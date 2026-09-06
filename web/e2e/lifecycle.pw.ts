@@ -1,4 +1,5 @@
 import { test, expect } from './harness';
+import { createToRevive } from './lifecycle-creation';
 
 test('J6 G-S1 G-P1 trusted Sandbox, two Agents, stop/delete, pause/revive and rotation preserve work', async ({
   harness: h,
@@ -75,7 +76,8 @@ test('J6 G-S1 G-P1 trusted Sandbox, two Agents, stop/delete, pause/revive and ro
   await expect(page.getByRole('button', { name: 'Resume', exact: true })).toBeEnabled({
     timeout: 180_000,
   });
-  await page.getByRole('button', { name: 'Resume', exact: true }).click();
+  await createToRevive(page, h, sandboxId);
+  await page.goto(`${h.config.baseURL}/sandboxes/${sandboxId}`);
   await expect(page.getByRole('button', { name: 'Pause', exact: true })).toBeEnabled({
     timeout: 540_000,
   });

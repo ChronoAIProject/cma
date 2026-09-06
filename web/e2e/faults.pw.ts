@@ -18,6 +18,15 @@ for (const name of faultNames) {
             timeout: 180_000,
           })
           .toBe('recovery_required');
+        const ambiguous = await h.readLaunch(page, launch.id);
+        expect(ambiguous.resolution.agent.id).toBeTruthy();
+        await page.goto(`${h.config.baseURL}/agents/${ambiguous.resolution.agent.id}`);
+        await expect(page.getByText('First message needs recovery', { exact: true })).toBeVisible();
+        await expect(
+          page.getByText('Delivery was interrupted before execution could be confirmed.', {
+            exact: true,
+          }),
+        ).toBeVisible();
       } else {
         await expect
           .poll(async () => (await h.readLaunch(page, launch.id)).failure?.code, {
@@ -36,9 +45,20 @@ for (const name of faultNames) {
       expect(h.commands.filter((row) => row.path.endsWith('/launches'))).toEqual(original);
       await h.operators.controlFault({ ...control, phase: 'release', launchId: launch.id });
       if (name === 'first_message_ambiguity') {
+        await expect(page.getByText('First message needs recovery', { exact: true })).toBeVisible();
+        await expect(page.getByRole('button', { name: 'Stop response', exact: true })).toHaveCount(
+          0,
+        );
+        expect((await h.readLaunch(page, launch.id)).first_message).toBe('recovery_required');
         expect(
-          h.commands.filter((row) => row.path.endsWith('/input') || row.path.endsWith('/agui/run')),
+          h.commands.filter(
+            (row) =>
+              row.path.endsWith('/input') ||
+              row.path.endsWith('/agui/run') ||
+              /\/responses(?:\/|$)/.test(row.path),
+          ),
         ).toHaveLength(0);
+        await h.capture(page, `fault-${name}-reloaded`);
       } else if (name === 'worker_crash' || current.failure?.retryable) {
         const ready = await h.ready(page, launch.id);
         const events = await h.get<{ items: { kind: { type: string } }[] }>(

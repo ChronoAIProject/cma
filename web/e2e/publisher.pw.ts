@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import type { ProfileDocument, SandboxProfileContent } from '@chronoai/cma-sdk';
 import type { Page } from '@playwright/test';
 import { test, expect, type Harness } from './harness';
 
@@ -25,6 +26,39 @@ test('J5 profiles publish to Marketplace, second owner forks, wizard publishes e
   harness: h,
 }) => {
   const page = await h.open('owner');
+  const fixtureWorkspace = h.fixture.profiles.workspace;
+  const repository = await h.get<{
+    content: { location: { type: string; url?: string; reference?: string } };
+  }>(
+    page,
+    `/api/v1/workspace-profiles/${fixtureWorkspace.id}/revisions/${fixtureWorkspace.revision}`,
+  );
+  if (repository.content.location.type !== 'git_repository' || !repository.content.location.url)
+    throw new Error(
+      'Required E2E J5 prerequisite: Workspace fixture must pin a verifiable public repository',
+    );
+  const skills = await h.get<{ items: { id: string; name: string; versions: string[] }[] }>(
+    page,
+    '/api/v1/profile-authoring/skills',
+  );
+  const skill = skills.items.find((entry) => entry.versions.length > 0);
+  if (!skill)
+    throw new Error(
+      'Required E2E J5 prerequisite: live Ornn catalogue must expose a published release',
+    );
+  const bounds = await h.get<{ min_cpu_millis: number; min_memory_mib: number }>(
+    page,
+    '/api/v1/profile-authoring/bounds',
+  );
+  const services = await h.get<{ id: string; name: string }[]>(
+    page,
+    '/api/v1/profile-authoring/services',
+  );
+  const service = services.find((entry) => h.fixture.baselineServices.includes(entry.id));
+  if (!service)
+    throw new Error(
+      'Required E2E J5 prerequisite: service catalogue must expose a baseline service',
+    );
   const suffix = randomUUID().slice(0, 8);
   const names = {
     agent: `E2E Agent ${suffix}`,
@@ -38,22 +72,77 @@ test('J5 profiles publish to Marketplace, second owner forks, wizard publishes e
     await page
       .getByLabel('Description', { exact: true })
       .fill('Scoped staging verification fixture');
-    if (kind === 'workspace') {
-      await page.getByRole('radio', { name: 'Empty directory', exact: true }).check();
-      await page.getByLabel('Empty directory name', { exact: true }).fill(`e2e-${suffix}`);
-      await page.getByRole('button', { name: `Add ${names.agent}`, exact: true }).click();
+    if (kind === 'agent') {
+      await page.getByLabel('Search Ornn skills', { exact: true }).fill(skill.id);
+      await page.getByRole('button', { name: `Add ${skill.name}`, exact: true }).click();
+      await expect(
+        page.getByRole('button', { name: `Version for ${skill.id}`, exact: true }),
+      ).toHaveText(skill.versions[0]!);
+      await page
+        .getByLabel('System prompt', { exact: true })
+        .fill('Act as a careful repository researcher. Preserve repository instructions.');
     }
-    if (kind === 'sandbox')
+    if (kind === 'workspace') {
+      await page
+        .getByLabel('Repository URL', { exact: true })
+        .fill(repository.content.location.url);
+      await page
+        .getByLabel('Branch or tag', { exact: true })
+        .fill(repository.content.location.reference ?? '');
+      await page.getByRole('button', { name: `Add ${names.agent}`, exact: true }).click();
+      const writes = h.commands.filter((row) => row.path === '/api/v1/workspace-profiles').length;
+      await page.getByRole('button', { name: 'Save draft', exact: true }).click();
+      expect(h.commands.filter((row) => row.path === '/api/v1/workspace-profiles')).toHaveLength(
+        writes,
+      );
+      await page.getByRole('button', { name: 'Verify repository', exact: true }).click();
+      await expect(page.getByText('Repository verified', { exact: true })).toBeVisible();
+    }
+    if (kind === 'sandbox') {
+      await page.getByRole('radio', { name: 'Custom', exact: true }).check();
+      await page
+        .getByLabel('CPU cores', { exact: true })
+        .fill(String(bounds.min_cpu_millis / 1000));
+      await page
+        .getByLabel('Memory (GiB)', { exact: true })
+        .fill(String(bounds.min_memory_mib / 1024));
+      await page.getByRole('checkbox', { name: service.name, exact: true }).check();
       await page.getByRole('button', { name: `Add ${names.workspace}`, exact: true }).click();
+    }
     ids[kind] = await publishProfile(page, h, kind);
   }
   const second = await h.open('secondOwner');
-  await second.goto(`${h.config.baseURL}/marketplace/agent/${ids.agent}`);
-  await expect(second.getByRole('heading', { name: names.agent, exact: true })).toBeVisible();
-  await second.getByRole('button', { name: 'Fork to my profiles', exact: true }).click();
-  await second.waitForURL(/\/profiles\/agent-profiles\/[^/]+$/);
-  expect(new URL(second.url()).pathname.split('/').at(-1)).not.toBe(ids.agent);
-  await h.capture(second, 'j5-second-owner-fork');
+  for (const kind of ['agent', 'sandbox'] as const) {
+    await second.goto(`${h.config.baseURL}/marketplace/${kind}/${ids[kind]}`);
+    await expect(second.getByRole('heading', { name: names[kind], exact: true })).toBeVisible();
+    await second.getByRole('button', { name: 'Fork to my profiles', exact: true }).click();
+    await second.waitForURL(new RegExp(`/profiles/${kind}-profiles/[^/]+$`));
+    const forkId = new URL(second.url()).pathname.split('/').at(-1)!;
+    expect(forkId).not.toBe(ids[kind]);
+    const source = await h.get<ProfileDocument<unknown>>(
+      page,
+      `/api/v1/${kind}-profiles/${ids[kind]}`,
+    );
+    const fork = await h.get<ProfileDocument<unknown>>(
+      second,
+      `/api/v1/${kind}-profiles/${forkId}`,
+    );
+    expect(fork.owner).toBe(h.fixture.accounts.secondOwner.subject);
+    expect(fork.forked_from).toEqual({ id: ids[kind], revision: 1 });
+    expect(fork.draft).toEqual(source.draft);
+    if (kind === 'sandbox') {
+      expect((fork.draft as SandboxProfileContent).workspace_profiles).toEqual([
+        { id: ids.workspace, revision: 1 },
+      ]);
+    }
+    await h.flush();
+    expect(h.journal.resources).toContainEqual({
+      kind: `${kind}-profiles`,
+      id: forkId,
+      subject: h.fixture.accounts.secondOwner.subject,
+    });
+    await h.capture(second, `j5-second-owner-${kind}-fork`);
+  }
   await page.goto(`${h.config.baseURL}/triggers/manage`);
   for (const kind of ['sandbox', 'workspace', 'agent'] as const)
     await page.locator(`#publisher-${kind}`).selectOption(`${ids[kind]}:1`);

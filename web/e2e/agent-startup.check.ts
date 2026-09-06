@@ -1,0 +1,206 @@
+import { test, expect, type Page, type TestInfo } from '@playwright/test';
+import { LocalStartup, localTime } from './agent-startup-fixtures';
+
+async function captureLayouts(page: Page, info: TestInfo, state: string) {
+  const originalViewport = page.viewportSize();
+  const originallyDark = await page.evaluate(() =>
+    document.body.hasAttribute('data-ds-dark-theme'),
+  );
+  try {
+    for (const theme of ['light', 'dark']) {
+      await page.evaluate(
+        (dark) => document.body.toggleAttribute('data-ds-dark-theme', dark),
+        theme === 'dark',
+      );
+      for (const viewport of [
+        { width: 1440, height: 1000 },
+        { width: 390, height: 844 },
+        { width: 320, height: 740 },
+      ]) {
+        await page.setViewportSize(viewport);
+        expect(
+          await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1),
+        ).toBe(true);
+        await expect
+          .poll(() =>
+            page.evaluate(() =>
+              [
+                ...document.querySelectorAll<HTMLElement>(
+                  '.agent-sign-in, .message-stream__recovery, [role="dialog"]',
+                ),
+              ]
+                .filter(
+                  (element) =>
+                    element.clientWidth > 0 &&
+                    (element.scrollWidth > element.clientWidth + 1 ||
+                      element.getBoundingClientRect().left < -1 ||
+                      element.getBoundingClientRect().right > innerWidth + 1),
+                )
+                .map((element) => ({
+                  className: element.className,
+                  width: element.clientWidth,
+                  contentWidth: element.scrollWidth,
+                  left: element.getBoundingClientRect().left,
+                  right: element.getBoundingClientRect().right,
+                  viewport: innerWidth,
+                })),
+            ),
+          )
+          .toEqual([]);
+        await page.screenshot({
+          path: info.outputPath(`${state}-${theme}-${viewport.width}.png`),
+          fullPage: true,
+        });
+      }
+    }
+  } finally {
+    await page.evaluate(
+      (dark) => document.body.toggleAttribute('data-ds-dark-theme', dark),
+      originallyDark,
+    );
+    if (originalViewport) await page.setViewportSize(originalViewport);
+  }
+}
+
+for (const status of ['paused', 'reviving'] as const) {
+  for (const kind of ['workspace', 'agent'] as const) {
+    test(`LOCAL ${status} ${kind} creation retries one command and reloads without manual revival`, async ({
+      page,
+      baseURL,
+    }, info) => {
+      const boundary = new LocalStartup();
+      boundary.sandbox = { ...boundary.sandbox, status };
+      boundary.loseCreationResponse = true;
+      await boundary.route(page, baseURL!);
+      await page.goto('/sandboxes/sbx_route');
+      await page
+        .locator('.sandbox-page')
+        .getByRole('button', { name: `New ${kind}`, exact: true })
+        .click();
+      const dialog = page.getByRole('dialog', { name: `New ${kind}`, exact: true });
+      if (kind === 'agent')
+        await dialog.getByRole('button', { name: 'Continue', exact: true }).click();
+      await dialog.getByRole('radio', { name: 'Default', exact: true }).check();
+      await dialog
+        .getByRole('button', { name: 'Deployment default Version 1', exact: true })
+        .click();
+      if (kind === 'agent') {
+        await dialog.getByRole('button', { name: 'Continue', exact: true }).click();
+        await dialog
+          .getByLabel('First message (optional)', { exact: true })
+          .fill('  Inspect after revival.\nKeep this request exact.  ');
+      }
+      await dialog.getByRole('button', { name: `Create ${kind}`, exact: true }).click();
+      await expect(
+        dialog.getByRole('button', { name: 'Retry creation', exact: true }),
+      ).toBeEnabled();
+      expect(boundary.writes).toHaveLength(1);
+      await captureLayouts(page, info, 'unsettled-creation');
+      await dialog.getByRole('button', { name: 'Retry creation', exact: true }).click();
+      await expect(dialog).toHaveCount(0);
+      expect(boundary.writes).toHaveLength(2);
+      expect(boundary.writes[1]).toEqual(boundary.writes[0]);
+      expect(boundary.writes[0]?.key).toBeTruthy();
+      expect(boundary.writes[0]?.body).toEqual(
+        kind === 'agent'
+          ? {
+              agent_profile: { id: 'agp_route', revision: 1 },
+              first_message: '  Inspect after revival.\nKeep this request exact.  ',
+            }
+          : { workspace_profile: { id: 'wkp_route', revision: 1 } },
+      );
+      await page.reload();
+      await expect(
+        page.getByRole('heading', {
+          name: kind === 'agent' ? 'Agent agt_contract' : 'research',
+          exact: true,
+        }),
+      ).toBeVisible();
+      await captureLayouts(page, info, 'accepted-reload');
+      expect(boundary.writes).toHaveLength(2);
+      expect(boundary.writes.some((write) => write.path.endsWith('/revive'))).toBe(false);
+      expect(boundary.unexpected).toEqual([]);
+      expect(boundary.errors).toEqual([]);
+      await info.attach('local-boundary', {
+        body: JSON.stringify({
+          mocked: true,
+          boundary: 'built_browser_public_http',
+          status,
+          kind,
+          writes: 2,
+          commands: 1,
+          captures: 12,
+        }),
+        contentType: 'application/json',
+      });
+    });
+  }
+}
+
+test('LOCAL provider sign-in replays after reload and clears durably without a fake turn', async ({
+  page,
+  baseURL,
+}, info) => {
+  const boundary = new LocalStartup();
+  boundary.agent = { ...boundary.agent, status: 'starting' };
+  boundary.events = [
+    {
+      seq: 1,
+      appended_at: localTime,
+      kind: {
+        type: 'sign_in_required',
+        message: 'Authorize the local provider fixture.',
+        code: 'LOCAL-CODE',
+        url: 'https://accounts.example.test/device',
+      },
+    },
+    {
+      seq: 2,
+      appended_at: localTime,
+      kind: { type: 'first_message_changed', state: 'recovery_required', recovery_generation: 1 },
+    },
+  ];
+  await boundary.route(page, baseURL!);
+  await page.goto('/agents/agt_contract');
+  await expect(page.getByRole('region', { name: 'Sign in to your account' })).toBeVisible();
+  await expect(page.getByRole('link', { name: 'Continue sign in' })).toHaveAttribute(
+    'href',
+    'https://accounts.example.test/device',
+  );
+  await page.reload();
+  await expect(page.getByText('LOCAL-CODE')).toBeVisible();
+  await expect(page.getByText('First message needs recovery', { exact: true })).toBeVisible();
+  await captureLayouts(page, info, 'sign-in-replayed');
+  boundary.events.push({
+    seq: 3,
+    appended_at: localTime,
+    kind: {
+      type: 'conversation_opened',
+      conversation_id: 'local-conversation',
+      runtime_generation: 1,
+    },
+  });
+  boundary.agent = { ...boundary.agent, status: 'ready' };
+  await expect(page.getByRole('region', { name: 'Sign in to your account' })).toHaveCount(0);
+  await expect(page.getByText('First message needs recovery', { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Send message', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Stop response', exact: true })).toHaveCount(0);
+  await page.reload();
+  await expect(page.getByRole('button', { name: 'Send message', exact: true })).toBeVisible();
+  await expect(page.getByText('LOCAL-CODE')).toHaveCount(0);
+  await expect(page.getByText('First message needs recovery', { exact: true })).toBeVisible();
+  await captureLayouts(page, info, 'sign-in-cleared');
+  expect(boundary.writes).toEqual([]);
+  expect(boundary.unexpected).toEqual([]);
+  expect(boundary.errors).toEqual([]);
+  await info.attach('local-boundary', {
+    body: JSON.stringify({
+      mocked: true,
+      boundary: 'durable_public_event_replay',
+      turnsStarted: 0,
+      providerLoginExecuted: false,
+      captures: 12,
+    }),
+    contentType: 'application/json',
+  });
+});
