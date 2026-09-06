@@ -138,6 +138,106 @@ fn lifecycle_retry_renews_only_confirmed_resumed_tokens_and_preserves_operation_
 }
 
 #[test]
+fn late_lifecycle_retry_requires_fresh_capture_for_pause_and_image_rotation() {
+    for rotation in [false, true] {
+        for parked in [false, true] {
+            let mut value = active();
+            if rotation {
+                let identity = SandboxRotationIdentity::capture(&value, &[]).unwrap();
+                value
+                    .begin_image_rotation("image-v2".into(), identity, NOW.into())
+                    .unwrap();
+            } else {
+                value.begin_pause(NOW.into(), None).unwrap();
+            }
+            let claim_work = |value: &mut Sandbox| {
+                value
+                    .work
+                    .claim(HOLDER.into(), LATER, EXPIRES.into())
+                    .unwrap();
+                value.work.lease.as_ref().unwrap().fence
+            };
+            let fence = claim_work(&mut value);
+            value
+                .publish_lifecycle_checkpoint(checkpoint(1, NOW), HOLDER, fence, LATER.into())
+                .unwrap();
+            if parked {
+                let fence = claim_work(&mut value);
+                value
+                    .complete_lifecycle_agent_pause(HOLDER, fence, LATER.into())
+                    .unwrap();
+            }
+            let fence = claim_work(&mut value);
+            let current = value.clone();
+            let authority = current.lifecycle.operation.as_ref().unwrap().authority();
+            assert!(value
+                .retry_lifecycle_after_writer_resume(LATER.into(), HOLDER, fence + 1, LATER.into())
+                .is_err());
+            assert_eq!(value, current);
+            value
+                .retry_lifecycle_after_writer_resume(LATER.into(), HOLDER, fence, LATER.into())
+                .unwrap();
+            let renewed = value.lifecycle.operation.as_ref().unwrap();
+            assert_eq!(renewed.authority().operation_id, authority.operation_id);
+            assert_ne!(
+                renewed.authority().writer_resume_token,
+                authority.writer_resume_token
+            );
+            assert_eq!(renewed.authority().writer_resume_generation, 1);
+            assert!(renewed.checkpoint_epoch().is_none());
+            assert_eq!(value.lifecycle.checkpoints, current.lifecycle.checkpoints);
+            let mut retry = mutation(&current, value.clone());
+            retry.events = vec![SandboxEventKind::WorkStepFailed {
+                step: SandboxWorkStep::RunLifecycleOperation,
+                failure: TypedFailure {
+                    class: "retryable".into(),
+                    detail: "late retry".into(),
+                },
+            }];
+            crate::sandbox::store::validate_lifecycle_mutation(&current, &[], &retry).unwrap();
+            let mut forged = retry.clone();
+            match forged.sandbox.lifecycle.operation.as_mut().unwrap() {
+                SandboxLifecycleOperation::Pause {
+                    checkpoint_epoch, ..
+                }
+                | SandboxLifecycleOperation::ImageRotation {
+                    checkpoint_epoch, ..
+                } => {
+                    *checkpoint_epoch = Some(1);
+                }
+                _ => unreachable!(),
+            }
+            assert!(
+                crate::sandbox::store::validate_lifecycle_mutation(&current, &[], &forged).is_err()
+            );
+            let mut forged = retry;
+            forged.sandbox.lifecycle.checkpoints.latest = None;
+            assert!(
+                crate::sandbox::store::validate_lifecycle_mutation(&current, &[], &forged).is_err()
+            );
+            let fence = claim_work(&mut value);
+            assert_eq!(value.next_lifecycle_checkpoint_epoch().unwrap(), 2);
+            value
+                .publish_lifecycle_checkpoint(checkpoint(2, LATER), HOLDER, fence, LATER.into())
+                .unwrap();
+            assert_eq!(
+                value
+                    .lifecycle
+                    .operation
+                    .as_ref()
+                    .unwrap()
+                    .checkpoint_epoch(),
+                Some(2)
+            );
+            assert_eq!(
+                value.lifecycle.checkpoints.previous.as_ref().unwrap().epoch,
+                1
+            );
+        }
+    }
+}
+
+#[test]
 fn only_exact_runtime_loss_discards_capture_debt_without_resume() {
     let mut value = active();
     value.lifecycle.checkpoints.latest = Some(checkpoint(1, NOW));

@@ -10,8 +10,9 @@ use layer2_core::sandbox::{
     SandboxLifecycleOperation, SandboxPausePhase,
 };
 use layer3_adapter::{
-    writer_resume_tokens_match, AgentSlot, CheckpointHoldReceipt, CheckpointHoldRequest,
-    CheckpointRequest, CheckpointWriterResumeRequest, RuntimeHandle, WriterState,
+    writer_resume_tokens_match, AdapterError, AgentSlot, CheckpointHoldReceipt,
+    CheckpointHoldRequest, CheckpointRequest, CheckpointWriterResumeRequest, RuntimeHandle,
+    WriterState,
 };
 
 use super::super::support::{adapter_failure, runtime, WorkerFailure};
@@ -67,7 +68,7 @@ impl SandboxWorker {
             }
             Err(error) => {
                 return self
-                    .fail_after_writer_resume(sandbox, adapter_failure(error), now)
+                    .fail_after_writer_resume(sandbox, checkpoint_hold_failure(error), now)
                     .await
             }
         };
@@ -176,7 +177,7 @@ impl SandboxWorker {
             .adapter
             .checkpoint_for_teardown(&runtime, &request)
             .await
-            .map_err(adapter_failure)?;
+            .map_err(checkpoint_hold_failure)?;
         if !valid_held_receipt(&receipt, &request)
             || receipt.checkpoint.object_reference != checkpoint.object_reference
             || receipt.checkpoint.sha256 != checkpoint.sha256
@@ -217,7 +218,7 @@ impl SandboxWorker {
         Ok(())
     }
 
-    async fn fail_after_writer_resume(
+    pub(super) async fn fail_after_writer_resume(
         &self,
         sandbox: Sandbox,
         failure: WorkerFailure,
@@ -287,6 +288,17 @@ impl SandboxWorker {
         }
         Err(error)
     }
+}
+
+fn checkpoint_hold_failure(error: AdapterError) -> WorkerFailure {
+    // A restart may retain authority that the runtime already resumed and retired.
+    if matches!(&error, AdapterError::Rejected(detail)
+        if detail.starts_with("checkpoint_hold_retired: ")
+            || detail == "CheckpointForTeardown: checkpoint_hold_retired")
+    {
+        return WorkerFailure::retryable("checkpoint writer authority was already resumed");
+    }
+    adapter_failure(error)
 }
 
 pub(super) fn require_quiet_agent(agent: &Agent) -> Result<(), WorkerFailure> {

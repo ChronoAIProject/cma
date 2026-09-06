@@ -238,7 +238,7 @@ async fn restarted_worker(harness: &Harness, now: SystemTime) -> Arc<SandboxWork
     )
 }
 
-async fn prepare_agent(
+pub(super) async fn prepare_agent(
     harness: &Harness,
     sandbox: &Sandbox,
     now: SystemTime,

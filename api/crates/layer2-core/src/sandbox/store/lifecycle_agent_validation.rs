@@ -87,8 +87,7 @@ pub(super) fn validate_lifecycle_agent_phase(
 fn agent_phase(current: &Sandbox, next: &Sandbox, no_agents: bool) -> AgentPhase {
     if no_agents
         && (next.status == SandboxStatus::Failed
-            || (current.lifecycle.operation == next.lifecycle.operation
-                && next.work.attempts == current.work.attempts.saturating_add(1)))
+            || next.work.attempts == current.work.attempts.saturating_add(1))
     {
         return AgentPhase::SandboxOnly;
     }
@@ -163,12 +162,14 @@ fn validate_pause(
     change: &SandboxLifecycleAgentMutation,
 ) -> Result<(), SandboxStoreError> {
     let next = &change.agent;
-    let expected_logs = vec![AgentLogKind::StatusChanged {
-        from: current.status,
-        to: AgentStatus::Paused,
-    }];
-    if current.status == AgentStatus::Paused
-        || current.conversation.active_turn.is_some()
+    let expected_logs = (current.status != AgentStatus::Paused)
+        .then_some(AgentLogKind::StatusChanged {
+            from: current.status,
+            to: AgentStatus::Paused,
+        })
+        .into_iter()
+        .collect::<Vec<_>>();
+    if current.conversation.active_turn.is_some()
         || blocking_operation(current)
         || next.status != AgentStatus::Paused
         || !conversation_matches_except_generation(current, next)

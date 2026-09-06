@@ -26,15 +26,7 @@ impl SandboxWorker {
         if let Some(failure) = agents
             .iter()
             .filter(|agent| agent.status.is_live())
-            .find_map(|agent| {
-                require_quiet_agent(agent).err().or_else(|| {
-                    (agent.status == AgentStatus::Paused).then(|| {
-                        WorkerFailure::terminal_security(
-                            "an active lifecycle capture included an already paused agent",
-                        )
-                    })
-                })
-            })
+            .find_map(|agent| require_quiet_agent(agent).err())
         {
             return self.abort_lifecycle_hold(sandbox, failure, now).await;
         }
@@ -48,6 +40,19 @@ impl SandboxWorker {
         let mut mutations = Vec::new();
         for current in agents.iter().filter(|agent| agent.status.is_live()) {
             let mut agent = current.clone();
+            if current.status == AgentStatus::Paused {
+                agent.revision = agent
+                    .revision
+                    .checked_add(1)
+                    .ok_or(SandboxStoreError::Conflict)?;
+                agent.updated_at = stamp.clone();
+                mutations.push(SandboxLifecycleAgentMutation {
+                    expected_revision: current.revision,
+                    agent,
+                    logs: Vec::new(),
+                });
+                continue;
+            }
             agent
                 .transition(AgentStatus::Paused, stamp.clone(), None)
                 .map_err(|error| SandboxStoreError::Corrupt(error.to_string()))?;
@@ -94,10 +99,12 @@ impl SandboxWorker {
             }
             return Ok(());
         }
-        if let Err(error) = self.resume_lifecycle_writers(&sandbox).await {
-            tracing::warn!(sandbox_id = %sandbox.id, error = ?error, "agent parking failed and writer resumption could not be confirmed");
-        }
-        committed
+        self.fail_after_writer_resume(
+            sandbox,
+            WorkerFailure::retryable("agent parking publication is unconfirmed"),
+            now,
+        )
+        .await
     }
 
     pub(super) async fn teardown_lifecycle_runtime(
@@ -175,11 +182,6 @@ impl SandboxWorker {
         failure: WorkerFailure,
         now: SystemTime,
     ) -> Result<(), SandboxStoreError> {
-        if let Err(resume_failure) = self.resume_lifecycle_writers(&sandbox).await {
-            return self
-                .handle_lifecycle_failure(sandbox, resume_failure, now)
-                .await;
-        }
-        self.handle_lifecycle_failure(sandbox, failure, now).await
+        self.fail_after_writer_resume(sandbox, failure, now).await
     }
 }

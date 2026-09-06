@@ -74,6 +74,64 @@ async fn pause_rejects_partial_scope_wrong_status_and_extra_logs() {
 }
 
 #[tokio::test]
+async fn pause_retries_fence_already_paused_agents_without_duplicate_status_logs() {
+    let current = claimed_pause_phase(SandboxPausePhase::PauseAgents);
+    let agents = vec![
+        test_agent("agt_ready", AgentStatus::Ready),
+        test_agent("agt_parked", AgentStatus::Paused),
+    ];
+    let fixture = seed_fixture(current, agents).await;
+    let valid = pause_mutation(&fixture.current, &fixture.agents);
+    let mut omitted = valid.clone();
+    omitted.agents.pop();
+    assert_rejected_atomically(&fixture, omitted).await;
+    let mut duplicate = valid.clone();
+    duplicate.agents[1].logs.push(AgentLogKind::StatusChanged {
+        from: AgentStatus::Paused,
+        to: AgentStatus::Paused,
+    });
+    duplicate.agents[1].agent.conversation.last_seq += 1;
+    duplicate.events.insert(
+        1,
+        SandboxEventKind::AgentStatusChanged {
+            agent_id: fixture.agents[1].id.clone(),
+            from: AgentStatus::Paused,
+            to: AgentStatus::Paused,
+        },
+    );
+    assert_rejected_atomically(&fixture, duplicate).await;
+    fixture
+        .store
+        .commit_sandbox_lifecycle(valid.clone())
+        .await
+        .unwrap();
+    for change in &valid.agents {
+        assert_eq!(
+            fixture.store.get_agent(&change.agent.id).await.unwrap(),
+            Some(change.agent.clone())
+        );
+    }
+    assert!(fixture
+        .store
+        .agent_log(&fixture.agents[1].id, 0, 100)
+        .await
+        .unwrap()
+        .is_empty());
+    let events = fixture
+        .store
+        .sandbox_events(&fixture.current.id, 0, 100)
+        .await
+        .unwrap();
+    assert_eq!(
+        events
+            .into_iter()
+            .map(|event| event.kind)
+            .collect::<Vec<_>>(),
+        valid.events
+    );
+}
+
+#[tokio::test]
 async fn reopen_rejects_nonincreasing_generation_and_changed_conversation_identity() {
     let current = claimed_revive_phase(SandboxRevivePhase::ConversationReopen);
     let agents = vec![test_agent("agt_reopen", AgentStatus::Paused)];
@@ -484,6 +542,15 @@ fn pause_mutation(current: &Sandbox, agents: &[Agent]) -> SandboxLifecycleMutati
         .iter()
         .map(|current| {
             let mut next = current.clone();
+            if current.status == AgentStatus::Paused {
+                next.revision += 1;
+                next.updated_at = LATER.into();
+                return SandboxLifecycleAgentMutation {
+                    expected_revision: current.revision,
+                    agent: next,
+                    logs: Vec::new(),
+                };
+            }
             next.transition(AgentStatus::Paused, LATER.into(), None)
                 .unwrap();
             next.conversation.last_seq += 1;
