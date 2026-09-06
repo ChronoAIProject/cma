@@ -1,9 +1,7 @@
 //! Atomic schema-v1 checkpoint metadata publication.
 
 use layer2_core::ids::SandboxId;
-use layer2_core::sandbox::store::{
-    validate_checkpoint_mutation, SandboxCheckpointMutation, SandboxStoreError,
-};
+use layer2_core::sandbox::store::{SandboxCheckpointMutation, SandboxStoreError};
 use layer2_core::sandbox::{
     Sandbox, SandboxCheckpointHistory, SandboxCheckpointRef, SandboxEvent, SandboxEventKind,
 };
@@ -13,7 +11,7 @@ use mongodb::{Collection, IndexModel};
 use serde::{Deserialize, Serialize};
 
 use super::checkpoint_objects::{prune_evicted, RetentionError};
-use super::lifecycle_execution::{load_sandbox_agents, LifecycleLoadError};
+use super::lifecycle_execution::LifecycleLoadError;
 use super::sandbox_events::{append_in_transaction, reconcile_event, TransactionEventError};
 use super::sandbox_mongo::{
     commit_transaction, is_duplicate_key, is_transient, signed, start_transaction,
@@ -21,6 +19,8 @@ use super::sandbox_mongo::{
     TRANSACTION_ATTEMPTS,
 };
 use super::sandboxes::{read_sandbox, sandbox_replacement_fields};
+
+mod agents;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct CheckpointDoc {
@@ -224,8 +224,7 @@ async fn apply_publication(
         .transpose()
         .map_err(PublishError::Domain)?
         .ok_or(PublishError::Domain(SandboxStoreError::NotFound))?;
-    let agents = load_sandbox_agents(store, &current.id, session).await?;
-    validate_checkpoint_mutation(&current, &agents, mutation).map_err(PublishError::Domain)?;
+    agents::validate_and_fence(store, &current, mutation, session).await?;
 
     store
         .checkpoints

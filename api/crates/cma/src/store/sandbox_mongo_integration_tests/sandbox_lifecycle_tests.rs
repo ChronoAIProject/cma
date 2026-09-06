@@ -1,10 +1,10 @@
 use std::sync::Arc;
 
 use layer2_core::sandbox::store::{
-    SandboxCheckpointMutation, SandboxLifecycleAgentMutation, SandboxLifecycleAgentScope,
-    SandboxLifecycleCommand, SandboxLifecycleCommandDisposition, SandboxLifecycleCommandResult,
-    SandboxLifecycleCommandStore, SandboxLifecycleExecutionStore, SandboxLifecycleMutation,
-    SandboxMutationGuard,
+    SandboxCheckpointAgentGuard, SandboxCheckpointMutation, SandboxLifecycleAgentMutation,
+    SandboxLifecycleAgentScope, SandboxLifecycleCommand, SandboxLifecycleCommandDisposition,
+    SandboxLifecycleCommandResult, SandboxLifecycleCommandStore, SandboxLifecycleExecutionStore,
+    SandboxLifecycleMutation, SandboxMutationGuard,
 };
 use layer2_core::sandbox::{
     Agent, AgentLogKind, RuntimeBinding, SandboxCheckpointConversation, SandboxCheckpointRef,
@@ -188,7 +188,7 @@ async fn lifecycle_checkpoint_and_all_agent_phase_commit_atomically() {
     let checkpoint = checkpoint_for_agents(&agents, 1);
 
     store
-        .publish_sandbox_checkpoint(checkpoint_mutation(&claimed, checkpoint.clone()))
+        .publish_sandbox_checkpoint(checkpoint_mutation(&claimed, &agents, checkpoint.clone()))
         .await
         .unwrap();
     let claimed = store
@@ -239,6 +239,7 @@ async fn one_stale_agent_aborts_the_entire_lifecycle_phase() {
     store
         .publish_sandbox_checkpoint(checkpoint_mutation(
             &claimed,
+            &agents,
             checkpoint_for_agents(&agents, 1),
         ))
         .await
@@ -275,6 +276,88 @@ async fn one_stale_agent_aborts_the_entire_lifecycle_phase() {
 }
 
 #[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn checkpoint_rejects_agent_and_log_changes_after_capture() {
+    let (client, name) = database("checkpoint_capture_guard").await;
+    let store = MongoSandboxStore::open(&client, &name).await.unwrap();
+    for change_log in [false, true] {
+        let suffix = if change_log { "log" } else { "revision" };
+        let (claimed, agents) = claimed_pause_fixture(&store, suffix).await;
+        let mutation = checkpoint_mutation(&claimed, &agents, checkpoint_for_agents(&agents, 1));
+        if change_log {
+            store
+                .append_agent_log(
+                    &agents[0].id,
+                    MINUTE.into(),
+                    AgentLogKind::AgentMessage {
+                        content: "output completed after capture".into(),
+                    },
+                )
+                .await
+                .unwrap();
+        } else {
+            let mut next = agents[0].clone();
+            next.revision += 1;
+            next.updated_at = MINUTE.into();
+            store.save_agent(agents[0].revision, next).await.unwrap();
+        }
+        let events = store.sandbox_events(&claimed.id, 0, 20).await.unwrap();
+        assert_eq!(
+            store.publish_sandbox_checkpoint(mutation).await,
+            Err(SandboxStoreError::Conflict)
+        );
+        assert_eq!(
+            store.get_sandbox(&claimed.id).await.unwrap(),
+            Some(claimed.clone())
+        );
+        assert_eq!(
+            store.sandbox_events(&claimed.id, 0, 20).await.unwrap(),
+            events
+        );
+        assert_eq!(
+            store
+                .checkpoints
+                .count_documents(doc! { "sandbox_id": claimed.id.as_str() })
+                .await
+                .unwrap(),
+            0
+        );
+    }
+    client.database(&name).drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn checkpoint_refuses_missing_persisted_agent_log_evidence() {
+    let (client, name) = database("checkpoint_log_corruption").await;
+    let store = MongoSandboxStore::open(&client, &name).await.unwrap();
+    let (claimed, mut agents) = claimed_pause_fixture(&store, "corrupt").await;
+    store
+        .append_agent_log(
+            &agents[0].id,
+            NOW.into(),
+            AgentLogKind::AgentMessage {
+                content: "output included in capture".into(),
+            },
+        )
+        .await
+        .unwrap();
+    agents[0] = store.get_agent(&agents[0].id).await.unwrap().unwrap();
+    let mutation = checkpoint_mutation(&claimed, &agents, checkpoint_for_agents(&agents, 1));
+    store
+        .agent_log
+        .delete_many(doc! { "agent_id": agents[0].id.as_str() })
+        .await
+        .unwrap();
+    assert_eq!(
+        store.publish_sandbox_checkpoint(mutation).await,
+        Err(SandboxStoreError::SequenceConflict)
+    );
+    assert_eq!(store.get_sandbox(&claimed.id).await.unwrap(), Some(claimed));
+    client.database(&name).drop().await.unwrap();
+}
+
+#[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_FAILPOINT_URI pointing at a failpoint-enabled replica set"]
 async fn lifecycle_phase_reconciles_an_ambiguous_commit_without_duplicate_logs() {
     let uri = std::env::var("CHRONO_TEST_MONGODB_FAILPOINT_URI")
@@ -291,6 +374,7 @@ async fn lifecycle_phase_reconciles_an_ambiguous_commit_without_duplicate_logs()
     store
         .publish_sandbox_checkpoint(checkpoint_mutation(
             &claimed,
+            &agents,
             checkpoint_for_agents(&agents, 1),
         ))
         .await
@@ -450,6 +534,7 @@ fn checkpoint_for_agents(agents: &[Agent], epoch: u64) -> SandboxCheckpointRef {
 
 fn checkpoint_mutation(
     claimed: &Sandbox,
+    agents: &[Agent],
     checkpoint: SandboxCheckpointRef,
 ) -> SandboxCheckpointMutation {
     let mut next = claimed.clone();
@@ -480,6 +565,10 @@ fn checkpoint_mutation(
     next.updated_at = NOW.into();
     SandboxCheckpointMutation {
         guard: SandboxMutationGuard::capture(claimed),
+        agents: agents
+            .iter()
+            .map(SandboxCheckpointAgentGuard::capture)
+            .collect(),
         checkpoint,
         sandbox: next,
         appended_at: NOW.into(),

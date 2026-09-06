@@ -4,9 +4,9 @@ use sha2::{Digest, Sha256};
 use super::*;
 use crate::sandbox::lifecycle_test_support::{agent, sandbox, NOW};
 use crate::sandbox::store::{
-    SandboxCheckpointMutation, SandboxLifecycleAgentMutation, SandboxLifecycleAgentScope,
-    SandboxLifecycleCommand, SandboxLifecycleCommandStore, SandboxLifecycleExecutionStore,
-    SandboxLifecycleMutation, SandboxMutationGuard,
+    SandboxCheckpointAgentGuard, SandboxCheckpointMutation, SandboxLifecycleAgentMutation,
+    SandboxLifecycleAgentScope, SandboxLifecycleCommand, SandboxLifecycleCommandStore,
+    SandboxLifecycleExecutionStore, SandboxLifecycleMutation, SandboxMutationGuard,
 };
 use crate::sandbox::{
     AgentLogKind, AgentStatus, SandboxCheckpointConversation, SandboxCheckpointRef,
@@ -21,7 +21,7 @@ const LEASE_END: &str = "2026-09-05T00:45:00Z";
 async fn checkpoint_publication_is_complete_guarded_and_gap_free() {
     let (store, claimed, agents) = pause_fixture().await;
     let checkpoint = checkpoint_for(&agents, 1);
-    let mutation = checkpoint_mutation(&claimed, checkpoint.clone());
+    let mutation = checkpoint_mutation(&claimed, &agents, checkpoint.clone());
 
     store.publish_sandbox_checkpoint(mutation).await.unwrap();
 
@@ -52,7 +52,7 @@ async fn checkpoint_publication_is_complete_guarded_and_gap_free() {
 async fn checkpoint_publication_rejects_an_incomplete_conversation_set_atomically() {
     let (store, claimed, agents) = pause_fixture().await;
     let checkpoint = checkpoint_for(&agents[..1], 1);
-    let mutation = checkpoint_mutation(&claimed, checkpoint);
+    let mutation = checkpoint_mutation(&claimed, &agents, checkpoint);
     let before = store.get_sandbox(&claimed.id).await.unwrap().unwrap();
 
     assert_eq!(
@@ -93,7 +93,7 @@ async fn lifecycle_checkpoint_accepts_an_exact_empty_live_agent_set() {
         .unwrap();
 
     store
-        .publish_sandbox_checkpoint(checkpoint_mutation(&claimed, checkpoint_for(&[], 1)))
+        .publish_sandbox_checkpoint(checkpoint_mutation(&claimed, &[], checkpoint_for(&[], 1)))
         .await
         .unwrap();
 
@@ -133,6 +133,10 @@ async fn checkpoint_metadata_retains_only_the_latest_two_complete_generations() 
         store
             .publish_sandbox_checkpoint(SandboxCheckpointMutation {
                 guard: SandboxMutationGuard::capture(&current),
+                agents: agents
+                    .iter()
+                    .map(SandboxCheckpointAgentGuard::capture)
+                    .collect(),
                 checkpoint,
                 sandbox: next,
                 appended_at: NOW.into(),
@@ -154,10 +158,104 @@ async fn checkpoint_metadata_retains_only_the_latest_two_complete_generations() 
 }
 
 #[tokio::test]
+async fn checkpoint_rejects_a_completed_agent_change_since_capture() {
+    let (store, claimed, agents) = pause_fixture().await;
+    let mutation = checkpoint_mutation(&claimed, &agents, checkpoint_for(&agents, 1));
+    let mut changed = agents[0].clone();
+    changed.revision += 1;
+    changed.updated_at = LATER.into();
+    store.save_agent(agents[0].revision, changed).await.unwrap();
+
+    assert_eq!(
+        store.publish_sandbox_checkpoint(mutation).await,
+        Err(SandboxStoreError::Conflict)
+    );
+    assert_eq!(
+        store.get_sandbox(&claimed.id).await.unwrap(),
+        Some(claimed.clone())
+    );
+    assert!(store.lock().checkpoints.is_empty());
+    assert_eq!(
+        store
+            .sandbox_events(&claimed.id, 0, 10)
+            .await
+            .unwrap()
+            .len(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn checkpoint_rejects_new_log_content_even_without_an_agent_revision_change() {
+    let (store, claimed, agents) = pause_fixture().await;
+    let mutation = checkpoint_mutation(&claimed, &agents, checkpoint_for(&agents, 1));
+    store
+        .append_agent_log(
+            &agents[0].id,
+            LATER.into(),
+            AgentLogKind::AgentMessage {
+                content: "completed after capture".into(),
+            },
+        )
+        .await
+        .unwrap();
+    store
+        .lock()
+        .agents
+        .get_mut(&agents[0].id)
+        .unwrap()
+        .conversation
+        .last_seq += 1;
+
+    assert_eq!(
+        store.publish_sandbox_checkpoint(mutation).await,
+        Err(SandboxStoreError::Conflict)
+    );
+    assert_eq!(store.get_sandbox(&claimed.id).await.unwrap(), Some(claimed));
+    assert!(store.lock().checkpoints.is_empty());
+}
+
+#[tokio::test]
+async fn checkpoint_rejects_duplicate_or_missing_capture_guards() {
+    for duplicate in [false, true] {
+        let (store, claimed, agents) = pause_fixture().await;
+        let mut mutation = checkpoint_mutation(&claimed, &agents, checkpoint_for(&agents, 1));
+        if duplicate {
+            mutation.agents.push(mutation.agents[0].clone());
+        } else {
+            mutation.agents.pop();
+        }
+        assert_eq!(
+            store.publish_sandbox_checkpoint(mutation).await,
+            Err(SandboxStoreError::Conflict)
+        );
+        assert!(store.lock().checkpoints.is_empty());
+    }
+}
+
+#[tokio::test]
+async fn checkpoint_refuses_corrupt_log_evidence_atomically() {
+    let (store, claimed, agents) = pause_fixture().await;
+    let mutation = checkpoint_mutation(&claimed, &agents, checkpoint_for(&agents, 1));
+    store.lock().agent_logs.get_mut(&agents[0].id).unwrap()[0].agent_id = agents[1].id.clone();
+
+    assert_eq!(
+        store.publish_sandbox_checkpoint(mutation).await,
+        Err(SandboxStoreError::SequenceConflict)
+    );
+    assert_eq!(store.get_sandbox(&claimed.id).await.unwrap(), Some(claimed));
+    assert!(store.lock().checkpoints.is_empty());
+}
+
+#[tokio::test]
 async fn all_live_agent_transition_and_logs_commit_atomically() {
     let (store, claimed, agents) = pause_fixture().await;
     store
-        .publish_sandbox_checkpoint(checkpoint_mutation(&claimed, checkpoint_for(&agents, 1)))
+        .publish_sandbox_checkpoint(checkpoint_mutation(
+            &claimed,
+            &agents,
+            checkpoint_for(&agents, 1),
+        ))
         .await
         .unwrap();
     let claimed = store
@@ -201,7 +299,11 @@ async fn all_live_agent_transition_and_logs_commit_atomically() {
 async fn stale_agent_revision_leaves_every_aggregate_and_event_unchanged() {
     let (store, claimed, agents) = pause_fixture().await;
     store
-        .publish_sandbox_checkpoint(checkpoint_mutation(&claimed, checkpoint_for(&agents, 1)))
+        .publish_sandbox_checkpoint(checkpoint_mutation(
+            &claimed,
+            &agents,
+            checkpoint_for(&agents, 1),
+        ))
         .await
         .unwrap();
     let claimed = store
@@ -245,7 +347,11 @@ async fn stale_agent_revision_leaves_every_aggregate_and_event_unchanged() {
 async fn all_live_scope_rejects_a_partial_agent_set() {
     let (store, claimed, agents) = pause_fixture().await;
     store
-        .publish_sandbox_checkpoint(checkpoint_mutation(&claimed, checkpoint_for(&agents, 1)))
+        .publish_sandbox_checkpoint(checkpoint_mutation(
+            &claimed,
+            &agents,
+            checkpoint_for(&agents, 1),
+        ))
         .await
         .unwrap();
     let claimed = store
@@ -272,7 +378,11 @@ async fn all_live_scope_rejects_a_partial_agent_set() {
 async fn lifecycle_phase_rejects_unrelated_sandbox_changes() {
     let (store, claimed, agents) = pause_fixture().await;
     store
-        .publish_sandbox_checkpoint(checkpoint_mutation(&claimed, checkpoint_for(&agents, 1)))
+        .publish_sandbox_checkpoint(checkpoint_mutation(
+            &claimed,
+            &agents,
+            checkpoint_for(&agents, 1),
+        ))
         .await
         .unwrap();
     let claimed = store
@@ -396,6 +506,7 @@ fn checkpoint_for(agents: &[Agent], epoch: u64) -> SandboxCheckpointRef {
 
 fn checkpoint_mutation(
     claimed: &Sandbox,
+    agents: &[Agent],
     checkpoint: SandboxCheckpointRef,
 ) -> SandboxCheckpointMutation {
     let mut next = claimed.clone();
@@ -404,6 +515,10 @@ fn checkpoint_mutation(
         .unwrap();
     SandboxCheckpointMutation {
         guard: SandboxMutationGuard::capture(claimed),
+        agents: agents
+            .iter()
+            .map(SandboxCheckpointAgentGuard::capture)
+            .collect(),
         checkpoint,
         sandbox: next,
         appended_at: NOW.into(),
