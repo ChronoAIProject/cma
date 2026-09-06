@@ -1217,3 +1217,62 @@ async fn workspace_mutations_project_every_named_hierarchy_conflict() {
     assert_eq!(status, StatusCode::CONFLICT);
     assert_eq!(problem["code"], "workspace_has_live_agents");
 }
+
+#[tokio::test]
+async fn idempotency_scopes_isolate_workspace_creation_from_sandbox_commands() {
+    for command in ["delete", "pause", "revive"] {
+        let fixture = fixture(8);
+        let create_path = format!("/api/v1/sandboxes/{command}:collision/workspaces");
+        let sandbox_path = "/api/v1/sandboxes/collision:workspace:create";
+        let (method, command_path) = if command == "delete" {
+            (Method::DELETE, sandbox_path.to_owned())
+        } else {
+            (Method::POST, format!("{sandbox_path}/{command}"))
+        };
+        let body = json!({"workspace_profile": {"id": "wsp_missing", "revision": 1}});
+        let key = Some("same-key-across-operations");
+        let create = json_response(
+            &fixture.router,
+            authenticated(Method::POST, &create_path, Some(body.clone()), key),
+        )
+        .await;
+        assert_eq!(create.0, StatusCode::NOT_FOUND);
+        assert_eq!(create.1["code"], "workspace_not_found");
+        let lifecycle = json_response(
+            &fixture.router,
+            authenticated(method.clone(), &command_path, None, key),
+        )
+        .await;
+        assert_eq!(lifecycle.0, StatusCode::NOT_FOUND, "{command}");
+        assert_eq!(lifecycle.1["code"], "sandbox_not_found", "{command}");
+        assert_eq!(
+            json_response(
+                &fixture.router,
+                authenticated(Method::POST, &create_path, Some(body), key),
+            )
+            .await,
+            create,
+        );
+        assert_eq!(
+            json_response(
+                &fixture.router,
+                authenticated(method, &command_path, None, key),
+            )
+            .await,
+            lifecycle,
+        );
+        assert_eq!(fixture.operations.records.lock().unwrap().len(), 2);
+        let changed = json_response(
+            &fixture.router,
+            authenticated(
+                Method::POST,
+                &create_path,
+                Some(json!({"workspace_profile": {"id": "wsp_other", "revision": 1}})),
+                key,
+            ),
+        )
+        .await;
+        assert_eq!(changed.0, StatusCode::UNPROCESSABLE_ENTITY);
+        assert_eq!(changed.1["code"], "idempotency_key_reused");
+    }
+}

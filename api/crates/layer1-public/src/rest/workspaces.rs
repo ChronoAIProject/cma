@@ -13,7 +13,7 @@ use layer2_core::{Capability, SandboxId, WorkspaceId, WorkspaceProfileId};
 
 use crate::AuthenticatedCaller;
 
-use super::idempotency::{IdempotencyKey, RequestBody};
+use super::idempotency::{operation_scope, IdempotencyKey, RequestBody};
 use super::instances::{confirmed_digest, execute_command, execute_empty_command, HierarchyState};
 use super::instances_openapi_shapes::{
     CreateWorkspaceRequest, WorkspaceDetailView, WorkspaceListView, WorkspaceView,
@@ -53,7 +53,7 @@ pub(super) async fn create(
         &caller,
         Capability::UseOwnSandboxes,
         key,
-        format!("sandbox:{id}:workspace:create"),
+        operation_scope("sandbox:workspace:create", &[&id]),
         body,
         move |body| async move {
             let confirmed_digest = confirmed_digest(body.trust_confirmed, body.commands_digest)?;

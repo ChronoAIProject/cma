@@ -21,7 +21,7 @@ use super::agent_openapi_shapes::{
     StopAgentRequest,
 };
 use super::agents::{execute_command, execute_empty_command, AgentRoutesState};
-use super::idempotency::{IdempotencyKey, RequestBody};
+use super::idempotency::{operation_scope, IdempotencyKey, RequestBody};
 use super::instance_problem::InstanceProblem;
 use super::BodyProblem;
 use crate::AuthenticatedCaller;
@@ -181,7 +181,7 @@ pub(crate) async fn approval(
         &state,
         &caller,
         key,
-        format!("agent:approval:{id}:{request_id}"),
+        operation_scope("agent:approval", &[&id, &request_id]),
         body,
         move |body| async move {
             service
