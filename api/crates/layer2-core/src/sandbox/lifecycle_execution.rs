@@ -197,7 +197,16 @@ impl Sandbox {
         fence: u64,
         at: String,
     ) -> Result<(), SandboxModelError> {
-        if self.runtime.is_some() || !valid_runtime_binding(&binding, &at) {
+        if self.runtime.is_some()
+            || !valid_runtime_binding(&binding, &at)
+            || self
+                .lifecycle
+                .runtime_provision
+                .as_ref()
+                .is_none_or(|reservation| {
+                    binding.provision_generation != Some(reservation.generation)
+                })
+        {
             return Err(invalid_execution());
         }
         self.apply_claimed(holder, fence, at.clone(), at, |next| {
@@ -219,6 +228,7 @@ impl Sandbox {
                 _ => return Err(invalid_execution()),
             }
             next.runtime = Some(binding);
+            next.lifecycle.runtime_provision = None;
             Ok(())
         })
     }
@@ -439,8 +449,7 @@ impl Sandbox {
             at.clone(),
             at.clone(),
             |next| {
-                next.lifecycle.operation = None;
-                next.lifecycle.paused_notice = None;
+                next.lifecycle.cancel_operation();
                 next.transition(SandboxStatus::Failed, at, Some(failure.clone()))?;
                 Ok(())
             },

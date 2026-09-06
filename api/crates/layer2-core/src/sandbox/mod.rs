@@ -37,6 +37,7 @@ mod provision;
 mod queued_message;
 mod revive;
 mod rotate;
+mod runtime_generation;
 mod runtime_recovery;
 mod runtime_recovery_agents;
 #[allow(clippy::module_inception)]
@@ -133,6 +134,7 @@ pub use rotate::{
     image_rotation_required, SandboxRotationAccounting, SandboxRotationAccountingOutcome,
     SandboxRotationAgentIdentity, SandboxRotationIdentity,
 };
+pub use runtime_generation::SandboxRuntimeProvisionReservation;
 pub use sandbox::{RuntimeBinding, Sandbox, SandboxLimits, TypedFailure};
 pub use service::{
     CreateSandbox, SandboxOrigin, SandboxPolicy, SandboxPolicySource, SandboxService,
@@ -191,6 +193,8 @@ mod lifecycle_tests;
 mod revive_tests;
 #[cfg(test)]
 mod rotate_tests;
+#[cfg(test)]
+mod runtime_generation_tests;
 #[cfg(test)]
 mod service_tests;
 #[cfg(test)]

@@ -42,7 +42,19 @@ pub(super) fn lifecycle_sandbox_advanced(
     let retries_same_phase = current.lifecycle.operation == next.lifecycle.operation
         && current.status == next.status
         && next.work.attempts == current.work.attempts.saturating_add(1);
-    let result = if retries_same_phase {
+    let reserves_runtime = current.lifecycle.runtime_provision.is_none()
+        && next.lifecycle.runtime_provision.is_some()
+        && current.lifecycle.operation == next.lifecycle.operation;
+    let result = if reserves_runtime {
+        expected
+            .reserve_lifecycle_runtime_generation(
+                next.lifecycle.runtime_generation_high_water,
+                &lease.holder,
+                lease.fence,
+                appended_at.into(),
+            )
+            .map(|_| ())
+    } else if retries_same_phase {
         expected.retry_lifecycle(
             next.work.ready_at.clone(),
             &lease.holder,

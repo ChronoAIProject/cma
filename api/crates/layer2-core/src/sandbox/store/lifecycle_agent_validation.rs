@@ -70,7 +70,7 @@ pub(super) fn validate_lifecycle_agent_phase(
             .ok_or(SandboxStoreError::NotFound)?;
         match phase {
             AgentPhase::Pause => validate_pause(stored, change)?,
-            AgentPhase::Reopen => validate_reopen(stored, change)?,
+            AgentPhase::Reopen => validate_reopen(current, stored, change)?,
             AgentPhase::QueueProgress => {
                 validate_queue_progress(stored, change, &mutation.appended_at)?
             }
@@ -181,6 +181,7 @@ fn validate_pause(
 }
 
 fn validate_reopen(
+    sandbox: &Sandbox,
     current: &Agent,
     change: &SandboxLifecycleAgentMutation,
 ) -> Result<(), SandboxStoreError> {
@@ -202,7 +203,12 @@ fn validate_reopen(
             to: AgentStatus::Ready,
         },
     ];
-    if current.status != AgentStatus::Paused
+    if sandbox
+        .runtime
+        .as_ref()
+        .and_then(|binding| binding.provision_generation)
+        != Some(generation)
+        || current.status != AgentStatus::Paused
         || current.conversation.active_turn.is_some()
         || blocking_operation(current)
         || next.status != AgentStatus::Ready

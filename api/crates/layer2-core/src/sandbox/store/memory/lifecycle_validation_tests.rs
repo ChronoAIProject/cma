@@ -91,7 +91,18 @@ async fn reopen_rejects_nonincreasing_generation_and_changed_conversation_identi
     };
     assert_rejected_atomically(&fixture, unchanged_generation).await;
 
-    let mut changed_identity = valid;
+    let mut unbound_generation = valid.clone();
+    unbound_generation.agents[0]
+        .agent
+        .conversation
+        .runtime_generation = Some(6);
+    unbound_generation.agents[0].logs[0] = AgentLogKind::ConversationOpened {
+        conversation_id: "conversation-agt_reopen".into(),
+        runtime_generation: 6,
+    };
+    assert_rejected_atomically(&fixture, unbound_generation).await;
+
+    let mut changed_identity = valid.clone();
     changed_identity.agents[0]
         .agent
         .conversation
@@ -101,6 +112,7 @@ async fn reopen_rejects_nonincreasing_generation_and_changed_conversation_identi
         runtime_generation: 5,
     };
     assert_rejected_atomically(&fixture, changed_identity).await;
+    fixture.store.commit_sandbox_lifecycle(valid).await.unwrap();
 }
 
 #[tokio::test]
@@ -404,6 +416,8 @@ fn claimed_revive_phase(phase: SandboxRevivePhase) -> Sandbox {
     };
     *current = phase;
     value.runtime = Some(runtime);
+    value.runtime.as_mut().unwrap().provision_generation = Some(5);
+    value.lifecycle.runtime_generation_high_water = 5;
     value
         .work
         .claim("lifecycle-worker".into(), NOW, LEASE_END.into())

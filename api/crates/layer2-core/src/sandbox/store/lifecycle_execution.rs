@@ -238,6 +238,19 @@ pub fn validate_lifecycle_mutation(
             "sandbox lifecycle mutation is not bounded or ordered",
         ));
     }
+    if mutation.sandbox.lifecycle.runtime_provision != current.lifecycle.runtime_provision {
+        if let Some(reservation) = mutation.sandbox.lifecycle.runtime_provision.as_ref() {
+            if agents.iter().any(|(agent, _)| {
+                agent.status.is_live()
+                    && agent
+                        .conversation
+                        .runtime_generation
+                        .is_some_and(|generation| generation >= reservation.generation)
+            }) {
+                return Err(SandboxStoreError::Conflict);
+            }
+        }
+    }
 
     let current_by_id = agents
         .iter()

@@ -98,7 +98,11 @@ impl SandboxStore for InMemorySandboxStore {
         let id = sandbox.id.clone();
         let mut state = self.lock();
         if state.sandboxes.get(&id).is_some_and(|current| {
-            current.owner != sandbox.owner || current.origin != sandbox.origin
+            current.owner != sandbox.owner
+                || current.origin != sandbox.origin
+                || current
+                    .validate_runtime_generation_successor(&sandbox)
+                    .is_err()
         }) {
             return Err(SandboxStoreError::Conflict);
         }
@@ -358,7 +362,11 @@ impl SandboxTransactionStore for InMemorySandboxStore {
             } => {
                 let id = sandbox.id.clone();
                 if candidate.sandboxes.get(&id).is_some_and(|current| {
-                    current.owner != sandbox.owner || current.origin != sandbox.origin
+                    current.owner != sandbox.owner
+                        || current.origin != sandbox.origin
+                        || current
+                            .validate_runtime_generation_successor(&sandbox)
+                            .is_err()
                 }) {
                     return Err(SandboxStoreError::Conflict);
                 }

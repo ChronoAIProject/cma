@@ -13,6 +13,8 @@ use super::{
 pub struct RuntimeBinding {
     pub runtime_id: String,
     pub runtime_version: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provision_generation: Option<u64>,
     pub bound_at: String,
 }
 
@@ -80,6 +82,7 @@ impl Sandbox {
             ));
         }
         self.lifecycle.validate(self)?;
+        self.validate_runtime_generation()?;
         if self.status == SandboxStatus::Paused && self.runtime.is_some() {
             return Err(SandboxModelError::invalid_value("sandbox.runtime"));
         }

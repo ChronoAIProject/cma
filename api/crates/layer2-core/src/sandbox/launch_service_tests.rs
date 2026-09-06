@@ -324,6 +324,7 @@ async fn admit_failed(
     failed.runtime = Some(RuntimeBinding {
         runtime_id: format!("runtime-{suffix}"),
         runtime_version: "image-v1".into(),
+        provision_generation: None,
         bound_at: BOUND_AT.into(),
     });
     failed.work = SandboxWorkState::new(SandboxWorkStep::None, FAILED_AT.into());
