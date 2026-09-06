@@ -1,6 +1,6 @@
 import { ProtocolError } from '../errors.js';
 import { profileReference } from '../profiles/types.js';
-import { boolean, integer, object, record, type Output } from '../schema.js';
+import { boolean, integer, object, optional, record, type Output } from '../schema.js';
 
 const u32 = (value: unknown) => {
   const number = integer(value);
@@ -13,7 +13,7 @@ const pauseSeconds = (value: unknown) => {
     throw new ProtocolError('pause_after_seconds must be between 60 and 86400');
   return number;
 };
-const knownSettings = object({
+const sections = {
   defaults: object({
     sandbox_profile: profileReference,
     workspace_profile: profileReference,
@@ -28,7 +28,8 @@ const knownSettings = object({
   }),
   triggers: object({ enabled: boolean, orchestration_paused: boolean }),
   marketplace: object({ enabled: boolean }),
-});
+};
+const knownSettings = object(sections);
 type KnownSettings = Output<typeof knownSettings>;
 export type PlatformSettings = KnownSettings & Readonly<Record<string, unknown>>;
 export function platformSettings(value: unknown): PlatformSettings {
@@ -67,3 +68,26 @@ export const replaceSettingsRequest = object({
   settings: platformSettings,
 });
 export type ReplaceSettingsRequest = Output<typeof replaceSettingsRequest>;
+
+const patchFields = object({
+  expected_revision: integer,
+  defaults: optional(sections.defaults),
+  inactivity: optional(sections.inactivity),
+  retention: optional(sections.retention),
+  limits: optional(sections.limits),
+  triggers: optional(sections.triggers),
+  marketplace: optional(sections.marketplace),
+});
+/** Supplied sections replace a whole section; omitted sections remain unchanged. */
+export type PatchSettingsRequest = Output<typeof patchFields>;
+export function patchSettingsRequest(value: unknown): PatchSettingsRequest {
+  const raw = record(value);
+  if (Object.keys(raw).some((key) => key !== 'expected_revision' && !Object.hasOwn(sections, key)))
+    throw new ProtocolError('unknown platform settings section');
+  const parsed = patchFields(value);
+  if (Object.keys(parsed).length < 2)
+    throw new ProtocolError('at least one settings section is required');
+  return parsed;
+}
+export const resetSettingsRequest = object({ expected_revision: integer });
+export type ResetSettingsRequest = Output<typeof resetSettingsRequest>;

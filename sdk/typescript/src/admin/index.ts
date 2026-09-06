@@ -13,11 +13,15 @@ import {
   type EventOptions,
   type PageOptions,
 } from '../resources.js';
-import { array } from '../schema.js';
+import { array, enumeration, integer, nullable, object, text, type Output } from '../schema.js';
 import {
+  patchSettingsRequest,
   replaceSettingsRequest,
+  resetSettingsRequest,
   storedPlatformSettings,
+  type PatchSettingsRequest,
   type ReplaceSettingsRequest,
+  type ResetSettingsRequest,
 } from './settings.js';
 import {
   activityAction,
@@ -47,6 +51,19 @@ export interface ActivityListOptions extends PageOptions {
   readonly actor?: string;
   readonly action?: ActivityAction;
 }
+
+const runtimeInventory = object({
+  observed_at: text,
+  runtimes: array(
+    object({
+      runtime_id: text,
+      generation: integer,
+      owner_reference: nullable(text),
+      status: enumeration('starting', 'ready', 'unavailable'),
+    }),
+  ),
+});
+export type RuntimeInventory = Output<typeof runtimeInventory>;
 
 function bound(options: { readonly limit?: number; readonly cursor?: string }) {
   if (
@@ -150,6 +167,35 @@ export class Administration {
       method: 'PUT',
       body: input(replaceSettingsRequest, body),
     });
+  }
+  patchSettings(body: PatchSettingsRequest, options: OperationOptions = {}) {
+    return read(this.config, '/api/v1/admin/settings', storedPlatformSettings, {
+      ...options,
+      method: 'PATCH',
+      body: input(patchSettingsRequest, body),
+    });
+  }
+  resetSettings(body: ResetSettingsRequest, options: OperationOptions = {}) {
+    return read(this.config, '/api/v1/admin/settings/reset', storedPlatformSettings, {
+      ...options,
+      method: 'POST',
+      body: input(resetSettingsRequest, body),
+    });
+  }
+  pauseTriggers(options: OperationOptions = {}) {
+    return read(this.config, '/api/v1/admin/triggers/pause', storedPlatformSettings, {
+      ...options,
+      method: 'POST',
+    });
+  }
+  resumeTriggers(options: OperationOptions = {}) {
+    return read(this.config, '/api/v1/admin/triggers/resume', storedPlatformSettings, {
+      ...options,
+      method: 'POST',
+    });
+  }
+  readRuntimeInventory(options: OperationOptions = {}) {
+    return read(this.config, '/api/v1/admin/runtime-inventory', runtimeInventory, options);
   }
   listActivity(options: ActivityListOptions = {}) {
     bound(options);

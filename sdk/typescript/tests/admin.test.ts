@@ -199,6 +199,58 @@ describe('public operator administration', () => {
     });
   });
 
+  it('patches full sections, resets with CAS, and controls Trigger orchestration once', async () => {
+    const t = fixture();
+    t.answer({ revision: 2, settings });
+    await t.admin.patchSettings({ expected_revision: 1, triggers: settings.triggers });
+    await t.admin.resetSettings({ expected_revision: 2 });
+    await t.admin.pauseTriggers();
+    await t.admin.resumeTriggers();
+    expect(
+      t.calls.map((call) => [new URL(call.url).pathname, call.init.method, call.init.body]),
+    ).toEqual([
+      [
+        '/api/v1/admin/settings',
+        'PATCH',
+        JSON.stringify({ expected_revision: 1, triggers: settings.triggers }),
+      ],
+      ['/api/v1/admin/settings/reset', 'POST', JSON.stringify({ expected_revision: 2 })],
+      ['/api/v1/admin/triggers/pause', 'POST', undefined],
+      ['/api/v1/admin/triggers/resume', 'POST', undefined],
+    ]);
+    for (const call of t.calls)
+      expect(new Headers(call.init.headers).has('Idempotency-Key')).toBe(false);
+  });
+
+  it('refuses empty, null, partial, unknown, or invalid-revision settings patches locally', () => {
+    const t = fixture();
+    for (const body of [
+      { expected_revision: 1 },
+      { expected_revision: 1, triggers: null },
+      { expected_revision: 1, triggers: { enabled: true } },
+      { expected_revision: 1, invented: {} },
+      { expected_revision: -1, triggers: settings.triggers },
+    ])
+      expect(() => t.admin.patchSettings(body as never)).toThrow(ValidationError);
+    expect(() => t.admin.resetSettings({ expected_revision: -1 })).toThrow(ValidationError);
+    expect(t.fetch).not.toHaveBeenCalled();
+  });
+
+  it('reads typed runtime inventory and rejects unknown lifecycle states', async () => {
+    const t = fixture();
+    const inventory = {
+      observed_at: now,
+      runtimes: [
+        { runtime_id: 'runtime-1', generation: 1, owner_reference: null, status: 'ready' },
+      ],
+    };
+    t.answer(inventory);
+    expect(await t.admin.readRuntimeInventory()).toEqual(inventory);
+    expect(t.calls[0]!.url).toContain('/api/v1/admin/runtime-inventory');
+    t.answer({ ...inventory, runtimes: [{ ...inventory.runtimes[0], status: 'invented' }] });
+    await expect(t.admin.readRuntimeInventory()).rejects.toBeInstanceOf(ProtocolError);
+  });
+
   it.each([0, 201, -1, 1.5, Number.NaN])(
     'refuses invalid page limit %s without a request',
     (limit) => {
