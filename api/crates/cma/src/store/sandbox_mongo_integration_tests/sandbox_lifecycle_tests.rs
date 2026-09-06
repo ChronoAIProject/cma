@@ -451,6 +451,141 @@ fn checkpoint(epoch: u64) -> SandboxCheckpointRef {
     .unwrap()
 }
 
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn lifecycle_recapture_atomically_fences_already_paused_rows_without_duplicate_logs() {
+    let (client, name) = database("lifecycle_recapture").await;
+    let store = MongoSandboxStore::open(&client, &name).await.unwrap();
+    let (claimed, agents) = claimed_pause_fixture(&store, "recapture").await;
+    store
+        .publish_sandbox_checkpoint(checkpoint_mutation(
+            &claimed,
+            &agents,
+            checkpoint_for_agents(&agents, 1),
+        ))
+        .await
+        .unwrap();
+    let claimed = store
+        .claim_sandbox_work(&claimed.id, "worker", MINUTE.into(), TWO_MINUTES.into())
+        .await
+        .unwrap()
+        .unwrap();
+    store
+        .commit_sandbox_lifecycle(pause_agents_mutation(&claimed, &agents))
+        .await
+        .unwrap();
+    let mut parked = Vec::new();
+    for agent in agents {
+        parked.push(store.get_agent(&agent.id).await.unwrap().unwrap());
+    }
+    let claimed = store
+        .claim_sandbox_work(&claimed.id, "worker", MINUTE.into(), TWO_MINUTES.into())
+        .await
+        .unwrap()
+        .unwrap();
+    let lease = claimed.work.lease.as_ref().unwrap();
+    let mut renewed = claimed.clone();
+    renewed
+        .retry_lifecycle_after_writer_resume(
+            MINUTE.into(),
+            &lease.holder,
+            lease.fence,
+            MINUTE.into(),
+        )
+        .unwrap();
+    store
+        .commit_sandbox_lifecycle(SandboxLifecycleMutation {
+            guard: SandboxMutationGuard::capture(&claimed),
+            sandbox: renewed.clone(),
+            agents: Vec::new(),
+            agent_scope: SandboxLifecycleAgentScope::Touched,
+            appended_at: MINUTE.into(),
+            events: vec![SandboxEventKind::WorkStepFailed {
+                step: SandboxWorkStep::RunLifecycleOperation,
+                failure: TypedFailure {
+                    class: "retryable_transient".into(),
+                    detail: "writers resumed before teardown".into(),
+                },
+            }],
+        })
+        .await
+        .unwrap();
+    let store = MongoSandboxStore::open(&client, &name).await.unwrap();
+    assert_eq!(store.get_sandbox(&claimed.id).await.unwrap(), Some(renewed));
+    let claimed = store
+        .claim_sandbox_work(&claimed.id, "worker", MINUTE.into(), TWO_MINUTES.into())
+        .await
+        .unwrap()
+        .unwrap();
+    store
+        .publish_sandbox_checkpoint(checkpoint_mutation(
+            &claimed,
+            &parked,
+            checkpoint_for_agents(&parked, 2),
+        ))
+        .await
+        .unwrap();
+    let claimed = store
+        .claim_sandbox_work(&claimed.id, "worker", MINUTE.into(), TWO_MINUTES.into())
+        .await
+        .unwrap()
+        .unwrap();
+    let valid = pause_agents_mutation(&claimed, &parked);
+    let mut partial = valid.clone();
+    partial.agents.pop();
+    assert!(store.commit_sandbox_lifecycle(partial).await.is_err());
+    assert_eq!(
+        store.get_sandbox(&claimed.id).await.unwrap(),
+        Some(claimed.clone())
+    );
+    for agent in &parked {
+        assert_eq!(
+            store.get_agent(&agent.id).await.unwrap(),
+            Some(agent.clone())
+        );
+    }
+    store.commit_sandbox_lifecycle(valid.clone()).await.unwrap();
+    for change in &valid.agents {
+        assert_eq!(
+            store.get_agent(&change.agent.id).await.unwrap(),
+            Some(change.agent.clone())
+        );
+        assert!(change.logs.is_empty());
+        assert_eq!(
+            store
+                .agent_log(&change.agent.id, 0, 10)
+                .await
+                .unwrap()
+                .len(),
+            1
+        );
+    }
+    let stored = store.get_sandbox(&claimed.id).await.unwrap().unwrap();
+    assert_eq!(
+        stored.lifecycle.checkpoints.latest.as_ref().unwrap().epoch,
+        2
+    );
+    assert_eq!(
+        stored
+            .lifecycle
+            .checkpoints
+            .previous
+            .as_ref()
+            .unwrap()
+            .epoch,
+        1
+    );
+    let events = store.sandbox_events(&claimed.id, 0, 100).await.unwrap();
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| matches!(event.kind, SandboxEventKind::AgentStatusChanged { .. }))
+            .count(),
+        2
+    );
+    client.database(&name).drop().await.unwrap();
+}
+
 async fn claimed_pause_fixture(store: &MongoSandboxStore, suffix: &str) -> (Sandbox, Vec<Agent>) {
     let mut value = sandbox(&format!("sbx_lifecycle_{suffix}"));
     value.name = format!("lifecycle-{suffix}");
@@ -603,6 +738,15 @@ fn pause_agents_mutation(claimed: &Sandbox, agents: &[Agent]) -> SandboxLifecycl
         .iter()
         .map(|current| {
             let mut next = current.clone();
+            if current.status == AgentStatus::Paused {
+                next.revision += 1;
+                next.updated_at = MINUTE.into();
+                return SandboxLifecycleAgentMutation {
+                    expected_revision: current.revision,
+                    agent: next,
+                    logs: Vec::new(),
+                };
+            }
             next.transition(AgentStatus::Paused, MINUTE.into(), None)
                 .unwrap();
             next.conversation.last_seq += 1;

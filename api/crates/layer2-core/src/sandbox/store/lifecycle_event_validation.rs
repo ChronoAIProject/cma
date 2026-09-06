@@ -19,6 +19,7 @@ pub(super) fn validate_lifecycle_events(
             let mut events = mutation
                 .agents
                 .iter()
+                .filter(|change| !matches!(phase, AgentPhase::Pause) || !change.logs.is_empty())
                 .map(|change| SandboxEventKind::AgentStatusChanged {
                     agent_id: change.agent.id.clone(),
                     from: match phase {

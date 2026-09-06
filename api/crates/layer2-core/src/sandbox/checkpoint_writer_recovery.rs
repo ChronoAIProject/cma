@@ -16,15 +16,36 @@ impl Sandbox {
         let mut next = self.clone();
         let authority = match next.lifecycle.operation.as_mut() {
             Some(SandboxLifecycleOperation::Pause {
-                phase: SandboxPausePhase::CaptureAndPublishCheckpoint,
+                phase,
                 authority,
-                ..
-            })
-            | Some(SandboxLifecycleOperation::ImageRotation {
-                phase: SandboxImageRotationPhase::CaptureAndPublishCheckpoint,
+                checkpoint_epoch,
+            }) if matches!(
+                *phase,
+                SandboxPausePhase::CaptureAndPublishCheckpoint
+                    | SandboxPausePhase::PauseAgents
+                    | SandboxPausePhase::TeardownRuntime
+            ) =>
+            {
+                *phase = SandboxPausePhase::CaptureAndPublishCheckpoint;
+                *checkpoint_epoch = None;
+                authority
+            }
+            Some(SandboxLifecycleOperation::ImageRotation {
+                phase,
                 authority,
+                checkpoint_epoch,
                 ..
-            }) => authority,
+            }) if matches!(
+                *phase,
+                SandboxImageRotationPhase::CaptureAndPublishCheckpoint
+                    | SandboxImageRotationPhase::PauseAgents
+                    | SandboxImageRotationPhase::TeardownRuntime
+            ) =>
+            {
+                *phase = SandboxImageRotationPhase::CaptureAndPublishCheckpoint;
+                *checkpoint_epoch = None;
+                authority
+            }
             _ => {
                 return Err(SandboxModelError::invalid_value(
                     "sandbox.checkpoint_writer_recovery",
