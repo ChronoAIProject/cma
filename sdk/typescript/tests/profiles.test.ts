@@ -97,6 +97,26 @@ describe.each(['agent', 'workspace', 'sandbox'] as const)('%s profiles', (kind) 
 });
 
 describe('profile response boundaries', () => {
+  it('allows omitted create descriptions and presence-aware update metadata', async () => {
+    const test = transport();
+    const document = profile('agent');
+    test.answer(document, 201);
+    await test.client.agentProfiles.create({ name: 'Project', content: contents.agent }, command);
+    expect(JSON.parse(String(test.calls.at(-1)?.init.body))).toEqual({
+      name: 'Project',
+      content: contents.agent,
+    });
+    test.answer(document);
+    const update = { content: contents.agent, draft_version: document.draft_version };
+    await test.client.agentProfiles.save(document.id, update, command);
+    expect(JSON.parse(String(test.calls.at(-1)?.init.body))).toEqual(update);
+    await test.client.agentProfiles.save(document.id, { ...update, description: '' }, command);
+    expect(JSON.parse(String(test.calls.at(-1)?.init.body)).description).toBe('');
+    expect(() =>
+      test.client.agentProfiles.save(document.id, { ...update, name: null as never }, command),
+    ).toThrow(ValidationError);
+  });
+
   it('rejects wrong profile and revision identities, kinds and success statuses', async () => {
     const test = transport();
     test.answer(profile('agent'));

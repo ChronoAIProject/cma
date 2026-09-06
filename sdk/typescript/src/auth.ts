@@ -1,7 +1,8 @@
 import { headersFor, observeResponse, urlOf, type ResolvedConfig } from './config.js';
-import { ApiError, ProtocolError, ValidationError } from './errors.js';
+import { ProtocolError, ValidationError } from './errors.js';
 import {
   errorFromResponse,
+  errorFromBody,
   readJsonBody,
   throwIfSignalAborted,
   withDeadline,
@@ -76,13 +77,13 @@ export class Authentication {
       if (![200, 401, 503].includes(response.status))
         throw await errorFromResponse(response, signal, metadata.requestId);
       const body = record(await readJsonBody(response, signal));
-      if (response.status === 503 && body.authenticated === false && body.code === 'store_failed')
-        throw new ApiError(
-          503,
-          'Browser identity could not be read.',
-          'store_failed',
-          metadata.requestId,
-        );
+      if (response.status === 503) {
+        const problem =
+          body.authenticated === false && body.code === 'store_failed'
+            ? { status: 503, code: 'store_failed', detail: 'Browser identity could not be read.' }
+            : body;
+        throw errorFromBody(response, problem, metadata.requestId);
+      }
       if (response.status === 401 && body.authenticated === false) return { authenticated: false };
       if (response.status !== 200 || body.authenticated !== true)
         throw new ProtocolError('Authentication status did not match its body');

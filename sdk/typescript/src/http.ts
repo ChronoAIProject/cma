@@ -273,6 +273,15 @@ export async function errorFromResponse(
       { cause },
     );
   }
+  return errorFromBody(response, raw, requestId);
+}
+
+/** Decode an already bounded JSON body while retaining HTTP correlation and retry metadata. */
+export function errorFromBody(
+  response: Response,
+  raw: unknown,
+  requestId = responseRequestId(response),
+): ApiError | ProtocolError {
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
     return new ProtocolError(`HTTP ${String(response.status)} problem document was not an object`);
   }
@@ -330,7 +339,7 @@ async function readText(response: Response, signal?: AbortSignal): Promise<strin
   }
 }
 
-async function readBytes(response: Response, signal?: AbortSignal): Promise<Uint8Array> {
+export async function readBytes(response: Response, signal?: AbortSignal): Promise<Uint8Array> {
   const declared = contentLength(response);
   if (declared !== undefined && declared > MAX_RESPONSE_BYTES) {
     throw new ProtocolError(`response exceeds the ${String(MAX_RESPONSE_BYTES)}-byte boundary`);

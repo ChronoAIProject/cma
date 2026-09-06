@@ -85,7 +85,14 @@ export type ProfileRevisionSummary = Output<typeof profileRevisionSummary>;
 
 export interface ProfileDraft<Content> {
   readonly name: string;
-  readonly description: string;
+  readonly description?: string;
+  readonly content: Content;
+}
+
+export interface ProfileUpdate<Content> {
+  readonly draft_version: number;
+  readonly name?: string;
+  readonly description?: string;
   readonly content: Content;
 }
 
@@ -111,7 +118,16 @@ export interface ProfileRevision<Content> extends ProfileRevisionSummary {
 }
 
 export function profileDraft<Content>(content: Parser<Content>): Parser<ProfileDraft<Content>> {
-  const metadata = object({ name: text, description: text });
+  const metadata = object({ name: text, description: optional(text) });
+  return (value) => ({ ...metadata(value), content: content(record(value).content) });
+}
+
+export function profileUpdate<Content>(content: Parser<Content>): Parser<ProfileUpdate<Content>> {
+  const metadata = object({
+    draft_version: positiveInteger,
+    name: optional(text),
+    description: optional(text),
+  });
   return (value) => ({ ...metadata(value), content: content(record(value).content) });
 }
 

@@ -55,7 +55,7 @@ export class AgentConversations {
 
   /** A run is submitted exactly once. A disconnect never resubmits its input. */
   async run(request: AgentRunRequest, options: AgentStreamOptions): Promise<void> {
-    validateThread(request.threadId);
+    validateThread(request?.threadId);
     const stream = connection(
       this.config,
       '/api/v1/agui/run',
@@ -176,7 +176,7 @@ async function* completeProjections(
     throw new TransportError('AG-UI disconnected during a durable projection');
 }
 
-function validateThread(thread: string): void {
+function validateThread(thread: unknown): asserts thread is string {
   if (typeof thread !== 'string' || !thread.trim() || thread.length > 256)
     throw new ValidationError('An existing Agent id is required');
 }

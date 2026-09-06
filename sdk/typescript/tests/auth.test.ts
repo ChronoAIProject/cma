@@ -62,6 +62,32 @@ describe('public authentication helpers', () => {
     }
   });
 
+  it('preserves middleware problem bodies, correlation and retry metadata on session-store failures', async () => {
+    const t = transport();
+    const auth = new Authentication({
+      ...t.client.config,
+      fetch: vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              type: 'https://spec.chrono-ai.fun/cma/1.0/problems/store-failed',
+              title: 'store failed',
+              status: 503,
+              detail: 'Authentication authority is temporarily unavailable.',
+              code: 'store_failed',
+            }),
+            { status: 503, headers: { 'x-request-id': 'contract-request', 'retry-after': '2' } },
+          ),
+      ),
+    });
+    await expect(auth.readSession()).rejects.toMatchObject({
+      status: 503,
+      code: 'store_failed',
+      requestId: 'contract-request',
+      retryAfterMs: 2000,
+    });
+  });
+
   it.each([
     '/',
     '/t/pub-example/plc_1',

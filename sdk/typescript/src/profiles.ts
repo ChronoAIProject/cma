@@ -19,12 +19,14 @@ import {
   profileDocument,
   profileDraft,
   profileRevision,
+  profileUpdate,
   profileVisibility,
   type ProfileContents,
   type ProfileDocument,
   type ProfileDraft,
   type ProfileKind,
   type ProfileRevision,
+  type ProfileUpdate,
   type ProfileVisibility,
 } from './profiles/types.js';
 
@@ -77,11 +79,10 @@ export class Profiles<Kind extends ProfileKind> {
 
   save(
     id: string,
-    body: ProfileDraft<ProfileContents[Kind]> & { readonly draft_version: number },
+    body: ProfileUpdate<ProfileContents[Kind]>,
     options: CommandOptions,
   ): Promise<ProfileDocument<ProfileContents[Kind]>> {
-    input(positiveInteger, body.draft_version);
-    input(this.#draft, body);
+    input(profileUpdate(contentParsers[this.kind]), body);
     return read(this.config, `${this.#path}/${segment(id)}`, identity(this.#document, id), {
       ...command(options),
       method: 'PUT',

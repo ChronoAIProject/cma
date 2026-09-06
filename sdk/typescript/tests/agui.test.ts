@@ -48,6 +48,17 @@ afterEach(() => {
 });
 
 describe('Agent conversation projection', () => {
+  it.each([null, undefined, [], 'not-an-object'])(
+    'refuses malformed run input %j before transport',
+    async (body) => {
+      const h = harness();
+      await expect(h.client.run(body as never, { onEvent: h.onEvent })).rejects.toBeInstanceOf(
+        ValidationError,
+      );
+      expect(h.fetch).not.toHaveBeenCalled();
+    },
+  );
+
   it('delivers content-first live frames immediately and acknowledges complete durable projections', async () => {
     const h = harness();
     h.fetch.mockResolvedValueOnce(
