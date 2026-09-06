@@ -4,6 +4,7 @@ import { Component, type ReactNode } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { AGENT_PROFILE, profileClient, SKILL_CATALOG } from '../test/profiles';
 import { AgentProfileEditor } from './AgentProfileEditor';
+import { ApiError } from '@chronoai/cma-sdk';
 
 function problem(code: string, status = 409) {
   return Object.assign(new Error('Server refused the operation.'), { code, status });
@@ -180,32 +181,39 @@ describe('Agent profile editing', () => {
     expect(screen.getByLabelText('Name')).toHaveValue('Current saved name');
   });
 
-  it('retries an uncertain write with its original body and key before permitting further edits', async () => {
-    const actor = userEvent.setup();
-    const saveProfile = vi
-      .fn()
-      .mockRejectedValueOnce(new Error('Connection lost'))
-      .mockImplementation(profileClient().saveProfile);
-    render(
-      <AgentProfileEditor
-        profileId={AGENT_PROFILE.id}
-        client={profileClient({ saveProfile })}
-        catalog={SKILL_CATALOG}
-      />,
-    );
-    await screen.findByRole('heading', { name: AGENT_PROFILE.name });
-    fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'Retain this request' } });
-    await actor.click(screen.getByRole('button', { name: 'Save draft' }));
-    await screen.findByRole('button', { name: 'Retry' });
-    expect(screen.getByLabelText('Name')).toBeDisabled();
-    await actor.click(screen.getByRole('button', { name: 'Retry' }));
-    await screen.findByText('Draft saved.');
-    expect(saveProfile.mock.calls[1]?.[1]).toEqual(saveProfile.mock.calls[0]?.[1]);
-    expect(saveProfile.mock.calls[1]?.[2].idempotencyKey).toBe(
-      saveProfile.mock.calls[0]?.[2].idempotencyKey,
-    );
-    expect(screen.getByLabelText('Name')).toBeEnabled();
-  });
+  it.each(['network', 'idempotency_in_flight', 'idempotency_recovery_required'])(
+    'retains a %s write and key before permitting further edits',
+    async (code) => {
+      const actor = userEvent.setup();
+      const saveProfile = vi
+        .fn()
+        .mockRejectedValueOnce(
+          code === 'network'
+            ? new Error('Connection lost')
+            : new ApiError(409, 'The command has not settled.', code),
+        )
+        .mockImplementation(profileClient().saveProfile);
+      render(
+        <AgentProfileEditor
+          profileId={AGENT_PROFILE.id}
+          client={profileClient({ saveProfile })}
+          catalog={SKILL_CATALOG}
+        />,
+      );
+      await screen.findByRole('heading', { name: AGENT_PROFILE.name });
+      fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'Retain this request' } });
+      await actor.click(screen.getByRole('button', { name: 'Save draft' }));
+      await screen.findByRole('button', { name: 'Retry' });
+      expect(screen.getByLabelText('Name')).toBeDisabled();
+      await actor.click(screen.getByRole('button', { name: 'Retry' }));
+      await screen.findByText('Draft saved.');
+      expect(saveProfile.mock.calls[1]?.[1]).toEqual(saveProfile.mock.calls[0]?.[1]);
+      expect(saveProfile.mock.calls[1]?.[2].idempotencyKey).toBe(
+        saveProfile.mock.calls[0]?.[2].idempotencyKey,
+      );
+      expect(screen.getByLabelText('Name')).toBeEnabled();
+    },
+  );
 
   it('locks conflict recovery while rereading and aborts the read on unmount', async () => {
     const actor = userEvent.setup();

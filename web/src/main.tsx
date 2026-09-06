@@ -4,6 +4,10 @@ import { App } from './App';
 import { AuthContextProvider } from './auth/context';
 import { createNyxidAuthProvider } from './auth/nyxid';
 import { startAppearance } from './theme/appearance';
+import { createClient } from '@chronoai/cma-sdk';
+import { CmaClientProvider } from './api/context';
+import { createRestWebClient } from './api/rest';
+import { createProfileViewsClient } from './api/profiles';
 
 /*
  * Before the first render, so the page never paints in the wrong theme and
@@ -22,11 +26,16 @@ if (!container) {
  * for tests.
  */
 const authProvider = createNyxidAuthProvider();
+const sdk = createClient();
+const client = createRestWebClient(sdk);
+const profiles = createProfileViewsClient(sdk);
 
 createRoot(container).render(
   <StrictMode>
     <AuthContextProvider provider={authProvider}>
-      <App />
+      <CmaClientProvider client={client} profiles={profiles}>
+        <App />
+      </CmaClientProvider>
     </AuthContextProvider>
   </StrictMode>,
 );

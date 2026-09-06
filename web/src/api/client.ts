@@ -68,8 +68,8 @@ export interface CmaWebClient {
 }
 
 export class ClientUnavailableError extends Error {
-  constructor() {
-    super('The CMA web client is not available in this build.');
+  constructor(message = 'The CMA web client is not available in this build.') {
+    super(message);
     this.name = 'ClientUnavailableError';
   }
 }
@@ -78,7 +78,7 @@ function unavailable<T>(): Promise<T> {
   return Promise.reject(new ClientUnavailableError());
 }
 
-/** Replaced by the generated SDK adapter when issue #819 lands. */
+/** Explicit fallback for unbound tests and unavailable public capabilities. */
 export const unavailableClient: CmaWebClient = {
   listSandboxes: async () => ({ items: [] }),
   readSandbox: unavailable,

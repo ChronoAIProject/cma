@@ -4,6 +4,7 @@ import { testClient } from '../test/client';
 import { AGENT_DETAIL, AGENT_TRANSCRIPT, AGENT_USAGE } from '../test/agent';
 import { workspaceFixture } from '../test/hierarchy';
 import { loadAgent, useAgentController } from './controller';
+import { ApiError } from '@chronoai/cma-sdk';
 
 function readableClient(overrides = {}) {
   return testClient({
@@ -18,6 +19,25 @@ function readableClient(overrides = {}) {
 }
 
 describe('Agent controller loading', () => {
+  it.each(['idempotency_in_flight', 'idempotency_recovery_required'])(
+    'retains an unsettled %s lifecycle command key',
+    async (code) => {
+      const stopAgent = vi
+        .fn()
+        .mockRejectedValueOnce(new ApiError(409, 'The command has not settled.', code))
+        .mockResolvedValue(undefined);
+      const client = readableClient({ stopAgent });
+      const { result } = renderHook(() => useAgentController(client, 'agt_1'));
+      await waitFor(() => expect(result.current.state.status).toBe('ready'));
+      await act(() => result.current.stop());
+      expect(result.current.actionError).toBe('The command has not settled.');
+      await act(() => result.current.stop());
+      expect(stopAgent).toHaveBeenCalledTimes(2);
+      expect(stopAgent.mock.calls[1]?.[1].idempotencyKey).toBe(
+        stopAgent.mock.calls[0]?.[1].idempotencyKey,
+      );
+    },
+  );
   it('restores historical tool calls and approvals without duplicating transcript messages', async () => {
     const events = [
       { type: 'turn_started', turn_sequence: 1 },

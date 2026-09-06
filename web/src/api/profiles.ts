@@ -1,0 +1,25 @@
+import type { Cma } from '@chronoai/cma-sdk';
+import type { ProfileViewsClient } from '../profiles/ProfileViews';
+import { agentContent, sandboxContent, workspaceContent } from './rest/profile-content';
+import { profileEditor, profileSummary } from './rest/profile-documents';
+import { marketplaceClient } from './rest/marketplace';
+
+export function createProfileViewsClient(sdk: Cma): ProfileViewsClient {
+  const resources = {
+    agent: sdk.agentProfiles,
+    workspace: sdk.workspaceProfiles,
+    sandbox: sdk.sandboxProfiles,
+  };
+  return {
+    profiles: {
+      listProfiles: async (kind, options) => {
+        const page = await resources[kind].list(options);
+        return { items: page.items.map(profileSummary), next: page.next };
+      },
+    },
+    agent: profileEditor(sdk.agentProfiles, agentContent),
+    workspace: profileEditor(sdk.workspaceProfiles, workspaceContent),
+    sandbox: profileEditor(sdk.sandboxProfiles, sandboxContent),
+    marketplace: marketplaceClient(sdk),
+  };
+}

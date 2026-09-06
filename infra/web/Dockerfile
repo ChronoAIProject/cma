@@ -4,6 +4,7 @@ WORKDIR /build/web
 COPY web/package.json web/package-lock.json ./
 RUN npm ci
 COPY web/ ./
+COPY sdk/typescript/src/ /build/sdk/typescript/src/
 # Which build the status band names (docs/Web_Style.md section 6). Baked into
 # the bundle here because that is the only moment the answer is knowable and
 # cannot later disagree with the code. The publisher passes the release

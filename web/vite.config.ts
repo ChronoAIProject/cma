@@ -1,8 +1,16 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
+import { fileURLToPath } from 'node:url';
 
 export default defineConfig({
   plugins: [react()],
+  resolve: {
+    alias: {
+      '@chronoai/cma-sdk': fileURLToPath(
+        new URL('../sdk/typescript/src/index.ts', import.meta.url),
+      ),
+    },
+  },
   /*
    * Which build is on screen, for the status band (Web_Style.md §6). Baked in
    * rather than fetched: a build identifier the running page asks a server for

@@ -1,5 +1,5 @@
-import { useCallback, useState } from 'react';
-import { useCmaClient } from './api/context';
+import { lazy, Suspense, useCallback, useState } from 'react';
+import { useCmaClient, useProfileViewsClient } from './api/context';
 import { AgentSurface } from './agent/AgentSurface';
 import { AgentDetails } from './agent/Details';
 import { useAgentController } from './agent/controller';
@@ -16,6 +16,10 @@ import { Button } from './ui/Button';
 import { IconNewChatOutline16 } from './ui/icons';
 import './Console.css';
 
+const ProfileViews = lazy(() =>
+  import('./profiles/ProfileViews').then((module) => ({ default: module.ProfileViews })),
+);
+
 interface ConsoleProps {
   readonly user: User;
   readonly route: AppRoute;
@@ -29,6 +33,7 @@ export function Console({ user, route, onSignOut, onNavigate, onCreate }: Consol
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [revision, setRevision] = useState(0);
   const client = useCmaClient();
+  const profiles = useProfileViewsClient();
   const navigation = useNavigation(client);
   const refreshNavigation = navigation.refresh;
   const refresh = useCallback(() => {
@@ -80,6 +85,31 @@ export function Console({ user, route, onSignOut, onNavigate, onCreate }: Consol
         onAction={actions.select}
         onNavigate={onNavigate}
       />
+    ) : route.kind === 'profiles' ||
+      route.kind === 'profile' ||
+      route.kind === 'marketplace' ||
+      route.kind === 'marketplace_profile' ? (
+      profiles === undefined ? (
+        <section className="console__empty">
+          <h1>Profiles unavailable</h1>
+        </section>
+      ) : (
+        <Suspense
+          fallback={
+            <section className="console__empty" role="status">
+              Loading profiles
+            </section>
+          }
+        >
+          <ProfileViews
+            key={JSON.stringify(route)}
+            route={route}
+            client={profiles}
+            onNavigate={onNavigate}
+            canManage={!user.visitor && user.capabilities.includes('manage_own_profiles')}
+          />
+        </Suspense>
+      )
     ) : route.kind === 'not_found' ? (
       <section className="console__empty" aria-labelledby="not-found-title">
         <p className="console__eyebrow">404</p>
