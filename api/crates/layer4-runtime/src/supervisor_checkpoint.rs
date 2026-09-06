@@ -8,6 +8,9 @@ use super::{HeldCheckpoint, Phase, Supervisor};
 use crate::failure::{Result, RuntimeError};
 use crate::writer_fence::WriterFence;
 
+#[path = "checkpoint_writer_tokens.rs"]
+mod tokens;
+
 impl Supervisor {
     pub(super) async fn checkpoint(
         &self,
@@ -34,8 +37,13 @@ impl Supervisor {
                 "writer resume token must be 64 lowercase hexadecimal characters",
             ));
         }
-
         let mut held = self.held_checkpoint.lock().await;
+        if tokens::was_resumed(&self.config, &request.writer_resume_token)? {
+            return Err(RuntimeError::rejected(
+                "checkpoint_hold_retired",
+                "checkpoint writer token was already resumed",
+            ));
+        }
         if let Some(existing) = held.as_ref() {
             return if existing.request == request {
                 Ok(ResponseFrame::CheckpointForTeardown(
@@ -93,6 +101,7 @@ impl Supervisor {
                 "writer resume token does not own the active checkpoint hold",
             ));
         }
+        tokens::retire(&self.config, &request.writer_resume_token)?;
         let Some(mut existing) = held.take() else {
             return Ok(ResponseFrame::ResumeCheckpointWriters(
                 CheckpointWriterResumeReceipt {

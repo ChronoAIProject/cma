@@ -45,6 +45,12 @@ pub(super) fn capture_for_teardown(
     if !request.has_valid_writer_resume_token() {
         return refused(operation, "writer_resume_token_invalid");
     }
+    if runtime
+        .resumed_checkpoint_tokens
+        .contains(&request.writer_resume_token)
+    {
+        return refused(operation, "checkpoint_hold_retired");
+    }
     if let Some((held_request, held_receipt)) = &runtime.held_checkpoint {
         return if held_request == &request {
             Ok(ResponseFrame::CheckpointForTeardown(held_receipt.clone()))
@@ -87,6 +93,9 @@ pub(super) fn resume_writers(
     {
         return refused(operation, "checkpoint_hold_conflict");
     }
+    runtime
+        .resumed_checkpoint_tokens
+        .insert(request.writer_resume_token.clone());
     runtime.held_checkpoint = None;
     Ok(ResponseFrame::ResumeCheckpointWriters(
         CheckpointWriterResumeReceipt {

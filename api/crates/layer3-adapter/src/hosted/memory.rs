@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
 
@@ -72,6 +72,7 @@ struct MemoryRuntime {
     agents: BTreeMap<AgentSlot, MemoryAgent>,
     writer_fence_captures: u64,
     held_checkpoint: Option<(CheckpointHoldRequest, CheckpointHoldReceipt)>,
+    resumed_checkpoint_tokens: BTreeSet<String>,
     restored_object: Option<String>,
     restored_conversations: BTreeMap<AgentSlot, String>,
 }
@@ -132,6 +133,7 @@ impl HostedBackend for InMemoryHostedBackend {
                 agents: BTreeMap::new(),
                 writer_fence_captures: 0,
                 held_checkpoint: None,
+                resumed_checkpoint_tokens: BTreeSet::new(),
                 restored_object: None,
                 restored_conversations: BTreeMap::new(),
             },

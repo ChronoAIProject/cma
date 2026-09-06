@@ -259,6 +259,7 @@ impl WorkspaceWorker {
             .map_err(|_| WorkerFailure::retryable("sandbox store unavailable"))?
             .filter(|sandbox| {
                 sandbox.owner == workspace.owner
+                    && sandbox.lifecycle.checkpoint_capture.is_none()
                     && matches!(
                         sandbox.status,
                         SandboxStatus::Installing | SandboxStatus::Active

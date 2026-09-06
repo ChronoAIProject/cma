@@ -188,7 +188,7 @@ async fn held_checkpoints_replay_exactly_and_resume_only_for_the_owning_token() 
         .resume_checkpoint_writers(
             &handle,
             &CheckpointWriterResumeRequest {
-                writer_resume_token: request.writer_resume_token,
+                writer_resume_token: request.writer_resume_token.clone(),
             },
         )
         .await
@@ -207,6 +207,52 @@ async fn held_checkpoints_replay_exactly_and_resume_only_for_the_owning_token() 
             .unwrap()
             .writers_resumed
     );
+    assert!(matches!(
+        adapter.checkpoint_for_teardown(&handle, &request).await,
+        Err(AdapterError::Rejected(detail)) if detail.contains("checkpoint_hold_retired")
+    ));
+    assert!(!backend.snapshot(&handle).await.unwrap().writers_held);
+    let mut next = request;
+    next.writer_resume_token = "d".repeat(64);
+    assert!(adapter
+        .checkpoint_for_teardown(&handle, &next)
+        .await
+        .is_ok());
+    assert!(backend.snapshot(&handle).await.unwrap().writers_held);
+}
+
+#[tokio::test]
+async fn resuming_an_unseen_token_retires_a_delayed_first_hold() {
+    let (adapter, backend) = CodexAdapter::in_memory(CodexSandboxSpec::default());
+    let handle = adapter.provision(&sandbox_spec(false)).await.unwrap();
+    adapter
+        .run_install(&handle, &InstallRequest::new("delayed-hold", Vec::new()))
+        .await
+        .unwrap();
+    adapter
+        .deliver_credential(&handle, credential())
+        .await
+        .unwrap();
+    let token = "e".repeat(64);
+    adapter
+        .resume_checkpoint_writers(
+            &handle,
+            &CheckpointWriterResumeRequest {
+                writer_resume_token: token.clone(),
+            },
+        )
+        .await
+        .unwrap();
+    assert!(matches!(
+        adapter.checkpoint_for_teardown(&handle, &CheckpointHoldRequest {
+            checkpoint: CheckpointRequest { epoch: 1, exclusions: Vec::new() },
+            writer_resume_token: token,
+        }).await,
+        Err(AdapterError::Rejected(detail)) if detail.contains("checkpoint_hold_retired")
+    ));
+    let snapshot = backend.snapshot(&handle).await.unwrap();
+    assert!(!snapshot.writers_held);
+    assert_eq!(snapshot.writer_fence_captures, 0);
 }
 
 #[tokio::test]

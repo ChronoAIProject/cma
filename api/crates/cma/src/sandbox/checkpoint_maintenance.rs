@@ -1,0 +1,293 @@
+use std::sync::Arc;
+use std::time::{Duration, SystemTime};
+
+use layer2_core::rfc3339_at;
+use layer2_core::sandbox::store::{
+    checkpoint_capture::validate_checkpoint_capture_work, PageRequest, SandboxLifecycleAgentScope,
+    SandboxLifecycleMutation, SandboxLifecycleStore, SandboxMutationGuard,
+    SandboxReconciliationStore, SandboxStoreError,
+};
+use layer2_core::sandbox::{
+    sandbox_checkpoint_due, Agent, Sandbox, SandboxCheckpointCapturePhase, SandboxEventKind,
+    SandboxStatus, SandboxWorkStep, Workspace,
+};
+use layer3_adapter::{writer_resume_tokens_match, CheckpointWriterResumeRequest, SandboxAdapter};
+
+use super::runtime_attachment::adopt_bound_runtime;
+
+mod capture;
+
+const CLAIM_DURATION: Duration = Duration::from_secs(5 * 60);
+const RETRY_DELAY: Duration = Duration::from_secs(30);
+const PAGE_SIZE: u16 = 200;
+
+pub(crate) trait SandboxCheckpointMaintenanceStore:
+    SandboxLifecycleStore + SandboxReconciliationStore
+{
+}
+impl<T> SandboxCheckpointMaintenanceStore for T where
+    T: SandboxLifecycleStore + SandboxReconciliationStore
+{
+}
+
+pub(crate) struct SandboxCheckpointMaintenance {
+    store: Arc<dyn SandboxCheckpointMaintenanceStore>,
+    adapter: Arc<dyn SandboxAdapter>,
+    deployment_id: String,
+    holder: String,
+}
+
+impl SandboxCheckpointMaintenance {
+    pub(crate) fn new(
+        store: Arc<dyn SandboxCheckpointMaintenanceStore>,
+        adapter: Arc<dyn SandboxAdapter>,
+        deployment_id: String,
+        holder: String,
+    ) -> Arc<Self> {
+        Arc::new(Self {
+            store,
+            adapter,
+            deployment_id,
+            holder,
+        })
+    }
+
+    pub(crate) async fn run_once(&self, now: SystemTime) -> Result<usize, SandboxStoreError> {
+        let mut cursor = None;
+        let mut progressed = 0;
+        let mut first_error = None;
+        loop {
+            let page = self
+                .store
+                .sandbox_runtime_authority(
+                    &PageRequest::new(PAGE_SIZE, cursor)
+                        .map_err(|_| SandboxStoreError::InvalidPage)?,
+                )
+                .await?;
+            for sandbox in page.items {
+                match self.process(sandbox, now).await {
+                    Ok(changed) => progressed += usize::from(changed),
+                    Err(SandboxStoreError::Conflict | SandboxStoreError::NotFound) => {}
+                    Err(error) => {
+                        first_error.get_or_insert(error);
+                    }
+                }
+            }
+            let Some(next) = page.next else { break };
+            cursor = Some(next);
+        }
+        first_error.map_or(Ok(progressed), Err)
+    }
+
+    async fn process(&self, sandbox: Sandbox, now: SystemTime) -> Result<bool, SandboxStoreError> {
+        let stamp = rfc3339_at(now);
+        let Some(capture) = sandbox.lifecycle.checkpoint_capture.as_ref() else {
+            if !sandbox_checkpoint_due(&sandbox, &stamp) {
+                return Ok(false);
+            }
+            let agents = self.agents(&sandbox).await?;
+            let workspaces = self.workspaces(&sandbox).await?;
+            if validate_checkpoint_capture_work(&sandbox, &agents, &workspaces).is_err() {
+                return Ok(false);
+            }
+            let mut next = sandbox.clone();
+            if next.begin_checkpoint_capture(stamp.clone()).is_err() {
+                return Ok(false);
+            }
+            self.commit(&sandbox, next, stamp).await?;
+            return Ok(true);
+        };
+        if !capture.work.is_due(&stamp) {
+            return Ok(false);
+        }
+        let abandoned = capture.work.lease.is_some();
+        let mut claimed = sandbox.clone();
+        claimed
+            .claim_checkpoint_capture(
+                self.holder.clone(),
+                stamp.clone(),
+                rfc3339_at(now + CLAIM_DURATION),
+            )
+            .map_err(model_error)?;
+        self.commit(&sandbox, claimed.clone(), stamp.clone())
+            .await?;
+        let capture = claimed
+            .lifecycle
+            .checkpoint_capture
+            .as_ref()
+            .expect("claimed capture remains present");
+        if capture.phase == SandboxCheckpointCapturePhase::Capture {
+            if abandoned || claimed.status != SandboxStatus::Active {
+                self.require_resume(&claimed, now).await?;
+            } else {
+                self.capture_and_publish(&claimed, now).await?;
+            }
+        } else {
+            self.resume(&claimed, now).await?;
+        }
+        Ok(true)
+    }
+
+    async fn resume(&self, claimed: &Sandbox, now: SystemTime) -> Result<(), SandboxStoreError> {
+        let capture = claimed
+            .lifecycle
+            .checkpoint_capture
+            .as_ref()
+            .ok_or(SandboxStoreError::Conflict)?;
+        let lease = capture
+            .work
+            .lease
+            .as_ref()
+            .ok_or(SandboxStoreError::Conflict)?;
+        let token = capture
+            .authority
+            .writer_resume_token
+            .as_ref()
+            .ok_or(SandboxStoreError::Conflict)?;
+        let result = async {
+            let handle =
+                adopt_bound_runtime(self.adapter.as_ref(), claimed, &self.deployment_id).await?;
+            self.adapter
+                .resume_checkpoint_writers(
+                    &handle,
+                    &CheckpointWriterResumeRequest {
+                        writer_resume_token: token.clone(),
+                    },
+                )
+                .await
+        }
+        .await;
+        let mut next = claimed.clone();
+        let stamp = rfc3339_at(now);
+        match result {
+            Ok(receipt)
+                if receipt.writers_resumed
+                    && writer_resume_tokens_match(&receipt.writer_resume_token, token) =>
+            {
+                next.complete_checkpoint_writer_resume(&lease.holder, lease.fence, stamp.clone())
+                    .map_err(model_error)?;
+            }
+            _ => {
+                next.retry_checkpoint_capture(
+                    rfc3339_at(now + RETRY_DELAY),
+                    &lease.holder,
+                    lease.fence,
+                    stamp.clone(),
+                )
+                .map_err(model_error)?;
+            }
+        }
+        self.commit(claimed, next, stamp).await
+    }
+
+    async fn require_resume(
+        &self,
+        attempted: &Sandbox,
+        now: SystemTime,
+    ) -> Result<(), SandboxStoreError> {
+        let current = self
+            .store
+            .get_sandbox(&attempted.id)
+            .await?
+            .ok_or(SandboxStoreError::NotFound)?;
+        let attempted_capture = attempted
+            .lifecycle
+            .checkpoint_capture
+            .as_ref()
+            .ok_or(SandboxStoreError::Conflict)?;
+        let capture = current
+            .lifecycle
+            .checkpoint_capture
+            .as_ref()
+            .ok_or(SandboxStoreError::Conflict)?;
+        if capture.authority != attempted_capture.authority
+            || capture.runtime != attempted_capture.runtime
+            || capture.work.lease != attempted_capture.work.lease
+        {
+            return Err(SandboxStoreError::Conflict);
+        }
+        let lease = capture
+            .work
+            .lease
+            .as_ref()
+            .ok_or(SandboxStoreError::Conflict)?;
+        let stamp = rfc3339_at(now);
+        let mut next = current.clone();
+        next.require_checkpoint_writer_resume(&lease.holder, lease.fence, stamp.clone())
+            .map_err(model_error)?;
+        self.commit(&current, next, stamp).await
+    }
+
+    async fn commit(
+        &self,
+        current: &Sandbox,
+        next: Sandbox,
+        at: String,
+    ) -> Result<(), SandboxStoreError> {
+        let result = self
+            .store
+            .commit_sandbox_lifecycle(SandboxLifecycleMutation {
+                guard: SandboxMutationGuard::capture(current),
+                sandbox: next.clone(),
+                agents: Vec::new(),
+                agent_scope: SandboxLifecycleAgentScope::Touched,
+                appended_at: at,
+                events: vec![SandboxEventKind::WorkStepCompleted {
+                    step: SandboxWorkStep::RunLifecycleOperation,
+                }],
+            })
+            .await;
+        if result.is_err() && self.store.get_sandbox(&current.id).await?.as_ref() == Some(&next) {
+            return Ok(());
+        }
+        result
+    }
+
+    async fn agents(&self, sandbox: &Sandbox) -> Result<Vec<Agent>, SandboxStoreError> {
+        let mut rows = Vec::new();
+        let mut cursor = None;
+        loop {
+            let page = self
+                .store
+                .sandbox_agents(
+                    &sandbox.id,
+                    &PageRequest::new(PAGE_SIZE, cursor)
+                        .map_err(|_| SandboxStoreError::InvalidPage)?,
+                )
+                .await?;
+            rows.extend(page.items);
+            if rows.len() > 256 {
+                return Err(SandboxStoreError::Conflict);
+            }
+            let Some(next) = page.next else { break };
+            cursor = Some(next);
+        }
+        Ok(rows)
+    }
+
+    async fn workspaces(&self, sandbox: &Sandbox) -> Result<Vec<Workspace>, SandboxStoreError> {
+        let mut rows = Vec::new();
+        let mut cursor = None;
+        loop {
+            let page = self
+                .store
+                .list_workspaces(
+                    &sandbox.id,
+                    &PageRequest::new(PAGE_SIZE, cursor)
+                        .map_err(|_| SandboxStoreError::InvalidPage)?,
+                )
+                .await?;
+            rows.extend(page.items);
+            if rows.len() > 256 {
+                return Err(SandboxStoreError::Conflict);
+            }
+            let Some(next) = page.next else { break };
+            cursor = Some(next);
+        }
+        Ok(rows)
+    }
+}
+
+fn model_error(error: layer2_core::sandbox::SandboxModelError) -> SandboxStoreError {
+    SandboxStoreError::Corrupt(error.to_string())
+}

@@ -223,9 +223,38 @@ impl SandboxWorker {
         failure: WorkerFailure,
         now: SystemTime,
     ) -> Result<(), SandboxStoreError> {
-        if let Err(resume_failure) = self.resume_lifecycle_writers(&sandbox).await {
+        if self.resume_lifecycle_writers(&sandbox).await.is_err() {
             return self
-                .handle_lifecycle_failure(sandbox, resume_failure, now)
+                .handle_lifecycle_failure(
+                    sandbox,
+                    WorkerFailure::retryable("checkpoint writer resumption is unconfirmed"),
+                    now,
+                )
+                .await;
+        }
+        if failure.is_retryable() {
+            let stamp = rfc3339_at(now);
+            let lease = super::support::lifecycle_lease(&sandbox, &self.config.holder)?;
+            let mut next = sandbox.clone();
+            next.retry_lifecycle_after_writer_resume(
+                rfc3339_at(now + self.config.retry_delay),
+                &lease.holder,
+                lease.fence,
+                stamp.clone(),
+            )
+            .map_err(model_error)?;
+            return self
+                .commit_lifecycle_phase(
+                    &sandbox,
+                    next,
+                    Vec::new(),
+                    layer2_core::sandbox::store::SandboxLifecycleAgentScope::Touched,
+                    stamp,
+                    vec![layer2_core::sandbox::SandboxEventKind::WorkStepFailed {
+                        step: layer2_core::sandbox::SandboxWorkStep::RunLifecycleOperation,
+                        failure: failure.typed(),
+                    }],
+                )
                 .await;
         }
         self.handle_lifecycle_failure(sandbox, failure, now).await

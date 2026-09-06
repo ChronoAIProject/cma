@@ -173,6 +173,15 @@ impl SandboxWorker {
     }
 
     async fn execute(&self, sandbox: Sandbox, now: SystemTime) -> Result<(), SandboxStoreError> {
+        if sandbox.lifecycle.checkpoint_capture.is_some() {
+            return self
+                .retry_failure(
+                    sandbox,
+                    support::WorkerFailure::retryable("checkpoint writer resumption is pending"),
+                    now,
+                )
+                .await;
+        }
         if matches!(
             sandbox.work.step,
             SandboxWorkStep::RunInstall
@@ -207,7 +216,9 @@ impl SandboxWorker {
             SandboxWorkStep::WaitForCredentialRotation => self.begin_rotation(sandbox, now).await,
             SandboxWorkStep::RevokeRotatedCredential => self.revoke_rotated(sandbox, now).await,
             SandboxWorkStep::FinishCredentialRotation => self.finish_rotation(sandbox, now).await,
-            SandboxWorkStep::RunLifecycleOperation => self.run_lifecycle(sandbox, now).await,
+            SandboxWorkStep::RunLifecycleOperation => {
+                Box::pin(self.run_lifecycle(sandbox, now)).await
+            }
             SandboxWorkStep::StopAgents => self.stop_agents(sandbox, now).await,
             SandboxWorkStep::RevokeRetirementCredentials => {
                 self.revoke_for_retirement(sandbox, now).await
