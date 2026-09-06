@@ -254,6 +254,7 @@ fn owned_header(name: &str) -> bool {
     matches!(
         name.to_ascii_lowercase().as_str(),
         "authorization"
+            | "open-sandbox-api-key"
             | "host"
             | "content-length"
             | "accept-encoding"
