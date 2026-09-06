@@ -38,9 +38,11 @@ impl HostedAdapter {
                 "runtime adoption handle is invalid".into(),
             ));
         }
-        let request = self
-            .deployment
-            .render_runtime(&adoption.spec, adoption.generation)?;
+        let mut deployment = self.deployment.clone();
+        if let Some(image) = &adoption.expected_image {
+            deployment.image.uri = image.clone();
+        }
+        let request = deployment.render_runtime(&adoption.spec, adoption.generation)?;
         let expected = provider_request_identity(&request)?;
         let Some(observation) = self.backend.adopt(&adoption.handle, &request).await? else {
             return Ok(None);

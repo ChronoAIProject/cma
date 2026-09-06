@@ -120,6 +120,8 @@ pub struct RuntimeAdoptionRequest {
     pub generation: u64,
     pub handle: RuntimeHandle,
     pub spec: SandboxSpec,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected_image: Option<String>,
 }
 
 impl RuntimeAdoptionRequest {
@@ -128,7 +130,15 @@ impl RuntimeAdoptionRequest {
             generation,
             handle,
             spec,
+            expected_image: None,
         }
+    }
+
+    /// Adopt the persisted image before rotating it to the current deployment.
+    #[must_use]
+    pub fn with_expected_image(mut self, image: impl Into<String>) -> Self {
+        self.expected_image = Some(image.into());
+        self
     }
 }
 
