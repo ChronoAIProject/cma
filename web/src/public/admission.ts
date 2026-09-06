@@ -1,9 +1,18 @@
-import type { Launch } from '@chronoai/cma-sdk';
+import { ApiError, type Launch } from '@chronoai/cma-sdk';
 import type { PublicClient } from './client';
 import { type BrowserIntent, writeIntent } from './intent';
 import { publicCopy } from '../vocabulary/needs';
 
 const pending = new Map<string, Promise<Launch>>();
+
+export function isUnsettledCommand(error: unknown): boolean {
+  return (
+    !(error instanceof ApiError) ||
+    error.isRetryable ||
+    error.code === 'idempotency_in_flight' ||
+    error.code === 'idempotency_recovery_required'
+  );
+}
 
 /** StrictMode and route remounts attach to the same in-flight command. */
 export function admit(client: PublicClient, intent: BrowserIntent, owner: string): Promise<Launch> {

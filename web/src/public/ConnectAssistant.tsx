@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
 import {
-  ApiError,
   type CreatedServiceConnection,
   type ServiceConnectionMetadata,
   type ServiceConnectionState,
@@ -10,6 +9,7 @@ import { connectionCopy, connectionStates } from '../vocabulary/connect';
 import { refusalSentence } from '../vocabulary/errors';
 import { publicCopy } from '../vocabulary/needs';
 import type { PublicClient } from './client';
+import { isUnsettledCommand } from './admission';
 import {
   clearConnectionReturn,
   readConnectionReturn,
@@ -158,7 +158,7 @@ export function ConnectAssistant({
         (cause: unknown) => {
           popup.current?.close();
           if (!live.current) return;
-          if (cause instanceof ApiError && !cause.isRetryable) command.current = undefined;
+          if (!isUnsettledCommand(cause)) command.current = undefined;
           setError(refusalSentence(cause));
         },
       )

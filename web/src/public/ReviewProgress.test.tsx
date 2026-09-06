@@ -78,24 +78,29 @@ describe('minimal review', () => {
     await waitFor(() => expect(changed).toHaveBeenCalledWith(PUBLIC_RECORD));
   });
 
-  it('freezes trust body and key while the start outcome is unknown', async () => {
-    const client = publicClient();
-    vi.mocked(client.requests.start)
-      .mockRejectedValueOnce(new Error('offline'))
-      .mockResolvedValue(PUBLIC_RECORD);
-    const actor = userEvent.setup();
-    render(
-      <ReviewCard client={client} record={PUBLIC_TRUST} onChanged={vi.fn()} onClose={vi.fn()} />,
-    );
-    await actor.click(screen.getByRole('checkbox'));
-    await actor.click(screen.getByRole('button', { name: 'Continue' }));
-    expect(await screen.findByRole('button', { name: 'Try again' })).toBeEnabled();
-    expect(screen.getByRole('checkbox')).toBeDisabled();
-    await actor.click(screen.getByRole('button', { name: 'Try again' }));
-    const calls = vi.mocked(client.requests.start).mock.calls;
-    expect(calls).toHaveLength(2);
-    expect(calls[1]).toEqual(calls[0]);
-  });
+  it.each(['transport', 'idempotency_in_flight', 'idempotency_recovery_required'])(
+    'freezes trust body and key while Start outcome %s is unknown',
+    async (code) => {
+      const client = publicClient();
+      vi.mocked(client.requests.start)
+        .mockRejectedValueOnce(
+          code === 'transport' ? new Error('offline') : new ApiError(409, 'Unknown', code),
+        )
+        .mockResolvedValue(PUBLIC_RECORD);
+      const actor = userEvent.setup();
+      render(
+        <ReviewCard client={client} record={PUBLIC_TRUST} onChanged={vi.fn()} onClose={vi.fn()} />,
+      );
+      await actor.click(screen.getByRole('checkbox'));
+      await actor.click(screen.getByRole('button', { name: 'Continue' }));
+      expect(await screen.findByRole('button', { name: 'Try again' })).toBeEnabled();
+      expect(screen.getByRole('checkbox')).toBeDisabled();
+      await actor.click(screen.getByRole('button', { name: 'Try again' }));
+      const calls = vi.mocked(client.requests.start).mock.calls;
+      expect(calls).toHaveLength(2);
+      expect(calls[1]).toEqual(calls[0]);
+    },
+  );
 
   it('keeps ordered needs and refreshes authoritative requirements after a refusal', async () => {
     const client = publicClient();

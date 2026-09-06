@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  ApiError,
   repeatChoiceFrom,
   type ExistingLaunchAgent,
   type LaunchRepeatChoice,
@@ -14,7 +13,7 @@ import { Button } from '../ui/Button';
 import { publicCopy } from '../vocabulary/needs';
 import { refusalSentence } from '../vocabulary/errors';
 import type { PublicClient } from './client';
-import { admit } from './admission';
+import { admit, isUnsettledCommand } from './admission';
 import { createIntent, forgetIntent, readIntent, type BrowserIntent } from './intent';
 import { Landing } from './Landing';
 import { Progress } from './Progress';
@@ -108,7 +107,7 @@ function Entry({
           setExisting(repeat);
         } else {
           setError(refusalSentence(cause));
-          if (cause instanceof ApiError && !cause.isRetryable) forgetIntent(selected.id);
+          if (!isUnsettledCommand(cause)) forgetIntent(selected.id);
         }
       } finally {
         setBusy(false);

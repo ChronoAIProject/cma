@@ -155,18 +155,23 @@ describe('public visitor admission', () => {
     },
   );
 
-  it('preserves body and key after an uncertain admission failure', async () => {
-    const client = publicClient();
-    vi.mocked(client.requests.createOrResume)
-      .mockRejectedValueOnce(new Error('offline'))
-      .mockResolvedValue(PUBLIC_RECORD);
-    const test = setup(auth(signedIn), client);
-    await test.user.click(await screen.findByRole('button', { name: 'Open in CMA' }));
-    await test.user.click(await screen.findByRole('button', { name: 'Try again' }));
-    await waitFor(() => expect(test.navigate).toHaveBeenCalled());
-    const calls = vi.mocked(client.requests.createOrResume).mock.calls;
-    expect(calls[1]).toEqual(calls[0]);
-  });
+  it.each(['transport', 'idempotency_in_flight', 'idempotency_recovery_required'])(
+    'preserves body and key after uncertain admission %s',
+    async (code) => {
+      const client = publicClient();
+      vi.mocked(client.requests.createOrResume)
+        .mockRejectedValueOnce(
+          code === 'transport' ? new Error('offline') : new ApiError(409, 'Unknown', code),
+        )
+        .mockResolvedValue(PUBLIC_RECORD);
+      const test = setup(auth(signedIn), client);
+      await test.user.click(await screen.findByRole('button', { name: 'Open in CMA' }));
+      await test.user.click(await screen.findByRole('button', { name: 'Try again' }));
+      await waitFor(() => expect(test.navigate).toHaveBeenCalled());
+      const calls = vi.mocked(client.requests.createOrResume).mock.calls;
+      expect(calls[1]).toEqual(calls[0]);
+    },
+  );
 
   it('renders retired targets without a start button, including a previously saved intent', async () => {
     createIntent(route);

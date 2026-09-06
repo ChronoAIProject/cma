@@ -11,6 +11,7 @@ import { Modal } from '../ui/Modal';
 import { needNames, needOrder, publicCopy } from '../vocabulary/needs';
 import { refusalSentence } from '../vocabulary/errors';
 import type { PublicClient } from './client';
+import { isUnsettledCommand } from './admission';
 import { ConnectAssistant } from './ConnectAssistant';
 import { Details, SoftwareDetails } from './Details';
 
@@ -73,7 +74,7 @@ export function ReviewCard({
       setUncertain(false);
       onChanged(result);
     } catch (cause) {
-      const unknown = !(cause instanceof ApiError) || cause.isRetryable;
+      const unknown = isUnsettledCommand(cause);
       setUncertain(unknown);
       if (!unknown) command.current = undefined;
       setError(refusalSentence(cause));
