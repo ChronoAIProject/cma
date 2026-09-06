@@ -16,6 +16,7 @@ use super::persistence::SecretValue;
 pub(crate) use identifiers::valid_provider_key_id;
 use identifiers::{credential_of, key_name, validate_credential_id};
 
+mod catalog;
 mod identifiers;
 
 const KEYS_PATH: &str = "/api/v1/api-keys";
@@ -362,11 +363,7 @@ impl KeyIssuer {
         if !response.status().is_success() {
             return Err(KeyIssuerError::Refused(response.status().as_u16()));
         }
-        response
-            .json::<ServiceListing>()
-            .await
-            .map(ServiceListing::into_rows)
-            .map_err(|error| KeyIssuerError::Unavailable(error.to_string()))
+        catalog::rows(response).await
     }
 }
 

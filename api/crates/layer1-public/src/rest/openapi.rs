@@ -28,6 +28,7 @@ use super::instances_openapi_shapes::{
 use super::launch_events::*;
 use super::openapi_shapes::ConformanceDocument;
 use super::problems::ProblemDocument;
+use super::profile_authoring::shapes::*;
 use super::profiles_openapi_shapes::*;
 use super::trigger_openapi_shapes::*;
 
@@ -36,6 +37,10 @@ use super::trigger_openapi_shapes::*;
     paths(
         super::conformance,
         super::defaults::read,
+        super::profile_authoring::bounds,
+        super::profile_authoring::services,
+        super::profile_authoring::skills,
+        super::profile_authoring::resolve_repository,
         crate::pty::terminal,
         projections::signup_options,
         super::triggers::create,
@@ -138,6 +143,12 @@ use super::trigger_openapi_shapes::*;
         ConformanceDocument,
         super::defaults::DefaultProfilesView,
         ProblemDocument,
+        ProfileCapacityBoundsView,
+        AuthoringServiceView,
+        AuthoringSkillView,
+        AuthoringSkillPage,
+        ResolveRepositoryRequest,
+        RepositoryResolutionView,
         SignupOptions,
         EmbedDescriptor,
         EmbedContentSecurityPolicy,
@@ -323,6 +334,7 @@ use super::trigger_openapi_shapes::*;
         (name = "trigger placements", description = "Owned Trigger placement and embed projections"),
         (name = "trigger launches", description = "Owned Trigger Launch lifecycle and event replay"),
         (name = "service connections", description = "Owner-scoped service authorization handoffs"),
+        (name = "profile authoring", description = "Read-only profile choices and repository verification"),
         (name = "agent profiles", description = "Owned Agent Profile drafts and immutable revisions"),
         (name = "workspace profiles", description = "Owned Workspace Profile drafts and immutable revisions"),
         (name = "sandbox profiles", description = "Owned Sandbox Profile drafts and immutable revisions"),

@@ -6,6 +6,7 @@ mod composition;
 mod config;
 mod health;
 mod permissions;
+mod profile_authoring;
 mod profile_policy;
 mod projections;
 mod rate_limit;

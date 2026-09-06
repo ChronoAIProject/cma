@@ -101,6 +101,13 @@ fn time_on_day(day: u64, seconds: u64) -> SystemTime {
 #[test]
 fn tiers_are_generic_http_work_classes() {
     assert_eq!(
+        request_tier(&request(
+            Method::POST,
+            "/api/v1/profile-authoring/repositories/resolve"
+        )),
+        RequestTier::Default
+    );
+    assert_eq!(
         request_tier(&request(Method::GET, "/livez")),
         RequestTier::Health
     );

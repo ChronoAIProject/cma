@@ -57,6 +57,9 @@ fn classify(method: &Method, path: &str) -> ActivityAction {
     if path.starts_with("/auth/") && path != "/auth/session" {
         return ActivityAction::Authenticate;
     }
+    if method == Method::POST && path == "/api/v1/profile-authoring/repositories/resolve" {
+        return ActivityAction::Read;
+    }
     match *method {
         Method::GET | Method::HEAD => ActivityAction::Read,
         Method::POST => ActivityAction::Create,
@@ -87,6 +90,17 @@ mod tests {
         assert_eq!(
             classify(&Method::GET, "/auth/logout"),
             ActivityAction::Authenticate
+        );
+    }
+
+    #[test]
+    fn repository_verification_is_recorded_as_a_read() {
+        assert_eq!(
+            classify(
+                &Method::POST,
+                "/api/v1/profile-authoring/repositories/resolve"
+            ),
+            ActivityAction::Read
         );
     }
 

@@ -2,6 +2,7 @@
 
 mod admin;
 mod agent;
+pub mod authoring;
 mod common;
 mod digest;
 mod marketplace;

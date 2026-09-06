@@ -92,6 +92,65 @@ not timestamps or request ids. A conflict requires a new read and an explicit
 reconciliation of the user's intended changes; never overwrite newer state
 using an automatically substituted revision.
 
+## Profile Authoring
+
+The four `/api/v1/profile-authoring` operations require authentication and
+`ManageOwnProfiles`. They are read-only lookups, including the repository
+resolver's POST: no idempotency key, resource admission, profile edit, clone,
+or Sandbox creation occurs. All successful responses are HTTP 200. Optional
+output fields are omitted rather than returned as `null`.
+Service and skill lookups use the current request's delegated authority when
+present, including for bearer callers without a previous browser sign-in.
+That authority is transient, never persisted by the lookup, and never included
+in a public response or repository verification request.
+
+`GET /api/v1/profile-authoring/bounds` returns
+`{ min_cpu_millis, max_cpu_millis, min_memory_mib, max_memory_mib }` from the
+same fixed deployment policy used to validate Sandbox Profiles. It does not
+depend on catalogue or repository availability.
+
+`GET /api/v1/profile-authoring/services` returns an array of owner-visible
+`{ id, name, description? }` choices. An empty array is a successful empty
+catalogue. Source failures return `503 profile_services_unavailable`, not an
+empty catalogue or credentials.
+Catalogue descriptions retain the complete source text up to 6144 UTF-8 bytes;
+this authoring limit does not change the separate profile draft limits.
+
+`GET /api/v1/profile-authoring/skills?q=&limit=&cursor=` returns
+`{ items: [{ id, name, description?, versions: [string] }], next? }`. Omitted
+`q` browses with an empty query; queries allow at most 200 UTF-8 bytes and no
+control characters. The limit defaults to 20 and accepts 1-50. A supplied
+cursor must be nonempty, at most 2048 bytes, and free of control characters.
+Versions are up to 100 latest selectable, nondeprecated releases, ordered
+newest-first by numeric `major.minor` and retained as strings. Existing profile
+pins are not changed by catalogue filtering. A filtered page may contain no
+items while retaining an advancing `next`; continue until `next` is absent.
+Invalid queries and source-rejected cursors return
+`400 invalid_profile_authoring_query`; unavailable or malformed source data
+returns `503 profile_skills_unavailable`.
+
+`POST /api/v1/profile-authoring/repositories/resolve` takes `{ url, reference? }`
+for a public GitHub repository and an optional branch or tag. The URL must
+contain exactly two nonempty ASCII owner/repository components,
+each at most 100 bytes after removing the repository's optional `.git` suffix.
+A single trailing slash is accepted. The response is
+`{ url, reference?, default_branch, commit_sha }`. The URL is canonical and may
+normalize owner/repository case and remove `.git` or trailing slashes.
+`reference` is retained exactly when requested and omitted otherwise; the
+observed default branch is never substituted into it. `default_branch` and the
+lowercase 40-hex `commit_sha` are verified server-side observations. No caller
+credential is forwarded to GitHub and redirects are not followed.
+
+Invalid URLs or references return `422 invalid_repository` or
+`invalid_repository_reference`; repository absence/inaccessibility returns
+`404 repository_not_found`, and a missing branch/tag returns
+`404 repository_reference_not_found`. Failed verification returns
+`503 repository_unavailable`. Malformed JSON, incompatible body fields,
+oversized bodies, and missing/wrong content types use `invalid_json` with
+400, 422, 413, and 415 respectively. All four routes return
+`401 not_authenticated` or `403 forbidden` before exposing validation or source
+results to unauthorized callers.
+
 ## Profiles And Marketplace
 
 The three profile APIs share lifecycle shape but have different content schemas.
@@ -371,6 +430,15 @@ above applies even when an operation annotates only its principal responses.
 | Operation | Body / Key | Query | Response |
 |---|---|---|---|
 | `GET /api/v1/defaults` | - | - | 200 DefaultProfilesView |
+
+### Profile authoring
+
+| Operation | Body / Key | Query | Response |
+|---|---|---|---|
+| `GET /api/v1/profile-authoring/bounds` | - | - | 200 ProfileCapacityBoundsView |
+| `GET /api/v1/profile-authoring/services` | - | - | 200 array<AuthoringServiceView> |
+| `GET /api/v1/profile-authoring/skills` | - | q, limit, cursor | 200 AuthoringSkillPage |
+| `POST /api/v1/profile-authoring/repositories/resolve` | ResolveRepositoryRequest | - | 200 RepositoryResolutionView |
 
 ### Profile marketplace
 

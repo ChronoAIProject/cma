@@ -74,6 +74,88 @@ fn every_profile_and_marketplace_route_is_documented_and_authenticated() {
 }
 
 #[test]
+fn profile_authoring_documents_read_only_queries_and_exact_response_shapes() {
+    let document = serde_json::to_value(document()).expect("OpenAPI serializes");
+    for (method, suffix, schema, statuses) in [
+        (
+            "get",
+            "bounds",
+            "ProfileCapacityBoundsView",
+            vec!["401", "403"],
+        ),
+        (
+            "get",
+            "services",
+            "AuthoringServiceView",
+            vec!["401", "403", "503"],
+        ),
+        (
+            "get",
+            "skills",
+            "AuthoringSkillPage",
+            vec!["400", "401", "403", "503"],
+        ),
+        (
+            "post",
+            "repositories/resolve",
+            "RepositoryResolutionView",
+            vec!["400", "401", "403", "404", "413", "415", "422", "503"],
+        ),
+    ] {
+        let path = format!("/api/v1/profile-authoring/{suffix}");
+        let operation = operation(&document, method, &path);
+        assert_eq!(operation["security"].as_array().unwrap().len(), 2);
+        let success = &operation["responses"]["200"]["content"]["application/json"]["schema"];
+        let success = if suffix == "services" {
+            &success["items"]
+        } else {
+            success
+        };
+        assert_eq!(success["$ref"], format!("#/components/schemas/{schema}"));
+        for status in statuses {
+            assert_eq!(
+                operation["responses"][status]["content"]["application/problem+json"]["schema"]
+                    ["$ref"],
+                "#/components/schemas/ProblemDocument"
+            );
+            assert!(!operation["responses"][status]["description"]
+                .as_str()
+                .unwrap()
+                .is_empty());
+        }
+        assert!(!operation["parameters"]
+            .as_array()
+            .is_some_and(|parameters| parameters
+                .iter()
+                .any(|parameter| parameter["name"] == "Idempotency-Key")));
+    }
+    let skills = operation(&document, "get", "/api/v1/profile-authoring/skills");
+    let parameters = skills["parameters"].as_array().unwrap();
+    assert_eq!(parameters.len(), 3);
+    let limit = parameters
+        .iter()
+        .find(|parameter| parameter["name"] == "limit")
+        .unwrap();
+    assert_eq!(limit["schema"]["default"], 20);
+    assert_eq!(limit["schema"]["minimum"], 1);
+    assert_eq!(limit["schema"]["maximum"], 50);
+    for (schema, optional) in [
+        ("AuthoringServiceView", "description"),
+        ("AuthoringSkillView", "description"),
+        ("AuthoringSkillPage", "next"),
+        ("RepositoryResolutionView", "reference"),
+    ] {
+        let schema = &document["components"]["schemas"][schema];
+        assert!(!schema["required"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|field| field == optional));
+        assert_eq!(schema["properties"][optional]["type"], "string");
+    }
+}
+
+#[test]
 fn every_admin_route_is_documented_and_authenticated() {
     let document = document();
     let mut operation_ids = HashSet::new();

@@ -28,6 +28,7 @@ pub mod openapi;
 mod openapi_shapes;
 pub mod pagination;
 mod problems;
+mod profile_authoring;
 mod profiles;
 mod profiles_agent;
 mod profiles_marketplace;
@@ -78,6 +79,7 @@ pub use launch_events::{
 pub use launch_quota::{LaunchQuota, LaunchQuotaError, LaunchQuotaPermit, LaunchQuotaRefusal};
 pub(crate) use problems::{problem_document, problem_response};
 pub use problems::{HttpProblem, Problem, ProblemDocument};
+pub use profile_authoring::profile_authoring_router;
 pub use profiles::{profiles_router, ProfileRoutePolicy, ProfilesState};
 pub use triggers::{trigger_router, TriggerRoutesState};
 

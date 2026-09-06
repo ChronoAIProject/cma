@@ -289,7 +289,8 @@ fn request_tier(request: &Request) -> RequestTier {
     {
         return RequestTier::Health;
     }
-    if request.method() != Method::POST {
+    if request.method() != Method::POST || path == "/api/v1/profile-authoring/repositories/resolve"
+    {
         return RequestTier::Default;
     }
     if path.split('/').rfind(|segment| !segment.is_empty()) == Some("input") {
