@@ -15,6 +15,14 @@
 
 `readConformance(options?)` performs `GET /api/v1/conformance` anonymously.
 
+`readDefaults(options?)` performs the authenticated `GET /api/v1/defaults` and
+returns only `sandbox_profile`, `workspace_profile`, and `agent_profile`, each
+an immutable `{ id, revision }` reference. It requires `use_own_sandboxes`.
+Read those exact revisions with the matching profile client's `readRevision`;
+never infer configured defaults from Marketplace listings or replace a pinned
+revision with the latest. Immutable revision reads admit the owner's profiles
+and non-retired public profiles; draft access remains owner-management-only.
+
 ```ts
 import { type Conformance, readConformance, resolveConfig } from '@chronoai/cma-sdk';
 

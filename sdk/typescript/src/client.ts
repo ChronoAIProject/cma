@@ -6,6 +6,7 @@ import { Marketplace } from './marketplace.js';
 import { Profiles } from './profiles.js';
 import { Sandboxes } from './sandboxes.js';
 import { Workspaces, Worktrees } from './workspaces.js';
+import { readDefaults, type PlatformDefaults } from './defaults.js';
 
 /** A configured client for the public CMA resource and discovery APIs. */
 export class Cma {
@@ -47,6 +48,10 @@ export class Cma {
   /** Read the anonymous deployment state exposed during the rebuild. */
   readConformance(options: OperationOptions = {}): Promise<Conformance> {
     return readConformance(this.#config, options);
+  }
+
+  readDefaults(options: OperationOptions = {}): Promise<PlatformDefaults> {
+    return readDefaults(this.#config, options);
   }
 }
 

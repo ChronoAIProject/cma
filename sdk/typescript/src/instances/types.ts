@@ -42,7 +42,7 @@ export const agentStatus = enumeration(
   'failed',
 );
 export type AgentStatus = Output<typeof agentStatus>;
-export const failure = object({ class: text, detail: text });
+export const failure = object({ class: text, detail: text, remediation: optional(text) });
 export type Failure = Output<typeof failure>;
 
 const sandboxFields = {

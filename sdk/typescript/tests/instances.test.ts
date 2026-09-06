@@ -103,4 +103,33 @@ describe('Sandbox hierarchy resources', () => {
     expect(() => test.client.sandboxes.list({ limit: Number.NaN })).toThrow(ValidationError);
     expect(() => test.client.sandboxes.events(sandbox.id, { after: -1 })).toThrow(ValidationError);
   });
+
+  it('retains safe detail remediation while accepting older durable failures without it', async () => {
+    const test = transport();
+    const failure = {
+      class: 'install_failed',
+      detail: 'Software installation did not complete.',
+      remediation: 'Review the install commands before creating a replacement Sandbox.',
+    };
+    test.answer({
+      ...sandbox,
+      status: 'failed',
+      failure,
+      workspaces: [],
+      workspace_count: 0,
+      worktree_count: 0,
+      agent_count: 0,
+    });
+    expect((await test.client.sandboxes.read(sandbox.id)).failure).toEqual(failure);
+    const event = {
+      sandbox_id: sandbox.id,
+      seq: 1,
+      appended_at: now,
+      kind: { type: 'failed', failure: { class: failure.class, detail: failure.detail } },
+    };
+    test.answer([event]);
+    expect(await test.client.sandboxes.events(sandbox.id)).toEqual([event]);
+    test.answer([{ ...event, kind: { ...event.kind, failure: { ...failure, remediation: 1 } } }]);
+    await expect(test.client.sandboxes.events(sandbox.id)).rejects.toBeInstanceOf(ProtocolError);
+  });
 });

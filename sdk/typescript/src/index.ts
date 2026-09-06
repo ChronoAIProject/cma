@@ -6,6 +6,7 @@ export { Sandboxes, type SandboxListOptions } from './sandboxes.js';
 export { Workspaces, Worktrees } from './workspaces.js';
 export { Profiles } from './profiles.js';
 export { Marketplace, type MarketplaceListOptions } from './marketplace.js';
+export { readDefaults, type PlatformDefaults } from './defaults.js';
 export type { CommandOptions, EventOptions, PageOptions, ResourcePage } from './resources.js';
 export type * from './agents/types.js';
 export type * from './agents/events.js';
