@@ -272,8 +272,10 @@ async fn admit_failed(store: &MongoSandboxStore, suffix: &str, launch_id: &str) 
     failed.runtime = Some(RuntimeBinding {
         runtime_id: format!("runtime-{suffix}"),
         runtime_version: "image-v1".into(),
+        provision_generation: Some(1),
         bound_at: BOUND_AT.into(),
     });
+    failed.lifecycle.runtime_generation_high_water = 1;
     failed.work = SandboxWorkState::new(SandboxWorkStep::None, MINUTE.into());
     failed.updated_at = MINUTE.into();
     failed.revision = 2;
@@ -287,6 +289,7 @@ async fn admit_paused(store: &MongoSandboxStore, suffix: &str, launch_id: &str) 
     let mut paused = fresh;
     paused.status = SandboxStatus::Paused;
     paused.credential = sandbox("credential-template").credential;
+    paused.credential.reaches = paused.profile.content.nyxid_services.clone();
     paused.work = SandboxWorkState::new(SandboxWorkStep::None, MINUTE.into());
     paused.lifecycle.checkpoints.latest = Some(checkpoint(1));
     paused.updated_at = MINUTE.into();
@@ -314,6 +317,7 @@ fn fresh_launch_sandbox(suffix: &str, launch_id: &str) -> Sandbox {
         launch_id: launch_id.into(),
     };
     value.profile.content.nyxid_services = vec![layer2_core::ServiceId::new("github")];
+    value.profile.digest = layer2_core::profiles::content_digest(&value.profile.content).unwrap();
     value.credential.reaches = vec![layer2_core::ServiceId::new("github")];
     value
 }

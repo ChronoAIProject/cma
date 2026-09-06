@@ -363,8 +363,10 @@ async fn runtime_loss_resumes_mid_pause_revive_and_rotation_without_replaying_ol
                 sandbox.runtime = Some(RuntimeBinding {
                     runtime_id: "lost-replacement".into(),
                     runtime_version: "image-v1".into(),
+                    provision_generation: Some(2),
                     bound_at: BEFORE.into(),
                 });
+                sandbox.lifecycle.runtime_generation_high_water = 2;
             }
             _ => unreachable!(),
         }
@@ -605,8 +607,10 @@ async fn runtime_loss_rolls_back_failed_log_writes_and_reconciles_ambiguous_comm
             sandbox.runtime = Some(RuntimeBinding {
                 runtime_id: "replacement".into(),
                 runtime_version: "image-v2".into(),
+                provision_generation: Some(2),
                 bound_at: BEFORE.into(),
             });
+            sandbox.lifecycle.runtime_generation_high_water = 2;
             store.save_sandbox(revision, sandbox.clone()).await.unwrap();
             let mut parked = agent.clone();
             parked.status = AgentStatus::Paused;

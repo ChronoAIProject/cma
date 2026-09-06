@@ -142,7 +142,6 @@ async fn apply_transaction(
                     "_id": sandbox.id.as_str(),
                     "document_schema_version": DOCUMENT_SCHEMA_VERSION,
                 })
-                .projection(doc! { "document_schema_version": 1, "last_seq": 1 })
                 .session(&mut *session)
                 .await
                 .map_err(ApplyError::Driver)?;
@@ -161,6 +160,13 @@ async fn apply_transaction(
                     SandboxStoreError::NotFound
                 }));
             };
+            let current = read_sandbox(&aggregate).map_err(ApplyError::Domain)?;
+            if current.revision != *expected_revision {
+                return Err(ApplyError::Domain(SandboxStoreError::Conflict));
+            }
+            current
+                .validate_runtime_generation_successor(sandbox)
+                .map_err(|_| ApplyError::Domain(SandboxStoreError::Conflict))?;
             let previous = aggregate
                 .get_i64("last_seq")
                 .map_err(|error| ApplyError::Domain(SandboxStoreError::Corrupt(error.to_string())))
