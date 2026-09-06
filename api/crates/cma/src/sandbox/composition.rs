@@ -3,7 +3,8 @@
 use std::sync::Arc;
 
 use layer2_core::sandbox::{
-    AgentOperationService, DurableAgentUpdateRecorder, SandboxPolicySource, WorkspaceService,
+    AgentOperationService, AgentUpdateRecorder, DurableAgentUpdateRecorder, SandboxPolicySource,
+    WorkspaceService,
 };
 use layer3_adapter::SandboxAdapter;
 
@@ -50,6 +51,7 @@ pub(crate) struct SandboxLifecycleComposition {
     workspace: SandboxScheduler,
     agent: SandboxScheduler,
     checkpoints: SandboxScheduler,
+    updates: Arc<dyn AgentUpdateRecorder>,
 }
 
 impl SandboxLifecycleComposition {
@@ -111,7 +113,7 @@ impl SandboxLifecycleComposition {
                 )),
                 checkpoints: dependencies.checkpoints,
                 registry,
-                updates,
+                updates: updates.clone(),
                 operations: dependencies.operations,
             },
             SandboxWorkerConfig::with_policy_source(
@@ -123,12 +125,17 @@ impl SandboxLifecycleComposition {
         );
 
         Self {
+            updates,
             reconciliation,
             checkpoints,
             sandbox: SandboxScheduler::new(sandbox_worker),
             workspace: SandboxScheduler::for_workspaces(workspace_worker),
             agent: SandboxScheduler::for_agents(agent_worker),
         }
+    }
+
+    pub(crate) fn updates(&self) -> Arc<dyn AgentUpdateRecorder> {
+        Arc::clone(&self.updates)
     }
 
     pub(crate) async fn initialize(&self) -> Result<(), String> {

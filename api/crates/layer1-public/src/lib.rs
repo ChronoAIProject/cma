@@ -3,12 +3,15 @@
 pub mod a2a;
 pub mod agui;
 pub mod auth;
+mod conversation;
 pub mod mcp;
+pub mod pty;
 pub mod responses;
 pub mod rest;
 pub mod tickets;
 
 pub use auth::{AuthenticatedCaller, AuthenticatedSubject, DelegatedCredential};
+pub use conversation::AgentConversationState;
 pub use tickets::{
     AttachmentClaim, AttachmentTickets, IssuedTicket, MemoryTicketStore, RedeemedTicket,
     StoredTicket, TicketId, TicketStore,

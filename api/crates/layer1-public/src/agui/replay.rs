@@ -1,0 +1,244 @@
+use std::{collections::VecDeque, convert::Infallible, time::Duration};
+
+use axum::{
+    extract::{Query, State},
+    http::StatusCode,
+    response::{sse::KeepAlive, IntoResponse, Response, Sse},
+};
+use futures_util::stream;
+use layer2_core::{
+    sandbox::{
+        Agent, AgentLiveFragment, AgentLiveFragmentKind, AgentLiveSubscription, AgentLogKind,
+    },
+    AgentId, Caller,
+};
+use serde::Deserialize;
+
+#[cfg(test)]
+#[path = "replay_tests.rs"]
+mod tests;
+
+use super::events::{ending, project, AguiEvent};
+use crate::{
+    conversation::{failure, read_failure},
+    AgentConversationState, AuthenticatedCaller,
+};
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct ReplayQuery {
+    thread_id: String,
+    #[serde(default, alias = "after")]
+    starting_after: Option<u64>,
+    follow: Option<bool>,
+}
+
+#[utoipa::path(get, path = "/api/v1/agui/events", tag = "ag-ui",
+    params(("thread_id" = String, Query), ("starting_after" = Option<u64>, Query),
+    ("after" = Option<u64>, Query), ("follow" = Option<bool>, Query)),
+    responses((status = 200, body = String, content_type = "text/event-stream"),
+    (status = 400, body = crate::rest::ProblemDocument), (status = 404, body = crate::rest::ProblemDocument)))]
+pub(super) async fn replay(
+    State(state): State<AgentConversationState>,
+    AuthenticatedCaller(caller): AuthenticatedCaller,
+    query: Result<Query<ReplayQuery>, axum::extract::rejection::QueryRejection>,
+) -> Response {
+    let Query(query) = match query {
+        Ok(query) => query,
+        Err(_) => {
+            return failure(
+                StatusCode::BAD_REQUEST,
+                "invalid_replay_query",
+                "The replay query is invalid.",
+            )
+        }
+    };
+    let id = AgentId(query.thread_id);
+    let watching = state.watch(&id);
+    open(
+        state,
+        caller,
+        id,
+        query.starting_after.unwrap_or(0),
+        query.follow.unwrap_or(true),
+        None,
+        watching,
+    )
+    .await
+}
+
+pub(super) async fn open(
+    state: AgentConversationState,
+    caller: Caller,
+    id: AgentId,
+    after: u64,
+    follow: bool,
+    run: Option<u64>,
+    watching: Option<AgentLiveSubscription>,
+) -> Response {
+    let (agent, history) = match state.reads.log_snapshot(&caller, &id).await {
+        Ok(snapshot) => snapshot,
+        Err(error) => return read_failure(error, "thread_not_found"),
+    };
+    if after > agent.conversation.last_seq {
+        let mut response = crate::rest::problem_document(
+            StatusCode::BAD_REQUEST,
+            "cursor-beyond-end",
+            "The replay cursor exceeds this Agent's durable log head.",
+            "cursor_beyond_end",
+        );
+        response["head"] = agent.conversation.last_seq.into();
+        return crate::rest::problem_response(StatusCode::BAD_REQUEST, response);
+    }
+    let mut open = Following {
+        state,
+        caller,
+        id,
+        after,
+        turn: 0,
+        pending: VecDeque::new(),
+        follow,
+        run,
+        ended: false,
+        watching,
+        committed_message_seq: 0,
+        held: None,
+    };
+    for entry in &history {
+        if entry.seq > after {
+            break;
+        }
+        if let AgentLogKind::TurnStarted { turn_sequence, .. } = entry.kind {
+            open.turn = turn_sequence;
+        }
+    }
+    if let Some(turn) = run {
+        open.turn = turn;
+        if after >= turn {
+            open.pending.push_back(AguiEvent {
+                kind: "RUN_STARTED",
+                thread_id: open.id.to_string(),
+                run_id: turn.to_string(),
+                body: serde_json::json!({}),
+                timestamp: None,
+                seq: None,
+                live: false,
+            });
+        }
+    }
+    open.committed_message_seq = history
+        .iter()
+        .rev()
+        .find(|entry| matches!(entry.kind, AgentLogKind::AgentMessage { .. }))
+        .map_or(0, |entry| entry.seq);
+    open.queue(history);
+    open.queue_live(&agent);
+    let stream = stream::unfold(open, |mut open| async move {
+        loop {
+            if let Some(event) = open.pending.pop_front() {
+                return Some((Ok::<_, Infallible>(event.sse()), open));
+            }
+            if open.ended || !open.follow {
+                return None;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            match open.state.reads.log_snapshot(&open.caller, &open.id).await {
+                Ok((agent, history)) => {
+                    open.queue(history);
+                    open.queue_live(&agent);
+                }
+                Err(_) => return None,
+            }
+        }
+    });
+    let mut response = Sse::new(stream)
+        .keep_alive(KeepAlive::new().interval(Duration::from_secs(15)))
+        .into_response();
+    response
+        .headers_mut()
+        .insert("cache-control", "no-cache, no-store".parse().unwrap());
+    response
+        .headers_mut()
+        .insert("x-accel-buffering", "no".parse().unwrap());
+    response
+}
+
+struct Following {
+    state: AgentConversationState,
+    caller: Caller,
+    id: AgentId,
+    after: u64,
+    turn: u64,
+    pending: VecDeque<AguiEvent>,
+    follow: bool,
+    run: Option<u64>,
+    ended: bool,
+    watching: Option<AgentLiveSubscription>,
+    committed_message_seq: u64,
+    held: Option<AgentLiveFragment>,
+}
+
+impl Following {
+    fn queue(&mut self, history: Vec<layer2_core::sandbox::AgentLogEntry>) {
+        for entry in history {
+            if entry.seq <= self.after {
+                continue;
+            }
+            if let AgentLogKind::TurnStarted { turn_sequence, .. } = entry.kind {
+                if self.run.is_some_and(|run| run != turn_sequence) {
+                    self.ended = true;
+                    break;
+                }
+                self.turn = turn_sequence;
+            }
+            self.after = entry.seq;
+            if matches!(entry.kind, AgentLogKind::AgentMessage { .. }) {
+                self.committed_message_seq = entry.seq;
+            }
+            self.pending.extend(project(&entry, self.turn));
+            if self.run.is_some() && ending(&entry.kind) {
+                self.ended = true;
+                break;
+            }
+        }
+    }
+
+    fn queue_live(&mut self, agent: &Agent) {
+        if self.ended || !self.follow {
+            return;
+        }
+        let Some(watching) = self.watching.as_mut() else {
+            return;
+        };
+        for _ in 0..32 {
+            match self
+                .held
+                .take()
+                .map(Ok)
+                .unwrap_or_else(|| watching.try_recv())
+            {
+                Ok(fragment)
+                    if fragment.agent_id == agent.id
+                        && Some(fragment.runtime_generation)
+                            == agent.conversation.runtime_generation
+                        && Some(fragment.turn_sequence) == agent.conversation.active_turn
+                        && (fragment.kind == AgentLiveFragmentKind::Thought
+                            || fragment.after_seq >= self.committed_message_seq) =>
+                {
+                    if fragment.after_seq > agent.conversation.last_seq {
+                        self.held = Some(fragment);
+                        break;
+                    }
+                    self.pending.push_back(super::live::project(fragment));
+                }
+                Ok(_) => {}
+                Err(tokio::sync::broadcast::error::TryRecvError::Lagged(frames)) => {
+                    self.pending.push_back(AguiEvent { kind: "STATE_DELTA", thread_id: self.id.to_string(), run_id: self.turn.to_string(),
+                        body: serde_json::json!({"delta": [{"op": "replace", "path": "/conversationGap", "value": {"frames": frames}}]}),
+                        timestamp: None, seq: None, live: true });
+                }
+                Err(_) => break,
+            }
+        }
+    }
+}

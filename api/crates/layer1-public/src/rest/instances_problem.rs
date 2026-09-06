@@ -5,7 +5,7 @@ use layer2_core::sandbox::{
 
 use super::{problem_document, problem_response};
 
-pub(super) enum HierarchyProblem {
+pub(crate) enum HierarchyProblem {
     Forbidden,
     SandboxNotFound,
     WorkspaceNotFound,
@@ -26,7 +26,7 @@ pub(super) enum HierarchyProblem {
 }
 
 impl HierarchyProblem {
-    pub(super) fn sandbox(error: SandboxServiceError) -> Self {
+    pub(crate) fn sandbox(error: SandboxServiceError) -> Self {
         match error {
             SandboxServiceError::Forbidden => Self::Forbidden,
             SandboxServiceError::ProfileNotFound => Self::ProfileNotFound("sandbox"),
@@ -50,7 +50,7 @@ impl HierarchyProblem {
         }
     }
 
-    pub(super) fn workspace(error: WorkspaceServiceError) -> Self {
+    pub(crate) fn workspace(error: WorkspaceServiceError) -> Self {
         match error {
             WorkspaceServiceError::Forbidden => Self::Forbidden,
             WorkspaceServiceError::ProfileNotFound => Self::ProfileNotFound("workspace"),
@@ -75,7 +75,7 @@ impl HierarchyProblem {
         }
     }
 
-    pub(super) fn sandbox_lifecycle(error: SandboxLifecycleCommandError) -> Self {
+    pub(crate) fn sandbox_lifecycle(error: SandboxLifecycleCommandError) -> Self {
         match error {
             SandboxLifecycleCommandError::Forbidden => Self::Forbidden,
             SandboxLifecycleCommandError::NotFound => Self::SandboxNotFound,
