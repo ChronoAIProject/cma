@@ -432,6 +432,11 @@ A failed preflight cannot authorize uploading an old output directory.
 Local mechanics checks use intercepted browser HTML and prove harness behavior,
 not staging journeys. Shared backend/SDK corpus replay proves deterministic
 public contract composition, not a live NyxID, kernel or storage deployment.
+The official Node/Python Responses client checks use the real loopback CMA
+composition with scripted runtime input and in-memory persistence. Their pinned
+client versions and exact verification boundary are recorded in
+[API_Responses.md](./API_Responses.md#6-official-sdk-conformance); they are not
+production runtime evidence.
 TypeScript replay labels each case by its actual boundary: `wire` calls the
 typed operation and checks the emitted request against the recorded request;
 `preflight-validation` proves local rejection without a network call;
@@ -455,9 +460,10 @@ was reproduced. For example, a publish revision-overflow port failure does not
 claim construction of billions of retained Trigger revisions. The inventory
 separates HTTP problems from protocol failure outcomes; error-only streams do
 not satisfy successful-stream coverage. A retrieved failed Response is a valid
-resource projection, not an HTTP refusal. Propagated runtime failure classes and
-stop reasons are open strings, so their fixtures are representative protocol
-examples, not an exhaustive catalog of provider errors.
+resource projection, not an HTTP refusal. Propagated runtime failure classes are
+open strings, so their fixtures are representative protocol examples, not an
+exhaustive catalog of provider errors. Fixed lifecycle stop reasons remain
+separately enumerated in the protocol inventory.
 
 Remote harness reports identify `executionTarget: configured_remote_origin` and
 `mocked: false`, but supplied commit/image pins remain

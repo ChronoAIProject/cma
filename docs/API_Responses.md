@@ -213,3 +213,36 @@ https://spec.chrono-ai.fun/cma/1.0/conf/responses-chat
 The Responses interface projects Agent-context creation, input, retained output
 and usage. It does not grant additional capabilities to an Agent, change its
 profile, create a terminal or add a Trigger mutation route.
+
+---
+
+## 6. Official SDK conformance
+
+Local compatibility was verified on 2026-09-07 with `openai-node` 7.10.0 on
+Node 26.8.1 and `openai-python` 3.8.0 on Python 3.13.11. Both clients passed
+against CMA's loopback-only `official_responses_sdk_server` test composition.
+The checked-in runners are
+[`openai_node.mjs`](../api/crates/cma/tests/official_responses/openai_node.mjs)
+and [`openai_python.py`](../api/crates/cma/tests/official_responses/openai_python.py).
+
+Each client created and retrieved an Agent conversation in its default owned
+context, read 18 raw streaming frames, consumed 16 aggregate-helper frames,
+and paginated three durable conversation items. Assertions covered contiguous
+event sequences, live reasoning, CMA tool-activity extensions, reconstructed
+assistant output and metadata, and the typed linear-predecessor conflict.
+Reasoning was absent from reconstructed history and completed output.
+
+The fixture uses real CMA public handlers, Core context/operation services and
+durable update recording with an in-memory store and a scripted runtime port.
+It does not contact OpenAI or NyxID, invoke a real agent kernel, or prove
+production provisioning or storage. Its owned Sandbox and Workspace already
+exist; fresh-Sandbox/default-context admission and context override validation
+are covered separately by backend tests and the shared public contract corpus.
+
+Run the ignored server test explicitly, never as part of an unfiltered ignored
+test run. It prints `CMA_SDK_BASE_URL`; both runners require that exact loopback
+URL. The Node runner also requires `CMA_NODE_SDK_ENTRY` pointing at the installed
+SDK's `index.mjs`; the Python runner uses its environment's installed `openai`
+package. No real API key is needed. The fixture accepts only its static local
+test credential and exposes an authenticated `POST /__sdk/shutdown` for orderly
+shutdown, with a ten-minute lifetime bound as a fallback.
