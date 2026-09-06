@@ -6,22 +6,38 @@ Managed agent service by ChronoAI. This file is the contract for anyone — huma
 
 ## 1. What CMA is
 
-A cloud-hosted service that runs coding-agent kernels (Codex, Claude Code, DeepSeek Harness) on ChronoAI infrastructure and exposes them over public interfaces. End users install nothing.
+A cloud-hosted service that runs agents on ChronoAI infrastructure and exposes
+their environment and conversations through public interfaces. End users install
+nothing. The one supported agent provider is Codex; additional providers require
+their own Layer 3 directory and evidence against pinned versions.
 
-**Topology — two pod roles:**
+**Topology: two pod roles.**
 
 | Pod | Contains | Responsibility |
 |---|---|---|
-| **Control plane pod** | Layers 1, 2, 3 | Public interfaces, core session model, kernel adapters. One deployment, horizontally scalable. |
-| **Bot pod** | Layer 4 | One sandboxed agent runtime per session. Many, ephemeral, one per active session. |
+| **Control plane pod** | Layers 1, 2, 3 | Public interfaces, the sandbox model, orchestration, and the sandbox adapter. One deployment; currently one API replica while visitor/rate counters are process-local. |
+| **Sandbox pod** | Layer 4 | One isolated CMA Sandbox containing Workspaces, Worktrees, and Agents. Many, provisioned by the sandbox provider. |
 
-The control plane never executes agent code. Bot pods never serve public traffic.
+The control plane never executes agent code. Sandbox pods never serve public
+traffic. A Sandbox is not an Agent: multiple Agents may work concurrently in
+distinct Worktrees inside one Sandbox.
 
-**Consumers.** CMA (ChronoAI Managed Agent) is a backend service. Its clients are other products' frontends and backends (NyxID Chat, FKST Chat). CMA's own `web/` frontend is an operational dashboard, the terminal surface, and the **reference client for the priority-1 public interface**. It is not the primary interaction path.
+**Consumers.** CMA is a backend service for product frontends and backends.
+Its own `web/` frontend is the operational dashboard, profile marketplace,
+Trigger publisher, public visitor journey, and reference client for the public
+interfaces. The main working surface is one Agent conversation in its Worktree,
+Workspace, and Sandbox. There is no terminal plane, separate Chat model, billing,
+sponsorship, or contribution-specific workflow.
 
-**The chat surface may call no route a third-party client could not call; its conversation wire is the Responses interface, and everything else it does is public REST/AG-UI.** The moment it needs something those public interfaces lack, the answer is to add it to the appropriate public interface, never to add a private route for the first-party client.
+**The conversation surface may call no route a third-party client could not
+call.** Instance and profile management use public REST; live Agent conversations
+use public AG-UI, and the public Responses interface projects the same Agent
+conversation for compatible clients. A missing first-party capability must be
+added to the appropriate public interface, never a private route.
 
-That is a stricter rule than the one it replaces, not a relaxation. "Features must not be built there that belong in the API" asked whether a feature *belonged* in the API, which is a judgement somebody makes; this asks whether the API *already projects it*, which is checkable. And the reason for having a first-party client at all is that `acp-kernel`'s stated exit criterion is that a product frontend can build a chat interface on the public interfaces — a claim nobody had tested. A client held to the same constraints as a third party is the only thing that keeps it honest; a client permitted one private route would prove nothing about the one somebody else has to build.
+A CMA Trigger brings a visitor to an Agent of their own, never the publisher's.
+GET, navigation, and an OAuth callback do not start work. An explicit visitor
+action supplies consent and admits the durable operation.
 
 ---
 
@@ -50,6 +66,30 @@ source, tests, and package documentation; it does not join the service project
 under `api/` or `web/`. Neither SDK is published to an external package registry:
 consumers use the checked-out source, while local package and scratch-consumer
 checks prove the exported surfaces without creating a distribution channel.
+
+### 2.1 Terminology
+
+The maintainer's definitions below are authoritative. Every resource, API path
+and UI noun uses these words. "Session" is retired except for the existing
+`GET /auth/session` route naming the browser sign-in session and vocabulary
+required by an external protocol.
+
+**1. CMA Environment**
+- 1.1 **CMA Sandbox** — the sandbox (pod) CMA starts for a user on Kubernetes.
+- 1.2 **CMA Workspace** — a directory within a CMA Sandbox; one sandbox can have multiple workspaces.
+- 1.3 **CMA Worktree** — a git worktree opened in a CMA Workspace; one workspace can have multiple worktrees.
+- 1.4 **CMA Agent** — the agent (e.g. a codex process) opened in one worktree; one worktree has one and only one agent.
+
+**2. CMA Environment Config**
+- 2.1 **CMA Agent Profile**: model name; thinking effort; permission level; agent skills (Ornn skills, installed at the worktree/agent level in the provider's own convention, never sandbox-global); agent system prompt.
+- 2.2 **CMA Workspace Profile**: workspace path — a public GitHub repository URL (default branch cloned to `/home/cma/<repo>`) or a custom directory name (`/home/cma/<name>`, git-initialised); the agent profiles for this workspace (several, one per agent/worktree).
+- 2.3 **CMA Sandbox Profile**: cpu (millicores); memory (MiB); NyxID service scope list (the scoped agent key, available to the whole sandbox); **agent provider** (codex; claude code and dsh disabled) and **model access type** (ChronoAI-managed LLM or the user's own credentials) — placed here because both are properties of the pod's home; maximum workspaces; maximum agents per workspace; the workspace profiles for this sandbox; software installation commands (global to the sandbox); environment variables (global).
+
+**3. Mutability.** A Sandbox Profile is immutable once its sandbox is provisioned. Workspaces and agents inside a sandbox are mutable: the user may add a workspace from any workspace profile and an agent from any agent profile within the limits. Profiles are versioned; instances pin snapshots. A profile marketplace lets users publish sandbox, workspace and agent profiles publicly.
+
+**4. Interaction.** A user always interacts with one agent, in one worktree, in one workspace, in one sandbox. The research use case is exactly: an agent in a worktree of `/home/cma/trureturing` (cloned from `https://github.com/the-omega-institute/trureturing`) inside a sandbox with the required software installed.
+
+**5. CMA Trigger.** An external button that brings the clicking user to an agent **of their own** (never the trigger owner's). Its configuration names the sandbox, workspace and agent profiles and, per level, whether the visitor's existing instance is reused: (a) create a new sandbox; (b) create a new workspace in the visitor's existing sandbox; (c) create a new agent in the visitor's existing workspace. The backend stores that behaviour under a trigger id and gives the owner integration snippets for web pages and Markdown. The owner lists the source URLs the button may be embedded on.
 
 ### `infra/` — fixed contents
 
@@ -101,7 +141,7 @@ Their cloud-side halves are still not here and cannot be: the IAM grant letting
 the service account read the secret, and the gateway the routes attach to, are
 infrastructure this repository consumes rather than owns.
 
-`infra/runtime/` is an image and nothing else. It carries no `deployment.yaml`, no `service.yaml` and no config, and that absence is the point: the bot pod is scheduled by the sandbox provider, not by this repository. CMA hands the provider an image URI and an entrypoint and gets an isolated runtime back. A Deployment here would mean the control plane was scheduling agent workloads itself, which §1 forbids.
+`infra/runtime/` is an image and nothing else. It carries no `deployment.yaml`, no `service.yaml` and no config, and that absence is the point: the Sandbox pod is scheduled by the sandbox provider, not by this repository. CMA hands the provider an image URI and an entrypoint and gets an isolated runtime back. A Deployment here would mean the control plane was scheduling agent workloads itself, which §1 forbids.
 
 ### `docs/`
 
@@ -111,103 +151,129 @@ All documentation lives in `docs/`, and every file in it is markdown. The only d
 
 ## 3. The four-layer architecture
 
-CMA is a four-layer system. **Source files are placed under their layer's directory.** The rule is: seeing a file's path must tell you which layer it belongs to, with no further reading.
+CMA is a four-layer system. **Source files are placed under their layer's
+directory.** Seeing a file's path must tell you which layer owns it.
 
 ```
 api/crates/
-  layer1-public/     Layer 1 — public interfaces          (control plane pod)
-  layer2-core/       Layer 2 — core session model + events (control plane pod)
-  layer3-adapter/    Layer 3 — ACP-shaped kernel adapters  (control plane pod)
-  layer4-runtime/    Layer 4 — sandboxed agent runtime     (bot pod)
-  cma/               binary — wires layers 1-3 into the control plane
+  layer1-public/     Layer 1: public interface projections (control plane pod)
+  layer2-core/       Layer 2: sandbox model and events     (control plane pod)
+  layer3-adapter/    Layer 3: sandbox adapter              (control plane pod)
+  layer4-runtime/    Layer 4: sandbox supervisor           (sandbox pod)
+  cma/               binary: composition, persistence and production adapters
 ```
 
-### Layer 1 — public interfaces (control plane pod)
+### Layer 1: public interfaces
 
-Six interface types, in priority order. Each exposes semantic operations expressed in that protocol's own idiom:
+Interfaces expose semantic operations in their protocol's own idiom:
 
 | Priority | Interface | Client | Directory |
 |---|---|---|---|
-| 1 | **AG-UI** | frontend clients | `layer1-public/src/agui/` |
-| 2 | **Responses** (standard OpenAI Responses API) | frontend chat clients | `layer1-public/src/responses/` |
-| 3 | **REST** | backend server clients | `layer1-public/src/rest/` |
-| 4 | **PTY** | CLI-like streaming clients | `layer1-public/src/pty/` |
-| 5 | **MCP** | agent clients | `layer1-public/src/mcp/` |
-| 6 | **A2A** | agent clients | `layer1-public/src/a2a/` |
+| 1 | **AG-UI** | frontend conversation clients; `threadId` is the Agent id | `layer1-public/src/agui/` |
+| 2 | **Responses** | compatible conversation clients; `conversation` is the Agent id | `layer1-public/src/responses/` |
+| 3 | **REST** | resource management, profiles, marketplace, Triggers and Launches | `layer1-public/src/rest/` |
+| 4 | **PTY** | absent in this release; no terminal plane | `layer1-public/src/pty/` (typed refusal only) |
+| 5 | **MCP** | explicit unsupported-operation response; no invented Agent tools | `layer1-public/src/mcp/` |
+| 6 | **A2A** | explicit unsupported-operation response; no invented Agent tasks | `layer1-public/src/a2a/` |
 
-Each interface is a **projection** of the same underlying core session model. Interfaces may expose a *subset* of core operations where the protocol cannot express one — but they must never invent an operation that does not exist in Layer 2, and they must never carry business logic.
+Each interface is a **projection** of the same core model. It may expose a
+subset of core operations, but must never invent an operation absent from
+Layer 2 or carry business logic. Refusals are explicit, typed, and named.
 
-### Layer 2 — the session core: models and events (control plane pod)
+### Layer 2: the sandbox model
 
-The single tunnel. Every Layer 1 interface talks to this and only this. It owns:
+The single tunnel. Every Layer 1 interface talks to Layer 2 and only Layer 2.
+It owns:
 
-- the session model and its lifecycle states
-- the durable, append-only event log with a per-session monotonic sequence
-- what a session was granted, and what it was refused
-- approval and permission state
-- usage and metering state
+- Sandbox -> Workspace -> Worktree -> Agent aggregates, lifecycle states,
+  ownership, limits, durable orchestration and recovery.
+- Agent, Workspace and Sandbox Profiles: editable drafts, immutable published
+  revisions, pinned instance snapshots, marketplace visibility and trust.
+- Trigger revisions, placements, Launch consent, reuse decisions, connection
+  requirements and durable progress.
+- Append-only Sandbox and Agent event logs, per-object monotonic sequences,
+  approval state, usage, idempotency and optimistic concurrency.
+- Platform defaults, count-based quotas, operator settings and audit events.
 
-Layer 2 is protocol-agnostic, kernel-agnostic and terminal-agnostic. **No protocol name and no kernel name may appear in Layer 2 identifiers, types, or comments**, and no machinery belonging to a domain a layer below owns. If you find yourself writing `agui_` or `codex_` here, the abstraction is wrong; if you find yourself parsing an escape sequence here, the code is in the wrong crate.
+Layer 2 is protocol-agnostic and provider-agnostic. **No protocol name or
+provider implementation name belongs in Layer 2 identifiers, types, or
+comments.** A domain provider selection is data; the provider's process,
+filesystem conventions and wire vocabulary belong below this layer.
+The core models the union of required domain operations, never only the
+intersection conveniently exposed by today's interfaces.
 
-Layer 2 is the superset: it models the union of what all interfaces and all kernels need, never the intersection.
+A Sandbox pins its complete Sandbox Profile at provisioning. Its service scope,
+provider, model access, resources, software and environment do not change
+implicitly. The owner may add Workspaces and Agents from independently selected
+published profiles within the recorded limits. Published profile changes never
+mutate existing instances.
 
-#### Capabilities: what a session can do never changes quietly
+#### Capabilities must be proved
 
-Two facts have to be told apart everywhere in this service: **"this session can never do that"** and **"that just failed"**. Only the second is worth retrying; only the first is worth telling somebody at creation; a caller who cannot distinguish them does neither well.
+"This can never do that" and "that just failed" are separate typed facts.
+Unsupported abilities are refused before provisioning; transient failure is
+reported with its operation identity and a supported recovery path.
 
-So:
+A runtime advertises only abilities demonstrated against its pinned version.
+The control plane admits the exact supported runtime contract before using it.
+A new image name is not evidence of a capability, and a deployment does not
+silently recompute an instance's authority.
 
-- A kernel **advertises** what it can do — hold a conversation, render a terminal, be carried onto a replacement runtime, accept input mid-turn, be interrupted, report usage. Statically, because these describe the kernel rather than the moment.
-- A session carries a **granted set**, decided when it is created and recorded rather than recomputed. It is the intersection of what its kernel can do with what its mode needs.
-- That set changes **only by an explicit, recorded act of its owner** — moving a session between planes, which is a rotation and is written to its log. Never by a recomputation, never as a side effect, and never without the owner having asked. A caller who reads a session's granted set once and acts on it is right until the owner changes it themselves.
-- A request outside that set fails **typed and named** — the ability it lacks, in words a caller can act on — before anything is provisioned, and never as a 404 and never by silently doing nothing.
+### Layer 3: the sandbox adapter
 
-**A capability is claimed only after it has been demonstrated against the pinned kernel version.** Every one currently advertised was established by driving the real thing; "the documentation says so" is not evidence. A capability claimed and absent is discovered by whoever tried to use it, which is the failure this whole model exists to remove.
-
-### Layer 3 — the Agent Client Protocol (control plane pod)
-
-Abstracts the agent runtime kernel so Layer 2 does not know or care which kernel is running.
-
-**The contract is the Agent Client Protocol**, not a shape resembling it. Its types are ACP's own, re-exported under this project's names, so a conversation crossing this boundary is already in a vendor-neutral vocabulary rather than translated into one. What the protocol does not define, this layer adds beside it and keeps separate: the runtime lifecycle a hosted sandbox needs, and the terminal plane ACP has no word for.
+`SandboxAdapter` abstracts runtime provisioning, install, credentials,
+Workspaces, Worktrees, Agent homes, conversations, checkpoints and restore.
+Its request types are neutral. Conversation types use the Agent Client
+Protocol's own vocabulary; hosting operations sit beside that contract.
 
 ```
 layer3-adapter/src/
-  lib.rs            the contract — the trait and its errors
-  conversation.rs   ACP's own vocabulary, re-exported
-  runtime.rs        what ACP does not define: provisioning, geometry, handles
-  hosted/           running any kernel in a provider-managed sandbox
-  terminal.rs       folding a runtime's bytes into a screen
-  codex/            Codex
-  claude_code/      Claude Code
-  dsh/              DeepSeek Harness
+  lib.rs            public contract exports
+  adapter.rs        SandboxAdapter
+  conversation.rs   ACP conversation vocabulary
+  runtime.rs        provisioning, install, credentials and runtime handles
+  workspace.rs      Workspace and Worktree operations
+  agent.rs          Agent home and conversation operations
+  checkpoint.rs     writer-fenced checkpoint and restore operations
+  hosted/           shared runtime transport and lifecycle
+  provider/         sandbox-provider transport
+  codex/            the one supported agent provider's conventions
 ```
 
-**The abstraction and its implementations are separate.** The trait file must contain no kernel-specific type, constant, or conditional. Adding a kernel means adding a directory, never editing the trait to accommodate it.
+**The abstraction and implementation remain separate.** Provider-specific
+conditions never enter the adapter trait or shared hosting machinery. Adding a
+provider means adding a directory, not teaching the supervisor or core its name.
+Unsupported providers have no selectable runtime or frontend path.
 
-**A kernel's directory holds what is true of that kernel and nothing else** — the program its pod runs, where it keeps its conversation, its private words for how much its agent may do unattended, and what it can be relied on to do. Everything about *being hosted* — bringing a sandbox up, the link back, the wire the two ends settle on, the credential that rides on it — is shared, because none of it changes with the agent inside.
+### Layer 4: the sandbox supervisor
 
-A kernel need not speak ACP itself. One does not, and translating its wire is its own directory's work; nothing above Layer 3 knows a third protocol exists.
+The runtime is a separate binary, not linked into the control plane. It runs as
+the sandbox user `cma`, with home `/home/cma`, and supervises:
 
-### Layer 4 — the agent runtimes (bot pod)
+- One-time Sandbox software installation as `cma`, before any credential is
+  delivered or the credential-bearing proxy starts.
+- Credential activation after install; workspace clone or git initialization
+  and workspace setup after credential availability.
+- Distinct Worktrees and Agent homes, with per-Agent skills and configuration
+  supplied by Layer 3. Agents never execute in the main checkout.
+- Conversation bridges, operation receipts, writer fencing, whole-home
+  checkpoint/restore, and resource observations.
 
-The actual agent process plus the ChronoAI-authored supervisor that hosts it, relays its terminal, carries its conversation, and stands between it and every credential it would otherwise hold.
+The supervisor is provider-neutral. It receives process and home plans and
+carries conversation data without interpreting a provider's transcript format.
+The current runtime contract is version **3**, identified by the image label
+`dev.chrono.cma.runtime-contract`; unsupported or missing versions are refused.
 
-Three kernels run here, each behind its own bridge: **Codex**, **Claude Code**, and the **DeepSeek Harness**.
-
-**The supervisor is kernel-neutral and must stay that way.** It is told what to run, where that program keeps its conversation, and what to write before starting it. It knows none of those things itself, and it reads none of what it carries: a conversation crosses as opaque bytes, deliberately, so a kernel changing its format cannot break the pod hosting it.
-
-Layer 4 runs in the bot pod and is a **separate binary**. It is not linked into the control plane.
-
-### Dependency rule — enforced in CI
+### Dependency rule: enforced in CI
 
 ```
-layer1-public  ──►  layer2-core  ──►  layer3-adapter
-layer4-runtime  (independent; shares only wire-protocol types)
+layer1-public -> layer2-core -> layer3-adapter
+layer4-runtime (independent; shares only wire-protocol types)
 ```
 
-- Layer 1 **must not** depend on Layer 3.
-- Layer 2 **must not** depend on Layer 1.
-- Layer 3 **must not** depend on Layer 1 or Layer 2.
+- Layer 1 must not depend on Layer 3.
+- Layer 2 must not depend on Layer 1.
+- Layer 3 must not depend on Layer 1 or Layer 2.
 - Nothing in the control plane may depend on `layer4-runtime`.
 
 A dependency edge not in this list is a CI failure, not a review comment.
@@ -224,35 +290,44 @@ Secrets are **referenced** in `secret.yaml`, never valued. No real secret value 
 
 ---
 
-## 5. A session in progress is never interrupted
+## 5. A sandbox in progress is never interrupted
 
-**No deployment, upgrade, restart or rollout may interrupt a session its owner has not stopped.** This is a hard rule and outranks every convenience below it. A session that stops working because CMA was upgraded is a defect of the same severity as losing the data.
+**No deployment, upgrade, restart or rollout may interrupt a Sandbox its owner
+has not stopped.** This rule outranks convenience. Work that disappears because
+CMA was upgraded is a data-loss defect.
 
-What "not interrupted" means, precisely:
-
-- The session keeps its identifier, its history, its configuration and its place in the owner's list.
-- Everything it has shown remains visible. A session that returns blank has lost the work as far as its owner can tell.
-- Work resumes where it left off — the agent continues its conversation rather than starting a new one.
+- The Sandbox, its Workspaces, Worktrees and Agents keep their identifiers,
+  configuration, history and place in the owner's hierarchy.
+- Everything already shown remains visible. A returning blank conversation has
+  lost work as far as its owner can tell.
+- Agents resume from their recorded conversations, not new conversations that
+  merely look similar.
 
 ### The database is the only authority
 
-Which sessions should be running is recorded, never remembered. A control plane process holds no state that matters: on boot, and continuously thereafter, it reads the record and makes reality match it — taking back over the runtimes that are still alive, replacing the ones that are gone, and reclaiming the ones nothing is entitled to.
+Desired state, admitted operations, claims and progress are recorded, never
+remembered only by a control-plane process. At boot and continuously, the
+controller takes back over live runtimes, replaces lost ones, recovers durable
+operations and reclaims resources no record owns. Reconciliation is owner- and
+writer-fenced; an expired worker must not mutate a newer worker's resources.
 
-A control plane that has just started has therefore no privileged knowledge, and needs none. This is what makes replacing it safe.
+Quiet Sandboxes pause according to platform settings after every Agent is quiet.
+Any admitted message, creation or Launch that needs one revives it. The owner
+does not need to repair a deployment by clicking a revive control.
 
-### Runtimes are versioned, and rotated to match
+### Runtime rotation and checkpoints
 
-The control plane knows which runtime version it expects. Any session running an older one is **rotated**: its agent transcript is snapshotted to chrono-storage, a new pod is brought up on the current image, and the agent resumes from that snapshot.
+Runtime image drift causes recorded rotation. A writer fence first holds the
+whole Sandbox home, including Workspaces, Worktrees, Agent homes and transcripts,
+for a consistent checkpoint. Restore installs that snapshot into a replacement
+runtime; the controller resumes the Agents and records the resulting version.
+The two retained checkpoints provide bounded recovery history.
 
-Rotation is preferred over upgrading a pod in place, because the runtime image changes too and a rotation exercises the same path a lost sandbox does.
-
-Rotation is not silent:
-
-- The record tracks the runtime version each session is on, every rotation that has happened, and the snapshot each one resumed from.
-- The snapshot carries a timestamp, and that timestamp is shown to the owner: they are told the point their session is being carried forward from.
-- While a rotation is in progress the session is not interactive, and the interface says so. Accepting input that would be lost with the outgoing pod is worse than briefly refusing it.
-
-Never require the owner to do anything to keep a session alive. "Click revive after the deploy" is not an acceptable design.
+Rotation and restore are never silent. The record names the runtime version,
+checkpoint timestamp and progress. The UI preserves history and explains why
+input is temporarily unavailable. It must not accept input that could be lost
+with an outgoing runtime, invent progress from elapsed time, or require the
+owner to manually restart an Agent after deployment.
 
 ## 6. Branches
 
@@ -332,7 +407,7 @@ The merge is the release. Nothing is tagged or published before it, and nothing 
 
 The tag is the version of record. `api/Cargo.toml` and `web/package.json` are not bumped: a bot writing to `main` would put it ahead of `develop` for no gain, and the version those files carry is not what anything deploys.
 
-Publishing is not deploying. `infra/` is untouched by a release, and a new image becomes live only when someone changes a manifest to name it. `CHRONO_SANDBOX_IMAGE` is the sharpest case: under §5 it is the runtime version every live session is measured against, so moving it rotates every session, and that has to be a decision rather than a consequence of merging.
+Publishing is not deploying. `infra/` is untouched by a release, and a new image becomes live only when someone changes a manifest to name it. `CHRONO_SANDBOX_IMAGE` is the sharpest case: under §5 it is the runtime version every live Sandbox is measured against, so moving it rotates every Sandbox, and that has to be a decision rather than a consequence of merging.
 
 Full procedure in `docs/Release.md`.
 
@@ -360,7 +435,7 @@ The document carries a changelog at the end recording every change. **The change
 - Read this file before making structural changes. It governs.
 - **Each layer explicitly owns its scope.** Code that is semantically foreign to the layer it sits in is moved to where it belongs — not tolerated, not wrapped, not left with a comment explaining itself. A kernel's name in the supervisor, a protocol's vocabulary in the core, an escape sequence anywhere above Layer 3: each is a defect of the same kind, and each is fixed by moving the code rather than by justifying it. This is checked deliberately, not assumed.
 - Never place a source file outside its layer's directory to make an import easier — fix the design instead.
-- **Never claim an ability that has not been demonstrated.** A capability, a resume path, a wire method: run it against the pinned version before advertising it. Where something cannot be done, declare the absence — a session refused by name at creation is a session somebody can plan around, and one that accepts a request and silently drops it is not.
+- **Never claim an ability that has not been demonstrated.** A capability, a resume path, a wire method: run it against the pinned version before advertising it. Where something cannot be done, declare the absence — a Sandbox or Agent refused by name at creation is something a caller can plan around, and one that accepts a request and silently drops it is not.
 - Never add a root-level file to satisfy a tool; move the tool's config into `api/` or `web/`.
 - Never weaken a CI gate to make a build pass. If a gate is wrong, change the gate deliberately in its own PR with a stated reason.
 - Never add a gitleaks allowlist entry. Change the offending string.
