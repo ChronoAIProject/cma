@@ -77,3 +77,23 @@ it('turns public validation extensions into field-level sentences without exposi
   expect(failure.uncertain).toBe(false);
   expect(failure.message).not.toMatch(/\b[a-z]+_[a-z_]+\b/);
 });
+
+it('associates named secret refusals with environment fields without needing their values', () => {
+  const failure = profileFailure({
+    status: 422,
+    code: 'profile_public_refused',
+    field: 'environment_variables.SERVICE_CONFIGURATION',
+    reason: 'secret_like_environment_value',
+  });
+  expect(failure.fields).toEqual({
+    environmentVariables:
+      'Remove the sensitive value for SERVICE_CONFIGURATION before making this profile public.',
+  });
+  expect(failure.message).toBe(failure.fields.environmentVariables);
+  expect(failure.uncertain).toBe(false);
+  const unavailable = profileFailure({ status: 503, code: 'profile_secret_scanner_unavailable' });
+  expect(unavailable.message).toBe(
+    'Environment values could not be checked. This profile was not published publicly.',
+  );
+  expect(unavailable.uncertain).toBe(true);
+});

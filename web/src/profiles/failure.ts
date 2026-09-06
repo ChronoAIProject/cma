@@ -62,15 +62,21 @@ export function profileFailure(error: unknown): ProfileFailure {
   const problem = record(error);
   const code = typeof problem.code === 'string' ? problem.code : '';
   const reason = typeof problem.reason === 'string' ? problem.reason : '';
+  const variable =
+    typeof problem.field === 'string'
+      ? /^environment_variables\.([A-Z_][A-Z0-9_]*)$/.exec(problem.field)?.[1]
+      : undefined;
   const path = typeof problem.path === 'string' ? problem.path.split(/[.[]/, 1)[0] : undefined;
   const field =
     reason === 'invalid_workspace_name'
       ? 'directoryName'
-      : typeof problem.field === 'string'
-        ? FIELD_NAMES[problem.field]
-        : path === undefined
-          ? undefined
-          : FIELD_NAMES[path];
+      : variable !== undefined
+        ? 'environmentVariables'
+        : typeof problem.field === 'string'
+          ? FIELD_NAMES[problem.field]
+          : path === undefined
+            ? undefined
+            : FIELD_NAMES[path];
   const status = typeof problem.status === 'number' ? problem.status : undefined;
   const conflict = code === 'profile_version_conflict';
   const known: Readonly<Record<string, string>> = {
@@ -83,12 +89,18 @@ export function profileFailure(error: unknown): ProfileFailure {
       'This profile cannot be made public. Check its published revision and references.',
     profile_invalid: 'Review the profile fields before trying again.',
     marketplace_disabled: 'The marketplace is currently unavailable.',
+    profile_secret_scanner_unavailable:
+      'Environment values could not be checked. This profile was not published publicly.',
     idempotency_in_flight: 'This command is still being processed. Retry to check its outcome.',
     idempotency_recovery_required:
       'This command needs recovery. Its original request has been retained.',
   };
+  const validation =
+    reason === 'secret_like_environment_value' && variable !== undefined
+      ? `Remove the sensitive value for ${variable} before making this profile public.`
+      : REASONS[reason];
   const message =
-    REASONS[reason] ??
+    validation ??
     known[code] ??
     'The operation could not be confirmed. Retry to check its outcome.';
   return {
@@ -102,8 +114,6 @@ export function profileFailure(error: unknown): ProfileFailure {
         status === 408 ||
         status >= 500),
     fields:
-      field === undefined
-        ? {}
-        : { [field]: REASONS[reason] ?? 'Check this value before trying again.' },
+      field === undefined ? {} : { [field]: validation ?? 'Check this value before trying again.' },
   };
 }
