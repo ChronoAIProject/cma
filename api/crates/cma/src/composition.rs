@@ -38,6 +38,11 @@ pub(crate) struct ControlPlaneComposition {
 
 impl ControlPlaneComposition {
     pub(crate) async fn build(config: &Config) -> Result<Self, String> {
+        let checkpoint_storage = crate::store::ChronoStorage::new(
+            &config.runtime.platform_base_url,
+            &config.checkpoint_storage,
+        )
+        .map_err(|error| format!("checkpoint storage is not usable: {error}"))?;
         let stores = Arc::new(
             MongoStores::connect(
                 &config.mongodb_uri,
@@ -45,6 +50,7 @@ impl ControlPlaneComposition {
                 &config.deployment_id,
                 &config.auth_encryption_key,
                 config.activity_retention,
+                checkpoint_storage,
             )
             .await
             .map_err(|error| format!("durable stores are not usable: {error}"))?,
@@ -62,7 +68,7 @@ impl ControlPlaneComposition {
                     agent_effort: config.default_profiles.agent_effort,
                 },
                 profile_policy.capacity_bounds,
-                &profile_policy.secret_patterns,
+                profile_policy.public_value_scanner.as_ref(),
             )
             .await
             .map_err(|error| format!("default profiles are not usable: {error}"))?;
@@ -164,6 +170,7 @@ impl ControlPlaneComposition {
         let worker_holder = format!("{}:{}", config.deployment_id, uuid::Uuid::new_v4());
         let sandbox_lifecycle = SandboxLifecycleComposition::new(
             SandboxLifecycleDependencies {
+                checkpoint_objects: Arc::clone(&stores.checkpoint_objects),
                 store: stores.sandbox_model.clone(),
                 adapter,
                 credentials: sandbox_credentials,

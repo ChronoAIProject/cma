@@ -102,13 +102,11 @@ async fn public_publication_fails_closed_and_returns_only_the_variable_name() {
         ProfileStoreError::Validation(ProfileError::environment_secret("CONFIGURATION"))
     );
     assert!(!format!("{refusal}").contains("plain-value"));
-    assert!(
-        store
-            .sandbox_profile_revision(&value.id, 1)
-            .await
-            .unwrap()
-            .is_none()
-    );
+    assert!(store
+        .sandbox_profile_revision(&value.id, 1)
+        .await
+        .unwrap()
+        .is_none());
 }
 
 #[tokio::test]
@@ -186,13 +184,11 @@ async fn publication_rechecks_the_snapshot_after_scanning_without_holding_the_st
     store.save_sandbox_draft(1, value.clone()).await.unwrap();
     scanner.release.notify_one();
     assert_eq!(task.await.unwrap(), Err(ProfileStoreError::Conflict));
-    assert!(
-        store
-            .sandbox_profile_revision(&value.id, 1)
-            .await
-            .unwrap()
-            .is_none()
-    );
+    assert!(store
+        .sandbox_profile_revision(&value.id, 1)
+        .await
+        .unwrap()
+        .is_none());
 }
 
 #[tokio::test]
