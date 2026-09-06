@@ -154,7 +154,10 @@ fn persist_application(
     Ok(SandboxMaintenanceOutcome::Scheduled)
 }
 
-fn validate_event_stream(state: &State, sandbox_id: &SandboxId) -> Result<(), SandboxStoreError> {
+pub(super) fn validate_event_stream(
+    state: &State,
+    sandbox_id: &SandboxId,
+) -> Result<(), SandboxStoreError> {
     for (index, event) in state
         .sandbox_events
         .get(sandbox_id)

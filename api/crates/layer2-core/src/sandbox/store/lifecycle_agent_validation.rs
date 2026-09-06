@@ -4,7 +4,7 @@ use crate::sandbox::queued_message::queued_message_origin;
 use crate::sandbox::{
     Agent, AgentLogKind, AgentOperationDelivery, AgentOperationIntent, AgentOperationRecord,
     AgentStatus, QueuedMessageState, Sandbox, SandboxImageRotationPhase, SandboxLifecycleOperation,
-    SandboxPausePhase, SandboxRevivePhase,
+    SandboxPausePhase, SandboxRevivePhase, SandboxStatus,
 };
 
 use super::lifecycle_event_validation::validate_lifecycle_events;
@@ -57,7 +57,9 @@ pub(super) fn validate_lifecycle_agent_phase(
             {
                 return Err(invalid("sandbox-only lifecycle phase changed agents"));
             }
-            validate_final_publication_agents(current, agents)?;
+            if mutation.sandbox.status == SandboxStatus::Active {
+                validate_final_publication_agents(current, agents)?;
+            }
         }
     }
 
@@ -83,6 +85,13 @@ pub(super) fn validate_lifecycle_agent_phase(
 }
 
 fn agent_phase(current: &Sandbox, next: &Sandbox, no_agents: bool) -> AgentPhase {
+    if no_agents
+        && (next.status == SandboxStatus::Failed
+            || (current.lifecycle.operation == next.lifecycle.operation
+                && next.work.attempts == current.work.attempts.saturating_add(1)))
+    {
+        return AgentPhase::SandboxOnly;
+    }
     match current.lifecycle.operation.as_ref() {
         Some(SandboxLifecycleOperation::Pause {
             phase: SandboxPausePhase::PauseAgents,

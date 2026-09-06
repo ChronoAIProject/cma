@@ -40,6 +40,10 @@ pub enum AgentLogKind {
         conversation_id: String,
         runtime_generation: u64,
     },
+    RuntimeGenerationRetired {
+        previous_generation: u64,
+        runtime_generation: u64,
+    },
     WorkStepCompleted {
         step: AgentWorkStep,
     },

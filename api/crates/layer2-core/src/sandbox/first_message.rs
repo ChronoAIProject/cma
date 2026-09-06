@@ -173,7 +173,13 @@ impl FirstMessageRecord {
             FirstMessageDelivery::Completed => {
                 fenced && self.completed_at.is_some() && self.failure.is_none()
             }
-            FirstMessageDelivery::Failed | FirstMessageDelivery::RecoveryRequired => {
+            FirstMessageDelivery::Failed => {
+                (fenced || self.unattempted_runtime_loss())
+                    && self.failed_at.is_some()
+                    && self.completed_at.is_none()
+                    && self.failure.is_some()
+            }
+            FirstMessageDelivery::RecoveryRequired => {
                 fenced
                     && self.failed_at.is_some()
                     && self.completed_at.is_none()
@@ -349,6 +355,32 @@ impl FirstMessageRecord {
             self.state,
             FirstMessageDelivery::Completed | FirstMessageDelivery::Failed
         )
+    }
+
+    pub(crate) fn fail_runtime_loss(&mut self, at: String) -> Result<(), SandboxModelError> {
+        if self.is_terminal() {
+            return Ok(());
+        }
+        self.state = FirstMessageDelivery::Failed;
+        self.failed_at = Some(at.clone());
+        self.failure = Some(FirstMessageFailure::new(
+            "runtime_lost",
+            "the runtime was lost before the first message completed",
+            false,
+            at,
+        )?);
+        self.validate()
+    }
+
+    fn unattempted_runtime_loss(&self) -> bool {
+        self.dispatch_generation == 0
+            && self.dispatch_fenced_at.is_none()
+            && self.write_confirmed_at.is_none()
+            && self.execution_observed_at.is_none()
+            && self
+                .failure
+                .as_ref()
+                .is_some_and(|failure| failure.code == "runtime_lost" && !failure.retryable)
     }
 
     fn require_state(&self, expected: FirstMessageDelivery) -> Result<(), SandboxModelError> {

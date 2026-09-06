@@ -400,6 +400,20 @@ fn validate_agent_change(
         .ok_or(SandboxStoreError::SequenceConflict)?;
     let status_transition = current.status == next.status
         || current.status.transition(next.status).ok() == Some(next.status);
+    let mut expected_work = current.work.clone();
+    if current.status == crate::sandbox::AgentStatus::Paused
+        && next.status == crate::sandbox::AgentStatus::Ready
+        && current
+            .conversation
+            .first_message
+            .as_ref()
+            .is_some_and(|message| message.state == crate::sandbox::FirstMessageDelivery::Queued)
+    {
+        expected_work.schedule(
+            crate::sandbox::AgentWorkStep::DispatchFirstMessage,
+            appended_at.into(),
+        );
+    }
     if change.logs.len() > MAX_AGENT_LOG_BATCH_SIZE
         || actual_last_seq != current.conversation.last_seq
         || change.expected_revision != current.revision
@@ -410,7 +424,7 @@ fn validate_agent_change(
         || !current.status.is_live()
         || !next.status.is_live()
         || !status_transition
-        || current.work != next.work
+        || expected_work != next.work
         || current.work.step.is_pending()
         || current.work.lease.is_some()
         || current.requested_stop_reason.is_some()

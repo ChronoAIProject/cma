@@ -63,6 +63,21 @@ pub(super) fn fold_agent_log(
                 latest_conversation = Some((conversation_id.clone(), *runtime_generation));
                 usage.open_generation(*runtime_generation)?;
             }
+            AgentLogKind::RuntimeGenerationRetired {
+                previous_generation,
+                runtime_generation,
+            } => {
+                let Some((_, generation)) = latest_conversation.as_mut() else {
+                    return Err("agent runtime retirement has no conversation".into());
+                };
+                if transcript.active.is_some()
+                    || *generation != *previous_generation
+                    || previous_generation.checked_add(1) != Some(*runtime_generation)
+                {
+                    return Err("agent runtime retirement boundary is invalid".into());
+                }
+                *generation = *runtime_generation;
+            }
             AgentLogKind::TurnStarted {
                 turn_sequence,
                 origin_key,

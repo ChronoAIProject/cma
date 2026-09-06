@@ -61,6 +61,9 @@ mod lifecycle_validation_tests;
 mod maintenance;
 #[cfg(test)]
 mod maintenance_tests;
+mod reconciliation;
+#[cfg(test)]
+mod reconciliation_tests;
 mod workspace_lifecycle;
 
 #[async_trait]
