@@ -261,7 +261,7 @@ async fn commits_append_gap_free_events_claim_due_work_and_count_ready_once() {
         step.completed_at.get_or_insert_with(|| LATER.into());
     }
     ready.work = layer2_core::trigger_domain::LaunchWorkState::new(
-        layer2_core::trigger_domain::LaunchWorkStep::None,
+        layer2_core::trigger_domain::LaunchWorkStep::Finish,
         LATER.into(),
     );
     let ready = seed
@@ -476,7 +476,7 @@ async fn wakeable_blocked_launches_are_due_and_claimable_in_mongo() {
 async fn ready_admission_handoffs_indexes_and_corruption_are_strict() {
     let seed = seeded("launch_handoff").await;
     let ready_public = published(&seed, "ready_admission").await;
-    let mut ready = launch(&ready_public, 'r', 's');
+    let mut ready = launch(&ready_public, 'c', 'd');
     ready
         .start(LaunchConfirmation {
             surface: LaunchConsentSurface::Landing,
@@ -487,6 +487,11 @@ async fn ready_admission_handoffs_indexes_and_corruption_are_strict() {
         .unwrap();
     ready.transition(LaunchState::Ready, LATER.into()).unwrap();
     ready.first_message = FirstMessageDelivery::Completed;
+    for step in &mut ready.steps {
+        step.status = layer2_core::trigger_domain::LaunchStepStatus::Completed;
+        step.started_at.get_or_insert_with(|| LATER.into());
+        step.completed_at.get_or_insert_with(|| LATER.into());
+    }
     ready.validate().unwrap();
     assert!(seed
         .store
