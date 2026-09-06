@@ -24,6 +24,7 @@ mod conversation_recorder;
 mod credential;
 mod error;
 mod event;
+mod execution;
 mod first_message;
 mod first_message_dispatch;
 mod first_message_service;
@@ -112,6 +113,7 @@ pub use event::{
     AgentAvailableCommand, AgentConfigOption, AgentLogEntry, AgentLogKind, AgentPlanStep,
     SandboxEvent, SandboxEventKind,
 };
+pub use execution::ProvisioningExecution;
 pub use first_message::{
     FirstMessageDelivery, FirstMessageFailure, FirstMessageRecord, MAX_FIRST_MESSAGE_BYTES,
 };

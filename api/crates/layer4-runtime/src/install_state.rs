@@ -183,7 +183,11 @@ pub(crate) fn validate_request(request: &InstallRequest) -> Result<()> {
             "install request digest does not match its execution fields",
         ));
     }
-    CommandLimits::install(request.timeout_seconds, request.output_limit_bytes)?;
+    CommandLimits::install(
+        request.timeout_seconds,
+        request.total_timeout_seconds,
+        request.output_limit_bytes,
+    )?;
     validate_commands(&request.commands)
 }
 

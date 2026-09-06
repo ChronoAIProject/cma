@@ -1,6 +1,42 @@
 use super::*;
 
 #[test]
+fn preparation_and_setup_digests_bind_configured_limits() {
+    let prepare = WorkspaceRequest::with_clone_depth(
+        "prepare",
+        "workspace",
+        "repo",
+        WorkspaceSource::Init,
+        2,
+    );
+    let mut changed = prepare.clone();
+    changed.clone_depth = 3;
+    assert!(!changed.has_valid_sha256());
+    let setup = WorkspaceSetupRequest::with_timeouts(
+        "setup",
+        "workspace",
+        "repo",
+        Vec::new(),
+        20,
+        30,
+        1_024,
+    );
+    let mut changed = setup.clone();
+    changed.total_timeout_seconds = 31;
+    assert!(!changed.has_valid_sha256());
+    assert_eq!(
+        serde_json::from_value::<WorkspaceRequest>(serde_json::to_value(&prepare).unwrap())
+            .unwrap(),
+        prepare
+    );
+    assert_eq!(
+        serde_json::from_value::<WorkspaceSetupRequest>(serde_json::to_value(&setup).unwrap())
+            .unwrap(),
+        setup
+    );
+}
+
+#[test]
 fn worktree_digest_encodings_are_stable() {
     let add = WorktreeRequest::new(
         "worktree:repo:agent-a:add:v1",

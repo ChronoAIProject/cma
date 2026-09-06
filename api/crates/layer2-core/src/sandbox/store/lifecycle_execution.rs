@@ -338,6 +338,7 @@ fn validate_next_sandbox(
         || next.limits != current.limits
         || next.created_at != current.created_at
         || next.lifecycle.next_authority != current.lifecycle.next_authority
+        || next.work.execution != current.work.execution
     {
         return Err(invalid(
             "sandbox lifecycle mutation changed immutable state",

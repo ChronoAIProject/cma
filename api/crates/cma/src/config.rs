@@ -12,6 +12,7 @@ use layer2_core::ServiceId;
 
 use crate::{auth::AuthMode, store::AuthEncryptionKey};
 
+mod execution;
 mod profiles;
 mod runtime;
 
@@ -136,6 +137,7 @@ pub struct Config {
     pub mongodb_database: String,
     pub deployment_id: String,
     pub runtime: RuntimeConfig,
+    pub execution: layer2_core::sandbox::ProvisioningExecution,
     pub baseline_services: Vec<ServiceId>,
     pub auth_encryption_key: AuthEncryptionKey,
     pub activity_retention: Duration,
@@ -157,6 +159,7 @@ impl std::fmt::Debug for Config {
             .field("mongodb_database", &self.mongodb_database)
             .field("deployment_id", &self.deployment_id)
             .field("runtime", &self.runtime)
+            .field("execution", &self.execution)
             .field("baseline_services", &self.baseline_services)
             .field("auth_encryption_key", &self.auth_encryption_key)
             .field("activity_retention", &self.activity_retention)
@@ -215,6 +218,7 @@ impl Config {
 
         let deployment_id = runtime::deployment_id_from_lookup(&mut lookup)?;
         let runtime = RuntimeConfig::from_lookup(&mut lookup)?;
+        let execution = execution::from_lookup(&mut lookup)?;
         let baseline_services = parse_service_ids(
             "CHRONO_BASELINE_SERVICES",
             &value_or(
@@ -287,6 +291,7 @@ impl Config {
             mongodb_database,
             deployment_id,
             runtime,
+            execution,
             baseline_services,
             auth_encryption_key,
             activity_retention,

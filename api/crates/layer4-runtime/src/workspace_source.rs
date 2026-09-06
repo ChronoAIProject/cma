@@ -10,13 +10,22 @@ use crate::failure::{Result, RuntimeError};
 use crate::git::GitRunner;
 use crate::paths::{path_is_directory, safe_component, validate_selector};
 
-const CLONE_DEPTH: &str = "50";
+pub(crate) fn validate_clone_depth(depth: u32) -> Result<()> {
+    if !(1..=1_000).contains(&depth) {
+        return Err(RuntimeError::rejected(
+            "invalid_clone_depth",
+            "clone depth must be between 1 and 1000",
+        ));
+    }
+    Ok(())
+}
 
 pub(crate) async fn prepare(
     home: &Path,
     allow_local_git: bool,
     request: &WorkspaceRequest,
 ) -> Result<WorkspaceReceipt> {
+    validate_clone_depth(request.clone_depth)?;
     safe_component(&request.workspace_id, "workspace id")?;
     safe_component(&request.name, "workspace name")?;
     ensure_home(home)?;
@@ -41,6 +50,7 @@ pub(crate) async fn prepare(
                     &path,
                     url,
                     reference.as_deref(),
+                    request.clone_depth,
                     &git,
                     allow_local_git,
                 )
@@ -71,6 +81,7 @@ pub(crate) async fn inspect_prepared(
     allow_local_git: bool,
     request: &WorkspaceRequest,
 ) -> Result<Option<WorkspaceReceipt>> {
+    validate_clone_depth(request.clone_depth)?;
     safe_component(&request.workspace_id, "workspace id")?;
     safe_component(&request.name, "workspace name")?;
     let path = home.join(&request.name);
@@ -165,6 +176,7 @@ async fn clone_workspace(
     path: &Path,
     url: &str,
     reference: Option<&str>,
+    clone_depth: u32,
     git: &GitRunner,
     allow_local_git: bool,
 ) -> Result<()> {
@@ -175,7 +187,7 @@ async fn clone_workspace(
     let mut args = vec![
         OsString::from("clone"),
         OsString::from("--depth"),
-        OsString::from(CLONE_DEPTH),
+        OsString::from(clone_depth.to_string()),
     ];
     if let Some(reference) = reference {
         args.extend([

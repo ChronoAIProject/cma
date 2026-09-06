@@ -72,6 +72,9 @@ impl Workspace {
     }
 
     pub fn validate_origin(&self) -> Result<(), SandboxModelError> {
+        if let Some(execution) = self.work.execution {
+            execution.validate()?;
+        }
         if let WorkspaceOrigin::Trigger { launch_id } = &self.origin {
             if launch_id.trim().is_empty()
                 || launch_id.len() > 128

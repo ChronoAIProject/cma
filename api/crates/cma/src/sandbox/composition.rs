@@ -40,6 +40,7 @@ pub(crate) struct SandboxLifecycleDependencies {
 }
 
 pub(crate) struct SandboxLifecycleConfig {
+    pub execution: layer2_core::sandbox::ProvisioningExecution,
     pub holder: String,
     pub deployment_id: String,
     pub runtime_version: String,
@@ -82,7 +83,8 @@ impl SandboxLifecycleComposition {
             WorkspaceWorkerConfig::new(
                 format!("{}:workspace", config.holder),
                 config.deployment_id.clone(),
-            ),
+            )
+            .with_execution(config.execution),
         );
         let agent_worker = AgentWorker::new(
             AgentWorkerDependencies {
@@ -121,7 +123,8 @@ impl SandboxLifecycleComposition {
                 config.deployment_id,
                 config.runtime_version,
                 dependencies.policy,
-            ),
+            )
+            .with_execution(config.execution),
         );
 
         Self {

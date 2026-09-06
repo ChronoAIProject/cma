@@ -2,7 +2,10 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::CommandReceipt;
-use crate::{DEFAULT_COMMAND_OUTPUT_LIMIT_BYTES, DEFAULT_COMMAND_TIMEOUT_SECONDS};
+use crate::{
+    DEFAULT_COMMAND_OUTPUT_LIMIT_BYTES, DEFAULT_COMMAND_TIMEOUT_SECONDS,
+    DEFAULT_TOTAL_TIMEOUT_SECONDS,
+};
 
 /// How a workspace root is created.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -25,6 +28,7 @@ pub struct WorkspaceRequest {
     pub workspace_id: String,
     pub name: String,
     pub source: WorkspaceSource,
+    pub clone_depth: u32,
 }
 
 impl WorkspaceRequest {
@@ -34,12 +38,23 @@ impl WorkspaceRequest {
         name: impl Into<String>,
         source: WorkspaceSource,
     ) -> Self {
+        Self::with_clone_depth(operation_id, workspace_id, name, source, 50)
+    }
+
+    pub fn with_clone_depth(
+        operation_id: impl Into<String>,
+        workspace_id: impl Into<String>,
+        name: impl Into<String>,
+        source: WorkspaceSource,
+        clone_depth: u32,
+    ) -> Self {
         let mut request = Self {
             operation_id: operation_id.into(),
             request_sha256: String::new(),
             workspace_id: workspace_id.into(),
             name: name.into(),
             source,
+            clone_depth,
         };
         request.request_sha256 = request.computed_sha256();
         request
@@ -47,7 +62,8 @@ impl WorkspaceRequest {
 
     pub fn computed_sha256(&self) -> String {
         let mut digest = Sha256::new();
-        digest.update(b"chrono.workspace.prepare.v1\0");
+        digest.update(b"chrono.workspace.prepare.v2\0");
+        digest.update(self.clone_depth.to_be_bytes());
         field(&mut digest, &self.workspace_id);
         field(&mut digest, &self.name);
         match &self.source {
@@ -90,6 +106,8 @@ pub struct WorkspaceSetupRequest {
     pub commands: Vec<String>,
     #[serde(rename = "timeout_s")]
     pub timeout_seconds: u64,
+    #[serde(rename = "total_timeout_s")]
+    pub total_timeout_seconds: u64,
     #[serde(rename = "output_limit")]
     pub output_limit_bytes: u32,
 }
@@ -119,6 +137,26 @@ impl WorkspaceSetupRequest {
         timeout_seconds: u64,
         output_limit_bytes: u32,
     ) -> Self {
+        Self::with_timeouts(
+            operation_id,
+            workspace_id,
+            name,
+            commands,
+            timeout_seconds,
+            DEFAULT_TOTAL_TIMEOUT_SECONDS,
+            output_limit_bytes,
+        )
+    }
+
+    pub fn with_timeouts(
+        operation_id: impl Into<String>,
+        workspace_id: impl Into<String>,
+        name: impl Into<String>,
+        commands: Vec<String>,
+        timeout_seconds: u64,
+        total_timeout_seconds: u64,
+        output_limit_bytes: u32,
+    ) -> Self {
         let mut request = Self {
             operation_id: operation_id.into(),
             request_sha256: String::new(),
@@ -126,6 +164,7 @@ impl WorkspaceSetupRequest {
             name: name.into(),
             commands,
             timeout_seconds,
+            total_timeout_seconds,
             output_limit_bytes,
         };
         request.request_sha256 = request.computed_sha256();
@@ -134,10 +173,11 @@ impl WorkspaceSetupRequest {
 
     pub fn computed_sha256(&self) -> String {
         let mut digest = Sha256::new();
-        digest.update(b"chrono.workspace.setup.v1\0");
+        digest.update(b"chrono.workspace.setup.v2\0");
         field(&mut digest, &self.workspace_id);
         field(&mut digest, &self.name);
         digest.update(self.timeout_seconds.to_be_bytes());
+        digest.update(self.total_timeout_seconds.to_be_bytes());
         digest.update(self.output_limit_bytes.to_be_bytes());
         digest.update(
             u32::try_from(self.commands.len())

@@ -64,8 +64,12 @@ pub(crate) async fn recover_locked(config: &RuntimeConfig) -> Result<()> {
             "setup" => {
                 let request: layer3_adapter::WorkspaceSetupRequest = pending.request()?;
                 if !request.has_valid_sha256()
-                    || request.timeout_seconds == 0
-                    || request.output_limit_bytes == 0
+                    || crate::command::CommandLimits::install(
+                        request.timeout_seconds,
+                        request.total_timeout_seconds,
+                        request.output_limit_bytes,
+                    )
+                    .is_err()
                 {
                     return Err(invalid_digest());
                 }
@@ -89,6 +93,7 @@ async fn prepare(
     config: &RuntimeConfig,
     request: layer3_adapter::WorkspaceRequest,
 ) -> Result<ResponseFrame> {
+    crate::workspace_source::validate_clone_depth(request.clone_depth)?;
     if !request.has_valid_sha256() {
         return Err(invalid_digest());
     }
@@ -222,6 +227,11 @@ async fn setup(
     config: &RuntimeConfig,
     request: layer3_adapter::WorkspaceSetupRequest,
 ) -> Result<ResponseFrame> {
+    crate::command::CommandLimits::install(
+        request.timeout_seconds,
+        request.total_timeout_seconds,
+        request.output_limit_bytes,
+    )?;
     if !request.has_valid_sha256() {
         return Err(invalid_digest());
     }

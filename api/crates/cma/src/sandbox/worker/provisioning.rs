@@ -17,10 +17,19 @@ use crate::sandbox::runtime_mapping::sandbox_spec;
 impl SandboxWorker {
     pub(super) async fn provision(
         &self,
-        sandbox: Sandbox,
+        mut sandbox: Sandbox,
         now: SystemTime,
     ) -> Result<(), SandboxStoreError> {
         let spec = sandbox_spec(&sandbox, &self.config.deployment_id);
+        if sandbox.work.execution.is_none() {
+            let expected = sandbox.revision;
+            sandbox.work.execution = Some(self.config.execution);
+            sandbox.revision = expected.checked_add(1).ok_or(SandboxStoreError::Conflict)?;
+            self.dependencies
+                .store
+                .save_sandbox(expected, sandbox.clone())
+                .await?;
+        }
         match self.dependencies.adapter.provision(&spec).await {
             Ok(handle) => {
                 let mut next = sandbox;
@@ -48,15 +57,31 @@ impl SandboxWorker {
 
     pub(super) async fn install(
         &self,
-        sandbox: Sandbox,
+        mut sandbox: Sandbox,
         now: SystemTime,
     ) -> Result<(), SandboxStoreError> {
         let Some(runtime) = runtime(&sandbox) else {
             return self.fail_corrupt_claim(sandbox, now).await;
         };
-        let request = InstallRequest::new(
+        if sandbox.work.execution.is_none() {
+            let expected = sandbox.revision;
+            sandbox.work.execution = Some(self.config.execution);
+            sandbox.revision = expected.checked_add(1).ok_or(SandboxStoreError::Conflict)?;
+            self.dependencies
+                .store
+                .save_sandbox(expected, sandbox.clone())
+                .await?;
+        }
+        let execution = sandbox
+            .work
+            .execution
+            .expect("execution policy was persisted");
+        let request = InstallRequest::with_timeouts(
             format!("sandbox-install-v1:{}", sandbox.id),
             sandbox.profile.content.software_install_commands.clone(),
+            execution.command_timeout_seconds,
+            execution.total_timeout_seconds,
+            layer3_adapter::DEFAULT_COMMAND_OUTPUT_LIMIT_BYTES,
         );
         match self
             .dependencies
