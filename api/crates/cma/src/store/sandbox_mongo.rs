@@ -77,11 +77,21 @@ pub struct MongoSandboxStore {
 }
 
 impl MongoSandboxStore {
+    #[cfg(test)]
     pub(super) async fn open(client: &Client, name: &str) -> Result<Self, StoreError> {
+        Self::open_with_storage(client, name, super::checkpoint_storage::test_storage(name)).await
+    }
+
+    pub(super) async fn open_with_storage(
+        client: &Client,
+        name: &str,
+        objects: std::sync::Arc<dyn super::CheckpointBlobStore>,
+    ) -> Result<Self, StoreError> {
         let database = client.database(name);
         require_transaction_topology(&database).await?;
         initialize_collections(&database, SANDBOX_COLLECTIONS).await?;
-        let checkpoint_objects = MongoCheckpointObjectStore::open(client, name).await?;
+        let checkpoint_objects =
+            MongoCheckpointObjectStore::open_with_storage(client, name, objects).await?;
         let store = Self {
             client: client.clone(),
             checkpoint_objects,

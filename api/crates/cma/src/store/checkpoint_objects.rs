@@ -9,47 +9,63 @@ use layer3_adapter::hosted::{
 };
 use layer3_adapter::{AdapterError, Result as AdapterResult};
 use mongodb::bson::Document;
-use mongodb::gridfs::GridFsBucket;
 use mongodb::{Client, Collection};
 
+use super::checkpoint_storage::CheckpointBlobStore;
 use super::durability::majority_collection;
 use super::schema::initialize_collections;
 
 mod download;
 mod model;
+mod publication;
 mod purge;
 mod retention;
+mod tombstones;
 mod upload;
 
-use model::{
-    bucket_options, ensure_indexes, validate_sandbox_id, GRIDFS_CHUNKS, GRIDFS_FILES, MANIFESTS,
-};
+use model::{ensure_indexes, validate_sandbox_id, GATES, MANIFESTS, TOMBSTONES};
 pub(super) use retention::{prune_evicted, RetentionError};
 
 /// Mongo-backed archive authority shared by all sandbox-confined views.
 #[derive(Clone)]
 pub struct MongoCheckpointObjectStore {
     manifests: Collection<Document>,
-    files: Collection<Document>,
-    chunks: Collection<Document>,
-    bucket: GridFsBucket,
+    gates: Collection<Document>,
+    tombstones: Collection<Document>,
+    objects: Arc<dyn CheckpointBlobStore>,
+    client: Client,
 }
 
 impl MongoCheckpointObjectStore {
+    #[cfg(test)]
     pub(crate) async fn open(client: &Client, database_name: &str) -> Result<Self, StoreError> {
+        Self::open_with_storage(
+            client,
+            database_name,
+            super::checkpoint_storage::test_storage(database_name),
+        )
+        .await
+    }
+
+    pub(crate) async fn open_with_storage(
+        client: &Client,
+        database_name: &str,
+        objects: Arc<dyn CheckpointBlobStore>,
+    ) -> Result<Self, StoreError> {
         let database = client.database(database_name);
-        initialize_collections(&database, &[MANIFESTS]).await?;
+        initialize_collections(&database, &[MANIFESTS, GATES, TOMBSTONES]).await?;
 
         let manifests = majority_collection(&database, MANIFESTS);
-        let files = majority_collection(&database, GRIDFS_FILES);
-        let chunks = majority_collection(&database, GRIDFS_CHUNKS);
-        ensure_indexes(&manifests, &files, &chunks).await?;
+        ensure_indexes(&manifests).await?;
+        let tombstones = majority_collection(&database, TOMBSTONES);
+        tombstones::ensure_indexes(&tombstones).await?;
 
         Ok(Self {
             manifests,
-            files,
-            chunks,
-            bucket: database.gridfs_bucket(bucket_options()),
+            gates: majority_collection(&database, GATES),
+            tombstones,
+            objects,
+            client: client.clone(),
         })
     }
 
@@ -62,13 +78,20 @@ impl MongoCheckpointObjectStore {
         }))
     }
 
-    /// Delete one sandbox's manifests, files, and closed-but-unpublished stages.
+    /// Retire one sandbox and delete its external objects and durable upload stages.
     ///
     /// Work is deliberately bounded. `Unavailable` after partial progress asks the
     /// lifecycle worker to retry; each retry continues idempotently.
     pub async fn purge_sandbox(&self, sandbox_id: &str) -> AdapterResult<()> {
         validate_sandbox_id(sandbox_id)?;
         purge::purge_sandbox(self, sandbox_id).await
+    }
+
+    pub(crate) async fn cleanup_due(&self, now: std::time::SystemTime) -> AdapterResult<usize> {
+        let now = mongodb::bson::DateTime::from_system_time(now);
+        let manifests = purge::cleanup_due(self, now).await;
+        let tombstones = tombstones::cleanup_due(self, now).await;
+        Ok(manifests? + tombstones?)
     }
 }
 

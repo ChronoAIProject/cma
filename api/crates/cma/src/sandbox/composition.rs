@@ -28,6 +28,7 @@ use super::{
 use crate::{shutdown::ShutdownCoordinator, store::MongoSandboxStore};
 
 pub(crate) struct SandboxLifecycleDependencies {
+    pub checkpoint_objects: Arc<crate::store::MongoCheckpointObjectStore>,
     pub store: Arc<MongoSandboxStore>,
     pub adapter: Arc<dyn SandboxAdapter>,
     pub credentials: Arc<dyn SandboxCredentialController>,
@@ -52,6 +53,7 @@ pub(crate) struct SandboxLifecycleComposition {
     workspace: SandboxScheduler,
     agent: SandboxScheduler,
     checkpoints: SandboxScheduler,
+    checkpoint_cleanup: SandboxScheduler,
     updates: Arc<dyn AgentUpdateRecorder>,
 }
 
@@ -128,6 +130,9 @@ impl SandboxLifecycleComposition {
         );
 
         Self {
+            checkpoint_cleanup: SandboxScheduler::for_checkpoint_cleanup(
+                dependencies.checkpoint_objects,
+            ),
             updates,
             reconciliation,
             checkpoints,
@@ -151,7 +156,13 @@ impl SandboxLifecycleComposition {
     pub(crate) fn spawn(self, shutdown: &mut ShutdownCoordinator) {
         let signal = shutdown.subscribe();
         shutdown.push(self.reconciliation.spawn(signal));
-        for scheduler in [self.checkpoints, self.sandbox, self.workspace, self.agent] {
+        for scheduler in [
+            self.checkpoints,
+            self.checkpoint_cleanup,
+            self.sandbox,
+            self.workspace,
+            self.agent,
+        ] {
             let signal = shutdown.subscribe();
             shutdown.push(scheduler.spawn(signal));
         }

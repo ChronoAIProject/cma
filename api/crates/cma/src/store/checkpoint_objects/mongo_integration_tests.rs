@@ -1,4 +1,3 @@
-use futures_util::io::AsyncWriteExt;
 use layer2_core::sandbox::store::{
     SandboxCheckpointMutation, SandboxLifecycleExecutionStore, SandboxMutationGuard, SandboxStore,
 };
@@ -7,7 +6,7 @@ use layer2_core::sandbox::{
 };
 use layer3_adapter::hosted::{CheckpointArchiveDownload, CheckpointArchiveUpload};
 use layer3_adapter::{AdapterError, CheckpointReceipt, Result as AdapterResult, WriterState};
-use mongodb::bson::{doc, Bson};
+use mongodb::bson::{doc, DateTime};
 use mongodb::options::ClientOptions;
 use mongodb::Client;
 use tokio::sync::mpsc;
@@ -15,10 +14,42 @@ use tokio::sync::mpsc;
 use crate::store::sandbox_mongo::MongoSandboxStore;
 use crate::store::sandbox_mongo_integration_tests::sandbox;
 
-use super::model::{
-    metadata_document, sha256_hex, ArchiveIdentity, ManifestDoc, GRIDFS_CHUNK_BYTES,
-};
+use super::model::{sha256_hex, ArchiveIdentity, ManifestDoc};
 use super::MongoCheckpointObjectStore;
+
+struct FailedDeleteStore {
+    delegate: std::sync::Arc<dyn crate::store::CheckpointBlobStore>,
+    fail_next: std::sync::atomic::AtomicBool,
+}
+
+#[async_trait::async_trait]
+impl crate::store::CheckpointBlobStore for FailedDeleteStore {
+    async fn upload(&self, key: &str, archive: CheckpointArchiveUpload) -> AdapterResult<()> {
+        self.delegate.upload(key, archive).await
+    }
+
+    async fn download(
+        &self,
+        key: &str,
+        reference: &str,
+        sha256: &str,
+        size: u64,
+    ) -> AdapterResult<CheckpointArchiveDownload> {
+        self.delegate.download(key, reference, sha256, size).await
+    }
+
+    async fn delete(&self, key: &str) -> AdapterResult<()> {
+        if self
+            .fail_next
+            .swap(false, std::sync::atomic::Ordering::SeqCst)
+        {
+            return Err(AdapterError::Unavailable(
+                "injected uncertain deletion".into(),
+            ));
+        }
+        self.delegate.delete(key).await
+    }
+}
 
 async fn test_store(prefix: &str) -> (Client, MongoCheckpointObjectStore, String) {
     let uri = std::env::var("CHRONO_TEST_MONGODB_URI")
@@ -160,7 +191,7 @@ async fn ownership_is_sandbox_confined_and_purge_does_not_cross_scope() {
 
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable real MongoDB"]
-async fn corrupt_manifest_and_gridfs_metadata_are_rejected() {
+async fn corrupt_manifest_and_external_object_keys_are_rejected() {
     let (client, store, database) = test_store("corrupt").await;
     let authority = store.for_sandbox("sbx_corrupt").unwrap();
     let first = authority
@@ -181,24 +212,14 @@ async fn corrupt_manifest_and_gridfs_metadata_are_rejected() {
     ));
 
     let second = authority
-        .upload(upload(b"GridFS metadata corruption target".to_vec()))
+        .upload(upload(b"external object key corruption target".to_vec()))
         .await
         .unwrap();
-    let second_manifest = store
-        .manifests
-        .find_one(doc! {
-            "sandbox_id": "sbx_corrupt",
-            "object_reference": &second.object_reference,
-        })
-        .await
-        .unwrap()
-        .unwrap();
-    let gridfs_id = second_manifest.get_object_id("gridfs_id").unwrap();
     store
-        .files
+        .manifests
         .update_one(
-            doc! { "_id": gridfs_id },
-            doc! { "$set": { "metadata.sandbox_id": "sbx_foreign" } },
+            doc! { "sandbox_id": "sbx_corrupt", "object_reference": &second.object_reference },
+            doc! { "$set": { "object_key": "cma/checkpoints/foreign/object.cma" } },
         )
         .await
         .unwrap();
@@ -211,38 +232,291 @@ async fn corrupt_manifest_and_gridfs_metadata_are_rejected() {
 
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable real MongoDB"]
-async fn purge_reclaims_closed_unpublished_gridfs_stage() {
+async fn purge_preserves_early_deletion_intent_and_reclaims_a_late_upload() {
     let (client, store, database) = test_store("orphan").await;
     let archive = b"closed but unpublished stage";
     let (object_reference, sha256) = sealed(archive);
     let identity =
         ArchiveIdentity::from_input(object_reference.clone(), sha256, archive.len() as u64)
             .unwrap();
-    let manifest = ManifestDoc::new("sbx_orphan", &identity, mongodb::bson::oid::ObjectId::new());
-    let mut stream = store
-        .bucket
-        .open_upload_stream(&object_reference)
-        .id(Bson::ObjectId(manifest.gridfs_id))
-        .chunk_size_bytes(GRIDFS_CHUNK_BYTES)
-        .metadata(metadata_document(&manifest).unwrap())
-        .await
-        .unwrap();
-    stream.write_all(archive).await.unwrap();
-    stream.close().await.unwrap();
-
+    let manifest = ManifestDoc::new("sbx_orphan", &identity, DateTime::now());
+    super::publication::admit(&store, &manifest).await.unwrap();
     store.purge_sandbox("sbx_orphan").await.unwrap();
     assert!(store
-        .files
-        .find_one(doc! { "_id": manifest.gridfs_id })
+        .tombstones
+        .find_one(doc! { "_id": &manifest.id })
+        .await
+        .unwrap()
+        .is_some());
+    // Simulate a backend finishing an already-admitted upload after the first DELETE/404.
+    store
+        .objects
+        .upload(&manifest.object_key, upload(archive.to_vec()))
+        .await
+        .unwrap();
+    assert!(super::publication::publish(&store, &manifest, &identity)
+        .await
+        .is_err());
+    assert!(store
+        .for_sandbox("sbx_orphan")
+        .unwrap()
+        .upload(upload(archive.to_vec()))
+        .await
+        .is_err());
+    let after_client_deadline =
+        manifest.cleanup_after.to_system_time() + std::time::Duration::from_secs(3_600);
+    store.cleanup_due(after_client_deadline).await.unwrap();
+    assert!(store
+        .manifests
+        .find_one(doc! { "_id": &manifest.id })
         .await
         .unwrap()
         .is_none());
+    assert!(store
+        .objects
+        .download(
+            &manifest.object_key,
+            &identity.object_reference,
+            &identity.sha256,
+            identity.size_bytes
+        )
+        .await
+        .is_err());
+    assert!(store
+        .tombstones
+        .find_one(doc! { "_id": &manifest.id })
+        .await
+        .unwrap()
+        .is_some());
+    drop(store);
+    let store = MongoCheckpointObjectStore::open(&client, &database)
+        .await
+        .unwrap();
+    // Even another late write after a restart and a completed cleanup is owned.
+    store
+        .objects
+        .upload(&manifest.object_key, upload(archive.to_vec()))
+        .await
+        .unwrap();
+    store
+        .cleanup_due(after_client_deadline + std::time::Duration::from_secs(7_200))
+        .await
+        .unwrap();
+    assert!(store
+        .objects
+        .download(
+            &manifest.object_key,
+            &identity.object_reference,
+            &identity.sha256,
+            identity.size_bytes
+        )
+        .await
+        .is_err());
+    store.purge_sandbox("sbx_orphan").await.unwrap();
+    client.database(&database).drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn uncertain_external_deletion_retains_durable_work_for_retry() {
+    let (client, base, database) = test_store("delete_retry").await;
+    let storage = std::sync::Arc::new(FailedDeleteStore {
+        delegate: base.objects,
+        fail_next: std::sync::atomic::AtomicBool::new(true),
+    });
+    let store = MongoCheckpointObjectStore::open_with_storage(&client, &database, storage.clone())
+        .await
+        .unwrap();
+    let archive = b"abandoned stage pending external deletion";
+    let (reference, sha256) = sealed(archive);
+    let identity = ArchiveIdentity::from_input(reference, sha256, archive.len() as u64).unwrap();
+    let stage = ManifestDoc::new("sbx_delete_retry", &identity, DateTime::now());
+    super::publication::admit(&store, &stage).await.unwrap();
+    store
+        .objects
+        .upload(&stage.object_key, upload(archive.to_vec()))
+        .await
+        .unwrap();
+    assert!(store
+        .cleanup_due(stage.cleanup_after.to_system_time())
+        .await
+        .is_err());
+    assert!(store
+        .manifests
+        .find_one(doc! { "_id": &stage.id, "state": "deleting" })
+        .await
+        .unwrap()
+        .is_some());
+    assert_eq!(
+        store
+            .cleanup_due(stage.cleanup_after.to_system_time())
+            .await
+            .unwrap(),
+        1
+    );
+    assert!(store
+        .manifests
+        .find_one(doc! { "_id": &stage.id })
+        .await
+        .unwrap()
+        .is_none());
+    assert!(store
+        .objects
+        .download(
+            &stage.object_key,
+            &identity.object_reference,
+            &identity.sha256,
+            identity.size_bytes
+        )
+        .await
+        .is_err());
+    storage
+        .fail_next
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    let first_retry = stage.cleanup_after.to_system_time() + std::time::Duration::from_secs(61);
+    assert!(store.cleanup_due(first_retry).await.is_err());
+    let tombstone = store
+        .tombstones
+        .find_one(doc! { "_id": &stage.id })
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(tombstone.get_i64("attempts").unwrap(), 1);
+    assert!(
+        tombstone
+            .get_datetime("next_attempt_at")
+            .unwrap()
+            .to_system_time()
+            > first_retry
+    );
+    assert_eq!(
+        store
+            .cleanup_due(first_retry + std::time::Duration::from_secs(3_600))
+            .await
+            .unwrap(),
+        1
+    );
+    assert!(store
+        .tombstones
+        .find_one(doc! { "_id": &stage.id })
+        .await
+        .unwrap()
+        .is_some());
+    client.database(&database).drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn concurrent_publication_keeps_one_winner_and_cleanup_cannot_delete_it() {
+    let (client, store, database) = test_store("winner").await;
+    let archive = b"same archive from concurrent writers";
+    let (reference, digest) = sealed(archive);
+    let identity =
+        ArchiveIdentity::from_input(reference.clone(), digest, archive.len() as u64).unwrap();
+    let first = ManifestDoc::new("sbx_winner", &identity, DateTime::now());
+    let second = ManifestDoc::new("sbx_winner", &identity, DateTime::now());
+    for stage in [&first, &second] {
+        super::publication::admit(&store, stage).await.unwrap();
+        store
+            .objects
+            .upload(&stage.object_key, upload(archive.to_vec()))
+            .await
+            .unwrap();
+    }
+    let (first_result, second_result) = tokio::join!(
+        super::publication::publish(&store, &first, &identity),
+        super::publication::publish(&store, &second, &identity),
+    );
+    assert!(first_result.is_ok() || second_result.is_ok());
+    let published = store
+        .manifests
+        .find_one(doc! { "sandbox_id": "sbx_winner", "state": "published" })
+        .await
+        .unwrap()
+        .unwrap();
+    let loser = if published.get_str("_id").unwrap() == first.id {
+        &second
+    } else {
+        &first
+    };
+    assert_eq!(
+        store
+            .manifests
+            .count_documents(doc! { "sandbox_id": "sbx_winner", "state": "published" })
+            .await
+            .unwrap(),
+        1
+    );
+    store
+        .cleanup_due(loser.cleanup_after.to_system_time())
+        .await
+        .unwrap();
+    let authority = store.for_sandbox("sbx_winner").unwrap();
+    assert_eq!(
+        bytes(authority.download(&reference).await.unwrap())
+            .await
+            .unwrap(),
+        archive
+    );
+    assert!(store
+        .objects
+        .download(
+            &loser.object_key,
+            &reference,
+            &identity.sha256,
+            identity.size_bytes
+        )
+        .await
+        .is_err());
+    client.database(&database).drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn retired_gate_refuses_replay_and_publication_before_old_manifest_cleanup() {
+    let (client, store, database) = test_store("retired").await;
+    let archive = b"published before retirement";
+    let authority = store.for_sandbox("sbx_retired").unwrap();
+    let receipt = authority.upload(upload(archive.to_vec())).await.unwrap();
+    let identity = ArchiveIdentity::from_input(
+        receipt.object_reference.clone(),
+        receipt.sha256,
+        receipt.size_bytes,
+    )
+    .unwrap();
+    let stage = ManifestDoc::new("sbx_retired", &identity, DateTime::now());
+    super::publication::admit(&store, &stage).await.unwrap();
+    store
+        .objects
+        .upload(&stage.object_key, upload(archive.to_vec()))
+        .await
+        .unwrap();
+    store
+        .gates
+        .update_one(
+            doc! { "_id": "sbx_retired" },
+            doc! { "$set": { "retired": true }, "$inc": { "serial": 1_i64 } },
+        )
+        .await
+        .unwrap();
+    assert!(super::publication::publish(&store, &stage, &identity)
+        .await
+        .is_err());
+    assert!(authority.upload(upload(archive.to_vec())).await.is_err());
+    assert_eq!(
+        store
+            .manifests
+            .count_documents(doc! { "sandbox_id": "sbx_retired", "state": "published" })
+            .await
+            .unwrap(),
+        1
+    );
     client.database(&database).drop().await.unwrap();
 }
 
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable real MongoDB"]
-async fn archive_larger_than_bson_document_limit_streams_through_gridfs() {
+async fn archive_larger_than_bson_document_limit_uses_external_objects() {
     let (client, store, database) = test_store("large").await;
     let mut archive = vec![0_u8; (16 * 1024 * 1024) + 4096];
     for (index, byte) in archive.iter_mut().enumerate() {
@@ -265,7 +539,7 @@ async fn publication_keeps_two_archives_and_prunes_all_parts_of_the_evicted_one(
     let second = stored_checkpoint(&store, &current, 2, b"shared generation").await;
     assert_eq!(second.object_reference, first.object_reference);
     publish(&store, &mut current, second).await;
-    let shared_id = gridfs_id(&store, &current, &first.object_reference).await;
+    let shared_key = object_key(&store, &current, &first.object_reference).await;
 
     let third = stored_checkpoint(&store, &current, 3, b"third generation").await;
     publish(&store, &mut current, third.clone()).await;
@@ -273,7 +547,12 @@ async fn publication_keeps_two_archives_and_prunes_all_parts_of_the_evicted_one(
 
     let fourth = stored_checkpoint(&store, &current, 4, b"fourth generation").await;
     publish(&store, &mut current, fourth.clone()).await;
-    assert_archive_absent(&store, &current, &first.object_reference, shared_id).await;
+    store
+        .checkpoint_objects
+        .cleanup_due(std::time::SystemTime::now())
+        .await
+        .unwrap();
+    assert_archive_absent(&store, &current, &first.object_reference, &shared_key).await;
     assert_archive_present(&store, &current, &third.object_reference).await;
     assert_archive_present(&store, &current, &fourth.object_reference).await;
     assert_eq!(
@@ -308,7 +587,7 @@ async fn ambiguous_publication_reconciles_without_losing_the_new_archive() {
     publish(&store, &mut current, first.clone()).await;
     let second = stored_checkpoint(&store, &current, 2, b"second generation").await;
     publish(&store, &mut current, second.clone()).await;
-    let first_id = gridfs_id(&store, &current, &first.object_reference).await;
+    let first_key = object_key(&store, &current, &first.object_reference).await;
     let third = stored_checkpoint(&store, &current, 3, b"just published generation").await;
 
     configure_commit_ambiguity(&admin, &app_name).await;
@@ -316,11 +595,89 @@ async fn ambiguous_publication_reconciles_without_losing_the_new_archive() {
     disable_failpoint(&admin).await;
     current = result.unwrap();
 
-    assert_archive_absent(&store, &current, &first.object_reference, first_id).await;
+    store
+        .checkpoint_objects
+        .cleanup_due(std::time::SystemTime::now())
+        .await
+        .unwrap();
+    assert_archive_absent(&store, &current, &first.object_reference, &first_key).await;
     assert_archive_present(&store, &current, &second.object_reference).await;
     assert_archive_present(&store, &current, &third.object_reference).await;
     assert_eq!(current.lifecycle.checkpoints.latest, Some(third));
     assert_eq!(current.lifecycle.checkpoints.previous, Some(second));
+    client.database(&database).drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_FAILPOINT_URI pointing at a failpoint-enabled replica set"]
+async fn ambiguous_external_stage_admission_and_publication_reconcile_exactly() {
+    let uri = std::env::var("CHRONO_TEST_MONGODB_FAILPOINT_URI").unwrap();
+    let suffix = uuid::Uuid::new_v4().simple().to_string();
+    let app_name = format!("cma-external-stage-{suffix}");
+    let database = format!("cma_checkpoint_stage_{suffix}");
+    let admin = Client::with_uri_str(&uri).await.unwrap();
+    let mut options = ClientOptions::parse(&uri).await.unwrap();
+    options.app_name = Some(app_name.clone());
+    let client = Client::with_options(options).unwrap();
+    let store = MongoCheckpointObjectStore::open(&client, &database)
+        .await
+        .unwrap();
+    let archive = b"exact stage after lost commit acknowledgement";
+    let (reference, sha256) = sealed(archive);
+    let identity =
+        ArchiveIdentity::from_input(reference.clone(), sha256, archive.len() as u64).unwrap();
+    let stage = ManifestDoc::new("sbx_ambiguous_stage", &identity, DateTime::now());
+    configure_commit_ambiguity(&admin, &app_name).await;
+    let admitted = super::publication::admit(&store, &stage).await;
+    disable_failpoint(&admin).await;
+    admitted.unwrap();
+    store
+        .objects
+        .upload(&stage.object_key, upload(archive.to_vec()))
+        .await
+        .unwrap();
+    configure_commit_ambiguity(&admin, &app_name).await;
+    let published = super::publication::publish(&store, &stage, &identity).await;
+    disable_failpoint(&admin).await;
+    published.unwrap();
+    assert_eq!(
+        store
+            .manifests
+            .count_documents(doc! { "sandbox_id": "sbx_ambiguous_stage", "state": "published" })
+            .await
+            .unwrap(),
+        1
+    );
+    let authority = store.for_sandbox("sbx_ambiguous_stage").unwrap();
+    assert_eq!(
+        bytes(authority.download(&reference).await.unwrap())
+            .await
+            .unwrap(),
+        archive
+    );
+    let uncertain = ManifestDoc::new("sbx_ambiguous_stage", &identity, DateTime::now());
+    super::publication::admit(&store, &uncertain).await.unwrap();
+    store
+        .objects
+        .upload(&uncertain.object_key, upload(archive.to_vec()))
+        .await
+        .unwrap();
+    configure_commit_ambiguity(&admin, &app_name).await;
+    let purged = store.purge_sandbox("sbx_ambiguous_stage").await;
+    disable_failpoint(&admin).await;
+    purged.unwrap();
+    assert!(store
+        .tombstones
+        .find_one(doc! { "_id": &uncertain.id })
+        .await
+        .unwrap()
+        .is_some());
+    assert!(store
+        .manifests
+        .find_one(doc! { "_id": &uncertain.id })
+        .await
+        .unwrap()
+        .is_none());
     client.database(&database).drop().await.unwrap();
 }
 
@@ -391,50 +748,39 @@ async fn publish_result(
     Ok(next)
 }
 
-async fn gridfs_id(
-    store: &MongoSandboxStore,
-    sandbox: &Sandbox,
-    reference: &str,
-) -> mongodb::bson::oid::ObjectId {
+async fn object_key(store: &MongoSandboxStore, sandbox: &Sandbox, reference: &str) -> String {
     store
         .checkpoint_objects
         .manifests
         .find_one(doc! {
             "sandbox_id": sandbox.id.as_str(),
             "object_reference": reference,
+            "state": "published",
         })
         .await
         .unwrap()
         .unwrap()
-        .get_object_id("gridfs_id")
+        .get_str("object_key")
         .unwrap()
+        .to_owned()
 }
 
 async fn assert_archive_present(store: &MongoSandboxStore, sandbox: &Sandbox, reference: &str) {
-    let id = gridfs_id(store, sandbox, reference).await;
-    assert!(store
+    let authority = store
         .checkpoint_objects
-        .files
-        .find_one(doc! { "_id": id })
+        .for_sandbox(sandbox.id.as_str())
+        .unwrap();
+    assert!(!bytes(authority.download(reference).await.unwrap())
         .await
         .unwrap()
-        .is_some());
-    assert!(
-        store
-            .checkpoint_objects
-            .chunks
-            .count_documents(doc! { "files_id": id })
-            .await
-            .unwrap()
-            > 0
-    );
+        .is_empty());
 }
 
 async fn assert_archive_absent(
     store: &MongoSandboxStore,
     sandbox: &Sandbox,
     reference: &str,
-    id: mongodb::bson::oid::ObjectId,
+    key: &str,
 ) {
     assert!(store
         .checkpoint_objects
@@ -448,20 +794,10 @@ async fn assert_archive_absent(
         .is_none());
     assert!(store
         .checkpoint_objects
-        .files
-        .find_one(doc! { "_id": id })
+        .objects
+        .download(key, reference, "unused", 1)
         .await
-        .unwrap()
-        .is_none());
-    assert_eq!(
-        store
-            .checkpoint_objects
-            .chunks
-            .count_documents(doc! { "files_id": id })
-            .await
-            .unwrap(),
-        0
-    );
+        .is_err());
 }
 
 async fn configure_commit_ambiguity(admin: &Client, app_name: &str) {

@@ -264,9 +264,15 @@ same transaction that removes publication authority, then perform bounded HTTP
 cleanup after commit. Never keep a Mongo transaction open around external HTTP.
 
 A DELETE followed by GET 404 is necessary but insufficient while an earlier
-ambiguous upload can still finish. Retain a tombstone and retry cleanup past the
-bounded upload lifetime. Restart must resume pending cleanup; timeout or lost
-response must not silently erase the only record of an orphan. Final external
+ambiguous upload can still finish. The client upload deadline is not a remote
+write-lifetime guarantee. Retain minimal `checkpoint_archive_tombstones`
+indefinitely for uncertain stages, containing only the exact opaque physical
+key, schema version and bounded retry state. Confirmed absence permits Sandbox
+purge to finish, but never relinquishes cleanup ownership of that key. Recheck
+with exponential backoff from one minute to one hour, in bounded pages, so a
+write arriving after any client deadline is still reclaimable. Restart must
+resume this cleanup; timeout or lost response must not silently erase the only
+record of an orphan. No tombstone contains credential fields. Final external
 storage and delayed-upload cleanup evidence remains a required deployment gate.
 
 ## Rollback And Alerts

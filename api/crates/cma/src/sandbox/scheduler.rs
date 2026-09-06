@@ -52,7 +52,24 @@ impl SandboxSweep for SandboxCheckpointMaintenance {
     }
 }
 
+#[async_trait::async_trait]
+impl SandboxSweep for crate::store::MongoCheckpointObjectStore {
+    async fn run_due(&self, now: SystemTime) -> Result<usize, SandboxStoreError> {
+        self.cleanup_due(now)
+            .await
+            .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))
+    }
+}
+
 impl SandboxScheduler {
+    pub(crate) fn for_checkpoint_cleanup(
+        worker: Arc<crate::store::MongoCheckpointObjectStore>,
+    ) -> Self {
+        Self {
+            worker,
+            sweep_interval: Duration::from_secs(30),
+        }
+    }
     pub(crate) fn new(worker: Arc<SandboxWorker>) -> Self {
         Self {
             worker,
