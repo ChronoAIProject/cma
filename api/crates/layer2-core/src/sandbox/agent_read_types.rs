@@ -29,6 +29,22 @@ pub enum AgentTurnOutcome {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+pub struct AgentTranscriptMessage {
+    pub sequence: u64,
+    pub role: AgentTranscriptRole,
+    pub content: String,
+    pub appended_at: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentTranscriptRole {
+    Owner,
+    Agent,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct AgentTranscriptTurn {
     pub turn_sequence: u64,
     pub started_at: String,
@@ -36,6 +52,7 @@ pub struct AgentTranscriptTurn {
     pub origin_key: Option<String>,
     pub owner_message: String,
     pub agent_messages: Vec<String>,
+    pub messages: Vec<AgentTranscriptMessage>,
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub metadata: std::collections::BTreeMap<String, String>,
     pub outcome: AgentTurnOutcome,

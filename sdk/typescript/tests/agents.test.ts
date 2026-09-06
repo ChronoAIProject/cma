@@ -115,6 +115,33 @@ describe('Agent resource commands', () => {
 });
 
 describe('Agent durable projections', () => {
+  it('refuses missing or malformed chronological transcript messages', async () => {
+    const test = transport();
+    const message = { sequence: 2, role: 'user', content: 'Review', appended_at: now };
+    for (const messages of [
+      undefined,
+      [{ ...message, sequence: 0 }],
+      [{ ...message, role: 'system' }],
+      [{ ...message, appended_at: null }],
+    ]) {
+      test.answer({
+        agent_id: agent.id,
+        through_seq: 2,
+        turns: [
+          {
+            turn_sequence: 1,
+            started_at: now,
+            owner_message: 'Review',
+            agent_messages: [],
+            messages,
+            outcome: { type: 'active' },
+          },
+        ],
+      });
+      await expect(test.client.agents.transcript(agent.id)).rejects.toBeInstanceOf(ProtocolError);
+    }
+  });
+
   it('decodes typed event pages, transcript outcomes, usage and nullable resource measurements', async () => {
     const test = transport();
     const events = {
@@ -138,6 +165,11 @@ describe('Agent durable projections', () => {
         started_at: now,
         owner_message: 'Review',
         agent_messages: ['Reviewed'],
+        messages: [
+          { sequence: 2, role: 'user', content: 'Review', appended_at: now },
+          { sequence: 3, role: 'assistant', content: 'Reviewed', appended_at: now },
+          { sequence: 5, role: 'user', content: 'Check the boundary', appended_at: now },
+        ],
         outcome,
       })),
     };

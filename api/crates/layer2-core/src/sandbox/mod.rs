@@ -81,8 +81,8 @@ pub use agent_operation_service::{
 };
 pub use agent_read_types::{
     AgentLineage, AgentListQuery, AgentReadError, AgentResourceReading, AgentTranscript,
-    AgentTranscriptTurn, AgentTurnOutcome, AgentUsage, AgentUsageReading, SandboxResourceReadError,
-    SandboxResourceReader, SandboxResourceReading,
+    AgentTranscriptMessage, AgentTranscriptRole, AgentTranscriptTurn, AgentTurnOutcome, AgentUsage,
+    AgentUsageReading, SandboxResourceReadError, SandboxResourceReader, SandboxResourceReading,
 };
 pub use agent_reads::AgentReadService;
 pub use agent_runtime::{

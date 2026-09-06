@@ -134,11 +134,19 @@ export const transcriptOutcome = tagged({
   interrupted: variant('interrupted', { at: text }),
 });
 export type TranscriptOutcome = Output<typeof transcriptOutcome>;
+export const transcriptMessage = object({
+  sequence: positiveInteger,
+  role: enumeration('user', 'assistant'),
+  content: text,
+  appended_at: text,
+});
+export type TranscriptMessage = Output<typeof transcriptMessage>;
 export const transcriptTurn = object({
   turn_sequence: integer,
   started_at: text,
   owner_message: text,
   agent_messages: array(text),
+  messages: array(transcriptMessage),
   outcome: transcriptOutcome,
 });
 export type TranscriptTurn = Output<typeof transcriptTurn>;

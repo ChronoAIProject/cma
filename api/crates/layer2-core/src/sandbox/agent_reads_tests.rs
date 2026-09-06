@@ -719,6 +719,231 @@ async fn transcript_reconstructs_completed_and_active_turns() {
 }
 
 #[tokio::test]
+async fn transcript_preserves_fenced_steering_in_durable_message_order() {
+    for delivery in [
+        None,
+        Some(AgentOperationDelivery::WriteConfirmed),
+        Some(AgentOperationDelivery::ExecutionObserved),
+        Some(AgentOperationDelivery::PreWriteFailed),
+        Some(AgentOperationDelivery::RecoveryRequired),
+        Some(AgentOperationDelivery::RuntimeLost),
+    ] {
+        let store = Arc::new(InMemorySandboxStore::default());
+        let agent = insert_hierarchy(
+            &store,
+            "agt_steering",
+            "wtr_steering",
+            "wks_steering",
+            "sbx_steering",
+            "owner",
+            AgentStatus::Starting,
+        )
+        .await;
+        let mut history = steering_history();
+        if let Some(state) = delivery {
+            history.push(AgentLogKind::OperationDeliveryChanged {
+                operation_sequence: 6,
+                operation: AgentOperationKind::Steer,
+                state,
+            });
+        }
+        history.push(AgentLogKind::AgentMessage {
+            content: "Boundary checked".into(),
+        });
+        let second_fence = history.len() as u64 + 2;
+        history.extend([
+            AgentLogKind::OperationDeliveryChanged {
+                operation_sequence: second_fence,
+                operation: AgentOperationKind::Steer,
+                state: AgentOperationDelivery::DispatchFenced,
+            },
+            AgentLogKind::OwnerMessage {
+                content: "Explain the result".into(),
+            },
+            AgentLogKind::TurnCompleted { turn_sequence: 3 },
+        ]);
+        let agent = replace_history(
+            &store,
+            agent,
+            history,
+            Some("conversation-steering"),
+            Some(1),
+            None,
+        )
+        .await;
+        let reads = service(store.clone());
+        let transcript = reads
+            .transcript(&caller("owner", true), &agent.id)
+            .await
+            .unwrap();
+        let turn = &transcript.turns[0];
+        assert_eq!(turn.owner_message, "Review");
+        assert_eq!(turn.agent_messages, ["First answer", "Boundary checked"]);
+        assert_eq!(
+            turn.messages
+                .iter()
+                .map(|message| (message.role, message.content.as_str()))
+                .collect::<Vec<_>>(),
+            [
+                (AgentTranscriptRole::Owner, "Review"),
+                (AgentTranscriptRole::Agent, "First answer"),
+                (AgentTranscriptRole::Owner, "Check the boundary"),
+                (AgentTranscriptRole::Agent, "Boundary checked"),
+                (AgentTranscriptRole::Owner, "Explain the result"),
+            ]
+        );
+        assert_eq!(turn.messages[2].sequence, 7);
+        assert_eq!(turn.messages[2].appended_at, NOW);
+        assert!(turn
+            .messages
+            .windows(2)
+            .all(|pair| pair[0].sequence < pair[1].sequence));
+        let restored: AgentTranscript =
+            serde_json::from_value(serde_json::to_value(&transcript).unwrap()).unwrap();
+        assert_eq!(restored, transcript);
+        reads
+            .usage(&caller("owner", true), &agent.id)
+            .await
+            .unwrap();
+        reads
+            .log(&caller("owner", true), &agent.id, 0, 40)
+            .await
+            .unwrap();
+    }
+}
+
+fn steering_history() -> Vec<AgentLogKind> {
+    vec![
+        AgentLogKind::ConversationOpened {
+            conversation_id: "conversation-steering".into(),
+            runtime_generation: 1,
+        },
+        AgentLogKind::TurnStarted {
+            turn_sequence: 3,
+            origin_key: None,
+        },
+        AgentLogKind::OwnerMessage {
+            content: "Review".into(),
+        },
+        AgentLogKind::AgentMessage {
+            content: "First answer".into(),
+        },
+        AgentLogKind::OperationDeliveryChanged {
+            operation_sequence: 6,
+            operation: AgentOperationKind::Steer,
+            state: AgentOperationDelivery::DispatchFenced,
+        },
+        AgentLogKind::OwnerMessage {
+            content: "Check the boundary".into(),
+        },
+    ]
+}
+
+#[tokio::test]
+async fn steering_requires_an_exact_adjacent_active_turn_admission() {
+    for fault in 0..9 {
+        let store = Arc::new(InMemorySandboxStore::default());
+        let agent = insert_hierarchy(
+            &store,
+            "agt_bad_steering",
+            "wtr_bad_steering",
+            "wks_bad_steering",
+            "sbx_bad_steering",
+            "owner",
+            AgentStatus::Starting,
+        )
+        .await;
+        let mut history = steering_history();
+        let mut active = Some(3);
+        match fault {
+            0 => {
+                history[4] = AgentLogKind::OperationDeliveryChanged {
+                    operation_sequence: 6,
+                    operation: AgentOperationKind::SendMessage,
+                    state: AgentOperationDelivery::DispatchFenced,
+                }
+            }
+            1 => {
+                history[4] = AgentLogKind::OperationDeliveryChanged {
+                    operation_sequence: 6,
+                    operation: AgentOperationKind::Steer,
+                    state: AgentOperationDelivery::WriteConfirmed,
+                }
+            }
+            2 => {
+                history[4] = AgentLogKind::OperationDeliveryChanged {
+                    operation_sequence: 5,
+                    operation: AgentOperationKind::Steer,
+                    state: AgentOperationDelivery::DispatchFenced,
+                }
+            }
+            3 => {
+                history.pop();
+            }
+            4 => history.insert(
+                5,
+                AgentLogKind::ModeChanged {
+                    mode: "code".into(),
+                },
+            ),
+            5 => history.push(AgentLogKind::OwnerMessage {
+                content: "Unfenced duplicate".into(),
+            }),
+            6 => {
+                history[3] = AgentLogKind::TurnCompleted { turn_sequence: 3 };
+                active = None;
+            }
+            7 => {
+                history[2] = AgentLogKind::ModeChanged {
+                    mode: "code".into(),
+                };
+                history[3] = AgentLogKind::ModeChanged {
+                    mode: "code".into(),
+                };
+            }
+            8 => {}
+            _ => unreachable!(),
+        }
+        let agent = replace_history(
+            &store,
+            agent,
+            history,
+            Some("conversation-steering"),
+            Some(1),
+            active,
+        )
+        .await;
+        if fault == 8 {
+            let mut entries = store.agent_log(&agent.id, 0, 40).await.unwrap();
+            entries[6].appended_at = "2026-09-05T00:00:01Z".into();
+            store.replace_agent_log_for_test(&agent.id, entries);
+        }
+        let reads = service(store);
+        assert!(
+            matches!(
+                reads.transcript(&caller("owner", true), &agent.id).await,
+                Err(AgentReadError::Corrupt(_))
+            ),
+            "transcript fault {fault}"
+        );
+        assert!(
+            matches!(
+                reads.usage(&caller("owner", true), &agent.id).await,
+                Err(AgentReadError::Corrupt(_))
+            ),
+            "usage fault {fault}"
+        );
+        assert!(
+            matches!(
+                reads.log(&caller("owner", true), &agent.id, 0, 40).await,
+                Err(AgentReadError::Corrupt(_))
+            ),
+            "log fault {fault}"
+        );
+    }
+}
+
+#[tokio::test]
 async fn transcript_keeps_admitted_queue_input_outside_a_turn() {
     let store = Arc::new(InMemorySandboxStore::default());
     let agent = insert_hierarchy(

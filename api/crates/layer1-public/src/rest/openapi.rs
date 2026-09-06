@@ -271,6 +271,8 @@ use super::trigger_openapi_shapes::*;
         AgentEventView,
         AgentTranscriptView,
         AgentTranscriptTurnView,
+        AgentTranscriptMessageView,
+        AgentTranscriptRoleView,
         AgentUsageView,
         AgentResourcesView,
         ProfileReferenceView,

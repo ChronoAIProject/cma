@@ -391,8 +391,24 @@ pub(crate) struct AgentTranscriptTurnView {
     pub(crate) started_at: String,
     pub(crate) owner_message: String,
     pub(crate) agent_messages: Vec<String>,
+    pub(crate) messages: Vec<AgentTranscriptMessageView>,
     #[schema(value_type = Object)]
     pub(crate) outcome: serde_json::Value,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub(crate) struct AgentTranscriptMessageView {
+    pub(crate) sequence: u64,
+    pub(crate) role: AgentTranscriptRoleView,
+    pub(crate) content: String,
+    pub(crate) appended_at: String,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum AgentTranscriptRoleView {
+    User,
+    Assistant,
 }
 
 #[derive(Debug, Serialize, ToSchema)]

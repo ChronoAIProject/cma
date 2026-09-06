@@ -193,7 +193,14 @@ projected alongside Agent identity, not per-Agent billing.
 `GET /api/v1/agents/{id}/events` is a **JSON page**, not SSE. It accepts `after`
 and `limit` (1-200, default 200), returns `items` and optional `next`, and omits
 internal dispatch keys and runtime approval locators. Read all pages, require
-advancing cursors and combine transcript fallback without duplicating turns.
+advancing cursors and combine transcript fallback without duplicating messages.
+
+Each transcript turn includes ordered `messages` with the durable `sequence`,
+`role` (`user` or `assistant`), `content` and `appended_at`. Steering remains a
+distinct owner message inside the active turn, even when assistant messages
+precede it. The `owner_message` summary holds only the initial input and
+`agent_messages` only assistant text; use `messages` to reconstruct chronology.
+Merge transcript and event replay by durable message sequence, not by turn id.
 Sandbox events are separately scoped JSON history. Launch event pages have
 `launch_id`, `events` and optional `next_cursor`; their cursors must not be used for Agent history.
 For live Agent and Launch streams see [AG-UI](API_AGUI.md).
