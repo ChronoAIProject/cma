@@ -31,7 +31,7 @@ it('binds the production App create command and opens the created Sandbox route'
     </AuthContextProvider>,
   );
   await user.click(await screen.findByRole('button', { name: 'New sandbox' }));
-  await user.click(await screen.findByRole('button', { name: /Research sandbox Revision/ }));
+  await user.click(await screen.findByRole('button', { name: /Research sandbox Version/ }));
   await user.click(await screen.findByRole('checkbox', { name: 'I trust this profile' }));
   await user.click(screen.getByRole('button', { name: 'Create sandbox' }));
   await waitFor(() => expect(window.location.pathname).toBe('/sandboxes/sbx_1'));

@@ -195,14 +195,14 @@ it('replaces the Agent dialog for inline Sandbox/Workspace creation, never stack
   await user.click(screen.getByRole('button', { name: 'New sandbox' }));
   expect(screen.getAllByRole('dialog')).toHaveLength(1);
   expect(screen.getByRole('dialog')).toHaveAccessibleName('New sandbox');
-  await user.click(await screen.findByRole('button', { name: /Research sandbox Revision/ }));
+  await user.click(await screen.findByRole('button', { name: /Research sandbox Version/ }));
   await user.click(await screen.findByRole('checkbox', { name: 'I trust this profile' }));
   await user.click(screen.getByRole('button', { name: 'Create sandbox' }));
   await waitFor(() => expect(screen.getByRole('dialog')).toHaveAccessibleName('New agent'));
   await waitFor(() => expect(screen.getByRole('button', { name: 'New workspace' })).toBeEnabled());
   await user.click(screen.getByRole('button', { name: 'New workspace' }));
   expect(screen.getAllByRole('dialog')).toHaveLength(1);
-  await user.click(await screen.findByRole('button', { name: /Research workspace Revision/ }));
+  await user.click(await screen.findByRole('button', { name: /Research workspace Version/ }));
   await user.click(await screen.findByRole('checkbox', { name: 'I trust this profile' }));
   await user.click(screen.getByRole('button', { name: 'Create workspace' }));
   await waitFor(() => expect(screen.getByRole('dialog')).toHaveAccessibleName('New agent'));

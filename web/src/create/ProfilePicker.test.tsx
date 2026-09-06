@@ -34,7 +34,7 @@ it('ignores an aborted selection after the owner changes profile source', async 
     },
   });
   render(<ProfilePicker client={client} kind="agent" onChange={onChange} />);
-  await user.click(await screen.findByRole('button', { name: /Research agent Revision/ }));
+  await user.click(await screen.findByRole('button', { name: /Research agent Version/ }));
   await user.click(screen.getByRole('radio', { name: 'Public' }));
   expect(signal?.aborted).toBe(true);
   await act(async () => complete?.(CREATION_AGENT));
@@ -59,5 +59,5 @@ it('pages profiles without duplicating entries and rejects a stalled cursor', as
   await waitFor(() =>
     expect(screen.getByRole('alert')).toHaveTextContent('More profiles could not be loaded.'),
   );
-  expect(screen.getAllByRole('button', { name: /First agent Revision/ })).toHaveLength(1);
+  expect(screen.getAllByRole('button', { name: /First agent Version/ })).toHaveLength(1);
 });
