@@ -11,441 +11,68 @@ data:
   CHRONO_INSTALL_COMMAND_TIMEOUT_SECONDS: "600"
   CHRONO_INSTALL_TOTAL_TIMEOUT_SECONDS: "1800"
   CHRONO_CLONE_DEPTH: "50"
-  # Address the control plane binds.
   CHRONO_SERVER_BIND: "0.0.0.0:8080"
-  # How callers are authenticated. Stated explicitly rather than left to the
-  # default because the other value, "trusted", attributes every request to one
-  # fixed principal and is meant only for local development. A switch that can
-  # disable authentication should be visible in the manifest, not implied.
+  # Production must remain provider-authenticated. The trusted identity below
+  # is read only in explicit local-development trusted mode.
   CHRONO_AUTH_MODE: "provider"
-  # Origin the browser sees, used to build the sign-in redirect URI.
-  #
-  # The app's origin, not this API's, because the whole browser flow has to
-  # stay on one host. The Gateway sends /auth/ on the app origin directly here,
-  # so the callback reaches this service while the session cookie is set for
-  # the origin the browser actually uses and the post-sign-in redirect lands on
-  # the app rather than on an API hostname that serves no page.
-  #
-  # Pointing this at the API's own hostname sends the user to a 404 holding a
-  # cookie the app can never read, since the cookie is host-only by design.
+  CHRONO_TRUSTED_SUBJECT: "local-developer"
+  # Browser auth callbacks and host-only cookies use the app origin; the
+  # Gateway routes API/auth/discovery paths directly to this control plane.
   CHRONO_SERVER_PUBLIC_URL: "https://bot.chrono-ai.fun"
-  # Origin allowed to call the API from a browser.
   CHRONO_SERVER_CORS_ORIGIN: "https://bot.chrono-ai.fun"
-  # Continuously refilled request budgets. Each number is also that bucket's
-  # maximum burst. The network admission guard runs before authentication and
-  # bounds identity-store/provider work; protected authenticated operations are
-  # then keyed by NyxID subject. Public and otherwise anonymous operations use
-  # the client network even when a browser attaches an ambient cookie.
-  #
-  # Health has its own bucket so ordinary traffic cannot starve probes. Startup
-  # refuses values below 30/minute, which leaves headroom above the declared
-  # kubelet and load-balancer probe schedules.
+  # Continuously refilled process-local budgets, also the maximum burst.
+  # Admission protects authentication work; health has a separate budget.
   CHRONO_SERVER_RATE_ADMISSION_PER_MINUTE: "6000"
   CHRONO_SERVER_RATE_HEALTH_PER_MINUTE: "120"
   CHRONO_SERVER_RATE_DEFAULT_PER_MINUTE: "600"
   CHRONO_SERVER_RATE_CREATE_PER_MINUTE: "10"
   CHRONO_SERVER_RATE_INPUT_PER_MINUTE: "120"
-  # The Google external Application Load Balancer appends the upstream address
-  # and then forwarding-rule IP to X-Forwarded-For. Accept that chain only when
-  # the TCP peer is in an official GFE proxy range, then skip the rightmost LB
-  # token. The resulting token is the upstream GFE observed, not necessarily
-  # the visitor.
+  # GFE appends upstream then forwarding-rule addresses. Trust the chain only
+  # from an official GFE TCP peer and skip its rightmost load-balancer token.
   CHRONO_SERVER_TRUSTED_PROXY_CIDRS: "35.191.0.0/16,130.211.0.0/22,2600:2d00:1:1::/64"
   CHRONO_SERVER_TRUSTED_PROXY_HOPS: "1"
-  # Both public CMA hostnames are Cloudflare-proxied. Advance from the
-  # GFE-observed edge to the next-left visitor only when the edge is in this
-  # reviewed set and that token exactly agrees with the single
-  # CF-Connecting-IP header. Missing/malformed/mismatched identity, a Worker or
-  # Pseudo-IPv4-overwrite marker, a direct-origin caller, or a new unreviewed
-  # edge range retains the GFE-observed upstream key. Startup accepts only an
-  # empty value or this exact build-pinned set and rejects overlap with the GFE
-  # set. These are the complete official ranges retrieved from
-  # https://www.cloudflare.com/ips-v4 and /ips-v6 on 2026-08-29. Release and
-  # runtime checks must compare both directions: an added range degrades to an
-  # edge-shared key, while a removed/reassigned range is a security alert and
-  # remains trusted until a reviewed build and configuration update land.
+  # Advance past Cloudflare only for an exact reviewed range and matching
+  # CF-Connecting-IP. Worker/Pseudo-IPv4/malformed/direct-origin requests retain
+  # the GFE-observed key. This complete build-pinned official set was retrieved
+  # from https://www.cloudflare.com/ips-v4 and /ips-v6 on 2026-08-29.
+  # Compare both directions before release: additions degrade to edge sharing;
+  # removals/reassignments are security alerts requiring code/config review.
   CHRONO_SERVER_CLOUDFLARE_PROXY_CIDRS: "173.245.48.0/20,103.21.244.0/22,103.22.200.0/22,103.31.4.0/22,141.101.64.0/18,108.162.192.0/18,190.93.240.0/20,188.114.96.0/20,197.234.240.0/22,198.41.128.0/17,162.158.0.0/15,104.16.0.0/13,104.24.0.0/14,172.64.0.0/13,131.0.72.0/22,2400:cb00::/32,2606:4700::/32,2803:f800::/32,2405:b500::/32,2405:8100::/32,2a06:98c0::/29,2c0f:f248::/32"
-  # The app-origin HTTPRoute sends API, auth, and discovery paths straight to
-  # cma-api, so a web-pod address never has to be trusted here. If the shared
-  # Gateway changes data plane, update the GFE and header contract rather than
-  # broadening trust speculatively.
-  # Counters are process-local and this deployment is pinned to one API
-  # replica. Scaling out without shared state multiplies effective allowances.
-  # NyxID identity provider base URL. Endpoints are discovered, never hard-coded.
   CHRONO_NYXID_BASE_URL: "https://nyx-api.chrono-ai.fun"
-  # Browser-facing NyxID origin for guided account creation. This is distinct
-  # from the API base URL and must be one canonical HTTPS origin.
   CHRONO_NYXID_PUBLIC_URL: "https://nyx.chrono-ai.fun"
-  # OAuth client identifier registered with NyxID. Not a secret.
-  #
-  # The provider issues this identifier; it is not a name we choose. The
-  # readable name "chrono-bot" was rejected at the authorize endpoint as an
-  # unknown client, which is what a wrong value looks like — a redirect to an
-  # error page rather than to login.
+  # Provider-issued OAuth client identifier, not a secret or a chosen name.
   CHRONO_NYXID_CLIENT_ID: "c0cd33d2-27ba-4b8d-b38e-562364fadb72"
-  # MongoDB database name. The connection URI is a secret.
-  #
-  # Must match the database the connection string's credentials are scoped to.
-  # A hosted deployment grants a user rights on one named database, so a name
-  # that differs by so much as a separator authenticates successfully and is
-  # then refused on first write — which reads as a permissions problem rather
-  # than the typo it is.
+  # Must match the database authorized by the Secret's connection URI.
   CHRONO_MONGODB_DATABASE: "chrono-bot"
-  # Temporary maintenance mode for the recovery boundary between the two
-  # one-time MongoDB migrations. Leave empty during every ordinary startup.
-  #
-  # The only accepted value is `legacy`, and that value is accepted only while
-  # CHRONO_MONGODB_LEGACY_CUTOVER is exactly `drained` and
-  # CHRONO_MONGODB_COORDINATION_CUTOVER is empty. The process then opens only
-  # the session store, completes and verifies sessions/session_events -> v2,
-  # closes MongoDB, answers /livez, keeps /ready at 503, and refuses every
-  # public route. Clear this key before enabling coordination activation.
-  CHRONO_MONGODB_CUTOVER_STAGE: ""
-  # One-time acknowledgement for upgrading writable `sessions` and
-  # `session_events` collections to their fenced v2 namespaces.
-  #
-  # Leave this empty during ordinary startup. Before setting it, stop every CMA
-  # replica that predates the namespace fence and wait for all of its MongoDB
-  # operations to finish. Then start exactly one replacement with the value
-  # `drained`. CMA cannot prove that external condition; the value is the
-  # operator's assertion that it has happened. Once startup has installed both
-  # read-only compatibility views, remove the value again. Completed stores do
-  # not require the acknowledgement on later starts. Keep the persisted cutover
-  # marker: it binds completion to the authoritative collection UUIDs so a lost
-  # or replaced namespace cannot be mistaken for a new empty database.
-  CHRONO_MONGODB_LEGACY_CUTOVER: ""
-  # One-time acknowledgement for first activation of an existing pre-coordination
-  # database or the exact session-write-protocol-1 to protocol-2 upgrade on an
-  # already completed coordination-protocol-3 database. Leave this empty during
-  # ordinary startup. Stop every process that predates either fence, wait for its
-  # MongoDB work and external provider operations to finish, then start exactly
-  # one new replica with `drained`. Verify `sessions -> sessions_v2 -> sessions_v3`,
-  # the UUID-bound activation/receipt proofs, session write protocol 2 with
-  # coordination protocol 3, receipt write protocol 1 with coordination protocol
-  # 2, and readiness;
-  # then remove the value and prove an unflagged replica becomes Ready. The exact
-  # protocol-2 session validator is the resumable writer-upgrade boundary. This
-  # does not authorize coordination protocol-1/protocol-2 markers, unknown or
-  # weakened validators, or UUID replacement; those states are refused even with
-  # `drained` and must not be relabelled or repaired in place.
-  CHRONO_MONGODB_COORDINATION_CUTOVER: ""
-  # How many days a recorded action is kept before the database removes it.
-  #
-  # Every request this control plane serves is recorded — who asked, when, for
-  # what, with which parameters, and how it came out — so this collection grows
-  # with traffic rather than with usage and would grow without limit if nothing
-  # expired it. Ninety days is long enough to investigate something nobody
-  # noticed at the time, and short enough that a busy month is not an outage.
-  #
-  # Applied as a TTL index, so lowering this removes entries that are already
-  # stored rather than only affecting the ones written afterwards. Raising it
-  # keeps entries longer from that moment on; it cannot bring back ones the
-  # database has already removed.
-  #
-  # Values are never recorded, whatever this is set to: what may be kept is an
-  # allowlist in the code, and there is no key in it for a credential, a token
-  # or an environment variable's value.
+  # TTL applies to existing Activity records; lowering it can remove history.
   CHRONO_ACTIVITY_RETENTION_DAYS: "90"
-  # Bucket holding each session's stored agent context, claim-bound handover,
-  # and exact resolved skill packs. Reached through the platform storage
-  # service, which brokers the credential. A deployment without this storage
-  # refuses session creation whenever the resolved pack set is nonempty.
-  # Skill-pack generation-fence objects and their deletion tombstones must be
-  # exempt from lifecycle expiry, compaction, and unversioned deletion for the
-  # lifetime of this bucket; removing either can make a stale writer current.
-  #
-  # The one bucket this service addresses. It writes objects into this bucket
-  # and nowhere else, and an unset value switches context storage off rather
-  # than inventing somewhere to write.
-  #
-  # It is owned by the machine identity below, which is what makes access work
-  # at all: the storage service authorises objects by bucket ownership, so a
-  # bucket created by any other identity is refused permanently.
-  CHRONO_CONTEXT_BUCKET: "chrono-platform-bot"
-  # Trigger repository baselines and checkpoints have a distinct lifecycle
-  # from conversation context. This deployment deliberately keeps them in the
-  # same machine-identity-owned bucket under CMA's subject/Launch-scoped object
-  # prefix; changing either policy does not implicitly change this selection.
-  CHRONO_TRIGGER_WORKSPACE_BUCKET: "chrono-platform-bot"
-  # GitHub Trigger rollout is deployment-owned and starts fail-closed. Enabling
-  # the environment alone is insufficient: the publisher and numeric upstream
-  # repository must both be allowlisted, the deterministic user cohort must be
-  # non-zero, and orchestration must be unpaused. The capability kill switch is
-  # independent so disabling admission still converges existing delegated reach
-  # toward tombstone acknowledgement or confirmed agent-key revocation without
-  # terminating its session.
-  CHRONO_TRIGGER_ENABLED: "false"
-  CHRONO_TRIGGER_ORCHESTRATION_PAUSED: "true"
-  CHRONO_TRIGGER_CAPABILITY_KILL_SWITCH: "true"
-  # Closed declaration for the exact CHRONO_SANDBOX_IMAGE. Keep this empty
-  # until that image has demonstrated every named capability; Trigger Launch
-  # admission fails closed when a published requirement is absent.
-  CHRONO_TRIGGER_RUNTIME_CAPABILITIES: ""
-  # Exact NyxID public-proxy service used only for credential-free repository
-  # metadata. NyxID's smallest rule is GET /repositories/**; CMA narrows it to
-  # /repositories/{one nonzero numeric ID} and never sends a subject, bearer,
-  # UserService, query, body, or caller-selected path.
-  # Keep empty until a dedicated credential-free NyxID service (for example,
-  # cma-trigger-github-public) has the bounded anonymous rule and live evidence.
-  CHRONO_TRIGGER_PUBLIC_GITHUB_SERVICE_SLUG: ""
-  # Trigger sessions never fall back to the ordinary gVisor OpenSandbox
-  # service. These three values are one closed authority and stay empty until
-  # the dedicated versioned native lane, workload namespace, key mount, and live
-  # evidence are present. A partial tuple fails CMA startup; an absent tuple
-  # leaves ordinary sessions available while Trigger admission stays closed.
-  CHRONO_TRIGGER_SANDBOX_BASE_URL: ""
-  CHRONO_TRIGGER_SANDBOX_NAMESPACE: ""
-  CHRONO_TRIGGER_SANDBOX_API_KEY_FILE: ""
-  CHRONO_TRIGGER_PUBLISHER_SUBJECT_IDS: ""
-  CHRONO_TRIGGER_REPOSITORY_IDS: ""
-  CHRONO_TRIGGER_USER_COHORT_PERCENT: "0"
-  # Maximum files admitted into one reviewed publication. It cannot exceed the
-  # complete review schema's 1,000-file bound. Change it only with pinned-provider
-  # measurement evidence and keep the recorded value with the release evidence.
-  CHRONO_TRIGGER_CHANGED_FILE_LIMIT: "1000"
-  # Bound asynchronous fork readiness reconciliation. GitHub's documented
-  # support-escalation threshold supplies the five-minute default; it is an
-  # operational deadline, not a provider completion guarantee.
-  CHRONO_TRIGGER_FORK_READINESS_TIMEOUT_SECONDS: "300"
-  # Dry-run retains the exact CMA-owned baseline/checkpoint/diff plan but has no
-  # deletion port. Promote to execute only after reviewing dry-run inventory;
-  # execute reuses the normal fenced effect worker. Neither mode enumerates or
-  # removes sandboxes, forks, branches, commits, or pull requests.
-  CHRONO_TRIGGER_CLEANUP_MODE: "dry_run"
-  # Each independent in-process lane has a bounded page and concurrency budget.
-  # Missed ticks are skipped, page cursors are cycle-checked, and durable Launch
-  # leases remain the authority when more than one control plane sees a row.
-  CHRONO_TRIGGER_WORKER_INTERVAL_SECONDS: "5"
-  CHRONO_TRIGGER_WORKER_PAGE_SIZE: "50"
-  CHRONO_TRIGGER_WORKER_MAX_PAGES: "20"
-  CHRONO_TRIGGER_WORKER_CONCURRENCY: "4"
-  # Issue #671 sponsorship is a separate post-MVP authority. The checked-in
-  # tuple is disabled with the kill switch engaged and every other value empty.
-  # Supplying any one staging value requires the complete tuple at startup;
-  # enabled composition is available only with separately reviewed production
-  # evidence, adapters, and secret projections.
-  CHRONO_SPONSORSHIP_ENABLED: "false"
-  CHRONO_SPONSORSHIP_KILL_SWITCH_ENGAGED: "true"
-  CHRONO_SPONSORSHIP_EPOCH: ""
-  CHRONO_SPONSORSHIP_CONFIGURATION_DIGEST: ""
-  CHRONO_SPONSORSHIP_EXPIRY_EVIDENCE_ID: ""
-  CHRONO_SPONSORSHIP_REVOCATION_EVIDENCE_ID: ""
-  CHRONO_SPONSORSHIP_TRUSTED_PROVIDER_POLICY_KEY: ""
-  CHRONO_SPONSORSHIP_ALLOWED_PROVIDER_POLICY_KEYS: ""
-  CHRONO_SPONSORSHIP_MAXIMUM_POLICY_BUDGET_MICROS: ""
-  CHRONO_SPONSORSHIP_MAXIMUM_POLICY_REQUESTS: ""
-  CHRONO_SPONSORSHIP_MAXIMUM_CONCURRENT_LAUNCHES: ""
-  # Policy, sponsor, Launch, rate-window, quota, token, and spend ceilings have
-  # no permissive software defaults. Disabled staging supplies every value
-  # inside the parser's absolute bounds, with per-Launch ceilings no greater
-  # than the corresponding policy ceilings.
-  CHRONO_SPONSORSHIP_DEFAULT_POLICY_EXPIRY_SECONDS: ""
-  CHRONO_SPONSORSHIP_MAXIMUM_POLICY_EXPIRY_SECONDS: ""
-  CHRONO_SPONSORSHIP_MAXIMUM_ACTIVE_POLICIES_PER_SPONSOR: ""
-  CHRONO_SPONSORSHIP_LAUNCH_RATE_WINDOW_SECONDS: ""
-  CHRONO_SPONSORSHIP_MAXIMUM_LAUNCHES_PER_SPONSOR_PER_WINDOW: ""
-  CHRONO_SPONSORSHIP_MAXIMUM_PER_LAUNCH_REQUESTS: ""
-  CHRONO_SPONSORSHIP_MAXIMUM_REQUESTS_PER_MINUTE: ""
-  CHRONO_SPONSORSHIP_MAXIMUM_PER_LAUNCH_INPUT_TOKENS: ""
-  CHRONO_SPONSORSHIP_MAXIMUM_PER_LAUNCH_OUTPUT_TOKENS: ""
-  CHRONO_SPONSORSHIP_MAXIMUM_POLICY_INPUT_TOKENS: ""
-  CHRONO_SPONSORSHIP_MAXIMUM_POLICY_OUTPUT_TOKENS: ""
-  CHRONO_SPONSORSHIP_MAXIMUM_PER_LAUNCH_BUDGET_MICROS: ""
-  # Adapter identities are canonical policy tokens. Adapter addresses are
-  # canonical HTTPS origins, not caller-selected URLs or inline credentials.
-  CHRONO_SPONSORSHIP_PROVIDER_ADAPTER_ID: ""
-  CHRONO_SPONSORSHIP_PROVIDER_BASE_URL: ""
-  CHRONO_SPONSORSHIP_BILLING_ADAPTER_ID: ""
-  CHRONO_SPONSORSHIP_BILLING_BASE_URL: ""
-  CHRONO_SPONSORSHIP_PRICING_ADAPTER_ID: ""
-  CHRONO_SPONSORSHIP_PRICING_BASE_URL: ""
-  CHRONO_SPONSORSHIP_WORKER_INTERVAL_SECONDS: ""
-  CHRONO_SPONSORSHIP_WORKER_PAGE_SIZE: ""
-  CHRONO_SPONSORSHIP_WORKER_MAX_PAGES: ""
-  CHRONO_SPONSORSHIP_WORKER_CONCURRENCY: ""
-  # Paths only, never keyring/HMAC values. No sponsorship projection is mounted
-  # in the dormant Deployment; future composition must add three distinct
-  # read-only files only after their resources and IAM are reviewed.
-  CHRONO_SPONSORSHIP_ENCRYPTION_KEYRING_FILE: ""
-  CHRONO_SPONSORSHIP_OPERATIONAL_KEYRING_FILE: ""
-  CHRONO_SPONSORSHIP_AUDIT_HMAC_KEY_FILE: ""
-  # This service's own machine identity on the identity platform, used for all
-  # session-owned objects above. The identifier is not secret; its secret half
-  # lives in the Secret, and they are delivered separately for that reason.
+  # Existing machine-owned external chrono-storage bucket. MongoDB stores
+  # archive manifests/fences, never archive bytes. CMA does not create buckets.
+  CHRONO_CHECKPOINT_BUCKET: "chrono-platform-bot"
   CHRONO_STORAGE_CLIENT_ID: "sa_a91005afad2304c1b0023b21"
-  # Root of the identity platform. Session context is stored through its proxy,
-  # and a session's CLI acts against it on the owner's behalf. Without this,
-  # context storage stays switched off rather than half-configured.
+  # Canonical platform origin for machine token minting and storage proxying.
   CHRONO_PLATFORM_BASE_URL: "https://nyx-api.chrono-ai.fun"
-  # Where a sandbox forwards the agent's model calls, on the owner's behalf.
-  # The owner's own credential is what authorises the call; this is only the
-  # address it is sent to.
-  #
-  # Addressed through the identity platform's proxy rather than the model
-  # service directly. The direct address rejects a platform token outright —
-  # it wants an API key — so pointing there would fail every turn while
-  # looking like a model problem. The proxy is also what applies the owner's
-  # own entitlements to the call.
-  #
-  # No /v1 suffix: the proxy already resolves to the service's versioned root,
-  # and adding one produces a duplicated path that answers 404.
-  # What every session carries whether or not its owner asked for it. An
-  # environment profile may add to these lists and may never remove from them —
-  # the control plane merges them back in on every write and again when a
-  # session is started, so a client that omits one still gets it.
-  #
-  # The CLI is already installed in the runtime image; naming it here is what
-  # makes it a promise to the session rather than an accident of the image.
-  CHRONO_BASELINE_PACKAGES: "nyxid"
-  # Skills every session loads, named the way the registry names them. Both a
-  # generated identifier and a unique name resolve, and the names are used here
-  # because they are stable and readable:
-  #   https://ornn.chrono-ai.fun/skills/nyxid
-  #   https://ornn.chrono-ai.fun/skills/ornn-agent-manual-cli
-  CHRONO_BASELINE_SKILLS: "nyxid,ornn-agent-manual-cli"
+  # Agent model calls use the scoped AgentKey through this platform proxy.
   CHRONO_UPSTREAM_BASE_URL: "https://nyx-api.chrono-ai.fun/api/v1/proxy/s/chrono-llm"
-  # Verified against the live service rather than taken from its model list:
-  # that listing is incomplete, and the model it does advertise for this kernel
-  # currently answers 503 while this one answers normally. Checking the list
-  # alone would have picked the broken one.
-  CHRONO_UPSTREAM_MODEL: "gpt-5.6-sol"
   CHRONO_UPSTREAM_WIRE_API: "responses"
-  # The second kernel's model. It speaks a messages-shaped API rather than the
-  # completions-shaped one above, which is a fact about the kernel and is not
-  # configured here.
-  #
-  # Unlike the model above, this one has NOT been checked against the live
-  # service — the gateway requires a credential this repository does not hold,
-  # so neither the name nor whether that gateway serves a messages-shaped
-  # endpoint at all could be confirmed from here. It is a key rather than a
-  # constant for exactly that reason: correcting it is an edit to this file, not
-  # a rebuild. Confirm both before offering this kernel to anyone.
-  #
-  # CHRONO_CLAUDE_UPSTREAM_BASE_URL is deliberately unset: the second kernel
-  # inherits the gateway above. A deployment whose gateways differ sets that key
-  # and the two part ways.
-  CHRONO_CLAUDE_UPSTREAM_MODEL: "claude-opus-5"
-  # The third kernel's model, on the same terms and with the same caveat: not
-  # checked against the live service, and a key rather than a constant so it can
-  # be corrected without a rebuild. Its request shape is a fact about the kernel
-  # and is not configured here either.
-  #
-  # CHRONO_DSH_UPSTREAM_BASE_URL is deliberately unset, inheriting the gateway
-  # above.
-  CHRONO_DSH_UPSTREAM_MODEL: "deepseek-v4-flash"
-  # OpenSandbox lifecycle API. In-cluster service DNS over plain HTTP: the call
-  # never leaves the cluster, and the sandbox provider terminates no TLS of its
-  # own. This mirrors how the neighbouring control plane reaches it.
+  # In-cluster provider authority and the namespace granted by its scoped Role.
   CHRONO_SANDBOX_BASE_URL: "http://opensandbox-server.opensandbox-system.svc.cluster.local"
-  # BatchSandbox cleanup is deliberately confined to the namespace granted by
-  # the namespaced Role in serviceaccount.yaml.
   CHRONO_SANDBOX_NAMESPACE: "chrono-bot"
-  # Image each session's sandbox runs: the agent kernel plus the supervisor that
-  # hosts it under a pseudo-terminal. Built from infra/runtime/Dockerfile.
-  # Published alongside the control plane from this repository, in the registry
-  # the cluster already pulls from. The previous value pointed at a public
-  # registry the cluster cannot authenticate to and where this image had never
-  # been published, so every session would have failed to start its sandbox.
-  #
-  # This value is also the runtime version. Sessions record the image they are
-  # running, and the control plane carries any session on a different one onto
-  # this — capturing the agent's conversation, replacing the sandbox, and
-  # resuming from the capture. Changing this tag is therefore a rollout of
-  # every live session, which is the point: CLAUDE.md section 5 forbids leaving
-  # a session on an image nobody maintains, and forbids interrupting it to fix
-  # that. Never point this at a moving tag; a tag that changes underneath a
-  # running deployment would rotate sessions with nothing having been decided.
-  # The API and runtime also share one exact four-MiB skill-prelude limit. Adopt
-  # the matching runtime image before deploying an API that accepts that limit;
-  # the currently pinned v0.7.0 runtime rejects bodies above two MiB with 413.
+  # Retained release digest, not evidence of the current runtime contract.
+  # Before activation, publish and verify the new contract-3 runtime, then
+  # update this exact digest through the maintainer release procedure.
   CHRONO_SANDBOX_IMAGE: "us-central1-docker.pkg.dev/aelf-shared-k8s-prod/aelf-prod-registry/cma-runtime:v0.10.0@sha256:0d2781ec75e55a8901714dc1e879d7048797fc52fb5d92e580c60849beb3e568"
-  # The default, and therefore the floor a session receives when its profile
-  # names no size.
-  #
-  # How many sessions run at once is decided by `deployment_capacity` in
-  # platform settings. An administrator copies those declared totals from the
-  # space this namespace was given; the control plane sums the sizes promised
-  # by durable session records before admitting another. The old incident in
-  # which the tenth session was refused only after its owner watched it remain
-  # in provisioning is therefore refused during creation instead.
-  #
-  # Requests and limits are the same value at the provider, so this is a
-  # reservation rather than a ceiling to burst against. Raising it costs
-  # concurrency; lowering it below what the agent needs costs the session,
-  # which fails partway through somebody's work rather than refusing to start.
+  # Default resource profiles are seeded only when no corresponding default
+  # exists. Durable operator settings and published profiles own later choices.
   CHRONO_SANDBOX_CPU: "1"
   CHRONO_SANDBOX_MEMORY: "1Gi"
-  # Public verification keys retained while runtime-policy signing keys rotate.
-  # The current public key is derived from the private signer at startup and is
-  # added to this map before it is passed to a sandbox. Previous values are a
-  # JSON object from key ID to standard-base64 Ed25519 public key. Public keys
-  # are configuration, never signing authority.
-  CHRONO_GITHUB_CAPABILITY_PREVIOUS_VERIFY_KEYS: "{}"
-  # Path to the mounted OpenSandbox API key. Read from a file rather than an
-  # environment variable so the credential can be delivered by a secret volume
-  # and rotated without rewriting this ConfigMap.
-  CHRONO_SANDBOX_API_KEY_FILE: "/var/secrets/opensandbox-api-key"
-  # What this deployment calls itself on the sandboxes it creates.
-  #
-  # The sandbox provider is shared: one API key sees every sandbox provisioned
-  # against it, including any belonging to another control plane. Reconciliation
-  # reclaims runtimes no session is entitled to, so without a name on each one a
-  # second control plane would read every session it has never heard of as an
-  # orphan and tear it down. Any additional control plane sharing this provider
-  # must use a different name here and set CHRONO_ADOPT_UNTAGGED_RUNTIMES=false.
-  CHRONO_DEPLOYMENT_ID: "chrono-bot-prod"
-  # Whether sandboxes carrying no deployment name belong to this one.
-  #
-  # True here because this deployment owns the provider, so sandboxes created
-  # before names were recorded are still reclaimed once they are genuinely
-  # orphaned. A second control plane must set this false.
-  CHRONO_ADOPT_UNTAGGED_RUNTIMES: "true"
-  RUST_LOG: "info"
-  # What a session is when it names no environment profile.
-  #
-  # A profile is the whole description of a session — which agent, which model,
-  # how hard it thinks, how often it stops to ask, whose model access it spends
-  # — so a session that names none still needs those answers, and this is where
-  # this deployment gives them.
-  #
-  # Every value is refused rather than defaulted if the software does not
-  # recognise it. A deployment that meant "ask first" and mistyped it must be
-  # told at startup, not discovered later by an agent that never asked.
-  CHRONO_DEFAULT_AGENT_KERNEL: "codex"
-  # Which plane an unqualified session is driven on. "terminal" is a screen
-  # someone types at; "conversation" is a structured exchange of messages, tool
-  # calls and approvals. A session is checked against its kernel's abilities
-  # before it exists, so a mode no kernel here can serve is refused at creation
-  # rather than discovered by whoever tries to use the session.
-  CHRONO_DEFAULT_AGENT_MODE: "conversation"
   CHRONO_DEFAULT_AGENT_MODEL: "gpt-5.6-sol"
   CHRONO_DEFAULT_AGENT_EFFORT: "high"
-  # "guarded" is ask-first. The cautious answer is the default answer, because
-  # the cost of asking too often is somebody's patience and the cost of asking
-  # too rarely is somebody's repository.
-  CHRONO_DEFAULT_AGENT_PERMISSION: "guarded"
-  # "delegated" spends this platform's model access rather than the owner's own
-  # credential, which is what makes a session work with nothing to set up.
-  CHRONO_DEFAULT_AGENT_CREDENTIAL: "delegated"
-  # Services every session's credential may reach, whatever its profile says.
-  #
-  # A session no longer carries its owner's whole identity. It is given a
-  # credential minted for it alone, limited to the services its environment
-  # profile named — and to these, always.
-  #
-  # A floor rather than a default, because one credential serves every call a
-  # session makes. The agent's own model calls go through the same key as the
-  # platform CLI, so a profile that excluded the model endpoint would not
-  # produce a narrower session but one that cannot think. The skill registry is
-  # here for the same reason: the baseline skills above are fetched through it.
-  #
-  # Named the way a person reads them; the identifiers the provider wants are
-  # resolved when a credential is minted.
-  #
-  # ornn and ornn-api are two services, not one name spelled twice. ornn-api
-  # answers the skill registry this service itself searches; ornn is the skill
-  # runtime an agent calls, and it is the one the baseline skills above tell the
-  # agent to reach for. Scoping to only the first produced sessions that could
-  # be told a skill exists and were then refused when they tried to use it —
-  # "API key scope forbidden" from the provider, on every call.
+  # Read-only Secret Manager projection, resolved once at startup.
+  CHRONO_SANDBOX_API_KEY_FILE: "/var/secrets/opensandbox-api-key"
+  # Provider ownership label. Other control planes must use distinct values;
+  # untagged or foreign runtime resources are never adopted or deleted.
+  CHRONO_DEPLOYMENT_ID: "chrono-bot-prod"
+  # AgentKey service floor. Registry API and runtime are distinct services.
   CHRONO_BASELINE_SERVICES: "chrono-llm,ornn-api,ornn"
+  RUST_LOG: "info"

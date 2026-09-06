@@ -179,6 +179,33 @@ assert_not_contains "${stderr_file}" 'CHRONO_COMMENT_ONLY' 'nested modules'
 assert_not_contains "${stderr_file}" 'CHRONO_OUTSIDE_SCOPE' 'nested modules'
 pass 'all nested config modules are scanned while sibling source and prose are excluded'
 
+new_case 'supported configuration read patterns'
+write_source "${case_root}/api/crates/cma/src/config.rs" \
+  'let direct = std::env::var("CHRONO_DIRECT");' \
+  'let os = std::env::var_os("CHRONO_OS");' \
+  'let required = required(&mut lookup, "CHRONO_REQUIRED")?;' \
+  'let defaulted = value_or(&mut lookup, "CHRONO_DEFAULTED", "default")?;' \
+  'let multiline = positive_u32(' \
+  '    &mut lookup,' \
+  '    "CHRONO_MULTILINE",' \
+  '    600, 1,' \
+  ')?;' \
+  'let (first, second) = ("CHRONO_FIRST", "CHRONO_SECOND");' \
+  'let bytes = b"CHRONO_BYTES";' \
+  'let raw = r###"CHRONO_RAW"###;' \
+  'const KEY: &str = "CHRONO_CONSTANT";' \
+  'let via_constant = lookup(KEY);'
+write_configmap 'CHRONO_DIRECT' 'CHRONO_OS' 'CHRONO_REQUIRED' 'CHRONO_DEFAULTED' \
+  'CHRONO_MULTILINE' 'CHRONO_FIRST' 'CHRONO_SECOND' 'CHRONO_BYTES' 'CHRONO_RAW' \
+  'CHRONO_CONSTANT'
+write_secret_contract
+run_checker "${case_root}"
+assert_status 0 'supported configuration read patterns'
+assert_contains "${stdout_file}" \
+  'Configuration key check passed: 10 code key(s) match 10 manifest key(s).' \
+  'supported configuration read patterns'
+pass 'direct, helper, multiline, tuple, byte, raw, and constant key reads are covered'
+
 new_case 'near miss literals'
 write_source "${case_root}/api/crates/cma/src/config.rs" \
   'let valid = lookup("CHRONO_VALID_9");' \
