@@ -53,6 +53,10 @@ export type AuthState =
 
 export interface AuthProvider {
   current(): Promise<AuthState>;
-  signIn(returnTo?: string): Promise<void>;
+  signIn(returnTo?: string, options?: SignInOptions): Promise<void>;
   signOut(): Promise<void>;
+}
+
+export interface SignInOptions {
+  readonly screen?: 'register';
 }

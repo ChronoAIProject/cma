@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
-import type { AuthProvider, AuthState } from './types';
+import type { AuthProvider, AuthState, SignInOptions } from './types';
 
 /**
  * Wires an AuthProvider into React. Components consume `useAuth()` and never
@@ -10,7 +10,7 @@ import type { AuthProvider, AuthState } from './types';
 
 interface AuthContextValue {
   readonly state: AuthState;
-  readonly signIn: (returnTo?: string) => Promise<void>;
+  readonly signIn: (returnTo?: string, options?: SignInOptions) => Promise<void>;
   readonly signOut: () => Promise<void>;
 }
 
@@ -54,9 +54,9 @@ export function AuthContextProvider({ provider, children }: AuthProviderProps) {
   }, [provider]);
 
   const signIn = useCallback(
-    async (returnTo?: string) => {
+    async (returnTo?: string, options?: SignInOptions) => {
       try {
-        await provider.signIn(returnTo);
+        await provider.signIn(returnTo, options);
         setState(await provider.current());
       } catch (error: unknown) {
         setState({
