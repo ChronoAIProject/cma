@@ -11,10 +11,16 @@ const rustDocsDirectory = join(packageRoot, '..', 'rust', 'docs');
 const declarations = join(packageRoot, 'dist', 'index.d.ts');
 const expectedRustDocuments = [
   'README.md',
+  'agents.md',
   'authentication.md',
   'errors.md',
+  'operations.md',
+  'profiles.md',
   'quickstart.md',
   'reference.md',
+  'sandboxes.md',
+  'streaming.md',
+  'triggers.md',
 ];
 const expectedTypeScriptDocuments = [...expectedRustDocuments].sort();
 

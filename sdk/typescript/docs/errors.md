@@ -1,6 +1,6 @@
 # Errors
 
-<!-- nav: 4 Errors -->
+<!-- nav: 10 Errors -->
 
 All SDK failures derive from `CmaError`. `ApiError` represents a structured
 non-success response, `ProtocolError` rejects an invalid response boundary, and

@@ -28,3 +28,16 @@ The SDK does not provide a terminal plane or create a separate Chat resource.
 The optional `@chronoai/cma-sdk/react` entry exports `CmaTriggerButton`, an
 SSR-safe anchor and image. Only that entry requires the React peer dependency;
 ordinary backend clients do not load React.
+
+## Guides
+
+- [Quickstart](quickstart.md): configure a client and inspect existing resources.
+- [Authentication](authentication.md): browser identity and backend credentials.
+- [Sandboxes](sandboxes.md): pinned environments and their hierarchy.
+- [Agents](agents.md): conversations, commands and owner-scoped projections.
+- [Profiles](profiles.md): drafts, immutable revisions and Marketplace entries.
+- [Streaming](streaming.md): acknowledgements, replay and interruption recovery.
+- [Triggers](triggers.md): publishing, embeds and explicit visitor admission.
+- [Operations](operations.md): operator controls and deployment discovery.
+- [Errors](errors.md): named refusals and uncertain command outcomes.
+- [Reference](reference.md): complete helper inventory and wire contracts.

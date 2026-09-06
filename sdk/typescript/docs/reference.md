@@ -1,6 +1,6 @@
 # Reference
 
-<!-- nav: 5 Reference -->
+<!-- nav: 11 Reference -->
 
 `createClient(config)` returns a `Cma` with the following public resources:
 
@@ -20,6 +20,22 @@
 | `admin`                                                 | `listSandboxes`, `readSandbox`, `sandboxEvents`, `retireSandbox`, `listProfiles`, `retireProfile`, `readSettings`, `replaceSettings`, `patchSettings`, `resetSettings`, `pauseTriggers`, `resumeTriggers`, `readRuntimeInventory`, `listActivity` |
 
 `readConformance(options?)` performs `GET /api/v1/conformance` anonymously.
+`readOpenApi(options?)` reads the generated `/openapi.json` anonymously, preserving
+its schemas, operation annotations and extensions.
+
+`agents.terminal(id)` preserves the named `capability_unsupported` refusal, or
+the owner-scoped not-found response. `unsupported.mcp()`, `unsupported.a2a()` and
+`unsupported.agentCard()` probe the explicit `interface_not_available` responses.
+These helpers reject with `ApiError`; they do not provide a terminal or implement
+either protocol. An unexpected successful response is a `ProtocolError`.
+
+`launches.list({ trigger, state, cursor, limit })` filters the visitor's Launches
+by Trigger id and the closed `LaunchState` enum. Its `next` cursor is opaque.
+
+`triggers.badge(publicId, { label, theme, placement, ifNoneMatch })` reads an
+anonymous SVG or a conditional `304` cache result with its entity tag.
+`triggers.embedScript()` reads the public script as text without executing it.
+Both suppress bearer credentials and cookies and reject redirects.
 
 `triggers` is an alias of `triggerAuthoring`. The `admin` namespace requires
 explicit operator capabilities. Settings replace, patch and reset carry
