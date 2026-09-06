@@ -3,8 +3,9 @@
 <!-- nav: 1 Overview -->
 
 This repository-only SDK exposes CMA's public Profiles, Marketplace, Sandboxes,
-Workspaces, Worktrees and Agents REST resources. It includes runtime-validated
-wire DTOs, owner-scoped reads, durable histories and explicit idempotent commands.
+Workspaces, Worktrees, Agents, Trigger authoring, visitor Launches and operator
+REST resources, plus public AG-UI Agent conversations. It includes validated
+resource DTOs, owner-scoped reads, durable histories and explicit commands.
 It is not published to a package registry.
 
 ```ts
@@ -15,7 +16,12 @@ const deployment = await cma.readConformance();
 console.log(deployment.service, deployment.status, deployment.interfaces);
 ```
 
-The client works in browsers and Node.js environments that provide `fetch`.
-No runtime dependency or browser global is required; inject `fetch` when the
-host does not supply one. Conversation streaming, Triggers and authentication
-resource helpers are not part of this REST resource slice.
+The client works in modern browsers and Node.js environments with `fetch`,
+Web Streams and AbortSignal support. Inject `fetch` when the host does not supply
+one. SSE framing uses the pinned `eventsource-parser` runtime dependency; the SDK
+does not require a DOM or an interactive sign-in page.
+
+Use `triggerAuthoring` for publisher-owned configuration, `launches` for explicit
+visitor admission and recorded progress, and `agui` for an existing Agent's
+conversation. Previewing a Trigger or replaying an Agent never submits work.
+The SDK does not provide a terminal plane or create a separate Chat resource.
