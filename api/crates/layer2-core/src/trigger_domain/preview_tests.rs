@@ -64,7 +64,7 @@ fn fixture(
         cpu_millis: 2_000,
         memory_mib: 4_096,
         nyxid_services: Vec::new(),
-        agent_provider: AgentProvider::Codex,
+        agent_provider: AgentProvider::default(),
         model_access: ModelAccess::ChronoaiManaged,
         max_workspaces: 8,
         max_agents_per_workspace: 8,

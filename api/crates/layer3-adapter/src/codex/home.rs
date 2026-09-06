@@ -10,6 +10,8 @@ use crate::{
 pub const BRIDGE_PROGRAM: &str = "codex-acp";
 pub const SHARED_AUTH_PATH: &str = "/home/cma/.cma/provider/codex/auth.json";
 pub const AGENT_HOME_ROOT: &str = "/home/cma/.cma/agents";
+const HOME_ENVIRONMENT_NAME: &str = "CODEX_HOME";
+pub(crate) const RESERVED_ENVIRONMENT_NAMES: &[&str] = &[HOME_ENVIRONMENT_NAME];
 const BASELINE_SKILLS: [(&str, &str); 2] = [
     ("nyxid", "/home/cma/.codex/skills/nyxid"),
     (
@@ -88,7 +90,7 @@ pub fn render_launch(request: &AgentOpenRequest) -> crate::Result<AgentLaunch> {
     }
 
     let mut env = std::collections::BTreeMap::from([(
-        "CODEX_HOME".to_string(),
+        HOME_ENVIRONMENT_NAME.to_string(),
         request.options.home_directory.clone(),
     )]);
     if !request.options.own_credential {

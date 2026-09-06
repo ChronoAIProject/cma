@@ -1,5 +1,6 @@
 use std::collections::BTreeSet;
 
+pub use layer3_adapter::AgentProvider;
 use serde::{Deserialize, Serialize};
 
 use crate::ids::{SandboxProfileId, ServiceId, SubjectId};
@@ -11,19 +12,7 @@ use super::content_digest;
 use super::validation::validate_commands;
 use super::{PublicValueScanError, PublicValueScanner};
 
-const RESERVED_ENVIRONMENT_NAMES: &[&str] = &[
-    "PATH",
-    "HOME",
-    "NYXID_URL",
-    "NYXID_ACCESS_TOKEN",
-    "CODEX_HOME",
-];
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum AgentProvider {
-    Codex,
-}
+const RESERVED_ENVIRONMENT_NAMES: &[&str] = &["PATH", "HOME", "NYXID_URL", "NYXID_ACCESS_TOKEN"];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -48,13 +37,16 @@ pub struct EnvironmentVariable {
 }
 
 impl EnvironmentVariable {
-    fn validate(&self) -> Result<(), ProfileError> {
+    fn validate(&self, provider: AgentProvider) -> Result<(), ProfileError> {
         let mut chars = self.name.chars();
         if !chars
             .next()
             .is_some_and(|c| c.is_ascii_uppercase() || c == '_')
             || !chars.all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_')
             || RESERVED_ENVIRONMENT_NAMES.contains(&self.name.as_str())
+            || provider
+                .reserved_environment_names()
+                .contains(&self.name.as_str())
             || self.name.starts_with("CHRONO_")
         {
             return Err(ProfileError::new(
@@ -131,7 +123,7 @@ impl SandboxProfileContent {
         }
         self.environment_variables
             .iter()
-            .try_for_each(EnvironmentVariable::validate)?;
+            .try_for_each(|variable| variable.validate(self.agent_provider))?;
         let names: BTreeSet<_> = self
             .environment_variables
             .iter()

@@ -66,7 +66,7 @@ fn sandbox_profile(id: &str, owner: &str, workspace: WorkspaceProfileRef) -> San
             cpu_millis: 2_000,
             memory_mib: 4_096,
             nyxid_services: vec![ServiceId::new("ornn-api")],
-            agent_provider: AgentProvider::Codex,
+            agent_provider: AgentProvider::default(),
             model_access: ModelAccess::ChronoaiManaged,
             max_workspaces: 4,
             max_agents_per_workspace: 4,
@@ -160,6 +160,39 @@ async fn validation_refuses_reserved_environment_names_and_secret_like_values() 
         .await
         .unwrap_err();
     assert_eq!(error.code, "secret_like_environment_value");
+}
+
+#[test]
+fn validation_protects_platform_and_selected_provider_environment_names() {
+    let mut profile = sandbox_profile(
+        "sbp_one",
+        "owner",
+        WorkspaceProfileRef::new(WorkspaceProfileId("wkp_one".into()), 1),
+    );
+    let provider_names = profile.draft.agent_provider.reserved_environment_names();
+    assert!(!provider_names.is_empty());
+    for name in [
+        "PATH",
+        "HOME",
+        "NYXID_URL",
+        "NYXID_ACCESS_TOKEN",
+        "CHRONO_SETTING",
+    ]
+    .into_iter()
+    .chain(provider_names.iter().copied())
+    {
+        profile.draft.environment_variables[0].name = name.into();
+        assert_eq!(
+            profile.draft.validate(bounds()),
+            Err(ProfileError::new(
+                "reserved_environment_variable",
+                "environment_variables.name",
+            )),
+            "{name}"
+        );
+    }
+    profile.draft.environment_variables[0].name = "PUBLIC_SETTING".into();
+    assert_eq!(profile.draft.validate(bounds()), Ok(()));
 }
 
 #[test]
