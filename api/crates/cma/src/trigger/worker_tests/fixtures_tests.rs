@@ -997,6 +997,7 @@ pub(super) fn sandbox_resource(
             detail: "sandbox provisioning failed".into(),
         }),
         runtime: (status == SandboxStatus::Active).then(|| RuntimeBinding {
+            provision_generation: Some(1),
             runtime_id: "runtime-launch".into(),
             runtime_version: "test".into(),
             bound_at: stamp(0),
@@ -1015,7 +1016,10 @@ pub(super) fn sandbox_resource(
             max_workspaces: context.sandbox.content.max_workspaces,
             max_agents_per_workspace: context.sandbox.content.max_agents_per_workspace,
         },
-        lifecycle: Default::default(),
+        lifecycle: layer2_core::sandbox::SandboxLifecycleState {
+            runtime_generation_high_water: u64::from(status == SandboxStatus::Active),
+            ..Default::default()
+        },
         last_activity_at: stamp(0),
         created_at: stamp(0),
         updated_at: stamp(0),

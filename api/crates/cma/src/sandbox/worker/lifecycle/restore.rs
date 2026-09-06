@@ -51,10 +51,28 @@ impl SandboxWorker {
             Ok(checkpoint) => checkpoint.clone(),
             Err(failure) => return self.handle_lifecycle_failure(sandbox, failure, now).await,
         };
-        let agents = self.lifecycle_agents(&sandbox).await?;
-        let generation = match replacement_runtime_generation(&sandbox, &agents) {
-            Ok(generation) => generation,
-            Err(failure) => return self.handle_lifecycle_failure(sandbox, failure, now).await,
+        let generation = match sandbox.lifecycle.runtime_provision.as_ref() {
+            Some(reservation) => reservation.generation,
+            None => {
+                let agents = self.lifecycle_agents(&sandbox).await?;
+                let minimum = match replacement_runtime_generation(&sandbox, &agents) {
+                    Ok(generation) => generation,
+                    Err(failure) => {
+                        return self.handle_lifecycle_failure(sandbox, failure, now).await
+                    }
+                };
+                let stamp = rfc3339_at(now);
+                let lease = lifecycle_lease(&sandbox, &self.config.holder)?;
+                let mut next = sandbox.clone();
+                next.reserve_lifecycle_runtime_generation(
+                    minimum,
+                    &lease.holder,
+                    lease.fence,
+                    stamp.clone(),
+                )
+                .map_err(model_error)?;
+                return self.complete_sandbox_only_phase(sandbox, next, stamp).await;
+            }
         };
         let request = RuntimeProvisionRequest::new(
             generation,
@@ -111,6 +129,7 @@ impl SandboxWorker {
         let mut next = sandbox.clone();
         next.bind_lifecycle_runtime(
             RuntimeBinding {
+                provision_generation: Some(generation),
                 runtime_id: handle.0,
                 runtime_version: replacement_runtime_version(
                     &sandbox,

@@ -6,8 +6,8 @@ use layer2_core::sandbox::store::{
     SandboxLifecycleAgentMutation, SandboxLifecycleAgentScope, SandboxStoreError, WorktreeStore,
 };
 use layer2_core::sandbox::{
-    Agent, AgentLogKind, AgentStatus, Sandbox, SandboxEventKind, SandboxWorkStep, Worktree,
-    WorktreeStatus,
+    Agent, AgentLogKind, AgentStatus, AgentWorkStep, FirstMessageDelivery, Sandbox,
+    SandboxEventKind, SandboxWorkStep, Worktree, WorktreeStatus,
 };
 use layer3_adapter::AgentOpenRequest;
 use tokio::sync::mpsc;
@@ -15,8 +15,7 @@ use tokio::sync::mpsc;
 use super::super::support::{adapter_failure, runtime, WorkerFailure};
 use super::super::SandboxWorker;
 use super::checkpoint::{pinned_checkpoint, require_quiet_agent};
-use super::restore::replacement_runtime_generation;
-use super::support::{lifecycle_lease, model_error, operation_id};
+use super::support::{lifecycle_lease, model_error};
 use crate::sandbox::live_agents::{LiveAgentAttachment, LiveAgentRegistryError};
 use crate::sandbox::runtime_mapping::{runtime_capabilities, runtime_options};
 
@@ -47,9 +46,23 @@ impl SandboxWorker {
             Err(failure) => return self.handle_lifecycle_failure(sandbox, failure, now).await,
         };
         let worktrees = self.lifecycle_worktrees(&live).await?;
-        let generation = match replacement_runtime_generation(&sandbox, &agents) {
-            Ok(generation) => generation,
-            Err(failure) => return self.handle_lifecycle_failure(sandbox, failure, now).await,
+        let generation = match sandbox
+            .runtime
+            .as_ref()
+            .and_then(|binding| binding.provision_generation)
+        {
+            Some(generation) => generation,
+            None => {
+                return self
+                    .handle_lifecycle_failure(
+                        sandbox,
+                        WorkerFailure::terminal_security(
+                            "replacement runtime generation is absent",
+                        ),
+                        now,
+                    )
+                    .await
+            }
         };
 
         let mut attachments = Vec::new();
@@ -62,9 +75,8 @@ impl SandboxWorker {
                 .conversation_id
                 .clone()
                 .expect("validated live agents have conversation identities");
-            let action = format!("reopen:{}", agent.id);
             let request = AgentOpenRequest::new(
-                operation_id(&sandbox, &action)?,
+                format!("agent:{}:open:v1", agent.id),
                 runtime_options(agent, &sandbox, worktree),
                 Some(conversation_id.clone()),
             );
@@ -135,6 +147,16 @@ impl SandboxWorker {
             agent
                 .transition(AgentStatus::Ready, stamp.clone(), None)
                 .map_err(|error| SandboxStoreError::Corrupt(error.to_string()))?;
+            if agent
+                .conversation
+                .first_message
+                .as_ref()
+                .is_some_and(|message| message.state == FirstMessageDelivery::Queued)
+            {
+                agent
+                    .work
+                    .schedule(AgentWorkStep::DispatchFirstMessage, stamp.clone());
+            }
             let logs = vec![
                 AgentLogKind::ConversationOpened {
                     conversation_id,
@@ -250,17 +272,16 @@ fn validate_reopen_set<'a>(
         .iter()
         .filter(|agent| agent.status.is_live())
         .collect::<Vec<_>>();
-    let matches = live.len() == by_id.len()
-        && live.iter().all(|agent| {
-            agent.status == AgentStatus::Paused
-                && require_quiet_agent(agent).is_ok()
-                && agent
-                    .conversation
-                    .conversation_id
-                    .as_deref()
-                    .zip(by_id.get(&agent.id).copied())
-                    .is_some_and(|(current, checkpoint)| current == checkpoint)
-        });
+    let matches = live.iter().all(|agent| {
+        agent.status == AgentStatus::Paused
+            && require_quiet_agent(agent).is_ok()
+            && agent
+                .conversation
+                .conversation_id
+                .as_deref()
+                .zip(by_id.get(&agent.id).copied())
+                .is_some_and(|(current, checkpoint)| current == checkpoint)
+    });
     if matches {
         Ok(live)
     } else {

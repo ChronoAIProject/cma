@@ -86,10 +86,12 @@ impl Harness {
             .await
             .unwrap();
         sandbox.runtime = Some(RuntimeBinding {
+            provision_generation: Some(1),
             runtime_id: runtime.0.clone(),
             runtime_version: "runtime-v2".into(),
             bound_at: stamp.clone(),
         });
+        sandbox.lifecycle.runtime_generation_high_water = 1;
         store.create_sandbox(sandbox).await.unwrap();
 
         let workspace_id = WorkspaceId::generate();
