@@ -87,6 +87,19 @@ impl AgentReadService {
         Ok(projection.transcript)
     }
 
+    /// Read a validated log through the exact aggregate captured for this read.
+    pub async fn log_snapshot(
+        &self,
+        caller: &Caller,
+        id: &AgentId,
+    ) -> Result<(Agent, Vec<AgentLogEntry>), AgentReadError> {
+        require(caller)?;
+        let agent = self.owned_lineage(caller, id).await?.agent;
+        let entries = self.complete_log(&agent).await?;
+        fold_agent_log(&agent, &entries).map_err(AgentReadError::Corrupt)?;
+        Ok((agent, entries))
+    }
+
     pub async fn usage(
         &self,
         caller: &Caller,
