@@ -21,6 +21,11 @@ use tower::ServiceExt;
 use super::{profiles_router, ProfileRoutePolicy, ProfilesState};
 use crate::AuthenticatedSubject;
 
+#[path = "defaults_tests.rs"]
+mod defaults_tests;
+#[path = "public_revision_tests.rs"]
+mod public_revision_tests;
+
 type OperationKey = (String, String, String);
 type OperationRecord = ([u8; 32], Option<Vec<u8>>);
 
