@@ -45,9 +45,9 @@ for (const document of documents) {
   navOrders.add(order);
   navLabels.add(label);
 
-  const fence = /```(?:ts|typescript)\s*\n([\s\S]*?)```/g;
+  const fence = /```(ts|tsx|typescript)\s*\n([\s\S]*?)```/g;
   for (const match of markdown.matchAll(fence)) {
-    examples.push({ document, source: match[1] });
+    examples.push({ document, source: match[2], jsx: match[1] === 'tsx' });
   }
 }
 
@@ -83,9 +83,13 @@ if (examples.length < 4) {
 
 const scratch = await mkdtemp(join(tmpdir(), 'cma-sdk-docs-'));
 try {
+  await writeFile(join(scratch, 'package.json'), JSON.stringify({ type: 'module' }));
   const roots = [];
   for (const [index, example] of examples.entries()) {
-    const path = join(scratch, `${basename(example.document, '.md')}-${String(index + 1)}.mts`);
+    const path = join(
+      scratch,
+      `${basename(example.document, '.md')}-${String(index + 1)}.${example.jsx ? 'tsx' : 'mts'}`,
+    );
     await writeFile(path, `export {};\n${example.source}`, 'utf8');
     roots.push(path);
   }
@@ -97,12 +101,16 @@ try {
     moduleResolution: ts.ModuleResolutionKind.NodeNext,
     moduleDetection: ts.ModuleDetectionKind.Force,
     strict: true,
+    jsx: ts.JsxEmit.ReactJSX,
     noEmit: true,
     skipLibCheck: true,
     verbatimModuleSyntax: true,
     baseUrl: packageRoot,
     paths: {
       '@chronoai/cma-sdk': ['./dist/index.d.ts'],
+      '@chronoai/cma-sdk/react': ['./dist/react.d.ts'],
+      react: ['./node_modules/@types/react/index.d.ts'],
+      'react/*': ['./node_modules/@types/react/*.d.ts'],
     },
     types: ['node'],
     typeRoots: [join(packageRoot, 'node_modules', '@types')],

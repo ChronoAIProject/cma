@@ -4,7 +4,7 @@
 
 This repository-only SDK exposes CMA's public Profiles, Marketplace, Sandboxes,
 Workspaces, Worktrees, Agents, Trigger authoring, visitor Launches and operator
-REST resources, plus public AG-UI Agent conversations. It includes validated
+REST resources, browser authentication helpers, plus AG-UI and Responses Agent conversations. It includes validated
 resource DTOs, owner-scoped reads, durable histories and explicit commands.
 It is not published to a package registry.
 
@@ -25,3 +25,6 @@ Use `triggerAuthoring` for publisher-owned configuration, `launches` for explici
 visitor admission and recorded progress, and `agui` for an existing Agent's
 conversation. Previewing a Trigger or replaying an Agent never submits work.
 The SDK does not provide a terminal plane or create a separate Chat resource.
+The optional `@chronoai/cma-sdk/react` entry exports `CmaTriggerButton`, an
+SSR-safe anchor and image. Only that entry requires the React peer dependency;
+ordinary backend clients do not load React.

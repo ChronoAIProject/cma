@@ -26,18 +26,40 @@ rejected.
 credentials nor cookies and does not invoke the credential callback. The SDK
 does not perform an interactive sign-in, create API keys or store credentials.
 
-Trigger preview is a public read. Admission requires the visitor's authenticated
+`readTriggerPreview(config, publicId)` and `launches.preview(publicId)` are
+credential-suppressed public reads, as is `auth.readSignupOptions()`. Admission requires the visitor's authenticated
 identity; Launch reads, progress and connection handoffs are owner-checked.
 Publisher methods require the separate Trigger-publishing grant. Operator methods
 require their distinct operator grants; exposing a client namespace does not grant
 authority to use it.
 
-For a same-origin browser, the application may navigate to `/auth/login` with a
-canonical local `return_to`; `screen=register` selects registration when supported.
-`/auth/signup-options` supplies current registration availability. These browser
-routes are not SDK methods. Preserve an explicit visitor intent across sign-in,
+## Browser Sessions
+
+`auth.readSession()` returns a discriminated `AuthSession`: HTTP 401 with
+`authenticated: false` means signed out; HTTP 503 is an unavailable identity
+store, not a signed-out result. Successful identities carry `subject`, explicit
+`capabilities`, `visitor`, and optional display fields. Display fields are never
+authorization evidence.
+
+`auth.loginUrl({ returnTo, screen: 'register' })` validates a canonical CMA
+workflow destination and returns the navigation URL without making a request.
+`screen` is optional; `auth.logoutUrl()` similarly returns the logout navigation
+URL without revoking anything until the application navigates there.
+`auth.readSignupOptions()` supplies current registration availability.
+Preserve an explicit visitor intent across sign-in,
 with a bounded lifetime and its exact command key/body. An OAuth callback without
 that intent must not create a Launch.
+
+```ts
+import { createClient } from '@chronoai/cma-sdk';
+
+const cma = createClient();
+const identity = await cma.auth.readSession();
+if (!identity.authenticated) {
+  const destination = cma.auth.loginUrl({ returnTo: '/triggers/manage' });
+  console.log(destination);
+}
+```
 
 `launches.createConnection` returns an opaque handoff id and a NyxID hosted URL,
 never service credentials. Validate HTTPS and reject URL user information before

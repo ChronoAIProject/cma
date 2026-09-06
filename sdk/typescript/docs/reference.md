@@ -4,25 +4,28 @@
 
 `createClient(config)` returns a `Cma` with the following public resources:
 
-| Resource                                                | Methods                                                                                                                                                               |
-| ------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `agentProfiles`, `workspaceProfiles`, `sandboxProfiles` | `list`, `read`, `create`, `save`, `publish`, `listRevisions`, `readRevision`, `setVisibility`, `retire`                                                               |
-| `marketplace.agent`, `.workspace`, `.sandbox`           | `list`, `read`, `fork`                                                                                                                                                |
-| `sandboxes`                                             | `list`, `read`, `create`, `pause`, `revive`, `delete`, `events`                                                                                                       |
-| `workspaces`                                            | `list(sandboxId)`, `read`, `create(sandboxId, body, options)`, `delete`                                                                                               |
-| `worktrees`                                             | `list(workspaceId)`, `read`                                                                                                                                           |
-| `agents`                                                | `list`, `read`, `create(workspaceId, body, options)`, `input`, `steer`, `interrupt`, `answerApproval`, `stop`, `delete`, `events`, `transcript`, `usage`, `resources` |
-| `triggerAuthoring`                                      | `list`, `read`, `create`, `save`, `delete`, `publish`, `retire`, `listRevisions`, `listPlacements`, `createPlacement`, `retirePlacement`, `embed`, `stats`            |
-| `launches`                                              | `preview`, `createOrResume`, `read`, `list`, `start`, `cancel`, `requirements`, `events`, `stream`, `createConnection`, `readConnection`                              |
-| `agui`                                                  | `run`, `replay`                                                                                                                                                       |
-| `admin`                                                 | `listSandboxes`, `readSandbox`, `sandboxEvents`, `retireSandbox`, `listProfiles`, `retireProfile`, `readSettings`, `replaceSettings`, `listActivity`                  |
+| Resource                                                | Methods                                                                                                                                                                                                                                           |
+| ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `agentProfiles`, `workspaceProfiles`, `sandboxProfiles` | `list`, `read`, `create`, `save`, `publish`, `listRevisions`, `readRevision`, `setVisibility`, `retire`                                                                                                                                           |
+| `marketplace.agent`, `.workspace`, `.sandbox`           | `list`, `read`, `fork`                                                                                                                                                                                                                            |
+| `sandboxes`                                             | `list`, `read`, `create`, `pause`, `revive`, `delete`, `events`                                                                                                                                                                                   |
+| `workspaces`                                            | `list(sandboxId)`, `read`, `create(sandboxId, body, options)`, `delete`                                                                                                                                                                           |
+| `worktrees`                                             | `list(workspaceId)`, `read`                                                                                                                                                                                                                       |
+| `agents`                                                | `list`, `read`, `create(workspaceId, body, options)`, `input`, `steer`, `interrupt`, `answerApproval`, `stop`, `delete`, `events`, `transcript`, `usage`, `resources`                                                                             |
+| `triggerAuthoring`                                      | `list`, `read`, `create`, `save`, `delete`, `publish`, `retire`, `listRevisions`, `listPlacements`, `createPlacement`, `retirePlacement`, `embed`, `stats`                                                                                        |
+| `launches`                                              | `preview`, `createOrResume`, `read`, `list`, `start`, `cancel`, `requirements`, `events`, `stream`, `createConnection`, `readConnection`                                                                                                          |
+| `agui`                                                  | `run`, `replay`, `readCapabilities`, `readSandboxSnapshot`, `streamLaunchEvents`                                                                                                                                                                  |
+| `responses`                                             | `createConversation`, `readConversation`, `listConversationItems`, `create`, `read`, `delete`, `cancel`                                                                                                                                           |
+| `auth`                                                  | `readSession`, `readSignupOptions`, `loginUrl`, `logoutUrl`                                                                                                                                                                                       |
+| `admin`                                                 | `listSandboxes`, `readSandbox`, `sandboxEvents`, `retireSandbox`, `listProfiles`, `retireProfile`, `readSettings`, `replaceSettings`, `patchSettings`, `resetSettings`, `pauseTriggers`, `resumeTriggers`, `readRuntimeInventory`, `listActivity` |
 
 `readConformance(options?)` performs `GET /api/v1/conformance` anonymously.
 
-The `admin` namespace is a documented subset of the public REST administration
-surface. Runtime inventory, settings patch/reset and Trigger pause/resume are
-not SDK exports in this version; use their documented REST contracts when
-needed. Do not infer extra methods from an operator's available permissions.
+`triggers` is an alias of `triggerAuthoring`. The `admin` namespace requires
+explicit operator capabilities. Settings replace, patch and reset carry
+`expected_revision`; a patch supplies at least one complete section and leaves
+omitted sections unchanged. Null sections and empty patches are refused. Neither
+settings commands nor Trigger pause/resume invent an idempotency key or retry.
 
 `readDefaults(options?)` performs the authenticated `GET /api/v1/defaults` and
 returns only `sandbox_profile`, `workspace_profile`, and `agent_profile`, each
@@ -150,6 +153,34 @@ plus `javascript_sri` and the `content_security_policy.img_src` / `script_src`
 directives. Display and copy these exact values; do not reconstruct them from
 the public id. `stats` reports totals and placement attribution. A failed stats
 read is unavailable data, never an observed zero.
+
+### React Button
+
+The descriptor's React snippet uses the optional peer-dependent React entry.
+It renders only an anchor and image, makes no API call, and is safe during SSR:
+
+```tsx
+import { CmaTriggerButton } from '@chronoai/cma-sdk/react';
+
+export const publishedButton = (
+  <CmaTriggerButton
+    triggerId="pub_example"
+    placementId="plc_readme"
+    label="open_in_cma"
+    theme="auto"
+    baseUrl="https://cma.example"
+  />
+);
+```
+
+`triggerId` is the public id, not the publisher's private Trigger id. Optional
+`placementId` controls attribution; without it the link uses `/t/{publicId}`.
+`label` is `open_in_cma`, `chat_with_this`, `run_with_cma`, or `try_it`; `theme`
+is `auto`, `light`, or `dark`. Their defaults are `open_in_cma` and `auto`.
+`baseUrl` must be an absolute HTTP(S) origin with no credentials, path, query or
+fragment; its default is `https://bot.chrono-ai.fun`. Prefer the exact supplied
+descriptor props for non-production deployments. Package checks compile and
+render the backend-generated snippet against the packed SDK.
 
 ## Visitor Launches
 
@@ -292,3 +323,53 @@ from zero through twenty. A successful durable acknowledgement resets that
 count. `run` never reconnects its POST. `timeoutMs` bounds admission and response
 headers, not an active AG-UI response body; use `signal` to bound the entire
 operation. Replay transport failure does not change the durable run outcome.
+
+`readCapabilities()` returns the deployment's typed AG-UI feature declaration.
+`readSandboxSnapshot(agentId)` returns the same Agent's Sandbox, Workspace,
+Worktree and first-message state and rejects a mismatched thread identity.
+`streamLaunchEvents` uses the visitor Launch companion: optional `after`,
+`limit` (1-200) and `follow: false` capture one bounded page. The default follows
+until disconnect or caller cancellation; reconnect is caller-owned.
+
+## Responses
+
+`responses` projects the same owned Agent conversation. `createConversation`
+accepts optional `metadata` identifiers `agent_profile`, `workspace`, and
+`sandbox`; it creates an Agent context, not a separate Chat aggregate.
+`readConversation` and `listConversationItems` read its durable projection.
+Items are newest-first, with `after`, `limit` (1-100), nullable `first_id` and
+`last_id`, and `has_more`. Provider tool activity uses `cma_chat.tool_activity`,
+not an invented standard function call.
+
+```ts
+import { createClient, type ResponseEvent } from '@chronoai/cma-sdk';
+
+const cma = createClient();
+export async function sendResponse(
+  agentId: string,
+  text: string,
+  signal: AbortSignal,
+  apply: (event: ResponseEvent) => Promise<void>,
+) {
+  return cma.responses.create(
+    { conversation: agentId, input: text, stream: true },
+    { signal, onEvent: apply },
+  );
+}
+```
+
+`create` submits once and returns the terminal `ResponseObject` after each
+callback has acknowledged its frame. `failed` and `incomplete` are authoritative
+Agent outcomes; an interrupted transport throws without inventing either one.
+The connection-local sequence starts at zero; it is not a durable replay cursor.
+`timeoutMs` bounds only admission and response headers (605 seconds by default);
+use `signal` to bound the complete operation. Never resubmit a disconnected POST
+automatically. Recover with durable `read(responseId)` or the Agent history.
+
+The subset requires `conversation`, exactly one nonempty user text message, and
+`stream: true`. Optional `previous_response_id` enforces a linear prior response;
+`model` is accepted but cannot override the pinned Agent Profile. `store: false`,
+background execution, tools and instruction overrides are unsupported. The
+explicit `delete` and `cancel` helpers preserve the server's
+`responses_field_unsupported` problem as `ApiError`; neither operation is
+advertised as a supported Agent action.

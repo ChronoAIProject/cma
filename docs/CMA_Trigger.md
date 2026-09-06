@@ -183,12 +183,15 @@ change and verify the supplied hash against the served script.
 ### React
 
 ```tsx
-<a href="https://cma.example/t/pub_example/plc_readme"><img src="https://cma.example/api/v1/triggers/public/pub_example/badge.svg?label=open_in_cma&theme=auto&placement=plc_readme" alt="Open in CMA" /></a>
+import { CmaTriggerButton } from '@chronoai/cma-sdk/react';
+
+<CmaTriggerButton triggerId="pub_example" placementId="plc_readme" label="open_in_cma" theme="auto" baseUrl="https://cma.example" />
 ```
 
-This JSX needs no CMA credential and does not need the SDK at runtime. Use the
-server-returned React snippet; the SDK does not export a Trigger button
-component. Rendering or mounting the link must not submit a Launch mutation.
+This JSX needs no CMA credential. Use the server-returned React snippet with
+the repository-only SDK's `react` subpath and the host application's React peer
+dependency. The component renders an anchor and image without fetching data or
+using browser globals; server rendering and mounting never submit a Launch.
 
 ### Just The Link
 
