@@ -47,6 +47,17 @@ async function captureLayouts(page: Page, info: TestInfo, state: string) {
             ),
           )
           .toEqual([]);
+        const signInLink = await page.evaluate(() => {
+          const link = document.querySelector('.agent-sign-in > a');
+          if (link === null) return undefined;
+          const probe = document.createElement('span');
+          probe.style.color = 'var(--dsw-alias-state-business-primary)';
+          document.body.append(probe);
+          const expected = getComputedStyle(probe).color;
+          probe.remove();
+          return { actual: getComputedStyle(link).color, expected };
+        });
+        if (signInLink) expect(signInLink.actual).toBe(signInLink.expected);
         await page.screenshot({
           path: info.outputPath(`${state}-${theme}-${viewport.width}.png`),
           fullPage: true,
