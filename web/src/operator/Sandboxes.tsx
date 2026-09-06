@@ -1,0 +1,244 @@
+import { useCallback, useRef, useState } from 'react';
+import type { AdminSandboxSummary, SandboxStatus } from '@chronoai/cma-sdk';
+import { Button } from '../ui/Button';
+import { Input } from '../ui/Input';
+import { RiskConfirmation } from '../ui/RiskConfirmation';
+import { IconArchiveOutline20, IconInspectOutline12, IconSearchOutline16 } from '../ui/icons';
+import type { OperatorClient } from './client';
+import {
+  FailureNotice,
+  RecordControls,
+  Records,
+  Timestamp,
+  stateWord,
+  useRecords,
+} from './records';
+import { operatorFailure, type OperatorFailure } from './failure';
+import { SandboxDetail } from './SandboxDetail';
+
+const statuses: readonly SandboxStatus[] = [
+  'provisioning',
+  'installing',
+  'active',
+  'pausing',
+  'paused',
+  'reviving',
+  'credential_rotating',
+  'rotating',
+  'failed',
+  'retiring',
+  'retired',
+];
+
+export function Sandboxes({
+  client,
+  canControl,
+}: {
+  readonly client: OperatorClient;
+  readonly canControl: boolean;
+}) {
+  const [owner, setOwner] = useState('');
+  const [status, setStatus] = useState<SandboxStatus | ''>('');
+  const [version, setVersion] = useState('');
+  const [filters, setFilters] = useState({ owner, status, version });
+  return (
+    <section aria-label="Sandbox inventory">
+      <h2>Sandboxes</h2>
+      <form
+        className="operator-filters"
+        onSubmit={(event) => {
+          event.preventDefault();
+          setFilters({ owner, status, version });
+        }}
+      >
+        <label className="operator-field">
+          <span>Owner</span>
+          <Input
+            aria-label="Sandbox owner"
+            value={owner}
+            onChange={(event) => setOwner(event.target.value)}
+            maxLength={255}
+          />
+        </label>
+        <label className="operator-field">
+          <span>Status</span>
+          <select
+            aria-label="Sandbox status"
+            value={status}
+            onChange={(event) => setStatus(event.target.value as SandboxStatus | '')}
+          >
+            <option value="">All statuses</option>
+            {statuses.map((value) => (
+              <option key={value} value={value}>
+                {stateWord(value)}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="operator-field">
+          <span>Runtime version</span>
+          <Input
+            aria-label="Runtime version"
+            value={version}
+            onChange={(event) => setVersion(event.target.value)}
+            maxLength={255}
+          />
+        </label>
+        <Button type="submit" icon={<IconSearchOutline16 />}>
+          Apply filters
+        </Button>
+      </form>
+      <SandboxRecords
+        key={JSON.stringify(filters)}
+        client={client}
+        canControl={canControl}
+        filters={filters}
+      />
+    </section>
+  );
+}
+
+function SandboxRecords({
+  client,
+  canControl,
+  filters,
+}: {
+  readonly client: OperatorClient;
+  readonly canControl: boolean;
+  readonly filters: {
+    readonly owner: string;
+    readonly status: SandboxStatus | '';
+    readonly version: string;
+  };
+}) {
+  const load = useCallback(
+    (cursor: string | undefined, signal: AbortSignal) =>
+      client.admin.listSandboxes({
+        cursor,
+        signal,
+        limit: 50,
+        owner: filters.owner || undefined,
+        status: filters.status || undefined,
+        runtime_version: filters.version || undefined,
+      }),
+    [client, filters],
+  );
+  const records = useRecords(load);
+  const [detail, setDetail] = useState<string>();
+  const [target, setTarget] = useState<AdminSandboxSummary>();
+  const [busy, setBusy] = useState(false);
+  const [failure, setFailure] = useState<OperatorFailure>();
+  const [uncertain, setUncertain] = useState(false);
+  const submitting = useRef(false);
+  const retire = async () => {
+    if (target === undefined || !canControl || submitting.current) return;
+    submitting.current = true;
+    setBusy(true);
+    setFailure(undefined);
+    try {
+      if (uncertain) {
+        const current = await client.admin.readSandbox(target.id);
+        setTarget({ ...target, status: current.sandbox.status });
+        setUncertain(false);
+        records.refresh();
+        if (current.sandbox.status === 'retiring' || current.sandbox.status === 'retired')
+          setTarget(undefined);
+      } else {
+        await client.admin.retireSandbox(target.id);
+        setTarget(undefined);
+        records.refresh();
+      }
+    } catch (error) {
+      const problem = operatorFailure(error);
+      setFailure(problem);
+      setUncertain((previous) => previous || problem.uncertain);
+    } finally {
+      submitting.current = false;
+      setBusy(false);
+    }
+  };
+  return (
+    <>
+      <RecordControls {...records} />
+      <FailureNotice failure={records.error} />
+      <Records loading={records.loading} empty={records.page?.items.length === 0}>
+        {records.page?.items.map((row) => (
+          <article className="operator-record" key={row.id}>
+            <Timestamp value={row.last_activity_at} />
+            <div>
+              <p>
+                {row.name} <span className="operator-state">{stateWord(row.status)}</span>
+              </p>
+              <p className="operator-meta">
+                <span>
+                  Owner <code>{row.owner}</code>
+                </span>
+                <span>{row.agent_count} Agents</span>
+                <span>Runtime {row.runtime_version ?? 'not bound'}</span>
+              </p>
+              <code>{row.id}</code>
+            </div>
+            <div>
+              <div className="operator-actions">
+                <Button
+                  size="sm"
+                  icon={<IconInspectOutline12 />}
+                  onClick={() => setDetail(row.id)}
+                  aria-label={`Details for ${row.name}`}
+                >
+                  Details
+                </Button>
+                <Button
+                  size="sm"
+                  variant="danger"
+                  icon={<IconArchiveOutline20 />}
+                  disabled={!canControl || row.status === 'retired' || row.status === 'retiring'}
+                  onClick={() => {
+                    setFailure(undefined);
+                    setUncertain(false);
+                    setTarget(row);
+                  }}
+                >
+                  Retire
+                </Button>
+              </div>
+              {!canControl ? (
+                <p className="operator-notice">Cross-owner control is required.</p>
+              ) : row.status === 'retired' || row.status === 'retiring' ? (
+                <p className="operator-notice">Retirement already requested.</p>
+              ) : null}
+            </div>
+          </article>
+        ))}
+      </Records>
+      {detail === undefined ? null : (
+        <SandboxDetail client={client} id={detail} onClose={() => setDetail(undefined)} />
+      )}
+      {target === undefined || !canControl ? null : (
+        <RiskConfirmation
+          open
+          title={`Retire ${target.name}`}
+          description={`Retiring Sandbox ${target.id} stops its Agents and releases its runtime. It cannot be resumed. The operator action is audited.`}
+          acknowledgeLabel="I understand this Sandbox cannot be resumed."
+          confirmLabel={uncertain ? 'Check current state' : 'Retire Sandbox'}
+          busy={busy}
+          dismissible={!busy}
+          failure={
+            failure === undefined
+              ? undefined
+              : `${failure.message}${failure.code === undefined ? '' : ` (${failure.code})`}`
+          }
+          status={
+            uncertain
+              ? 'The previous outcome is unknown. Only a read will be sent next.'
+              : busy
+                ? 'Submitting'
+                : undefined
+          }
+          onCancel={() => setTarget(undefined)}
+          onConfirm={() => void retire()}
+        />
+      )}
+    </>
+  );
+}
