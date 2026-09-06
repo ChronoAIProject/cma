@@ -44,6 +44,7 @@ async fn subscription_precedes_admission_and_survives_turns_without_persisting_f
     let thought = live.try_recv().unwrap();
     assert_eq!(first.agent_id, working.id);
     assert_eq!(first.runtime_generation, 1);
+    assert_eq!(first.after_seq, working.conversation.last_seq);
     assert_eq!(Some(first.turn_sequence), working.conversation.active_turn);
     assert_eq!(first.message_id, second.message_id);
     assert_eq!(first.kind, AgentLiveFragmentKind::Message);
@@ -111,16 +112,16 @@ async fn unseen_message_identity_survives_the_first_evidence_commit() {
     assert_eq!(first.message_id, second.message_id);
     assert_eq!(first.delta, "first ");
     assert_eq!(second.delta, "second");
-    assert!(
-        store
-            .get_agent(&working.id)
-            .await
-            .unwrap()
-            .unwrap()
-            .conversation
-            .last_seq
-            > working.conversation.last_seq
-    );
+    let committed_seq = store
+        .get_agent(&working.id)
+        .await
+        .unwrap()
+        .unwrap()
+        .conversation
+        .last_seq;
+    assert!(committed_seq > working.conversation.last_seq);
+    assert_eq!(first.after_seq, committed_seq);
+    assert_eq!(second.after_seq, committed_seq);
     assert_eq!(live.try_recv(), Err(TryRecvError::Empty));
 }
 

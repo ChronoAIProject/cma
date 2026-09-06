@@ -72,15 +72,25 @@ impl AgentUpdateRecorder for DurableAgentUpdateRecorder {
                 let FoldedConversationUpdate::Quiet(mut next_assembly) = folded else {
                     unreachable!()
                 };
-                let fragment =
-                    live::accepted_fragment(&current, assembly, &mut next_assembly, &update);
+                let fragment = live::accepted_fragment(
+                    &current,
+                    assembly,
+                    &mut next_assembly,
+                    &update,
+                    current.conversation.last_seq,
+                );
                 *assembly = next_assembly;
                 self.live.publish(fragment);
                 return Ok(AgentUpdateOutcome::quiet());
             };
             let mut change = *change;
-            let fragment =
-                live::accepted_fragment(&current, assembly, &mut change.assembly, &update);
+            let fragment = live::accepted_fragment(
+                &current,
+                assembly,
+                &mut change.assembly,
+                &update,
+                change.agent.conversation.last_seq,
+            );
             let mutation = AgentConversationMutation {
                 admission_guard: None,
                 expected_agent_revision: current.revision,

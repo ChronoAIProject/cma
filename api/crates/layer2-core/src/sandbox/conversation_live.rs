@@ -23,6 +23,7 @@ pub struct AgentLiveFragment {
     pub agent_id: AgentId,
     pub runtime_generation: u64,
     pub turn_sequence: u64,
+    pub after_seq: u64,
     pub message_id: String,
     pub kind: AgentLiveFragmentKind,
     pub delta: String,
@@ -35,6 +36,7 @@ impl std::fmt::Debug for AgentLiveFragment {
             .field("agent_id", &self.agent_id)
             .field("runtime_generation", &self.runtime_generation)
             .field("turn_sequence", &self.turn_sequence)
+            .field("after_seq", &self.after_seq)
             .field("message_id", &self.message_id)
             .field("kind", &self.kind)
             .field("delta_bytes", &self.delta.len())
@@ -114,6 +116,7 @@ pub(super) fn accepted_fragment(
     previous: &AgentMessageAssembly,
     next: &mut AgentMessageAssembly,
     update: &ConversationUpdate,
+    after_seq: u64,
 ) -> Option<AgentLiveFragment> {
     let generation = current.conversation.runtime_generation?;
     let turn = current.conversation.active_turn?;
@@ -166,6 +169,7 @@ pub(super) fn accepted_fragment(
         agent_id: current.id.clone(),
         runtime_generation: generation,
         turn_sequence: turn,
+        after_seq,
         message_id: identity.as_ref()?.id.clone(),
         kind,
         delta,
