@@ -29,11 +29,18 @@ pub(super) struct EmbedSnippets {
 }
 
 #[derive(ToSchema)]
+pub(super) struct EmbedContentSecurityPolicy {
+    img_src: String,
+    script_src: String,
+}
+
+#[derive(ToSchema)]
 pub(super) struct EmbedDescriptor {
     public_url: String,
     badge_url: String,
     label_text: String,
     javascript_sri: String,
+    content_security_policy: EmbedContentSecurityPolicy,
     snippets: EmbedSnippets,
 }
 

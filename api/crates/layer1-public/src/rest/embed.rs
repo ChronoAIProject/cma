@@ -34,7 +34,15 @@ pub struct EmbedDescriptor {
     pub badge_url: String,
     pub label_text: String,
     pub javascript_sri: String,
+    pub content_security_policy: EmbedContentSecurityPolicy,
     pub snippets: EmbedSnippets,
+}
+
+/// Copy-ready source directives for the configured, validated public origin.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EmbedContentSecurityPolicy {
+    pub img_src: String,
+    pub script_src: String,
 }
 
 /// Copy-ready snippets derived from the same canonical URLs and presentation.
@@ -228,6 +236,10 @@ pub(super) fn build_descriptor(
         badge_url,
         label_text: label_text.into(),
         javascript_sri: EMBED_V1_JAVASCRIPT_SRI.into(),
+        content_security_policy: EmbedContentSecurityPolicy {
+            img_src: format!("img-src {origin}"),
+            script_src: format!("script-src {origin}"),
+        },
         snippets,
     }
 }
