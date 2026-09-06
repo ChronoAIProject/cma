@@ -11,11 +11,11 @@ const messages: Readonly<Record<string, string>> = {
   sandbox_not_found: 'The selected sandbox is no longer available.',
   workspace_not_found: 'The selected workspace is no longer available.',
   sandbox_profile_not_found:
-    'The selected sandbox revision is no longer available. Choose another profile.',
+    'The selected sandbox version is no longer available. Choose another profile.',
   workspace_profile_not_found:
-    'The selected workspace revision is no longer available. Choose another profile.',
+    'The selected workspace version is no longer available. Choose another profile.',
   agent_profile_not_found:
-    'The selected agent revision is no longer available. Choose another profile.',
+    'The selected agent version is no longer available. Choose another profile.',
   sandbox_limit_reached:
     'Your sandbox limit has been reached. Delete an unused sandbox before creating another.',
   workspace_limit_reached:

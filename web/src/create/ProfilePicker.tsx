@@ -62,7 +62,7 @@ export function ProfilePicker({
       if (!request.signal.aborted) onChange(selected);
     } catch {
       if (!request.signal.aborted)
-        setError('This published revision could not be loaded. Choose the profile again.');
+        setError('This published version could not be loaded. Choose the profile again.');
     } finally {
       if (!request.signal.aborted) setLoading(false);
     }
@@ -142,7 +142,7 @@ export function ProfilePicker({
               }
               onClick={() => void choose(choice)}
             >
-              {choice.name} <span>Revision {choice.revision}</span>
+              {choice.name} <span>Version {choice.revision}</span>
             </Button>
           </li>
         ))}
@@ -156,7 +156,7 @@ export function ProfilePicker({
       {value === undefined ? null : (
         <div className="create-profile-picker__selection">
           <strong>{value.name}</strong>
-          <span>Revision {value.revision.revision}</span>
+          <span>Version {value.revision.revision}</span>
           {value.kind === 'agent' ? (
             <p>
               {value.revision.content.model ?? 'Deployment model'} ·{' '}
@@ -168,8 +168,8 @@ export function ProfilePicker({
           ) : null}
           {value.kind === 'sandbox' ? (
             <p>
-              {value.revision.content.cpuMillis} millicores · {value.revision.content.memoryMib} MiB
-              ·{' '}
+              {value.revision.content.cpuMillis / 1000} CPU cores ·{' '}
+              {value.revision.content.memoryMib / 1024} GB ·{' '}
               {value.revision.content.modelAccess === 'own_credentials'
                 ? 'Your own account'
                 : 'ChronoAI account'}
