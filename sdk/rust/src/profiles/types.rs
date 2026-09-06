@@ -138,6 +138,7 @@ pub struct ProfileDraft<C> {
     /// Profile display name.
     pub name: String,
     /// Profile description.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub description: String,
     /// Kind-specific draft content.
     pub content: C,

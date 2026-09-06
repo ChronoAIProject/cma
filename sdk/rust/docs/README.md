@@ -4,7 +4,8 @@
 
 The repository-only Rust SDK provides typed async access to CMA discovery,
 Agent/Workspace/Sandbox profiles, the profile marketplace, Sandboxes,
-Workspaces, Worktrees, and Agents. It is a standalone client package with no
+Workspaces, Worktrees, Agents, Triggers, Launches, operator settings, and live
+conversation protocols. It is a standalone client package with no
 service-crate dependencies and is not published to a package registry.
 
 Use it from a checkout with a Cargo path dependency:
@@ -26,13 +27,15 @@ println!("{}: {}", deployment.service, deployment.status);
 # }
 ```
 
-Resource requests accept a caller-supplied bearer credential. Every mutation
-requires an explicit `IdempotencyKey`; reuse the same key and unchanged request
-when retrying one logical command. The client never retries automatically and
-never follows redirects.
+Resource requests accept a caller-supplied bearer credential. Keyed REST
+mutations require an explicit `IdempotencyKey`; reuse the same key and unchanged
+request when retrying one logical command. Settings writes instead use revision
+CAS. AG-UI and Responses admissions have protocol-specific identities and must
+not be retried blindly. The client never retries automatically or follows redirects.
 
 Durable REST event polling, transcript, usage, and resource reads are supported.
-This package does not implement live AG-UI, Responses, PTY, MCP, or A2A streams.
+Pull-based AG-UI, Launch companion, and Responses streams are supported. PTY,
+MCP, and A2A are explicit named-refusal probes, not executable interfaces.
 REST acceptance does not prove that provisioning, input execution, or a
 lifecycle operation has finished. Poll the returned resource and durable events
 for the relevant status.

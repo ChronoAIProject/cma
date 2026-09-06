@@ -181,4 +181,33 @@ impl Client {
             ))
         }
     }
+
+    pub(crate) async fn operation<T: DeserializeOwned, B: Serialize>(
+        &self,
+        method: Method,
+        segments: &[&str],
+        body: Option<&B>,
+        status: StatusCode,
+    ) -> Result<T> {
+        self.request(Request::operation(method, segments, body, status)?)
+            .await
+    }
+
+    pub(crate) async fn empty(&self, request: Request<'_>) -> Result<()> {
+        let body = send(&self.inner, request).await?;
+        if body.iter().all(u8::is_ascii_whitespace) {
+            Ok(())
+        } else {
+            Err(Error::protocol(
+                "bodyless operation unexpectedly returned a body",
+            ))
+        }
+    }
+
+    pub(crate) async fn refusal(&self, request: Request<'_>) -> Result<()> {
+        send(&self.inner, request).await?;
+        Err(Error::protocol(
+            "unsupported operation unexpectedly returned success",
+        ))
+    }
 }

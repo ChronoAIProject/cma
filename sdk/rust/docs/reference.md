@@ -1,6 +1,6 @@
 # Reference
 
-<!-- nav: 5 Reference -->
+<!-- nav: 11 Reference -->
 
 `Client::builder(base_url)` returns a `ClientBuilder`. The builder accepts an
 optional request timeout and bearer token, and produces a cloneable `Client`.
@@ -20,6 +20,14 @@ returns `Conformance`, containing `service`, `status`, and the currently exposed
 | `workspaces()` | `list`, `read`, `create`, `delete` |
 | `worktrees()` | `list`, `read` |
 | `agents()` | `list`, `read`, `create`, `input`, `steer`, `interrupt`, `answer_approval`, `stop`, `delete`, `events`, `transcript`, `usage`, `resources` |
+| `auth()` | `read_session`, anonymous `read_signup_options`, navigation-only `login_url`, `logout_url` |
+| `triggers()` | `list`, `read`, `create`, `save`, `delete`, `publish`, `retire`, `list_revisions`, `list_placements`, `create_placement`, `retire_placement`, `embed`, `stats` |
+| `launches()` | `create_or_resume`, `list`, `read`, `start`, `cancel`, `requirements`, `events`, `stream`, `create_connection`, `read_connection` |
+| `agui()` | `read_capabilities`, `read_sandbox`, `run`, `events` |
+| `responses()` | `create_conversation`, `read_conversation`, `list_items`, `create`, `read`, unsupported `delete`, `cancel` |
+| `admin()` | `list_sandboxes`, `read_sandbox`, `sandbox_events`, `retire_sandbox`, `list_profiles`, `retire_profile`, `read_settings`, `replace_settings`, `patch_settings`, `reset_settings`, `pause_triggers`, `resume_triggers`, `read_runtime_inventory`, `list_activity` |
+| `Client` reads | `read_conformance`, `read_openapi`, `read_defaults`, `read_trigger_preview`, `read_trigger_badge` |
+| Explicit refusals | `agents().terminal`, `unsupported().mcp`, `unsupported().a2a`, `unsupported().agent_card` |
 
 `C` is one of `AgentProfileContent`, `WorkspaceProfileContent`, or
 `SandboxProfileContent` from `cma_sdk::profiles`. Profile drafts and immutable
@@ -51,9 +59,40 @@ HTTP 202 with `InputAccepted { queued }`; other Agent commands accept an empty
 HTTP 202 response. Agent resources report Sandbox-wide counters, with `None`
 when a counter is unavailable.
 
-Mutations require `&IdempotencyKey`. The constructor accepts 1 to 255 visible
+Keyed owner REST mutations require `&IdempotencyKey`. The constructor accepts 1 to 255 visible
 ASCII characters without spaces. Invalid identifiers, zero revision numbers,
 and zero Sandbox profile resource allocations are refused before HTTP.
 Unknown status or event tags, malformed JSON, wrong resource identities, and
 unexpected success statuses are protocol errors. Response bodies are limited
 to 8 MiB even when the peer omits `Content-Length`.
+
+Trigger and Launch list responses normalize the backend's `next_cursor` into
+`ResourcePage::next`. Launch REST events instead expose their exact numeric
+`next_cursor`; `LaunchReplayOptions` configures the owner-only AG-UI companion
+at `GET /api/v1/agui/launches/{id}/events`. Stream `cursor()` returns the last
+complete event, without implying the application has persisted it.
+
+`ReplayOptions` controls AG-UI finite history or follow mode. `RunRequest` admits
+one user message or approval answer. `AgentEvent::cursor` is set only at a new
+durable record boundary; live frames never acknowledge one. `SandboxCompanion`
+has typed Sandbox, Workspace, Worktree, and first-message lifecycle snapshots.
+
+Responses uses Agent identity as `conversation`; `CreateResponseRequest` accepts
+plain text or exactly one user message with plain text or one `input_text` part.
+Streaming and durable storage are required. Standard tools, background work,
+stateless generation, and conversation deletion are not invented. Response
+event names and connection-local sequences are checked before yielding.
+
+Badge retrieval returns a typed modified SVG or not-modified result, retaining
+the required nonempty ETag. A 304 requires an explicit request validator. Markup
+is returned as inert text, not parsed or sanitized for DOM insertion. It sends
+no configured bearer credential. Auth and
+OpenAPI root paths preserve any configured deployment prefix, as do versioned
+API routes. OAuth callback is browser-owned and has no SDK exchange method.
+
+`read_embed_script(&EmbedScriptOptions)` retrieves the supplemental anonymous
+`/embed/v1.js` browser asset, retaining exact JavaScript and conditional 304
+semantics. It does not execute the script and is not a Layer1 API operation.
+Chronological transcript `messages` are required typed entries with sequence,
+user/assistant role, content, and append timestamp; preserve this order rather
+than concatenating the owner/Agent summary fields.

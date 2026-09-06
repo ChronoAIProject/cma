@@ -1,6 +1,6 @@
 # Errors
 
-<!-- nav: 4 Errors -->
+<!-- nav: 10 Errors -->
 
 The client returns `cma_sdk::Error`. `Error::Api` represents a structured
 non-success response, `Error::Protocol` rejects an invalid response boundary,
@@ -39,3 +39,10 @@ Malformed problem documents, a problem status that contradicts the HTTP status,
 oversized responses, and unexpected successful status codes are protocol errors
 rather than fabricated resource values. Transport failures omit request URLs
 and credentials from their messages.
+
+For streams, invalid UTF-8, JSON, closed tags, event names, or cursor ordering
+produce protocol errors and stop the reader. Interrupted transport remains a
+transport error. Responses EOF before a terminal event is ambiguous: retrieve
+the known response or durable Agent history before considering another input.
+AG-UI and Launch replay can reconnect explicitly from the last fully consumed
+durable cursor; Responses sequence numbers cannot be used that way.

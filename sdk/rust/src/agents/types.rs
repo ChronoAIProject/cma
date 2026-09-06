@@ -171,7 +171,7 @@ pub struct Agent {
 }
 
 /// Create an Agent in an existing Workspace.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CreateAgentRequest {
     /// Immutable Agent profile reference.
     pub agent_profile: ProfileReference,
@@ -184,21 +184,21 @@ pub struct CreateAgentRequest {
 }
 
 /// Text sent as a new message or steering input.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AgentTextRequest {
     /// Owner-provided text.
     pub text: String,
 }
 
 /// Answer one pending approval request.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ApprovalDecisionRequest {
     /// Explicit owner decision.
     pub decision: ApprovalDecision,
 }
 
 /// Request to stop an Agent.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StopAgentRequest {
     /// Optional explicit owner reason.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -237,6 +237,24 @@ pub enum TranscriptOutcome {
     },
 }
 
+string_enum! { /// Author of one chronological durable transcript message.
+    pub enum TranscriptRole { User => "user", Assistant => "assistant" }
+}
+
+/// One authoritative chronological message, including owner steering within a turn.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct TranscriptMessage {
+    /// Positive durable log sequence.
+    #[serde(deserialize_with = "crate::resources::deserialize_positive")]
+    pub sequence: u64,
+    /// Recorded author role.
+    pub role: TranscriptRole,
+    /// Exact durable message content.
+    pub content: String,
+    /// Durable append timestamp.
+    pub appended_at: String,
+}
+
 /// One durably recorded conversation turn.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct TranscriptTurn {
@@ -248,6 +266,8 @@ pub struct TranscriptTurn {
     pub owner_message: String,
     /// Durable Agent messages.
     pub agent_messages: Vec<String>,
+    /// Authoritative messages in chronological order; summaries above are not ordering evidence.
+    pub messages: Vec<TranscriptMessage>,
     /// Current or terminal turn outcome.
     pub outcome: TranscriptOutcome,
 }

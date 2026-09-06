@@ -224,7 +224,7 @@ pub struct WorkspaceDetail {
 }
 
 /// Request to begin provisioning a Sandbox from an immutable profile.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CreateSandboxRequest {
     /// Immutable Sandbox profile reference.
     pub sandbox_profile: ProfileReference,
@@ -232,6 +232,7 @@ pub struct CreateSandboxRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
     /// Explicit acknowledgement of the referenced commands.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub trust_confirmed: bool,
     /// Digest shown to the caller before trust confirmation.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -239,11 +240,12 @@ pub struct CreateSandboxRequest {
 }
 
 /// Request to prepare a Workspace inside an existing Sandbox.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CreateWorkspaceRequest {
     /// Immutable Workspace profile reference.
     pub workspace_profile: ProfileReference,
     /// Explicit acknowledgement of referenced commands.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub trust_confirmed: bool,
     /// Digest shown to the caller before trust confirmation.
     #[serde(skip_serializing_if = "Option::is_none")]

@@ -44,6 +44,29 @@ pub enum Error {
 }
 
 impl Error {
+    /// Decode an already-observed HTTP problem using the same boundary as SDK operations.
+    ///
+    /// This performs no transport and does not decide whether retrying a command is safe.
+    pub fn from_http_problem(
+        status: u16,
+        request_id: Option<String>,
+        retry_after: Option<&str>,
+        body: &[u8],
+    ) -> Self {
+        let Ok(status) = reqwest::StatusCode::from_u16(status) else {
+            return Self::protocol("invalid HTTP problem status");
+        };
+        if status.is_success() {
+            return Self::protocol("successful HTTP status cannot describe an API refusal");
+        }
+        crate::http::problem_error(
+            status,
+            request_id,
+            retry_after.and_then(crate::http::parse_retry_after),
+            body,
+        )
+    }
+
     pub(crate) fn validation(message: impl Into<String>) -> Self {
         Self::Validation {
             message: message.into(),

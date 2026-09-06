@@ -1,5 +1,5 @@
-//! Async Rust client for CMA discovery, profiles, marketplace, and REST resources.
-//! Durable REST event polling is supported; live protocol streams are not.
+//! Async Rust client for CMA public resources and explicit durable work admission.
+//! Includes bounded REST polling and pull-based AG-UI, Launch, and Responses streams.
 //!
 //! ```no_run
 //! use cma_sdk::Client;
@@ -16,14 +16,24 @@
 
 #[macro_use]
 mod macros;
+pub mod admin;
 pub mod agents;
+pub mod agui;
+pub mod assets;
+pub mod auth;
 mod client;
 mod conformance;
+pub mod defaults;
+pub mod discovery;
 mod error;
 mod http;
 pub mod instances;
+pub mod launches;
 pub mod profiles;
 mod resources;
+pub mod responses;
+pub mod stream;
+pub mod triggers;
 
 /// Executable integration guides shipped with the crate.
 pub mod guides {
@@ -33,6 +43,18 @@ pub mod guides {
     pub mod quickstart {}
     #[doc = include_str!("../docs/authentication.md")]
     pub mod authentication {}
+    #[doc = include_str!("../docs/sandboxes.md")]
+    pub mod sandboxes {}
+    #[doc = include_str!("../docs/agents.md")]
+    pub mod agents {}
+    #[doc = include_str!("../docs/profiles.md")]
+    pub mod profiles {}
+    #[doc = include_str!("../docs/streaming.md")]
+    pub mod streaming {}
+    #[doc = include_str!("../docs/triggers.md")]
+    pub mod triggers {}
+    #[doc = include_str!("../docs/operations.md")]
+    pub mod operations {}
     #[doc = include_str!("../docs/errors.md")]
     pub mod errors {}
     #[doc = include_str!("../docs/reference.md")]

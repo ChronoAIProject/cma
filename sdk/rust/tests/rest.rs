@@ -270,7 +270,7 @@ async fn sandbox_workspace_and_worktree_contracts() {
     server.expect(
         "POST",
         "/sandboxes/sandbox-1/workspaces",
-        Some(json!({"workspace_profile":reference(),"trust_confirmed":false})),
+        Some(json!({"workspace_profile":reference()})),
         201,
         Some(workspace()),
     );
@@ -432,7 +432,7 @@ async fn every_agent_command_and_durable_read_contract() {
         }
     ));
     server.expect("GET", "/agents/agent-1/transcript", None, 200,
-        Some(json!({"agent_id":"agent-1","through_seq":3,"turns":[{"turn_sequence":1,"started_at":NOW,"owner_message":"Review","agent_messages":["Done"],"outcome":{"type":"completed","at":NOW}}]})));
+        Some(json!({"agent_id":"agent-1","through_seq":3,"turns":[{"turn_sequence":1,"started_at":NOW,"owner_message":"Review","agent_messages":["Done"],"messages":[{"sequence":1,"role":"user","content":"Review","appended_at":NOW},{"sequence":2,"role":"assistant","content":"Done","appended_at":NOW}],"outcome":{"type":"completed","at":NOW}}]})));
     assert!(matches!(
         agents.transcript("agent-1").await.unwrap().turns[0].outcome,
         TranscriptOutcome::Completed { .. }

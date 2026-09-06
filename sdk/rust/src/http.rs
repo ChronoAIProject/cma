@@ -18,8 +18,10 @@ pub(crate) struct Request<'a> {
     pub(crate) query: &'a [(&'a str, String)],
     body: Option<Vec<u8>>,
     key: Option<&'a IdempotencyKey>,
-    status: StatusCode,
+    pub(crate) statuses: Vec<StatusCode>,
     pub(crate) anonymous: bool,
+    pub(crate) root: bool,
+    pub(crate) headers: header::HeaderMap,
 }
 
 impl<'a> Request<'a> {
@@ -30,8 +32,10 @@ impl<'a> Request<'a> {
             query: &[],
             body: None,
             key: None,
-            status: StatusCode::OK,
+            statuses: vec![StatusCode::OK],
             anonymous: false,
+            root: false,
+            headers: header::HeaderMap::new(),
         }
     }
 
@@ -42,13 +46,26 @@ impl<'a> Request<'a> {
         key: &'a IdempotencyKey,
         status: StatusCode,
     ) -> Result<Self> {
+        let mut request = Self::operation(method, segments, body, status)?;
+        request.key = Some(key);
+        Ok(request)
+    }
+
+    pub(crate) fn operation<B: Serialize>(
+        method: Method,
+        segments: &'a [&'a str],
+        body: Option<&B>,
+        status: StatusCode,
+    ) -> Result<Self> {
         Ok(Self {
             method,
             segments,
             query: &[],
-            key: Some(key),
-            status,
+            key: None,
+            statuses: vec![status],
             anonymous: false,
+            root: false,
+            headers: header::HeaderMap::new(),
             body: body
                 .map(serde_json::to_vec)
                 .transpose()
@@ -58,44 +75,18 @@ impl<'a> Request<'a> {
 }
 
 pub(crate) async fn send(client: &ClientInner, request: Request<'_>) -> Result<Vec<u8>> {
-    if request
-        .segments
-        .iter()
-        .any(|segment| matches!(*segment, "" | "." | ".."))
-    {
-        return Err(Error::validation(
-            "resource identifiers must be nonempty path segments",
-        ));
-    }
-    let mut url = client.base_url.clone();
-    url.path_segments_mut()
-        .map_err(|_| Error::protocol("invalid deployment path"))?
-        .pop_if_empty()
-        .extend(["api", "v1"])
-        .extend(request.segments);
-    if !request.query.is_empty() {
-        url.query_pairs_mut()
-            .extend_pairs(request.query.iter().map(|(key, value)| (*key, value)));
-    }
-    let mut outgoing = client
-        .http
-        .request(request.method, url)
-        .header(header::ACCEPT, "application/json")
-        .timeout(client.request_timeout);
-    if !request.anonymous
-        && let Some(bearer) = &client.bearer
-    {
-        outgoing = outgoing.header(header::AUTHORIZATION, bearer.clone());
-    }
-    if let Some(key) = request.key {
-        outgoing = outgoing.header("Idempotency-Key", key.as_str());
-    }
-    if let Some(body) = request.body {
-        outgoing = outgoing
-            .header(header::CONTENT_TYPE, "application/json")
-            .body(body);
-    }
-    let mut response = outgoing
+    Ok(receive(client, request).await?.body)
+}
+
+pub(crate) struct ResponseBody {
+    pub(crate) status: StatusCode,
+    pub(crate) body: Vec<u8>,
+    pub(crate) headers: header::HeaderMap,
+}
+
+pub(crate) async fn receive(client: &ClientInner, request: Request<'_>) -> Result<ResponseBody> {
+    let statuses = request.statuses.clone();
+    let mut response = outgoing(client, request)?
         .send()
         .await
         .map_err(|_| Error::transport("request failed before a complete HTTP response"))?;
@@ -128,17 +119,74 @@ pub(crate) async fn send(client: &ClientInner, request: Request<'_>) -> Result<V
         }
         body.extend_from_slice(&chunk);
     }
-    if !status.is_success() {
-        return Err(problem_error(status, request_id, retry_after, &body));
-    }
-    if status != request.status {
+    if !statuses.contains(&status) {
+        if !status.is_success() {
+            return Err(problem_error(status, request_id, retry_after, &body));
+        }
         return Err(Error::protocol(format!(
-            "operation expected HTTP {} but received HTTP {}",
-            request.status.as_u16(),
+            "operation received unexpected HTTP {}",
             status.as_u16()
         )));
     }
-    Ok(body)
+    Ok(ResponseBody {
+        status,
+        body,
+        headers: response.headers().clone(),
+    })
+}
+
+pub(crate) fn url(client: &ClientInner, segments: &[&str], root: bool) -> Result<reqwest::Url> {
+    if segments
+        .iter()
+        .any(|segment| matches!(*segment, "" | "." | ".."))
+    {
+        return Err(Error::validation(
+            "resource identifiers must be nonempty path segments",
+        ));
+    }
+    let mut url = client.base_url.clone();
+    {
+        let mut path = url
+            .path_segments_mut()
+            .map_err(|_| Error::protocol("invalid deployment path"))?;
+        path.pop_if_empty();
+        if !root {
+            path.extend(["api", "v1"]);
+        }
+        path.extend(segments);
+    }
+    Ok(url)
+}
+
+pub(crate) fn outgoing(
+    client: &ClientInner,
+    request: Request<'_>,
+) -> Result<reqwest::RequestBuilder> {
+    let mut url = url(client, request.segments, request.root)?;
+    if !request.query.is_empty() {
+        url.query_pairs_mut()
+            .extend_pairs(request.query.iter().map(|(key, value)| (*key, value)));
+    }
+    let mut outgoing = client
+        .http
+        .request(request.method, url)
+        .header(header::ACCEPT, "application/json")
+        .timeout(client.request_timeout);
+    outgoing = outgoing.headers(request.headers);
+    if !request.anonymous
+        && let Some(bearer) = &client.bearer
+    {
+        outgoing = outgoing.header(header::AUTHORIZATION, bearer.clone());
+    }
+    if let Some(key) = request.key {
+        outgoing = outgoing.header("Idempotency-Key", key.as_str());
+    }
+    if let Some(body) = request.body {
+        outgoing = outgoing
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(body);
+    }
+    Ok(outgoing)
 }
 
 fn too_large<T>() -> Result<T> {
@@ -147,7 +195,7 @@ fn too_large<T>() -> Result<T> {
     )))
 }
 
-fn parse_retry_after(value: &str) -> Option<Duration> {
+pub(crate) fn parse_retry_after(value: &str) -> Option<Duration> {
     let value = value.trim();
     let duration = if value.bytes().all(|byte| byte.is_ascii_digit()) {
         Duration::from_secs(value.parse().ok()?)
@@ -170,7 +218,7 @@ struct Problem {
     extensions: BTreeMap<String, serde_json::Value>,
 }
 
-fn problem_error(
+pub(crate) fn problem_error(
     status: StatusCode,
     request_id: Option<String>,
     retry_after: Option<Duration>,

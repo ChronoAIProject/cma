@@ -51,6 +51,12 @@ impl Agents<'_> {
         identity(&value.id, id)?;
         Ok(value)
     }
+    /// Read the named unsupported-terminal refusal; this release has no terminal plane.
+    pub async fn terminal(&self, id: &str) -> Result<()> {
+        self.client
+            .refusal(crate::http::Request::get(&["agents", id, "terminal"]))
+            .await
+    }
     /// Create an Agent inside an existing Workspace; readiness is asynchronous.
     pub async fn create(
         &self,
