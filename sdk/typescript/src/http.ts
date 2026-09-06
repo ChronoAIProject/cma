@@ -65,16 +65,19 @@ export async function request(
     if (response.status === 204) {
       return null;
     }
-    const body = await readText(response, signal);
-    if (body.trim() === '') {
-      return null;
-    }
-    try {
-      return JSON.parse(body) as unknown;
-    } catch (cause) {
-      throw new ProtocolError('success response was not valid JSON', { cause });
-    }
+    return readJsonBody(response, signal);
   });
+}
+
+/** Bounded JSON decoding shared with non-problem browser authentication responses. */
+export async function readJsonBody(response: Response, signal?: AbortSignal): Promise<unknown> {
+  const body = await readText(response, signal);
+  if (body.trim() === '') return null;
+  try {
+    return JSON.parse(body) as unknown;
+  } catch (cause) {
+    throw new ProtocolError('response was not valid JSON', { cause });
+  }
 }
 
 /** Make one request whose successful response must not carry a body. */

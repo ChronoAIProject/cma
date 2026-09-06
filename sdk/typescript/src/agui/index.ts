@@ -7,7 +7,10 @@ import {
   TransportError,
   ValidationError,
 } from '../errors.js';
-import { raceWithAbortSignal } from '../http.js';
+import { raceWithAbortSignal, type OperationOptions } from '../http.js';
+import { read, segment } from '../resources.js';
+import { streamLaunchEvents, type LaunchStreamOptions } from '../launch/stream.js';
+import { agentSandboxSnapshot, aguiCapabilities } from './companions.js';
 import { connection } from './transport.js';
 import type {
   AgentConversationEvent,
@@ -22,10 +25,33 @@ export type {
   AgentRunRequest,
   AgentStreamOptions,
 } from './types.js';
+export type { AgentSandboxSnapshot, AguiCapabilities } from './companions.js';
 
 /** Agent conversation streaming through the public AG-UI projection. */
 export class AgentConversations {
   constructor(private readonly config: ResolvedConfig) {}
+
+  readCapabilities(options: OperationOptions = {}) {
+    return read(this.config, '/api/v1/agui/capabilities', aguiCapabilities, options);
+  }
+
+  readSandboxSnapshot(threadId: string, options: OperationOptions = {}) {
+    return read(
+      this.config,
+      `/api/v1/agui/agents/${segment(threadId)}/sandbox`,
+      (value) => {
+        const snapshot = agentSandboxSnapshot(value);
+        if (snapshot.threadId !== threadId)
+          throw new ProtocolError('AG-UI Sandbox snapshot belongs to another Agent');
+        return snapshot;
+      },
+      options,
+    );
+  }
+
+  streamLaunchEvents(launchId: string, options: LaunchStreamOptions) {
+    return streamLaunchEvents(this.config, launchId, options);
+  }
 
   /** A run is submitted exactly once. A disconnect never resubmits its input. */
   async run(request: AgentRunRequest, options: AgentStreamOptions): Promise<void> {

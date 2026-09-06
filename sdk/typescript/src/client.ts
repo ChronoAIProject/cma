@@ -11,6 +11,8 @@ import { Administration } from './admin/index.js';
 import { TriggerAuthoring } from './trigger-authoring/index.js';
 import { AgentConversations } from './agui/index.js';
 import { Launches } from './launch/index.js';
+import { Authentication } from './auth.js';
+import { Responses } from './responses.js';
 
 /** A configured client for the public CMA resource and discovery APIs. */
 export class Cma {
@@ -21,6 +23,9 @@ export class Cma {
   readonly worktrees: Worktrees;
   readonly admin: Administration;
   readonly triggerAuthoring: TriggerAuthoring;
+  readonly triggers: TriggerAuthoring;
+  readonly auth: Authentication;
+  readonly responses: Responses;
   readonly agui: AgentConversations;
   readonly launches: Launches;
   readonly agentProfiles: Profiles<'agent'>;
@@ -40,6 +45,9 @@ export class Cma {
     this.worktrees = new Worktrees(this.#config);
     this.admin = new Administration(this.#config);
     this.triggerAuthoring = new TriggerAuthoring(this.#config);
+    this.triggers = this.triggerAuthoring;
+    this.auth = new Authentication(this.#config);
+    this.responses = new Responses(this.#config);
     this.agui = new AgentConversations(this.#config);
     this.launches = new Launches(this.#config);
     this.agentProfiles = new Profiles(this.#config, 'agent');

@@ -1,5 +1,6 @@
 import type { ResolvedConfig } from '../config.js';
 import { ApiError, ProtocolError } from '../errors.js';
+import { readTriggerPreview } from '../triggers.js';
 import type { OperationOptions } from '../http.js';
 import {
   command,
@@ -24,7 +25,6 @@ import {
   launchConnectionRequirements,
   serviceConnectionStatus,
   startLaunchRequest,
-  triggerPreview,
   type CreateLaunchRequest,
   type CreateServiceConnectionRequest,
   type StartLaunchRequest,
@@ -45,12 +45,7 @@ export class Launches {
   constructor(private readonly config: ResolvedConfig) {}
 
   preview(publicId: string, options: OperationOptions = {}) {
-    return read(
-      this.config,
-      `/api/v1/triggers/public/${segment(publicId)}`,
-      triggerPreview,
-      options,
-    );
+    return readTriggerPreview(this.config, publicId, options);
   }
   createOrResume(publicId: string, body: CreateLaunchRequest, options: CommandOptions) {
     return read(this.config, `/api/v1/triggers/public/${segment(publicId)}/launches`, launch, {

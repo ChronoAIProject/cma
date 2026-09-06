@@ -8,11 +8,14 @@ import {
   ValidationError,
 } from '../errors.js';
 import { raceWithAbortSignal, requestResponse, type OperationOptions } from '../http.js';
-import { segment } from '../resources.js';
+import { query, segment } from '../resources.js';
 import { launchEvent, type LaunchEvent } from './events.js';
 
 export interface LaunchStreamOptions extends OperationOptions {
   readonly after?: number;
+  readonly limit?: number;
+  /** False reads one captured event page and closes. */
+  readonly follow?: boolean;
   readonly onEvent: (event: LaunchEvent) => void | Promise<void>;
 }
 
@@ -25,10 +28,21 @@ export async function streamLaunchEvents(
   let cursor = options.after ?? 0;
   if (!Number.isSafeInteger(cursor) || cursor < 0)
     throw new ValidationError('The event cursor must be a nonnegative safe integer');
+  if (
+    options.limit !== undefined &&
+    (!Number.isInteger(options.limit) || options.limit < 1 || options.limit > 200)
+  )
+    throw new ValidationError('The event limit must be between 1 and 200');
+  if (options.follow !== undefined && typeof options.follow !== 'boolean')
+    throw new ValidationError('follow must be boolean');
   const signal = options.signal ?? new AbortController().signal;
   const response = await requestResponse(
     config,
-    `/api/v1/agui/launches/${segment(id)}/events?starting_after=${String(cursor)}`,
+    query(`/api/v1/agui/launches/${segment(id)}/events`, {
+      starting_after: cursor,
+      limit: options.limit,
+      follow: options.follow === undefined ? undefined : String(options.follow),
+    }),
     { ...options, headers: { Accept: 'text/event-stream' }, expectedStatus: 200 },
   );
   if (
