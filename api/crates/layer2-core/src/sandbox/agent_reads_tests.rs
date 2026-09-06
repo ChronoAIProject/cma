@@ -1076,6 +1076,12 @@ async fn transcript_reconstructs_queue_input_across_a_pre_write_retry() {
         None,
     )
     .await;
+    let delivered_at = "2026-09-05T00:00:01Z";
+    let mut entries = store.agent_log(&agent.id, 0, 40).await.unwrap();
+    for entry in entries.iter_mut().filter(|entry| entry.seq > 3) {
+        entry.appended_at = delivered_at.into();
+    }
+    store.replace_agent_log_for_test(&agent.id, entries);
 
     let transcript = service(store)
         .transcript(&caller("owner", true), &agent.id)
@@ -1089,6 +1095,25 @@ async fn transcript_reconstructs_queue_input_across_a_pre_write_retry() {
     ));
     assert_eq!(transcript.turns[1].owner_message, "retry this input");
     assert_eq!(transcript.turns[1].agent_messages, ["delivered once"]);
+    let admitted_message = AgentTranscriptMessage {
+        sequence: 3,
+        role: AgentTranscriptRole::Owner,
+        content: "retry this input".into(),
+        appended_at: NOW.into(),
+    };
+    assert_eq!(transcript.turns[0].messages, [admitted_message.clone()]);
+    assert_eq!(
+        transcript.turns[1].messages,
+        [
+            admitted_message,
+            AgentTranscriptMessage {
+                sequence: 13,
+                role: AgentTranscriptRole::Agent,
+                content: "delivered once".into(),
+                appended_at: delivered_at.into(),
+            },
+        ]
+    );
     assert!(matches!(
         transcript.turns[1].outcome,
         AgentTurnOutcome::Completed { .. }
