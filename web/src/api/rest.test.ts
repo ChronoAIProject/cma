@@ -1,5 +1,5 @@
 /** @vitest-environment node */
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { ApiError, ProtocolError } from '@chronoai/cma-sdk';
 import {
   NOW,
@@ -11,7 +11,6 @@ import {
   WIRE_WORKSPACE,
   WIRE_WORKSPACE_DETAIL,
 } from '../test/rest';
-import { ClientUnavailableError } from './client';
 import { CreatedResourceReadError, createRestWebClient } from './rest';
 import { profileFailure } from '../profiles/failure';
 
@@ -192,19 +191,11 @@ describe('public REST web binding', () => {
     expect(JSON.parse(String(test.fetch.mock.calls[5]?.[1]?.body))).toEqual({});
   });
 
-  it('rejects malformed wire answers and declares missing streaming without using private routes', async () => {
+  it('rejects malformed wire answers without using private routes', async () => {
     const test = restTransport();
     const client = createRestWebClient(test.sdk);
     test.reply({ ...WIRE_AGENT, status: 'unknown' });
     await expect(client.readAgent('agent-1')).rejects.toBeInstanceOf(ProtocolError);
-    const onEvent = vi.fn();
-    await expect(client.replayAgent('agent-1', { onEvent })).rejects.toBeInstanceOf(
-      ClientUnavailableError,
-    );
-    await expect(
-      client.runAgent({ threadId: 'agent-1', runId: 'run-1' }, { onEvent }),
-    ).rejects.toThrow(/streaming is not available/);
-    expect(onEvent).not.toHaveBeenCalled();
     expect(test.fetch).toHaveBeenCalledOnce();
   });
 });

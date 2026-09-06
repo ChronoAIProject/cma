@@ -1,5 +1,5 @@
 import type { Cma } from '@chronoai/cma-sdk';
-import { ClientUnavailableError, type CmaWebClient } from './client';
+import type { CmaWebClient } from './client';
 import { agentDetail, sandboxDetail, sandboxSummary, workspaceDetail } from './rest/hierarchy';
 
 /** The write succeeded; a failed detail read must not release its command key. */
@@ -27,12 +27,6 @@ async function createdDetail<Value>(
   } catch (cause) {
     throw new CreatedResourceReadError(resource, id, cause);
   }
-}
-
-function streamUnavailable(): Promise<never> {
-  return Promise.reject(
-    new ClientUnavailableError('Agent conversation streaming is not available in this build.'),
-  );
 }
 
 /** One public SDK transport, with explicit wire-to-view conversion at the boundary. */
@@ -93,8 +87,8 @@ export function createRestWebClient(sdk: Cma): CmaWebClient {
         kind: event.kind,
       }));
     },
-    replayAgent: streamUnavailable,
-    runAgent: streamUnavailable,
+    replayAgent: (id, options) => sdk.agui.replay(id, options),
+    runAgent: (request, options) => sdk.agui.run(request, options),
     createSandbox: async (input, options) => {
       const created = await sdk.sandboxes.create(
         {
