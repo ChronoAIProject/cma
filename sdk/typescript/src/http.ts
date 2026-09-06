@@ -285,7 +285,18 @@ export async function errorFromResponse(
   if (detail === undefined) {
     return new ProtocolError(`HTTP ${String(response.status)} problem document carried no detail`);
   }
-  return new ApiError(response.status, detail, code, requestId, retryAfterMilliseconds(response));
+  const standard = new Set(['type', 'title', 'status', 'detail', 'instance', 'code']);
+  const extensions = Object.freeze(
+    Object.fromEntries(Object.entries(body).filter(([key]) => !standard.has(key))),
+  );
+  return new ApiError(
+    response.status,
+    detail,
+    code,
+    requestId,
+    retryAfterMilliseconds(response),
+    extensions,
+  );
 }
 
 const MAX_RETRY_AFTER_MS = 2_147_483_647;

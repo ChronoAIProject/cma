@@ -2,9 +2,10 @@
 
 <!-- nav: 1 Overview -->
 
-The temporary SDK reads the public state of a CMA deployment while its resource
-interfaces are rebuilt. It does not expose an old or speculative resource
-model.
+This repository-only SDK exposes CMA's public Profiles, Marketplace, Sandboxes,
+Workspaces, Worktrees and Agents REST resources. It includes runtime-validated
+wire DTOs, owner-scoped reads, durable histories and explicit idempotent commands.
+It is not published to a package registry.
 
 ```ts
 import { createClient } from '@chronoai/cma-sdk';
@@ -15,3 +16,6 @@ console.log(deployment.service, deployment.status, deployment.interfaces);
 ```
 
 The client works in browsers and Node.js environments that provide `fetch`.
+No runtime dependency or browser global is required; inject `fetch` when the
+host does not supply one. Conversation streaming, Triggers and authentication
+resource helpers are not part of this REST resource slice.

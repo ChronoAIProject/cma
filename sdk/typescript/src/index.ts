@@ -1,12 +1,18 @@
-/**
- * Temporary CMA discovery client.
- *
- * Resource APIs return with the replacement public contract in issue #819.
- * This package intentionally exposes only the live anonymous discovery route
- * and transport primitives that do not encode a retired domain model.
- */
+/** Typed, repository-only client for CMA's public resource APIs. */
 
 export { Cma, createClient } from './client.js';
+export { Agents, type AgentListOptions } from './agents.js';
+export { Sandboxes, type SandboxListOptions } from './sandboxes.js';
+export { Workspaces, Worktrees } from './workspaces.js';
+export { Profiles } from './profiles.js';
+export { Marketplace, type MarketplaceListOptions } from './marketplace.js';
+export type { CommandOptions, EventOptions, PageOptions, ResourcePage } from './resources.js';
+export type * from './agents/types.js';
+export type * from './agents/events.js';
+export type * from './instances/types.js';
+export type * from './instances/events.js';
+export type * from './profiles/types.js';
+export type * from './profiles/marketplace.js';
 export {
   headersFor,
   observeResponse,

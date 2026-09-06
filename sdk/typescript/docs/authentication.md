@@ -2,12 +2,10 @@
 
 <!-- nav: 3 Authentication -->
 
-The currently supported discovery request is deliberately anonymous. It sends
-neither the configured bearer credential nor browser cookies.
-
-The transport configuration still accepts a rotation-aware credential callback
-so callers do not need to restructure client construction when authenticated
-resource methods return in issue #819:
+Resource methods use browser cookies by default. Backend callers can disable
+cookies and provide a rotation-aware credential callback; it is resolved for
+each HTTP request. The callback should read from the host's credential store,
+never from a URL or committed constant:
 
 ```ts
 import { createClient } from '@chronoai/cma-sdk';
@@ -18,8 +16,12 @@ const cma = createClient({
   credential: () => process.env.CMA_ACCESS_TOKEN,
 });
 
-await cma.readConformance(); // The callback is not invoked for this public read.
+await cma.agents.list();
 ```
 
 Never place a credential in `baseUrl`; URLs containing user information are
 rejected.
+
+`readConformance` remains deliberately anonymous: it sends neither bearer
+credentials nor cookies and does not invoke the credential callback. The SDK
+does not perform an interactive sign-in, create API keys or store credentials.

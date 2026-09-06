@@ -17,12 +17,26 @@ export class ApiError extends CmaError {
     readonly requestId?: string,
     /** Validated positive Retry-After delay supplied by the service. */
     readonly retryAfterMs?: number,
+    /** Structured RFC 9457 extensions; never inferred from the error message. */
+    readonly extensions: Readonly<Record<string, unknown>> = {},
   ) {
     super('ApiError', message);
   }
 
   get isUnauthenticated(): boolean {
     return this.status === 401;
+  }
+
+  get field(): string | undefined {
+    return typeof this.extensions.field === 'string' ? this.extensions.field : undefined;
+  }
+
+  get path(): string | undefined {
+    return typeof this.extensions.path === 'string' ? this.extensions.path : undefined;
+  }
+
+  get reason(): string | undefined {
+    return typeof this.extensions.reason === 'string' ? this.extensions.reason : undefined;
   }
 
   /** Whether a later request could plausibly receive a different answer. */
