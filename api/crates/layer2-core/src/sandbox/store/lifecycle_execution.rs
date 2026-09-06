@@ -32,6 +32,7 @@ pub struct SandboxMutationGuard {
     pub lease: Option<SandboxWorkLease>,
     pub operation: Option<SandboxLifecycleOperation>,
     pub runtime: Option<RuntimeBinding>,
+    pub checkpoint_capture: Option<crate::sandbox::SandboxCheckpointCapture>,
 }
 
 impl SandboxMutationGuard {
@@ -45,6 +46,7 @@ impl SandboxMutationGuard {
             lease: sandbox.work.lease.clone(),
             operation: sandbox.lifecycle.operation.clone(),
             runtime: sandbox.runtime.clone(),
+            checkpoint_capture: sandbox.lifecycle.checkpoint_capture.clone(),
         }
     }
 
@@ -57,6 +59,7 @@ impl SandboxMutationGuard {
             && self.lease == sandbox.work.lease
             && self.operation == sandbox.lifecycle.operation
             && self.runtime == sandbox.runtime
+            && self.checkpoint_capture == sandbox.lifecycle.checkpoint_capture
     }
 }
 
@@ -228,6 +231,11 @@ pub fn validate_lifecycle_mutation(
     mutation: &SandboxLifecycleMutation,
 ) -> Result<(), SandboxStoreError> {
     validate_guard(current, &mutation.guard)?;
+    if current.lifecycle.checkpoint_capture.is_some()
+        || mutation.sandbox.lifecycle.checkpoint_capture.is_some()
+    {
+        return super::checkpoint_capture::validate_capture_mutation(current, agents, mutation);
+    }
     validate_next_sandbox(current, &mutation.sandbox, &mutation.appended_at)?;
     if mutation.agents.len() > MAX_SANDBOX_LIFECYCLE_AGENTS
         || mutation.events.is_empty()

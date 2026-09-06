@@ -90,6 +90,25 @@ impl SandboxLifecycleExecutionStore for InMemorySandboxStore {
             .get(&mutation.guard.sandbox_id)
             .ok_or(SandboxStoreError::NotFound)?;
         let agents = sandbox_agent_log_rows(&state, &current.id);
+        if current.lifecycle.checkpoint_capture.is_none()
+            && mutation.sandbox.lifecycle.checkpoint_capture.is_some()
+        {
+            let rows = agents
+                .iter()
+                .map(|(agent, _)| agent.clone())
+                .collect::<Vec<_>>();
+            let workspaces = state
+                .workspaces
+                .values()
+                .filter(|workspace| workspace.sandbox_id == current.id)
+                .cloned()
+                .collect::<Vec<_>>();
+            super::super::checkpoint_capture::validate_checkpoint_capture_work(
+                current,
+                &rows,
+                &workspaces,
+            )?;
+        }
         validate_lifecycle_mutation(current, &agents, &mutation)?;
 
         let mut candidate = state.clone();

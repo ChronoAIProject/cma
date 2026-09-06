@@ -33,6 +33,7 @@ impl Sandbox {
             return Err(invalid_recovery());
         }
         let mut next = self.clone();
+        next.lifecycle.checkpoint_capture = None;
         next.runtime = None;
         next.work
             .schedule(SandboxWorkStep::RunLifecycleOperation, at.clone());

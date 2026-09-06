@@ -10,7 +10,19 @@ pub(super) fn checkpoint_sandbox_advanced(
     appended_at: &str,
 ) -> bool {
     let mut expected = current.clone();
-    let result = if current.lifecycle.operation.is_none() {
+    let result = if let Some(capture) = current.lifecycle.checkpoint_capture.as_ref() {
+        let Some(lease) = capture.work.lease.as_ref() else {
+            return false;
+        };
+        expected
+            .publish_captured_checkpoint(
+                checkpoint.clone(),
+                &lease.holder,
+                lease.fence,
+                appended_at.into(),
+            )
+            .map(|_| ())
+    } else if current.lifecycle.operation.is_none() {
         expected
             .publish_opportunistic_checkpoint(checkpoint.clone(), appended_at.into())
             .map(|_| ())
@@ -45,7 +57,22 @@ pub(super) fn lifecycle_sandbox_advanced(
     let reserves_runtime = current.lifecycle.runtime_provision.is_none()
         && next.lifecycle.runtime_provision.is_some()
         && current.lifecycle.operation == next.lifecycle.operation;
-    let result = if reserves_runtime {
+    let renewed_writer = current
+        .lifecycle
+        .operation
+        .as_ref()
+        .zip(next.lifecycle.operation.as_ref())
+        .is_some_and(|(old, new)| {
+            old.authority().writer_resume_generation != new.authority().writer_resume_generation
+        });
+    let result = if renewed_writer {
+        expected.retry_lifecycle_after_writer_resume(
+            next.work.ready_at.clone(),
+            &lease.holder,
+            lease.fence,
+            appended_at.into(),
+        )
+    } else if reserves_runtime {
         expected
             .reserve_lifecycle_runtime_generation(
                 next.lifecycle.runtime_generation_high_water,

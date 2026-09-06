@@ -6,9 +6,9 @@ use sha2::{Digest, Sha256};
 use crate::seconds_from_rfc3339;
 
 use super::{
-    Sandbox, SandboxCheckpointHistory, SandboxModelError, SandboxReviveCause, SandboxRevivePhase,
-    SandboxRotationAccounting, SandboxRotationIdentity, SandboxRuntimeProvisionReservation,
-    SandboxStatus,
+    Sandbox, SandboxCheckpointCapture, SandboxCheckpointHistory, SandboxModelError,
+    SandboxReviveCause, SandboxRevivePhase, SandboxRotationAccounting, SandboxRotationIdentity,
+    SandboxRuntimeProvisionReservation, SandboxStatus,
 };
 
 const MAX_LIFECYCLE_OPERATION_ID_BYTES: usize = 256;
@@ -84,6 +84,22 @@ pub struct SandboxLifecycleAuthority {
     pub requested_at: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub writer_resume_token: Option<String>,
+    #[serde(default)]
+    pub writer_resume_generation: u64,
+}
+
+impl SandboxLifecycleAuthority {
+    pub(crate) fn expected_writer_resume_token(&self) -> String {
+        let identity = if self.writer_resume_generation == 0 {
+            self.operation_id.clone()
+        } else {
+            format!(
+                "{}:writer-hold:{}",
+                self.operation_id, self.writer_resume_generation
+            )
+        };
+        format!("{:x}", Sha256::digest(identity.as_bytes()))
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -153,6 +169,8 @@ pub struct SandboxLifecycleState {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub runtime_provision: Option<SandboxRuntimeProvisionReservation>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub checkpoint_capture: Option<SandboxCheckpointCapture>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub operation: Option<SandboxLifecycleOperation>,
     #[serde(default)]
     pub checkpoints: SandboxCheckpointHistory,
@@ -168,6 +186,7 @@ impl Default for SandboxLifecycleState {
             next_authority: 1,
             runtime_generation_high_water: 0,
             runtime_provision: None,
+            checkpoint_capture: None,
             operation: None,
             checkpoints: SandboxCheckpointHistory::default(),
             paused_notice: None,
@@ -279,7 +298,7 @@ impl SandboxLifecycleState {
         self.paused_notice = None;
     }
 
-    fn allocate_authority(
+    pub(super) fn allocate_authority(
         &mut self,
         sandbox_id: &crate::SandboxId,
         requested_at: String,
@@ -299,6 +318,7 @@ impl SandboxLifecycleState {
             generation,
             requested_at,
             writer_resume_token,
+            writer_resume_generation: 0,
         })
     }
 
@@ -335,7 +355,9 @@ impl SandboxLifecycleState {
                 validate_writer_token(authority)?;
             }
             SandboxLifecycleOperation::Revive { .. } => {
-                if authority.writer_resume_token.is_some() {
+                if authority.writer_resume_token.is_some()
+                    || authority.writer_resume_generation != 0
+                {
                     return Err(invalid_lifecycle());
                 }
             }
@@ -371,7 +393,7 @@ fn paused_notice_is_invalid(notice: Option<&str>) -> bool {
 }
 
 fn validate_writer_token(authority: &SandboxLifecycleAuthority) -> Result<(), SandboxModelError> {
-    let expected = format!("{:x}", Sha256::digest(authority.operation_id.as_bytes()));
+    let expected = authority.expected_writer_resume_token();
     if authority.writer_resume_token.as_deref() != Some(expected.as_str()) {
         return Err(invalid_lifecycle());
     }

@@ -36,6 +36,7 @@ pub fn validate_agent_conversation_admission(
     };
     let parent = parent.ok_or(SandboxStoreError::Conflict)?;
     if !admission
+        || parent.lifecycle.checkpoint_capture.is_some()
         || *guard != SandboxMutationGuard::capture(parent)
         || parent.id != current.sandbox_id
         || parent.owner != current.owner

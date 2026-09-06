@@ -57,7 +57,8 @@ impl AgentAdmissionStore for InMemorySandboxStore {
         {
             return Err(SandboxStoreError::WorkspaceNotReady);
         }
-        if sandbox.status != SandboxStatus::Active {
+        if sandbox.status != SandboxStatus::Active || sandbox.lifecycle.checkpoint_capture.is_some()
+        {
             return Err(SandboxStoreError::SandboxNotReady);
         }
         let live = state
