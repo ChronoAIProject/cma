@@ -121,7 +121,7 @@ impl AgentWorker {
             None => match self
                 .dependencies
                 .skills
-                .resolve(&agent.owner, &agent.profile.content.skills)
+                .resolve(&context.sandbox, &agent.profile.content.skills)
                 .await
             {
                 Ok(material) => material,

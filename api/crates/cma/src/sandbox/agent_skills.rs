@@ -3,12 +3,11 @@ use std::time::Duration;
 
 use futures_util::{StreamExt as _, TryStreamExt as _};
 use layer2_core::profiles::{SkillRef, SkillSource};
-use layer2_core::sandbox::ResolvedAgentSkill;
-use layer2_core::SubjectId;
+use layer2_core::sandbox::{ResolvedAgentSkill, Sandbox};
 use layer3_adapter::AgentSkill;
 use serde::Deserialize;
 
-use super::credential::OwnerTokenSource;
+use super::credential::SandboxCredentialController;
 
 const ORNN_PROXY_PATH: &[&str] = &["api", "v1", "proxy", "s", "ornn-api"];
 const ORNN_SKILLS_PATH: &[&str] = &["api", "v1", "skills"];
@@ -19,6 +18,8 @@ const MAX_URL_BYTES: usize = 2_048;
 const LOOKUP_CONCURRENCY: usize = 4;
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
 const RESOLUTION_TIMEOUT: Duration = Duration::from_secs(30);
+
+mod authority;
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub(crate) enum AgentSkillResolutionError {
@@ -35,7 +36,7 @@ pub(crate) enum AgentSkillResolutionError {
 pub(crate) trait AgentSkillResolver: Send + Sync {
     async fn resolve(
         &self,
-        owner: &SubjectId,
+        sandbox: &Sandbox,
         references: &[SkillRef],
     ) -> Result<Vec<ResolvedAgentSkill>, AgentSkillResolutionError>;
 
@@ -54,7 +55,7 @@ pub(crate) struct EmptyAgentSkillResolver;
 impl AgentSkillResolver for EmptyAgentSkillResolver {
     async fn resolve(
         &self,
-        _owner: &SubjectId,
+        _sandbox: &Sandbox,
         references: &[SkillRef],
     ) -> Result<Vec<ResolvedAgentSkill>, AgentSkillResolutionError> {
         if references.is_empty() {
@@ -83,19 +84,15 @@ pub(crate) struct OrnnAgentSkillResolver {
     http: reqwest::Client,
     request_origin: reqwest::Url,
     locator_origin: reqwest::Url,
-    tokens: Option<Arc<dyn OwnerTokenSource>>,
+    credentials: Option<Arc<dyn SandboxCredentialController>>,
 }
 
 impl OrnnAgentSkillResolver {
-    pub(crate) fn authenticated<T>(
+    pub(crate) fn scoped(
         platform_origin: &str,
-        tokens: Arc<T>,
-    ) -> Result<Arc<Self>, String>
-    where
-        T: OwnerTokenSource + 'static,
-    {
-        let tokens: Arc<dyn OwnerTokenSource> = tokens;
-        Self::new(platform_origin, Some(tokens)).map(Arc::new)
+        credentials: Arc<dyn SandboxCredentialController>,
+    ) -> Result<Arc<Self>, String> {
+        Self::new(platform_origin, Some(credentials)).map(Arc::new)
     }
 
     pub(crate) fn anonymous(platform_origin: &str) -> Result<Arc<Self>, String> {
@@ -104,7 +101,7 @@ impl OrnnAgentSkillResolver {
 
     fn new(
         platform_origin: &str,
-        tokens: Option<Arc<dyn OwnerTokenSource>>,
+        credentials: Option<Arc<dyn SandboxCredentialController>>,
     ) -> Result<Self, String> {
         let origin = parse_platform_origin(platform_origin)?;
         let http = reqwest::Client::builder()
@@ -116,23 +113,8 @@ impl OrnnAgentSkillResolver {
             http,
             request_origin: origin.clone(),
             locator_origin: origin,
-            tokens,
+            credentials,
         })
-    }
-
-    async fn owner_bearer(
-        &self,
-        owner: &SubjectId,
-    ) -> Result<Option<crate::auth::persistence::SecretValue>, AgentSkillResolutionError> {
-        let Some(tokens) = &self.tokens else {
-            return Ok(None);
-        };
-        tokens
-            .token_for(owner)
-            .await
-            .map_err(|_| unavailable("owner credential lookup failed"))?
-            .map(Some)
-            .ok_or_else(|| unavailable("owner credential is not available"))
     }
 
     async fn resolve_one(
@@ -188,7 +170,7 @@ impl OrnnAgentSkillResolver {
 impl AgentSkillResolver for OrnnAgentSkillResolver {
     async fn resolve(
         &self,
-        owner: &SubjectId,
+        sandbox: &Sandbox,
         references: &[SkillRef],
     ) -> Result<Vec<ResolvedAgentSkill>, AgentSkillResolutionError> {
         if references.len() > MAX_REFERENCES {
@@ -206,16 +188,19 @@ impl AgentSkillResolver for OrnnAgentSkillResolver {
                 return Err(invalid(index, "skill id duplicates another home entry"));
             }
         }
-        let bearer = self.owner_bearer(owner).await?;
-        let bearer = bearer.as_ref().map(|value| value.expose());
-        let requests = references
-            .iter()
-            .enumerate()
-            .map(|(index, reference)| self.resolve_one(index, reference, bearer))
-            .collect::<Vec<_>>();
-        let resolution = futures_util::stream::iter(requests)
-            .buffered(LOOKUP_CONCURRENCY)
-            .try_collect();
+        let resolution = async {
+            let bearer = self.scoped_bearer(sandbox).await?;
+            let bearer = bearer.as_ref().map(|value| value.expose());
+            let requests = references
+                .iter()
+                .enumerate()
+                .map(|(index, reference)| self.resolve_one(index, reference, bearer))
+                .collect::<Vec<_>>();
+            futures_util::stream::iter(requests)
+                .buffered(LOOKUP_CONCURRENCY)
+                .try_collect()
+                .await
+        };
         tokio::time::timeout(RESOLUTION_TIMEOUT, resolution)
             .await
             .map_err(|_| unavailable("Ornn resolution deadline elapsed"))?

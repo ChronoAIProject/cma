@@ -422,7 +422,7 @@ impl ScriptedSkills {
 impl AgentSkillResolver for ScriptedSkills {
     async fn resolve(
         &self,
-        _owner: &SubjectId,
+        _sandbox: &Sandbox,
         _references: &[SkillRef],
     ) -> Result<Vec<ResolvedAgentSkill>, AgentSkillResolutionError> {
         self.calls.fetch_add(1, Ordering::Relaxed);
