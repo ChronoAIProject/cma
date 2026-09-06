@@ -1,7 +1,27 @@
 {
   "version": 1,
-  "openapi_operations": 110,
+  "openapi_operations": 114,
   "operations": {
+    "GET /api/v1/profile-authoring/bounds": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/profile_authoring.rs# Fixed deployment bounds require profile management authority and perform no upstream read.",
+      "required_problems": ["forbidden", "not_authenticated"]
+    },
+    "GET /api/v1/profile-authoring/services": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/profile_authoring.rs# Owner-visible service catalog projects Core validated source data and typed refusal.",
+      "required_problems": ["forbidden", "not_authenticated", "profile_services_unavailable"]
+    },
+    "GET /api/v1/profile-authoring/skills": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/profile_authoring.rs# Skill query validation and owner-scoped source failures are projected through Core.",
+      "required_problems": ["forbidden", "invalid_profile_authoring_query", "not_authenticated", "profile_skills_unavailable"]
+    },
+    "POST /api/v1/profile-authoring/repositories/resolve": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/profile_authoring.rs# Read-only repository verification has typed body and Core repository refusals without idempotency or admission.",
+      "required_problems": ["forbidden", "invalid_json", "invalid_repository", "invalid_repository_reference", "not_authenticated", "repository_not_found", "repository_reference_not_found", "repository_unavailable"]
+    },
     "DELETE /api/v1/agents/{id}": {
       "classification": "openapi",
       "source": "api/crates/layer1-public/src/rest/agents.rs# Public handler and typed error projection define the operation contract.",

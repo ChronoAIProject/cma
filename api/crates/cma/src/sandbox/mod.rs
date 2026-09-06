@@ -29,7 +29,7 @@ pub(crate) use composition::{
 };
 pub(crate) use credential::{
     CredentialCustodyError, CredentialMaterial, CredentialRevocation, ManagedSandboxCredentials,
-    SandboxCredentialController, SandboxCredentialCustody,
+    OwnerTokenSource, SandboxCredentialController, SandboxCredentialCustody,
 };
 pub(crate) use live_agents::LiveAgentRegistry;
 pub(crate) use policy::LiveSandboxPolicy;

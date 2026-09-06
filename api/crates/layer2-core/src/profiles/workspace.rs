@@ -24,7 +24,7 @@ pub enum WorkspaceLocation {
 }
 
 impl WorkspaceLocation {
-    fn validate(&self) -> Result<(), ProfileError> {
+    pub(super) fn validate(&self) -> Result<(), ProfileError> {
         match self {
             Self::Directory { name } => validate_workspace_name(name),
             Self::GitRepository { url, reference } => {

@@ -3,8 +3,11 @@
 use std::sync::Arc;
 
 use axum::{extract::DefaultBodyLimit, Router};
-use layer1_public::rest::{hierarchy_router, profiles_router, HierarchyState, ProfilesState};
+use layer1_public::rest::{
+    hierarchy_router, profile_authoring_router, profiles_router, HierarchyState, ProfilesState,
+};
 use layer2_core::{
+    profiles::authoring::ProfileAuthoringService,
     sandbox::{
         AgentContextService, HierarchyReadService, SandboxOperatorService, SandboxService,
         StoredSandboxRetirement, WorkspaceService,
@@ -16,6 +19,7 @@ use crate::{
     activity::ActivityRecorder,
     auth::{keys::KeyIssuer, AuthMode, AuthState, SignInRecords},
     config::Config,
+    profile_authoring::CmaProfileAuthoringSource,
     profile_policy::profile_route_policy,
     projections::{AdapterSandboxResources, AgentProjectionServices},
     rate_limit::RateLimiters,
@@ -58,6 +62,7 @@ impl ControlPlaneComposition {
         let activity = ActivityService::new(stores.activity.clone());
         let users = UserDirectory::new(stores.users.clone());
         let profile_policy = profile_route_policy();
+        let authoring_bounds = profile_policy.capacity_bounds;
         stores
             .sandbox_profiles
             .seed_default_profiles(
@@ -134,6 +139,10 @@ impl ControlPlaneComposition {
             }),
             stores.auth.clone(),
             config.nyxid_public_url.clone(),
+        );
+        let profile_authoring = ProfileAuthoringService::new(
+            authoring_bounds,
+            CmaProfileAuthoringSource::production(config, Arc::clone(&auth))?,
         );
         let sandbox_credentials: Arc<dyn SandboxCredentialController> = match &config.auth_mode {
             AuthMode::Provider { base_url, .. } => ManagedSandboxCredentials::new(
@@ -220,6 +229,7 @@ impl ControlPlaneComposition {
             settings,
         );
         let resource_routes = profiles_router(profiles)
+            .merge(profile_authoring_router(profile_authoring))
             .merge(hierarchy_router(hierarchy))
             .merge(projections.router(Arc::clone(&operations)))
             .merge(projections.conversation_router(context, sandbox_lifecycle.updates()))
