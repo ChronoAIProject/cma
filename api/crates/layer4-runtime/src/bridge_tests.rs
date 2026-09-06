@@ -57,6 +57,24 @@ async fn detached_output_is_replayed() {
 
 #[cfg(unix)]
 #[tokio::test]
+async fn primary_exit_remains_observable_without_active_subscribers() {
+    let mut launch = launch();
+    launch.args = vec!["-c".into(), "exit 0".into()];
+    let bridge = Bridge::start(&launch, &BTreeMap::new()).unwrap();
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while !bridge.is_ended() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("exit state remains observable without a waiting subscriber");
+    tokio::time::timeout(Duration::from_millis(100), bridge.ended())
+        .await
+        .expect("late subscribers observe the retained exit state");
+}
+
+#[cfg(unix)]
+#[tokio::test]
 async fn close_terminates_descendants_after_the_primary_has_exited() {
     let mut launch = launch();
     launch.args = vec!["-c".into(), "sleep 30 & printf '%s\\n' $!".into()];
