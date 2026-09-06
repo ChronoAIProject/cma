@@ -297,6 +297,9 @@ jobs:
           cache-dependency-path: web/package-lock.json
       - name: Install (lockfile integrity)
         run: npm ci
+      - name: Install SDK runtime dependencies (lockfile integrity)
+        working-directory: sdk/typescript
+        run: npm ci --omit=dev --ignore-scripts
       - name: Format
         run: npx prettier --check .
       - name: Lint

@@ -3,6 +3,8 @@ FROM node:26-alpine AS build
 WORKDIR /build/web
 COPY web/package.json web/package-lock.json ./
 RUN npm ci
+COPY sdk/typescript/package.json sdk/typescript/package-lock.json /build/sdk/typescript/
+RUN npm ci --prefix /build/sdk/typescript --omit=dev --ignore-scripts
 COPY web/ ./
 COPY sdk/typescript/src/ /build/sdk/typescript/src/
 # Which build the status band names (docs/Web_Style.md section 6). Baked into

@@ -26,7 +26,9 @@
     "format": "prettier --write .",
     "format:check": "prettier --check ."
   },
-  "dependencies": {},
+  "dependencies": {
+    "eventsource-parser": "4.1.0"
+  },
   "devDependencies": {
     "@eslint/js": "^9.39.0",
     "@types/node": "^22.20.1",
