@@ -3,6 +3,7 @@ import { Cma } from '../src/client.js';
 import { resolveConfig, type ResponseMetadata } from '../src/config.js';
 import { readConformance, toConformance } from '../src/discovery.js';
 import { ProtocolError } from '../src/errors.js';
+import { transport } from './resource-fixtures.js';
 
 /** @vitest-environment node */
 
@@ -88,6 +89,36 @@ describe('anonymous deployment discovery', () => {
       { ...CONFORMANCE, extra: true },
     ]) {
       expect(() => toConformance(malformed)).toThrow(ProtocolError);
+    }
+  });
+
+  it('reads the generated OpenAPI document anonymously without dropping extensions', async () => {
+    const document = {
+      openapi: '3.1.0',
+      info: { title: 'CMA', version: '1', description: 'Public API' },
+      paths: {
+        '/api/v1/conformance': { get: { responses: { '200': {} }, 'x-cma-operation': 'read' } },
+        'x-cma-public': true,
+      },
+      components: { schemas: { Conformance: { type: 'object' } } },
+      'x-cma-runtime-contract': 3,
+    };
+    const test = transport();
+    test.answer(document);
+    expect(await test.client.readOpenApi()).toEqual(document);
+    expect(new URL(test.calls[0]!.url).pathname).toBe('/openapi.json');
+    expect(test.calls[0]!.init.credentials).toBe('omit');
+    expect(new Headers(test.calls[0]!.init.headers).has('authorization')).toBe(false);
+    for (const malformed of [
+      null,
+      { ...document, openapi: '2.0' },
+      { ...document, info: { title: 'CMA' } },
+      { ...document, paths: [] },
+      { ...document, paths: { invalid: {} } },
+      { ...document, paths: { '/agents': [] } },
+    ]) {
+      test.answer(malformed);
+      await expect(test.client.readOpenApi()).rejects.toBeInstanceOf(ProtocolError);
     }
   });
 });

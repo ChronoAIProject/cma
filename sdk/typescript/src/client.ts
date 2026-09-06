@@ -1,5 +1,10 @@
 import { resolveConfig, type ClientConfig, type ResolvedConfig } from './config.js';
-import { readConformance, type Conformance } from './discovery.js';
+import {
+  readConformance,
+  readOpenApi,
+  type Conformance,
+  type OpenApiDocument,
+} from './discovery.js';
 import type { OperationOptions } from './http.js';
 import { Agents } from './agents.js';
 import { Marketplace } from './marketplace.js';
@@ -13,6 +18,7 @@ import { AgentConversations } from './agui/index.js';
 import { Launches } from './launch/index.js';
 import { Authentication } from './auth.js';
 import { Responses } from './responses.js';
+import { UnsupportedInterfaces } from './unsupported.js';
 
 /** A configured client for the public CMA resource and discovery APIs. */
 export class Cma {
@@ -26,6 +32,7 @@ export class Cma {
   readonly triggers: TriggerAuthoring;
   readonly auth: Authentication;
   readonly responses: Responses;
+  readonly unsupported: UnsupportedInterfaces;
   readonly agui: AgentConversations;
   readonly launches: Launches;
   readonly agentProfiles: Profiles<'agent'>;
@@ -48,6 +55,7 @@ export class Cma {
     this.triggers = this.triggerAuthoring;
     this.auth = new Authentication(this.#config);
     this.responses = new Responses(this.#config);
+    this.unsupported = new UnsupportedInterfaces(this.#config);
     this.agui = new AgentConversations(this.#config);
     this.launches = new Launches(this.#config);
     this.agentProfiles = new Profiles(this.#config, 'agent');
@@ -65,9 +73,13 @@ export class Cma {
     return this.#config;
   }
 
-  /** Read the anonymous deployment state exposed during the rebuild. */
+  /** Read the anonymous deployment state. */
   readConformance(options: OperationOptions = {}): Promise<Conformance> {
     return readConformance(this.#config, options);
+  }
+
+  readOpenApi(options: OperationOptions = {}): Promise<OpenApiDocument> {
+    return readOpenApi(this.#config, options);
   }
 
   readDefaults(options: OperationOptions = {}): Promise<PlatformDefaults> {

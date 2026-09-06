@@ -136,6 +136,37 @@ describe('public entry resources', () => {
       repeatChoiceFrom(new ApiError(409, 'Choose', 'trigger_repeat_choice_required')),
     ).toThrow(ProtocolError);
   });
+
+  it('encodes Launch list filters and rejects unknown states before transport', async () => {
+    const test = transport();
+    test.answer({ items: [launchFixture] });
+    await test.client.launches.list({
+      trigger: 'trg/a b',
+      state: 'ready',
+      limit: 5,
+      cursor: 'next',
+    });
+    const url = new URL(test.calls.at(-1)!.url);
+    expect(Object.fromEntries(url.searchParams)).toEqual({
+      trigger: 'trg/a b',
+      state: 'ready',
+      limit: '5',
+      cursor: 'next',
+    });
+    await expect(
+      test.client.launches.list({
+        state: 'unknown' as never,
+      }),
+    ).rejects.toBeInstanceOf(ValidationError);
+    expect(test.calls).toHaveLength(1);
+  });
+
+  it('preserves omitted review acknowledgements for the server default', async () => {
+    const test = transport();
+    test.answer(launchFixture, 202);
+    await test.client.launches.start(launchFixture.id, {}, command);
+    expect(JSON.parse(String(test.calls[0]!.init.body))).toEqual({});
+  });
 });
 
 describe('progress companion', () => {

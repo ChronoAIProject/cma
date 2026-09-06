@@ -2,11 +2,57 @@ import type { ResolvedConfig } from './config.js';
 import { ProtocolError } from './errors.js';
 import { request, type OperationOptions } from './http.js';
 
-/** Public state exposed while the replacement CMA interfaces are rebuilt. */
+/** Public state of the currently composed CMA interfaces. */
 export interface Conformance {
   readonly service: string;
   readonly status: string;
   readonly interfaces: readonly string[];
+}
+
+/** The generated OpenAPI document, retaining its schema and operation extensions. */
+export interface OpenApiDocument extends Readonly<Record<string, unknown>> {
+  readonly openapi: string;
+  readonly info: Readonly<Record<string, unknown>> & {
+    readonly title: string;
+    readonly version: string;
+  };
+  readonly paths: {
+    readonly [path: `/${string}`]: Readonly<Record<string, unknown>>;
+    readonly [extension: `x-${string}`]: unknown;
+  };
+}
+
+export async function readOpenApi(
+  config: ResolvedConfig,
+  options: OperationOptions = {},
+): Promise<OpenApiDocument> {
+  const raw = objectOf(
+    await request({ ...config, credential: undefined, cookies: false }, '/openapi.json', {
+      ...options,
+      expectedStatus: 200,
+    }),
+    'OpenAPI document',
+  );
+  const version = nonEmptyText(raw.openapi, 'OpenAPI version');
+  if (!/^3\.\d+\.\d+$/.test(version)) throw new ProtocolError('expected OpenAPI version 3');
+  const info = objectOf(raw.info, 'OpenAPI info');
+  const paths = Object.fromEntries(
+    Object.entries(objectOf(raw.paths, 'OpenAPI paths')).map(([path, value]) => {
+      if (path.startsWith('x-')) return [path, value];
+      if (!path.startsWith('/')) throw new ProtocolError('OpenAPI path must start with /');
+      return [path, objectOf(value, 'OpenAPI path item')];
+    }),
+  ) as OpenApiDocument['paths'];
+  return {
+    ...raw,
+    openapi: version,
+    info: {
+      ...info,
+      title: nonEmptyText(info.title, 'OpenAPI title'),
+      version: nonEmptyText(info.version, 'OpenAPI info version'),
+    },
+    paths,
+  };
 }
 
 /**

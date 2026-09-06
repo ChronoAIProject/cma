@@ -13,6 +13,7 @@ import {
   type ResourcePage,
 } from '../resources.js';
 import { array, object, optional, text } from '../schema.js';
+import { readEmbedScript, readTriggerBadge, type TriggerBadgeOptions } from './assets.js';
 import {
   createPlacementBody,
   createTriggerBody,
@@ -29,6 +30,7 @@ import {
 } from './types.js';
 
 export * from './types.js';
+export * from './assets.js';
 
 /** Publisher-owned drafts, immutable publications, placements, and copy-ready embeds. */
 export class TriggerAuthoring {
@@ -158,6 +160,14 @@ export class TriggerAuthoring {
 
   stats(id: string, options: OperationOptions = {}) {
     return read(this.config, `${this.path(id)}/stats`, triggerStatistics, options);
+  }
+
+  badge(publicId: string, options: TriggerBadgeOptions = {}) {
+    return readTriggerBadge(this.config, publicId, options);
+  }
+
+  embedScript(options: OperationOptions = {}) {
+    return readEmbedScript(this.config, options);
   }
 
   private path(id: string): string {

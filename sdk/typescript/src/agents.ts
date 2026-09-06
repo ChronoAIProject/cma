@@ -31,6 +31,7 @@ import {
   type StopAgentRequest,
 } from './agents/types.js';
 import { agentEvent } from './agents/events.js';
+import { requireRefusal } from './unsupported.js';
 
 export interface AgentListOptions extends PageOptions {
   readonly sandbox?: string;
@@ -131,6 +132,11 @@ export class Agents {
   }
   resources(id: string, options: OperationOptions = {}) {
     return this.readProjection(id, 'resources', agentResources, options);
+  }
+
+  /** Preserve the named terminal capability refusal; no attachment is available. */
+  terminal(id: string, options: OperationOptions = {}): Promise<never> {
+    return requireRefusal(this.config, `/api/v1/agents/${segment(id)}/terminal`, 'GET', options);
   }
 
   private readProjection<Value extends { readonly agent_id: string }>(

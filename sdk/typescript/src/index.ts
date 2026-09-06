@@ -34,7 +34,14 @@ export {
   type ResponseMetadata,
   type ResponseObserver,
 } from './config.js';
-export { readConformance, toConformance, type Conformance } from './discovery.js';
+export {
+  readConformance,
+  readOpenApi,
+  toConformance,
+  type Conformance,
+  type OpenApiDocument,
+} from './discovery.js';
+export { UnsupportedInterfaces } from './unsupported.js';
 export {
   ApiError,
   CmaError,

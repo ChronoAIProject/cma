@@ -207,7 +207,7 @@ export const createLaunchRequest = object({
 export type CreateLaunchRequest = Output<typeof createLaunchRequest>;
 export const startLaunchRequest = object({
   trust_confirmed_digest: optional(text),
-  acknowledgements: array(text),
+  acknowledgements: optional(array(text)),
 });
 export type StartLaunchRequest = Output<typeof startLaunchRequest>;
 export const existingLaunchAgent = object({

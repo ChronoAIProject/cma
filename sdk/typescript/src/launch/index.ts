@@ -23,16 +23,23 @@ import {
   existingLaunchAgent,
   launch,
   launchConnectionRequirements,
+  launchState,
   serviceConnectionStatus,
   startLaunchRequest,
   type CreateLaunchRequest,
   type CreateServiceConnectionRequest,
+  type LaunchState,
   type StartLaunchRequest,
 } from './types.js';
 
 export type * from './types.js';
 export type * from './events.js';
 export type { LaunchStreamOptions } from './stream.js';
+
+export interface LaunchListOptions extends PageOptions {
+  readonly trigger?: string;
+  readonly state?: LaunchState;
+}
 
 export function repeatChoiceFrom(error: unknown) {
   if (!(error instanceof ApiError) || error.code !== 'trigger_repeat_choice_required')
@@ -58,10 +65,16 @@ export class Launches {
   read(id: string, options: OperationOptions = {}) {
     return read(this.config, `/api/v1/launches/${segment(id)}`, identity(launch, id), options);
   }
-  async list(options: PageOptions = {}) {
+  async list(options: LaunchListOptions = {}) {
+    if (options.state !== undefined) input(launchState, options.state);
     const result = await read(
       this.config,
-      query('/api/v1/launches', { cursor: options.cursor, limit: options.limit }),
+      query('/api/v1/launches', {
+        trigger: options.trigger,
+        state: options.state,
+        cursor: options.cursor,
+        limit: options.limit,
+      }),
       object({ items: array(launch), next_cursor: optional(text) }),
       options,
     );
