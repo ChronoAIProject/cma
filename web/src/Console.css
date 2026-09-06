@@ -1,16 +1,29 @@
 .console__surface {
-  display: grid;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
   min-width: 0;
   min-height: 0;
   background: var(--dsw-alias-bg-base);
 }
 
 .console__empty {
+  margin: auto;
   align-self: center;
   justify-self: center;
   max-width: 32rem;
   padding: 24px;
   text-align: center;
+}
+
+.console__navigation-status {
+  padding: 16px;
+  overflow-wrap: anywhere;
+}
+.console__action-error {
+  margin: 0;
+  padding: 8px 16px;
+  color: var(--dsw-alias-state-error-primary);
 }
 
 .console__empty h1 {

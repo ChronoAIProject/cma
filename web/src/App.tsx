@@ -41,6 +41,7 @@ export function App() {
     <Console
       user={state.user}
       route={router.route}
+      onNavigate={router.navigate}
       onSignOut={() => {
         void signOut();
       }}

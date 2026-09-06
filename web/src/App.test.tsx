@@ -11,7 +11,9 @@ describe('the retained application shell', () => {
         <App />
       </AuthContextProvider>,
     );
-    expect(await screen.findByRole('heading', { name: 'No resources yet' })).toBeInTheDocument();
+    expect(
+      await screen.findByRole('heading', { name: 'Create your first agent' }),
+    ).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /account menu/i })).toBeInTheDocument();
   });
 
