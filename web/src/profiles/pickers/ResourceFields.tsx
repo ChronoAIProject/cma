@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { Input } from '../../ui/Input';
+import { Button } from '../../ui/Button';
 import type { CapacityBounds, SandboxProfileContent } from '../client';
 import { ChoiceGroup } from '../ChoiceGroup';
 import { Field } from '../Field';
@@ -13,9 +14,13 @@ const PRESETS = {
 export function ResourceFields({
   editor,
   bounds,
+  loading = false,
+  onRetry,
 }: {
   readonly editor: EditorState<SandboxProfileContent>;
   readonly bounds?: CapacityBounds;
+  readonly loading?: boolean;
+  readonly onRetry?: () => void;
 }) {
   const [custom, setCustom] = useState(false);
   const content = editor.draft.content;
@@ -98,7 +103,16 @@ export function ResourceFields({
           />
         </Field>
       </div>
-      {bounds === undefined ? <p role="status">Resource limits are unavailable.</p> : null}
+      {bounds === undefined ? (
+        <div role={onRetry === undefined ? 'status' : 'alert'} aria-busy={loading}>
+          <p>{loading ? 'Loading resource limits' : 'Resource limits are unavailable.'}</p>
+          {onRetry === undefined ? null : (
+            <Button type="button" onClick={onRetry}>
+              Try again
+            </Button>
+          )}
+        </div>
+      ) : null}
     </>
   );
 }

@@ -15,6 +15,57 @@ import { createProfileViewsClient } from './profiles';
 const options = { idempotencyKey: 'profile-command-819' };
 
 describe('public profile web binding', () => {
+  it('binds public authoring reads and a read-only repository resolve without a command key', async () => {
+    const test = restTransport();
+    const authoring = createProfileViewsClient(test.sdk).authoring;
+    const signal = new AbortController().signal;
+    test.reply({
+      min_cpu_millis: 1000,
+      max_cpu_millis: 4000,
+      min_memory_mib: 1024,
+      max_memory_mib: 8192,
+    });
+    expect(await authoring?.readCapacityBounds({ signal })).toEqual({
+      minCpuMillis: 1000,
+      maxCpuMillis: 4000,
+      minMemoryMib: 1024,
+      maxMemoryMib: 8192,
+    });
+    test.reply([{ id: 'github', name: 'GitHub', description: 'Repository access' }]);
+    expect(await authoring?.listServices({ signal })).toEqual([
+      { id: 'github', name: 'GitHub', description: 'Repository access' },
+    ]);
+    const skills = {
+      items: [{ id: 'research', name: 'Research', versions: ['1.2', '1.1'] }],
+      next: 'more',
+    };
+    test.reply(skills);
+    expect(await authoring?.searchSkills('research & tools', { cursor: 'first', signal })).toEqual(
+      skills,
+    );
+    const url = new URL(String(test.fetch.mock.calls.at(-1)?.[0]), 'https://cma.example.test');
+    expect(url.pathname).toBe('/api/v1/profile-authoring/skills');
+    expect(url.searchParams.get('q')).toBe('research & tools');
+    expect(url.searchParams.get('cursor')).toBe('first');
+    const repository = {
+      url: 'https://github.com/example/research',
+      default_branch: 'main',
+      commit_sha: 'a'.repeat(40),
+    };
+    test.reply(repository);
+    expect(
+      await authoring?.resolveRepository(
+        { type: 'git_repository', url: repository.url },
+        { signal },
+      ),
+    ).toEqual(repository);
+    expect(test.body()).toEqual({ url: repository.url });
+    expect(test.fetch.mock.calls.at(-1)?.[1]?.method).toBe('POST');
+    expect(new Headers(test.fetch.mock.calls.at(-1)?.[1]?.headers).has('idempotency-key')).toBe(
+      false,
+    );
+  });
+
   it('maps all owner lists and Agent draft mutations, publication, sharing and retirement', async () => {
     const test = restTransport();
     const views = createProfileViewsClient(test.sdk);

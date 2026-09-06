@@ -23,9 +23,13 @@ export function WorkspaceLocationPicker({
   const location = value.location;
   const key = repositoryKey(location);
   const request = useRef<AbortController | undefined>(undefined);
+  const latestEditor = useRef(editor);
   const [checking, setChecking] = useState<string>();
   const [failure, setFailure] = useState<{ key: string; message: string }>();
   useEffect(() => () => request.current?.abort(), [key]);
+  useEffect(() => {
+    latestEditor.current = editor;
+  }, [editor]);
   const content = (next: Partial<WorkspaceProfileContent>) => {
     request.current?.abort();
     setChecking(undefined);
@@ -43,13 +47,23 @@ export function WorkspaceLocationPicker({
     setChecking(key);
     setFailure(undefined);
     try {
-      await resolver.resolveRepository(location, { signal: abort.signal });
-      if (!abort.signal.aborted) onVerified(key);
+      const resolved = await resolver.resolveRepository(location, { signal: abort.signal });
+      const current = latestEditor.current;
+      if (!abort.signal.aborted && repositoryKey(current.draft.content.location) === key) {
+        const canonical = { ...location, url: resolved.url };
+        if (canonical.url !== location.url)
+          current.change({
+            ...current.draft,
+            content: { ...current.draft.content, location: canonical },
+          });
+        onVerified(repositoryKey(canonical));
+      }
     } catch {
       if (!abort.signal.aborted)
         setFailure({
           key,
-          message: 'The repository or reference could not be verified. Check access and try again.',
+          message:
+            'The public repository or reference could not be verified. Check the URL and try again.',
         });
     } finally {
       if (!abort.signal.aborted) setChecking(undefined);
@@ -105,7 +119,7 @@ export function WorkspaceLocationPicker({
           <Field
             id="profile-repositoryUrl"
             label="Repository URL"
-            help="Use the HTTPS address of a GitHub repository this account can access."
+            help="Use the HTTPS address of a public GitHub repository."
             error={errors.repositoryUrl}
           >
             <Input

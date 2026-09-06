@@ -194,10 +194,13 @@ function AgentEditor({ client, catalog, profileId, onSaved }: AgentProfileEditor
             catalog={catalog}
             value={draft.content.skills}
             disabled={locked}
+            error={errors.skills}
             onChange={(skills) => content({ skills })}
           />
           {errors.skills === undefined ? null : (
-            <p className="profile-field__error">{errors.skills}</p>
+            <p id="profile-skills-error" className="profile-field__error">
+              {errors.skills}
+            </p>
           )}
         </section>
         <section className="profile-editor__band">

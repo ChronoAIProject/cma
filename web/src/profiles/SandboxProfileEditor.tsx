@@ -1,6 +1,7 @@
 import { Input } from '../ui/Input';
 import type {
   CapacityBounds,
+  CapacityBoundsClient,
   ProfileDocument,
   ProfileDraft,
   ProfileEditorClient,
@@ -18,6 +19,7 @@ import { ProfileReferencePicker } from './pickers/ProfileReferencePicker';
 import { ResourceFields } from './pickers/ResourceFields';
 import { ServicePicker } from './pickers/ServicePicker';
 import { validateSandboxProfile } from './sandboxValidation';
+import { useCapacityBounds } from './capacityBounds';
 
 const INITIAL: ProfileDraft<SandboxProfileContent> = {
   name: '',
@@ -42,6 +44,7 @@ export interface SandboxProfileEditorProps {
   readonly marketplace: Pick<MarketplaceClient, 'listMarketplace'>;
   readonly services?: ServiceCatalogClient;
   readonly bounds?: CapacityBounds;
+  readonly boundsClient?: CapacityBoundsClient;
   readonly profileId?: string;
   readonly onSaved?: (profile: ProfileDocument<SandboxProfileContent>) => void;
 }
@@ -55,10 +58,13 @@ function SandboxEditor({
   profiles,
   marketplace,
   services,
-  bounds,
+  bounds: providedBounds,
+  boundsClient,
   profileId,
   onSaved,
 }: SandboxProfileEditorProps) {
+  const capacity = useCapacityBounds(providedBounds === undefined ? boundsClient : undefined);
+  const bounds = providedBounds ?? capacity.bounds;
   return (
     <ProfileEditor
       client={client}
@@ -76,7 +82,12 @@ function SandboxEditor({
           <>
             <section className="profile-editor__band">
               <h2>Size</h2>
-              <ResourceFields editor={editor} bounds={bounds} />
+              <ResourceFields
+                editor={editor}
+                bounds={bounds}
+                loading={capacity.loading}
+                onRetry={capacity.failed ? capacity.retry : undefined}
+              />
             </section>
             <section className="profile-editor__band">
               <h2>Services it can reach</h2>

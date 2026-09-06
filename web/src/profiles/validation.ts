@@ -6,6 +6,10 @@ export function byteLength(value: string): number {
   return new TextEncoder().encode(value).length;
 }
 
+export function isSkillVersion(value: string | undefined): value is string {
+  return value !== undefined && value.length <= 20 && /^(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(value);
+}
+
 export function validateMetadata(
   draft: Pick<ProfileDraft<unknown>, 'name' | 'description'>,
 ): FieldErrors {
@@ -30,5 +34,7 @@ export function validateAgentProfile(draft: ProfileDraft<AgentProfileContent>): 
   if (draft.content.skills.length > 32) errors.skills = 'Choose at most 32 skills.';
   else if (draft.content.skills.some((skill) => skill.id.trim() === ''))
     errors.skills = 'Choose a skill with a valid identifier.';
+  else if (draft.content.skills.some((skill) => !isSkillVersion(skill.version)))
+    errors.skills = 'Choose a published major.minor version for each skill.';
   return errors;
 }

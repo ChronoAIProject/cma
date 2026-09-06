@@ -222,6 +222,10 @@
 .skill-picker__search {
   width: 100%;
 }
+.skill-picker__version {
+  flex: 1;
+  min-width: 0;
+}
 .skill-picker__version-help {
   grid-column: 2;
 }
