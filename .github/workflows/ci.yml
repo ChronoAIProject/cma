@@ -23,9 +23,8 @@ jobs:
         run: .github/scripts/check-file-size-tests.sh
       - name: Source files stay within size limits
         run: .github/scripts/check-file-size.sh
-      # The real-tree invocation lands with #809, once its configuration code
-      # and manifests agree. The checker stays strict; only its fixtures run in
-      # this independent prerequisite commit.
+      - name: Deployment configuration matches code
+        run: .github/scripts/check-config-keys.sh
       - name: Configuration key validator regressions
         run: .github/scripts/check-config-keys-tests.sh
       - uses: actions/setup-node@v6
@@ -214,6 +213,8 @@ jobs:
         run: npm run docs:check
       - name: Repository package contents
         run: npm pack --dry-run
+      - name: Packaged SDK and React embed consumer
+        run: npm run package:check
       - name: Scratch Node consumer
         run: |
           archive=$(npm pack --silent --pack-destination "$RUNNER_TEMP")
