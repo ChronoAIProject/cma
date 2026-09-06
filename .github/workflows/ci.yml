@@ -28,6 +28,13 @@ jobs:
       # this independent prerequisite commit.
       - name: Configuration key validator regressions
         run: .github/scripts/check-config-keys-tests.sh
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 26
+      - name: API and configuration documentation validator regressions
+        run: node --test .github/scripts/check-api-docs.test.mjs .github/scripts/check-config-docs.test.mjs
+      - name: Deployment configuration is documented
+        run: node .github/scripts/check-config-docs.mjs
       - name: Release notes validator regressions
         run: .github/release-notes-tests.sh
       - name: Release planning tests
