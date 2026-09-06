@@ -30,7 +30,21 @@ impl SandboxLifecycleExecutionStore for InMemorySandboxStore {
             .sandboxes
             .get(&mutation.guard.sandbox_id)
             .ok_or(SandboxStoreError::NotFound)?;
-        let agents = sandbox_agent_rows(&state, &current.id);
+        let agents = sandbox_agent_log_rows(&state, &current.id);
+        for (agent, _) in agents.iter().filter(|(agent, _)| agent.status.is_live()) {
+            let logs = state
+                .agent_logs
+                .get(&agent.id)
+                .map(Vec::as_slice)
+                .unwrap_or(&[]);
+            if logs.len() as u64 != agent.conversation.last_seq
+                || logs.iter().enumerate().any(|(offset, entry)| {
+                    entry.agent_id != agent.id || entry.seq != offset as u64 + 1
+                })
+            {
+                return Err(SandboxStoreError::SequenceConflict);
+            }
+        }
         validate_checkpoint_mutation(current, &agents, &mutation)?;
 
         let mut candidate = state.clone();

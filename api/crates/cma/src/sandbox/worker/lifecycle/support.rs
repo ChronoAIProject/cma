@@ -99,7 +99,7 @@ impl SandboxWorker {
         let stamp = rfc3339_at(now);
         let lease = lifecycle_lease(&sandbox, &self.config.holder)?;
         let mut next = sandbox.clone();
-        if failure.is_retryable() {
+        let recorded_failure = if failure.is_retryable() {
             next.retry_lifecycle(
                 rfc3339_at(now + self.config.retry_delay),
                 &lease.holder,
@@ -107,6 +107,7 @@ impl SandboxWorker {
                 stamp.clone(),
             )
             .map_err(model_error)?;
+            failure.typed()
         } else {
             next.fail_lifecycle(
                 failure.detail().into(),
@@ -114,8 +115,8 @@ impl SandboxWorker {
                 lease.fence,
                 stamp.clone(),
             )
-            .map_err(model_error)?;
-        }
+            .map_err(model_error)?
+        };
         self.commit_lifecycle_phase(
             &sandbox,
             next,
@@ -124,7 +125,7 @@ impl SandboxWorker {
             stamp,
             vec![SandboxEventKind::WorkStepFailed {
                 step: SandboxWorkStep::RunLifecycleOperation,
-                failure: failure.typed(),
+                failure: recorded_failure,
             }],
         )
         .await

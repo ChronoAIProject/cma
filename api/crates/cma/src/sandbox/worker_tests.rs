@@ -41,6 +41,7 @@ use super::worker::{
     CREDENTIAL_ROTATION_AGE,
 };
 
+mod checkpoint_consistency_tests;
 mod lifecycle_queue_tests;
 
 const PROFILE_TIME: &str = "2026-09-05T00:00:00Z";

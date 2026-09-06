@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use async_trait::async_trait;
 
-use crate::ids::{SandboxId, SubjectId};
+use crate::ids::{AgentId, SandboxId, SubjectId};
 use crate::sandbox::{
     Agent, AgentLogKind, RuntimeBinding, Sandbox, SandboxCheckpointRef, SandboxEventKind,
     SandboxLifecycleOperation, SandboxStatus, SandboxWorkLease, SandboxWorkStep,
@@ -64,9 +64,28 @@ impl SandboxMutationGuard {
 #[derive(Debug, Clone)]
 pub struct SandboxCheckpointMutation {
     pub guard: SandboxMutationGuard,
+    pub agents: Vec<SandboxCheckpointAgentGuard>,
     pub checkpoint: SandboxCheckpointRef,
     pub sandbox: Sandbox,
     pub appended_at: String,
+}
+
+/// The exact durable conversation position observed during checkpoint capture.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct SandboxCheckpointAgentGuard {
+    pub agent_id: AgentId,
+    pub revision: u64,
+    pub last_seq: u64,
+}
+
+impl SandboxCheckpointAgentGuard {
+    pub fn capture(agent: &Agent) -> Self {
+        Self {
+            agent_id: agent.id.clone(),
+            revision: agent.revision,
+            last_seq: agent.conversation.last_seq,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -138,7 +157,7 @@ impl<T> SandboxLifecycleStore for T where
 #[doc(hidden)]
 pub fn validate_checkpoint_mutation(
     current: &Sandbox,
-    agents: &[Agent],
+    agents: &[(Agent, u64)],
     mutation: &SandboxCheckpointMutation,
 ) -> Result<(), SandboxStoreError> {
     validate_guard(current, &mutation.guard)?;
@@ -165,7 +184,29 @@ pub fn validate_checkpoint_mutation(
         .checkpoint
         .validate()
         .map_err(|_| invalid("checkpoint reference is invalid"))?;
-    validate_checkpoint_agents(current, agents, &mutation.checkpoint)?;
+    let live = agents.iter().filter(|(agent, _)| agent.status.is_live());
+    let expected = live
+        .clone()
+        .map(|(agent, _)| SandboxCheckpointAgentGuard::capture(agent))
+        .collect::<BTreeSet<_>>();
+    let captured = mutation.agents.iter().cloned().collect::<BTreeSet<_>>();
+    if live.count() != expected.len()
+        || captured.len() != mutation.agents.len()
+        || captured != expected
+    {
+        return Err(SandboxStoreError::Conflict);
+    }
+    if agents
+        .iter()
+        .any(|(agent, last_seq)| agent.status.is_live() && agent.conversation.last_seq != *last_seq)
+    {
+        return Err(SandboxStoreError::SequenceConflict);
+    }
+    let rows = agents
+        .iter()
+        .map(|(agent, _)| agent.clone())
+        .collect::<Vec<_>>();
+    validate_checkpoint_agents(current, &rows, &mutation.checkpoint)?;
 
     if !checkpoint_sandbox_advanced(
         current,

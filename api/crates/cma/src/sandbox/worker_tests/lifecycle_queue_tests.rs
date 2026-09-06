@@ -220,7 +220,7 @@ async fn restarted_worker_retires_an_abandoned_queue_fence_without_resending() {
     assert_eq!(inputs.lock().unwrap().len(), 1);
 }
 
-fn ready_agent(sandbox: &Sandbox, now: SystemTime) -> Agent {
+pub(super) fn ready_agent(sandbox: &Sandbox, now: SystemTime) -> Agent {
     let stamp = rfc3339_at(now);
     Agent {
         id: AgentId::generate(),

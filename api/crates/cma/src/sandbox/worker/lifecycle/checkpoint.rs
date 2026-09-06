@@ -2,7 +2,8 @@ use std::time::SystemTime;
 
 use layer2_core::rfc3339_at;
 use layer2_core::sandbox::store::{
-    SandboxCheckpointMutation, SandboxMutationGuard, SandboxStore, SandboxStoreError,
+    SandboxCheckpointAgentGuard, SandboxCheckpointMutation, SandboxMutationGuard, SandboxStore,
+    SandboxStoreError,
 };
 use layer2_core::sandbox::{
     Agent, Sandbox, SandboxCheckpointConversation, SandboxCheckpointRef, SandboxImageRotationPhase,
@@ -33,13 +34,11 @@ impl SandboxWorker {
                 .await;
         };
         let agents = self.lifecycle_agents(&sandbox).await?;
-        let captures = match self
-            .capture_lifecycle_conversations(&runtime, &agents)
-            .await
-        {
-            Ok(captures) => captures,
-            Err(failure) => return self.handle_lifecycle_failure(sandbox, failure, now).await,
-        };
+        for agent in agents.iter().filter(|agent| agent.status.is_live()) {
+            if let Err(failure) = require_quiet_agent(agent) {
+                return self.handle_lifecycle_failure(sandbox, failure, now).await;
+            }
+        }
         let epoch = sandbox
             .next_lifecycle_checkpoint_epoch()
             .map_err(model_error)?;
@@ -72,6 +71,14 @@ impl SandboxWorker {
                     .await
             }
         };
+        // The home archive and conversation captures must share one writer hold.
+        let captures = match self
+            .capture_lifecycle_conversations(&runtime, &agents)
+            .await
+        {
+            Ok(captures) => captures,
+            Err(failure) => return self.fail_after_writer_resume(sandbox, failure, now).await,
+        };
         let stamp = rfc3339_at(now);
         let checkpoint =
             match SandboxCheckpointRef::seal(&held.checkpoint, &captures, stamp.clone()) {
@@ -99,6 +106,11 @@ impl SandboxWorker {
         .map_err(model_error)?;
         let mutation = SandboxCheckpointMutation {
             guard: SandboxMutationGuard::capture(&sandbox),
+            agents: agents
+                .iter()
+                .filter(|agent| agent.status.is_live())
+                .map(SandboxCheckpointAgentGuard::capture)
+                .collect(),
             checkpoint,
             sandbox: next.clone(),
             appended_at: stamp,
