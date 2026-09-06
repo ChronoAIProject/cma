@@ -32,6 +32,8 @@ mod bootstrap;
 mod checkpoint;
 #[path = "memory_mutations.rs"]
 mod mutations;
+#[path = "memory_probes.rs"]
+mod probes;
 
 /// Observable in-memory state used by Layer 2 lifecycle tests.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -71,6 +73,7 @@ struct MemoryRuntime {
     writer_fence_captures: u64,
     held_checkpoint: Option<(CheckpointHoldRequest, CheckpointHoldReceipt)>,
     restored_object: Option<String>,
+    restored_conversations: BTreeMap<AgentSlot, String>,
 }
 
 #[derive(Debug, Clone)]
@@ -90,79 +93,7 @@ pub struct InMemoryHostedBackend {
     lost_responses: Arc<StdMutex<VecDeque<WireOperation>>>,
     corrupt_install_receipt: Arc<AtomicBool>,
     corrupt_capture_digest: Arc<AtomicBool>,
-}
-
-impl InMemoryHostedBackend {
-    pub async fn snapshot(&self, handle: &RuntimeHandle) -> crate::Result<InMemoryRuntimeSnapshot> {
-        self.runtimes
-            .lock()
-            .await
-            .get(handle)
-            .map(MemoryRuntime::snapshot)
-            .ok_or_else(|| AdapterError::Unavailable(format!("unknown runtime {}", handle.0)))
-    }
-
-    pub async fn requests(&self) -> Vec<(RuntimeHandle, RequestFrame)> {
-        self.requests.lock().await.clone()
-    }
-
-    /// Emit one conversation update from an inspectable runtime.
-    pub async fn send_agent_update(
-        &self,
-        handle: &RuntimeHandle,
-        agent_id: &AgentSlot,
-        update: ConversationUpdate,
-    ) -> crate::Result<()> {
-        let updates = self
-            .runtimes
-            .lock()
-            .await
-            .get(handle)
-            .and_then(|runtime| runtime.agents.get(agent_id))
-            .filter(|agent| agent.running)
-            .map(|agent| agent.updates.clone())
-            .ok_or_else(|| AdapterError::Unavailable("agent update channel is not live".into()))?;
-        updates
-            .send(update)
-            .await
-            .map_err(|_| AdapterError::Unavailable("agent update receiver ended".into()))
-    }
-
-    /// Return one typed runtime failure the next time this operation is sent.
-    pub fn fail_next(
-        &self,
-        operation: WireOperation,
-        code: impl Into<String>,
-        detail: impl Into<String>,
-    ) {
-        self.failures
-            .lock()
-            .expect("in-memory failure queue lock")
-            .push_back(WireFailure {
-                operation,
-                code: code.into(),
-                detail: detail.into(),
-                retryable: false,
-            });
-    }
-
-    /// Apply one operation but report a lost response to exercise durable replay.
-    pub fn lose_next_response(&self, operation: WireOperation) {
-        self.lost_responses
-            .lock()
-            .expect("in-memory lost-response queue lock")
-            .push_back(operation);
-    }
-
-    /// Make the next successful install reply carry an invalid receipt.
-    pub fn corrupt_next_install_receipt(&self) {
-        self.corrupt_install_receipt.store(true, Ordering::Relaxed);
-    }
-
-    /// Make the next captured archive disagree with its advertised digest.
-    pub fn corrupt_next_capture_digest(&self) {
-        self.corrupt_capture_digest.store(true, Ordering::Relaxed);
-    }
+    archives: Arc<StdMutex<BTreeMap<String, checkpoint::HomeArchive>>>,
 }
 
 #[async_trait::async_trait]
@@ -202,6 +133,7 @@ impl HostedBackend for InMemoryHostedBackend {
                 writer_fence_captures: 0,
                 held_checkpoint: None,
                 restored_object: None,
+                restored_conversations: BTreeMap::new(),
             },
         );
         Ok(handle)
@@ -325,15 +257,17 @@ impl HostedBackend for InMemoryHostedBackend {
                 }))
             }
             RequestFrame::Checkpoint(request) => {
-                checkpoint::capture(runtime, handle, request, operation)
+                checkpoint::capture(runtime, &self.archives, request, operation)
             }
             RequestFrame::CheckpointForTeardown(request) => {
-                checkpoint::capture_for_teardown(runtime, handle, request, operation)
+                checkpoint::capture_for_teardown(runtime, &self.archives, request, operation)
             }
             RequestFrame::ResumeCheckpointWriters(request) => {
                 checkpoint::resume_writers(runtime, request, operation)
             }
-            RequestFrame::Restore(request) => checkpoint::restore(runtime, request, operation),
+            RequestFrame::Restore(request) => {
+                checkpoint::restore(runtime, &self.archives, request, operation)
+            }
             RequestFrame::Resources => checkpoint::resources(runtime),
             RequestFrame::OpenAgent(_) => Err(AdapterError::Rejected(
                 "open_agent must use the hosted conversation path".into(),
@@ -441,6 +375,11 @@ impl HostedBackend for InMemoryHostedBackend {
             ));
         }
 
+        if runtime.restored_object.is_some()
+            && resume_conversation.as_ref() != runtime.restored_conversations.get(&launch.agent_id)
+        {
+            return refused(WireOperation::OpenAgent, "restored_conversation_mismatch");
+        }
         let conversation_id =
             resume_conversation.unwrap_or_else(|| format!("conversation-{}", launch.agent_id.0));
         let receipt = AgentOpenReceipt {
