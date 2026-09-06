@@ -330,7 +330,12 @@ async fn launch_revive_treats_an_active_owned_sandbox_as_satisfied() {
 fn fixture() -> (Arc<SandboxService>, Arc<InMemorySandboxStore>) {
     let profiles = Arc::new(InMemoryProfileStore::default());
     let store = Arc::new(InMemorySandboxStore::default());
-    let service = SandboxService::new(store.clone(), profiles, SandboxPolicy::default());
+    let service = SandboxService::new(
+        store.clone(),
+        profiles,
+        SandboxPolicy::default(),
+        Arc::new(crate::sandbox::FixedSandboxCredentialPrerequisite::Ready),
+    );
     (service, store)
 }
 

@@ -33,6 +33,30 @@ Publisher methods require the separate Trigger-publishing grant. Operator method
 require their distinct operator grants; exposing a client namespace does not grant
 authority to use it.
 
+## Renewable Sandbox Authority
+
+Creating a new Sandbox requires renewable owner authority established through
+CMA's public `/auth/login` OAuth flow with the same subject. A request bearer
+authenticates that request; CMA does not persist it or assume it can be renewed.
+This prerequisite also applies to Launch creation or Start when resolution needs
+a new Sandbox, but does not gate reuse of an already admitted Sandbox or Agent.
+Default-context conversation creation also checks setup if it needs a Sandbox.
+
+Missing setup returns HTTP 409 with `sandbox_credential_setup_required` in the
+normal problem document. Use `auth.loginUrl({ returnTo })` for a supported CMA
+workflow destination, complete sign-in with the same account, then submit the
+refused keyed operation with a **new** idempotency key. The original key continues
+to replay its exact refusal, even after setup. An ambiguous transport failure is
+different: retry its original key and unchanged body to learn its outcome.
+Conversation creation is unkeyed: retry a definitive setup refusal after sign-in,
+but never assume an ambiguous conversation-creation failure is safe to replay.
+
+A successful `auth.readSession()` proves identity, not renewable credential
+readiness; resource admission checks that prerequisite again. Authentication
+store or provider outages remain dependency errors, not instructions to replace
+credentials. The SDK neither performs the OAuth exchange nor acquires a refresh
+token for the application.
+
 ## Browser Sessions
 
 `auth.readSession()` returns a discriminated `AuthSession`: HTTP 401 with

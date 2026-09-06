@@ -1057,6 +1057,7 @@
         "not_authenticated",
         "provisioning_timeout",
         "responses_field_unsupported",
+        "sandbox_credential_setup_required",
         "sandbox_not_found",
         "sandbox_required",
         "workspace_not_found"
@@ -1101,6 +1102,7 @@
         "launch_service_unavailable",
         "missing_idempotency_key",
         "not_authenticated",
+        "sandbox_credential_setup_required",
         "store_failed",
         "triggers_disabled",
         "trust_confirmation_mismatch"
@@ -1244,6 +1246,7 @@
         "json_content_type_required",
         "missing_idempotency_key",
         "not_authenticated",
+        "sandbox_credential_setup_required",
         "sandbox_limit_reached",
         "sandbox_name_conflict",
         "sandbox_profile_not_found",
@@ -1391,6 +1394,7 @@
         "missing_idempotency_key",
         "not_authenticated",
         "resource_quota",
+        "sandbox_credential_setup_required",
         "store_failed",
         "trigger_not_found",
         "trigger_repeat_choice_required",

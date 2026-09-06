@@ -23,6 +23,7 @@ pub mod profile;
 mod public_contract_tests;
 mod records;
 mod refresh;
+mod sandbox_prerequisite;
 mod session_routes;
 mod signup_options;
 mod token;

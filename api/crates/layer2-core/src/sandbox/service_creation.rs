@@ -168,6 +168,17 @@ impl SandboxService {
         policy: SandboxPolicy,
     ) -> Result<Sandbox, SandboxServiceError> {
         let name = requested_name(request.name, &profile.name)?;
+        self.credentials
+            .check(&caller.subject)
+            .await
+            .map_err(|error| match error {
+                super::SandboxCredentialPrerequisiteError::SetupRequired => {
+                    SandboxServiceError::CredentialSetupRequired
+                }
+                super::SandboxCredentialPrerequisiteError::Unavailable(detail) => {
+                    SandboxServiceError::Unavailable(detail)
+                }
+            })?;
         let now = now_rfc3339();
         let reaches = profile
             .revision

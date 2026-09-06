@@ -22,6 +22,32 @@ must use an explicitly configured CORS origin. Allowed request headers include
 `X-Request-Id`; exposed response headers include `Link`, `Retry-After` and
 `X-Request-Id`. CORS is not authorization.
 
+Creating a new Sandbox also requires renewable owner delegation already held by
+CMA. A request bearer authenticates that request; CMA does not persist it or
+derive refresh authority from it. Complete the existing `/auth/login` OAuth
+flow with the same account to establish delegation. Bearer SDK calls remain
+supported after this setup; the browser session need not accompany them.
+
+`POST /api/v1/sandboxes`, public Launch creation, and Draft Launch start return
+`409 sandbox_credential_setup_required` when a new Sandbox is needed but that
+delegation is missing or no longer renewable. No Sandbox is admitted, and a
+refused Draft start leaves the Launch unchanged. Reused Sandboxes and Agents do
+not acquire this prerequisite merely for reuse. Identity-store or provider
+outages remain sanitized `503` failures, not a request to repeat sign-in.
+Default-context `POST /api/v1/conversations` inherits this prerequisite when it
+needs a new Sandbox. That protocol-compatible operation is unkeyed: retry only
+a definitive setup refusal after sign-in, not an ambiguous creation failure.
+
+Use the SDK's `auth.loginUrl` or `auth().login_url` with a canonical CMA return
+path, preserve the pending command without any credential, and verify that the
+returned identity is the same subject. A successful browser session alone does
+not prove the provider supplied renewable delegation: the next admission still
+checks it. For keyed operations, after a definitive setup-required refusal and
+successful sign-in, explicitly retry with a **new** idempotency key. The previous
+key continues to replay its exact refusal; transport-ambiguous retries must
+retain the original key and body. Neither OAuth callback nor return navigation
+starts work.
+
 Send `Content-Type: application/json` when a route has a JSON body. An empty
 object and an absent body are not interchangeable: Agent stop requires `{}`
 (or its documented reason field), whereas interrupt, pause and revive have no

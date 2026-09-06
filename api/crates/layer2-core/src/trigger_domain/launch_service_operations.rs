@@ -34,6 +34,7 @@ impl LaunchService {
             .await
             .map_err(|error| LaunchServiceError::Unavailable(error.to_string()))?;
         let requirements = if launch.resolution.sandbox.is_pending() {
+            self.require_sandbox_credentials(&caller.subject).await?;
             RequirementsSnapshot {
                 services: self
                     .connections

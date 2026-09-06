@@ -143,6 +143,10 @@ fn trigger_problem(error: TriggerServiceError) -> ProblemParts {
 
 fn launch_problem(error: LaunchServiceError) -> ProblemParts {
     match error {
+        LaunchServiceError::CredentialSetupRequired => conflict(
+            "sandbox_credential_setup_required",
+            super::problems::SANDBOX_CREDENTIAL_SETUP_DETAIL,
+        ),
         LaunchServiceError::Forbidden => forbidden("launch Triggers"),
         LaunchServiceError::Disabled => unavailable(
             "triggers_disabled",

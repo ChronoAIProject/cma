@@ -90,6 +90,14 @@ including caller-supplied `title`, are refused. Omitted context is resolved
 through platform defaults. Specifying both Workspace and Sandbox requires
 matching owned lineage; it does not move the Workspace.
 
+If default-context selection needs a new Sandbox, its owner must first establish
+renewable authority through CMA's public `/auth/login` flow with the same account.
+Missing setup returns `409 sandbox_credential_setup_required` before Sandbox
+admission. An existing admitted context does not require this setup merely for
+reuse. Conversation creation is unkeyed: the caller may retry that definitive
+refusal after sign-in, but must not automatically replay an ambiguous creation
+failure. An `Idempotency-Key` does not make this endpoint replay-safe.
+
 ```json
 {
   "metadata": {

@@ -57,3 +57,26 @@ Login and logout helpers construct explicit browser navigation URLs only. The
 OAuth callback belongs to browser authentication and is not an SDK token
 exchange. Return targets must be canonical CMA workflow paths; absolute URLs,
 fragments, query strings, and arbitrary redirects are refused before transport.
+
+## Renewable Sandbox Authority
+
+New Sandbox admission requires renewable owner authority established through
+CMA's public `/auth/login` OAuth flow with the same subject. A request bearer
+authenticates a request; CMA does not persist it or assume it is renewable.
+Launch creation and Start have the same prerequisite when they need a new
+Sandbox. Reusing an already admitted Sandbox or Agent does not require new setup.
+Default-context conversation creation also checks setup if it needs a Sandbox.
+
+The normal HTTP problem document reports missing setup as status 409 and code
+`sandbox_credential_setup_required`. Construct a browser destination with
+`auth().login_url(...)`, finish sign-in with the same account, and retry the
+definitively refused keyed operation with a **new** `IdempotencyKey`. Its original
+key continues to replay the exact refusal after setup. For an ambiguous transport
+failure, keep the original key and unchanged body instead.
+Conversation creation is unkeyed: a definitive setup refusal can be retried after
+sign-in, but an ambiguous creation failure is not automatically safe to replay.
+
+`AuthSession::SignedIn` proves identity, not renewable authority. The next resource
+admission checks setup again; store and provider outages remain dependency
+errors. The SDK does not perform an OAuth token exchange or obtain refresh
+credentials for a backend client.

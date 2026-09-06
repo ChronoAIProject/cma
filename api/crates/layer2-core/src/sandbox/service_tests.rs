@@ -24,6 +24,9 @@ use super::service::{DEFAULT_INACTIVITY_PAUSE_AFTER_SECONDS, DEFAULT_RETENTION_G
 use super::*;
 use tokio::sync::Notify;
 
+#[path = "service_credential_tests.rs"]
+mod credential_prerequisite_tests;
+
 const NOW: &str = "2026-09-05T00:00:00Z";
 const LATER: &str = "2026-09-05T00:01:00Z";
 
@@ -556,7 +559,12 @@ async fn trust_confirmation_is_required_only_for_unsafe_foreign_profiles() {
         .unwrap()
         .digest;
     let unsafe_id = public_unsafe.id.clone();
-    let service = SandboxService::new(store, profiles.clone(), policy(10, 10));
+    let service = SandboxService::new(
+        store,
+        profiles.clone(),
+        policy(10, 10),
+        Arc::new(crate::sandbox::FixedSandboxCredentialPrerequisite::Ready),
+    );
     let caller = caller("caller", [Capability::CreateSandbox]);
 
     service.create(&caller, request(own)).await.unwrap();
@@ -613,6 +621,7 @@ async fn foreign_nested_setup_requires_the_outer_digest_for_an_owned_safe_parent
         Arc::new(InMemorySandboxStore::default()),
         profiles.clone(),
         policy(10, 10),
+        Arc::new(crate::sandbox::FixedSandboxCredentialPrerequisite::Ready),
     );
     let consumer = caller("consumer", [Capability::CreateSandbox]);
 
@@ -684,6 +693,7 @@ async fn missing_or_corrupt_nested_revisions_fail_closed_without_recording_use()
             workspace_profiles,
             profile_uses,
             policy_source,
+            Arc::new(crate::sandbox::FixedSandboxCredentialPrerequisite::Ready),
         );
         let mut create = request(parent.clone());
         create.confirmed_digest = Some(digest.clone());
@@ -722,6 +732,7 @@ async fn corrupt_outer_profile_aggregate_id_fails_closed_before_owner_is_trusted
         workspace_profiles,
         profile_uses,
         policy_source,
+        Arc::new(crate::sandbox::FixedSandboxCredentialPrerequisite::Ready),
     );
 
     assert!(matches!(
@@ -760,6 +771,7 @@ async fn recorder_failure_does_not_fail_an_admitted_sandbox() {
         workspace_profiles,
         profile_uses,
         policy_source,
+        Arc::new(crate::sandbox::FixedSandboxCredentialPrerequisite::Ready),
     );
 
     let admitted = service
@@ -803,7 +815,12 @@ async fn private_foreign_and_retired_profiles_are_hidden() {
         .retire_sandbox_profile(&retired.id, &SubjectId::new("caller"), LATER.into())
         .await
         .unwrap();
-    let service = SandboxService::new(store, profiles, policy(10, 10));
+    let service = SandboxService::new(
+        store,
+        profiles,
+        policy(10, 10),
+        Arc::new(crate::sandbox::FixedSandboxCredentialPrerequisite::Ready),
+    );
     let caller = caller("caller", [Capability::CreateSandbox]);
 
     for reference in [private, retired] {
@@ -833,7 +850,12 @@ async fn create_uses_origin_specific_capabilities_and_limits() {
     .await;
 
     let manual_store = Arc::new(InMemorySandboxStore::default());
-    let manual_service = SandboxService::new(manual_store, profiles.clone(), policy(3, 1));
+    let manual_service = SandboxService::new(
+        manual_store,
+        profiles.clone(),
+        policy(3, 1),
+        Arc::new(crate::sandbox::FixedSandboxCredentialPrerequisite::Ready),
+    );
     let manual = caller(
         "owner",
         [Capability::CreateSandbox, Capability::UseOwnSandboxes],
@@ -932,7 +954,12 @@ async fn create_uses_origin_specific_capabilities_and_limits() {
         SandboxServiceError::SandboxLimitReached { limit: 3, live: 3 }
     );
     let visitor_store = Arc::new(InMemorySandboxStore::default());
-    let visitor_service = SandboxService::new(visitor_store, profiles.clone(), policy(3, 1));
+    let visitor_service = SandboxService::new(
+        visitor_store,
+        profiles.clone(),
+        policy(3, 1),
+        Arc::new(crate::sandbox::FixedSandboxCredentialPrerequisite::Ready),
+    );
     let launcher = caller("owner", [Capability::LaunchTriggers]);
     let mut trigger_request = request(reference.clone());
     trigger_request.origin = SandboxOrigin::Trigger {
@@ -979,6 +1006,7 @@ async fn create_uses_origin_specific_capabilities_and_limits() {
         Arc::new(InMemorySandboxStore::default()),
         profiles,
         policy(2, 1),
+        Arc::new(crate::sandbox::FixedSandboxCredentialPrerequisite::Ready),
     );
     let dual = caller(
         "owner",
@@ -1034,8 +1062,12 @@ async fn trigger_replay_precedes_zero_quota_and_changed_security_input_conflicts
     let store = Arc::new(InMemorySandboxStore::default());
     let source = Arc::new(MutablePolicy(Mutex::new(policy(3, 1))));
     let policy_source: Arc<dyn SandboxPolicySource> = source.clone();
-    let service =
-        SandboxService::with_policy_source(store.clone(), profiles.clone(), policy_source);
+    let service = SandboxService::with_policy_source(
+        store.clone(),
+        profiles.clone(),
+        policy_source,
+        Arc::new(crate::sandbox::FixedSandboxCredentialPrerequisite::Ready),
+    );
     let launcher = caller("owner", [Capability::LaunchTriggers]);
     let trigger = |profile| CreateSandbox {
         profile,
@@ -1127,7 +1159,12 @@ async fn concurrent_trigger_replay_returns_one_sandbox_and_records_one_use() {
     .await;
     let profile_id = reference.id.clone();
     let store = Arc::new(InMemorySandboxStore::default());
-    let service = SandboxService::new(store.clone(), profiles.clone(), policy(3, 1));
+    let service = SandboxService::new(
+        store.clone(),
+        profiles.clone(),
+        policy(3, 1),
+        Arc::new(crate::sandbox::FixedSandboxCredentialPrerequisite::Ready),
+    );
     let launcher = caller("owner", [Capability::LaunchTriggers]);
     let mut tasks = Vec::new();
     for _ in 0..20 {
@@ -1207,6 +1244,7 @@ async fn frozen_launch_profiles_survive_outer_and_nested_retirement_with_exact_t
         Arc::new(InMemorySandboxStore::default()),
         profiles.clone(),
         policy(3, 1),
+        Arc::new(crate::sandbox::FixedSandboxCredentialPrerequisite::Ready),
     );
     let launcher = caller("consumer", [Capability::LaunchTriggers]);
     let launch = |confirmed_digest| CreateSandbox {
@@ -1281,6 +1319,7 @@ async fn launch_exact_outer_revision_corruption_fails_closed() {
             workspace_profiles,
             profile_uses,
             policy_source,
+            Arc::new(crate::sandbox::FixedSandboxCredentialPrerequisite::Ready),
         );
         let mut create = request(reference.clone());
         create.origin = SandboxOrigin::Trigger {
@@ -1312,7 +1351,12 @@ async fn launch_replay_precedes_failed_policy_retired_profile_and_sign_in_comple
     own_credentials.draft.model_access = ModelAccess::OwnCredentials;
     let reference = publish(&profiles, own_credentials).await;
     let store = Arc::new(InMemorySandboxStore::default());
-    let service = SandboxService::new(store.clone(), profiles.clone(), policy(3, 1));
+    let service = SandboxService::new(
+        store.clone(),
+        profiles.clone(),
+        policy(3, 1),
+        Arc::new(crate::sandbox::FixedSandboxCredentialPrerequisite::Ready),
+    );
     let launcher = caller("owner", [Capability::LaunchTriggers]);
     let launch = || CreateSandbox {
         profile: reference.clone(),
@@ -1350,6 +1394,7 @@ async fn launch_replay_precedes_failed_policy_retired_profile_and_sign_in_comple
         workspace_profiles,
         profile_uses,
         policy_source,
+        Arc::new(crate::sandbox::FixedSandboxCredentialPrerequisite::Ready),
     );
     let mut replay = launch();
     replay.confirmed_digest = Some("confirmation-no-longer-current".into());
@@ -1386,7 +1431,12 @@ async fn create_reads_current_policy_for_each_admission() {
         baseline_services: vec![ServiceId::new("baseline-one")],
     })));
     let policy_source: Arc<dyn SandboxPolicySource> = source.clone();
-    let service = SandboxService::with_policy_source(store, profiles, policy_source);
+    let service = SandboxService::with_policy_source(
+        store,
+        profiles,
+        policy_source,
+        Arc::new(crate::sandbox::FixedSandboxCredentialPrerequisite::Ready),
+    );
     let owner = caller("owner", [Capability::CreateSandbox]);
 
     let first = service
@@ -1449,7 +1499,12 @@ async fn default_names_deduplicate_and_preserve_utf8_byte_bounds() {
         ),
     )
     .await;
-    let service = SandboxService::new(store, profiles, policy(10, 10));
+    let service = SandboxService::new(
+        store,
+        profiles,
+        policy(10, 10),
+        Arc::new(crate::sandbox::FixedSandboxCredentialPrerequisite::Ready),
+    );
     let owner = caller("owner", [Capability::CreateSandbox]);
 
     let mut names = Vec::new();
@@ -1491,7 +1546,12 @@ async fn an_explicit_live_name_is_not_silently_renamed() {
     )
     .await;
     let profile_id = reference.id.clone();
-    let service = SandboxService::new(store, profiles.clone(), policy(10, 10));
+    let service = SandboxService::new(
+        store,
+        profiles.clone(),
+        policy(10, 10),
+        Arc::new(crate::sandbox::FixedSandboxCredentialPrerequisite::Ready),
+    );
     let owner = caller("owner", [Capability::CreateSandbox]);
     let mut invalid = request(reference.clone());
     invalid.name = Some("invalid\0name".into());
@@ -1531,7 +1591,12 @@ async fn concurrent_admission_never_exceeds_the_live_limit() {
     )
     .await;
     let profile_id = reference.id.clone();
-    let service = SandboxService::new(store.clone(), profiles.clone(), policy(3, 1));
+    let service = SandboxService::new(
+        store.clone(),
+        profiles.clone(),
+        policy(3, 1),
+        Arc::new(crate::sandbox::FixedSandboxCredentialPrerequisite::Ready),
+    );
     let owner = caller("owner", [Capability::CreateSandbox]);
     let mut tasks = Vec::new();
     for _ in 0..20 {
@@ -1588,7 +1653,12 @@ async fn admission_atomically_starts_with_created_and_snapshots_the_revision() {
         ),
     )
     .await;
-    let service = SandboxService::new(store.clone(), profiles, policy(3, 1));
+    let service = SandboxService::new(
+        store.clone(),
+        profiles,
+        policy(3, 1),
+        Arc::new(crate::sandbox::FixedSandboxCredentialPrerequisite::Ready),
+    );
     let owner = caller("owner", [Capability::CreateSandbox]);
     let sandbox = service.create(&owner, request(reference)).await.unwrap();
 
@@ -1623,7 +1693,12 @@ async fn own_account_profiles_store_only_the_required_sign_in_state() {
     );
     own_account.draft.model_access = ModelAccess::OwnCredentials;
     let reference = publish(&profiles, own_account).await;
-    let service = SandboxService::new(store, profiles, policy(3, 1));
+    let service = SandboxService::new(
+        store,
+        profiles,
+        policy(3, 1),
+        Arc::new(crate::sandbox::FixedSandboxCredentialPrerequisite::Ready),
+    );
 
     let sandbox = service
         .create(
@@ -1655,7 +1730,12 @@ async fn reads_require_capability_and_hide_another_owner() {
         ),
     )
     .await;
-    let service = SandboxService::new(store, profiles, policy(3, 1));
+    let service = SandboxService::new(
+        store,
+        profiles,
+        policy(3, 1),
+        Arc::new(crate::sandbox::FixedSandboxCredentialPrerequisite::Ready),
+    );
     let creator = caller("owner", [Capability::CreateSandbox]);
     let sandbox = service.create(&creator, request(reference)).await.unwrap();
     let owner = caller("owner", [Capability::UseOwnSandboxes]);
@@ -1713,7 +1793,12 @@ async fn delete_is_idempotent_and_schedules_cleanup_from_every_live_status() {
             ),
         )
         .await;
-        let service = SandboxService::new(store.clone(), profiles, policy(3, 1));
+        let service = SandboxService::new(
+            store.clone(),
+            profiles,
+            policy(3, 1),
+            Arc::new(crate::sandbox::FixedSandboxCredentialPrerequisite::Ready),
+        );
         let creator = caller("owner", [Capability::CreateSandbox]);
         let mut sandbox = service.create(&creator, request(reference)).await.unwrap();
         if status != SandboxStatus::Provisioning {
@@ -1753,7 +1838,12 @@ async fn concurrent_delete_returns_the_winning_retirement_state() {
         ),
     )
     .await;
-    let service = SandboxService::new(store.clone(), profiles, policy(3, 1));
+    let service = SandboxService::new(
+        store.clone(),
+        profiles,
+        policy(3, 1),
+        Arc::new(crate::sandbox::FixedSandboxCredentialPrerequisite::Ready),
+    );
     let sandbox = service
         .create(
             &caller("owner", [Capability::CreateSandbox]),
@@ -1797,7 +1887,12 @@ async fn lease_takeover_fences_a_stale_worker_commit() {
         ),
     )
     .await;
-    let service = SandboxService::new(store.clone(), profiles, policy(3, 1));
+    let service = SandboxService::new(
+        store.clone(),
+        profiles,
+        policy(3, 1),
+        Arc::new(crate::sandbox::FixedSandboxCredentialPrerequisite::Ready),
+    );
     let owner = caller("owner", [Capability::CreateSandbox]);
     let sandbox = service.create(&owner, request(reference)).await.unwrap();
 

@@ -253,6 +253,7 @@ async fn conversation_router(harness: &Harness) -> Router {
             harness.store.clone(),
             profiles.clone(),
             SandboxPolicy::default(),
+            Arc::new(layer2_core::sandbox::FixedSandboxCredentialPrerequisite::Ready),
         ),
         WorkspaceService::new(harness.store.clone(), profiles.clone()),
         services.agents(),

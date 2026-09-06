@@ -10,7 +10,7 @@ use layer1_public::{
     },
 };
 use layer2_core::{
-    sandbox::{AgentService, SandboxService, WorkspaceService},
+    sandbox::{AgentService, SandboxCredentialPrerequisite, SandboxService, WorkspaceService},
     trigger_domain::{
         LaunchService, ServiceConnectionBroker, ServiceConnectionService, TriggerService,
     },
@@ -28,6 +28,7 @@ use super::{
 use crate::{rate_limit::CmaLaunchQuota, rate_limit::RateLimiters, store::MongoStores};
 
 pub(crate) struct TriggerCompositionDependencies {
+    pub credentials: Arc<dyn SandboxCredentialPrerequisite>,
     pub stores: Arc<MongoStores>,
     pub directory: Arc<UserDirectory>,
     pub settings: Arc<PlatformSettingsService>,
@@ -64,6 +65,7 @@ impl TriggerComposition {
             resources.clone(),
             dependencies.broker.clone(),
             launch_policy,
+            dependencies.credentials,
         );
         let connections =
             ServiceConnectionService::new(definitions.clone(), dependencies.broker.clone());

@@ -216,6 +216,7 @@ fn composed_rest_router() -> Router {
         Arc::clone(&sandbox_store),
         Arc::clone(&profile_store),
         SandboxPolicy::default(),
+        Arc::new(layer2_core::sandbox::FixedSandboxCredentialPrerequisite::Ready),
     );
     let workspaces = WorkspaceService::new(Arc::clone(&sandbox_store), profile_store.clone());
     let projections = AgentProjectionServices::new(
@@ -249,6 +250,7 @@ fn composed_rest_router() -> Router {
             enabled: true,
             orchestration_paused: false,
         }),
+        Arc::new(layer2_core::sandbox::FixedSandboxCredentialPrerequisite::Ready),
     );
     let connections = ServiceConnectionService::new(Arc::clone(&launch_store), Arc::clone(&broker));
     let trigger_routes = trigger_router(TriggerRoutesState::new(

@@ -10,6 +10,7 @@ use serde_json::Value;
 
 mod agent_cases;
 mod authoring_cases;
+mod credential_cases;
 mod domains;
 mod experience_cases;
 mod fault_cases;
@@ -104,6 +105,9 @@ fn paths() -> Vec<PathBuf> {
 }
 
 async fn scenario(name: &str) -> Scenario {
+    if let Some(scenario) = credential_cases::scenario(name).await {
+        return scenario;
+    }
     if let Some(scenario) = authoring_cases::scenario(name) {
         return scenario;
     }

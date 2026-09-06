@@ -111,6 +111,7 @@ pub(super) fn fixture_with_operations(
             max_sandboxes_per_owner: sandbox_limit,
             ..SandboxPolicy::default()
         },
+        Arc::new(layer2_core::sandbox::FixedSandboxCredentialPrerequisite::Ready),
     );
     let workspaces = WorkspaceService::new(store.clone(), profiles.clone());
     let hierarchy = HierarchyReadService::new(store.clone());
