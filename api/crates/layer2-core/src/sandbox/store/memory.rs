@@ -236,6 +236,9 @@ impl WorktreeStore for InMemorySandboxStore {
 #[async_trait]
 impl AgentStore for InMemorySandboxStore {
     async fn create_agent(&self, agent: Agent) -> Result<(), SandboxStoreError> {
+        if agent.work.resolved_skills.is_some() {
+            return Err(SandboxStoreError::Conflict);
+        }
         let mut state = self.lock();
         if state.agents.values().any(|stored| {
             stored.worktree_id == agent.worktree_id
@@ -258,6 +261,17 @@ impl AgentStore for InMemorySandboxStore {
     ) -> Result<(), SandboxStoreError> {
         let id = agent.id.clone();
         let mut state = self.lock();
+        let current = state.agents.get(&id).ok_or(SandboxStoreError::NotFound)?;
+        if current.owner != agent.owner
+            || current.profile != agent.profile
+            || current.work.resolved_skills != agent.work.resolved_skills
+        {
+            return Err(SandboxStoreError::Conflict);
+        }
+        agent
+            .work
+            .validate_resolved_skills(&agent.profile.content.skills)
+            .map_err(|error| SandboxStoreError::Corrupt(error.to_string()))?;
         save_record!(state, agents, id, expected_revision, agent)
     }
 

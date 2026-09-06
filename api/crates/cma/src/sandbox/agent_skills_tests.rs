@@ -204,8 +204,11 @@ fn material(id: &str, version: &str, hash: &str) -> serde_json::Value {
 
 fn detail_target(id: &str, version: &str) -> String {
     let origin = reqwest::Url::parse("http://fixture.invalid").unwrap();
-    let url = skill_detail_url(&origin, id, version).unwrap();
-    format!("{}?{}", url.path(), url.query().unwrap())
+    let url = skill_detail_url(&origin, id, (!version.is_empty()).then_some(version)).unwrap();
+    url.query().map_or_else(
+        || url.path().to_owned(),
+        |query| format!("{}?{query}", url.path()),
+    )
 }
 
 #[tokio::test]
@@ -253,10 +256,10 @@ async fn exact_pinned_material_is_authenticated_and_keeps_reference_order() {
             .collect::<Vec<_>>(),
         ["skl_beta", "skl_alpha"]
     );
-    assert_eq!(resolved[0].version.as_deref(), Some("3.4"));
+    assert_eq!(resolved[0].version, "3.4");
     assert_eq!(resolved[0].archive_sha256, "b".repeat(64));
     assert_eq!(
-        resolved[0].source_url,
+        resolver(&registry, None).runtime_skills(&resolved).unwrap()[0].source_url,
         concat!(
             "https://platform.example/api/v1/proxy/s/ornn-api/api/v1/skills/",
             "skl_beta/versions/3.4/download"
@@ -290,15 +293,17 @@ async fn duplicate_references_fail_before_authority_is_read() {
 }
 
 #[tokio::test]
-async fn unpinned_or_mutable_versions_fail_before_authority_is_read() {
+async fn invalid_version_grammar_fails_before_authority_is_read() {
     let registry = Registry::start().await;
     let tokens = TestTokens::present();
     for version in [
-        None,
-        Some("@latest"),
         Some("latest"),
         Some("1.2.3"),
         Some("01.2"),
+        Some("@"),
+        Some("@Latest"),
+        Some("@with.dot"),
+        Some("@1stable"),
     ] {
         let error = resolver(&registry, Some(Arc::clone(&tokens)))
             .resolve(&owner(), &[reference("skl_a", version)])
@@ -308,6 +313,68 @@ async fn unpinned_or_mutable_versions_fail_before_authority_is_read() {
     }
     assert_eq!(tokens.calls.load(Ordering::Relaxed), 0);
     assert!(registry.requests().is_empty());
+}
+
+#[tokio::test]
+async fn omitted_and_real_dist_tags_resolve_once_to_literal_material() {
+    for version in [
+        None,
+        Some(""),
+        Some("@latest"),
+        Some("@stable"),
+        Some("@rc-1"),
+    ] {
+        let registry = Registry::start().await;
+        registry.reply(
+            "skl_alias",
+            version.unwrap_or(""),
+            Reply::json(material("skl_alias", "3.4", &"a".repeat(64))),
+        );
+        let tokens = TestTokens::present();
+        let resolver = resolver(&registry, Some(Arc::clone(&tokens)));
+        let references = [reference("skl_alias", version)];
+        let resolved = resolver.resolve(&owner(), &references).await.unwrap();
+        assert_eq!(resolved[0].version, "3.4");
+        assert_eq!(references[0].version.as_deref(), version);
+        validate_skill_selection(&references, &resolved).unwrap();
+        let first = resolver.runtime_skills(&resolved).unwrap();
+        let second = resolver.runtime_skills(&resolved).unwrap();
+        assert_eq!(first, second);
+        assert_eq!(first[0].version.as_deref(), Some("3.4"));
+        assert!(first[0].source_url.ends_with("/versions/3.4/download"));
+        assert_eq!(tokens.calls.load(Ordering::Relaxed), 1);
+        assert_eq!(registry.requests().len(), 1);
+    }
+}
+
+#[tokio::test]
+async fn persisted_material_rebuilds_current_locators_without_metadata_or_tokens() {
+    let registry = Registry::start().await;
+    let tokens = TestTokens::with(TokenReply::Failed("must not be called".into()));
+    let mut resolver = resolver(&registry, Some(Arc::clone(&tokens)));
+    let material = vec![ResolvedAgentSkill {
+        source: SkillSource::Ornn,
+        id: layer2_core::SkillId::new("skl_persisted"),
+        version: "2.10".into(),
+        archive_sha256: "b".repeat(64),
+    }];
+    let first = resolver.runtime_skills(&material).unwrap();
+    resolver.locator_origin = reqwest::Url::parse("https://replacement.example").unwrap();
+    let second = resolver.runtime_skills(&material).unwrap();
+    assert_ne!(first[0].source_url, second[0].source_url);
+    assert_eq!(first[0].id, second[0].id);
+    assert_eq!(first[0].version, second[0].version);
+    assert_eq!(first[0].archive_sha256, second[0].archive_sha256);
+    assert_eq!(tokens.calls.load(Ordering::Relaxed), 0);
+    assert!(registry.requests().is_empty());
+    for invalid in ["2.10.0", "@latest", "02.10"] {
+        let mut changed = material.clone();
+        changed[0].version = invalid.into();
+        assert!(matches!(
+            resolver.runtime_skills(&changed),
+            Err(AgentSkillResolutionError::Invalid(_))
+        ));
+    }
 }
 
 #[tokio::test]

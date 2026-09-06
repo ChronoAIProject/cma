@@ -2,7 +2,7 @@ use std::time::SystemTime;
 
 use layer2_core::rfc3339_at;
 use layer2_core::sandbox::store::{AgentWorkMutation, SandboxStoreError, MAX_AGENT_CLEANUP_DEBT};
-use layer2_core::sandbox::{Agent, AgentCleanupDebt, AgentWorkStep};
+use layer2_core::sandbox::{Agent, AgentCleanupDebt, AgentWorkStep, ResolvedAgentSkill};
 
 use super::{claimed_fence, RequestEvidence};
 use crate::sandbox::agent_worker::AgentWorker;
@@ -12,9 +12,12 @@ impl AgentWorker {
         &self,
         mut agent: Agent,
         evidence: &RequestEvidence,
+        resolved_skills: Option<Vec<ResolvedAgentSkill>>,
         now: SystemTime,
     ) -> Result<Agent, SandboxStoreError> {
-        if evidence.step != agent.work.step {
+        if evidence.step != agent.work.step
+            || (evidence.step == AgentWorkStep::MaterializeHome) != resolved_skills.is_some()
+        {
             return Err(SandboxStoreError::Corrupt(
                 "agent side-effect intent does not match its work step".into(),
             ));
@@ -27,6 +30,7 @@ impl AgentWorker {
         {
             return if existing.operation_id == evidence.operation_id
                 && existing.request_sha256 == evidence.request_sha256
+                && (resolved_skills.is_none() || agent.work.resolved_skills == resolved_skills)
             {
                 Ok(agent)
             } else {
@@ -42,6 +46,14 @@ impl AgentWorker {
         }
         let expected = agent.revision;
         let fence = claimed_fence(&agent, &self.config.holder)?;
+        if let Some(material) = resolved_skills {
+            if agent.work.resolved_skills.is_some() {
+                return Err(SandboxStoreError::Corrupt(
+                    "agent skill selection has no home intent".into(),
+                ));
+            }
+            agent.work.resolved_skills = Some(material);
+        }
         agent.work.cleanup_debt.push(AgentCleanupDebt {
             step: evidence.step,
             operation_id: evidence.operation_id.clone(),

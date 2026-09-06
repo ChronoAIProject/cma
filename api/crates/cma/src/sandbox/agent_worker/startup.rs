@@ -13,7 +13,8 @@ use super::startup_support::{
 };
 use super::support::{
     adapter_failure, bump_log_sequence, claimed_fence, request_evidence, runtime_capabilities,
-    runtime_options, skill_failure, validate_skills, AgentContext, WorkerFailure,
+    runtime_options, skill_failure, validate_runtime_skills, validate_skills, AgentContext,
+    WorkerFailure,
 };
 use super::AgentWorker;
 use crate::sandbox::live_agents::{LiveAgentAttachment, LiveAgentTarget};
@@ -44,7 +45,9 @@ impl AgentWorker {
             &request.operation_id,
             &request.request_sha256,
         );
-        let agent = self.prepare_side_effect(agent, &evidence, now).await?;
+        let agent = self
+            .prepare_side_effect(agent, &evidence, None, now)
+            .await?;
         let authority_fence = claimed_fence(&agent, &self.config.holder)?;
         match self
             .dependencies
@@ -91,16 +94,48 @@ impl AgentWorker {
             Ok(context) => context,
             Err(failure) => return self.handle_failure(agent, failure, now).await,
         };
-        let skills = match self
-            .dependencies
-            .skills
-            .resolve(&agent.owner, &agent.profile.content.skills)
-            .await
-        {
+        let material = match &agent.work.resolved_skills {
+            Some(material) => material.clone(),
+            None if agent
+                .work
+                .cleanup_debt
+                .iter()
+                .any(|debt| debt.step == AgentWorkStep::MaterializeHome)
+                || agent
+                    .work
+                    .receipts
+                    .iter()
+                    .any(|receipt| receipt.step == AgentWorkStep::MaterializeHome) =>
+            {
+                return self
+                    .handle_failure(
+                        agent,
+                        WorkerFailure::terminal(
+                            "agent_skill_material_missing",
+                            "durable home intent has no immutable skill selection",
+                        ),
+                        now,
+                    )
+                    .await;
+            }
+            None => match self
+                .dependencies
+                .skills
+                .resolve(&agent.owner, &agent.profile.content.skills)
+                .await
+            {
+                Ok(material) => material,
+                Err(error) => return self.handle_failure(agent, skill_failure(error), now).await,
+            },
+        };
+        if let Err(failure) = validate_skills(&agent.profile.content.skills, &material) {
+            return self.handle_failure(agent, failure, now).await;
+        }
+        let skills = match self.dependencies.skills.runtime_skills(&material) {
             Ok(skills) => skills,
             Err(error) => return self.handle_failure(agent, skill_failure(error), now).await,
         };
-        if let Err(failure) = validate_skills(&agent.profile.content.skills, &skills) {
+        if let Err(failure) = validate_runtime_skills(&material, &skills) {
             return self.handle_failure(agent, failure, now).await;
         }
         let request = AgentHomeRequest::new(
@@ -114,7 +149,9 @@ impl AgentWorker {
             &request.operation_id,
             &request.request_sha256,
         );
-        let agent = self.prepare_side_effect(agent, &evidence, now).await?;
+        let agent = self
+            .prepare_side_effect(agent, &evidence, Some(material), now)
+            .await?;
         let authority_fence = claimed_fence(&agent, &self.config.holder)?;
         match self
             .dependencies
@@ -174,7 +211,9 @@ impl AgentWorker {
             &request.operation_id,
             &request.request_sha256,
         );
-        let mut agent = self.prepare_side_effect(agent, &evidence, now).await?;
+        let mut agent = self
+            .prepare_side_effect(agent, &evidence, None, now)
+            .await?;
         let authority_fence = claimed_fence(&agent, &self.config.holder)?;
         let (channel, updates) = match self.open(&context, authority_fence, &request).await {
             Ok(opened) => opened,
@@ -244,7 +283,7 @@ impl AgentWorker {
             Err(error) => {
                 return self
                     .handle_failure(agent, registry_failure(error), now)
-                    .await
+                    .await;
             }
         };
         let expected = agent.revision;

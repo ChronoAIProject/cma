@@ -620,6 +620,7 @@ mod execution_tests;
 mod launch_command_tests;
 mod profile_transaction_tests;
 mod sandbox_lifecycle_tests;
+mod skill_material_tests;
 mod transaction_reconciliation_tests;
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]

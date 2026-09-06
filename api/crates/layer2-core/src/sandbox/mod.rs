@@ -93,6 +93,7 @@ pub use agent_runtime::{
 pub use agent_service::{AgentService, AgentServiceError, CreateAgent};
 pub use agent_work::{
     AgentCleanupDebt, AgentWorkLease, AgentWorkReceipt, AgentWorkState, AgentWorkStep,
+    ResolvedAgentSkill,
 };
 pub use checkpoint::{
     sandbox_checkpoint_due, SandboxCheckpointConversation, SandboxCheckpointConversationRef,
