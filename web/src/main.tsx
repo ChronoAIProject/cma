@@ -9,6 +9,9 @@ import { CmaClientProvider } from './api/context';
 import { createRestWebClient } from './api/rest';
 import { createProfileViewsClient } from './api/profiles';
 import { createCreationClient } from './api/creation';
+import { createOperatorClient } from './operator/client';
+import { createTriggerPublisherClient } from './trigger-publisher/client';
+import { createPublicClient } from './public/client';
 
 /*
  * Before the first render, so the page never paints in the wrong theme and
@@ -31,11 +34,21 @@ const sdk = createClient();
 const client = createRestWebClient(sdk);
 const profiles = createProfileViewsClient(sdk);
 const creation = createCreationClient(sdk);
+const operator = createOperatorClient(sdk);
+const publisher = createTriggerPublisherClient(sdk);
+const publicClient = createPublicClient(sdk);
 
 createRoot(container).render(
   <StrictMode>
     <AuthContextProvider provider={authProvider}>
-      <CmaClientProvider client={client} profiles={profiles} creation={creation}>
+      <CmaClientProvider
+        client={client}
+        profiles={profiles}
+        creation={creation}
+        operator={operator}
+        publisher={publisher}
+        publicClient={publicClient}
+      >
         <App />
       </CmaClientProvider>
     </AuthContextProvider>

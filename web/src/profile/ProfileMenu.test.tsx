@@ -19,10 +19,11 @@ describe('account menu', () => {
     const actor = userEvent.setup();
     render(<ProfileMenu user={user} onSignOut={onSignOut} onNavigate={onNavigate} />);
     await actor.click(screen.getByRole('button', { name: /account menu/i }));
-    for (const name of ['Profiles', 'Marketplace', 'CMA Trigger', 'Developer']) {
+    for (const name of ['Profiles', 'Marketplace', 'Developer']) {
       expect(screen.getByRole('menuitem', { name })).toBeInTheDocument();
     }
     expect(screen.queryByRole('menuitem', { name: 'Operations' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('menuitem', { name: 'CMA Trigger' })).not.toBeInTheDocument();
     expect(screen.getByRole('menuitem', { name: /appearance/i })).toBeInTheDocument();
 
     await actor.click(screen.getByRole('menuitem', { name: 'Profiles' }));
@@ -36,7 +37,7 @@ describe('account menu', () => {
     const actor = userEvent.setup();
     render(
       <ProfileMenu
-        user={{ ...user, capabilities: ['read_event_log'] }}
+        user={{ ...user, capabilities: ['read_activity_log'] }}
         onSignOut={vi.fn()}
         onNavigate={vi.fn()}
       />,

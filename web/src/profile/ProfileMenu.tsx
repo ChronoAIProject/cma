@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import type { Capability, User } from '../auth/types';
+import type { User } from '../auth/types';
+import { canOpenOperations } from '../operator/capabilities';
 import type { AppRoute } from '../routing/routes';
 import { Menu, type MenuEntry } from '../ui/Menu';
 import {
@@ -29,16 +30,6 @@ interface ProfileMenuProps {
   readonly collapsed?: boolean;
 }
 
-const OPERATIONS_CAPABILITIES: readonly Capability[] = [
-  'read_all_sandboxes',
-  'control_any_sandbox',
-  'read_runtime_inventory',
-  'read_event_log',
-  'read_activity_log',
-  'read_user_directory',
-  'configure_platform',
-];
-
 const MENU_ROUTES: Readonly<Record<string, AppRoute>> = {
   profiles: { kind: 'profiles' },
   marketplace: { kind: 'marketplace' },
@@ -67,13 +58,13 @@ export function ProfileMenu({ user, onSignOut, onNavigate, collapsed = false }: 
   const [open, setOpen] = useState(false);
   const [appearance, setLocalAppearance] = useState<Appearance>(() => storedAppearance());
   const [avatarBroken, setAvatarBroken] = useState(false);
-  const canOperate = user.capabilities.some((capability) =>
-    OPERATIONS_CAPABILITIES.includes(capability),
-  );
+  const canOperate = canOpenOperations(user.capabilities);
   const items: MenuEntry[] = [
     { id: 'profiles', icon: <IconPersonalizationOutline16 />, label: 'Profiles' },
     { id: 'marketplace', icon: <IconBrowseOutline16 />, label: 'Marketplace' },
-    { id: 'triggers', icon: <IconGoalOutline16 />, label: 'CMA Trigger' },
+    ...(!user.visitor && user.capabilities.includes('publish_triggers')
+      ? [{ id: 'triggers', icon: <IconGoalOutline16 />, label: 'CMA Trigger' }]
+      : []),
     { type: 'separator', id: 'before-platform' },
     { id: 'developer', icon: <IconCodeOutline16 />, label: 'Developer' },
     ...(canOperate

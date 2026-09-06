@@ -42,7 +42,7 @@ describe('application routes', () => {
     '/agents/%2F',
     '/agents/.',
     '/profiles/agent',
-    '/profiles/agent-profiles/agp_1',
+    '/profiles/agent/agp_1',
     '/profiles/unknown/id',
     '/triggers/manage/id/unknown',
     '/operations/extra',
@@ -53,6 +53,15 @@ describe('application routes', () => {
   it('preserves an unknown path for rendering and browser history', () => {
     expect(routePath({ kind: 'not_found', pathname: '/unknown' })).toBe('/unknown');
   });
+
+  it.each(['agent', 'workspace', 'sandbox'] as const)(
+    'uses the explicit %s editor resource path',
+    (profileKind) => {
+      const route = { kind: 'profile' as const, profileKind, profileId: 'profile-one' };
+      expect(routePath(route)).toBe(`/profiles/${profileKind}-profiles/profile-one`);
+      expect(parseRoute(routePath(route))).toEqual(route);
+    },
+  );
 
   it('tracks navigate, replace, and browser popstate from the current location', () => {
     window.history.replaceState(null, '', '/');

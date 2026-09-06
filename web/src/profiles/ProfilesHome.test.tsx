@@ -14,7 +14,7 @@ it('lists own profiles by kind with revision, visibility, updated time and keybo
   );
   expect(await screen.findByRole('link', { name: 'Research agent' })).toHaveAttribute(
     'href',
-    '/profiles/sandbox/agp_research',
+    '/profiles/sandbox-profiles/agp_research',
   );
   expect(screen.getByText('Revision 1')).toBeInTheDocument();
   expect(screen.getByText('Private')).toBeInTheDocument();
