@@ -35,7 +35,7 @@ pub(super) struct RequestEvidence {
 
 #[derive(Debug, Clone, thiserror::Error)]
 #[error("{class}: {detail}")]
-pub(super) struct WorkerFailure {
+pub(in crate::sandbox) struct WorkerFailure {
     class: &'static str,
     detail: String,
     retryable: bool,

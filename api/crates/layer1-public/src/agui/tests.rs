@@ -4,6 +4,7 @@ use serde_json::{json, Value};
 
 use crate::rest::agents_tests::{
     conversation_fixture, insert_agent, json_response, request, response, seeded_agent,
+    seeded_worktree,
 };
 
 #[tokio::test]
@@ -62,11 +63,15 @@ async fn replay_uses_agent_thread_turn_sequence_and_only_final_frame_cursors() {
     .await;
     assert_eq!(status, StatusCode::OK);
     let text = std::str::from_utf8(&body).unwrap();
-    let frames = text
+    let mut frames = text
         .split("\n\n")
         .filter(|frame| frame.contains("data:"))
         .collect::<Vec<_>>();
-    assert_eq!(frames.len(), 8);
+    assert_eq!(frames.len(), 9);
+    let opened = frames.remove(0);
+    assert!(opened.contains("id: 2"));
+    assert!(opened.contains("\"runId\":\"0\""));
+    assert!(opened.contains("\"path\":\"/signIn\""));
     let values = frames
         .iter()
         .map(|frame| {
@@ -118,6 +123,72 @@ async fn replay_uses_agent_thread_turn_sequence_and_only_final_frame_cursors() {
     assert_eq!(status, StatusCode::BAD_REQUEST);
     assert_eq!(body["code"], "cursor_beyond_end");
     assert_eq!(body["head"], 6);
+}
+
+#[tokio::test]
+async fn startup_sign_in_replays_and_clears_without_inventing_a_turn() {
+    use layer2_core::sandbox::store::{AgentLogStore, AgentStore, WorktreeStore};
+
+    let (state, store) = conversation_fixture().await;
+    let agent = seeded_agent("agt_sign_in", AgentStatus::Ready, 3, None);
+    store
+        .create_worktree(seeded_worktree(&agent))
+        .await
+        .unwrap();
+    store.create_agent(agent.clone()).await.unwrap();
+    for kind in [
+        AgentLogKind::Created {
+            workspace_id: agent.workspace_id.clone(),
+            worktree_id: agent.worktree_id.clone(),
+        },
+        AgentLogKind::SignInRequired {
+            url: "https://login.example.test/device".into(),
+            code: Some("fixture-code".into()),
+            message: None,
+        },
+        AgentLogKind::ConversationOpened {
+            conversation_id: "conversation-agt_sign_in".into(),
+            runtime_generation: 1,
+        },
+    ] {
+        store
+            .append_agent_log(&agent.id, agent.updated_at.clone(), kind)
+            .await
+            .unwrap();
+    }
+    let router = super::router(state);
+    for (after, expected_count) in [(1, 2), (2, 1)] {
+        let (status, body) = response(
+            &router,
+            request(
+                Method::GET,
+                &format!(
+                    "/api/v1/agui/events?thread_id=agt_sign_in&starting_after={after}&follow=false"
+                ),
+                "owner-a",
+                None,
+                None,
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let text = std::str::from_utf8(&body).unwrap();
+        let values = text
+            .lines()
+            .filter_map(|line| line.strip_prefix("data: "))
+            .map(|data| serde_json::from_str::<Value>(data).unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(values.len(), expected_count);
+        assert!(values.iter().all(|value| value["type"] == "STATE_DELTA"
+            && value["runId"] == "0"
+            && value["delta"][0]["path"] == "/signIn"));
+        if after == 1 {
+            assert_eq!(values[0]["delta"][0]["value"]["code"], "fixture-code");
+        }
+        assert!(values.last().unwrap()["delta"][0]["value"].is_null());
+        assert!(text.contains("id: 3"));
+        assert!(!text.contains("RUN_STARTED"));
+    }
 }
 
 #[tokio::test]

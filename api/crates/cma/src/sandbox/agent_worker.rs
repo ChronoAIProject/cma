@@ -14,12 +14,14 @@ mod connection;
 mod first_message;
 mod reconcile;
 mod startup;
+mod startup_open;
 mod startup_support;
 mod support;
 
-const DEFAULT_LEASE: Duration = Duration::from_secs(15 * 60);
+const DEFAULT_LEASE: Duration = Duration::from_secs(18 * 60);
 const DEFAULT_RETRY: Duration = Duration::from_secs(30);
 const DEFAULT_OPEN_TIMEOUT: Duration = Duration::from_secs(120);
+const DEFAULT_SIGN_IN_TIMEOUT: Duration = Duration::from_secs(17 * 60);
 
 pub(crate) struct AgentWorkerDependencies {
     pub store: Arc<dyn AgentLifecycleStore>,
@@ -37,6 +39,7 @@ pub(crate) struct AgentWorkerConfig {
     pub lease_duration: Duration,
     pub retry_delay: Duration,
     pub open_timeout: Duration,
+    pub sign_in_timeout: Duration,
 }
 
 impl AgentWorkerConfig {
@@ -47,6 +50,7 @@ impl AgentWorkerConfig {
             lease_duration: DEFAULT_LEASE,
             retry_delay: DEFAULT_RETRY,
             open_timeout: DEFAULT_OPEN_TIMEOUT,
+            sign_in_timeout: DEFAULT_SIGN_IN_TIMEOUT,
         }
     }
 }

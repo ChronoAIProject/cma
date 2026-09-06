@@ -49,6 +49,7 @@ const DEPLOYMENT_ID: &str = "lifecycle-test";
 
 mod runtime_attachment_tests;
 mod sdk_conformance_tests;
+mod sign_in_tests;
 mod skill_material_tests;
 
 struct Harness {

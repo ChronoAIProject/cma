@@ -10,6 +10,7 @@ use super::agent_worker_transaction::PublicationReceipt;
 use super::agents::read_agent;
 use super::sandbox_events::reconcile_event_with_snapshot_session;
 use super::sandbox_mongo::MongoSandboxStore;
+use super::sandboxes::read_sandbox;
 use super::worktrees::read_worktree;
 
 pub(super) async fn reconcile_publication_after_unknown(
@@ -58,6 +59,22 @@ async fn reconcile_publication_snapshot(
         .transpose()?;
     if agent.as_ref() != Some(&receipt.agent) {
         return Ok(false);
+    }
+
+    if let Some(expected) = receipt.sign_in_sandbox.as_ref() {
+        let sandbox = store
+            .sandboxes
+            .find_one(doc! { "_id": expected.id.as_str() })
+            .read_concern(ReadConcern::snapshot())
+            .session(&mut *session)
+            .await
+            .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?
+            .as_ref()
+            .map(read_sandbox)
+            .transpose()?;
+        if sandbox.as_ref() != Some(expected) {
+            return Ok(false);
+        }
     }
 
     if let Some(expected) = receipt.worktree.as_ref() {

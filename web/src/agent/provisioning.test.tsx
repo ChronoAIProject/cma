@@ -190,3 +190,54 @@ it('retires sign-in notices when a turn starts or the live sign-in state clears'
     ).recovery,
   ).toHaveLength(0);
 });
+
+it.each([undefined, 'existing-run'])(
+  'clears sign-in notices on conversation open while preserving run %s and unrelated recovery',
+  (activeRunId) => {
+    const history = conversationFromTranscript(AGENT_TRANSCRIPT);
+    const signIn = {
+      seq: 5,
+      appendedAt: AGENT_DETAIL.createdAt,
+      kind: { type: 'sign_in_required', message: 'Authorize your account.' },
+    };
+    const notice = foldAgentEvent(history, signIn);
+    const liveNotice = foldLiveEvent(
+      notice,
+      {
+        type: 'STATE_DELTA',
+        threadId: 'agt_1',
+        runId: '0',
+        delta: [{ op: 'replace', path: '/signIn', value: { message: 'Authorize your account.' } }],
+      },
+      'agt_1',
+    );
+    const waiting = foldAgentEvent(
+      { ...liveNotice, activeRunId },
+      {
+        seq: 6,
+        appendedAt: AGENT_DETAIL.createdAt,
+        kind: { type: 'first_message_changed', state: 'recovery_required' },
+      },
+    );
+    const unrelated = waiting.recovery.find((entry) => entry.id === 'first-message-recovery');
+    expect(waiting.recovery.map((entry) => entry.id)).toEqual([
+      'sign-in:5',
+      'live-sign-in',
+      'first-message-recovery',
+    ]);
+    const opened = foldAgentEvent(waiting, {
+      seq: 7,
+      appendedAt: AGENT_DETAIL.createdAt,
+      kind: {
+        type: 'conversation_opened',
+        conversation_id: 'conversation-ready',
+        runtime_generation: 1,
+      },
+    });
+    expect(opened.recovery).toEqual([unrelated]);
+    expect(opened.activeRunId).toBe(activeRunId);
+    expect(opened.messages).toEqual(waiting.messages);
+    expect(opened.cursor).toBe(7);
+    expect(foldAgentEvent(opened, signIn)).toEqual(opened);
+  },
+);

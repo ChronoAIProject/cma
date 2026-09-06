@@ -412,6 +412,7 @@ async fn owner_authentication_precedes_a_fresh_session() {
     let (client, mut server) = socket_pair().await;
     send_ready(&mut server, "agent-1").await;
     let (release, held) = tokio::sync::oneshot::channel();
+    let (authorize, authorized) = tokio::sync::oneshot::channel();
     let server = tokio::spawn(async move {
         let initialize = receive_json(&mut server).await;
         respond(
@@ -423,6 +424,16 @@ async fn owner_authentication_precedes_a_fresh_session() {
         let authenticate = receive_json(&mut server).await;
         assert_eq!(authenticate["method"], "authenticate");
         assert_eq!(authenticate["params"]["methodId"], "device-code");
+        send_json(&mut server, serde_json::json!({
+            "jsonrpc": "2.0", "id": 91, "method": "elicitation/create",
+            "params": { "url": "https://login.example.test/device", "userCode": "fixture-code" },
+        })).await;
+        let elicitation = receive_json(&mut server).await;
+        assert_eq!(elicitation["id"], 91);
+        assert_eq!(elicitation["result"]["action"], "accept");
+        authorized
+            .await
+            .expect("caller receives and authorizes the device challenge");
         respond(&mut server, &authenticate, serde_json::json!({})).await;
         let new_session = receive_json(&mut server).await;
         assert_eq!(new_session["method"], "session/new");
@@ -434,17 +445,22 @@ async fn owner_authentication_precedes_a_fresh_session() {
         .await;
         let _ = held.await;
     });
-    let (updates, _) = mpsc::channel(4);
-    let opened = Bridge::open(
+    let (updates, mut receiver) = mpsc::channel(4);
+    let opening = Bridge::open(
         client,
         "agent-1",
         "/workspace".into(),
         settings(None, true),
         None,
         updates,
-    )
-    .await
-    .expect("owner bridge authenticates and opens");
+    );
+    tokio::pin!(opening);
+    tokio::select! {
+        update = receiver.recv() => assert!(matches!(update, Some(ConversationUpdate::SignInRequired { code: Some(code), .. }) if code == "fixture-code")),
+        _ = &mut opening => panic!("opening cannot finish before owner authentication"),
+    }
+    authorize.send(()).unwrap();
+    let opened = opening.await.expect("owner bridge authenticates and opens");
     assert_eq!(
         opened.channel.conversation_id.as_deref(),
         Some("conversation-owner")

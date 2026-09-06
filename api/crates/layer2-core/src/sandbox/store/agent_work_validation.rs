@@ -123,6 +123,26 @@ fn validate_work_delta(
     }
     match kind {
         PublicationKind::Intent => validate_intent_delta(current, next),
+        PublicationKind::StartupNotice => {
+            if current.work == next.work
+                && current.conversation.conversation_id.is_none()
+                && current.conversation.runtime_generation.is_none()
+                && current
+                    .work
+                    .cleanup_debt
+                    .iter()
+                    .any(|debt| debt.step == AgentWorkStep::OpenConversation)
+                && current.work.lease.as_ref().is_some_and(|lease| {
+                    stamp(&lease.expires_at).is_ok_and(|expires| {
+                        stamp(&mutation.appended_at).is_ok_and(|at| at < expires)
+                    })
+                })
+            {
+                Ok(())
+            } else {
+                Err(SandboxStoreError::Conflict)
+            }
+        }
         PublicationKind::Retry => {
             let attempts = current
                 .work
@@ -247,7 +267,10 @@ fn validate_agent_delta(
         && current.stop_reason == next.stop_reason
         && current.deleted_at == next.deleted_at;
     let exact = match kind {
-        PublicationKind::Intent | PublicationKind::Retry | PublicationKind::Advance => unchanged,
+        PublicationKind::Intent
+        | PublicationKind::StartupNotice
+        | PublicationKind::Retry
+        | PublicationKind::Advance => unchanged,
         PublicationKind::Ready => {
             current.failure == next.failure
                 && next.ready_at.as_deref() == Some(&mutation.appended_at)

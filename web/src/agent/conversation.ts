@@ -124,13 +124,17 @@ function foldDurableEvent(state: ConversationState, event: AgentEvent): Conversa
   const kind = event.kind;
   const next = { ...state, cursor: event.seq };
   switch (kind.type) {
+    case 'conversation_opened':
     case 'turn_started':
       return {
         ...next,
         recovery: next.recovery.filter(
           (notice) => !notice.id.startsWith('sign-in:') && notice.id !== 'live-sign-in',
         ),
-        activeRunId: String(number(kind.turn_sequence) ?? event.seq),
+        activeRunId:
+          kind.type === 'turn_started'
+            ? String(number(kind.turn_sequence) ?? event.seq)
+            : next.activeRunId,
       };
     case 'owner_message':
     case 'agent_message': {

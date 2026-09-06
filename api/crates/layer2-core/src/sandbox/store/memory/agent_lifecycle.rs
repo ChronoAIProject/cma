@@ -1,6 +1,6 @@
 use super::*;
 use crate::sandbox::store::{
-    apply_agent_connection_recovery, validate_agent_work_mutation,
+    apply_agent_connection_recovery, apply_agent_sign_in, validate_agent_work_mutation,
     AgentConnectionRecoveryApplication, AgentConnectionRecoveryCandidate,
     AgentConnectionRecoveryOutcome, AgentConnectionRecoveryRequest, AgentWorkMutation,
     AgentWorkerStore,
@@ -101,6 +101,18 @@ impl AgentWorkerStore for InMemorySandboxStore {
         let mut state = self.lock();
         let mut candidate = state.clone();
         validate_mutation(&candidate, &mutation)?;
+
+        let current = candidate
+            .agents
+            .get(&mutation.agent.id)
+            .ok_or(SandboxStoreError::NotFound)?;
+        let sandbox = candidate
+            .sandboxes
+            .get(&current.sandbox_id)
+            .ok_or(SandboxStoreError::NotFound)?;
+        if let Some(next) = apply_agent_sign_in(sandbox, current, &mutation)? {
+            candidate.sandboxes.insert(next.id.clone(), next);
+        }
 
         let agent_id = mutation.agent.id.clone();
         let sandbox_id = mutation.agent.sandbox_id.clone();

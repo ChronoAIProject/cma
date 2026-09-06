@@ -32,11 +32,13 @@ pub use agent_conversation::{
     validate_agent_conversation_admission, AgentConversationMutation, AgentConversationStore,
 };
 mod agent_lifecycle;
+mod agent_sign_in;
 pub use agent_lifecycle::{
     apply_agent_connection_recovery, AgentConnectionRecoveryApplication,
     AgentConnectionRecoveryCandidate, AgentConnectionRecoveryCause, AgentConnectionRecoveryOutcome,
     AgentConnectionRecoveryRequest, AgentWorkMutation, AgentWorkerStore, VersionedWorktree,
 };
+pub use agent_sign_in::apply_agent_sign_in;
 mod agent_work_evidence_validation;
 mod agent_work_transition_validation;
 mod agent_work_validation;
