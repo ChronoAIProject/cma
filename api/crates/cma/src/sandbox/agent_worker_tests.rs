@@ -47,6 +47,7 @@ use super::live_agents::{
 const DEPLOYMENT_ID: &str = "lifecycle-test";
 
 mod runtime_attachment_tests;
+mod sdk_conformance_tests;
 
 struct Harness {
     store: Arc<InMemorySandboxStore>,
@@ -56,6 +57,7 @@ struct Harness {
     runtime: RuntimeHandle,
     workspace: Workspace,
     now: SystemTime,
+    updates: Arc<DurableAgentUpdateRecorder>,
 }
 
 impl Harness {
@@ -131,12 +133,13 @@ impl Harness {
 
         let registry = Arc::new(LiveAgentRegistry::default());
         let operations = AgentOperationService::new(store.clone(), registry.clone());
+        let updates = DurableAgentUpdateRecorder::new(store.clone());
         let dependencies = AgentWorkerDependencies {
             store: store.clone(),
             adapter,
             skills,
             registry: registry.clone(),
-            updates: DurableAgentUpdateRecorder::new(store.clone()),
+            updates: updates.clone(),
             operations,
         };
         let mut config = AgentWorkerConfig::new("agent-worker", DEPLOYMENT_ID);
@@ -152,6 +155,7 @@ impl Harness {
             runtime,
             workspace,
             now,
+            updates,
         }
     }
 
