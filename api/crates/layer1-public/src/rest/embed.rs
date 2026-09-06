@@ -219,10 +219,12 @@ pub(super) fn build_descriptor(
         escape_html_attribute(&origin),
     );
     let react = format!(
-        "<a href=\"{}\"><img src=\"{}\" alt=\"{}\" /></a>",
-        escape_jsx_attribute(&public_url),
-        escape_jsx_attribute(&badge_url),
-        escape_jsx_attribute(label_text),
+        "import {{ CmaTriggerButton }} from '@chronoai/cma-sdk/react';\n\n<CmaTriggerButton triggerId=\"{}\" placementId=\"{}\" label=\"{}\" theme=\"{}\" baseUrl=\"{}\" />",
+        escape_jsx_attribute(public_id.as_str()),
+        escape_jsx_attribute(placement_id.as_str()),
+        label,
+        theme,
+        escape_jsx_attribute(&origin),
     );
     let snippets = EmbedSnippets {
         markdown,

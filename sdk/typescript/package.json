@@ -14,11 +14,16 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./react": {
+      "types": "./dist/react.d.ts",
+      "import": "./dist/react.js"
     }
   },
   "scripts": {
     "build": "tsc --project tsconfig.build.json",
     "docs:check": "node scripts/check-docs.mjs",
+    "package:check": "node scripts/check-package.mjs",
     "typecheck": "tsc --noEmit --project tsconfig.json",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
@@ -29,13 +34,25 @@
   "dependencies": {
     "eventsource-parser": "4.1.0"
   },
+  "peerDependencies": {
+    "react": "^18.0.0 || ^19.0.0"
+  },
+  "peerDependenciesMeta": {
+    "react": {
+      "optional": true
+    }
+  },
   "devDependencies": {
     "@eslint/js": "^9.39.0",
     "@types/node": "^22.20.1",
+    "@types/react": "19.2.18",
+    "@types/react-dom": "19.2.4",
     "@vitest/coverage-v8": "^3.2.7",
     "eslint": "^9.39.0",
     "globals": "^16.5.0",
     "prettier": "^3.6.0",
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
     "typescript": "^5.9.0",
     "typescript-eslint": "^8.46.0",
     "vitest": "^3.2.0"
