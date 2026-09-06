@@ -99,6 +99,7 @@ async fn dispatch_without_a_configured_first_message_is_a_noop() {
 #[tokio::test]
 async fn first_message_fence_is_durable_before_the_runtime_side_effect() {
     let store = Arc::new(InMemorySandboxStore::default());
+    seed_active_parent(&store).await;
     let mut agent = test_agent(AgentStatus::Ready, Some("Start here."));
     authorize_first_message_work(&mut agent, 5);
     store.create_agent(agent.clone()).await.unwrap();
@@ -176,6 +177,7 @@ async fn first_message_fence_is_durable_before_the_runtime_side_effect() {
 #[tokio::test]
 async fn proven_pre_write_failure_requeues_the_first_message() {
     let store = Arc::new(InMemorySandboxStore::default());
+    seed_active_parent(&store).await;
     let mut agent = test_agent(AgentStatus::Ready, Some("Start here."));
     authorize_first_message_work(&mut agent, 5);
     store.create_agent(agent.clone()).await.unwrap();
@@ -202,6 +204,7 @@ async fn proven_pre_write_failure_requeues_the_first_message() {
 #[tokio::test]
 async fn ambiguous_first_message_never_resends_automatically() {
     let store = Arc::new(InMemorySandboxStore::default());
+    seed_active_parent(&store).await;
     let mut agent = test_agent(AgentStatus::Ready, Some("Start here."));
     authorize_first_message_work(&mut agent, 5);
     store.create_agent(agent.clone()).await.unwrap();
@@ -347,6 +350,7 @@ async fn stale_work_authority_cannot_touch_state_or_runtime() {
 #[tokio::test]
 async fn explicit_recovery_is_owner_authorized_and_closes_the_uncertain_turn() {
     let store = Arc::new(InMemorySandboxStore::default());
+    seed_active_parent(&store).await;
     let mut agent = test_agent(AgentStatus::Ready, Some("Start here."));
     authorize_first_message_work(&mut agent, 5);
     store.create_agent(agent.clone()).await.unwrap();
@@ -401,6 +405,7 @@ async fn explicit_recovery_is_owner_authorized_and_closes_the_uncertain_turn() {
 #[tokio::test]
 async fn late_terminal_evidence_resolves_first_message_ambiguity() {
     let store = Arc::new(InMemorySandboxStore::default());
+    seed_active_parent(&store).await;
     let mut agent = test_agent(AgentStatus::Ready, Some("Start here."));
     authorize_first_message_work(&mut agent, 5);
     store.create_agent(agent.clone()).await.unwrap();
@@ -428,6 +433,7 @@ async fn late_terminal_evidence_resolves_first_message_ambiguity() {
 #[tokio::test]
 async fn trigger_launch_observes_the_real_first_message_dispatch_without_resending() {
     let store = Arc::new(InMemorySandboxStore::default());
+    seed_active_parent(&store).await;
     let mut agent = test_agent(AgentStatus::Ready, Some("Inspect the workspace"));
     authorize_first_message_work(&mut agent, 5);
     store.create_agent(agent.clone()).await.unwrap();

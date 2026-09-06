@@ -3,7 +3,7 @@ use layer3_adapter::{ContentBlock, ConversationInput, PermissionDecision, Permis
 use crate::{now_rfc3339, RuntimeCapability};
 
 use super::agent_operation_service::operation_store_error;
-use super::store::AgentConversationStore;
+use super::store::{AgentConversationStore, SandboxMutationGuard};
 use super::{
     Agent, AgentLogKind, AgentMessageOutcome, AgentOperationError, AgentOperationIntent,
     AgentOperationService, AgentRuntimeTarget, AgentStatus, QueuedAgentMessage,
@@ -62,6 +62,7 @@ impl AgentOperationService {
         &self,
         current: Agent,
         text: String,
+        parent: SandboxMutationGuard,
     ) -> Result<AgentMessageOutcome, AgentOperationError> {
         if current.conversation.queued_messages.len() >= MAX_QUEUED_AGENT_MESSAGES {
             return Err(AgentOperationError::QueueCapacityExceeded {
@@ -75,7 +76,10 @@ impl AgentOperationService {
         let mut next = current.clone();
         next.conversation.queued_messages.push(message);
         let logs = vec![AgentLogKind::OwnerMessage { content: text }];
-        let agent = self.commit_change(&current, next, logs, at).await?.0;
+        let agent = self
+            .commit_admission(&current, next, logs, at, parent)
+            .await?
+            .0;
         Ok(AgentMessageOutcome::Queued { agent, sequence })
     }
 
@@ -83,6 +87,7 @@ impl AgentOperationService {
         &self,
         current: Agent,
         text: String,
+        parent: SandboxMutationGuard,
     ) -> Result<PreparedAgentOperation, AgentOperationError> {
         if current.conversation.active_turn.is_some() {
             return Err(AgentOperationError::Corrupt(
@@ -123,7 +128,8 @@ impl AgentOperationService {
                 to: AgentStatus::Working,
             },
         ];
-        self.commit_change(&current, next, logs, at).await?;
+        self.commit_admission(&current, next, logs, at, parent)
+            .await?;
         Ok(PreparedAgentOperation {
             target,
             operation_sequence,
@@ -139,6 +145,7 @@ impl AgentOperationService {
         &self,
         current: Agent,
         text: String,
+        parent: SandboxMutationGuard,
     ) -> Result<PreparedAgentOperation, AgentOperationError> {
         let turn_sequence = active_turn(&current)?;
         let target = runtime_target(&current)?;
@@ -160,7 +167,8 @@ impl AgentOperationService {
                 content: text.clone(),
             },
         ];
-        self.commit_change(&current, next, logs, at).await?;
+        self.commit_admission(&current, next, logs, at, parent)
+            .await?;
         Ok(PreparedAgentOperation {
             target,
             operation_sequence,
@@ -175,6 +183,7 @@ impl AgentOperationService {
     pub(super) async fn fence_interrupt(
         &self,
         current: Agent,
+        parent: SandboxMutationGuard,
     ) -> Result<PreparedAgentOperation, AgentOperationError> {
         let turn_sequence = active_turn(&current)?;
         let target = runtime_target(&current)?;
@@ -203,7 +212,8 @@ impl AgentOperationService {
                 to: AgentStatus::Working,
             });
         }
-        self.commit_change(&current, next, logs, at).await?;
+        self.commit_admission(&current, next, logs, at, parent)
+            .await?;
         Ok(PreparedAgentOperation {
             target,
             operation_sequence,
@@ -224,6 +234,7 @@ impl AgentOperationService {
         current: Agent,
         approval_id: String,
         decision: super::AgentApprovalDecision,
+        parent: SandboxMutationGuard,
     ) -> Result<PreparedAgentOperation, AgentOperationError> {
         let turn_sequence = active_turn(&current)?;
         let pending =
@@ -277,7 +288,8 @@ impl AgentOperationService {
                 to: AgentStatus::Working,
             },
         ];
-        self.commit_change(&current, next, logs, at).await?;
+        self.commit_admission(&current, next, logs, at, parent)
+            .await?;
         let locator = snapshot
             .runtime_locator
             .as_ref()

@@ -3,8 +3,8 @@ use std::sync::Arc;
 use crate::{AgentId, Caller, Capability, RuntimeCapability};
 
 use super::store::{
-    AgentConversationStore, AgentStore, SandboxLifecycleExecutionStore, SandboxStore,
-    SandboxStoreError,
+    AgentConversationStore, AgentStore, SandboxLifecycleExecutionStore, SandboxMutationGuard,
+    SandboxStore, SandboxStoreError,
 };
 use super::{
     Agent, AgentApprovalDecision, AgentOperationDelivery, AgentRuntimeRegistry, AgentStatus,
@@ -136,15 +136,22 @@ impl AgentOperationService {
             require_granted(&current, [RuntimeCapability::Conversation])?;
             self.require_first_message_settled(&current)?;
             self.require_dispatch_available(&current)?;
+            if !matches!(current.status, AgentStatus::Ready | AgentStatus::Paused) {
+                return Err(AgentOperationError::StatusConflict {
+                    status: current.status,
+                });
+            }
+            let (parent, queues) = self.parent_admission(&current).await?;
             match current.status {
-                AgentStatus::Ready if self.parent_lifecycle_queues(&current).await? => {
-                    match self.queue_message(current, text.clone()).await {
+                AgentStatus::Ready if queues => {
+                    match self.queue_message(current, text.clone(), parent).await {
                         Ok(outcome) => return Ok(outcome),
                         Err(AgentOperationError::Conflict) => continue,
                         Err(error) => return Err(error),
                     }
                 }
-                AgentStatus::Ready => match self.fence_message(current, text.clone()).await {
+                AgentStatus::Ready => match self.fence_message(current, text.clone(), parent).await
+                {
                     Ok(prepared) => {
                         return self
                             .dispatch_prepared(prepared)
@@ -154,28 +161,33 @@ impl AgentOperationService {
                     Err(AgentOperationError::Conflict) => continue,
                     Err(error) => return Err(error),
                 },
-                AgentStatus::Paused => match self.queue_message(current, text.clone()).await {
-                    Ok(outcome) => return Ok(outcome),
-                    Err(AgentOperationError::Conflict) => continue,
-                    Err(error) => return Err(error),
-                },
+                AgentStatus::Paused => {
+                    match self.queue_message(current, text.clone(), parent).await {
+                        Ok(outcome) => return Ok(outcome),
+                        Err(AgentOperationError::Conflict) => continue,
+                        Err(error) => return Err(error),
+                    }
+                }
                 status => return Err(AgentOperationError::StatusConflict { status }),
             }
         }
         Err(AgentOperationError::Conflict)
     }
 
-    async fn parent_lifecycle_queues(&self, agent: &Agent) -> Result<bool, AgentOperationError> {
+    pub(super) async fn parent_admission(
+        &self,
+        agent: &Agent,
+    ) -> Result<(SandboxMutationGuard, bool), AgentOperationError> {
         let sandbox = SandboxStore::get_sandbox(self.store.as_ref(), &agent.sandbox_id)
             .await
             .map_err(operation_store_error)?
             .ok_or_else(|| AgentOperationError::Corrupt("agent parent sandbox is absent".into()))?;
-        if sandbox.owner != agent.owner {
+        if sandbox.id != agent.sandbox_id || sandbox.owner != agent.owner {
             return Err(AgentOperationError::Corrupt(
                 "agent parent sandbox ownership is inconsistent".into(),
             ));
         }
-        match sandbox.status {
+        let queues = match sandbox.status {
             SandboxStatus::Pausing | SandboxStatus::Paused => Ok(true),
             SandboxStatus::Reviving => match sandbox.lifecycle.operation.as_ref() {
                 Some(SandboxLifecycleOperation::Revive { phase, .. }) => {
@@ -197,7 +209,8 @@ impl AgentOperationService {
             _ => Err(AgentOperationError::StatusConflict {
                 status: agent.status,
             }),
-        }
+        }?;
+        Ok((SandboxMutationGuard::capture(&sandbox), queues))
     }
 
     pub async fn steer(
@@ -217,7 +230,8 @@ impl AgentOperationService {
             self.require_active_status(&current, &[AgentStatus::Working])?;
             self.require_first_message_dispatch_settled(&current)?;
             self.require_dispatch_available(&current)?;
-            match self.fence_steer(current, text.clone()).await {
+            let (parent, _) = self.parent_admission(&current).await?;
+            match self.fence_steer(current, text.clone(), parent).await {
                 Ok(prepared) => return self.dispatch_prepared(prepared).await,
                 Err(AgentOperationError::Conflict) => continue,
                 Err(error) => return Err(error),
@@ -247,7 +261,8 @@ impl AgentOperationService {
             )?;
             self.require_first_message_dispatch_settled(&current)?;
             self.require_dispatch_available(&current)?;
-            match self.fence_interrupt(current).await {
+            let (parent, _) = self.parent_admission(&current).await?;
+            match self.fence_interrupt(current, parent).await {
                 Ok(prepared) => return self.dispatch_prepared(prepared).await,
                 Err(AgentOperationError::Conflict) => continue,
                 Err(error) => return Err(error),
@@ -271,8 +286,9 @@ impl AgentOperationService {
             self.require_active_status(&current, &[AgentStatus::WaitingApproval])?;
             self.require_first_message_dispatch_settled(&current)?;
             self.require_dispatch_available(&current)?;
+            let (parent, _) = self.parent_admission(&current).await?;
             match self
-                .fence_approval(current, approval_id.clone(), decision)
+                .fence_approval(current, approval_id.clone(), decision, parent)
                 .await
             {
                 Ok(prepared) => return self.dispatch_prepared(prepared).await,

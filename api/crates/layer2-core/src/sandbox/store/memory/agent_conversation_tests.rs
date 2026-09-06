@@ -8,7 +8,7 @@ use layer3_adapter::{
 
 use crate::sandbox::store::{
     AgentAdmissionStore, AgentConversationMutation, AgentConversationStore, AgentLogStore,
-    AgentStore, AgentWorkMutation, AgentWorkerStore, VersionedWorktree,
+    AgentStore, AgentWorkMutation, AgentWorkerStore, SandboxMutationGuard, VersionedWorktree,
 };
 use crate::sandbox::{
     AgentConversationError, AgentLogEntry, AgentLogKind, AgentMessageAssembly, AgentStatus,
@@ -117,7 +117,13 @@ async fn ready_agent(
     (store, agent)
 }
 
-fn begin_turn(mut agent: crate::sandbox::Agent) -> AgentConversationMutation {
+fn begin_turn(
+    store: &super::InMemorySandboxStore,
+    mut agent: crate::sandbox::Agent,
+) -> AgentConversationMutation {
+    let admission_guard = Some(SandboxMutationGuard::capture(
+        store.lock().sandboxes.get(&agent.sandbox_id).unwrap(),
+    ));
     let expected_agent_revision = agent.revision;
     let expected_last_seq = agent.conversation.last_seq;
     let turn_sequence = expected_last_seq + 1;
@@ -127,6 +133,7 @@ fn begin_turn(mut agent: crate::sandbox::Agent) -> AgentConversationMutation {
     agent.conversation.active_turn = Some(turn_sequence);
     agent.conversation.last_seq += 2;
     AgentConversationMutation {
+        admission_guard,
         expected_agent_revision,
         expected_last_seq,
         runtime_generation: 1,
@@ -144,7 +151,13 @@ fn begin_turn(mut agent: crate::sandbox::Agent) -> AgentConversationMutation {
     }
 }
 
-fn begin_first_message(mut agent: crate::sandbox::Agent) -> AgentConversationMutation {
+fn begin_first_message(
+    store: &super::InMemorySandboxStore,
+    mut agent: crate::sandbox::Agent,
+) -> AgentConversationMutation {
+    let admission_guard = Some(SandboxMutationGuard::capture(
+        store.lock().sandboxes.get(&agent.sandbox_id).unwrap(),
+    ));
     let expected_agent_revision = agent.revision;
     let expected_last_seq = agent.conversation.last_seq;
     let fence_sequence = expected_last_seq + 1;
@@ -160,6 +173,7 @@ fn begin_first_message(mut agent: crate::sandbox::Agent) -> AgentConversationMut
     agent.conversation.active_turn = Some(turn_sequence);
     agent.conversation.last_seq += 4;
     AgentConversationMutation {
+        admission_guard,
         expected_agent_revision,
         expected_last_seq,
         runtime_generation: 1,
@@ -191,7 +205,7 @@ async fn working_agent() -> (
     Arc<DurableAgentUpdateRecorder>,
 ) {
     let (store, agent) = ready_agent(None).await;
-    let mutation = begin_turn(agent);
+    let mutation = begin_turn(&store, agent);
     let working = mutation.agent.clone();
     store.commit_agent_conversation(mutation).await.unwrap();
     let recorder = DurableAgentUpdateRecorder::new(Arc::new(store.clone()));
@@ -212,7 +226,7 @@ fn turn_ended() -> ConversationUpdate {
 #[tokio::test]
 async fn conversation_mutation_updates_agent_and_log_atomically() {
     let (store, agent) = ready_agent(None).await;
-    let mutation = begin_turn(agent);
+    let mutation = begin_turn(&store, agent);
     let expected = mutation.agent.clone();
 
     let appended = store.commit_agent_conversation(mutation).await.unwrap();
@@ -227,7 +241,7 @@ async fn conversation_mutation_updates_agent_and_log_atomically() {
 #[tokio::test]
 async fn stale_runtime_generation_cannot_write() {
     let (store, agent) = ready_agent(None).await;
-    let mut mutation = begin_turn(agent.clone());
+    let mut mutation = begin_turn(&store, agent.clone());
     mutation.runtime_generation = 2;
 
     assert_eq!(
@@ -240,7 +254,7 @@ async fn stale_runtime_generation_cannot_write() {
 #[tokio::test]
 async fn late_sequence_failure_rolls_back_the_agent() {
     let (store, agent) = ready_agent(None).await;
-    let mut mutation = begin_turn(agent.clone());
+    let mut mutation = begin_turn(&store, agent.clone());
     mutation.agent.conversation.last_seq += 1;
 
     assert_eq!(
@@ -253,7 +267,7 @@ async fn late_sequence_failure_rolls_back_the_agent() {
 #[tokio::test]
 async fn invalid_conversation_timestamp_is_rejected_atomically() {
     let (store, agent) = ready_agent(None).await;
-    let mut mutation = begin_turn(agent.clone());
+    let mut mutation = begin_turn(&store, agent.clone());
     mutation.appended_at = "not-a-timestamp".into();
 
     assert_eq!(
@@ -266,7 +280,7 @@ async fn invalid_conversation_timestamp_is_rejected_atomically() {
 #[tokio::test]
 async fn conversation_mutation_cannot_change_requested_stop_intent() {
     let (store, agent) = ready_agent(None).await;
-    let mut mutation = begin_turn(agent.clone());
+    let mut mutation = begin_turn(&store, agent.clone());
     mutation.agent.requested_stop_reason = Some(AgentStopReason::Owner);
 
     assert_eq!(
@@ -279,7 +293,7 @@ async fn conversation_mutation_cannot_change_requested_stop_intent() {
 #[tokio::test]
 async fn conversation_mutation_cannot_change_capability_grants() {
     let (store, agent) = ready_agent(None).await;
-    let mut mutation = begin_turn(agent.clone());
+    let mut mutation = begin_turn(&store, agent.clone());
     mutation.agent.capabilities = crate::RuntimeCapabilities::default();
 
     assert_eq!(
@@ -377,7 +391,7 @@ async fn chunks_stay_live_until_complete_messages_can_be_committed_in_order() {
 #[tokio::test]
 async fn first_message_progresses_from_write_confirmation_to_completion() {
     let (store, agent) = ready_agent(Some("Inspect the proof.")).await;
-    let mutation = begin_first_message(agent);
+    let mutation = begin_first_message(&store, agent);
     let working = mutation.agent.clone();
     store.commit_agent_conversation(mutation).await.unwrap();
     let recorder = DurableAgentUpdateRecorder::new(Arc::new(store.clone()));

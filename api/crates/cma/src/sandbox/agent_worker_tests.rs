@@ -784,9 +784,19 @@ async fn worker_does_not_resend_a_first_message_fenced_by_the_same_lease() {
         },
     ];
     fenced.conversation.last_seq += u64::try_from(logs.len()).unwrap();
+    let parent = layer2_core::sandbox::store::SandboxStore::get_sandbox(
+        harness.store.as_ref(),
+        &claimed.sandbox_id,
+    )
+    .await
+    .unwrap()
+    .unwrap();
     harness
         .store
         .commit_agent_conversation(AgentConversationMutation {
+            admission_guard: Some(layer2_core::sandbox::store::SandboxMutationGuard::capture(
+                &parent,
+            )),
             expected_agent_revision: claimed.revision,
             expected_last_seq,
             runtime_generation: claimed.conversation.runtime_generation.unwrap(),
