@@ -204,7 +204,9 @@ async fn apply_admission(
         .transpose()
         .map_err(ApplyError::Domain)?
         .ok_or(ApplyError::Domain(SandboxStoreError::SandboxNotReady))?;
-    if sandbox.status != admission.kind.allowed_status() {
+    if sandbox.status != admission.kind.allowed_status()
+        || sandbox.lifecycle.checkpoint_capture.is_some()
+    {
         return Err(ApplyError::Domain(SandboxStoreError::SandboxNotReady));
     }
     candidate
@@ -305,7 +307,7 @@ async fn apply_admission(
     })
 }
 
-async fn lock_sandbox(
+pub(super) async fn lock_sandbox(
     store: &MongoSandboxStore,
     sandbox_id: &str,
     session: &mut mongodb::ClientSession,

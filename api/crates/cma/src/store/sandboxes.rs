@@ -360,6 +360,9 @@ impl SandboxStore for MongoSandboxStore {
             return Err(SandboxStoreError::Conflict);
         }
         current
+            .validate_checkpoint_capture_successor(&sandbox)
+            .map_err(|_| SandboxStoreError::Conflict)?;
+        current
             .validate_runtime_generation_successor(&sandbox)
             .map_err(|_| SandboxStoreError::Conflict)?;
         let expected = signed(expected_revision, "expected sandbox revision")

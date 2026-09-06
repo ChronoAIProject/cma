@@ -67,7 +67,7 @@ impl SandboxWorkerStore for MongoSandboxStore {
             let Some(mut sandbox) = self.get_sandbox(id).await? else {
                 return Ok(None);
             };
-            if !sandbox.work.is_due(&now) {
+            if !sandbox.work.is_due(&now) || sandbox.lifecycle.checkpoint_capture.is_some() {
                 return Ok(None);
             }
             let expected = sandbox.revision;

@@ -211,7 +211,7 @@ async fn apply_admission(
     if sandbox.owner != workspace.owner {
         return Err(ApplyError::Domain(SandboxStoreError::WorkspaceNotReady));
     }
-    if sandbox.status != SandboxStatus::Active {
+    if sandbox.status != SandboxStatus::Active || sandbox.lifecycle.checkpoint_capture.is_some() {
         return Err(ApplyError::Domain(SandboxStoreError::SandboxNotReady));
     }
 
