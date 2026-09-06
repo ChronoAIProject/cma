@@ -1,0 +1,218 @@
+import { useEffect, useState } from 'react';
+import type { Launch, ServiceConnectionMetadata, TriggerPreview } from '@chronoai/cma-sdk';
+import { Button } from '../ui/Button';
+import {
+  IconCheckOutline16,
+  IconCopyOutline16,
+  IconLoadingOutline16,
+  IconWarningOutline16,
+} from '../ui/icons';
+import { blockedStates, requestStates, stepStates } from '../vocabulary/states';
+import { progressDetail, stepNames, stepOrder } from '../vocabulary/steps';
+import { failureRemediation } from '../vocabulary/errors';
+import { publicCopy } from '../vocabulary/needs';
+import { type AppRouter } from '../routing/routes';
+import type { PublicClient } from './client';
+import { ReviewCard } from './ReviewCard';
+import { ConnectAssistant } from './ConnectAssistant';
+import { useRecordedProgress } from './useRecordedProgress';
+import { createIntent } from './intent';
+
+export function Progress({
+  client,
+  id,
+  onNavigate,
+}: {
+  readonly client: PublicClient;
+  readonly id: string;
+  readonly onNavigate: AppRouter['navigate'];
+}) {
+  const progress = useRecordedProgress(client, id);
+  const record = progress.record;
+  const [preview, setPreview] = useState<TriggerPreview>();
+  const [services, setServices] = useState<readonly ServiceConnectionMetadata[]>([]);
+  const [copyStatus, setCopyStatus] = useState<string>();
+  useEffect(() => {
+    document.title = publicCopy.pageTitle(publicCopy.title);
+  }, []);
+  const publicId = record?.public_id;
+  const draft = record?.state === 'draft';
+  const blocked = record?.blocked_reason;
+  const agentId =
+    record?.resolution.agent.state === 'pending' ? undefined : record?.resolution.agent.id;
+  useEffect(() => {
+    if ((record?.state === 'ready' || record?.state === 'completed') && agentId !== undefined)
+      onNavigate({ kind: 'agent', agentId }, { replace: true });
+  }, [record?.state, agentId, onNavigate]);
+  useEffect(() => {
+    if (publicId === undefined || !draft) return;
+    const controller = new AbortController();
+    void client.requests.preview(publicId, { signal: controller.signal }).then(
+      (value) => {
+        if (!controller.signal.aborted) setPreview(value);
+      },
+      () => undefined,
+    );
+    return () => controller.abort();
+  }, [client, publicId, draft]);
+  useEffect(() => {
+    if (blocked?.type !== 'connection_required') return;
+    const controller = new AbortController();
+    void client.requests.requirements(id, { signal: controller.signal }).then(
+      (value) => {
+        if (!controller.signal.aborted) setServices(value.services);
+      },
+      () => undefined,
+    );
+    return () => controller.abort();
+  }, [client, id, blocked]);
+  const back = (value: Launch) =>
+    onNavigate({
+      kind: 'public_trigger',
+      publicId: value.public_id,
+      placementId: value.placement_id,
+    });
+  const startOver = (value: Launch) => {
+    const route = {
+      kind: 'public_trigger' as const,
+      publicId: value.public_id,
+      placementId: value.placement_id,
+    };
+    try {
+      createIntent(route, 'new');
+      onNavigate(route);
+    } catch {
+      setCopyStatus(publicCopy.storageUnavailable);
+    }
+  };
+  if (record === undefined)
+    return (
+      <>
+        <h1>{publicCopy.title}</h1>
+        {progress.error === undefined ? (
+          <p role="status">{publicCopy.loading}</p>
+        ) : (
+          <>
+            <p className="public-error" role="alert">
+              {progress.error}
+            </p>
+            <Button onClick={progress.refresh}>{publicCopy.retry}</Button>
+          </>
+        )}
+      </>
+    );
+  const summary = blocked === undefined ? requestStates[record.state] : blockedStates[blocked.type];
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(record.id);
+      setCopyStatus(publicCopy.copied);
+    } catch {
+      setCopyStatus(publicCopy.copyFailed);
+    }
+  };
+  return (
+    <section className="public-progress">
+      <h1>{publicCopy.title}</h1>
+      <p role="status" aria-live="polite">
+        {summary}
+      </p>
+      <ol className="public-timeline">
+        {stepOrder.map((key) => {
+          const step = record.steps.find((item) => item.key === key);
+          const state = step?.status ?? 'pending';
+          const label =
+            state === 'blocked' && blocked?.type === 'orchestration_paused'
+              ? blockedStates.orchestration_paused
+              : stepStates[state];
+          const detail = progressDetail(step?.safe_detail);
+          return (
+            <li
+              key={key}
+              className={`public-step${state === 'failed' ? ' public-step--failed' : ''}`}
+            >
+              <span className="public-step__icon" aria-hidden="true">
+                {state === 'completed' ? (
+                  <IconCheckOutline16 />
+                ) : state === 'failed' || state === 'blocked' ? (
+                  <IconWarningOutline16 />
+                ) : (
+                  <IconLoadingOutline16 />
+                )}
+              </span>
+              <div>
+                <div className="public-step__line">
+                  <h2>{stepNames[key]}</h2>
+                  <span>{label}</span>
+                </div>
+                {detail === undefined ? null : <p>{detail}</p>}
+              </div>
+            </li>
+          );
+        })}
+      </ol>
+      {progress.observedAt === undefined ? null : (
+        <p className="public-observed">
+          {progress.error === undefined
+            ? publicCopy.observation(new Date(progress.observedAt).toLocaleTimeString())
+            : publicCopy.offline(new Date(progress.observedAt).toLocaleTimeString())}
+        </p>
+      )}
+      {progress.error === undefined ? null : (
+        <div className="public-notice">
+          <p>{progress.error}</p>
+          <Button onClick={progress.refresh}>{publicCopy.checkAgain}</Button>
+        </div>
+      )}
+      {blocked?.type === 'connection_required' ? (
+        <ConnectAssistant
+          client={client}
+          requestId={record.id}
+          service={
+            services.find((item) => item.service === blocked.service) ?? {
+              service: blocked.service,
+              state: 'unknown',
+            }
+          }
+          onSatisfied={progress.refresh}
+          onRecheck={progress.refresh}
+        />
+      ) : null}
+      {record.failure === undefined ? null : (
+        <div className="public-notice">
+          <p className="public-error" role="alert">
+            {failureRemediation(record.failure.code)}
+          </p>
+          <div className="public-actions">
+            <Button onClick={progress.refresh}>{publicCopy.checkAgain}</Button>
+            {agentId === undefined ? null : (
+              <Button onClick={() => onNavigate({ kind: 'agent', agentId })}>
+                {publicCopy.continue}
+              </Button>
+            )}
+            <Button onClick={() => startOver(record)}>{publicCopy.startOver}</Button>
+            <Button icon={<IconCopyOutline16 />} onClick={() => void copy()}>
+              {publicCopy.copySupport}
+            </Button>
+          </div>
+          {copyStatus === undefined ? null : <p role="status">{copyStatus}</p>}
+        </div>
+      )}
+      {record.state === 'cancelled' ? (
+        <>
+          <p>{publicCopy.cancelled}</p>
+          <Button onClick={() => startOver(record)}>{publicCopy.startOver}</Button>
+        </>
+      ) : null}
+      {draft ? (
+        <ReviewCard
+          key={record.trust.confirmation_digest ?? record.id}
+          client={client}
+          record={record}
+          preview={preview}
+          onChanged={progress.changed}
+          onClose={() => back(record)}
+        />
+      ) : null}
+    </section>
+  );
+}
