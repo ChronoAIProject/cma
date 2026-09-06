@@ -15,9 +15,7 @@ use super::AgentWorker;
 
 mod effects;
 mod mapping;
-pub(super) use crate::sandbox::runtime_mapping::{
-    runtime_capabilities, runtime_options, sandbox_spec,
-};
+pub(super) use crate::sandbox::runtime_mapping::{runtime_capabilities, runtime_options};
 pub(super) use effects::{settle_cleanup_debt, settle_compensated_cleanup_debt};
 pub(super) use mapping::validate_skills;
 
@@ -123,29 +121,13 @@ impl AgentWorker {
             .map_err(parent_store_failure)?
             .ok_or_else(missing_parent)?;
         validate_lineage(agent, &sandbox, &workspace, &worktree)?;
-        let expected = sandbox
-            .runtime
-            .as_ref()
-            .filter(|binding| !binding.runtime_id.trim().is_empty())
-            .map(|binding| RuntimeHandle(binding.runtime_id.clone()))
-            .ok_or_else(|| {
-                WorkerFailure::retryable(
-                    "agent_runtime_unavailable",
-                    "the sandbox runtime is not bound",
-                )
-            })?;
-        let attached = self
-            .dependencies
-            .adapter
-            .provision(&sandbox_spec(&sandbox, &self.config.deployment_id))
-            .await
-            .map_err(adapter_failure)?;
-        if attached != expected {
-            return Err(WorkerFailure::terminal(
-                "agent_runtime_identity_mismatch",
-                "provider attached another sandbox runtime",
-            ));
-        }
+        let attached = crate::sandbox::runtime_attachment::adopt_bound_runtime(
+            self.dependencies.adapter.as_ref(),
+            &sandbox,
+            &self.config.deployment_id,
+        )
+        .await
+        .map_err(adapter_failure)?;
         Ok(AgentContext {
             sandbox,
             workspace,

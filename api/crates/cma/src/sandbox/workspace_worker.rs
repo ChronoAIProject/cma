@@ -14,7 +14,7 @@ use layer3_adapter::{
 };
 
 use self::support::{
-    claimed_fence, failure, sandbox_spec, valid_prepare_receipt, valid_setup_receipt, WorkerFailure,
+    claimed_fence, failure, valid_prepare_receipt, valid_setup_receipt, WorkerFailure,
 };
 use super::worker::{ProfileWorkspaceProvisioner, SandboxDependencyError};
 
@@ -266,23 +266,13 @@ impl WorkspaceWorker {
                     && sandbox.credential.delivered
             })
             .ok_or_else(|| WorkerFailure::retryable("sandbox runtime is not ready"))?;
-        let expected = sandbox
-            .runtime
-            .as_ref()
-            .map(|binding| RuntimeHandle(binding.runtime_id.clone()))
-            .ok_or_else(|| WorkerFailure::retryable("sandbox runtime is not bound"))?;
-        let attached = self
-            .dependencies
-            .adapter
-            .provision(&sandbox_spec(&sandbox, &self.config.deployment_id))
-            .await
-            .map_err(failure)?;
-        if attached != expected {
-            return Err(WorkerFailure::terminal(
-                "workspace_runtime_identity_mismatch",
-                "provider attached another sandbox runtime",
-            ));
-        }
+        let attached = super::runtime_attachment::adopt_bound_runtime(
+            self.dependencies.adapter.as_ref(),
+            &sandbox,
+            &self.config.deployment_id,
+        )
+        .await
+        .map_err(failure)?;
         Ok((sandbox, attached))
     }
 

@@ -173,6 +173,25 @@ impl SandboxWorker {
     }
 
     async fn execute(&self, sandbox: Sandbox, now: SystemTime) -> Result<(), SandboxStoreError> {
+        if matches!(
+            sandbox.work.step,
+            SandboxWorkStep::RunInstall
+                | SandboxWorkStep::DeliverInitialCredential
+                | SandboxWorkStep::DeliverRotatedCredential
+                | SandboxWorkStep::CreateProfileWorkspace(_)
+        ) {
+            if let Err(error) = super::runtime_attachment::adopt_bound_runtime(
+                self.dependencies.adapter.as_ref(),
+                &sandbox,
+                &self.config.deployment_id,
+            )
+            .await
+            {
+                return self
+                    .handle_failure(sandbox, support::adapter_failure(error), now)
+                    .await;
+            }
+        }
         match sandbox.work.step {
             SandboxWorkStep::ProvisionRuntime => self.provision(sandbox, now).await,
             SandboxWorkStep::RunInstall => self.install(sandbox, now).await,
