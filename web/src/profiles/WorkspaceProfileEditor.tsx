@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import type {
   ProfileDocument,
   ProfileDraft,
@@ -47,6 +47,7 @@ function WorkspaceEditor({
   onSaved,
 }: WorkspaceProfileEditorProps) {
   const [verified, setVerified] = useState<string>();
+  const verifiedForValidation = useRef<string | undefined>(undefined);
   return (
     <ProfileEditor
       client={client}
@@ -58,7 +59,7 @@ function WorkspaceEditor({
         const errors = { ...validateWorkspaceProfile(draft) };
         if (
           draft.content.location.type === 'git_repository' &&
-          verified !== repositoryKey(draft.content.location)
+          verifiedForValidation.current !== repositoryKey(draft.content.location)
         )
           errors.repositoryUrl ??= 'Verify the repository and reference before saving.';
         return errors;
@@ -75,7 +76,10 @@ function WorkspaceEditor({
                 editor={editor}
                 resolver={resolver}
                 verified={verified}
-                onVerified={setVerified}
+                onVerified={(key) => {
+                  verifiedForValidation.current = key;
+                  setVerified(key);
+                }}
               />
             </section>
             <section className="profile-editor__band">

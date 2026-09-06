@@ -51,12 +51,11 @@ export function WorkspaceLocationPicker({
       const current = latestEditor.current;
       if (!abort.signal.aborted && repositoryKey(current.draft.content.location) === key) {
         const canonical = { ...location, url: resolved.url };
-        if (canonical.url !== location.url)
-          current.change({
-            ...current.draft,
-            content: { ...current.draft.content, location: canonical },
-          });
         onVerified(repositoryKey(canonical));
+        current.change({
+          ...current.draft,
+          content: { ...current.draft.content, location: canonical },
+        });
       }
     } catch {
       if (!abort.signal.aborted)

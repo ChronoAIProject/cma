@@ -34,6 +34,11 @@ it('creates a repository workspace only after server verification and preserves 
   ).toBeInTheDocument();
   await actor.click(screen.getByRole('button', { name: 'Verify repository' }));
   await screen.findByText('Repository verified');
+  expect(
+    screen.queryByText('Verify the repository and reference before saving.'),
+  ).not.toBeInTheDocument();
+  expect(screen.getByLabelText('Repository URL')).not.toHaveAttribute('aria-invalid', 'true');
+  expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   expect(resolveRepository).toHaveBeenCalledWith(
     {
       type: 'git_repository',
