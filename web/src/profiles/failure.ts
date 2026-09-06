@@ -83,6 +83,9 @@ export function profileFailure(error: unknown): ProfileFailure {
       'This profile cannot be made public. Check its published revision and references.',
     profile_invalid: 'Review the profile fields before trying again.',
     marketplace_disabled: 'The marketplace is currently unavailable.',
+    idempotency_in_flight: 'This command is still being processed. Retry to check its outcome.',
+    idempotency_recovery_required:
+      'This command needs recovery. Its original request has been retained.',
   };
   const message =
     REASONS[reason] ??
@@ -91,7 +94,13 @@ export function profileFailure(error: unknown): ProfileFailure {
   return {
     message,
     conflict,
-    uncertain: !conflict && (status === undefined || status === 408 || status >= 500),
+    uncertain:
+      !conflict &&
+      (code === 'idempotency_in_flight' ||
+        code === 'idempotency_recovery_required' ||
+        status === undefined ||
+        status === 408 ||
+        status >= 500),
     fields:
       field === undefined
         ? {}
