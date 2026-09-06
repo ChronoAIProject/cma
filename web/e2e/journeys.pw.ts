@@ -1,3 +1,4 @@
+import type { AgentTranscript } from '@chronoai/cma-sdk';
 import { test, expect, type Launch } from './harness';
 
 test('J0 new account returns to the same Trigger and reaches ready after one CMA click', async ({
@@ -22,15 +23,63 @@ test('J0 new account returns to the same Trigger and reaches ready after one CMA
   });
   const launch = await h.currentLaunch(page);
   expect(launch.public_id).toBe(target.publicId);
-  await h.ready(page, launch.id);
-  expect(await h.get<{ visitor: boolean }>(page, '/auth/session')).toMatchObject({ visitor: true });
+  expect(launch.placement_id).toBe(target.placementId);
+  const identity = await h.get<{
+    authenticated: boolean;
+    subject: string;
+    visitor: boolean;
+    capabilities: string[];
+  }>(page, '/auth/session');
+  expect(identity).toMatchObject({ authenticated: true, visitor: true });
+  expect(identity.subject).toBe(h.fixture.accounts.signup.subject);
+  expect(Object.values(h.fixture.visitors).map((account) => account.subject)).not.toContain(
+    identity.subject,
+  );
+  expect([...identity.capabilities].sort()).toEqual([
+    'delete_own_sandbox',
+    'launch_triggers',
+    'use_own_sandboxes',
+  ]);
+  await expect
+    .poll(
+      async () => ['ready', 'completed'].includes((await h.readLaunch(page, launch.id)).state),
+      {
+        timeout: 540_000,
+        intervals: [1500, 3000, 5000],
+      },
+    )
+    .toBe(true);
+  const ready = await h.readLaunch(page, launch.id);
+  expect(ready.resolution.agent.id).toBeTruthy();
+  await page.waitForURL(`${h.config.baseURL}/agents/${ready.resolution.agent.id}`);
+  await expect
+    .poll(
+      async () => {
+        const transcript = await h.get<AgentTranscript>(
+          page,
+          `/api/v1/agents/${ready.resolution.agent.id}/transcript`,
+        );
+        return (
+          transcript.turns.length === 1 &&
+          transcript.turns[0]?.outcome.type === 'completed' &&
+          transcript.turns[0].messages.some(
+            (message) => message.role === 'assistant' && message.content.trim().length > 0,
+          )
+        );
+      },
+      { timeout: 180_000, intervals: [1500, 3000, 5000] },
+    )
+    .toBe(true);
+  await expect(page.locator('.message--assistant .agent-content').first()).toContainText(/\S/);
+  await expect(page.getByRole('button', { name: 'Stop response', exact: true })).toHaveCount(0);
   expect(h.commands.filter((row) => row.path.endsWith('/launches'))).toHaveLength(1);
   expect(
     h.commands.filter(
       (row) =>
         row.path.endsWith('/start') ||
         row.path.endsWith('/input') ||
-        row.path.endsWith('/agui/run'),
+        row.path.endsWith('/agui/run') ||
+        /\/responses(?:\/|$)/.test(row.path),
     ),
   ).toHaveLength(0);
   await h.capture(page, 'j0-ready');

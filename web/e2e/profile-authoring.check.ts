@@ -42,6 +42,13 @@ for (const viewport of [
       releaseBounds = resolve;
     });
     let boundsCalls = 0;
+    let skillCalls = 0;
+    let serviceCalls = 0;
+    const resolutions: unknown[] = [];
+    let releaseRepository!: () => void;
+    const pendingRepository = new Promise<void>((resolve) => {
+      releaseRepository = resolve;
+    });
     await page.route('**/*', async (route) => {
       const request = route.request();
       const url = new URL(request.url());
@@ -65,10 +72,19 @@ for (const viewport of [
         await route.continue();
         return;
       }
-      if (request.method() !== 'GET') writes.push(`${request.method()} ${url.pathname}`);
-      if (url.pathname === '/api/v1/sandboxes' || url.pathname === '/api/v1/workspace-profiles') {
+      if (request.method() !== 'GET' && !url.pathname.endsWith('/repositories/resolve'))
+        writes.push(`${request.method()} ${url.pathname}`);
+      if (
+        ['/api/v1/sandboxes', '/api/v1/workspace-profiles', '/api/v1/agent-profiles'].includes(
+          url.pathname,
+        )
+      ) {
         await reply({ items: [] });
       } else if (url.pathname === '/api/v1/profile-authoring/skills') {
+        if (++skillCalls === 1) {
+          await reply({ status: 503, code: 'profile_skills_unavailable' }, 503);
+          return;
+        }
         await reply({
           items: [
             {
@@ -80,7 +96,23 @@ for (const viewport of [
           ],
         });
       } else if (url.pathname === '/api/v1/profile-authoring/services') {
-        await reply([{ id: 'github', name: 'GitHub' }]);
+        if (++serviceCalls === 1)
+          await reply({ status: 503, code: 'profile_services_unavailable' }, 503);
+        else await reply([{ id: 'github', name: 'GitHub' }]);
+      } else if (url.pathname === '/api/v1/profile-authoring/repositories/resolve') {
+        resolutions.push(request.postDataJSON());
+        const attempt = resolutions.length;
+        if (attempt === 1) await pendingRepository;
+        if (attempt === 2) {
+          await reply({ status: 503, code: 'repository_unavailable' }, 503);
+        } else {
+          await reply({
+            url: 'https://github.com/local-fixture/research',
+            reference: attempt === 1 ? 'main' : 'release',
+            default_branch: 'main',
+            commit_sha: 'a'.repeat(40),
+          });
+        }
       } else if (url.pathname === '/api/v1/profile-authoring/bounds') {
         boundsCalls += 1;
         if (boundsCalls === 1) {
@@ -103,6 +135,9 @@ for (const viewport of [
       }
     });
     await page.goto('/profiles/agent-profiles/new');
+    await expect(page.getByText('Skills could not be loaded.')).toBeVisible();
+    await page.getByLabel('Name', { exact: true }).fill('Pinned research');
+    await page.getByRole('button', { name: 'Try again', exact: true }).click();
     await page.getByRole('button', { name: 'Add Repository research' }).click();
     const version = page.getByRole('button', { name: 'Version for research' });
     await expect(version).toHaveText('1234567890.123456789');
@@ -114,6 +149,7 @@ for (const viewport of [
     await page.screenshot({ path: info.outputPath('release-menu.png'), fullPage: true });
     await page.getByRole('menuitemradio', { name: '1.1' }).click();
     await expect(version).toHaveText('1.1');
+    await expect(page.getByLabel('Name', { exact: true })).toHaveValue('Pinned research');
     await page.goto('/profiles/sandbox-profiles/new');
     await expect(page.getByText('Loading resource limits')).toBeVisible();
     await page.getByLabel('Name', { exact: true }).fill('Retained research setup');
@@ -128,21 +164,75 @@ for (const viewport of [
     await page.getByText('Resource limits are unavailable.').scrollIntoViewIfNeeded();
     await layout(page);
     await page.screenshot({ path: info.outputPath('bounds-error.png'), fullPage: true });
-    await page.getByRole('button', { name: 'Try again' }).click();
+    await page
+      .getByText('Resource limits are unavailable.')
+      .locator('..')
+      .getByRole('button', { name: 'Try again' })
+      .click();
     await expect(page.getByRole('radio', { name: 'Custom' })).toBeEnabled();
     await page.getByRole('radio', { name: 'Custom' }).check();
     await page.getByLabel('CPU cores').fill('3');
     await page.getByLabel('Memory (GiB)').fill('6');
     await expect(page.getByLabel('Name', { exact: true })).toHaveValue('Retained research setup');
+    await expect(page.getByText('Services could not be loaded.')).toBeVisible();
+    await page
+      .getByText('Services could not be loaded.')
+      .locator('..')
+      .getByRole('button', { name: 'Try again' })
+      .click();
     await page.getByRole('checkbox', { name: 'GitHub' }).check();
     await page.getByLabel('CPU cores').scrollIntoViewIfNeeded();
     await layout(page);
     await page.screenshot({ path: info.outputPath('bounds-ready.png'), fullPage: true });
+    await page.goto('/profiles/workspace-profiles/new');
+    await page.getByLabel('Name', { exact: true }).fill('Retained repository draft');
+    await page
+      .getByLabel('Repository URL', { exact: true })
+      .fill('https://github.com/local-fixture/research.git');
+    await page.getByLabel('Branch or tag', { exact: true }).fill('main');
+    await page.getByRole('button', { name: 'Verify repository', exact: true }).click();
+    await expect.poll(() => resolutions.length).toBe(1);
+    await page.getByLabel('Branch or tag', { exact: true }).fill('release');
+    releaseRepository();
+    await page.getByRole('button', { name: 'Save draft', exact: true }).click();
+    expect(writes).toEqual([]);
+    await expect(page.getByText('Repository verified', { exact: true })).toHaveCount(0);
+    await page.getByRole('button', { name: 'Verify repository', exact: true }).click();
+    await expect(
+      page.getByText(
+        'The public repository or reference could not be verified. Check the URL and try again.',
+      ),
+    ).toBeVisible();
+    await layout(page);
+    await page.screenshot({ path: info.outputPath('repository-error.png'), fullPage: true });
+    await page.getByRole('button', { name: 'Verify repository', exact: true }).click();
+    await expect(page.getByText('Repository verified', { exact: true })).toBeVisible();
+    await expect(page.getByLabel('Repository URL', { exact: true })).toHaveValue(
+      'https://github.com/local-fixture/research',
+    );
+    await expect(page.getByLabel('Branch or tag', { exact: true })).toHaveValue('release');
+    await expect(page.getByLabel('Name', { exact: true })).toHaveValue('Retained repository draft');
+    expect(resolutions).toEqual([
+      { url: 'https://github.com/local-fixture/research.git', reference: 'main' },
+      { url: 'https://github.com/local-fixture/research.git', reference: 'release' },
+      { url: 'https://github.com/local-fixture/research.git', reference: 'release' },
+    ]);
+    await layout(page);
+    await page.screenshot({ path: info.outputPath('repository-ready.png'), fullPage: true });
     expect(writes).toEqual([]);
     expect(unexpected).toEqual([]);
     expect(errors).toEqual([]);
     await info.attach('local-authoring-checks', {
-      body: JSON.stringify({ viewport, captures: 4, errors, unexpected, writes }),
+      body: JSON.stringify({
+        mocked: true,
+        boundary: 'built_browser_public_http',
+        viewport,
+        captures: 6,
+        errors,
+        unexpected,
+        writes,
+        repositoryReads: resolutions.length,
+      }),
       contentType: 'application/json',
     });
   });

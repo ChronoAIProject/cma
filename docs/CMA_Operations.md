@@ -401,6 +401,21 @@ quotas or substitute an administrator for a fresh visitor. Signup account cleanu
 remains an external operator responsibility; the harness never calls NyxID
 administrative account/role handlers.
 
+J0 verifies the newly registered account has exactly `launch_triggers`,
+`use_own_sandboxes` and `delete_own_sandbox`, returns to the original placement,
+and receives a completed first assistant answer without another CMA command.
+J5 requires the pinned Workspace fixture to identify a verifiable public Git
+repository, a live Ornn catalogue with a published skill release, readable
+deployment resource bounds, and a service catalogue containing a declared
+baseline service. It verifies the repository before publication, uses the live
+skill/resource/service controls, and forks both Agent and Sandbox Profiles as
+the second owner while checking provenance and copied content. J6 needs capacity
+for three Agents: two for the existing home/rotation proof and one admitted while
+Paused through normal creation. That third creation deliberately loses only the
+browser response, retains the real admission in the cleanup ledger, retries the
+same key/body, then reloads without an explicit revive or another input command.
+These additions are campaign requirements, not remote execution evidence.
+
 The owner-bound append-only `cleanup.ndjson` ledger contains only resources
 actually created by this campaign, including late child resolutions from its
 admitted Launches. Reused resources are not cleanup-owned. Cleanup stops Agents
@@ -432,6 +447,37 @@ A failed preflight cannot authorize uploading an old output directory.
 Local mechanics checks use intercepted browser HTML and prove harness behavior,
 not staging journeys. Shared backend/SDK corpus replay proves deterministic
 public contract composition, not a live NyxID, kernel or storage deployment.
+
+On 2026-09-07, the built-UI local profile-authoring checks passed 3/3 at
+1440, 390 and 320 pixels. They exercised skill/service unavailability and retry,
+preserved draft values and skill pins, delayed/unavailable resource bounds, and
+repository stale-result rejection, typed failure, retry and canonical URL
+preservation. The separate local startup checks passed 5/5: Workspace and Agent
+creation from both Paused and Reviving parents, lost-response same-key/body retry,
+accepted reload without another create or manual revival, and durable sign-in
+notice replay/clearing while preserving unrelated first-message recovery without
+a fake turn or browser write. Startup captures cover both themes at all three
+widths, including the unsettled dialog and accepted/replayed states.
+
+Run these local suites from `web/` against an existing production-build loopback
+preview (default `http://127.0.0.1:4342`) with Node 26.8.1 and an installed browser:
+
+```sh
+npm run build
+npx playwright test --config e2e/profile-authoring.config.ts
+npx playwright test --config e2e/agent-startup.config.ts
+```
+
+Use `CMA_AUTHORING_PREVIEW_URL` or `CMA_STARTUP_PREVIEW_URL` to select a different
+loopback preview, and `CMA_E2E_BROWSER_PATH` to select the browser executable.
+Each suite writes screenshots and structured local-boundary attachments to its
+own fresh OS temporary directory (`cma-profile-authoring-browser-*` or
+`cma-agent-startup-browser-*`), outside the checkout. HTTP responses are
+intercepted local fixtures, including recorded backend response shapes; the
+sign-in destination is an inert example. No provider login, remote creation,
+actual repository resolution, runtime revival or remote failure is executed by
+these checks. They do not advance any remote gate or journey in the tables below.
+
 The official Node/Python Responses client checks use the real loopback CMA
 composition with scripted runtime input and in-memory persistence. Their pinned
 client versions and exact verification boundary are recorded in
