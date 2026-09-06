@@ -168,7 +168,7 @@ pub trait SandboxProfileStore: Send + Sync {
         expected_draft_version: u64,
         published_at: String,
         bounds: ProfileCapacityBounds,
-        secret_patterns: &[String],
+        scanner: &dyn super::PublicValueScanner,
     ) -> Result<SandboxProfileRevision, ProfileStoreError>;
     async fn sandbox_profile_revision(
         &self,
@@ -284,5 +284,6 @@ fn readable(owner: &SubjectId, profile_owner: &SubjectId, visibility: ProfileVis
 
 mod admin_memory;
 mod marketplace_memory;
+mod marketplace_public_values;
 mod marketplace_support;
 mod memory;

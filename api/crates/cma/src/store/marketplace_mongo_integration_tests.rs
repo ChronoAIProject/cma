@@ -482,7 +482,7 @@ async fn marketplace_visibility_and_draft_controls_are_enforced() {
                 &["SECRET".into()],
             )
             .await,
-        Err(MarketplaceError::Validation(_))
+        Err(MarketplaceError::PublicValues(_))
     ));
     store
         .set_profile_visibility(

@@ -213,16 +213,10 @@ impl SandboxProfileStore for CorruptingSandboxProfiles {
         expected_draft_version: u64,
         published_at: String,
         bounds: ProfileCapacityBounds,
-        secret_patterns: &[String],
+        scanner: &dyn crate::profiles::PublicValueScanner,
     ) -> Result<SandboxProfileRevision, ProfileStoreError> {
         self.inner
-            .publish_sandbox_profile(
-                id,
-                expected_draft_version,
-                published_at,
-                bounds,
-                secret_patterns,
-            )
+            .publish_sandbox_profile(id, expected_draft_version, published_at, bounds, scanner)
             .await
     }
 

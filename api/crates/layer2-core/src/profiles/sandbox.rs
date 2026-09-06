@@ -9,6 +9,7 @@ use super::common::{
 };
 use super::content_digest;
 use super::validation::validate_commands;
+use super::{PublicValueScanError, PublicValueScanner};
 
 const RESERVED_ENVIRONMENT_NAMES: &[&str] = &[
     "PATH",
@@ -145,20 +146,25 @@ impl SandboxProfileContent {
         Ok(())
     }
 
-    pub fn validate_public_values(&self, secret_patterns: &[String]) -> Result<(), ProfileError> {
-        for variable in &self.environment_variables {
-            if secret_patterns
-                .iter()
-                .filter(|pattern| !pattern.is_empty())
-                .any(|pattern| variable.value.contains(pattern))
+    pub async fn validate_public_values(
+        &self,
+        scanner: &dyn PublicValueScanner,
+    ) -> Result<(), ProfileError> {
+        match scanner.scan(&self.environment_variables).await {
+            Ok(()) => Ok(()),
+            Err(PublicValueScanError::Secret { variable })
+                if self
+                    .environment_variables
+                    .iter()
+                    .any(|value| value.name == variable) =>
             {
-                return Err(ProfileError::new(
-                    "secret_like_environment_value",
-                    "environment_variables",
-                ));
+                Err(ProfileError::environment_secret(&variable))
             }
+            Err(_) => Err(ProfileError::new(
+                "public_value_scanner_unavailable",
+                "environment_variables",
+            )),
         }
-        Ok(())
     }
 }
 
@@ -186,22 +192,19 @@ impl SandboxProfile {
     pub fn validate(&self, bounds: ProfileCapacityBounds) -> Result<(), ProfileError> {
         validate_metadata(&self.name, &self.description)?;
         self.draft.validate(bounds)?;
-        if self.visibility == ProfileVisibility::Public {
-            self.draft.validate_public_values(&[])?;
-        }
         Ok(())
     }
 
-    pub fn publish(
+    pub async fn publish(
         &self,
         revision: u32,
         published_at: String,
         bounds: ProfileCapacityBounds,
-        secret_patterns: &[String],
+        scanner: &dyn PublicValueScanner,
     ) -> Result<SandboxProfileRevision, ProfileError> {
         self.validate(bounds)?;
         if self.visibility == ProfileVisibility::Public {
-            self.draft.validate_public_values(secret_patterns)?;
+            self.draft.validate_public_values(scanner).await?;
         }
         Ok(SandboxProfileRevision {
             profile_id: self.id.clone(),

@@ -347,11 +347,26 @@ impl SandboxProfileStore for InMemoryProfileStore {
         expected: u64,
         published_at: String,
         bounds: ProfileCapacityBounds,
-        secret_patterns: &[String],
+        scanner: &dyn crate::profiles::PublicValueScanner,
     ) -> Result<SandboxProfileRevision, ProfileStoreError> {
+        let (profile, number) = {
+            let state = self.lock();
+            let profile = state.sandboxes.get(id).ok_or(ProfileStoreError::NotFound)?;
+            if profile.draft_version != expected || profile.retired_at.is_some() {
+                return Err(ProfileStoreError::Conflict);
+            }
+            (
+                profile.clone(),
+                next_revision(&state.sandbox_revisions, id)?,
+            )
+        };
+        let revision = profile
+            .publish(number, published_at, bounds, scanner)
+            .await?;
         let mut state = self.lock();
-        let profile = state.sandboxes.get(id).ok_or(ProfileStoreError::NotFound)?;
-        if profile.draft_version != expected || profile.retired_at.is_some() {
+        if state.sandboxes.get(id) != Some(&profile)
+            || next_revision(&state.sandbox_revisions, id)? != number
+        {
             return Err(ProfileStoreError::Conflict);
         }
         let mut workspace_names = BTreeSet::new();
@@ -373,8 +388,6 @@ impl SandboxProfileStore for InMemoryProfileStore {
                 );
             }
         }
-        let number = next_revision(&state.sandbox_revisions, id)?;
-        let revision = profile.publish(number, published_at, bounds, secret_patterns)?;
         state
             .sandbox_revisions
             .insert((id.clone(), number), revision.clone());

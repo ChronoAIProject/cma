@@ -167,6 +167,8 @@ pub enum MarketplaceError {
     Unpublished,
     #[error("profile validation failed: {0}")]
     Validation(String),
+    #[error("public profile validation failed: {0}")]
+    PublicValues(super::ProfileError),
     #[error("trust confirmation required for digest {commands_digest}")]
     TrustConfirmationRequired { commands_digest: String },
     #[error("invalid marketplace page")]
@@ -194,7 +196,7 @@ pub trait MarketplaceStore: Send + Sync {
         visibility: ProfileVisibility,
         updated_at: String,
         bounds: ProfileCapacityBounds,
-        secret_patterns: &[String],
+        scanner: &dyn super::PublicValueScanner,
     ) -> Result<(), MarketplaceError>;
     async fn fork_profile(
         &self,

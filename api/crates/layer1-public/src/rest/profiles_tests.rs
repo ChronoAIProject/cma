@@ -25,6 +25,8 @@ use crate::AuthenticatedSubject;
 mod defaults_tests;
 #[path = "public_revision_tests.rs"]
 mod public_revision_tests;
+#[path = "profiles_public_values_tests.rs"]
+mod public_values_tests;
 
 type OperationKey = (String, String, String);
 type OperationRecord = ([u8; 32], Option<Vec<u8>>);
@@ -146,6 +148,13 @@ fn settings_service(store: Arc<MemorySettingsStore>) -> Arc<PlatformSettingsServ
 }
 
 fn fixture_with_settings(marketplace_enabled: bool) -> (Router, Arc<MemorySettingsStore>) {
+    fixture_with_scanner(marketplace_enabled, Arc::new(["SECRET_TOKEN".into()]))
+}
+
+fn fixture_with_scanner(
+    marketplace_enabled: bool,
+    scanner: Arc<dyn layer2_core::profiles::PublicValueScanner>,
+) -> (Router, Arc<MemorySettingsStore>) {
     let settings = Arc::new(MemorySettingsStore::new(marketplace_enabled));
     let profiles = Arc::new(InMemoryProfileStore::default());
     let operations: Arc<dyn OperationStore> = Arc::new(MemoryOperationStore::default());
@@ -160,7 +169,7 @@ fn fixture_with_settings(marketplace_enabled: bool) -> (Router, Arc<MemorySettin
                 min_memory_mib: 256,
                 max_memory_mib: 8_192,
             },
-            secret_patterns: vec!["SECRET_TOKEN".into()],
+            public_value_scanner: scanner,
         },
     ));
     (router, settings)
@@ -1165,6 +1174,8 @@ async fn sandbox_and_marketplace_routes_cover_bounds_trust_fork_and_publication_
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
     assert_eq!(refused["code"], "profile_public_refused");
     assert_eq!(refused["reason"], "secret_like_environment_value");
+    assert_eq!(refused["field"], "environment_variables.APP_VALUE");
+    assert!(!refused.to_string().contains("SECRET_TOKEN"));
 
     assert_eq!(
         mutate(

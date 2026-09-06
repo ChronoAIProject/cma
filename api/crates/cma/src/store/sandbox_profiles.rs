@@ -148,7 +148,7 @@ impl SandboxProfileStore for MongoProfileStore {
         expected: u64,
         published_at: String,
         bounds: ProfileCapacityBounds,
-        secret_patterns: &[String],
+        scanner: &dyn layer2_core::profiles::PublicValueScanner,
     ) -> Result<SandboxProfileRevision, ProfileStoreError> {
         let mut last_transient = None;
         for attempt in 0..TRANSACTION_ATTEMPTS {
@@ -251,14 +251,16 @@ impl SandboxProfileStore for MongoProfileStore {
                     }
                 }
             }
-            let revision =
-                match profile.publish(number, published_at.clone(), bounds, secret_patterns) {
-                    Ok(revision) => revision,
-                    Err(error) => {
-                        let _ = session.abort_transaction().await;
-                        return Err(error.into());
-                    }
-                };
+            let revision = match profile
+                .publish(number, published_at.clone(), bounds, scanner)
+                .await
+            {
+                Ok(revision) => revision,
+                Err(error) => {
+                    let _ = session.abort_transaction().await;
+                    return Err(error.into());
+                }
+            };
             let inserted = self
                 .sandbox_revisions
                 .insert_one(revision_document(id.as_str(), number, &revision)?)

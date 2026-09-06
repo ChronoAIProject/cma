@@ -5,6 +5,7 @@ mod agent;
 mod common;
 mod digest;
 mod marketplace;
+mod public_values;
 mod sandbox;
 mod validation;
 mod workspace;
@@ -28,6 +29,7 @@ pub use marketplace::{
     MarketplaceStore, MarketplaceSummary, ResolvedProfileName, ResolvedProfileRevision,
     TrustConfirmation,
 };
+pub use public_values::{PublicValueScanError, PublicValueScanner};
 pub use sandbox::{
     AgentProvider, EnvironmentVariable, ModelAccess, ProfileCapacityBounds, SandboxProfile,
     SandboxProfileContent, SandboxProfileRevision, SandboxProfileSnapshot,
@@ -42,5 +44,7 @@ pub use workspace::{
     WorkspaceProfileSnapshot,
 };
 
+#[cfg(test)]
+mod public_value_policy_tests;
 #[cfg(test)]
 mod tests;

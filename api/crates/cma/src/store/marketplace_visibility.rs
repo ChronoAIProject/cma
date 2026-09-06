@@ -23,7 +23,7 @@ async fn validate_revisions(
     expected_revision: u32,
     expected_published_at: Option<&str>,
     bounds: ProfileCapacityBounds,
-    secret_patterns: &[String],
+    scanner: &dyn layer2_core::profiles::PublicValueScanner,
 ) -> Result<(), MarketplaceError> {
     if expected_revision == 0 {
         return Err(MarketplaceError::Unpublished);
@@ -60,8 +60,9 @@ async fn validate_revisions(
                     .map_err(validation_error)?;
                 revision
                     .content
-                    .validate_public_values(secret_patterns)
-                    .map_err(validation_error)?;
+                    .validate_public_values(scanner)
+                    .await
+                    .map_err(MarketplaceError::PublicValues)?;
             }
         }
         seen = next;
@@ -97,7 +98,7 @@ pub(super) async fn set_profile_visibility(
     visibility: ProfileVisibility,
     updated_at: String,
     bounds: ProfileCapacityBounds,
-    secret_patterns: &[String],
+    scanner: &dyn layer2_core::profiles::PublicValueScanner,
 ) -> Result<(), MarketplaceError> {
     if owner.as_str() == SYSTEM_OWNER {
         return Err(MarketplaceError::Forbidden);
@@ -116,7 +117,7 @@ pub(super) async fn set_profile_visibility(
                 publication.revision,
                 publication.published_at.as_deref(),
                 bounds,
-                secret_patterns,
+                scanner,
             )
             .await?;
         }
