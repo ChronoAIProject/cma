@@ -24,6 +24,9 @@ const T3: &str = "2026-09-05T03:00:00Z";
 const T4: &str = "2026-09-05T04:00:00Z";
 static DATABASE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
+#[path = "profile_reference_mongo_tests.rs"]
+mod reference_tests;
+
 async fn database(prefix: &str) -> (Client, String, MongoProfileStore) {
     let uri = std::env::var("CHRONO_TEST_MONGODB_URI")
         .expect("CHRONO_TEST_MONGODB_URI must name a MongoDB replica set");

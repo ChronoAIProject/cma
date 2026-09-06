@@ -158,13 +158,24 @@ Create uses `{ name, description?, content }`; read returns identity, owner,
 visibility, draft content, `draft_version` and publication information. Update
 uses `{ draft_version, content, name?, description? }`. Publication posts
 `{ draft_version }` to `/revisions` and returns an immutable published revision.
-Visibility uses `{ visibility: "private" | "public" }`. Retirement preserves
-existing instance snapshots and may conflict with live published references.
+Visibility uses `{ visibility: "private" | "public" }`. Making a profile private
+or retiring it hides discovery without invalidating existing instance snapshots
+or exact published references. A retired profile cannot publish new revisions.
 
 A profile reference is `{ "id": "agp_example", "revision": 1 }`, with a
 positive published revision of the correct kind. Agent, Workspace and Sandbox
 references are not interchangeable. Array order is preserved and the canonical
-content digest includes that order.
+content digest includes that order. The exact reserved defaults `agp_default`
+and `wkp_default` are accepted as Agent and Workspace references respectively;
+other reserved-looking strings and cross-kind IDs are not interchangeable.
+
+Newly selected references must resolve to an owned or public, nonretired profile
+revision. An exact pin inherited from the server-recorded fork source or the
+parent's own prior published revisions remains usable when the child becomes
+private or retired. Changing its ID or revision is a new selection and requires
+current access. Draft JSON alone never grants reference authority, and inherited
+pins do not grant direct access to a private child's profile routes. Publication
+rechecks these rules atomically with reading the draft and inserting its revision.
 
 ```json
 {

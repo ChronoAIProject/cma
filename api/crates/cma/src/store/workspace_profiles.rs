@@ -11,8 +11,8 @@ use super::profile_documents::{
     decode_record, profile_document, revision_document, save_draft, ProfileDocumentInput,
 };
 use super::profiles::{
-    advance_publication, get_profile, get_revision, list_profiles, list_revisions,
-    readable_revision, retire_profile, PublishError,
+    advance_publication, get_profile, get_revision, list_profiles, list_revisions, retire_profile,
+    PublishError,
 };
 use super::sandbox_mongo::{
     commit_transaction, i64_field_matches, is_duplicate_key, is_transient, nullable, record_bson,
@@ -91,7 +91,7 @@ impl WorkspaceProfileStore for MongoProfileStore {
         profile: WorkspaceProfile,
     ) -> Result<(), ProfileStoreError> {
         profile.validate()?;
-        if profile.draft_version != 1 {
+        if profile.draft_version != 1 || profile.forked_from.is_some() {
             return Err(ProfileStoreError::Conflict);
         }
         self.workspace_profiles
@@ -180,23 +180,9 @@ impl WorkspaceProfileStore for MongoProfileStore {
                     return Err(error);
                 }
             };
-            let mut reference_error = None;
-            for reference in &profile.draft.agent_profiles {
-                if let Err(error) = readable_revision(
-                    &self.agent_revisions,
-                    &self.agent_profiles,
-                    reference.id.as_str(),
-                    reference.revision,
-                    &profile.owner,
-                    &mut session,
-                )
-                .await
-                {
-                    reference_error = Some(error);
-                    break;
-                }
-            }
-            if let Some(error) = reference_error {
+            if let Err(error) =
+                super::profile_references::workspace_references(self, &profile, &mut session).await
+            {
                 let _ = session.abort_transaction().await;
                 match error {
                     PublishError::Domain(error) => return Err(error),

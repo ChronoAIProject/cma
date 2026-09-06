@@ -7,6 +7,7 @@ mod common;
 mod digest;
 mod marketplace;
 mod public_values;
+pub mod references;
 mod sandbox;
 mod validation;
 mod workspace;

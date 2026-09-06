@@ -5,6 +5,9 @@ use crate::ids::{
 
 const NOW: &str = "2026-09-05T00:00:00Z";
 
+#[path = "reference_tests.rs"]
+mod reference_tests;
+
 fn agent_profile(id: &str, owner: &str, visibility: ProfileVisibility) -> AgentProfile {
     AgentProfile {
         id: AgentProfileId(id.into()),

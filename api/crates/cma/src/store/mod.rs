@@ -53,6 +53,7 @@ mod profile_documents;
 mod profile_index_tests;
 #[cfg(test)]
 mod profile_operator_mongo_integration_tests;
+mod profile_references;
 mod profiles;
 mod sandbox_admission;
 #[cfg(test)]

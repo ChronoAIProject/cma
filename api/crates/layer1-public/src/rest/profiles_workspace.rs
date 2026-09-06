@@ -138,7 +138,7 @@ pub(super) async fn create(
                 retired_at: None,
             };
             profile.validate().map_err(invalid)?;
-            validate_agent_references(&command_state, &owner, &profile.draft.agent_profiles)
+            validate_agent_references(&command_state, &owner, None, &profile.draft.agent_profiles)
                 .await?;
             command_state
                 .workspaces
@@ -236,8 +236,13 @@ pub(super) async fn update(
             profile.draft = body.content.into();
             profile.updated_at = layer2_core::now_rfc3339();
             profile.validate().map_err(invalid)?;
-            validate_agent_references(&command_state, &owner, &profile.draft.agent_profiles)
-                .await?;
+            validate_agent_references(
+                &command_state,
+                &owner,
+                Some(&profile.id),
+                &profile.draft.agent_profiles,
+            )
+            .await?;
             command_state
                 .workspaces
                 .save_workspace_draft(body.draft_version, profile.clone())
@@ -274,8 +279,13 @@ pub(super) async fn publish(
         body,
         move |body| async move {
             let profile = owned(&command_state, &owner, &id).await?;
-            validate_agent_references(&command_state, &owner, &profile.draft.agent_profiles)
-                .await?;
+            validate_agent_references(
+                &command_state,
+                &owner,
+                Some(&profile.id),
+                &profile.draft.agent_profiles,
+            )
+            .await?;
             let revision = command_state
                 .workspaces
                 .publish_workspace_profile(

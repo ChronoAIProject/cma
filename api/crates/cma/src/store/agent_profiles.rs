@@ -88,7 +88,7 @@ pub(super) fn read_revision(
 impl AgentProfileStore for MongoProfileStore {
     async fn create_agent_profile(&self, profile: AgentProfile) -> Result<(), ProfileStoreError> {
         profile.validate()?;
-        if profile.draft_version != 1 {
+        if profile.draft_version != 1 || profile.forked_from.is_some() {
             return Err(ProfileStoreError::Conflict);
         }
         self.agent_profiles
