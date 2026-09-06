@@ -41,6 +41,7 @@ pub struct CreateWorkspaceRequest {
 pub struct FailureView {
     pub class: String,
     pub detail: String,
+    pub remediation: String,
 }
 
 impl From<&TypedFailure> for FailureView {
@@ -48,6 +49,7 @@ impl From<&TypedFailure> for FailureView {
         Self {
             class: value.class.clone(),
             detail: value.detail.clone(),
+            remediation: super::remediation::guidance(&value.class).into(),
         }
     }
 }
