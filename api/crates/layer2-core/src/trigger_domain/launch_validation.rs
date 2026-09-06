@@ -59,8 +59,13 @@ impl Launch {
         validate_persisted_message_evidence(self).map_err(|_| {
             TriggerError::new("invalid_launch_first_message", "first_message_evidence")
         })?;
-        self.work
-            .validate(&self.id, self.state == LaunchState::Cancelled)?;
+        self.work.validate(
+            &self.id,
+            matches!(
+                self.state,
+                LaunchState::Cancelled | LaunchState::FailedTerminal
+            ),
+        )?;
         for confirmation in &self.confirmations {
             confirmation.validate()?;
             validate_optional_time(
