@@ -17,6 +17,12 @@ pub use agent_control::{
 };
 mod agent_reads;
 pub use agent_reads::AgentReadQueryStore;
+mod reconciliation;
+pub use reconciliation::{
+    apply_sandbox_runtime_loss, validate_sandbox_runtime_loss_request, SandboxReconciliationStore,
+    SandboxRuntimeLossAgentMutation, SandboxRuntimeLossApplication, SandboxRuntimeLossMutation,
+    SandboxRuntimeLossOutcome, SandboxRuntimeLossRequest,
+};
 mod agent_admission;
 pub use agent_admission::{
     AgentAdmission, AgentAdmissionResult, AgentAdmissionStore, AgentCreation,

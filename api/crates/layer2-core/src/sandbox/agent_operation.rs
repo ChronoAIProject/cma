@@ -44,6 +44,7 @@ pub enum AgentOperationDelivery {
     ExecutionObserved,
     PreWriteFailed,
     RecoveryRequired,
+    RuntimeLost,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -239,7 +240,7 @@ impl AgentOperationRecord {
                     && self.failed_at.is_some()
                     && self.failure.is_some()
             }
-            AgentOperationDelivery::RecoveryRequired => {
+            AgentOperationDelivery::RecoveryRequired | AgentOperationDelivery::RuntimeLost => {
                 self.execution_observed_at.is_none()
                     && self.failed_at.is_some()
                     && self.failure.is_some()
@@ -307,6 +308,20 @@ impl AgentOperationRecord {
             self.state,
             AgentOperationDelivery::DispatchFenced | AgentOperationDelivery::RecoveryRequired
         )
+    }
+
+    /// Retire an unresolved write when its runtime is gone, preserving uncertainty.
+    pub fn retire_lost_runtime(
+        &mut self,
+        failure: AgentOperationFailure,
+    ) -> Result<(), SandboxModelError> {
+        if !self.blocks_dispatch() {
+            return Err(SandboxModelError::invalid_value("agent.operation.state"));
+        }
+        self.state = AgentOperationDelivery::RuntimeLost;
+        self.failed_at = Some(failure.occurred_at.clone());
+        self.failure = Some(failure);
+        self.validate()
     }
 
     fn require_fenced(&self) -> Result<(), SandboxModelError> {

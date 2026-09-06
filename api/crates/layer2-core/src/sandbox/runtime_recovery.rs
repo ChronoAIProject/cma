@@ -1,0 +1,120 @@
+//! Aggregate transitions after exact runtime absence has been established.
+
+use super::{
+    Agent, Sandbox, SandboxImageRotationPhase, SandboxLifecycleOperation, SandboxModelError,
+    SandboxPausePhase, SandboxReviveCause, SandboxReviveFailureClass, SandboxRotationIdentity,
+    SandboxStatus, SandboxWorkStep,
+};
+
+impl Sandbox {
+    /// Unbound provisioning/recovery steps are intentional and are not runtime loss.
+    pub fn requires_runtime_loss_recovery(&self) -> bool {
+        self.status == SandboxStatus::Active
+            || (self.runtime.is_some()
+                && matches!(
+                    self.status,
+                    SandboxStatus::Provisioning
+                        | SandboxStatus::Installing
+                        | SandboxStatus::Pausing
+                        | SandboxStatus::Reviving
+                        | SandboxStatus::Rotating
+                        | SandboxStatus::CredentialRotating
+                ))
+    }
+
+    /// Reset runtime authority while preserving checkpoint history and lifecycle purpose.
+    pub(crate) fn recover_runtime_loss(
+        &mut self,
+        recovered_agents: &[Agent],
+        at: String,
+    ) -> Result<(), SandboxModelError> {
+        self.validate()?;
+        if !self.requires_runtime_loss_recovery() || crate::seconds_from_rfc3339(&at).is_none() {
+            return Err(invalid_recovery());
+        }
+        let mut next = self.clone();
+        next.runtime = None;
+        next.work
+            .schedule(SandboxWorkStep::RunLifecycleOperation, at.clone());
+        match next.lifecycle.checkpoints.latest.as_ref() {
+            None => {
+                next.lifecycle.cancel_operation();
+                next.transition(
+                    SandboxStatus::Failed,
+                    at.clone(),
+                    Some(SandboxReviveFailureClass::RuntimeLost.typed_failure(
+                        "the sandbox runtime was lost before a complete checkpoint was saved",
+                    )),
+                )?;
+                next.work.schedule(SandboxWorkStep::None, at.clone());
+            }
+            Some(checkpoint) => {
+                let epoch = checkpoint.epoch;
+                let notice = format!(
+                    "Your sandbox runtime was lost. Your sandbox is being restored from the checkpoint saved at {}.",
+                    checkpoint.sealed_at
+                );
+                match &self.lifecycle.operation {
+                    Some(SandboxLifecycleOperation::Pause { .. }) => {
+                        next.lifecycle.start_pause(
+                            &next.id,
+                            at.clone(),
+                            self.lifecycle.paused_notice.clone(),
+                        )?;
+                        if let Some(SandboxLifecycleOperation::Pause {
+                            phase,
+                            checkpoint_epoch,
+                            ..
+                        }) = next.lifecycle.operation.as_mut()
+                        {
+                            *phase = SandboxPausePhase::PublishPaused;
+                            *checkpoint_epoch = Some(epoch);
+                        }
+                    }
+                    Some(SandboxLifecycleOperation::ImageRotation {
+                        target_runtime_version,
+                        ..
+                    }) => {
+                        let identity = SandboxRotationIdentity::capture(&next, recovered_agents)?;
+                        next.lifecycle.start_image_rotation(
+                            &next.id,
+                            at.clone(),
+                            target_runtime_version.clone(),
+                            identity,
+                        )?;
+                        if let Some(SandboxLifecycleOperation::ImageRotation {
+                            phase,
+                            checkpoint_epoch,
+                            ..
+                        }) = next.lifecycle.operation.as_mut()
+                        {
+                            *phase = SandboxImageRotationPhase::CheckpointVerification;
+                            *checkpoint_epoch = Some(epoch);
+                        }
+                        next.lifecycle.paused_notice = Some(notice);
+                    }
+                    _ => {
+                        next.lifecycle.start_revive(
+                            &next.id,
+                            at.clone(),
+                            SandboxReviveCause::RuntimeLost,
+                        )?;
+                        if next.status != SandboxStatus::Reviving {
+                            next.transition(SandboxStatus::Reviving, at.clone(), None)?;
+                        }
+                        next.lifecycle.paused_notice = Some(notice);
+                    }
+                }
+            }
+        }
+        next.updated_at = at;
+        next.revision = self.revision.checked_add(1).ok_or_else(invalid_recovery)?;
+        next.validate()?;
+        *self = next;
+        Ok(())
+    }
+}
+
+const fn invalid_recovery() -> SandboxModelError {
+    SandboxModelError::invalid_value("sandbox.runtime_loss_recovery")
+}
