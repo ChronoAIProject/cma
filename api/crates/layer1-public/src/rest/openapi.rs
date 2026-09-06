@@ -33,6 +33,8 @@ use super::trigger_openapi_shapes::*;
 #[openapi(
     paths(
         super::conformance,
+        super::defaults::read,
+        crate::pty::terminal,
         projections::signup_options,
         super::triggers::create,
         super::triggers::list,
@@ -132,6 +134,7 @@ use super::trigger_openapi_shapes::*;
     ),
     components(schemas(
         ConformanceDocument,
+        super::defaults::DefaultProfilesView,
         ProblemDocument,
         SignupOptions,
         EmbedDescriptor,
@@ -331,6 +334,8 @@ struct ApiDoc;
 
 pub fn document() -> utoipa::openapi::OpenApi {
     let mut document = ApiDoc::openapi();
+    document.merge(crate::responses::document());
+    document.merge(crate::agui::document());
     let components = document
         .components
         .get_or_insert_with(openapi::Components::new);
@@ -387,6 +392,7 @@ fn anonymous_path(path: &str) -> bool {
         path,
         "/auth/signup-options"
             | "/api/v1/conformance"
+            | "/api/v1/agui/capabilities"
             | "/api/v1/triggers/public/{public_id}"
             | "/api/v1/triggers/public/{public_id}/badge.svg"
     )

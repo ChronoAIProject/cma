@@ -7,8 +7,9 @@ use layer1_public::rest::{agent_router, AgentRoutesState};
 use layer2_core::profiles::{AgentProfileStore, ProfileUseRecorder};
 use layer2_core::sandbox::store::{AgentReadStore, AgentServiceStore};
 use layer2_core::sandbox::{
-    AgentOperationService, AgentOperationStore, AgentReadService, AgentRuntimeRegistry,
-    AgentService, Sandbox, SandboxResourceReadError, SandboxResourceReader, SandboxResourceReading,
+    AgentContextService, AgentOperationService, AgentOperationStore, AgentReadService,
+    AgentRuntimeRegistry, AgentService, AgentUpdateRecorder, Sandbox, SandboxResourceReadError,
+    SandboxResourceReader, SandboxResourceReading,
 };
 use layer2_core::{OperationStore, RuntimeCapabilities};
 use layer3_adapter::{AdapterError, RuntimeHandle, SandboxAdapter};
@@ -63,7 +64,26 @@ impl AgentProjectionServices {
             Arc::clone(&self.operations),
             operation_records,
         );
-        Router::new().merge(agent_router(agent_routes))
+        Router::new()
+            .merge(agent_router(agent_routes))
+            .merge(layer1_public::pty::router(self.reads.clone()))
+    }
+
+    pub(crate) fn conversation_router(
+        &self,
+        context: Arc<AgentContextService>,
+        updates: Arc<dyn AgentUpdateRecorder>,
+    ) -> Router {
+        let state = layer1_public::AgentConversationState::new(
+            self.reads.clone(),
+            self.operations.clone(),
+            context,
+        )
+        .with_updates(updates);
+        layer1_public::agui::router(state.clone())
+            .merge(layer1_public::responses::router(state))
+            .merge(layer1_public::mcp::router())
+            .merge(layer1_public::a2a::router())
     }
 }
 

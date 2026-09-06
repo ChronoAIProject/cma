@@ -6,8 +6,8 @@ use axum::{extract::DefaultBodyLimit, Router};
 use layer1_public::rest::{hierarchy_router, profiles_router, HierarchyState, ProfilesState};
 use layer2_core::{
     sandbox::{
-        HierarchyReadService, SandboxOperatorService, SandboxService, StoredSandboxRetirement,
-        WorkspaceService,
+        AgentContextService, HierarchyReadService, SandboxOperatorService, SandboxService,
+        StoredSandboxRetirement, WorkspaceService,
     },
     ActivityService, OperationStore, PlatformSettingsService, UserDirectory,
 };
@@ -204,9 +204,17 @@ impl ControlPlaneComposition {
             worker_holder,
         })?;
         let (trigger_routes, launch_scheduler) = trigger.into_parts();
+        let context = AgentContextService::new(
+            sandbox_service,
+            workspace_service,
+            projections.agents(),
+            stores.sandbox_profiles.clone(),
+            settings,
+        );
         let resource_routes = profiles_router(profiles)
             .merge(hierarchy_router(hierarchy))
             .merge(projections.router(Arc::clone(&operations)))
+            .merge(projections.conversation_router(context, sandbox_lifecycle.updates()))
             .merge(trigger_routes)
             .merge(layer1_public::rest::admin::router(admin));
         let public = super::rest_router(resource_routes)

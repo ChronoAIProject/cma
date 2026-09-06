@@ -211,7 +211,7 @@ fn every_trigger_launch_and_connection_operation_is_documented() {
 }
 
 #[test]
-fn only_the_four_public_operations_are_anonymous() {
+fn only_public_discovery_and_previews_are_anonymous() {
     let document = serde_json::to_value(document()).expect("OpenAPI serializes");
     let authenticated = serde_json::json!([
         {"bearerAuth": []},
@@ -236,6 +236,7 @@ fn only_the_four_public_operations_are_anonymous() {
     assert_eq!(
         anonymous,
         BTreeSet::from([
+            "get /api/v1/agui/capabilities".to_owned(),
             "get /api/v1/conformance".to_owned(),
             "get /api/v1/triggers/public/{public_id}".to_owned(),
             "get /api/v1/triggers/public/{public_id}/badge.svg".to_owned(),

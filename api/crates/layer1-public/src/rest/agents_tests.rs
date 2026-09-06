@@ -3,6 +3,9 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+mod conversation_fixtures;
+pub(crate) use conversation_fixtures::conversation_fixture;
+
 use async_trait::async_trait;
 use axum::{
     body::{to_bytes, Body, Bytes},
@@ -368,7 +371,12 @@ fn workspace(id: &str, sandbox_id: &str, owner: &str) -> Workspace {
     }
 }
 
-fn seeded_agent(id: &str, status: AgentStatus, last_seq: u64, active_turn: Option<u64>) -> Agent {
+pub(crate) fn seeded_agent(
+    id: &str,
+    status: AgentStatus,
+    last_seq: u64,
+    active_turn: Option<u64>,
+) -> Agent {
     Agent {
         id: AgentId(id.into()),
         worktree_id: WorktreeId(format!("wkt_{id}")),
@@ -425,7 +433,7 @@ fn seeded_worktree(agent: &Agent) -> Worktree {
     }
 }
 
-async fn insert_agent(
+pub(crate) async fn insert_agent(
     store: &InMemorySandboxStore,
     agent: Agent,
     mut kinds: Vec<AgentLogKind>,
@@ -458,7 +466,7 @@ async fn insert_agent(
     agent
 }
 
-fn request(
+pub(crate) fn request(
     method: Method,
     path: &str,
     subject: &str,
@@ -484,7 +492,7 @@ fn request(
     request
 }
 
-async fn response(router: &Router, request: Request<Body>) -> (StatusCode, Bytes) {
+pub(crate) async fn response(router: &Router, request: Request<Body>) -> (StatusCode, Bytes) {
     let response = router.clone().oneshot(request).await.unwrap();
     let status = response.status();
     let body = to_bytes(response.into_body(), 2 * 1_024 * 1_024)
@@ -493,7 +501,7 @@ async fn response(router: &Router, request: Request<Body>) -> (StatusCode, Bytes
     (status, body)
 }
 
-async fn json_response(router: &Router, request: Request<Body>) -> (StatusCode, Value) {
+pub(crate) async fn json_response(router: &Router, request: Request<Body>) -> (StatusCode, Value) {
     let (status, bytes) = response(router, request).await;
     let body = serde_json::from_slice(&bytes)
         .unwrap_or_else(|error| panic!("response {status} was not JSON: {error}"));
