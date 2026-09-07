@@ -8,6 +8,7 @@ use mongodb::Client;
 
 use super::*;
 use crate::store::sandbox_maintenance::mongo_integration_tests::{database, fixture};
+use layer2_core::sandbox::AgentLogKind;
 
 const NOW: &str = "2026-09-05T00:30:00Z";
 
