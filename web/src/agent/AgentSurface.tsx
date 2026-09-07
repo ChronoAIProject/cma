@@ -124,7 +124,10 @@ export function AgentSurface({
       : (conversation.livePausedNotice ?? undefined);
   const running =
     status === 'working' || conversation.activeRunId !== undefined || controller.pending === 'send';
-  const approvalBusy = controller.pending === 'approval';
+  const approvalBusy = controller.pending === 'approval' || state.historyUnavailable === true;
+  const issue = state.historyUnavailable
+    ? 'Conversation activity is unavailable. Reconnecting.'
+    : controller.actionError;
   const preparation = agentProgress({ ...detail, status }, state.sandboxEvents ?? []);
 
   return (
@@ -159,15 +162,17 @@ export function AgentSurface({
         </div>
       </header>
 
-      {controller.actionError === undefined ? null : (
-        <div className="agent-action-error" role="alert">
-          <span>{controller.actionError}</span>
-          <Button
-            size="sm"
-            icon={<IconCloseOutline16 />}
-            aria-label="Dismiss error"
-            onClick={controller.clearActionError}
-          />
+      {issue === undefined ? null : (
+        <div className="agent-action-error" role={state.historyUnavailable ? 'status' : 'alert'}>
+          <span>{issue}</span>
+          {state.historyUnavailable ? null : (
+            <Button
+              size="sm"
+              icon={<IconCloseOutline16 />}
+              aria-label="Dismiss error"
+              onClick={controller.clearActionError}
+            />
+          )}
         </div>
       )}
 
@@ -191,7 +196,10 @@ export function AgentSurface({
         status={status}
         pausedNotice={pausedNotice}
         running={running}
-        busy={controller.pending !== undefined && controller.pending !== 'send'}
+        busy={
+          state.historyUnavailable === true ||
+          (controller.pending !== undefined && controller.pending !== 'send')
+        }
         onSend={controller.send}
         onStop={controller.interrupt}
       />

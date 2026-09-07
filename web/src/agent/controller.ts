@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { ApiError, TransportError } from '@chronoai/cma-sdk';
 import type { CmaWebClient } from '../api/client';
 import { CommandKeys } from '../api/client';
 import type {
@@ -23,6 +24,7 @@ export interface ReadyAgent {
   readonly workspace: WorkspaceDetail;
   readonly conversation: ConversationState;
   readonly sandboxEvents?: readonly SandboxEvent[];
+  readonly historyUnavailable?: boolean;
 }
 
 export type AgentResourceState =
@@ -60,10 +62,15 @@ function withUsage(conversation: ConversationState, usage: AgentUsage): Conversa
   return { ...conversation, usage };
 }
 
+function transientReadFailure(error: unknown): boolean {
+  return (error instanceof ApiError && error.isRetryable) || error instanceof TransportError;
+}
+
 export async function loadAgent(
   client: CmaWebClient,
   agentId: string,
   signal: AbortSignal,
+  allowIncompleteHistory = false,
 ): Promise<ReadyAgent & { readonly durableEvents: readonly AgentEvent[] }> {
   const [detail, transcript, usage] = await Promise.all([
     client.readAgent(agentId, { signal }),
@@ -82,8 +89,16 @@ export async function loadAgent(
   const durableEvents: AgentEvent[] = [];
   let cursor: number | undefined = 0;
   const seen = new Set<number>([0]);
+  let historyUnavailable = false;
   do {
-    const page = await client.readAgentEvents(agentId, { cursor, signal });
+    let page;
+    try {
+      page = await client.readAgentEvents(agentId, { cursor, signal });
+    } catch (error) {
+      if (signal.aborted || !allowIncompleteHistory || !transientReadFailure(error)) throw error;
+      historyUnavailable = true;
+      break;
+    }
     durableEvents.push(...page.items);
     conversation = page.items.reduce(foldAgentEvent, conversation);
     const nextCursor = page.next;
@@ -98,7 +113,7 @@ export async function loadAgent(
   conversation = mergeTranscriptSnapshot(conversation, snapshot, conversation.cursor, true);
   if (usage.throughSeq >= (conversation.usage?.throughSeq ?? 0))
     conversation = withUsage(conversation, usage);
-  return { detail, workspace, conversation, durableEvents };
+  return { detail, workspace, conversation, durableEvents, historyUnavailable };
 }
 
 function refreshConversation(
@@ -170,7 +185,7 @@ export function useAgentController(
         return;
       }
       setState({ status: 'loading' });
-      void loadAgent(client, agentId, controller.signal)
+      void loadAgent(client, agentId, controller.signal, true)
         .then((ready) => {
           if (controller.signal.aborted) return;
           liveCursor.current = ready.conversation.cursor;
@@ -186,16 +201,46 @@ export function useAgentController(
     };
   }, [agentId, applyLive, client, revision]);
 
+  const historyUnavailable =
+    state.status === 'ready' && state.detail.id === agentId && state.historyUnavailable === true;
+  useEffect(() => {
+    if (!historyUnavailable || agentId === undefined) return;
+    const request = new AbortController();
+    let timer: ReturnType<typeof setTimeout>;
+    let retryDelay = 5000;
+    const recover = async () => {
+      try {
+        const ready = await loadAgent(client, agentId, request.signal);
+        if (request.signal.aborted) return;
+        liveCursor.current = ready.conversation.cursor;
+        setState({ status: 'ready', ...ready });
+      } catch (error) {
+        if (request.signal.aborted) return;
+        if (transientReadFailure(error)) {
+          retryDelay = Math.min(retryDelay * 2, 30000);
+          timer = setTimeout(() => void recover(), retryDelay);
+        } else setState({ status: 'error', message: errorMessage(error) });
+      }
+    };
+    timer = setTimeout(() => void recover(), 5000);
+    return () => {
+      request.abort();
+      clearTimeout(timer);
+    };
+  }, [agentId, client, historyUnavailable]);
+
   const replayEnabled =
     agentId !== undefined &&
     state.status === 'ready' &&
     state.detail.id === agentId &&
+    !historyUnavailable &&
     pending !== 'send' &&
     pending !== 'approval';
 
   const provisioning =
     state.status === 'ready' &&
     state.detail.id === agentId &&
+    !historyUnavailable &&
     (state.detail.status === 'starting' ||
       (state.detail.firstMessage !== undefined &&
         !['completed', 'failed', 'recovery_required'].includes(state.detail.firstMessage.state)));
@@ -287,7 +332,7 @@ export function useAgentController(
       approval: { readonly id: string; readonly decision: ApprovalDecision } | string,
       onAccepted?: () => void,
     ) => {
-      if (agentId === undefined || actionAbort.current !== undefined) return;
+      if (agentId === undefined || actionAbort.current !== undefined || historyUnavailable) return;
       replayAbort.current?.abort();
       const controller = new AbortController();
       actionAbort.current = controller;
@@ -336,7 +381,7 @@ export function useAgentController(
         }
       }
     },
-    [agentId, applyLive, client],
+    [agentId, applyLive, client, historyUnavailable],
   );
 
   const command = useCallback(

@@ -22,6 +22,156 @@ function readableClient(overrides = {}) {
 }
 
 describe('Agent controller loading', () => {
+  it('keeps the authorized transcript and partial tools visible after a failed event page, then retries from zero', async () => {
+    vi.useFakeTimers();
+    let failSecondPage = true;
+    const events: AgentEvent[] = [
+      {
+        seq: 1,
+        appendedAt: AGENT_DETAIL.createdAt,
+        kind: { type: 'turn_started', turn_sequence: 1 },
+      },
+      {
+        seq: 2,
+        appendedAt: AGENT_DETAIL.createdAt,
+        kind: { type: 'tool_call_started', call_id: 'read', title: 'Read files' },
+      },
+      {
+        seq: 3,
+        appendedAt: AGENT_DETAIL.createdAt,
+        kind: { type: 'tool_call_updated', call_id: 'read', status: 'completed' },
+      },
+      {
+        seq: 4,
+        appendedAt: AGENT_DETAIL.createdAt,
+        kind: { type: 'turn_completed', turn_sequence: 1 },
+      },
+    ];
+    const readAgentEvents = vi.fn(async (_id: string, options: { cursor: number }) => {
+      if (options.cursor === 0) return { items: events.slice(0, 2), next: 2 };
+      if (failSecondPage)
+        throw new ApiError(
+          503,
+          'Authority temporarily unavailable',
+          'auth_temporarily_unavailable',
+        );
+      return { items: events.slice(2) };
+    });
+    const client = readableClient({ readAgentEvents, runAgent: vi.fn() });
+    const { result, unmount } = renderHook(() => useAgentController(client, 'agt_1'));
+    await act(() => vi.advanceTimersByTimeAsync(0));
+    expect(result.current.state).toMatchObject({
+      status: 'ready',
+      historyUnavailable: true,
+      conversation: {
+        messages: expect.arrayContaining([
+          expect.objectContaining({ content: 'The repository is ready.' }),
+        ]),
+        toolCalls: [expect.objectContaining({ id: 'read', status: 'running' })],
+      },
+    });
+    expect(client.replayAgent).not.toHaveBeenCalled();
+    await act(() => result.current.send('Must wait'));
+    expect(client.runAgent).not.toHaveBeenCalled();
+    failSecondPage = false;
+    await act(() => vi.advanceTimersByTimeAsync(5000));
+    expect(readAgentEvents.mock.calls.map((call) => call[1].cursor)).toEqual([0, 2, 0, 2]);
+    expect(result.current.state).toMatchObject({
+      status: 'ready',
+      historyUnavailable: false,
+      conversation: {
+        cursor: 4,
+        toolCalls: [expect.objectContaining({ id: 'read', status: 'completed' })],
+      },
+    });
+    expect(client.replayAgent).toHaveBeenCalledWith('agt_1', expect.objectContaining({ after: 4 }));
+    unmount();
+  });
+
+  it.each([401, 403])(
+    'does not mask event-history denial %s behind the transcript',
+    async (status) => {
+      const client = readableClient({
+        readAgentEvents: vi.fn().mockRejectedValue(new ApiError(status, 'Denied')),
+      });
+      const { result } = renderHook(() => useAgentController(client, 'agt_1'));
+      await waitFor(() =>
+        expect(result.current.state).toEqual({ status: 'error', message: 'Denied' }),
+      );
+    },
+  );
+
+  it.each([401, 403])('fails closed when a recovery read changes to denial %s', async (status) => {
+    vi.useFakeTimers();
+    const client = readableClient({
+      readAgentEvents: vi
+        .fn()
+        .mockRejectedValueOnce(new ApiError(503, 'Unavailable'))
+        .mockRejectedValue(new ApiError(status, 'Denied')),
+    });
+    const { result } = renderHook(() => useAgentController(client, 'agt_1'));
+    await act(() => vi.advanceTimersByTimeAsync(0));
+    expect(result.current.state).toMatchObject({ status: 'ready', historyUnavailable: true });
+    await act(() => vi.advanceTimersByTimeAsync(5000));
+    expect(result.current.state).toEqual({ status: 'error', message: 'Denied' });
+    expect(client.replayAgent).not.toHaveBeenCalled();
+  });
+
+  it('backs off repeated transient recovery failures and cancels retries on unmount', async () => {
+    vi.useFakeTimers();
+    const readAgentEvents = vi.fn().mockRejectedValue(new ApiError(503, 'Unavailable'));
+    const client = readableClient({ readAgentEvents });
+    const { result, unmount } = renderHook(() => useAgentController(client, 'agt_1'));
+    await act(() => vi.advanceTimersByTimeAsync(0));
+    await act(() => vi.advanceTimersByTimeAsync(5000));
+    expect(readAgentEvents).toHaveBeenCalledTimes(2);
+    await act(() => vi.advanceTimersByTimeAsync(9999));
+    expect(readAgentEvents).toHaveBeenCalledTimes(2);
+    await act(() => vi.advanceTimersByTimeAsync(1));
+    expect(readAgentEvents).toHaveBeenCalledTimes(3);
+    expect(result.current.state).toMatchObject({ status: 'ready', historyUnavailable: true });
+    unmount();
+    await act(() => vi.advanceTimersByTimeAsync(60000));
+    expect(readAgentEvents).toHaveBeenCalledTimes(3);
+  });
+
+  it('ignores a late recovery result after switching Agents', async () => {
+    vi.useFakeTimers();
+    let resolvePage: ((page: { items: readonly AgentEvent[] }) => void) | undefined;
+    const readAgentEvents = vi
+      .fn()
+      .mockRejectedValueOnce(new ApiError(503, 'Unavailable'))
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolvePage = resolve;
+          }),
+      )
+      .mockResolvedValue({ items: [] });
+    const client = readableClient({
+      readAgent: async (id: string) => ({ ...AGENT_DETAIL, id }),
+      readAgentTranscript: async (agentId: string) => ({ ...AGENT_TRANSCRIPT, agentId }),
+      readAgentUsage: async (agentId: string) => ({ ...AGENT_USAGE, agentId }),
+      readAgentEvents,
+    });
+    const { result, rerender } = renderHook(({ id }) => useAgentController(client, id), {
+      initialProps: { id: 'agt_1' },
+    });
+    await act(() => vi.advanceTimersByTimeAsync(0));
+    await act(() => vi.advanceTimersByTimeAsync(5000));
+    rerender({ id: 'agt_2' });
+    await act(() => vi.advanceTimersByTimeAsync(0));
+    await act(async () => {
+      resolvePage?.({ items: [] });
+    });
+    expect(result.current.state).toMatchObject({
+      status: 'ready',
+      detail: { id: 'agt_2' },
+      historyUnavailable: false,
+    });
+    expect(readAgentEvents.mock.calls[1]?.[1].signal.aborted).toBe(true);
+  });
+
   it.each(['idempotency_in_flight', 'idempotency_recovery_required'])(
     'retains an unsettled %s lifecycle command key',
     async (code) => {
