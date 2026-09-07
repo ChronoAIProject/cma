@@ -1,12 +1,15 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import type { AgentStatus } from '../api/types';
 import { Button } from '../ui/Button';
 import { IconSendOutline16, IconStopFill16 } from '../ui/icons';
+import type { SandboxInputAvailability } from './sandboxInput';
 
 interface ComposerProps {
   readonly status: AgentStatus;
   readonly pausedNotice?: string;
   readonly running: boolean;
+  readonly starting?: boolean;
+  readonly inputAvailability: SandboxInputAvailability;
   readonly busy: boolean;
   readonly onSend: (content: string, onAccepted: () => void) => Promise<void> | void;
   readonly onStop: () => Promise<void> | void;
@@ -31,10 +34,24 @@ function fit(field: HTMLTextAreaElement): void {
   field.style.height = `${String(field.scrollHeight)}px`;
 }
 
-export function Composer({ status, pausedNotice, running, busy, onSend, onStop }: ComposerProps) {
+export function Composer({
+  status,
+  pausedNotice,
+  running,
+  starting = false,
+  inputAvailability,
+  busy,
+  onSend,
+  onStop,
+}: ComposerProps) {
   const [content, setContent] = useState('');
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const sending = useRef(false);
+  const noticeId = useId();
+  const inputBlocked = !inputAvailability.allowed;
+  const notice = inputAvailability.notice ?? pausedNotice;
+  const hasNotice =
+    starting || notice !== undefined || inputAvailability.savingStartedAt !== undefined;
   const usable = canMessage(status);
 
   useEffect(() => {
@@ -61,7 +78,8 @@ export function Composer({ status, pausedNotice, running, busy, onSend, onStop }
 
   const submit = () => {
     const message = content.trim();
-    if (message === '' || !usable || busy || running || sending.current) return;
+    if (message === '' || !usable || busy || running || starting || inputBlocked || sending.current)
+      return;
     const draft = content;
     sending.current = true;
     void Promise.resolve(
@@ -73,9 +91,20 @@ export function Composer({ status, pausedNotice, running, busy, onSend, onStop }
 
   return (
     <div className="agent-composer">
-      {pausedNotice === undefined ? null : (
-        <p className="agent-composer__notice" role="status">
-          {pausedNotice}
+      {!hasNotice ? null : (
+        <p id={noticeId} className="agent-composer__notice" role="status">
+          {starting ? 'Starting. ' : null}
+          {notice}
+          {inputAvailability.savingStartedAt === undefined ? null : (
+            <>
+              {' '}
+              Saving started{' '}
+              <time dateTime={inputAvailability.savingStartedAt}>
+                {new Date(inputAvailability.savingStartedAt).toLocaleString()}
+              </time>
+              .
+            </>
+          )}
         </p>
       )}
       <form
@@ -96,6 +125,7 @@ export function Composer({ status, pausedNotice, running, busy, onSend, onStop }
             rows={1}
             value={content}
             disabled={!usable}
+            aria-describedby={hasNotice ? noticeId : undefined}
             placeholder={placeholder(status)}
             onChange={(event) => {
               setContent(event.target.value);
@@ -127,7 +157,8 @@ export function Composer({ status, pausedNotice, running, busy, onSend, onStop }
             icon={<IconSendOutline16 />}
             aria-label="Send message"
             title="Send message"
-            disabled={!usable || busy || content.trim() === ''}
+            disabled={!usable || busy || starting || inputBlocked || content.trim() === ''}
+            aria-describedby={hasNotice ? noticeId : undefined}
           />
         )}
       </form>

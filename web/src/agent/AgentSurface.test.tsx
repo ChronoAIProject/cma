@@ -78,6 +78,7 @@ function controller(
   overrides: Partial<AgentController> = {},
 ): AgentController {
   return {
+    inputAvailability: { allowed: true },
     state:
       state.status === 'ready' && conversation !== undefined ? { ...state, conversation } : state,
     reload: vi.fn(),
@@ -90,6 +91,56 @@ function controller(
     ...overrides,
   };
 }
+
+it('holds approvals while saving and distinguishes pending admission from an actual active turn', async () => {
+  const conversation: ConversationState = {
+    ...conversationFromTranscript(AGENT_TRANSCRIPT),
+    approvals: [{ id: 'approval_1', reason: 'cma:write', message: 'Apply the patch' }],
+  };
+  const approve = vi.fn();
+  const interrupt = vi.fn();
+  const draw = (overrides: Partial<AgentController>, activeRunId?: string) => (
+    <AgentSurface
+      agentId="agt_1"
+      controller={controller(
+        {
+          status: 'ready',
+          detail: { ...AGENT_DETAIL, status: 'working' },
+          workspace: workspaceFixture(),
+          conversation: { ...conversation, activeRunId },
+        },
+        undefined,
+        { approve, interrupt, ...overrides },
+      )}
+      detailsOpen={false}
+      onDetailsOpenChange={vi.fn()}
+      onNavigate={vi.fn()}
+    />
+  );
+  const inputAvailability = {
+    allowed: false,
+    notice: 'Saving progress. Messages will be available when saving finishes.',
+    savingStartedAt: '2026-09-08T00:00:00Z',
+  };
+  const { rerender } = render(draw({ inputAvailability }));
+  expect(await screen.findByText('Resources unavailable')).toBeInTheDocument();
+  const draft = screen.getByRole('textbox', { name: 'Message' });
+  fireEvent.change(draft, { target: { value: 'Keep my draft' } });
+  expect(draft).toBeEnabled();
+  expect(screen.getByRole('button', { name: 'Allow' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: 'Send message' })).toBeDisabled();
+  expect(screen.queryByRole('button', { name: 'Stop response' })).not.toBeInTheDocument();
+  rerender(draw({ pending: 'send', inputAvailability: { allowed: true } }));
+  expect(screen.getByText('Starting', { exact: true })).toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Stop response' })).not.toBeInTheDocument();
+  expect(draft).toHaveValue('Keep my draft');
+  rerender(draw({ pending: 'send', inputAvailability }, 'run-active'));
+  expect(screen.getByRole('button', { name: 'Stop response' })).toBeEnabled();
+  fireEvent.click(screen.getByRole('button', { name: 'Stop response' }));
+  expect(interrupt).toHaveBeenCalledOnce();
+  expect(approve).not.toHaveBeenCalled();
+  expect(screen.getByText('The repository is ready.')).toBeInTheDocument();
+});
 
 it('focuses the route heading while loading, then the composer for a usable Agent', async () => {
   const { rerender } = render(

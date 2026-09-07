@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AgentEvent, AgentLiveEvent, AgentTranscript } from '../api/types';
 import { testClient } from '../test/client';
 import { AGENT_DETAIL, AGENT_TRANSCRIPT, AGENT_USAGE } from '../test/agent';
-import { workspaceFixture } from '../test/hierarchy';
+import { sandboxFixture, workspaceFixture } from '../test/hierarchy';
 import { loadAgent, useAgentController } from './controller';
 import { ApiError } from '@chronoai/cma-sdk';
 
@@ -12,6 +12,7 @@ afterEach(() => vi.useRealTimers());
 function readableClient(overrides = {}) {
   return testClient({
     readAgent: vi.fn().mockResolvedValue(AGENT_DETAIL),
+    readSandbox: vi.fn().mockResolvedValue(sandboxFixture()),
     readWorkspace: vi.fn().mockResolvedValue(workspaceFixture()),
     readAgentTranscript: vi.fn().mockResolvedValue(AGENT_TRANSCRIPT),
     readAgentUsage: vi.fn().mockResolvedValue(AGENT_USAGE),

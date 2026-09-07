@@ -122,9 +122,12 @@ export function AgentSurface({
     conversation.livePausedNotice === undefined
       ? detail.pausedNotice
       : (conversation.livePausedNotice ?? undefined);
-  const running =
-    status === 'working' || conversation.activeRunId !== undefined || controller.pending === 'send';
-  const approvalBusy = controller.pending === 'approval' || state.historyUnavailable === true;
+  const running = conversation.activeRunId !== undefined;
+  const starting = controller.pending === 'send' && !running;
+  const approvalBusy =
+    controller.pending === 'approval' ||
+    state.historyUnavailable === true ||
+    !controller.inputAvailability.allowed;
   const issue = state.historyUnavailable
     ? 'Conversation activity is unavailable. Reconnecting.'
     : controller.actionError;
@@ -146,8 +149,8 @@ export function AgentSurface({
               {title}
             </h1>
             <span className="agent-header__status">
-              <StateDot state={statusDot(status)} size={9} />
-              {statusLabel(status)}
+              <StateDot state={starting ? 'ongoing' : statusDot(status)} size={9} />
+              {starting ? 'Starting' : statusLabel(status)}
             </span>
           </div>
           <Button
@@ -196,6 +199,8 @@ export function AgentSurface({
         status={status}
         pausedNotice={pausedNotice}
         running={running}
+        starting={starting}
+        inputAvailability={controller.inputAvailability}
         busy={
           state.historyUnavailable === true ||
           (controller.pending !== undefined && controller.pending !== 'send')
