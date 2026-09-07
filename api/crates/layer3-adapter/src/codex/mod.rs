@@ -52,7 +52,7 @@ impl HostedAgentRuntime for CodexRuntime {
     fn open_settings(&self, request: &AgentOpenRequest) -> crate::Result<HostedAgentOpenSettings> {
         let permission_mode = match request.options.permission {
             crate::PermissionLevel::Guarded => "read-only",
-            crate::PermissionLevel::Autonomous => "agent",
+            crate::PermissionLevel::Autonomous => "agent-full-access",
         };
         Ok(HostedAgentOpenSettings {
             permission_mode: Some(permission_mode.into()),

@@ -89,26 +89,29 @@ export function Composer({ status, pausedNotice, running, busy, onSend, onStop }
         <label className="sr-only" htmlFor="agent-message">
           Message
         </label>
-        <textarea
-          ref={inputRef}
-          id="agent-message"
-          rows={1}
-          value={content}
-          disabled={!usable}
-          placeholder={placeholder(status)}
-          onChange={(event) => {
-            setContent(event.target.value);
-          }}
-          onKeyDown={(event) => {
-            if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
-              event.preventDefault();
-              submit();
-            }
-          }}
-        />
+        <div className="agent-composer__capsule">
+          <textarea
+            ref={inputRef}
+            id="agent-message"
+            rows={1}
+            value={content}
+            disabled={!usable}
+            placeholder={placeholder(status)}
+            onChange={(event) => {
+              setContent(event.target.value);
+            }}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
+                event.preventDefault();
+                submit();
+              }
+            }}
+          />
+          <div className="agent-composer__row" />
+        </div>
         {running ? (
           <Button
-            placement="agent-composer__submit"
+            placement="agent-composer__submit agent-composer__submit--stop"
             variant="primary"
             icon={<IconStopFill16 />}
             aria-label="Stop response"

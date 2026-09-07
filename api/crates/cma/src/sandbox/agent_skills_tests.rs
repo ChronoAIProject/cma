@@ -155,7 +155,7 @@ fn material(id: &str, version: &str, hash: &str) -> serde_json::Value {
     json!({
         "data": {
             "guid": id,
-            "name": "ignored-display-name",
+            "name": id,
             "version": version,
             "skillHash": hash,
             "metadata": {"ignored": true}
@@ -317,6 +317,7 @@ async fn persisted_material_rebuilds_current_locators_without_metadata_or_tokens
     let material = vec![ResolvedAgentSkill {
         source: SkillSource::Ornn,
         id: layer2_core::SkillId::new("skl_persisted"),
+        name: None,
         version: "2.10".into(),
         archive_sha256: "b".repeat(64),
     }];
@@ -492,6 +493,29 @@ async fn anonymous_mode_resolves_public_material_without_authorization() {
 }
 
 #[tokio::test]
+async fn selected_baseline_skills_resolve_and_retain_exact_archive_pins() {
+    let registry = Registry::start().await;
+    let ids = ["nyxid", "ornn-agent-manual-cli"];
+    for id in ids {
+        registry.reply(id, "", Reply::json(material(id, "2.0", &"b".repeat(64))));
+    }
+    let resolver = resolver(&registry, Some(TestCredentials::present()));
+    let references = ids.map(|id| reference(id, None));
+    let resolved = resolver.resolve(&sandbox(), &references).await.unwrap();
+    validate_skill_selection(&references, &resolved).unwrap();
+    let runtime = resolver.runtime_skills(&resolved).unwrap();
+    for (id, skill) in ids.iter().zip(runtime) {
+        assert_eq!(skill.id, *id);
+        assert_eq!(skill.name.as_deref(), Some(*id));
+        assert_eq!(skill.version.as_deref(), Some("2.0"));
+        assert_eq!(skill.archive_sha256, "b".repeat(64));
+        assert!(skill
+            .source_url
+            .ends_with(&format!("/{id}/versions/2.0/download")));
+    }
+}
+
+#[tokio::test]
 async fn malformed_runtime_ids_fail_before_authority_is_read() {
     let registry = Registry::start().await;
     let credentials = TestCredentials::present();
@@ -502,8 +526,6 @@ async fn malformed_runtime_ids_fail_before_authority_is_read() {
         "has.dot",
         "has/slash",
         "has space",
-        "nyxid",
-        "ornn-agent-manual-cli",
         too_long.as_str(),
     ] {
         let error = resolver(&registry, Some(Arc::clone(&credentials)))

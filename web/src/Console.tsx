@@ -1,4 +1,5 @@
 import { lazy, Suspense, useCallback, useEffect, useState } from 'react';
+import { LandingCharacter } from './landing/LandingCharacter';
 import {
   useCmaClient,
   useProfileViewsClient,
@@ -195,7 +196,9 @@ export function Console({
       </section>
     ) : (
       <section className="console__empty" aria-labelledby="empty-title">
-        <p className="console__eyebrow">CMA</p>
+        <div className="brand-home brand-home--compact">
+          <LandingCharacter />
+        </div>
         <h1 id="empty-title">
           {route.kind === 'home'
             ? user.visitor

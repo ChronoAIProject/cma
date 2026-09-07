@@ -438,6 +438,7 @@ impl AgentSkillResolver for ScriptedSkills {
                     .map(|skill| ResolvedAgentSkill {
                         source: SkillSource::Ornn,
                         id: SkillId::new(skill.id),
+                        name: skill.name,
                         version: skill.version.expect("resolved literal"),
                         archive_sha256: skill.archive_sha256,
                     })
@@ -460,6 +461,7 @@ impl AgentSkillResolver for ScriptedSkills {
             .zip(locators)
             .map(|(skill, source_url)| AgentSkill {
                 id: skill.id.as_str().to_owned(),
+                name: skill.name.clone(),
                 version: Some(skill.version.clone()),
                 archive_sha256: skill.archive_sha256.clone(),
                 source_url,
@@ -896,6 +898,7 @@ async fn transient_skill_resolution_retries_then_materializes_exact_archive() {
     };
     let material = AgentSkill {
         id: "research".into(),
+        name: None,
         version: Some("7.0".into()),
         archive_sha256: "e".repeat(64),
         source_url: "https://ornn.example/skills/research/7.0.tar.gz".into(),
@@ -955,6 +958,7 @@ async fn lost_home_reply_retries_with_a_rotated_locator_for_the_same_archive() {
     };
     let first = AgentSkill {
         id: "research".into(),
+        name: None,
         version: Some("7.0".into()),
         archive_sha256: "e".repeat(64),
         source_url: "https://ornn.example/temporary/a.tar.gz".into(),

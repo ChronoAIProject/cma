@@ -76,6 +76,8 @@ pub struct RuntimeOptions {
 pub struct AgentSkill {
     pub id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub version: Option<String>,
     pub archive_sha256: String,
     pub source_url: String,
@@ -341,6 +343,14 @@ fn skills_field(digest: &mut Sha256, skills: &[AgentSkill]) {
         field(digest, &skill.id);
         optional_field(digest, skill.version.as_deref());
         field(digest, &skill.archive_sha256);
+    }
+    // Preserve existing unnamed intents while binding all newly resolved names.
+    if skills.iter().any(|skill| skill.name.is_some()) {
+        field(digest, "skill-names-v1");
+        count(digest, skills.len());
+        for skill in skills {
+            optional_field(digest, skill.name.as_deref());
+        }
     }
 }
 

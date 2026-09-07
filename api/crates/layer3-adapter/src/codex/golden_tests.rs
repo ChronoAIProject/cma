@@ -23,7 +23,7 @@ fn options(
 fn golden(own_credential: bool, permission: PermissionLevel, effort: ReasoningEffort) -> String {
     let (approval, sandbox) = match permission {
         PermissionLevel::Guarded => ("on-request", "read-only"),
-        PermissionLevel::Autonomous => ("on-failure", "workspace-write"),
+        PermissionLevel::Autonomous => ("never", "danger-full-access"),
     };
     let prefix = format!(
         "model = \"gpt-golden\"\n\
@@ -89,6 +89,7 @@ fn agent_home_contains_exact_profile_files_shared_auth_and_skills() {
         prompt,
         vec![AgentSkill {
             id: "proof-review".into(),
+            name: None,
             version: Some("v3".into()),
             archive_sha256: "a".repeat(64),
             source_url: "https://ornn.example/proof-review.tgz".into(),
@@ -116,6 +117,79 @@ fn agent_home_contains_exact_profile_files_shared_auth_and_skills() {
             .any(|link| link.path == format!("skills/{baseline}")));
     }
     assert_eq!(plan.skills, request.skills);
+}
+
+#[test]
+fn selected_baseline_skills_use_pinned_archives_without_duplicate_fallback_links() {
+    for selected in [vec!["nyxid"], vec!["nyxid", "ornn-agent-manual-cli"]] {
+        let request = AgentHomeRequest::new(
+            "agent:agent-7:home:create:v1",
+            options(false, PermissionLevel::Autonomous, ReasoningEffort::XHigh),
+            "Use the selected skill revisions.",
+            selected
+                .iter()
+                .map(|id| AgentSkill {
+                    id: (*id).into(),
+                    name: None,
+                    version: Some("2.0".into()),
+                    archive_sha256: "a".repeat(64),
+                    source_url: format!("https://ornn.example/{id}.tgz"),
+                })
+                .collect(),
+        );
+        let plan = render_agent_home(&request, &CodexConfig::default()).unwrap();
+        assert_eq!(plan.skills, request.skills);
+        for id in ["nyxid", "ornn-agent-manual-cli"] {
+            assert_eq!(
+                plan.symlinks
+                    .iter()
+                    .any(|link| link.path == format!("skills/{id}")),
+                !selected.contains(&id)
+            );
+        }
+        let mut duplicate = request;
+        duplicate.skills.push(duplicate.skills[0].clone());
+        assert!(render_agent_home(&duplicate, &CodexConfig::default()).is_err());
+    }
+}
+
+#[test]
+fn registry_skill_names_replace_fallbacks_even_when_ids_are_opaque() {
+    let skills = ["nyxid", "ornn-agent-manual-cli"]
+        .into_iter()
+        .enumerate()
+        .map(|(index, name)| AgentSkill {
+            id: format!("registry-id-{index}"),
+            name: Some(name.into()),
+            version: Some("3.0".into()),
+            archive_sha256: "c".repeat(64),
+            source_url: format!("https://ornn.example/registry-id-{index}.zip"),
+        })
+        .collect();
+    let request = AgentHomeRequest::new(
+        "agent:agent-7:home:create:v1",
+        options(false, PermissionLevel::Autonomous, ReasoningEffort::XHigh),
+        "",
+        skills,
+    );
+    let plan = render_agent_home(&request, &CodexConfig::default()).unwrap();
+    assert_eq!(plan.symlinks.len(), 1);
+    assert_eq!(plan.symlinks[0].path, "auth.json");
+    for (installed, selected) in plan.skills.iter().zip(&request.skills) {
+        assert_eq!(installed.id, selected.id);
+        assert_eq!(installed.version, selected.version);
+        assert_eq!(installed.archive_sha256, selected.archive_sha256);
+        assert_eq!(installed.source_url, selected.source_url);
+        assert_eq!(installed.name, None);
+        assert!(serde_json::to_value(installed)
+            .unwrap()
+            .get("name")
+            .is_none());
+    }
+
+    let mut duplicate_name = request;
+    duplicate_name.skills[1].name = duplicate_name.skills[0].name.clone();
+    assert!(render_agent_home(&duplicate_name, &CodexConfig::default()).is_err());
 }
 
 #[test]
@@ -149,7 +223,10 @@ fn bridge_launch_uses_per_agent_home_worktree_slot_and_acp_resume() {
 #[test]
 fn checkpoint_exclusions_are_exact_sorted_disposable_alias_roots() {
     let (adapter, _) = CodexAdapter::in_memory(CodexSandboxSpec::default());
-    assert!(adapter.checkpoint_exclusions(&[]).unwrap().is_empty());
+    assert_eq!(
+        adapter.checkpoint_exclusions(&[]).unwrap(),
+        [".codex/tmp/arg0"]
+    );
     assert_eq!(
         adapter
             .checkpoint_exclusions(&[
@@ -160,7 +237,8 @@ fn checkpoint_exclusions_are_exact_sorted_disposable_alias_roots() {
             .unwrap(),
         [
             ".cma/agents/agent-a/home/tmp/arg0",
-            ".cma/agents/agent-z/home/tmp/arg0"
+            ".cma/agents/agent-z/home/tmp/arg0",
+            ".codex/tmp/arg0"
         ]
     );
     for slot in [
@@ -268,7 +346,7 @@ fn acp_open_settings_map_permissions_and_preserve_credential_ownership() {
     };
     for (permission, expected_mode) in [
         (PermissionLevel::Guarded, "read-only"),
-        (PermissionLevel::Autonomous, "agent"),
+        (PermissionLevel::Autonomous, "agent-full-access"),
     ] {
         for own_credential in [false, true] {
             let request = AgentOpenRequest::new(

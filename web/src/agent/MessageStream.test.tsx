@@ -30,10 +30,11 @@ function conversation() {
 
 it('renders messages and Agent activity in their original stream order', () => {
   render(<MessageStream conversation={conversation()} onApproval={vi.fn()} />);
+  fireEvent.click(screen.getByRole('button', { name: /^Thinking/ }));
   const ordered = [
     'Find the issue',
-    'Reasoning',
-    'Read package',
+    'Thinking',
+    'Tool - Read package - running - ongoing',
     'Write package',
     'The issue is fixed',
   ].map((name) => screen.getByText(name));

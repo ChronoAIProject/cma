@@ -26,6 +26,7 @@ import { Landing } from './Landing';
 import { Progress } from './Progress';
 import { RepeatChoice } from './RepeatChoice';
 import './Public.css';
+import { BrandLoading } from '../landing/LandingCharacter';
 
 export type PublicRoute = Extract<AppRoute, { kind: 'public_trigger' | 'launch' }>;
 
@@ -61,7 +62,7 @@ export function PublicJourney({
               {publicCopy.signIn}
             </Button>
           ) : (
-            <p role="status">{publicCopy.loading}</p>
+            <BrandLoading label={publicCopy.loading} />
           )}
         </main>
       </div>
@@ -87,6 +88,12 @@ function Entry({
     intent?.credentialRecovery === undefined ? undefined : credentialSetupMessage,
   );
   const [busy, setBusy] = useState(false);
+  const [automatic, setAutomatic] = useState(false);
+  const entryRequest = useRef<ReturnType<PublicClient['requests']['entryIntent']> | undefined>(
+    undefined,
+  );
+  const entryApplied = useRef(false);
+  const signingIn = useRef(false);
   const [needsSignIn, setNeedsSignIn] = useState(intent?.credentialRecovery !== undefined);
   const [existing, setExisting] = useState<ExistingLaunchAgent>();
   const [revision, setRevision] = useState(0);
@@ -160,6 +167,45 @@ function Entry({
   useEffect(() => {
     if (
       preview?.availability !== 'published' ||
+      preview.always_review !== false ||
+      intent !== undefined
+    )
+      return;
+    let live = true;
+    entryRequest.current ??= client.requests.entryIntent(route.publicId);
+    void entryRequest.current.then(
+      (entry) => {
+        if (
+          !live ||
+          entryApplied.current ||
+          !entry.accepted ||
+          entry.placement_id !== route.placementId
+        )
+          return;
+        entryApplied.current = true;
+        try {
+          const selected = createIntent(route);
+          setAutomatic(true);
+          setIntent(selected);
+        } catch {
+          setError(publicCopy.storageUnavailable);
+        }
+      },
+      () => undefined,
+    );
+    return () => {
+      live = false;
+    };
+  }, [client, intent, preview?.always_review, preview?.availability, route]);
+  useEffect(() => {
+    if (!automatic || intent === undefined || state.status !== 'anonymous' || signingIn.current)
+      return;
+    signingIn.current = true;
+    void signIn(intent.path);
+  }, [automatic, intent, signIn, state.status]);
+  useEffect(() => {
+    if (
+      preview?.availability !== 'published' ||
       intent === undefined ||
       intent.credentialRecovery !== undefined ||
       owner === undefined ||
@@ -216,10 +262,23 @@ function Entry({
     <>
       {preview === undefined ? (
         error === undefined ? (
-          <p role="status">{publicCopy.loading}</p>
+          <BrandLoading label={publicCopy.loading} />
         ) : (
           <h1>{publicCopy.pageUnavailable}</h1>
         )
+      ) : automatic && error === undefined ? (
+        <>
+          <header className="public-heading">
+            <h1>{preview.title}</h1>
+          </header>
+          <BrandLoading
+            label={
+              state.status === 'anonymous' || state.status === 'checking'
+                ? 'Signing you in'
+                : 'Preparing your agent'
+            }
+          />
+        </>
       ) : (
         <Landing
           preview={preview}

@@ -37,6 +37,7 @@ fn skill_material_is_committed_once_with_the_first_home_intent() {
     let material = vec![crate::sandbox::ResolvedAgentSkill {
         source: crate::profiles::SkillSource::Ornn,
         id: crate::SkillId::new("research"),
+        name: Some("research".into()),
         version: "2.10".into(),
         archive_sha256: "a".repeat(64),
     }];
@@ -81,7 +82,29 @@ fn skill_material_is_committed_once_with_the_first_home_intent() {
     let mut replacement = advance.clone();
     replacement.agent.work.resolved_skills.as_mut().unwrap()[0].archive_sha256 = "b".repeat(64);
     assert_conflict(&selected, &worktree, &replacement);
+    let mut replacement = advance;
+    replacement.agent.work.resolved_skills.as_mut().unwrap()[0].name = Some("renamed".into());
+    assert_conflict(&selected, &worktree, &replacement);
     assert_eq!(selected.profile, current.profile);
+}
+
+#[test]
+fn legacy_skill_material_without_name_round_trips_and_new_names_are_validated() {
+    let legacy = serde_json::json!({
+        "source": "ornn",
+        "id": "research",
+        "version": "1.0",
+        "archive_sha256": "a".repeat(64),
+    });
+    let mut material: crate::sandbox::ResolvedAgentSkill =
+        serde_json::from_value(legacy.clone()).unwrap();
+    assert_eq!(material.name, None);
+    assert_eq!(serde_json::to_value(&material).unwrap(), legacy);
+    assert!(material.validate().is_ok());
+    for name in ["", " spaced", "control\n"] {
+        material.name = Some(name.into());
+        assert!(material.validate().is_err());
+    }
 }
 
 #[test]

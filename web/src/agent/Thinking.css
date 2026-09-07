@@ -1,0 +1,210 @@
+/*
+ * The reasoning row — docs/Web_Style.md §13.
+ *
+ * A row rather than a pill, because it carries a line of the agent's own
+ * words: a pill sized to its label would truncate every one of them to
+ * nothing. No colour, ever — §2 reserves the semantic inks for session and
+ * system state, and reasoning is neither.
+ */
+
+.thinking {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  align-items: stretch;
+  min-width: 0;
+  margin-bottom: 20px;
+}
+
+.thinking__key {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  width: 100%;
+  min-width: 0;
+  height: 24px;
+  padding: 0;
+  overflow: hidden;
+  color: var(--dsw-alias-label-secondary);
+  font-family: var(--dsw-font-family);
+  font-size: 14px;
+  line-height: 24px;
+  text-align: left;
+  white-space: nowrap;
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+
+.thinking__key:hover {
+  color: var(--dsw-alias-label-primary);
+}
+
+.thinking__key:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+/*
+ * Height-capped with its own scroll: reasoning is unbounded and arrives
+ * fast, and a band that grew without limit would push the conversation off
+ * the screen while saying less than any line of it.
+ */
+.thinking__body {
+  align-self: stretch;
+  max-height: 120px;
+  padding: 12px;
+  overflow-y: auto;
+  color: var(--dsw-alias-label-caption);
+  font-size: 13px;
+  line-height: 20px;
+  background: var(--dsw-alias-bg-layer-2);
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 10px;
+}
+
+.thinking__reasoning {
+  white-space: pre-wrap;
+}
+
+.thinking__activities {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.thinking__reasoning + .thinking__activities {
+  padding-top: 10px;
+  border-top: 1px solid var(--dsw-alias-border-l1);
+}
+
+.thinking__activity {
+  min-width: 0;
+}
+
+.thinking__activityline {
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-family: var(--ds-font-family-code);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.thinking__activitybody {
+  margin-top: 4px;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.thinking__activitybody summary {
+  width: fit-content;
+  cursor: pointer;
+}
+
+.thinking__activitybody pre {
+  max-height: 120px;
+  margin: 6px 0 0;
+  padding: 8px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  background: var(--dsw-alias-bg-base);
+  border-radius: 6px;
+}
+
+.thinking__activitybody p {
+  margin: 4px 0 0;
+}
+
+.thinking__glyph {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.thinking__title {
+  flex: none;
+}
+
+/* A 2px dot between the title and the line, rather than a bullet character. */
+.thinking__dot {
+  flex: none;
+  width: 2px;
+  height: 2px;
+  background: var(--dsw-alias-label-tertiary);
+  border-radius: 50%;
+}
+
+/*
+ * The agent's newest line. It never wraps: a row that grows with the longest
+ * sentence would move the conversation under it several times a second.
+ */
+.thinking__summary {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--dsw-alias-label-tertiary);
+  text-overflow: ellipsis;
+}
+
+/*
+ * The sweep — a band of lighter ground travelling across the row.
+ *
+ * It says the row is live without claiming progress, which is the same reason
+ * §5 refuses a spinner: a bar that fills implies somebody knows how far along
+ * it is, and nothing here does. It rides on the row rather than on the text,
+ * so the agent's words stay at full contrast while it passes.
+ */
+.thinking__key::after {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 300px;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    color-mix(in srgb, var(--dsw-alias-bg-base) 60%, transparent) 55%,
+    transparent 100%
+  );
+  animation: thinking-sweep 2.6s ease-out infinite;
+  pointer-events: none;
+  content: '';
+}
+
+.thinking--settled .thinking__key::after {
+  display: none;
+}
+
+.thinking__key {
+  position: relative;
+}
+
+@keyframes thinking-sweep {
+  from {
+    transform: translateX(-300px);
+  }
+
+  to {
+    transform: translateX(100%);
+  }
+}
+
+/*
+ * Stopped for anybody who asked for less motion. The row still says what the
+ * agent is working through — the sweep was never carrying that.
+ */
+@media (prefers-reduced-motion: reduce) {
+  .thinking__key::after {
+    animation: none;
+    opacity: 0;
+  }
+}

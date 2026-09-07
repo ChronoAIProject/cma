@@ -104,6 +104,53 @@ fn restore_validation_refuses_runtime_workspace_transition_paths() {
     let _ = std::fs::remove_dir_all(config.checkpoint_root);
 }
 
+#[cfg(unix)]
+#[tokio::test]
+async fn excluded_executable_aliases_do_not_discard_agent_history_or_allow_other_escapes() {
+    let config = config("transient-aliases");
+    let aliases = [".provider/tmp/aliases", ".cma/agents/a/home/tmp/aliases"];
+    for path in aliases {
+        std::fs::create_dir_all(config.home.join(path)).unwrap();
+        std::os::unix::fs::symlink(
+            "/usr/local/bin/provider",
+            config.home.join(path).join("exec"),
+        )
+        .unwrap();
+    }
+    let history = config.home.join(".cma/agents/a/home/transcript.jsonl");
+    std::fs::write(&history, "preserved conversation\n").unwrap();
+    let rejected = crate::checkpoint_manifest::collect(&config.home, &[]).unwrap_err();
+    assert_eq!(rejected.code, "checkpoint_symlink_escape");
+    let store = CheckpointStore::new(&config);
+    let receipt = store
+        .capture(&CheckpointRequest {
+            epoch: 1,
+            exclusions: aliases.map(str::to_string).to_vec(),
+        })
+        .await
+        .unwrap();
+    store
+        .restore(&RestoreRequest {
+            object_reference: receipt.object_reference,
+            sha256: receipt.sha256,
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        std::fs::read_to_string(&history).unwrap(),
+        "preserved conversation\n"
+    );
+    for path in aliases {
+        assert!(!config.home.join(path).exists());
+    }
+    std::os::unix::fs::symlink("/etc/passwd", config.home.join("outside")).unwrap();
+    let rejected = crate::checkpoint_manifest::collect(&config.home, &aliases.map(str::to_string))
+        .unwrap_err();
+    assert_eq!(rejected.code, "checkpoint_symlink_escape");
+    std::fs::remove_dir_all(config.home).unwrap();
+    std::fs::remove_dir_all(config.checkpoint_root).unwrap();
+}
+
 #[tokio::test]
 async fn whole_home_round_trips_files_modes_links_and_worktree_dependencies() {
     let config = config("round-trip");

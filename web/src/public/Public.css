@@ -145,14 +145,14 @@
 }
 .public-step {
   display: grid;
-  grid-template-columns: 24px minmax(0, 1fr);
+  grid-template-columns: 44px minmax(0, 1fr);
   gap: 12px;
   padding: 16px 0;
   border-bottom: 1px solid var(--dsw-alias-border-l2);
 }
 .public-step__icon {
-  width: 24px;
-  height: 24px;
+  width: 44px;
+  height: 44px;
   display: grid;
   place-items: center;
 }

@@ -9,6 +9,7 @@ fn selected_material() -> Vec<ResolvedAgentSkill> {
     vec![ResolvedAgentSkill {
         source: SkillSource::Ornn,
         id: SkillId::new("research"),
+        name: None,
         version: "7.0".into(),
         archive_sha256: "a".repeat(64),
     }]

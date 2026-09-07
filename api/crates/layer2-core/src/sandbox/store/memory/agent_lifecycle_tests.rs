@@ -27,6 +27,7 @@ async fn immutable_skill_material_is_atomic_fenced_and_protected_from_ordinary_s
     let material = vec![ResolvedAgentSkill {
         source: SkillSource::Ornn,
         id: crate::SkillId::new("research"),
+        name: Some("research".into()),
         version: "2.10".into(),
         archive_sha256: "a".repeat(64),
     }];
