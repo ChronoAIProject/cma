@@ -518,7 +518,7 @@ async fn correlated_mutations_replay_exactly_across_adapter_recreation() {
         adapter_a
             .open_agent(&handle, 10, &changed_open, updates)
             .await,
-        Err(AdapterError::Rejected(_))
+        Err(AdapterError::OperationIdentityConflict(_))
     ));
     let (stale_updates, _stale_updates_rx) = tokio::sync::mpsc::channel(1);
     assert!(matches!(

@@ -343,12 +343,12 @@ impl SandboxAdapter for HostedAdapter {
         conversation_id: &str,
         updates: mpsc::Sender<ConversationUpdate>,
     ) -> crate::Result<ConversationChannel> {
-        agent::open_agent(
+        agent::reconnect_agent(
             self,
             handle,
             authority_fence,
             request,
-            Some(conversation_id),
+            conversation_id,
             updates,
         )
         .await

@@ -96,7 +96,9 @@ pub(super) fn failure(error: AdapterError) -> WorkerFailure {
             "workspace_resource_quota",
             "workspace runtime has no available capacity",
         ),
-        AdapterError::Rejected(_) | AdapterError::Unsupported(_) => WorkerFailure::terminal(
+        AdapterError::Rejected(_)
+        | AdapterError::OperationIdentityConflict(_)
+        | AdapterError::Unsupported(_) => WorkerFailure::terminal(
             "workspace_runtime_rejected",
             "workspace runtime rejected the operation",
         ),

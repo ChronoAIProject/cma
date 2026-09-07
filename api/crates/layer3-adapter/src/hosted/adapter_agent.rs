@@ -167,6 +167,48 @@ pub(super) async fn remove_home(
     }
 }
 
+pub(super) async fn reconnect_agent(
+    adapter: &HostedAdapter,
+    handle: &RuntimeHandle,
+    authority_fence: u64,
+    request: &AgentOpenRequest,
+    conversation_id: &str,
+    updates: mpsc::Sender<ConversationUpdate>,
+) -> crate::Result<ConversationChannel> {
+    let result = open_agent(
+        adapter,
+        handle,
+        authority_fence,
+        request,
+        Some(conversation_id),
+        updates.clone(),
+    )
+    .await;
+    match result {
+        Err(AdapterError::OperationIdentityConflict(_))
+            if request.resume_conversation.is_none() =>
+        {
+            // Older restores included resume identity in the durable launch digest.
+            // Only an exact pre-effect refusal permits this one canonical replay.
+            let resumed = AgentOpenRequest::new(
+                request.operation_id.clone(),
+                request.options.clone(),
+                Some(conversation_id.to_owned()),
+            );
+            open_agent(
+                adapter,
+                handle,
+                authority_fence,
+                &resumed,
+                Some(conversation_id),
+                updates,
+            )
+            .await
+        }
+        result => result,
+    }
+}
+
 pub(super) async fn open_agent(
     adapter: &HostedAdapter,
     handle: &RuntimeHandle,

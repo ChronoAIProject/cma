@@ -308,7 +308,9 @@ pub(super) fn adapter_failure(error: AdapterError) -> WorkerFailure {
         AdapterError::AtCapacity(_) => {
             WorkerFailure::resource_quota("requested sandbox capacity is unavailable")
         }
-        AdapterError::Rejected(_) | AdapterError::Unsupported(_) => {
+        AdapterError::Rejected(_)
+        | AdapterError::OperationIdentityConflict(_)
+        | AdapterError::Unsupported(_) => {
             WorkerFailure::terminal_validation("runtime rejected the lifecycle operation")
         }
         AdapterError::RuntimeContractMismatch(_) => {

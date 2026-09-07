@@ -112,7 +112,13 @@ pub(super) fn replay_operation(
         return Ok(None);
     };
     if stored.request_sha256 != request_sha256 || stored.payload_sha256 != payload_sha256 {
-        return refused(operation, "operation_replay_mismatch");
+        return if operation == WireOperation::OpenAgent {
+            Err(AdapterError::OperationIdentityConflict(format!(
+                "{operation:?}: operation_replay_mismatch"
+            )))
+        } else {
+            refused(operation, "operation_replay_mismatch")
+        };
     }
     Ok(Some(stored.response.clone()))
 }
