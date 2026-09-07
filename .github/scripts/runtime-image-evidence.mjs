@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { readFileSync, writeFileSync, lstatSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { checks } from './runtime-image-probe.mjs';
+import { checks, diagnosticStages } from './runtime-image-probe.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 export const source = 'https://github.com/ChronoAIProject/cma';
@@ -65,6 +65,12 @@ export function validateEvidence(value, commit, expectedId, expected, sourceRefe
 const docker = (args) => execFileSync('docker', args, { encoding: 'utf8', timeout: 180000, maxBuffer: 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'] }).trim();
 const inspect = (id) => JSON.parse(docker(['image', 'inspect', id]))[0];
 
+export function safeFailureStage(stage, error) {
+  if (stage !== 'probe') return stage;
+  const match = String(error?.stderr ?? '').match(/^runtime image probe failed at ([a-z-]+); raw runtime data withheld$/m);
+  return match && diagnosticStages.includes(match[1]) ? `probe:${match[1]}` : 'probe';
+}
+
 export function campaign(imageRef, commit, output, command = docker) {
   assert.match(commit, revision);
   assert.ok(imageRef && !imageRef.startsWith('-'));
@@ -75,6 +81,7 @@ export function campaign(imageRef, commit, output, command = docker) {
   writeFileSync(output, `${JSON.stringify(evidence)}\n`, { mode: 0o600, flag: 'wx' });
   const identity = `cma-runtime-ci-${randomUUID()}`;
   const label = `dev.chrono.cma.evidence=${identity}`;
+  let stage = 'image-admission';
   try {
     const image = JSON.parse(command(['image', 'inspect', imageRef]))[0];
     validateImage(image, commit);
@@ -83,14 +90,20 @@ export function campaign(imageRef, commit, output, command = docker) {
       assert.ok(image.RepoDigests.includes(sourceReference));
     }
     evidence.image = { Id: image.Id, RepoDigests: sourceReference ? [sourceReference] : [], Os: image.Os, Architecture: image.Architecture, Config: { User: image.Config.User, Labels: Object.fromEntries(['org.opencontainers.image.revision', 'org.opencontainers.image.source', 'dev.chrono.cma.runtime-contract'].map((key) => [key, image.Config.Labels[key]])) } };
+    stage = 'volume-create';
     command(['volume', 'create', '--label', label, identity]);
+    stage = 'container-create';
     command(['create', '--name', identity, '--label', label, '--network', 'none', '--read-only', '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges=true', '--pids-limit', '128', '--memory', '1g', '--cpus', '2', '--tmpfs', '/tmp:rw,nosuid,nodev,size=536870912,mode=1777', '--tmpfs', '/var/lib/cma-runtime:rw,nosuid,nodev,size=67108864,uid=10001,gid=10001,mode=700', '--mount', `type=volume,source=${identity},target=/home/cma`, '--mount', `type=bind,source=${resolve(root, '.github/scripts/runtime-image-probe.mjs')},target=/opt/cma-probe.mjs,readonly`, '--env', `CHRONO_SANDBOX_ID=${identity}`, image.Id]);
+    stage = 'container-start';
     command(['start', identity]);
+    stage = 'probe';
     evidence.proof = JSON.parse(command(['exec', identity, 'node', '/opt/cma-probe.mjs']));
+    stage = 'proof-validation';
     validateProbe(evidence.proof, expected);
     evidence.result = 'pass';
-  } catch {
+  } catch (error) {
     evidence.result = 'fail';
+    process.stderr.write(`Runtime image campaign failed at ${safeFailureStage(stage, error)}; raw diagnostics withheld\n`);
   } finally {
     try {
       const containers = command(['ps', '--all', '--quiet', '--filter', `label=${label}`]).split(/\s+/).filter(Boolean);
@@ -106,7 +119,7 @@ export function campaign(imageRef, commit, output, command = docker) {
       assert.equal(command(['ps', '--all', '--quiet', '--filter', `label=${label}`]), '');
       assert.equal(command(['volume', 'ls', '--quiet', '--filter', `label=${label}`]), '');
       evidence.cleanup = { containers: 0, volumes: 0 };
-    } catch { evidence.result = 'fail'; }
+    } catch { evidence.result = 'fail'; process.stderr.write('Runtime image campaign failed at cleanup; raw diagnostics withheld\n'); }
     writeFileSync(output, `${JSON.stringify(evidence)}\n`, { mode: 0o600 });
   }
   validateEvidence(evidence, commit, evidence.image?.Id, expected, sourceReference);
