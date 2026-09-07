@@ -439,8 +439,8 @@ impl super::HostedControlTransport for ProviderHostedControlTransport {
 }
 
 fn restore_request(request: &RequestFrame) -> Option<&crate::RestoreRequest> {
+    // Bootstrap admits installation identity; only Restore consumes the archive.
     match request {
-        RequestFrame::BootstrapRestore(request) => Some(&request.checkpoint),
         RequestFrame::Restore(request) => Some(request),
         _ => None,
     }
