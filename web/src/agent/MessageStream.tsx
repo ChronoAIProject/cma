@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useLayoutEffect, useRef } from 'react';
 import type { ApprovalDecision } from './controller';
 import type { ConversationState } from './conversation';
 import { StreamEntry, type Entry } from './StreamEntry';
@@ -18,21 +18,37 @@ export function MessageStream({
 }: MessageStreamProps) {
   const endRef = useRef<HTMLDivElement>(null);
   const pinned = useRef(true);
+  const previousTop = useRef(0);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const scroller = endRef.current?.closest('.agent-surface__conversation');
     if (!(scroller instanceof HTMLElement)) return;
     const track = () => {
-      pinned.current = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight <= 48;
+      const atEnd = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight <= 48;
+      if (atEnd) pinned.current = true;
+      else if (scroller.scrollTop < previousTop.current) pinned.current = false;
+      previousTop.current = scroller.scrollTop;
+    };
+    const follow = () => {
+      if (!pinned.current) return;
+      scroller.scrollTop = scroller.scrollHeight;
+      previousTop.current = scroller.scrollTop;
     };
     scroller.addEventListener('scroll', track, { passive: true });
-    return () => scroller.removeEventListener('scroll', track);
+    const observer = typeof ResizeObserver === 'undefined' ? undefined : new ResizeObserver(follow);
+    observer?.observe(scroller);
+    for (const child of scroller.children) observer?.observe(child);
+    return () => {
+      scroller.removeEventListener('scroll', track);
+      observer?.disconnect();
+    };
   }, []);
 
-  useEffect(() => {
-    const end = endRef.current;
-    if (pinned.current && end !== null && typeof end.scrollIntoView === 'function') {
-      end.scrollIntoView({ block: 'end' });
+  useLayoutEffect(() => {
+    const scroller = endRef.current?.closest('.agent-surface__conversation');
+    if (pinned.current && scroller instanceof HTMLElement) {
+      scroller.scrollTop = scroller.scrollHeight;
+      previousTop.current = scroller.scrollTop;
     }
   }, [conversation]);
 

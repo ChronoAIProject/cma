@@ -21,8 +21,20 @@ const output = await mkdtemp(join(tmpdir(), 'cma-restored-ui-'));
 console.log('Evidence:', output);
 const browser = await chromium.launch({ executablePath: chrome(), headless: true });
 let navigationEntry = () => {};
+let agentStream;
 const fixture = createServer((request, response) => {
-  if (request.url === '/fixture-readme') {
+  if (request.url === '/agent-stream') {
+    response.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Access-Control-Allow-Origin': base,
+      'Access-Control-Allow-Credentials': 'true',
+      'Access-Control-Allow-Methods': 'GET, OPTIONS',
+      'Access-Control-Allow-Headers': 'content-type, x-request-id',
+    });
+    if (request.method === 'OPTIONS') return response.end();
+    response.write(': ready\n\n');
+    agentStream = response;
+  } else if (request.url === '/fixture-readme') {
     response.setHeader('Content-Type', 'text/html');
     response.end('<a href="/api/v1/triggers/public/public-example/open/plc_readme">Try it</a>');
   } else {
@@ -101,10 +113,38 @@ try {
           return route.fulfill({ status: 202, json: initial });
         }
         if (path === '/api/v1/launches/lch_example') return reply(finished ? ready : initial);
-        if (path === '/api/v1/agui/launches/lch_example/events' || path === '/api/v1/agui/events')
+        if (path === '/api/v1/agui/events')
+          return route.continue({ url: `${fixtureBase}/agent-stream` });
+        if (path === '/api/v1/agui/launches/lch_example/events')
           return route.fulfill({ contentType: 'text/event-stream', body: ': keep-alive\n\n' });
         if (path === '/api/v1/sandboxes') return reply({ items: [] });
-        if (path === '/api/v1/agents/agt_ready') return reply(agent);
+        if (path === '/api/v1/agents/agt_ready')
+          return reply({
+            ...agent,
+            title: 'A long Agent title that must never widen the available mobile center column',
+          });
+        if (
+          path ===
+          `/api/v1/sandbox-profiles/${agent.sandbox.profile.id}/revisions/${agent.sandbox.profile.revision}`
+        )
+          return reply({
+            profile_id: agent.sandbox.profile.id,
+            revision: agent.sandbox.profile.revision,
+            digest: agent.sandbox.profile.digest,
+            published_at: now,
+            content: {
+              cpu_millis: 4000,
+              memory_mib: 8192,
+              nyxid_services: [],
+              agent_provider: 'codex',
+              model_access: 'chronoai_managed',
+              max_workspaces: 1,
+              max_agents_per_workspace: 1,
+              workspace_profiles: [],
+              software_install_commands: [],
+              environment_variables: [],
+            },
+          });
         if (path === '/api/v1/workspaces/wsp_one') return reply(workspace);
         if (path.endsWith('/agt_ready/usage'))
           return reply({
@@ -122,9 +162,9 @@ try {
             sandbox_id: 'sbx_one',
             uptime_ms: samples * 5000,
             cpu_usage_usec: samples * 2500000,
-            cpu_millis_limit: 4000,
+            cpu_millis_limit: theme === 'dark' ? null : 4000,
             memory_bytes_used: 1024 ** 3,
-            memory_bytes_limit: 8 * 1024 ** 3,
+            memory_bytes_limit: theme === 'dark' ? null : 8 * 1024 ** 3,
             memory_bytes_peak: null,
             stall_permille: null,
             ceiling_hits: null,
@@ -270,8 +310,15 @@ try {
       await expect(page.getByRole('textbox', { name: 'Message', exact: true })).toBeFocused();
       await page.getByRole('button', { name: /^Thinking/ }).click();
       await expect(page.locator('.thinking__body')).toBeVisible();
-      await expect(page.getByText('CPU · 0.5 cores / 4 cores')).toBeVisible({ timeout: 10000 });
-      await expect(page.getByText('RAM · 1 GiB / 8 GiB')).toBeVisible();
+      const capacityLabel = theme === 'dark' ? ' configured' : '';
+      await expect(page.getByText(`CPU · 0.5 cores / 4 cores${capacityLabel}`)).toBeVisible({
+        timeout: 10000,
+      });
+      await expect(page.getByText(`RAM · 1 GiB / 8 GiB${capacityLabel}`)).toBeVisible();
+      await expect(page.getByRole('progressbar', { name: 'RAM' })).toHaveAttribute(
+        'aria-valuetext',
+        `1 GiB of 8 GiB${capacityLabel}`,
+      );
       await expect(page.getByText('Network · ↓ 2 KiB · ↑ 1 KiB')).toBeVisible();
       await expect(page.getByRole('progressbar', { name: 'Context' })).toHaveAttribute(
         'aria-valuenow',
@@ -281,14 +328,80 @@ try {
         width: document.documentElement.scrollWidth,
         viewport: innerWidth,
         send: getComputedStyle(document.querySelector('.agent-composer__submit')).borderRadius,
+        sendWidth: document.querySelector('.agent-composer__submit').getBoundingClientRect().width,
+        sendHeight: document.querySelector('.agent-composer__submit').getBoundingClientRect()
+          .height,
+        centerWidth: document.querySelector('.frame__center').getBoundingClientRect().width,
+        childWidths: [...document.querySelector('.agent-surface').children].map(
+          (element) => element.getBoundingClientRect().width,
+        ),
         metrics: getComputedStyle(document.querySelector('.resources')).gridTemplateColumns.split(
           ' ',
         ).length,
       }));
       assert(fits.width <= fits.viewport);
       assert.equal(fits.send, '50%');
+      assert.equal(fits.sendWidth, viewport.width === 390 ? 44 : 34);
+      assert.equal(fits.sendHeight, fits.sendWidth);
+      assert(fits.childWidths.every((width) => width <= fits.centerWidth + 1));
       assert.equal(fits.metrics, 3);
       const agentShot = await screenshot('agent');
+      let streamCursor = 7;
+      const emit = (event) => {
+        assert(agentStream !== undefined && !agentStream.destroyed);
+        const boundary = event.type === 'RUN_STARTED' || event.type === 'RUN_FINISHED';
+        agentStream.write(
+          `${boundary ? `id: ${++streamCursor}\n` : ''}data: ${JSON.stringify({ threadId: agent.id, runId: 'follow-proof', ...(!boundary ? { 'cma:live': true } : {}), ...event })}\n\n`,
+        );
+      };
+      const bottomGap = () =>
+        page
+          .locator('.agent-surface__conversation')
+          .evaluate((element) => element.scrollHeight - element.scrollTop - element.clientHeight);
+      emit({ type: 'RUN_STARTED' });
+      emit({ type: 'TEXT_MESSAGE_START', messageId: 'follow-message', role: 'assistant' });
+      emit({
+        type: 'TEXT_MESSAGE_CONTENT',
+        messageId: 'follow-message',
+        delta: 'Follow proof.\n\n'.repeat(70),
+      });
+      await expect(page.locator('.message--assistant').last()).toContainText('Follow proof.');
+      await expect.poll(bottomGap).toBeLessThan(2);
+      emit({
+        type: 'TEXT_MESSAGE_CONTENT',
+        messageId: 'follow-message',
+        delta: 'New content at the end.\n\n'.repeat(10),
+      });
+      await expect(page.locator('.message--assistant').last()).toContainText(
+        'New content at the end.',
+      );
+      await expect.poll(bottomGap).toBeLessThan(2);
+      const scroller = page.locator('.agent-surface__conversation');
+      await scroller.hover();
+      await page.mouse.wheel(0, -450);
+      await expect.poll(bottomGap).toBeGreaterThan(200);
+      const manualTop = await scroller.evaluate((element) => element.scrollTop);
+      emit({
+        type: 'TEXT_MESSAGE_CONTENT',
+        messageId: 'follow-message',
+        delta: 'Preserve manual position.\n\n'.repeat(10),
+      });
+      await expect(page.locator('.message--assistant').last()).toContainText(
+        'Preserve manual position.',
+      );
+      await expect.poll(() => scroller.evaluate((element) => element.scrollTop)).toBe(manualTop);
+      await page.mouse.wheel(0, 100000);
+      await expect.poll(bottomGap).toBeLessThan(2);
+      emit({
+        type: 'TEXT_MESSAGE_CONTENT',
+        messageId: 'follow-message',
+        delta: 'Following restored.\n\n'.repeat(10),
+      });
+      await expect(page.locator('.message--assistant').last()).toContainText('Following restored.');
+      await expect.poll(bottomGap).toBeLessThan(2);
+      emit({ type: 'TEXT_MESSAGE_END', messageId: 'follow-message' });
+      emit({ type: 'RUN_FINISHED' });
+      const followShot = await screenshot('follow');
       assert.deepEqual(errors, []);
       evidence.push({
         theme,
@@ -296,6 +409,8 @@ try {
         authShot,
         progressShot,
         agentShot,
+        followShot,
+        followsLiveOutputAndPreservesManualScroll: true,
         launches,
         samples,
         pixels: {
@@ -306,6 +421,8 @@ try {
         },
       });
       await context.close();
+      agentStream?.end();
+      agentStream = undefined;
     }
   }
   await writeFile(

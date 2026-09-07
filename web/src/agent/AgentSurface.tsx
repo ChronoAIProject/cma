@@ -125,6 +125,7 @@ export function AgentSurface({
   const running =
     status === 'working' || conversation.activeRunId !== undefined || controller.pending === 'send';
   const approvalBusy = controller.pending === 'approval';
+  const preparation = agentProgress({ ...detail, status }, state.sandboxEvents ?? []);
 
   return (
     <section className="agent-surface">
@@ -173,10 +174,10 @@ export function AgentSurface({
       <div className="agent-surface__conversation">
         {status === 'starting' ||
         detail.failure !== undefined ||
-        state.sandboxEvents !== undefined ? (
+        preparation.some((step) => step.status !== 'Done') ? (
           <ProvisioningProgress
             title="Agent preparation"
-            steps={agentProgress(detail, state.sandboxEvents ?? [])}
+            steps={preparation}
             failure={detail.failure}
           />
         ) : null}
@@ -198,6 +199,7 @@ export function AgentSurface({
         key={agentId}
         agentId={agentId}
         sandboxId={detail.sandbox.id}
+        sandboxProfile={detail.sandbox.profile}
         usage={conversation.usage}
       />
     </section>

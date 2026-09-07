@@ -687,7 +687,13 @@ figure. Context-summary boundaries use neutral metadata, not failure colour.
 Resources are a public point read scoped to the Agent's Sandbox. Memory, CPU,
 and network occupy a stable three-column row on the reading axis. CPU uses a
 human unit in the ordinary surface; technical details may show the wire unit.
-Tracks appear only with reported ceilings, and each has accessible numeric values.
+Tracks use reported ceilings first, independently for each resource. When a
+ceiling is absent, the exact pinned Sandbox Profile revision may supply a
+configured capacity. Its id and revision must match, and its digest must match
+when the pin includes one. That denominator visibly says "configured", including
+the accessible numeric description; it is not a runtime observation. Missing,
+forbidden, invalid or mismatched profile reads leave the honest absolute figure
+without a track. Never substitute configured capacity into resource observations.
 
 A missing grant, a runtime that cannot report, a reading not yet available, and
 an absent individual measurement remain distinct written states. None becomes
@@ -1269,6 +1275,14 @@ is never fabricated on reload. The neutral sweep stops when the turn ends.
 Message role labels return outside the owner's bubble at 12/18 with an 8px
 gap; turns keep the baseline 16px rhythm. Required small text uses caption ink.
 
+Conversation opening and live output follow the latest content while the reader
+remains at the end, including content-height changes after layout. Scrolling
+up preserves the reader's position until they return to the end. Completed Agent
+preparation leaves the conversation surface once no step is active or failed;
+the pinned configuration remains available in Agent details.
+The Agent's single grid column is shrinkable to the available center width;
+long titles and tables never widen the conversation, composer or instruments.
+
 Below the composer, restore the baseline two-column tokens/context row and
 three-column RAM/CPU/network row with 12px figures, 8px column gaps and 2px
 neutral tracks capped at 240px. Resource observations use the public Agent
@@ -1369,3 +1383,5 @@ Append-only. Never edit or delete an entry.
 | 2026-09-07 | Aligned the remaining typography, motion, accessibility, authentication-gate and invariant wording with the implemented Agent client. Retired terminal fonts, simulated introductions, the removed 3D authentication scene and automatic first-message claims; preserved the static brand gate, durable-history equivalence, explicit visitor consent and historical changelog. |
 | 2026-09-07 | Added four fixed light/dark badge-preview aliases in §2 using the established paper, ink and coal palette, so the publisher can inspect both appearances without switching the application theme or introducing component-level raw colours. |
 | 2026-09-07 | Restored the pre-refactor Three.js mark, Thinking container, circular composer actions and compact public resource instrumentation on the current CMA hierarchy. Added state-coloured 3D provisioning marks and bounded external-click entry consent for no-review Triggers; preserved existing shared controls, durable history and append-only style history. |
+| 2026-09-08 | Distinguished observed resource ceilings from explicitly labelled configured capacities resolved through the exact pinned Sandbox Profile revision. Added layout-aware conversation following that preserves manual reading position and removes completed preparation from the conversation surface. |
+| 2026-09-08 | Kept the Agent grid within the available center width for long titles and Markdown tables, and enforced the established 34px/44px square composer control against shared icon-button width rules. |

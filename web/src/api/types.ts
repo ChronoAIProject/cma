@@ -29,6 +29,11 @@ export interface ProfileReference {
   readonly digest?: string;
 }
 
+export interface ConfiguredSandboxCapacity {
+  readonly cpuMillis: number;
+  readonly memoryBytes: number;
+}
+
 export interface Failure {
   readonly class: string;
   readonly detail: string;

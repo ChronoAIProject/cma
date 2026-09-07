@@ -101,3 +101,42 @@ it('names the full lineage and exposes messages, approvals, tools, reasoning, us
   await actor.click(screen.getByRole('button', { name: 'Show Agent details' }));
   expect(onDetailsOpenChange).toHaveBeenCalledWith(true);
 });
+
+it('removes completed preparation while preserving active and failed preparation', async () => {
+  const conversation = conversationFromTranscript(AGENT_TRANSCRIPT);
+  const draw = (detail: typeof AGENT_DETAIL) => (
+    <AgentSurface
+      agentId="agt_1"
+      controller={controller({
+        status: 'ready',
+        detail,
+        workspace: workspaceFixture(),
+        conversation,
+        sandboxEvents: [],
+      })}
+      detailsOpen={false}
+      onDetailsOpenChange={vi.fn()}
+      onNavigate={vi.fn()}
+    />
+  );
+  const { rerender } = render(draw(AGENT_DETAIL));
+  expect(await screen.findByText('Resources unavailable')).toBeInTheDocument();
+  expect(screen.queryByRole('region', { name: 'Agent preparation' })).not.toBeInTheDocument();
+  rerender(
+    draw({
+      ...AGENT_DETAIL,
+      status: 'starting',
+      readyAt: undefined,
+      worktree: { ...AGENT_DETAIL.worktree, status: 'creating' },
+    }),
+  );
+  expect(screen.getByRole('region', { name: 'Agent preparation' })).toHaveTextContent(
+    'In progress',
+  );
+  rerender(
+    draw({ ...AGENT_DETAIL, failure: { class: 'preparation', detail: 'Preparation failed' } }),
+  );
+  expect(screen.getByRole('region', { name: 'Agent preparation' })).toHaveTextContent(
+    'Preparation failed',
+  );
+});
