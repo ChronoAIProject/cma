@@ -76,4 +76,4 @@ data:
   CHRONO_DEPLOYMENT_ID: "chrono-bot-prod"
   # AgentKey service floor. Public skill material is served by ornn-api.
   CHRONO_BASELINE_SERVICES: "chrono-llm,ornn-api"
-  RUST_LOG: "info"
+  RUST_LOG: "info,cma::sandbox::checkpoint_maintenance=debug"
