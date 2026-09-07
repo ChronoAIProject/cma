@@ -14,10 +14,10 @@ acceptance of this campaign.
 | 1. Public Agent Profile | Exact text, model, effort, Autonomous, four latest public skill pins | Created and published at revision 1; exact configuration and archive checksums verified |
 | 2. Public Workspace Profile | Exact metadata, repository `dev`, no setup, one Agent Profile | Created and published at revision 1; exact configuration verified |
 | 3. Public Sandbox Profile | 4000 millicores, 8192 MiB, two requested services, 4/4 limits, working toolchain | Created and published at revision 1; isolated real-repository toolchain proof passed; production proof pending |
-| 4. Public Trigger | Exact title/message, all-level reuse, Try It, visitor theme, no review, README placement | Exact revision published after first rollout; README-only PR #841 pending protected checks |
+| 4. Public Trigger | Exact title/message, all-level reuse, Try It, visitor theme, no review, README placement | Exact revision published after first rollout; README-only PR #841 merged after all 12 protected checks; default README snippet read back exactly |
 | 5. Login without bootstrap | No Sandbox, Workspace, Agent, or Profile created by login alone | Existing-owner fresh-browser production sign-in created no resources before or after rollout; fresh signup not tested |
 | 6. Complete external-click flow | Login then automatic provisioning; exact first message once; correct software, skills, scopes | First live click/sign-in/Sandbox/Workspace passed; checkpoint race blocked Agent creation and exhausted Launch retries; corrected rerun pending |
-| 7. Previous UI style | Original rotating 3D mark and established controls; desktop/mobile screenshots | Restored; local desktop/mobile, both-theme, animation and canvas checks passed; production proof pending |
+| 7. Previous UI style | Original rotating 3D mark and established controls; desktop/mobile screenshots | Restored; live home desktop/mobile, both-theme, animation, reduced-motion and canvas checks passed; running provisioning step pending |
 | 8. Autonomous YOLO | Pinned provider runs full-access mode with no approval requests | Corrected to never/danger-full-access and provider full-access mode; production first turn pending |
 | 9. Lifecycle | Active to paused to active; paused to terminated; history retained | Checkpoint exclusions and large-home metadata limits corrected and tested; production exercise pending |
 | 10. Cleanup | Only identified stale state removed; new published flow remains usable | Two old Sandboxes retired through the public API under explicit authorization; final environment pending |
@@ -69,8 +69,11 @@ No first prompt ran. The failing browser evidence is retained in
 `production-first/`; it must not be relabeled as a passing end-to-end run.
 
 The configured-Agent-before-checkpoint correction is committed in `e132f0a2`,
-with real Mongo regression evidence in `9fa6cff7`. Checkpoint waiting and bounded
-concurrent transfer corrections are being verified before the next rollout.
+with real Mongo regression evidence in `9fa6cff7`. Commit `380f0457` preserves
+durable Launch waiting and creation identity during checkpoint admission races;
+`dfe1d7ce` transfers four ordered parts concurrently with bounded buffers and
+verified readback. These corrections have passed focused core, Mongo, worker,
+and storage regression tests and are building for the next rollout.
 Retirement was requested through the public API for this identified test
 Sandbox, which had zero Agents and zero Worktrees. No database repair was used.
 
@@ -78,6 +81,38 @@ Live production browser evidence verifies the original green/yellow 3D marks,
 still states, four desktop/mobile theme layouts, and the absence of creation
 during login alone. Running-step motion and a completed Agent conversation are
 still pending the corrected production run.
+
+### Corrected Run Preparation
+
+README-only PR #841 merged normally as `chronoai-shining` at
+2026-09-07 16:24:09 UTC after all 12 required checks passed. Merge commit
+`cf219c59be5cfeb95c21eaaad66d6e5bb6cd704c` changes only the README button.
+The default README blob `bb7196be076502da99c6652f019e1d2d6550d74e` was read
+back and matches the published Trigger's Markdown snippet exactly.
+
+Cluster-local storage measurements gave 6.547 seconds for a single 32 MiB
+upload plus verified readback, and 11.757 seconds for four simultaneous parts.
+All five temporary measurement objects were deleted and verified absent. This
+improves the initial 4 GB transfer but does not by itself fit the fully built
+13.7 GB home within the existing 600-second object upload lifetime.
+
+Runtime source `0412d647` therefore streams deterministic gzip checkpoints and
+restores both plain and compressed archives with the existing path, file-hash,
+entry, metadata, and uncompressed-payload bounds. Its focused corruption,
+truncation, trailing-member, deterministic-replay, and legacy-restore tests pass;
+the full runtime suite has 161 passing tests and one external-ZIP test ignored.
+Production compression, transfer duration, and full-home restore still require
+the corrected live run. Adoption is forward-only relative to plain-only runtime
+images, as recorded in `Release.md`.
+
+The repository workload verifier sends one real Agent message through the
+deployed chat UI. It requires the .NET build, fast checks, selftest, and Lean
+conventions target to record successful process exit codes in a local receipt.
+A separate read-only check validates that receipt, the actual worktree, and
+unchanged tracked source. The receipt check must pass before an Agent's success
+message can count as toolchain acceptance. Repeat-Trigger verification compares
+the entire existing conversation and requires the first prompt exactly once,
+including after legitimate follow-up work.
 
 ## Historical Observation
 
