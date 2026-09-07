@@ -192,6 +192,7 @@ RUN test -n "${OS_SECURITY_REFRESH}" \
 WORKDIR /home/cma
 USER 10001:10001
 ENV HOME=/home/cma \
+    PATH=/home/cma/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
     CHRONO_RUNTIME_BIND=0.0.0.0:9090 \
     TERM=xterm-256color
 EXPOSE 9090
