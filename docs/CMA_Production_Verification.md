@@ -17,7 +17,7 @@ acceptance of this campaign.
 | 4. Public Trigger | Exact title/message, all-level reuse, Try It, visitor theme, no review, README placement | Exact revision published after first rollout; README-only PR #841 merged after all 12 protected checks; default README snippet read back exactly |
 | 5. Login without bootstrap | No Sandbox, Workspace, Agent, or Profile created by login alone | Existing-owner fresh-browser production sign-in created no resources before or after rollout; fresh signup not tested |
 | 6. Complete external-click flow | Login then automatic provisioning; exact first message once; correct software, skills, scopes | Initial corrected first click and active reuse passed; paused repeat exposed restore reconnection defects and timed out; corrected paused flow and actual workload pending |
-| 7. Previous UI style | Original rotating 3D mark and established controls; desktop/mobile screenshots | Live home and provisioning animation passed in desktop/mobile, both themes and reduced motion; final chat corrections awaiting rollout |
+| 7. Previous UI style | Original rotating 3D mark and established controls; desktop/mobile screenshots | Live home and provisioning animation passed in desktop/mobile, both themes and reduced motion; latest chat corrections deployed, final active browser checks pending |
 | 8. Autonomous YOLO | Pinned provider runs full-access mode with no approval requests | Actual provider configuration verified; first response and subsequent workload attempt completed with zero approvals |
 | 9. Lifecycle | Active to paused to active; paused to terminated; history retained | Natural idle pause and original conversation/home restoration observed; final Active publication blocked by reconnect defects; manual heavy-home lifecycle pending |
 | 10. Cleanup | Only identified stale state removed; new published flow remains usable | Two old Sandboxes retired through the public API under explicit authorization; final environment pending |
@@ -215,11 +215,24 @@ Active publication required the connection work to finish. Source `22e2bc98`
 permits only validated restore-participant reconnection in the final two
 restore phases, retaining quiet-work and writer-fence checks. It passed the
 persisted-stuck and interleaving regressions, 35 Agent worker tests and 64
-Sandbox worker tests. These tests exposed a further missing transport case:
+Sandbox worker tests. Further live inspection exposed a missing transport case:
 lifecycle reopen used a resume-bearing request, whereas reconnection replayed
 the original non-resume request. The live runtime journal and durable original
-receipt had different request hashes. A bounded, exact-identity compatibility
-correction and canonical future restore request are still being verified.
+receipt had different request hashes. Source `217dda6a` adds a bounded,
+exact-identity compatibility correction and canonical future restore request.
+Only an exact structured, nonretryable identity conflict permits one retry with
+the recorded conversation and unchanged settings; ambiguous failures and other
+refusals never permit it. The original durable receipt remains unchanged.
+
+The combined correction passed 103 adapter tests, 35 Agent worker tests,
+64 Sandbox worker tests, a real supervisor journal/process regression, and
+all-target/all-feature Clippy. Legacy and canonical restore tests cover three
+adapter restarts and checkpoint generations, with negative cases for changed
+settings, wrong conversations, corrupt receipts, and ambiguous responses.
+The API image built successfully and passed the image scan; its manifest pin
+is updated for rollout, but live recovery is not yet accepted. The latest
+pre-rollout sample at 18:46:46 UTC still had both completed turns and their
+original conversation, with no queued message or manually repaired state.
 
 The browser attempt `production-paused-revive-8ebb0db9/` timed out at its
 thirty-minute provisioning deadline. It remains a failed attempt even if its
@@ -248,8 +261,12 @@ of that probe. Source `3e1a755a` coalesces only unfinished verification for exac
 authority identity, gives each caller its own deadline and durable recheck,
 and adds static failure-stage/status diagnostics without a TTL authorization
 cache. Its twenty cookie-authority tests, 97 broader auth tests and Clippy
-passed; four existing Mongo auth integration tests were not run. This API
-source is built for the next corrected release, not yet production acceptance.
+passed. All four previously ignored Mongo auth integration tests subsequently
+passed on combined source `217dda6a` against a fresh, loopback-only MongoDB
+8.2.4 replica set. The tests removed their databases, and that exact local
+fixture was shut down and its disposable data removed; no integrated or
+production Mongo instance was used. This API source is built for the next
+corrected release, not yet production acceptance.
 
 ## Historical Observation
 
