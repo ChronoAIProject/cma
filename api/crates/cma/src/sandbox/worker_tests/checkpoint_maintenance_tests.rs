@@ -38,6 +38,72 @@ fn token(sandbox: &Sandbox) -> String {
 }
 
 #[tokio::test]
+async fn periodic_checkpoint_exclusions_include_retained_terminal_agent_homes() {
+    use layer2_core::sandbox::{AgentStatus, AgentStopReason};
+
+    let (harness, active, now) = active().await;
+    let mut ids = Vec::new();
+    for deleted in [false, true] {
+        let mut agent = lifecycle_queue_tests::ready_agent(&active, now);
+        agent.creation_key = agent.id.to_string();
+        harness.store.create_agent(agent.clone()).await.unwrap();
+        let revision = agent.revision;
+        agent
+            .transition(
+                AgentStatus::Stopped,
+                rfc3339_at(now),
+                Some(AgentStopReason::Owner),
+            )
+            .unwrap();
+        harness
+            .store
+            .save_agent(revision, agent.clone())
+            .await
+            .unwrap();
+        if deleted {
+            let revision = agent.revision;
+            agent
+                .transition(AgentStatus::Deleted, rfc3339_at(now), None)
+                .unwrap();
+            harness
+                .store
+                .save_agent(revision, agent.clone())
+                .await
+                .unwrap();
+        }
+        ids.push(agent.id.to_string());
+    }
+    let worker = maintenance(&harness, "periodic-exclusions");
+    worker.run_once(now).await.unwrap();
+    worker.run_once(now).await.unwrap();
+    let captured = harness.stored(&active.id).await;
+    assert!(captured.lifecycle.checkpoints.latest.is_some());
+    let requests = harness.backend.requests().await;
+    let holds = requests
+        .iter()
+        .filter_map(|(_, request)| match request {
+            RequestFrame::CheckpointForTeardown(hold) => Some(hold),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(holds.len(), 1);
+    ids.sort();
+    assert_eq!(
+        holds[0].checkpoint.exclusions,
+        ids.iter()
+            .map(|id| format!(".cma/agents/{id}/home/tmp/arg0"))
+            .collect::<Vec<_>>()
+    );
+    worker.run_once(now).await.unwrap();
+    assert!(harness
+        .stored(&active.id)
+        .await
+        .lifecycle
+        .checkpoint_capture
+        .is_none());
+}
+
+#[tokio::test]
 async fn periodic_capture_persists_authority_before_io_and_retains_debt_until_resume() {
     let (harness, active, now) = active().await;
     let worker = maintenance(&harness, "periodic-a");

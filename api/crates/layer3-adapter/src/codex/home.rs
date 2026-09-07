@@ -24,6 +24,16 @@ pub(crate) fn expected_home(slot: &crate::AgentSlot) -> String {
     format!("{AGENT_HOME_ROOT}/{}/home", slot.0)
 }
 
+pub(crate) fn checkpoint_exclusions(agents: &[crate::AgentSlot]) -> crate::Result<Vec<String>> {
+    let mut paths = BTreeSet::new();
+    for agent in agents {
+        validate_slot(agent)?;
+        // Codex 0.147 creates disposable executable aliases here, not conversation data.
+        paths.insert(format!(".cma/agents/{}/home/tmp/arg0", agent.0));
+    }
+    Ok(paths.into_iter().collect())
+}
+
 /// Render files, links, and requested archives for one Codex home.
 pub fn render_agent_home(
     request: &AgentHomeRequest,

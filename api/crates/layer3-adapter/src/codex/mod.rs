@@ -249,6 +249,10 @@ impl SandboxAdapter for CodexAdapter {
         self.hosted.capture_agent(handle, agent).await
     }
 
+    fn checkpoint_exclusions(&self, agents: &[AgentSlot]) -> crate::Result<Vec<String>> {
+        home::checkpoint_exclusions(agents)
+    }
+
     async fn checkpoint(
         &self,
         handle: &RuntimeHandle,

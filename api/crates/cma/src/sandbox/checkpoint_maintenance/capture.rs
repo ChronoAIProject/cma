@@ -68,6 +68,22 @@ impl SandboxCheckpointMaintenance {
         now: SystemTime,
     ) -> Result<(SandboxCheckpointRef, Vec<SandboxCheckpointAgentGuard>), SandboxStoreError> {
         let agents = self.agents(claimed).await?;
+        if agents
+            .iter()
+            .any(|agent| agent.sandbox_id != claimed.id || agent.owner != claimed.owner)
+        {
+            return Err(SandboxStoreError::Corrupt(
+                "checkpoint agent lineage is inconsistent".into(),
+            ));
+        }
+        let slots = agents
+            .iter()
+            .map(|agent| AgentSlot::new(agent.id.to_string()))
+            .collect::<Vec<_>>();
+        let exclusions = self
+            .adapter
+            .checkpoint_exclusions(&slots)
+            .map_err(provider_error)?;
         let guards = agents
             .iter()
             .filter(|agent| agent.status.is_live())
@@ -96,7 +112,7 @@ impl SandboxCheckpointMaintenance {
                 &CheckpointHoldRequest {
                     checkpoint: CheckpointRequest {
                         epoch: capture.checkpoint_epoch,
-                        exclusions: Vec::new(),
+                        exclusions,
                     },
                     writer_resume_token: token.clone(),
                 },

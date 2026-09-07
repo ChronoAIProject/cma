@@ -47,7 +47,22 @@ impl SandboxWorker {
             Ok(token) => token,
             Err(failure) => return self.handle_lifecycle_failure(sandbox, failure, now).await,
         };
-        let request = checkpoint_hold_request(epoch, token.clone());
+        let request = match checkpoint_hold_request(
+            self.dependencies.adapter.as_ref(),
+            epoch,
+            token.clone(),
+            &agents,
+        ) {
+            Ok(request) => request,
+            Err(error) => {
+                return self
+                    .handle_lifecycle_failure(sandbox, adapter_failure(error), now)
+                    .await
+            }
+        };
+        if !self.lifecycle_state_matches(&sandbox).await? {
+            return Err(SandboxStoreError::Conflict);
+        }
         let held = match self
             .dependencies
             .adapter
@@ -171,7 +186,26 @@ impl SandboxWorker {
             WorkerFailure::terminal_security("lifecycle runtime binding is absent")
         })?;
         let checkpoint = pinned_checkpoint(sandbox)?;
-        let request = checkpoint_hold_request(checkpoint.epoch, lifecycle_writer_token(sandbox)?);
+        let agents = self
+            .lifecycle_agents(sandbox)
+            .await
+            .map_err(|_| WorkerFailure::retryable("checkpoint agent inventory unavailable"))?;
+        let request = checkpoint_hold_request(
+            self.dependencies.adapter.as_ref(),
+            checkpoint.epoch,
+            lifecycle_writer_token(sandbox)?,
+            &agents,
+        )
+        .map_err(adapter_failure)?;
+        if !self
+            .lifecycle_state_matches(sandbox)
+            .await
+            .map_err(|_| WorkerFailure::retryable("checkpoint lifecycle state unavailable"))?
+        {
+            return Err(WorkerFailure::retryable(
+                "checkpoint lifecycle authority was superseded",
+            ));
+        }
         let receipt = self
             .dependencies
             .adapter
@@ -341,14 +375,24 @@ pub(super) fn pinned_checkpoint(sandbox: &Sandbox) -> Result<&SandboxCheckpointR
     Ok(checkpoint)
 }
 
-fn checkpoint_hold_request(epoch: u64, writer_resume_token: String) -> CheckpointHoldRequest {
-    CheckpointHoldRequest {
+fn checkpoint_hold_request(
+    adapter: &dyn layer3_adapter::SandboxAdapter,
+    epoch: u64,
+    writer_resume_token: String,
+    agents: &[Agent],
+) -> Result<CheckpointHoldRequest, AdapterError> {
+    // Admission fences and retained tombstones keep this complete slot set stable during a hold.
+    let slots = agents
+        .iter()
+        .map(|agent| AgentSlot::new(agent.id.to_string()))
+        .collect::<Vec<_>>();
+    Ok(CheckpointHoldRequest {
         checkpoint: CheckpointRequest {
             epoch,
-            exclusions: Vec::new(),
+            exclusions: adapter.checkpoint_exclusions(&slots)?,
         },
         writer_resume_token,
-    }
+    })
 }
 
 fn lifecycle_writer_token(sandbox: &Sandbox) -> Result<String, WorkerFailure> {
