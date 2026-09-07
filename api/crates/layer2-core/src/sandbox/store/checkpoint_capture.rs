@@ -1,6 +1,6 @@
 use crate::sandbox::{
-    Agent, AgentStatus, Sandbox, SandboxCheckpointCapturePhase, SandboxEventKind, SandboxStatus,
-    SandboxWorkStep, Workspace,
+    Agent, AgentOrigin, AgentStatus, Sandbox, SandboxCheckpointCapturePhase, SandboxEventKind,
+    SandboxStatus, SandboxWorkStep, Workspace, WorkspaceStatus,
 };
 
 use super::{SandboxLifecycleAgentScope, SandboxLifecycleMutation, SandboxStoreError};
@@ -39,11 +39,53 @@ pub fn validate_checkpoint_capture_work(
                 || workspace.owner != sandbox.owner
                 || workspace.work.step.is_pending()
                 || workspace.work.lease.is_some()
+                || profile_agents_pending(workspace, agents)
         })
     {
         return Err(SandboxStoreError::Conflict);
     }
     Ok(())
+}
+
+fn profile_agents_pending(workspace: &Workspace, agents: &[Agent]) -> bool {
+    if workspace.status != WorkspaceStatus::Ready {
+        return false;
+    }
+    workspace
+        .profile
+        .content
+        .agent_profiles
+        .iter()
+        .enumerate()
+        .any(|(index, reference)| {
+            !agents.iter().any(|agent| {
+                if agent.workspace_id != workspace.id
+                    || agent.profile.id != reference.id
+                    || agent.profile.revision != reference.revision
+                {
+                    return false;
+                }
+                match agent.origin {
+                    AgentOrigin::WorkspaceProfile { index: admitted } => {
+                        usize::from(admitted) == index
+                            && agent.creation_key
+                                == crate::sandbox::agent::profile_agent_creation_key(
+                                    &workspace.id,
+                                    admitted,
+                                )
+                    }
+                    // A Trigger can win the same automatic admission slot. Terminal
+                    // rows still fulfill it: profile reconciliation never recreates them.
+                    AgentOrigin::Trigger { .. } => {
+                        agent.creation_key.starts_with("trigger-profile:")
+                            && workspace.profile.content.agent_profiles[..index]
+                                .iter()
+                                .all(|prior| prior != reference)
+                    }
+                    AgentOrigin::Manual => false,
+                }
+            })
+        })
 }
 
 pub(super) fn validate_capture_mutation(
