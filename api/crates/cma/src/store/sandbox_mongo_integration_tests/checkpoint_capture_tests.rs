@@ -10,7 +10,10 @@ use crate::store::sandbox_maintenance::mongo_integration_tests::{
 
 mod concurrency_tests;
 mod publication_tests;
+mod quiet_tests;
 mod renewal_tests;
+
+const QUIET_AT: &str = "2026-09-04T23:58:00Z";
 
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
@@ -51,7 +54,7 @@ async fn checkpoint_capture_waits_for_missing_pinned_agents_in_the_same_transact
         .await
         .unwrap()
         .is_empty());
-    insert_agent(&store, &agent, NOW).await;
+    insert_agent(&store, &agent, QUIET_AT).await;
     store
         .commit_sandbox_lifecycle(request.clone())
         .await
@@ -149,7 +152,7 @@ async fn capture_fixture(store: &MongoSandboxStore, suffix: &str) -> (Sandbox, W
     let agent = ready_agent(&parent, &format!("agt_capture_{suffix}"));
     let workspace = ready_workspace(&parent, agent.workspace_id.as_str(), "project");
     store.create_workspace(workspace.clone()).await.unwrap();
-    insert_agent(store, &agent, NOW).await;
+    insert_agent(store, &agent, QUIET_AT).await;
     (parent, workspace, agent)
 }
 

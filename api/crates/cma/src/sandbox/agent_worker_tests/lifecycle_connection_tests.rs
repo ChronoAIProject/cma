@@ -333,6 +333,7 @@ async fn restored_connection_does_not_admit_unrestored_or_foreign_identity() {
 async fn connection_recovery_still_waits_for_checkpoint_writer_resumption() {
     let harness = Harness::new(Arc::new(EmptyAgentSkillResolver)).await;
     let ready = completed_agent(&harness).await;
+    let capture_at = harness.now + Duration::from_secs(120);
     let current = harness
         .store
         .get_sandbox(&ready.sandbox_id)
@@ -341,7 +342,7 @@ async fn connection_recovery_still_waits_for_checkpoint_writer_resumption() {
         .unwrap();
     let mut capturing = current.clone();
     capturing
-        .begin_checkpoint_capture(rfc3339_at(harness.now))
+        .begin_checkpoint_capture(rfc3339_at(capture_at))
         .unwrap();
     harness
         .store
@@ -350,7 +351,7 @@ async fn connection_recovery_still_waits_for_checkpoint_writer_resumption() {
             sandbox: capturing,
             agents: Vec::new(),
             agent_scope: SandboxLifecycleAgentScope::Touched,
-            appended_at: rfc3339_at(harness.now),
+            appended_at: rfc3339_at(capture_at),
             events: vec![SandboxEventKind::WorkStepCompleted {
                 step: SandboxWorkStep::RunLifecycleOperation,
             }],
@@ -365,16 +366,12 @@ async fn connection_recovery_still_waits_for_checkpoint_writer_resumption() {
     assert_eq!(
         harness
             .worker
-            .reconcile_connections(harness.now)
+            .reconcile_connections(capture_at)
             .await
             .unwrap(),
         1
     );
-    assert!(!harness
-        .worker
-        .run_one(&ready.id, harness.now)
-        .await
-        .unwrap());
+    assert!(!harness.worker.run_one(&ready.id, capture_at).await.unwrap());
     let retry = harness.stored(&ready.id).await;
     assert_eq!(retry.work.step, AgentWorkStep::PublishConnection);
     assert_eq!(retry.work.attempts, 0);

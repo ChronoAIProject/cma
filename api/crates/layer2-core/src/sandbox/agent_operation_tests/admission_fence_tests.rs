@@ -72,8 +72,19 @@ async fn checkpoint_between_policy_read_and_commit_refuses_without_retry_or_admi
     parent.runtime.as_mut().unwrap().provision_generation = Some(1);
     parent.lifecycle.runtime_generation_high_water = 1;
     store.create_sandbox(parent).await.unwrap();
-    let ready = test_agent(AgentStatus::Ready, None);
+    let mut ready = test_agent(AgentStatus::Ready, None);
+    ready.conversation.last_seq = 1;
     store.create_agent(ready.clone()).await.unwrap();
+    let prior = store
+        .append_agent_log(
+            &ready.id,
+            "2026-09-04T23:58:00Z".into(),
+            AgentLogKind::WorkStepCompleted {
+                step: AgentWorkStep::None,
+            },
+        )
+        .await
+        .unwrap();
     let (sender, inputs) = recording_sender(Ok(()));
     let registry = changing_registry(store.clone(), sender, ParentChange::Checkpoint, 1);
     let service = AgentOperationService::new(store.clone(), registry.clone());
@@ -88,7 +99,10 @@ async fn checkpoint_between_policy_read_and_commit_refuses_without_retry_or_admi
         store.get_agent(&ready.id).await.unwrap(),
         Some(ready.clone())
     );
-    assert!(store.agent_log(&ready.id, 0, 100).await.unwrap().is_empty());
+    assert_eq!(
+        store.agent_log(&ready.id, 0, 100).await.unwrap(),
+        vec![prior]
+    );
     assert!(inputs.lock().unwrap().is_empty());
     assert_eq!(
         service

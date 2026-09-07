@@ -69,7 +69,7 @@ impl SandboxMaintenanceStore for InMemorySandboxStore {
     }
 }
 
-fn live_agent_activities(
+pub(super) fn live_agent_activities(
     state: &State,
     sandbox_id: &SandboxId,
 ) -> Result<Vec<SandboxAgentActivity>, SandboxStoreError> {

@@ -1,6 +1,6 @@
 use super::*;
 use layer2_core::sandbox::store::{
-    AgentStore, SandboxLifecycleAgentScope, SandboxLifecycleExecutionStore,
+    AgentLogStore, AgentStore, SandboxLifecycleAgentScope, SandboxLifecycleExecutionStore,
     SandboxLifecycleMutation, SandboxMutationGuard,
 };
 use layer2_core::sandbox::{SandboxCheckpointCapturePhase, SANDBOX_CHECKPOINT_INTERVAL_SECONDS};
@@ -35,6 +35,55 @@ fn token(sandbox: &Sandbox) -> String {
         .writer_resume_token
         .clone()
         .unwrap()
+}
+
+#[tokio::test]
+async fn periodic_capture_waits_two_quiet_minutes_across_worker_restart() {
+    let (harness, active, now) = active().await;
+    let mut agent = lifecycle_queue_tests::ready_agent(&active, now);
+    agent.conversation.last_seq = 1;
+    harness.store.create_agent(agent.clone()).await.unwrap();
+    harness
+        .store
+        .append_agent_log(
+            &agent.id,
+            rfc3339_at(now),
+            layer2_core::sandbox::AgentLogKind::WorkStepCompleted {
+                step: layer2_core::sandbox::AgentWorkStep::None,
+            },
+        )
+        .await
+        .unwrap();
+    for elapsed in [0, 4, 119] {
+        let worker = maintenance(&harness, "quiet-restarted");
+        assert_eq!(
+            worker
+                .run_once(now + Duration::from_secs(elapsed))
+                .await
+                .unwrap(),
+            0
+        );
+        assert_eq!(harness.stored(&active.id).await, active);
+    }
+    assert!(!harness
+        .backend
+        .requests()
+        .await
+        .iter()
+        .any(|(_, request)| matches!(request, RequestFrame::CheckpointForTeardown(_))));
+    assert_eq!(
+        maintenance(&harness, "quiet-restarted")
+            .run_once(now + Duration::from_secs(120))
+            .await
+            .unwrap(),
+        1
+    );
+    assert!(harness
+        .stored(&active.id)
+        .await
+        .lifecycle
+        .checkpoint_capture
+        .is_some());
 }
 
 #[tokio::test]
@@ -167,8 +216,20 @@ async fn periodic_capture_persists_authority_before_io_and_retains_debt_until_re
 #[tokio::test]
 async fn failed_conversation_capture_keeps_resume_debt_and_publishes_nothing() {
     let (harness, active, now) = active().await;
-    let agent = lifecycle_queue_tests::ready_agent(&active, now);
-    harness.store.create_agent(agent).await.unwrap();
+    let mut agent = lifecycle_queue_tests::ready_agent(&active, now);
+    agent.conversation.last_seq = 1;
+    harness.store.create_agent(agent.clone()).await.unwrap();
+    harness
+        .store
+        .append_agent_log(
+            &agent.id,
+            rfc3339_at(now - Duration::from_secs(120)),
+            layer2_core::sandbox::AgentLogKind::WorkStepCompleted {
+                step: layer2_core::sandbox::AgentWorkStep::None,
+            },
+        )
+        .await
+        .unwrap();
     let worker = maintenance(&harness, "periodic-a");
     let runtime = RuntimeHandle(active.runtime.as_ref().unwrap().runtime_id.clone());
     worker.run_once(now).await.unwrap();
