@@ -110,9 +110,9 @@ fn publication_time(now: SystemTime, current: &Agent) -> Result<SystemTime, Sand
 fn dispatch_error(error: AgentOperationError) -> SandboxStoreError {
     match error {
         AgentOperationError::NotFound => SandboxStoreError::NotFound,
-        AgentOperationError::StaleWorkAuthority | AgentOperationError::Conflict => {
-            SandboxStoreError::Conflict
-        }
+        AgentOperationError::StaleWorkAuthority
+        | AgentOperationError::Conflict
+        | AgentOperationError::CheckpointInProgress => SandboxStoreError::Conflict,
         AgentOperationError::LogCapacityExceeded => SandboxStoreError::AgentLogCapacityExceeded,
         AgentOperationError::Corrupt(detail) => SandboxStoreError::Corrupt(detail),
         AgentOperationError::Unavailable(detail)
@@ -121,5 +121,18 @@ fn dispatch_error(error: AgentOperationError) -> SandboxStoreError {
         unexpected => SandboxStoreError::Corrupt(format!(
             "first-message dispatcher returned an invalid lifecycle outcome: {unexpected}"
         )),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn checkpoint_busy_preserves_durable_first_message_retry() {
+        assert_eq!(
+            dispatch_error(AgentOperationError::CheckpointInProgress),
+            SandboxStoreError::Conflict
+        );
     }
 }

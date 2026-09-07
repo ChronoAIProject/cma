@@ -106,6 +106,8 @@ pub enum SandboxStoreError {
     Duplicate,
     #[error("record revision changed")]
     Conflict,
+    #[error("sandbox checkpoint is in progress; input was not admitted")]
+    CheckpointInProgress,
     #[error("event sequence would not be gap-free")]
     SequenceConflict,
     #[error("agent log capacity exceeded")]

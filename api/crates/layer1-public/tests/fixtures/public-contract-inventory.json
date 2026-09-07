@@ -950,6 +950,7 @@
         "json_content_type_required",
         "missing_idempotency_key",
         "not_authenticated",
+        "sandbox_checkpoint_in_progress",
         "store_failed"
       ]
     },
@@ -1036,6 +1037,7 @@
         "invalid_run_request",
         "not_authenticated",
         "provisioning_timeout",
+        "sandbox_checkpoint_in_progress",
         "thread_not_found"
       ],
       "required_protocol_failures": [
@@ -1151,7 +1153,8 @@
         "not_authenticated",
         "previous_response_id_conflict",
         "response_in_progress",
-        "responses_field_unsupported"
+        "responses_field_unsupported",
+        "sandbox_checkpoint_in_progress"
       ],
       "required_protocol_failures": [
         "agent_turn_failed",

@@ -205,12 +205,12 @@ async fn checkpoint_capture_holds_every_writer_until_exact_resume_acknowledgemen
     );
     assert_eq!(
         store.commit_agent_conversation(stale_input).await,
-        Err(SandboxStoreError::Conflict)
+        Err(SandboxStoreError::CheckpointInProgress)
     );
     let input = begin_stored_conversation_turn(&store, agent.clone()).await;
     assert_eq!(
         store.commit_agent_conversation(input).await,
-        Err(SandboxStoreError::Conflict)
+        Err(SandboxStoreError::CheckpointInProgress)
     );
     assert_eq!(
         store

@@ -14,6 +14,10 @@ use layer2_core::sandbox::{
 use crate::rest::instance_problem::InstanceProblem;
 use crate::rest::{problem_document, problem_response};
 
+#[cfg(test)]
+#[path = "conversation_checkpoint_tests.rs"]
+mod checkpoint_tests;
+
 #[derive(Clone)]
 pub struct AgentConversationState {
     pub(crate) reads: Arc<AgentReadService>,
@@ -87,6 +91,9 @@ pub(crate) fn context_failure(error: AgentContextError) -> Response {
             "The context did not become ready within the ten-minute admission bound.",
         ),
         AgentContextError::NotReady => InstanceProblem::AgentNotReady.into_response(),
+        AgentContextError::CheckpointInProgress => {
+            InstanceProblem::CheckpointInProgress.into_response()
+        }
         AgentContextError::Agent(error) => InstanceProblem::from_create(error).into_response(),
         AgentContextError::Sandbox(error) => {
             crate::rest::instances_problem::HierarchyProblem::sandbox(error).into_response()
