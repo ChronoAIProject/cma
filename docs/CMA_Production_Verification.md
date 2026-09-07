@@ -324,6 +324,43 @@ their findings were not used for speculative product changes. Actual Send/Stop,
 full built-home pause/restore, paused deletion and the final fresh environment
 are still pending acceptance.
 
+### Heavy Checkpoint Request Cancellation
+
+The first full built-home checkpoint did not publish. Repeated epoch-7 captures
+left the latest durable checkpoint at epoch 6, while the four completed turns,
+resource identities and selected built artifacts remained unchanged. Runtime
+inspection found a locally sealed 6,263,745,872-byte archive and overlapping
+temporary capture files; local archive creation is not durable checkpoint
+acceptance. The matching `heavy-home-after.json` restore proof has not passed.
+
+Read-only inspection confirmed the consumed Sandbox provider uses an HTTP
+client with a 180-second timeout. Its scoped control failures occurred at
+19:12:38, 19:16:08, 19:19:38 and 19:23:08 UTC, each approximately 180 seconds
+after endpoint resolution. Cancelling CMA's HTTP handler dropped the operation
+and writer guards while its blocking archive task continued. No provider
+configuration, runtime journal, writer token or database record was repaired.
+
+The CMA correction keeps long control operations owned independently of the
+HTTP connection and streams JSON whitespace until the exact typed response is
+available. Archive import validation additionally negotiates
+`application/vnd.cma.checkpoint-receipt+json`: opted-in clients require the
+committed object reference, SHA-256 and byte count before accepting HTTP 200;
+legacy clients retain the empty HTTP 204 response. Heartbeats are not completion.
+The adapter's 107 tests pass, including delayed streamed completion, both failure
+classes, legacy compatibility, altered identities, malformed/truncated responses,
+and receipt size limits. All 168 runtime tests pass, with one existing external
+fixture ignored. Three real HTTP-disconnect regressions prove held-capture
+fencing and exact replay, ordinary-capture serialization, and inherited restore
+completion. All-target/all-feature Clippy and secret scans passed for both layers.
+
+The test-only Sandbox was retired through one actual UI Delete command after
+two exact-identity, no-active-work and four-turn-hash checks. Its pod is gone,
+writer capture and lifecycle operations are cleared, and all four public
+conversation turns retain their original SHA-256. Its generated runtime home
+was removed; `retire-checkpoint-failure-GDUebo/` preserves the evidence. This
+does not count as a passing heavy restore or paused-deletion acceptance. Fresh
+production verification on the corrected images remains required.
+
 ## Historical Observation
 
 Recorded on 2026-09-07, Singapore time. This is a bounded production observation,
