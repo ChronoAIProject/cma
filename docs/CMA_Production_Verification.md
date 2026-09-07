@@ -19,7 +19,7 @@ acceptance of this campaign.
 | 6. Complete external-click flow | Login then automatic provisioning; exact first message once; correct software, skills, scopes | Fresh `streaming-fixed` README entry, first response, live configuration and actual workload passed; matching built-home restore and final first/repeat cycle pending |
 | 7. Previous UI style | Original rotating 3D mark and established controls; desktop/mobile screenshots | Live home/provisioning motion passed; four-view chat checks passed; deployed web `a5d6fb4b` preserves mobile navigation and verifies lifecycle input holds in all four views |
 | 8. Autonomous YOLO | Pinned provider runs full-access mode with no approval requests | Actual provider configuration verified; latest first response and successful subsequent workload completed with zero approvals |
-| 9. Lifecycle | Active to paused to active; paused to terminated; history retained | Heavy epoch-2 checkpoint published; one UI Pause admitted at 21:16:10 UTC exceeded its 30-minute test deadline and remains in progress; restore, manual Resume and paused Delete remain pending |
+| 9. Lifecycle | Active to paused to active; paused to terminated; history retained | Heavy Pause settled at 22:12:00 UTC with exact hierarchy/history retained; original 30-minute UI test remains failed; README restoration, manual Resume and paused Delete remain pending |
 | 10. Cleanup | Only identified stale state removed; new published flow remains usable | Two old Sandboxes retired through the public API under explicit authorization; final environment pending |
 | 11. Conversation UI | Thinking, Send/Stop, CPU, RAM, context, token, network metrics | Four-view active metrics, Thinking, live follow/manual scroll/re-follow, completion, hierarchy and reload passed; actual Send/Stop acceptance in progress |
 
@@ -599,6 +599,46 @@ conversation, all four resource identifiers and two-turn transcript SHA-256
 `2d50df491bf47c2555f4e634ce61ac59f15f95581b0f5f3df382c8178f8f6edc`
 remain unchanged. The combined API image is still building; no successful Pause,
 restoration or final Trigger acceptance is inferred from these observations.
+
+### Heavy Pause Completion And Recovery API Rollout
+
+The third Pause archive published epoch 3 at 2026-09-07 21:59:21 UTC. Object
+`cpa_c5504a2420f8445c81f5a677e8786382` is upload-confirmed and published, with
+6,265,725,637 bytes; its staged transfer took approximately 437 seconds. Agent
+parking completed at 22:05:40, followed by runtime teardown and final Paused
+publication at 22:12:00. The original pod is gone, the lifecycle operation and
+work lease are absent, and public Resume is available. All four identifiers,
+the original native conversation and exact two-turn transcript are preserved.
+Evidence is in `admitted-pause-continuation-D14NcJ/` and the matching scoped
+store readback. The earlier continuation observer was cancelled to correct its
+handling of omitted optional public fields; its samples and cancellation note
+remain in `admitted-pause-continuation-fcxlvm/`. Neither continuation changes the
+original 30-minute UI test's failed outcome. The admitted operation took
+approximately 56 minutes including its failed upload attempts.
+
+API `0327a382` passed its image scan, registry digest readback and all 18 manifest
+validations. It was deployed only after the settled Pause, with no runtime or
+Agent work in progress. Pod `cma-api-54d7684985-49mpn` became Ready on digest
+`sha256:5278873cc69bd6ee43aef45c78cb8b725e312dbf1ec5214a0972fc089064f73a`.
+Manifest commit `abd1821f` pins this image. Web `a5d6fb4b` and runtime `137b489d`
+were unchanged. Readback is in `observe-api-0327-rollout-2214.json`.
+
+One real repeat README click admitted Launch
+`lch_5df2e48f722c4c2bb4d306cd50d7df28` at 22:13:55 UTC. It automatically selected
+the existing Sandbox, Workspace and Agent, with no review or manual Resume, and
+recognized the already completed first prompt. Replacement runtime
+`f51eab7a-6281-4b9f-ab73-82580706f7fd-0` has UID
+`c66ed753-b59f-41f2-9f58-17152c770999` and the unchanged pinned image. The
+`production-streaming-fixed-restored-repeat/` run is still in progress; completed
+activation and exact built-artifact restoration are not yet accepted.
+
+Follow-up commit `553e180b` corrects backdated lifecycle failure events and
+already-expired retry delays. Capture failures include monotonic elapsed work,
+and writer recovery adds its own acknowledgement time before recording the
+failure and scheduling retry. Four deterministic regressions failed before the
+fix and passed afterward; 26 focused tests, 1,076 core/CMA tests, strict Clippy,
+formatting and secret checks passed. The follow-up image is building separately;
+it did not delay the verified `0327a382` rollout and is not yet deployed.
 
 ## Historical Observation
 
