@@ -13,15 +13,15 @@ acceptance of this campaign.
 | --- | --- | --- |
 | 1. Public Agent Profile | Exact text, model, effort, Autonomous, four latest public skill pins | Created and published at revision 1; exact configuration and archive checksums verified |
 | 2. Public Workspace Profile | Exact metadata, repository `dev`, no setup, one Agent Profile | Created and published at revision 1; exact configuration verified |
-| 3. Public Sandbox Profile | 4000 millicores, 8192 MiB, two requested services, 4/4 limits, working toolchain | Created and published at revision 1; isolated real-repository toolchain proof passed; production proof pending |
+| 3. Public Sandbox Profile | 4000 millicores, 8192 MiB, two requested services, 4/4 limits, working toolchain | Exact configuration verified in production; actual Agent workload exposed a login-shell PATH defect; corrected-image workload pending |
 | 4. Public Trigger | Exact title/message, all-level reuse, Try It, visitor theme, no review, README placement | Exact revision published after first rollout; README-only PR #841 merged after all 12 protected checks; default README snippet read back exactly |
 | 5. Login without bootstrap | No Sandbox, Workspace, Agent, or Profile created by login alone | Existing-owner fresh-browser production sign-in created no resources before or after rollout; fresh signup not tested |
-| 6. Complete external-click flow | Login then automatic provisioning; exact first message once; correct software, skills, scopes | First live click/sign-in/Sandbox/Workspace passed; checkpoint race blocked Agent creation and exhausted Launch retries; corrected rerun pending |
-| 7. Previous UI style | Original rotating 3D mark and established controls; desktop/mobile screenshots | Restored; live home desktop/mobile, both-theme, animation, reduced-motion and canvas checks passed; running provisioning step pending |
-| 8. Autonomous YOLO | Pinned provider runs full-access mode with no approval requests | Corrected to never/danger-full-access and provider full-access mode; production first turn pending |
-| 9. Lifecycle | Active to paused to active; paused to terminated; history retained | Checkpoint exclusions and large-home metadata limits corrected and tested; production exercise pending |
+| 6. Complete external-click flow | Login then automatic provisioning; exact first message once; correct software, skills, scopes | Corrected production first click and repeat reuse passed with no extra clicks; exact skills/scopes verified; actual workload and final-image rerun pending |
+| 7. Previous UI style | Original rotating 3D mark and established controls; desktop/mobile screenshots | Live home and provisioning animation passed in desktop/mobile, both themes and reduced motion; final chat corrections awaiting rollout |
+| 8. Autonomous YOLO | Pinned provider runs full-access mode with no approval requests | Actual provider configuration verified; first response and subsequent workload attempt completed with zero approvals |
+| 9. Lifecycle | Active to paused to active; paused to terminated; history retained | Compressed periodic production checkpoints published; heavy built-home pause/restore and final runtime rotation still pending |
 | 10. Cleanup | Only identified stale state removed; new published flow remains usable | Two old Sandboxes retired through the public API under explicit authorization; final environment pending |
-| 11. Conversation UI | Thinking, Send/Stop, CPU, RAM, context, token, network metrics | Restored and browser-tested with measured fixtures; real production metrics verification pending |
+| 11. Conversation UI | Thinking, Send/Stop, CPU, RAM, context, token, network metrics | Live observations found missing gVisor limits, clipping and follow defects; exact configured-capacity fallback and layout fixes tested locally; production acceptance pending |
 
 Private campaign evidence is kept under `/tmp/cma-trureturing-loop.LvTezb` and
 must not be committed or uploaded wholesale. One existing NyxID owner account is
@@ -113,6 +113,74 @@ unchanged tracked source. The receipt check must pass before an Agent's success
 message can count as toolchain acceptance. Repeat-Trigger verification compares
 the entire existing conversation and requires the first prompt exactly once,
 including after legitimate follow-up work.
+
+### Corrected Production Journey
+
+API `380f0457`, web `d55e581e`, and runtime `0412d647` completed the corrected
+production entry. Launch `lch_8c440c2ae7b54609852d24edaa76e112` provisioned
+Sandbox `sbx_e5bb9c67ceb747e29f6d71faab0c6f97`, Workspace
+`wks_23ab9751dc9c4459bb8e132926abd8f0`, Worktree
+`wkt_8dcc607cd4e247088bd4210e30f8a716`, and Agent
+`agt_9b174a0ff4d34a9ea507caa92f9847a0`. Its exact first prompt completed at
+2026-09-07 17:00:21 UTC with zero extra CMA clicks and zero approval requests.
+The elapsed click-to-answer time was approximately eleven minutes, including
+provisioning and the model's tool use; this is not a low-latency claim.
+
+Repeat Launch `lch_ed34f1aef68d495a9f037ca0957724b1` reused all four instance
+identifiers and preserved the complete conversation with the first prompt
+exactly once. Evidence remains in `production-first-fixed/` and
+`production-repeat/`. Both used GitHub-rendered README HTML at the source
+origin and a genuine browser anchor click, not authenticated GitHub page access.
+
+A read-only configuration probe while the Agent was working verified all five
+installers, profile environment and instructions, `gpt-5.6-sol` with `xhigh`,
+`never` and `danger-full-access`, twenty exact skill files across four archives,
+native skill discovery once each, the separate Agent home and worktree, and the
+NyxID key's exact `chrono-llm,ornn-api` service scope with `proxy read` and no
+node/all grants. The worktree was `/home/cma/trureturing/.worktrees/wt-1`, branch
+`cma/wt-1`, base `c382165c4623d22e1f59d0e7412b1b3183f42217`, with clean tracked
+source. This probe did not yet reproduce the Agent's login-shell environment.
+
+### Actual Workload Failure And Follow-Up
+
+The real Agent workload attempt `workload-toolchain/` failed honestly:
+`make -C tools dotnet` exited 2 because `dotnet` was not found. The provider
+process inherited the configured PATH, but Debian `/etc/profile` reset it inside
+`bash -lc`; the separate Agent home lacked the main home's restoring profile.
+The failed receipt and attempt are retained and never count as acceptance.
+
+Runtime `8ebb0db9` preserves nonempty inherited PATH in the image's login-shell
+initialization, without editing live Agent homes. Its regression reproduces the
+distinct Agent HOME, login/non-login shells, tool directories with spaces,
+empty/unset fallback and intentional owner-profile overrides. The previously
+deployed runtime fails the new login-shell check. Actual fixed-image execution
+and receipt readback remain required after rollout.
+
+API `f88d7cf0` renews exact periodic capture claims, bounds total capture and
+metadata recovery, and uses revision-fenced retry after ambiguous publication
+or timeout without releasing an uncertain writer hold. Its follow-up tests
+`7b15a8b6` passed all fourteen real-Mongo cases, including renewal/takeover races
+and an ambiguous-commit failpoint. Only the disposable fixture was changed.
+
+The exact compressed-runtime full-home fixture sealed 13,799,459,617 raw bytes
+into 6,175,626,862 gzip bytes in 233.150 seconds. Exact hold replay, downloaded
+digest and writer resume passed. Heavy production upload and full-home restore
+remain unverified: extrapolated transfer time is close to the 600-second upload
+lifetime, and local compression evidence must not be substituted for that test.
+
+Web `83aa8a36` adds explicitly labelled configured CPU/RAM capacity only when
+observed limits are absent and the pinned public revision matches; unavailable
+or invalid reads retain truthful absolute values. It also removes completed
+preparation, preserves manual upward scrolling while following live growth by
+default, restores square 34/44-pixel Send controls, and bounds long mobile
+conversation content. Its 895 tests and four desktop/mobile theme browser
+configurations passed; final production verification is still pending rollout.
+
+One automation browser cookie appeared in a scratch transport diagnostic. Its
+exact login record was revoked and replay with the original cookie returned
+401. A fresh sign-in-only check in `login-alone-moMaAS/` created zero resources;
+the NyxID CLI credential was unchanged. The earlier first/repeat evidence is
+retained, but its revoked authentication state must not be reused.
 
 ## Historical Observation
 
