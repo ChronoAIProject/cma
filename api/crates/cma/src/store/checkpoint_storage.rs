@@ -17,7 +17,7 @@ mod token;
 mod transfer;
 
 pub(super) const OBJECT_HTTP_TIMEOUT: Duration = Duration::from_secs(180);
-pub(super) const UPLOAD_LIFETIME: Duration = Duration::from_secs(600);
+pub(super) const UPLOAD_LIFETIME: Duration = Duration::from_secs(1_200);
 
 #[async_trait::async_trait]
 pub(crate) trait CheckpointBlobStore: Send + Sync {

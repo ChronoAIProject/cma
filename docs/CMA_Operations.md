@@ -463,6 +463,23 @@ readable. Do not roll back to an API that cannot read the part layout after a
 multipart checkpoint is published. This avoids the production ingress's HTTP
 413 limit without changing runtime archive bytes or writer-fence authority.
 
+New upload stages record a fixed 1,200-second (20-minute) client transfer budget
+in `cleanup_after`, increased from 600 seconds after a still-progressing
+6.26 GB upload exhausted that shorter budget. This is a CMA-owned bound, not an
+expiry sent to the external storage service. Existing stages keep their exact
+recorded deadlines across upgrades; never extend a live stage by editing its
+record. Transfer cancellation and cleanup both use the stored deadline.
+
+The 180-second per-request timeout, four concurrent 32 MiB parts, three bounded
+immutable-part attempts, exact readback checks and Retry-After handling remain
+unchanged. Storage credentials are refreshed between requests when needed.
+Both periodic and explicit lifecycle captures still have a 1,800-second total
+bound, including archive creation and publication, so a 20-minute upload budget
+leaves less than ten minutes for the remaining work and does not guarantee every
+large home can finish. Periodic capture claims renew every minute; the explicit
+lifecycle worker retains its configured 31-minute lease. Timeout preserves
+writer-recovery and cleanup authority rather than claiming publication.
+
 Publish only after bounded upload, size/digest verification and readable bytes.
 Use immutable physical object identities so cleanup of a losing upload cannot
 delete a concurrent winner. Retention preserves the two recorded checkpoints
