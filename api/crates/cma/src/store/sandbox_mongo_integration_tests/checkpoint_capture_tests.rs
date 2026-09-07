@@ -13,6 +13,58 @@ mod publication_tests;
 
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn checkpoint_capture_waits_for_missing_pinned_agents_in_the_same_transaction() {
+    let (client, name) = database("capture_profile_priority").await;
+    let store = MongoSandboxStore::open(&client, &name).await.unwrap();
+    let mut parent = active_sandbox("sbx_capture_profile_priority");
+    parent.work = SandboxWorkState::new(SandboxWorkStep::None, NOW.into());
+    store.create_sandbox(parent.clone()).await.unwrap();
+    let mut agent = ready_agent(&parent, "agt_capture_profile_priority");
+    let mut workspace = ready_workspace(&parent, agent.workspace_id.as_str(), "project");
+    workspace
+        .profile
+        .content
+        .agent_profiles
+        .push(layer2_core::profiles::AgentProfileRef {
+            id: agent.profile.id.clone(),
+            revision: agent.profile.revision,
+        });
+    agent.origin = layer2_core::sandbox::AgentOrigin::WorkspaceProfile { index: 0 };
+    agent.creation_key = format!("workspace-profile:{}:0", workspace.id);
+    store.create_workspace(workspace.clone()).await.unwrap();
+    let request = begin(&parent);
+    assert_eq!(
+        store.commit_sandbox_lifecycle(request.clone()).await,
+        Err(SandboxStoreError::Conflict)
+    );
+    assert_eq!(
+        store.get_sandbox(&parent.id).await.unwrap(),
+        Some(parent.clone())
+    );
+    assert_eq!(
+        store.get_workspace(&workspace.id).await.unwrap(),
+        Some(workspace)
+    );
+    assert!(store
+        .sandbox_events(&parent.id, 0, 10)
+        .await
+        .unwrap()
+        .is_empty());
+    insert_agent(&store, &agent, NOW).await;
+    store
+        .commit_sandbox_lifecycle(request.clone())
+        .await
+        .unwrap();
+    let reopened = MongoSandboxStore::open(&client, &name).await.unwrap();
+    assert_eq!(
+        reopened.get_sandbox(&parent.id).await.unwrap(),
+        Some(request.sandbox)
+    );
+    client.database(&name).drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
 async fn runtime_writer_claims_require_persisted_parent_authority() {
     let (client, name) = database("writer_missing_parent").await;
     let store = MongoSandboxStore::open(&client, &name).await.unwrap();
