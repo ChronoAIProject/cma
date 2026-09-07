@@ -10,6 +10,7 @@ use crate::store::sandbox_maintenance::mongo_integration_tests::{
 
 mod concurrency_tests;
 mod publication_tests;
+mod renewal_tests;
 
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
