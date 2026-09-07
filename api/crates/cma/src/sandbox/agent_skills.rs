@@ -11,7 +11,6 @@ use super::credential::SandboxCredentialController;
 
 const ORNN_PROXY_PATH: &[&str] = &["api", "v1", "proxy", "s", "ornn-api"];
 const ORNN_SKILLS_PATH: &[&str] = &["api", "v1", "skills"];
-const BASELINE_SKILL_IDS: &[&str] = &["nyxid", "ornn-agent-manual-cli"];
 const MAX_REFERENCES: usize = 32;
 const MAX_RESPONSE_BYTES: usize = 1024 * 1024;
 const MAX_URL_BYTES: usize = 2_048;
@@ -154,12 +153,16 @@ impl OrnnAgentSkillResolver {
         {
             return Err(invalid(index, "Ornn response changed the pinned version"));
         }
+        if !safe_skill_name(&material.name) {
+            return Err(invalid(index, "Ornn response has an invalid skill name"));
+        }
         if !canonical_sha256(&material.skill_hash) {
             return Err(invalid(index, "Ornn response has an invalid SHA-256"));
         }
         Ok(ResolvedAgentSkill {
             source: reference.source,
             id: reference.id.clone(),
+            name: Some(material.name),
             version: material.version,
             archive_sha256: material.skill_hash,
         })
@@ -181,7 +184,7 @@ impl AgentSkillResolver for OrnnAgentSkillResolver {
         if references.is_empty() {
             return Ok(Vec::new());
         }
-        let mut ids = std::collections::BTreeSet::from_iter(BASELINE_SKILL_IDS.iter().copied());
+        let mut ids = std::collections::BTreeSet::new();
         for (index, reference) in references.iter().enumerate() {
             requested_version(reference, index)?;
             if !ids.insert(reference.id.as_str()) {
@@ -220,6 +223,7 @@ impl AgentSkillResolver for OrnnAgentSkillResolver {
                         .map_err(|_| invalid(index, "download locator is not canonical"))?;
                 Ok(AgentSkill {
                     id: skill.id.as_str().to_owned(),
+                    name: skill.name.clone(),
                     version: Some(skill.version.clone()),
                     archive_sha256: skill.archive_sha256.clone(),
                     source_url: source_url.to_string(),
@@ -239,6 +243,7 @@ struct OrnnEnvelope {
 #[derive(Debug, Deserialize)]
 struct OrnnMaterial {
     guid: String,
+    name: String,
     version: String,
     #[serde(rename = "skillHash")]
     skill_hash: String,
@@ -366,10 +371,14 @@ fn validate_material(material: &[ResolvedAgentSkill]) -> Result<(), AgentSkillRe
     if material.len() > MAX_REFERENCES {
         return Err(invalid(0, "skill selection exceeds the reference limit"));
     }
-    let mut ids = std::collections::BTreeSet::from_iter(BASELINE_SKILL_IDS.iter().copied());
+    let mut ids = std::collections::BTreeSet::new();
     for (index, skill) in material.iter().enumerate() {
         if !matches!(skill.source, SkillSource::Ornn)
             || !safe_skill_id(skill.id.as_str())
+            || skill
+                .name
+                .as_deref()
+                .is_some_and(|name| !safe_skill_name(name))
             || !ids.insert(skill.id.as_str())
             || !canonical_ornn_version(&skill.version)
             || !canonical_sha256(&skill.archive_sha256)
@@ -394,6 +403,13 @@ fn canonical_ornn_version(version: &str) -> bool {
         && version
             .split_once('.')
             .is_some_and(|(major, minor)| canonical_decimal(major) && canonical_decimal(minor))
+}
+
+fn safe_skill_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 256
+        && name.trim() == name
+        && !name.chars().any(char::is_control)
 }
 
 fn canonical_decimal(value: &str) -> bool {

@@ -64,7 +64,7 @@ pub fn render_config(options: &RuntimeOptions, config: &CodexConfig) -> crate::R
 fn permission_settings(permission: PermissionLevel) -> (&'static str, &'static str) {
     match permission {
         PermissionLevel::Guarded => ("on-request", "read-only"),
-        PermissionLevel::Autonomous => ("on-failure", "workspace-write"),
+        PermissionLevel::Autonomous => ("never", "danger-full-access"),
     }
 }
 

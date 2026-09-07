@@ -48,6 +48,7 @@ async fn archive_is_fetched_only_through_the_loopback_route_and_verified() {
         Some(&proxy),
         &AgentSkill {
             id: "review".into(),
+            name: None,
             version: Some("1".into()),
             archive_sha256: digest,
             source_url: "https://ornn.invalid/api/v1/skills/review/versions/1/download".into(),
@@ -76,6 +77,7 @@ async fn checksum_mismatch_never_extracts_the_archive() {
         Some(&proxy),
         &AgentSkill {
             id: "review".into(),
+            name: None,
             version: None,
             archive_sha256: "0".repeat(64),
             source_url: "/api/v1/skills/review/versions/1/download".into(),
@@ -99,4 +101,45 @@ fn recursively_encoded_skill_paths_are_refused() {
         let error = proxied_url("http://127.0.0.1:9092", source).unwrap_err();
         assert_eq!(error.code, "skill_source_invalid", "accepted {source}");
     }
+}
+
+#[tokio::test]
+#[ignore = "requires CMA_SKILL_ARCHIVE, CMA_SKILL_SHA256, and CMA_SKILL_MANIFEST"]
+async fn pinned_external_archive_materializes_through_the_runtime_installer() {
+    let source = std::env::var("CMA_SKILL_ARCHIVE").expect("archive path");
+    let digest = std::env::var("CMA_SKILL_SHA256").expect("pinned archive digest");
+    let manifest = std::env::var("CMA_SKILL_MANIFEST").expect("relative skill manifest");
+    let manifest = safe_relative(&manifest, "skill manifest").unwrap();
+    let archive = std::fs::read(source).unwrap();
+    assert_eq!(hex(&Sha256::digest(&archive)), digest);
+    let (proxy, server) = server(archive).await;
+    let root = std::env::temp_dir().join(format!(
+        "cma-external-skill-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    std::fs::create_dir(&root).unwrap();
+    let destination = root.join("selected-skill");
+    install(
+        &reqwest::Client::new(),
+        Some(&proxy),
+        &AgentSkill {
+            id: "selected-skill".into(),
+            name: None,
+            version: None,
+            archive_sha256: digest,
+            source_url: "/api/v1/skills/review/versions/1/download".into(),
+        },
+        &destination,
+    )
+    .await
+    .unwrap();
+    let manifest = destination.join(manifest);
+    assert!(std::fs::metadata(&manifest).unwrap().is_file());
+    assert!(!std::fs::read_to_string(manifest).unwrap().trim().is_empty());
+    server.abort();
+    std::fs::remove_dir_all(root).unwrap();
 }

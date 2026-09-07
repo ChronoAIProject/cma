@@ -1,0 +1,95 @@
+body {
+  --dsw-alias-character-running: var(--dsw-static-ink-800);
+  --dsw-alias-character-completed: var(--dsw-static-moss-500);
+  --dsw-alias-character-pending: var(--dsw-static-amber-300);
+  --dsw-alias-character-failed: var(--dsw-static-red-600);
+}
+
+.landing__character {
+  position: relative;
+  display: block;
+  flex: none;
+  width: min(100%, clamp(220px, 50vmin, 520px));
+  padding: 0;
+  aspect-ratio: 1;
+  color: var(--dsw-alias-brand-primary);
+  background: transparent;
+  border: 0;
+  isolation: isolate;
+}
+.landing__character[data-motion] {
+  cursor: pointer;
+}
+.landing__character:focus-visible {
+  outline: none;
+  border-radius: 50%;
+  box-shadow: var(--focus-ring);
+}
+.landing__character--compact {
+  width: 44px;
+  height: 44px;
+}
+.landing__character[data-state='running'] {
+  color: var(--dsw-alias-character-running);
+}
+.landing__character[data-state='completed'] {
+  color: var(--dsw-alias-character-completed);
+}
+.landing__character[data-state='pending'] {
+  color: var(--dsw-alias-character-pending);
+}
+.landing__character[data-state='failed'] {
+  color: var(--dsw-alias-character-failed);
+}
+.landing__character-canvas,
+.landing__character-fallback {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+.landing__character-canvas {
+  z-index: 1;
+}
+.landing__character-fallback {
+  box-sizing: border-box;
+  padding: 15%;
+}
+.landing__character-fallback svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+.landing__character-fallback svg * {
+  stroke: currentColor;
+}
+.landing__character[data-ready] .landing__character-fallback {
+  visibility: hidden;
+}
+.brand-home {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: min(100%, 560px);
+  margin: auto;
+  padding: 24px;
+  text-align: center;
+}
+.brand-home h1 {
+  margin: 0 0 24px;
+  font-size: 48px;
+  font-weight: 700;
+  line-height: 1.05;
+  letter-spacing: 0;
+}
+.brand-home--compact .landing__character {
+  max-width: 280px;
+}
+.brand-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  min-height: 88px;
+}

@@ -1,6 +1,6 @@
 import { Console } from './Console';
 import { useAuth } from './auth/context';
-import lockup from './assets/brand/cma-lockup-horizontal.svg';
+import { BrandLoading, LandingCharacter } from './landing/LandingCharacter';
 import { useAppRouter } from './routing/routes';
 import { Button } from './ui/Button';
 import './styles/tokens.css';
@@ -40,14 +40,14 @@ export function App() {
     state.status !== 'error'
   ) {
     return (
-      <Suspense fallback={<div className="app-checking" aria-busy="true" />}>
+      <Suspense fallback={<BrandLoading />}>
         <PublicJourney client={publicClient} route={router.route} onNavigate={router.navigate} />
       </Suspense>
     );
   }
 
   if (state.status === 'checking') {
-    return <div className="app-checking" aria-busy="true" />;
+    return <BrandLoading label="Signing you in" />;
   }
   if (state.status === 'error') {
     return (
@@ -60,10 +60,13 @@ export function App() {
   if (state.status === 'anonymous') {
     return (
       <main className="auth-gate">
-        <img className="auth-gate__brand" src={lockup} alt="CMA" />
-        <Button variant="primary" onClick={() => void signIn(window.location.pathname)}>
-          Sign in
-        </Button>
+        <div className="brand-home">
+          <LandingCharacter />
+          <h1>CMA</h1>
+          <Button variant="primary" onClick={() => void signIn(window.location.pathname)}>
+            Sign in
+          </Button>
+        </div>
       </main>
     );
   }

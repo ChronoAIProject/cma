@@ -14,6 +14,7 @@ import type {
   SandboxSummary,
   WorkspaceDetail,
 } from './types';
+import type { AgentResources } from '@chronoai/cma-sdk';
 
 export interface ReadOptions {
   readonly signal?: AbortSignal;
@@ -44,6 +45,7 @@ export interface CmaWebClient {
   ): Promise<ResourcePage<AgentEvent, number>>;
   readAgentTranscript(id: string, options?: ReadOptions): Promise<AgentTranscript>;
   readAgentUsage(id: string, options?: ReadOptions): Promise<AgentUsage>;
+  readAgentResources(id: string, options?: ReadOptions): Promise<AgentResources>;
   readSandboxEvents(id: string, options?: PageOptions<number>): Promise<readonly SandboxEvent[]>;
   replayAgent(threadId: string, options: AgentStreamOptions): Promise<void>;
   runAgent(request: AgentRunRequest, options: AgentStreamOptions): Promise<void>;
@@ -87,6 +89,7 @@ export const unavailableClient: CmaWebClient = {
   readAgentEvents: unavailable,
   readAgentTranscript: unavailable,
   readAgentUsage: unavailable,
+  readAgentResources: unavailable,
   readSandboxEvents: unavailable,
   replayAgent: unavailable,
   runAgent: unavailable,

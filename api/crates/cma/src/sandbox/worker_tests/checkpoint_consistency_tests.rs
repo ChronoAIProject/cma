@@ -28,7 +28,10 @@ async fn lifecycle_checkpoint_replays_exact_exclusions_after_agent_becomes_a_tom
         .unwrap();
     assert_eq!(
         before.checkpoint.exclusions,
-        [format!(".cma/agents/{}/home/tmp/arg0", agent.id)]
+        [
+            format!(".cma/agents/{}/home/tmp/arg0", agent.id),
+            ".codex/tmp/arg0".to_string()
+        ]
     );
     let revision = agent.revision;
     agent

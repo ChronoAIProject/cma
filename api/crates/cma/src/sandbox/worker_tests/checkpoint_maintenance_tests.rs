@@ -92,6 +92,7 @@ async fn periodic_checkpoint_exclusions_include_retained_terminal_agent_homes() 
         holds[0].checkpoint.exclusions,
         ids.iter()
             .map(|id| format!(".cma/agents/{id}/home/tmp/arg0"))
+            .chain(std::iter::once(".codex/tmp/arg0".to_string()))
             .collect::<Vec<_>>()
     );
     worker.run_once(now).await.unwrap();

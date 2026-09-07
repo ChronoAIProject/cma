@@ -1,12 +1,8 @@
 import { useEffect, useState } from 'react';
 import type { Launch, ServiceConnectionMetadata, TriggerPreview } from '@chronoai/cma-sdk';
 import { Button } from '../ui/Button';
-import {
-  IconCheckOutline16,
-  IconCopyOutline16,
-  IconLoadingOutline16,
-  IconWarningOutline16,
-} from '../ui/icons';
+import { IconCopyOutline16 } from '../ui/icons';
+import { BrandLoading, LandingCharacter } from '../landing/LandingCharacter';
 import { blockedStates, requestStates, stepStates } from '../vocabulary/states';
 import { progressDetail, stepNames, stepOrder } from '../vocabulary/steps';
 import { failureRemediation } from '../vocabulary/errors';
@@ -92,7 +88,7 @@ export function Progress({
       <>
         <h1>{publicCopy.title}</h1>
         {progress.error === undefined ? (
-          <p role="status">{publicCopy.loading}</p>
+          <BrandLoading label={publicCopy.loading} />
         ) : (
           <>
             <p className="public-error" role="alert">
@@ -133,13 +129,18 @@ export function Progress({
               className={`public-step${state === 'failed' ? ' public-step--failed' : ''}`}
             >
               <span className="public-step__icon" aria-hidden="true">
-                {state === 'completed' ? (
-                  <IconCheckOutline16 />
-                ) : state === 'failed' || state === 'blocked' ? (
-                  <IconWarningOutline16 />
-                ) : (
-                  <IconLoadingOutline16 />
-                )}
+                <LandingCharacter
+                  compact
+                  state={
+                    state === 'completed'
+                      ? 'completed'
+                      : state === 'failed'
+                        ? 'failed'
+                        : state === 'running'
+                          ? 'running'
+                          : 'pending'
+                  }
+                />
               </span>
               <div>
                 <div className="public-step__line">

@@ -11,6 +11,8 @@ use super::SandboxModelError;
 pub struct ResolvedAgentSkill {
     pub source: SkillSource,
     pub id: SkillId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
     pub version: String,
     pub archive_sha256: String,
 }
@@ -19,6 +21,12 @@ impl ResolvedAgentSkill {
     pub fn validate(&self) -> Result<(), SandboxModelError> {
         if self.id.as_str().is_empty()
             || self.id.as_str().len() > 256
+            || self.name.as_ref().is_some_and(|name| {
+                name.is_empty()
+                    || name.len() > 256
+                    || name.trim() != name
+                    || name.chars().any(char::is_control)
+            })
             || self.version.is_empty()
             || self.version.len() > 256
             || self.version.trim() != self.version

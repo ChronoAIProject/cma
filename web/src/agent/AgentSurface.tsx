@@ -12,6 +12,8 @@ import './Agent.css';
 import { statusLabel } from '../vocabulary/status';
 import { ProvisioningProgress } from '../sandbox/ProvisioningProgress';
 import { agentProgress } from '../sandbox/progress';
+import { Resources } from './Resources';
+import { BrandLoading } from '../landing/LandingCharacter';
 
 interface AgentSurfaceProps {
   readonly agentId: string;
@@ -90,9 +92,7 @@ export function AgentSurface({
           </h1>
         </header>
         <div className="agent-loading">
-          <span className="skeleton agent-loading__row" />
-          <span className="skeleton agent-loading__row" />
-          <span className="skeleton agent-loading__row" />
+          <BrandLoading label="Opening your agent" />
         </div>
       </section>
     );
@@ -193,6 +193,12 @@ export function AgentSurface({
         busy={controller.pending !== undefined && controller.pending !== 'send'}
         onSend={controller.send}
         onStop={controller.interrupt}
+      />
+      <Resources
+        key={agentId}
+        agentId={agentId}
+        sandboxId={detail.sandbox.id}
+        usage={conversation.usage}
       />
     </section>
   );

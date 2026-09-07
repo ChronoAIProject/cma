@@ -39,6 +39,7 @@ export function createRestWebClient(sdk: Cma): CmaWebClient {
     readSandbox: async (id, options) => sandboxDetail(await sdk.sandboxes.read(id, options)),
     readWorkspace: async (id, options) => workspaceDetail(await sdk.workspaces.read(id, options)),
     readAgent: async (id, options) => agentDetail(await sdk.agents.read(id, options)),
+    readAgentResources: (id, options) => sdk.agents.resources(id, options),
     readAgentEvents: async (id, options) => {
       const page = await sdk.agents.events(id, { after: options?.cursor, signal: options?.signal });
       return {

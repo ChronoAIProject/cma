@@ -26,7 +26,7 @@ function controller(
   };
 }
 
-it('focuses the route heading while loading, then the composer for a usable Agent', () => {
+it('focuses the route heading while loading, then the composer for a usable Agent', async () => {
   const { rerender } = render(
     <AgentSurface
       agentId="agt_1"
@@ -54,6 +54,7 @@ it('focuses the route heading while loading, then the composer for a usable Agen
     />,
   );
   expect(screen.getByRole('textbox', { name: 'Message' })).toHaveFocus();
+  expect(await screen.findByText('Resources unavailable')).toBeInTheDocument();
 });
 
 it('names the full lineage and exposes messages, approvals, tools, reasoning, usage, and details', async () => {
@@ -90,8 +91,9 @@ it('names the full lineage and exposes messages, approvals, tools, reasoning, us
   );
   expect(screen.getByRole('heading', { name: 'Agent one' })).toBeInTheDocument();
   expect(screen.getByText('The repository is ready.')).toBeInTheDocument();
-  expect(screen.getByText('Typecheck')).toBeInTheDocument();
-  expect(screen.getByText('Reasoning')).toBeInTheDocument();
+  await actor.click(screen.getByRole('button', { name: /^Thinking/ }));
+  expect(screen.getByText('shell - Typecheck - completed - not reported')).toBeInTheDocument();
+  expect(screen.getAllByText('Check the types.')).toHaveLength(2);
   expect(screen.getByText('Conversation recovery')).toBeInTheDocument();
   expect(screen.getByLabelText('Agent usage')).toHaveTextContent('120 input');
   await actor.click(screen.getByRole('button', { name: 'Allow' }));

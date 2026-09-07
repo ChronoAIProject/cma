@@ -114,7 +114,7 @@ profile kind, readable by the publisher.
 |---|---|
 | `model` | Optional opaque nonempty model name; omission selects the deployment default during admission. |
 | `thinking_effort` | `minimal`, `low`, `medium`, `high`, `x_high`. |
-| `permission_level` | `guarded` or `autonomous`; no unrestricted mode. |
+| `permission_level` | `guarded` requests approval for privileged work; `autonomous` runs without provider approval prompts or an inner command sandbox inside the isolated CMA Sandbox. |
 | `skills` | At most 32 `{ source: "ornn", id, version? }` entries; per-Agent installation. |
 | `system_prompt` | Plain UTF-8 text, at most 32 KiB, installed verbatim in the Agent home. |
 
@@ -122,6 +122,14 @@ The profile prompt is standing guidance plus the repository's instructions,
 not a replacement for repository `AGENTS.md`. CMA does not edit repository files
 to install the profile prompt. Missing requested skills fail creation with a
 typed refusal; they are not silently omitted.
+
+For the supported Codex provider, `autonomous` is YOLO: `approval_policy =
+"never"`, `sandbox_mode = "danger-full-access"`, and ACP mode
+`agent-full-access`. `guarded` retains `on-request`, `read-only`, and ACP mode
+`read-only`. The outer CMA Sandbox and its pinned NyxID service scope remain
+the isolation and service-authority boundaries. Explicitly selected `nyxid`
+or `ornn-agent-manual-cli` skill revisions install into the Agent home in place
+of only their corresponding bundled fallback links.
 
 ### Workspace Profile
 

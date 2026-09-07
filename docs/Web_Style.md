@@ -1234,6 +1234,60 @@ A style change must not alter ownership, consent, durability or these behaviors.
 
 ---
 
+## 23. Pre-refactor visual continuity
+
+The September 7 Trigger-loop requirements restore the presentation shipped at
+`f5b6ded65750a75b5f2144e7d90436ceb402776d` (immediately before the retired
+model removal), without restoring the retired data model. This section
+supersedes the static-authentication-mark wording in sections 14a, 20 and 21.
+Shared Button, Picker, Menu, font and palette geometry remains the existing
+Inkwell/Lumen implementation from that baseline.
+
+The original Three.js character geometry, materials, studio lights, pointer
+look, press-to-spin and visibility disposal return to the unframed Home and
+authentication surfaces. The stable square is bounded to the available width,
+220px minimum when space permits and 520px maximum; compact Home uses 280px.
+The wordmark is 48px, weight 700, with zero tracking. Sign-in never waits for
+WebGL; unavailable rendering retains the original still mark.
+
+Every provisioning step uses that same character in a fixed 44px square.
+Completed steps are green and still, running steps blue and continuously
+turning, and pending steps yellow and still. Failures are red and still.
+These semantic character aliases resolve to existing moss 500, ink 800,
+amber 300 and red 600 in both themes; the colour is a redundant reinforcement
+of the adjacent written status. Compact characters omit the contact shadow.
+Only a running character schedules frames; reduced motion makes every state
+still. Loading surfaces use the same running character, never another spinner.
+
+The Agent composer restores the baseline 22px-radius capsule, full-width
+16/24 textarea growing to fourteen lines, and a separate lower action row.
+The 34px circular Send control becomes a neutral circular Stop control in the
+same seat, increasing to 44px on narrow screens. The established Thinking row
+and 120px capped disclosure return, grouping live reasoning and durable tools
+by turn. Tool output is disclosed only when actually supplied; live reasoning
+is never fabricated on reload. The neutral sweep stops when the turn ends.
+Message role labels return outside the owner's bubble at 12/18 with an 8px
+gap; turns keep the baseline 16px rhythm. Required small text uses caption ink.
+
+Below the composer, restore the baseline two-column tokens/context row and
+three-column RAM/CPU/network row with 12px figures, 8px column gaps and 2px
+neutral tracks capped at 240px. Resource observations use the public Agent
+resources read, sampled every five seconds while visible. CPU rate derives
+only from two monotonic samples of the same Sandbox uptime; restart, failure
+or absent samples remain Measuring, unavailable or not reported, never zero.
+Network has no ceiling or percentage. Failed refresh retains the reading and
+labels it stale. Layout stays three columns on narrow screens, wrapping within
+each column rather than widening the viewport.
+
+For a published Trigger with review disabled, an external button navigation
+carrying a server-confirmed browser gesture supplies the bounded consent.
+The browser consumes that evidence through the public entry-intent operation,
+retains its exact command across necessary sign-in and proceeds without an
+extra Proceed/Next command. Generic navigation, reloads, crawlers and OAuth
+callbacks without this evidence remain read-only. Explicitly reviewed
+Triggers retain their review controls. This supersedes wording that limited
+the consent gesture to a second click on the CMA landing page.
+
 ## Changelog
 
 Append-only. Never edit or delete an entry.
@@ -1314,3 +1368,4 @@ Append-only. Never edit or delete an entry.
 | 2026-09-06 | Amended §§1, 9–11, 12.2, 13–14, 16–18 and 19a for the Sandbox tree, Agent conversation and details, durable creation and public visitor journey, resource actions, versioned Profiles and Marketplace, persistent Developer route, and removal of terminal/session/canvas contracts. Public retry controls now require an actual supported operation. Historical rows and established palette tokens are unchanged. |
 | 2026-09-07 | Aligned the remaining typography, motion, accessibility, authentication-gate and invariant wording with the implemented Agent client. Retired terminal fonts, simulated introductions, the removed 3D authentication scene and automatic first-message claims; preserved the static brand gate, durable-history equivalence, explicit visitor consent and historical changelog. |
 | 2026-09-07 | Added four fixed light/dark badge-preview aliases in §2 using the established paper, ink and coal palette, so the publisher can inspect both appearances without switching the application theme or introducing component-level raw colours. |
+| 2026-09-07 | Restored the pre-refactor Three.js mark, Thinking container, circular composer actions and compact public resource instrumentation on the current CMA hierarchy. Added state-coloured 3D provisioning marks and bounded external-click entry consent for no-review Triggers; preserved existing shared controls, durable history and append-only style history. |

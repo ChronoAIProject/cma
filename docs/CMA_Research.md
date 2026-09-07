@@ -136,8 +136,11 @@ The profile environment is empty because names such as `PATH`, `HOME`,
 `CODEX_HOME`, and `CHRONO_*` are reserved. Instead, installation creates one
 explicit environment script. Every later setup or research shell command must
 source it. Shell startup files and one command's exported variables are not a
-cross-command persistence mechanism. `autonomous` permits local work under the
-runtime's supported permission policy; it grants no remote publication authority.
+cross-command persistence mechanism. `autonomous` runs Codex in YOLO mode inside
+the isolated CMA Sandbox: no provider approval prompts and no inner command
+sandbox. Its configuration uses `never` and `danger-full-access`, and the ACP
+bridge uses `agent-full-access`. The Sandbox's pinned NyxID scope still bounds
+service access; autonomous execution does not add remote publication authority.
 
 ## Sandbox Installation
 

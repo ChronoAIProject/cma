@@ -1,6 +1,7 @@
 import type { Failure } from '../api/types';
 import type { ProvisioningStep } from './progress';
 import './ProvisioningProgress.css';
+import { LandingCharacter } from '../landing/LandingCharacter';
 
 export function ProvisioningProgress({
   title,
@@ -17,6 +18,18 @@ export function ProvisioningProgress({
       <ol aria-live="polite">
         {steps.map((step) => (
           <li key={step.label} data-state={step.status}>
+            <LandingCharacter
+              compact
+              state={
+                step.status === 'Done'
+                  ? 'completed'
+                  : step.status === 'In progress'
+                    ? 'running'
+                    : step.status === "Didn't work"
+                      ? 'failed'
+                      : 'pending'
+              }
+            />
             <span>{step.label}</span>
             <strong>{step.status}</strong>
             {step.detail === undefined ? null : <p>{step.detail}</p>}
