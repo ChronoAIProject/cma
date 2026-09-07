@@ -39,6 +39,7 @@ mod lifecycle_execution;
 mod lifecycle_execution_support;
 mod lifecycle_service;
 mod limits;
+mod pending_approvals;
 mod provision;
 mod queued_message;
 mod revive;
@@ -143,6 +144,7 @@ pub use lifecycle::{
 };
 pub use lifecycle_service::SandboxLifecycleCommandError;
 pub use limits::{enforce_agent_limit, enforce_workspace_limit, SandboxLimitError};
+pub use pending_approvals::PendingAgentApprovals;
 pub use provision::{SandboxWorkLease, SandboxWorkState, SandboxWorkStep};
 pub use queued_message::{
     QueuedAgentMessage, QueuedMessageState, MAX_AGENT_MESSAGE_BYTES, MAX_QUEUED_AGENT_MESSAGES,
