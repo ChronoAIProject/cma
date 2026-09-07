@@ -16,12 +16,12 @@ acceptance of this campaign.
 | 3. Public Sandbox Profile | 4000 millicores, 8192 MiB, two requested services, 4/4 limits, working toolchain | Exact live configuration and all four actual Agent workload checks passed on runtime `137b489d`; independent receipt confirms unchanged tracked source |
 | 4. Public Trigger | Exact title/message, all-level reuse, Try It, visitor theme, no review, README placement | Exact revision published after first rollout; README-only PR #841 merged after all 12 protected checks; default README snippet read back exactly |
 | 5. Login without bootstrap | No Sandbox, Workspace, Agent, or Profile created by login alone | Existing-owner fresh-browser sign-in created no resources; successful unseen-CMA-identity callback contract passes default/home/Trigger returns; external fresh signup not tested |
-| 6. Complete external-click flow | Login then automatic provisioning; exact first message once; correct software, skills, scopes | Fresh `streaming-fixed` README entry, first response, live configuration and actual workload passed; matching built-home restore and final first/repeat cycle pending |
-| 7. Previous UI style | Original rotating 3D mark and established controls; desktop/mobile screenshots | Live home/provisioning motion passed; four-view chat checks passed; deployed web `a5d6fb4b` preserves mobile navigation and verifies lifecycle input holds in all four views |
+| 6. Complete external-click flow | Login then automatic provisioning; exact first message once; correct software, skills, scopes | Fresh `streaming-fixed` README entry, first response, live configuration and actual workload passed; heavy repeat restored the backend but failed automatic browser navigation; web correction is deployed, final first/paused-repeat acceptance pending |
+| 7. Previous UI style | Original rotating 3D mark and established controls; desktop/mobile screenshots | Live home/provisioning motion and four-view chat checks passed; web `1eb60be1` retains the tested lifecycle input holds and corrects automatic revival to the existing blue running state |
 | 8. Autonomous YOLO | Pinned provider runs full-access mode with no approval requests | Actual provider configuration verified; latest first response and successful subsequent workload completed with zero approvals |
-| 9. Lifecycle | Active to paused to active; paused to terminated; history retained | Heavy Pause settled at 22:12:00 UTC with exact hierarchy/history retained; original 30-minute UI test remains failed; README restoration, manual Resume and paused Delete remain pending |
+| 9. Lifecycle | Active to paused to active; paused to terminated; history retained | Heavy Pause settled at 22:12 UTC and backend revival around 22:36 UTC with exact hierarchy/history retained; original Pause timeout and repeat browser failure remain failed; built-file identity, manual Resume and paused Delete remain pending |
 | 10. Cleanup | Only identified stale state removed; new published flow remains usable | Two old Sandboxes retired through the public API under explicit authorization; final environment pending |
-| 11. Conversation UI | Thinking, Send/Stop, CPU, RAM, context, token, network metrics | Four-view active metrics, Thinking, live follow/manual scroll/re-follow, completion, hierarchy and reload passed; actual Send/Stop acceptance in progress |
+| 11. Conversation UI | Thinking, Send/Stop, CPU, RAM, context, token, network metrics | Four-view active metrics, Thinking, live follow/manual scroll/re-follow, completion, hierarchy and reload passed; actual Send/Stop acceptance awaits the restored-file check and active checkpoint completion |
 
 Private campaign evidence is kept under `/tmp/cma-trureturing-loop.LvTezb` and
 must not be committed or uploaded wholesale. One existing NyxID owner account is
@@ -639,6 +639,45 @@ failure and scheduling retry. Four deterministic regressions failed before the
 fix and passed afterward; 26 focused tests, 1,076 core/CMA tests, strict Clippy,
 formatting and secret checks passed. The follow-up image is building separately;
 it did not delay the verified `0327a382` rollout and is not yet deployed.
+
+### Long Revival Browser Failure And Web Correction
+
+The admitted heavy repeat reached backend Ready around 2026-09-07 22:36 UTC,
+reusing the exact Sandbox, Workspace, Worktree and Agent. Both completed turns
+retain SHA-256
+`2d50df491bf47c2555f4e634ce61ac59f15f95581b0f5f3df382c8178f8f6edc`.
+However, `production-streaming-fixed-restored-repeat/` failed at 22:37:53:
+the browser stopped healthy progress polling after five minutes and never
+navigated to the ready Agent. Its screenshot, failure and original admission
+are preserved; no duplicate Launch or manual Check Again was issued.
+
+Web `1eb60be1` changes the five-minute budget to uninterrupted read outages;
+successful reads reset it, while terminal states and unmount still stop work.
+Automatic revival uses the existing blue moving mark and In progress label;
+genuine user-action blockers retain their presentation. Both thirty-minute
+healthy preparation regressions reach automatic navigation. All 994 frontend
+tests, typechecking, lint, formatting and secret checks pass. The scanned,
+registry-verified image was pinned in `a733adaf`; all 18 manifests validated
+without skips and policy lint passed. Web pod `cma-web-7944b84b65-wpwhg` is Ready
+on digest
+`sha256:9dd4ab08129f4a5d4a585976d3afff315a70ae2f878ebca24fd923f717700b12`.
+Readback is `observe-web-1eb-rollout-2247.json`. API and runtime were unchanged.
+
+The separate backend/data preflight passed and explicitly recorded periodic
+epoch-4 capture. The first selected-artifact after-probe failed at runtime-files;
+no artifact equality is accepted from it. Its original wrapper suppressed
+the subprocess detail, so bounded read-only diagnostics are ongoing. This does
+not establish data loss, and the failed browser journey remains failed regardless
+of any independent data continuation.
+
+API source `d46abe08` removes the unnecessary archive import before restore
+bootstrap. Bootstrap only validates and records inherited installation identity;
+actual credentialed home Restore retains transfer and integrity checks. Four
+transport regressions and all 111 Layer 3 tests pass, with strict Clippy, format
+and secret checks. The new image includes the pending `553e180b` lifecycle timing
+fix and is building; neither API change is live yet. The final acceptance
+sequence now includes a genuinely paused README repeat after manual Resume
+coverage, rather than counting an already-active reopen as revival proof.
 
 ## Historical Observation
 
