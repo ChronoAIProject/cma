@@ -13,15 +13,15 @@ acceptance of this campaign.
 | --- | --- | --- |
 | 1. Public Agent Profile | Exact text, model, effort, Autonomous, four latest public skill pins | Created and published at revision 1; exact configuration and archive checksums verified |
 | 2. Public Workspace Profile | Exact metadata, repository `dev`, no setup, one Agent Profile | Created and published at revision 1; exact configuration verified |
-| 3. Public Sandbox Profile | 4000 millicores, 8192 MiB, two requested services, 4/4 limits, working toolchain | Exact configuration verified in production; actual Agent workload exposed a login-shell PATH defect; corrected-image workload pending |
+| 3. Public Sandbox Profile | 4000 millicores, 8192 MiB, two requested services, 4/4 limits, working toolchain | Exact live configuration and four actual Agent workload checks passed on runtime `8ebb0db9`; independent receipt confirms unchanged tracked source |
 | 4. Public Trigger | Exact title/message, all-level reuse, Try It, visitor theme, no review, README placement | Exact revision published after first rollout; README-only PR #841 merged after all 12 protected checks; default README snippet read back exactly |
-| 5. Login without bootstrap | No Sandbox, Workspace, Agent, or Profile created by login alone | Existing-owner fresh-browser production sign-in created no resources before or after rollout; fresh signup not tested |
-| 6. Complete external-click flow | Login then automatic provisioning; exact first message once; correct software, skills, scopes | Initial corrected first click and active reuse passed; paused repeat exposed restore reconnection defects and timed out; corrected paused flow and actual workload pending |
-| 7. Previous UI style | Original rotating 3D mark and established controls; desktop/mobile screenshots | Live home and provisioning animation passed in desktop/mobile, both themes and reduced motion; latest chat corrections deployed, final active browser checks pending |
+| 5. Login without bootstrap | No Sandbox, Workspace, Agent, or Profile created by login alone | Existing-owner fresh-browser sign-in created no resources, including a new run on API `217dda6a`; fresh signup not tested |
+| 6. Complete external-click flow | Login then automatic provisioning; exact first message once; correct software, skills, scopes | Initial corrected first click and new post-recovery README reuse passed; actual workload and configuration passed; fresh paused cycle and final clean first click pending |
+| 7. Previous UI style | Original rotating 3D mark and established controls; desktop/mobile screenshots | Live home/provisioning motion passed; latest deployed chat passed four desktop/mobile theme configurations, including layout, hierarchy and reload |
 | 8. Autonomous YOLO | Pinned provider runs full-access mode with no approval requests | Actual provider configuration verified; first response and subsequent workload attempt completed with zero approvals |
-| 9. Lifecycle | Active to paused to active; paused to terminated; history retained | Natural idle pause and original conversation/home restoration observed; final Active publication blocked by reconnect defects; manual heavy-home lifecycle pending |
+| 9. Lifecycle | Active to paused to active; paused to terminated; history retained | Legacy revival recovered automatically with exact history; normal checkpoint then one waiting command passed; full built-home manual lifecycle pending |
 | 10. Cleanup | Only identified stale state removed; new published flow remains usable | Two old Sandboxes retired through the public API under explicit authorization; final environment pending |
-| 11. Conversation UI | Thinking, Send/Stop, CPU, RAM, context, token, network metrics | Capacity/layout fixes deployed; real hierarchy expansion passed; transient activity-read recovery deployed; active metrics, streaming and actual Stop acceptance pending |
+| 11. Conversation UI | Thinking, Send/Stop, CPU, RAM, context, token, network metrics | Four-view active metrics, Thinking, live follow/manual scroll/re-follow, completion, hierarchy and reload passed; actual Send/Stop acceptance in progress |
 
 Private campaign evidence is kept under `/tmp/cma-trureturing-loop.LvTezb` and
 must not be committed or uploaded wholesale. One existing NyxID owner account is
@@ -229,9 +229,8 @@ The combined correction passed 103 adapter tests, 35 Agent worker tests,
 all-target/all-feature Clippy. Legacy and canonical restore tests cover three
 adapter restarts and checkpoint generations, with negative cases for changed
 settings, wrong conversations, corrupt receipts, and ambiguous responses.
-The API image built successfully and passed the image scan; its manifest pin
-is updated for rollout, but live recovery is not yet accepted. The latest
-pre-rollout sample at 18:46:46 UTC still had both completed turns and their
+The API image built successfully and passed the image scan before rollout.
+The final pre-rollout sample at 18:46:46 UTC still had both completed turns and their
 original conversation, with no queued message or manually repaired state.
 
 The browser attempt `production-paused-revive-8ebb0db9/` timed out at its
@@ -265,8 +264,65 @@ passed. All four previously ignored Mongo auth integration tests subsequently
 passed on combined source `217dda6a` against a fresh, loopback-only MongoDB
 8.2.4 replica set. The tests removed their databases, and that exact local
 fixture was shut down and its disposable data removed; no integrated or
-production Mongo instance was used. This API source is built for the next
-corrected release, not yet production acceptance.
+production Mongo instance was used. The combined API source `217dda6a` was
+subsequently deployed; the original upstream 503 cause remains unproven.
+
+### Recovery Acceptance
+
+API `217dda6a` became Ready on 2026-09-07 at 18:48 UTC, using digest
+`sha256:e187c78f7398a5d43b2e217f22c5db8bc4bbf92dd6601851d7d8ddac21703226`.
+Runtime `8ebb0db9` and web `e4f495fc` were unchanged. The existing Sandbox pod
+was not restarted. The original pending Launch reached Ready at 18:48:52 UTC;
+its connection work and lifecycle operation settled automatically. Two separate
+readbacks verified the exact original conversation and both completed turns,
+whose hash remained
+`2ecee216215088857561e8eebd077acd9694e24f0e66d09c080b4cadc4dffebb`.
+
+A new README click, Launch `lch_5dbef7fee22e402096d335db3d7d3af8`, passed
+in `production-recovered-reuse-217dda6a/`. It reused every resource, preserved
+the whole transcript and exact first prompt once, and required zero extra CMA
+clicks or approvals. This still uses the documented rendered-README method;
+it is not authenticated GitHub-page browser coverage or a fresh paused cycle.
+The earlier thirty-minute timed-out attempt remains failed evidence.
+
+The single real workload submission waited for scheduled checkpoint epoch 6.
+AG-UI waits in memory for this boundary before durable admission, with a
+ten-minute bound; an optimistic Stop button alone is not evidence of admission.
+The 1,680,505,384-byte archive published at 18:53:21 UTC. Exactly one owner
+message and turn then progressed through dispatch fencing, confirmed write and
+observed execution, without a resend, approval or writer-hold deadlock.
+
+The completed `workload-toolchain-fixed/` run passed all four actual checks:
+`make -C tools dotnet` (151.209 seconds), `check-fast` (38.313 seconds),
+`selftest` (19.166 seconds), and the Lean `D5.S0.Conventions.WDigits` target
+(334.694 seconds). Independent receipt readback required all four real exit
+codes to be zero, no termination signals, exact commands, the original worktree
+and commit, and no tracked source changes. The earlier failed PATH workload
+and its receipt remain preserved separately.
+
+Live configuration verification passed while that workload was active. The
+first restored-runtime probe failed because it expected a fresh completed
+installer journal. Replacement runtimes correctly record inherited installation;
+the corrected probe requires fresh exact-pod evidence tying both bootstrap
+hashes to durable checkpoint epoch 5 and the original five-command installation
+proof. Seven local positive/negative cases cover this branch. No installer,
+runtime journal or database record was edited to satisfy it. Model `gpt-5.6-sol`,
+`xhigh`, `never`/`danger-full-access`, instructions, four skills/20 files, native
+discovery, software versions, login-shell PATH, worktree, environment and exact
+NyxID services/scopes all passed. The built home had 346,931 entries and
+13,472,969,062 payload bytes; its complete heavy lifecycle remains pending.
+
+Fresh existing-owner sign-in on the new API passed in `login-alone-9L1NBT/`
+with zero Trigger visits or resource commands and identical inventories before,
+after and ten seconds after login. Existing sessions were preserved.
+The latest UI evidence in `agent-ui-gLs7J7/`, `paused-hierarchy-cjTeuk/`, and
+`production-follow-AoGPFn/` passed desktop/mobile and both themes: actual resource
+metrics and pinned capacity, Context matched to public usage events, Thinking,
+live follow, manual-scroll preservation, re-follow, completed response, exact
+hierarchy, details and reload. Earlier incomplete verifier runs remain preserved;
+their findings were not used for speculative product changes. Actual Send/Stop,
+full built-home pause/restore, paused deletion and the final fresh environment
+are still pending acceptance.
 
 ## Historical Observation
 
