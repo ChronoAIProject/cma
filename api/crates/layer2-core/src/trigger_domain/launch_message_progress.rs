@@ -252,7 +252,7 @@ fn settle_observed_message(
                     retry_at,
                 )?;
             } else {
-                launch.work.retry(holder, fence, retry_at)?;
+                launch.work.defer(holder, fence, retry_at)?;
             }
             let (status, detail) = if record.attempt == 0 {
                 (LaunchStepStatus::Running, "Waiting for the first message")
