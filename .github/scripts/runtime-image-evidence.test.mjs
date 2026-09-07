@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, mkdirSync, writeFileSync, symlinkSync, chmodSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { checks, installRequest } from './runtime-image-probe.mjs';
-import { campaign, pins, source, validateEvidence, validateImage } from './runtime-image-evidence.mjs';
+import { assertCheckpointHoldReceipt, checks, diagnosticStages, installedCodexVersion, installRequest } from './runtime-image-probe.mjs';
+import { campaign, pins, safeFailureStage, source, validateEvidence, validateImage } from './runtime-image-evidence.mjs';
 
 const commit = 'c'.repeat(40);
 const expected = pins(readFileSync(new URL('../../infra/runtime/Dockerfile', import.meta.url), 'utf8'));
@@ -69,6 +69,79 @@ test('install digest is deterministic and binds the exact command bytes', () => 
   assert.deepEqual(installRequest(['true']), installRequest(['true']));
   assert.notEqual(installRequest(['true']).request_sha256, installRequest(['true ']).request_sha256);
   assert.notEqual(installRequest(['a', 'bc']).request_sha256, installRequest(['ab', 'c']).request_sha256);
+});
+
+test('probe failure diagnostics emit only known static stages', () => {
+  for (const stage of diagnosticStages) {
+    assert.equal(safeFailureStage('probe', { stderr: Buffer.from(`runtime image probe failed at ${stage}; raw runtime data withheld\n`) }), `probe:${stage}`);
+  }
+  for (const stderr of [
+    'raw credential data',
+    'runtime image probe failed at unknown-sensitive-value; raw runtime data withheld',
+    'runtime image probe failed at checkpoint-request; raw runtime data withheld SECRET',
+    'prefix runtime image probe failed at checkpoint-request; raw runtime data withheld',
+    'runtime image probe failed at checkpoint-request\nSECRET; raw runtime data withheld',
+  ]) assert.equal(safeFailureStage('probe', { stderr }), 'probe');
+  assert.equal(safeFailureStage('probe', Error('raw child error')), 'probe');
+  assert.equal(safeFailureStage('image-admission', { stderr: 'raw image data' }), 'image-admission');
+});
+
+test('Codex version inspection isolates helper symlinks and preserves the sandbox home', () => {
+  const home = mkdtempSync(join(tmpdir(), 'cma-runtime-version-test-'));
+  const scratchPaths = [];
+  try {
+    mkdirSync(join(home, '.codex'));
+    writeFileSync(join(home, '.codex', 'retained'), 'retained');
+    symlinkSync('retained', join(home, '.codex', 'retained-link'));
+    const command = (program, args, options) => {
+      assert.equal(program, 'codex');
+      assert.deepEqual(args, ['--version']);
+      assert.deepEqual(options.stdio, ['ignore', 'pipe', 'pipe']);
+      assert.equal(options.env.HOME, process.env.HOME);
+      const scratch = options.env.CODEX_HOME;
+      assert.notEqual(scratch, process.env.CODEX_HOME);
+      assert.ok(!scratch.startsWith(`${home}/`));
+      scratchPaths.push(scratch);
+      mkdirSync(join(scratch, 'tmp'));
+      symlinkSync('/usr/local/bin/codex', join(scratch, 'tmp', 'apply_patch'));
+      return `codex-cli ${expected.CODEX_VERSION}\n`;
+    };
+    assert.equal(installedCodexVersion(home, command), `codex-cli ${expected.CODEX_VERSION}`);
+    assert.equal(installedCodexVersion(home, command), `codex-cli ${expected.CODEX_VERSION}`);
+    assert.notEqual(scratchPaths[0], scratchPaths[1]);
+    assert.ok(scratchPaths.every((path) => !existsSync(path)));
+    for (const mutate of [
+      () => writeFileSync(join(home, '.codex', 'retained'), 'changed'),
+      () => chmodSync(join(home, '.codex', 'retained'), 0o400),
+      () => symlinkSync('/usr/local/bin/codex', join(home, '.codex', 'escaped')),
+    ]) {
+      assert.throws(() => installedCodexVersion(home, (...args) => { const version = command(...args); mutate(); return version; }));
+      assert.ok(scratchPaths.every((path) => !existsSync(path)));
+    }
+    assert.throws(() => installedCodexVersion(home, (...args) => { command(...args); throw Error('raw child failure'); }));
+    assert.ok(scratchPaths.every((path) => !existsSync(path)));
+  } finally { rmSync(home, { recursive: true, force: true }); }
+});
+
+test('checkpoint diagnostics distinguish refusal, receipt and writer stages without returning runtime values', () => {
+  const hold = { t: 'checkpoint_for_teardown', writer_resume_token: 'a'.repeat(64) };
+  const receipt = { ...hold, checkpoint: { writers: 'held' } };
+  const stages = [];
+  assertCheckpointHoldReceipt(receipt, hold, (stage) => stages.push(stage));
+  assert.deepEqual(stages, ['checkpoint-receipt-type', 'checkpoint-receipt-writers', 'checkpoint-receipt-token']);
+  for (const [value, expectedStage] of [
+    [{ t: 'failure', code: 'writer_fence_failed', detail: 'SECRET' }, 'checkpoint-refused-writer-fence-failed'],
+    [{ t: 'failure', code: 'checkpoint_io_failed', detail: 'SECRET' }, 'checkpoint-refused-checkpoint-io-failed'],
+    [{ t: 'failure', code: 'checkpoint_symlink_escape', detail: 'checkpoint symlink .codex/tmp/arg0/sensitive-path/apply_patch escapes the sandbox home' }, 'checkpoint-refused-codex-temporary-symlink-escape'],
+    [{ t: 'failure', code: 'SECRET', detail: 'SECRET' }, 'checkpoint-receipt-type'],
+    [{ ...receipt, checkpoint: { writers: 'resumed' } }, 'checkpoint-receipt-writers'],
+    [{ ...receipt, writer_resume_token: 'SECRET' }, 'checkpoint-receipt-token'],
+  ]) {
+    let actualStage;
+    assert.throws(() => assertCheckpointHoldReceipt(value, hold, (stage) => { actualStage = stage; }));
+    assert.equal(actualStage, expectedStage);
+    assert.ok(diagnosticStages.includes(actualStage));
+  }
 });
 
 test('campaign pins the execution ID and refuses probe, deletion and inventory failures', () => {

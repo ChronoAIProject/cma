@@ -1,18 +1,82 @@
 import assert from 'node:assert/strict';
 import { createHash, randomBytes } from 'node:crypto';
-import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, mkdtempSync, lstatSync, readdirSync, readlinkSync, rmSync, symlinkSync, existsSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { pathToFileURL } from 'node:url';
 
 export const checks = [
   'installed-artifacts', 'non-root-read-only', 'credential-before-install-refused',
   'install-exact-replay', 'credential-after-install', 'daemon-writer-active',
+  'agent-home-helper-aliases', 'escaping-helper-refused',
   'checkpoint-writers-held', 'checkpoint-exact-replay', 'wrong-resume-token-refused',
   'mutation-while-held-refused', 'checkpoint-download-digest', 'writer-resumed',
   'retired-hold-refused', 'whole-home-restore',
 ];
+const checkpointFailures = [
+  'writer_fence_failed', 'checkpoint_io_failed', 'checkpoint_changed',
+  'checkpoint_manifest_failed', 'checkpoint_too_large', 'checkpoint_task_failed',
+  'checkpoint_store_invalid', 'checkpoint_collision', 'checkpoint_hold_retired',
+  'checkpoint_hold_conflict', 'writer_resume_token_invalid',
+  'checkpoint_home_invalid', 'checkpoint_path_invalid', 'checkpoint_symlink_escape',
+  'checkpoint_symlink_invalid', 'checkpoint_entry_unsupported', 'checkpoint_invalid',
+  'invalid_path', 'checkpoint_writer_state_invalid', 'checkpoint_writer_state_unavailable',
+  'checkpoint_writers_held',
+];
+export const diagnosticStages = [
+  'runtime-ready', ...checks, 'complete', 'checkpoint-request',
+  'checkpoint-receipt-type', 'checkpoint-receipt-writers', 'checkpoint-receipt-token',
+  'checkpoint-writer-stable',
+  'checkpoint-refused-codex-temporary-symlink-escape',
+  ...checkpointFailures.map((code) => `checkpoint-refused-${code.replaceAll('_', '-')}`),
+];
 export const sha256 = (bytes) => createHash('sha256').update(bytes).digest('hex');
+
+function homeSnapshot(root) {
+  const entries = [];
+  const visit = (relative) => {
+    const path = join(root, relative);
+    const stat = lstatSync(path);
+    const entry = { path: relative, mode: stat.mode };
+    if (stat.isDirectory()) {
+      entries.push({ ...entry, kind: 'directory' });
+      for (const child of readdirSync(path).sort()) visit(join(relative, child));
+    } else if (stat.isFile()) entries.push({ ...entry, kind: 'file', sha256: sha256(readFileSync(path)) });
+    else if (stat.isSymbolicLink()) entries.push({ ...entry, kind: 'symlink', target: readlinkSync(path) });
+    else assert.fail('sandbox home has an unsupported entry');
+  };
+  visit('');
+  return sha256(JSON.stringify(entries));
+}
+
+export function installedCodexVersion(home, command = execFileSync) {
+  const before = homeSnapshot(home);
+  const scratch = mkdtempSync(join(tmpdir(), 'cma-codex-version-'));
+  try {
+    // Even --version creates executable-helper symlinks in CODEX_HOME.
+    const version = command('codex', ['--version'], {
+      encoding: 'utf8', timeout: 10000, stdio: ['ignore', 'pipe', 'pipe'],
+      env: { ...process.env, CODEX_HOME: scratch },
+    }).trim();
+    assert.equal(homeSnapshot(home), before);
+    return version;
+  } finally { rmSync(scratch, { recursive: true, force: true }); }
+}
+
+export function assertCheckpointHoldReceipt(receipt, hold, onStage) {
+  const code = checkpointFailures.find((value) => receipt?.t === 'failure' && receipt.code === value);
+  onStage(code ? `checkpoint-refused-${code.replaceAll('_', '-')}` : 'checkpoint-receipt-type');
+  if (code === 'checkpoint_symlink_escape' && /^checkpoint symlink \.codex\/tmp\/[^\r\n]+ escapes the sandbox home$/.test(receipt.detail ?? '')) {
+    onStage('checkpoint-refused-codex-temporary-symlink-escape');
+  }
+  assert.equal(receipt.t, hold.t);
+  onStage('checkpoint-receipt-writers');
+  assert.equal(receipt.checkpoint.writers, 'held');
+  onStage('checkpoint-receipt-token');
+  assert.equal(receipt.writer_resume_token, hold.writer_resume_token);
+}
 
 export function installRequest(commands) {
   const parts = [Buffer.from('chrono.install.request.v2\0')];
@@ -38,8 +102,14 @@ export function installRequest(commands) {
   };
 }
 
-export async function probe() {
+export async function probe(onStage = () => {}) {
   const completed = [];
+  const complete = (check) => {
+    assert.equal(check, checks[completed.length]);
+    completed.push(check);
+    onStage(checks[completed.length] ?? 'complete');
+  };
+  onStage('runtime-ready');
   const secret = randomBytes(32).toString('hex');
   const control = async (frame) => {
     const response = await fetch('http://127.0.0.1:9090/runtime/control', {
@@ -63,6 +133,7 @@ export async function probe() {
       await delay(1000);
     }
   }
+  onStage(checks[0]);
   const artifacts = {};
   for (const [name, path] of Object.entries({
     runtime: '/usr/local/bin/layer4-runtime',
@@ -70,15 +141,15 @@ export async function probe() {
     native: '/usr/local/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl/bin/codex',
     acp: '/usr/local/lib/node_modules/@agentclientprotocol/codex-acp/dist/index.js',
   })) artifacts[name] = sha256(readFileSync(path));
-  artifacts.codexVersion = execFileSync('codex', ['--version'], { encoding: 'utf8', timeout: 10000 }).trim();
+  artifacts.codexVersion = installedCodexVersion('/home/cma');
   artifacts.acpVersion = JSON.parse(readFileSync('/usr/local/lib/node_modules/@agentclientprotocol/codex-acp/package.json')).version;
-  completed.push('installed-artifacts');
+  complete('installed-artifacts');
   assert.equal(process.getuid(), 10001);
   assert.throws(() => writeFileSync('/usr/local/cma-ci-write-refusal', 'refused'));
-  completed.push('non-root-read-only');
+  complete('non-root-read-only');
   const credential = { t: 'credential', operation_id: 'ci-credential', value: secret, custody_generation: 1 };
   assert.equal((await control(credential)).code, 'install_not_completed');
-  completed.push('credential-before-install-refused');
+  complete('credential-before-install-refused');
 
   // The detached writer remains an adopted supervisor child after installation.
   const writer = [
@@ -98,55 +169,85 @@ export async function probe() {
   assert.equal(installed.commands.length, 2);
   assert.ok(installed.commands.every((command) => command.exit_code === 0));
   assert.deepEqual(await control(request), installed);
-  completed.push('install-exact-replay');
+  complete('install-exact-replay');
   assert.deepEqual(await control(credential), { t: 'credential', operation_id: credential.operation_id, installed: true });
-  completed.push('credential-after-install');
+  complete('credential-after-install');
   const counter = () => readFileSync('/home/cma/ci-writer', 'utf8');
   await delay(100);
   const before = counter();
   await delay(100);
   assert.notEqual(counter(), before);
-  completed.push('daemon-writer-active');
-  mkdirSync('/home/cma/.cma/agents/ci-agent/home/sessions', { recursive: true });
-  const retained = '/home/cma/.cma/agents/ci-agent/home/sessions/ci-history';
-  writeFileSync(retained, 'retained-conversation-fixture', { mode: 0o600 });
-  const hold = { t: 'checkpoint_for_teardown', checkpoint: { epoch: 1, exclusions: [] }, writer_resume_token: 'a'.repeat(64) };
+  complete('daemon-writer-active');
+  const agentHome = '/home/cma/.cma/agents/ci-agent/home';
+  const retained = [
+    [`${agentHome}/sessions/ci-history`, 'retained-conversation-fixture'],
+    [`${agentHome}/config.toml`, 'model = "retained-fixture"\n'],
+    [`${agentHome}/skills/fixture/SKILL.md`, 'retained-skill-fixture'],
+    ['/home/cma/.cma/provider/codex/auth.json', '{"fixture":"retained-auth-fixture"}'],
+    [`${agentHome}/tmp/retained`, 'retained-other-temporary-content'],
+    [`${agentHome}/tmp/arg0-sibling/retained`, 'retained-adjacent-content'],
+  ];
+  for (const [path, bytes] of retained) {
+    mkdirSync(join(path, '..'), { recursive: true });
+    writeFileSync(path, bytes, { mode: 0o600 });
+  }
+  symlinkSync('/home/cma/.cma/provider/codex/auth.json', `${agentHome}/auth.json`);
+  assert.equal(execFileSync('codex', ['--version'], {
+    encoding: 'utf8', timeout: 10000, stdio: ['ignore', 'pipe', 'pipe'],
+    env: { ...process.env, HOME: agentHome, CODEX_HOME: agentHome },
+  }).trim(), artifacts.codexVersion);
+  const aliasRoot = `${agentHome}/tmp/arg0`;
+  const aliases = readdirSync(aliasRoot, { recursive: true, withFileTypes: true }).filter((entry) => entry.isSymbolicLink());
+  assert.deepEqual(aliases.map((entry) => entry.name).sort(), ['apply_patch', 'applypatch', 'codex-execve-wrapper', 'codex-linux-sandbox']);
+  for (const entry of aliases) assert.equal(readlinkSync(join(entry.parentPath, entry.name)), '/usr/local/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl/bin/codex');
+  complete('agent-home-helper-aliases');
+  const rejectedHold = { t: 'checkpoint_for_teardown', checkpoint: { epoch: 1, exclusions: [] }, writer_resume_token: '0'.repeat(64) };
+  assert.equal((await control(rejectedHold)).code, 'checkpoint_symlink_escape');
+  const afterRefusal = counter();
+  await delay(150);
+  assert.notEqual(counter(), afterRefusal);
+  complete('escaping-helper-refused');
+  const hold = { t: 'checkpoint_for_teardown', checkpoint: { epoch: 1, exclusions: ['.cma/agents/ci-agent/home/tmp/arg0'] }, writer_resume_token: 'a'.repeat(64) };
+  onStage('checkpoint-request');
   const receipt = await control(hold);
-  assert.equal(receipt.t, hold.t);
-  assert.equal(receipt.checkpoint.writers, 'held');
-  assert.equal(receipt.writer_resume_token, hold.writer_resume_token);
+  assertCheckpointHoldReceipt(receipt, hold, onStage);
+  onStage('checkpoint-writer-stable');
   const heldCounter = counter();
   await delay(150);
   assert.equal(counter(), heldCounter);
-  completed.push('checkpoint-writers-held');
+  complete('checkpoint-writers-held');
   assert.deepEqual(await control(hold), receipt);
-  completed.push('checkpoint-exact-replay');
+  complete('checkpoint-exact-replay');
   assert.equal((await control({ t: 'resume_checkpoint_writers', writer_resume_token: 'b'.repeat(64) })).code, 'checkpoint_hold_conflict');
-  completed.push('wrong-resume-token-refused');
+  complete('wrong-resume-token-refused');
   assert.equal((await control(credential)).code, 'checkpoint_writers_held');
-  completed.push('mutation-while-held-refused');
+  complete('mutation-while-held-refused');
   assert.match(receipt.checkpoint.sha256, /^[0-9a-f]{64}$/);
   assert.equal(receipt.checkpoint.object_reference, `home-${receipt.checkpoint.sha256}.cma`);
   const download = await fetch(`http://127.0.0.1:9090/runtime/checkpoints/${receipt.checkpoint.object_reference}`, { signal: AbortSignal.timeout(30000), redirect: 'error' });
   assert.equal(download.status, 200);
   assert.equal(sha256(Buffer.from(await download.arrayBuffer())), receipt.checkpoint.sha256);
-  completed.push('checkpoint-download-digest');
+  complete('checkpoint-download-digest');
   const resume = { t: 'resume_checkpoint_writers', writer_resume_token: hold.writer_resume_token };
   assert.equal((await control(resume)).writers_resumed, true);
   await delay(150);
   assert.notEqual(counter(), heldCounter);
-  completed.push('writer-resumed');
+  complete('writer-resumed');
   assert.equal((await control(hold)).code, 'checkpoint_hold_retired');
-  completed.push('retired-hold-refused');
-  writeFileSync(retained, 'changed-after-checkpoint');
+  complete('retired-hold-refused');
+  for (const [path] of retained) writeFileSync(path, 'changed-after-checkpoint');
   assert.deepEqual(await control({ t: 'restore', object_reference: receipt.checkpoint.object_reference, sha256: receipt.checkpoint.sha256 }), { t: 'restore', accepted: true });
-  assert.equal(readFileSync(retained, 'utf8'), 'retained-conversation-fixture');
-  completed.push('whole-home-restore');
+  for (const [path, bytes] of retained) assert.equal(readFileSync(path, 'utf8'), bytes);
+  assert.equal(readlinkSync(`${agentHome}/auth.json`), '/home/cma/.cma/provider/codex/auth.json');
+  assert.equal(readFileSync(`${agentHome}/auth.json`, 'utf8'), '{"fixture":"retained-auth-fixture"}');
+  assert.equal(existsSync(aliasRoot), false);
+  complete('whole-home-restore');
   assert.deepEqual(completed, checks);
   return { checks: completed, artifacts };
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  try { process.stdout.write(`${JSON.stringify(await probe())}\n`); }
-  catch { process.stderr.write('runtime image probe failed; raw runtime data withheld\n'); process.exitCode = 1; }
+  let stage = 'runtime-ready';
+  try { process.stdout.write(`${JSON.stringify(await probe((value) => { stage = value; }))}\n`); }
+  catch { process.stderr.write(`runtime image probe failed at ${stage}; raw runtime data withheld\n`); process.exitCode = 1; }
 }
