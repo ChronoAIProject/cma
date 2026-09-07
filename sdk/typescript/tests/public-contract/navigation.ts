@@ -6,6 +6,7 @@ export const browserOperations = new Set([
   'GET /auth/login',
   'GET /auth/logout',
   'GET /auth/callback',
+  'GET /api/v1/triggers/public/{public_id}/open/{placement_id}',
 ]);
 
 /** Navigation URLs are SDK output; browser redirects and callback handling remain composition-only. */
@@ -32,6 +33,14 @@ export async function verifyNavigation(
     }
   } else if (fixture.operation === 'GET /auth/logout') {
     expect(new URL(client.auth.logoutUrl()).pathname).toBe('/auth/logout');
+  } else if (fixture.operation === 'GET /api/v1/triggers/public/{public_id}/open/{placement_id}') {
+    const parts = url.pathname.split('/');
+    expect(parts[5]).toBeTruthy();
+    expect(parts[6]).toBe('open');
+    expect(parts[7]).toMatch(/^plc_/);
+    expect(fixture.response.headers.location).toBe(`/t/${parts[5]}/${parts[7]}`);
+    expect(fixture.response.headers['cache-control']).toBe('private, no-store');
+    expect(fixture.response.headers['set-cookie']).toContain('Max-Age=0');
   } else {
     expect(fixture.operation).toBe('GET /auth/callback');
     // The callback is consumed by CMA's server, never by an SDK-issued token exchange.

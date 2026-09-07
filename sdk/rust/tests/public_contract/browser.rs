@@ -29,6 +29,9 @@ pub const BROWSER_CASES: &[&str] = &[
     "auth-callback-expired-state",
     "auth-callback-cancelled",
     "auth-callback-code-missing",
+    "triggers-open-without-user-activation",
+    "triggers-entry-intent-without-click-evidence",
+    "triggers-entry-intent-cross-origin",
 ];
 
 pub fn owns(case: &Case) -> bool {
@@ -39,6 +42,38 @@ pub fn owns(case: &Case) -> bool {
 // shared response models and navigation helpers without issuing a replacement request.
 pub fn verify(c: &Context<'_>) {
     match c.case.operation.as_str() {
+        "GET /api/v1/triggers/public/{public_id}/open/{placement_id}" => {
+            assert_eq!(c.case.response.status, 303);
+            assert_eq!(
+                c.case.response.headers["cache-control"],
+                "private, no-store"
+            );
+            assert!(c.case.response.headers["set-cookie"].contains("Max-Age=0"));
+            let parts: Vec<_> = c.case.request.path.split('/').collect();
+            assert_eq!(
+                c.case.response.headers["location"],
+                format!("/t/{}/{}", parts[5], parts[7])
+            );
+        }
+        "POST /api/v1/triggers/public/{public_id}/entry-intent" => {
+            // The browser owns Origin, Fetch metadata and the HttpOnly evidence cookie.
+            assert!(c.case.request.headers.contains_key("origin"));
+            match c.case.response.status {
+                200 => {
+                    assert_eq!(c.case.response.body, serde_json::json!({"accepted": false}));
+                    assert_eq!(
+                        c.case.response.headers["cache-control"],
+                        "private, no-store"
+                    );
+                    assert!(c.case.response.headers["set-cookie"].contains("Max-Age=0"));
+                }
+                403 => {
+                    assert_eq!(c.case.response.body_kind, "empty");
+                    assert!(c.case.response.body.is_null());
+                }
+                _ => panic!("unexpected entry intent status {}", c.case.response.status),
+            }
+        }
         "GET /auth/login" => {
             let result = c.client.auth().login_url(&LoginOptions {
                 return_to: c.q("return_to"),
