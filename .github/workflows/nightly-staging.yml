@@ -70,12 +70,14 @@ jobs:
       CMA_E2E_MODE: smoke
       CMA_E2E_BASE_URL: ${{ vars.CMA_E2E_BASE_URL }}
       CMA_E2E_PUBLIC_ID: ${{ vars.CMA_E2E_PUBLIC_ID }}
-      CMA_E2E_OUTPUT_DIR: ${{ runner.temp }}/cma-e2e-smoke-${{ github.run_id }}-${{ github.run_attempt }}
     steps:
       # Run trusted develop code, never the dispatcher's arbitrary branch with fixture credentials.
       - uses: actions/checkout@v5
         with:
           ref: develop
+      - name: Initialize isolated evidence path
+        working-directory: .
+        run: printf '%s\n' "CMA_E2E_OUTPUT_DIR=$RUNNER_TEMP/cma-e2e-smoke-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" >> "$GITHUB_ENV"
       - uses: actions/setup-node@v6
         with:
           node-version: 26
@@ -132,7 +134,6 @@ jobs:
       CMA_E2E_FIXTURE_OWNER: ${{ inputs.fixture_owner }}
       CMA_E2E_FIXTURE_FILE: ${{ vars.CMA_E2E_FIXTURE_FILE }}
       CMA_E2E_BROWSER_PATH: ${{ vars.CMA_E2E_BROWSER_PATH }}
-      CMA_E2E_OUTPUT_DIR: ${{ runner.temp }}/cma-e2e-journeys-${{ github.run_id }}-${{ github.run_attempt }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
@@ -148,6 +149,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: node .github/scripts/staging-authority.mjs attest "$RUNNER_TEMP/staging-before.json"
+      - name: Initialize isolated evidence path
+        working-directory: .
+        run: printf '%s\n' "CMA_E2E_OUTPUT_DIR=$RUNNER_TEMP/cma-e2e-journeys-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" >> "$GITHUB_ENV"
       - run: npm ci
       - name: Install SDK runtime dependencies
         working-directory: sdk/typescript
