@@ -17,9 +17,9 @@ acceptance of this campaign.
 | 4. Public Trigger | Exact title/message, all-level reuse, Try It, visitor theme, no review, README placement | Exact revision published after first rollout; README-only PR #841 merged after all 12 protected checks; default README snippet read back exactly |
 | 5. Login without bootstrap | No Sandbox, Workspace, Agent, or Profile created by login alone | Existing-owner fresh-browser sign-in created no resources; successful unseen-CMA-identity callback contract passes default/home/Trigger returns; external fresh signup not tested |
 | 6. Complete external-click flow | Login then automatic provisioning; exact first message once; correct software, skills, scopes | Fresh `streaming-fixed` README entry, first response, live configuration and actual workload passed; matching built-home restore and final first/repeat cycle pending |
-| 7. Previous UI style | Original rotating 3D mark and established controls; desktop/mobile screenshots | Live home/provisioning motion passed; latest deployed chat passed four desktop/mobile theme configurations, including layout, hierarchy and reload |
+| 7. Previous UI style | Original rotating 3D mark and established controls; desktop/mobile screenshots | Live home/provisioning motion passed; four-view chat checks passed; deployed web `242ae95c` fixes mobile Agent navigation and preserves desktop navigation and history |
 | 8. Autonomous YOLO | Pinned provider runs full-access mode with no approval requests | Actual provider configuration verified; latest first response and successful subsequent workload completed with zero approvals |
-| 9. Lifecycle | Active to paused to active; paused to terminated; history retained | Legacy revival recovered automatically with exact history; normal checkpoint then one waiting command passed; full built-home manual lifecycle pending |
+| 9. Lifecycle | Active to paused to active; paused to terminated; history retained | Heavy epoch-2 checkpoint published at 21:16:07 UTC; UI Pause admitted at 21:16:10; matching full-home restore, manual Resume and paused Delete remain pending |
 | 10. Cleanup | Only identified stale state removed; new published flow remains usable | Two old Sandboxes retired through the public API under explicit authorization; final environment pending |
 | 11. Conversation UI | Thinking, Send/Stop, CPU, RAM, context, token, network metrics | Four-view active metrics, Thinking, live follow/manual scroll/re-follow, completion, hierarchy and reload passed; actual Send/Stop acceptance in progress |
 
@@ -454,7 +454,7 @@ two-turn transcript hash survived this control-plane rollout; no Agent turn
 was active and no Sandbox pod was restarted. The admitted capture remained
 recorded for lease-fenced recovery rather than being manually repaired.
 
-### Heavy Publication Still Failing
+### Heavy Publication Investigation
 
 The post-workload capture began at 20:32:43 UTC and sealed a
 6,265,977,876-byte runtime archive at 20:41:03.616. It did not publish a durable
@@ -490,6 +490,81 @@ aggregate/profile write service. Session reads and callback replay do not add
 duplicate user/audit records. All 98 focused auth tests passed, with four separate
 Mongo tests ignored. This is not a fresh external NyxID signup or second-owner
 browser test.
+
+### Published Heavy Checkpoint And Mobile Navigation
+
+The later automatic capture published epoch 2 at 2026-09-07 21:16:07 UTC.
+Object `cpa_dc1adcafe24d41a99dbf861849fb97e3` is upload-confirmed and published,
+with 6,265,720,509 bytes. Its staged transfer took approximately 443 seconds,
+within the existing 600-second lifetime. This succeeded on API `2b930ca4`, before
+the immutable-part recovery fix; the original failed transfer's exact cause
+remains unknown. The original failed evidence is not relabeled. Read-only
+publication evidence is in `heavy-publication-watch-FdXKFc/`.
+
+The waiting UI verifier admitted one Pause at 21:16:10 UTC after authoritative
+eligibility and unchanged hierarchy/history checks. Its new full-home archive
+began uploading at 21:24:21. At the 21:24:26 store readback, the Sandbox was still
+Pausing; this is not yet a completed Pause or restore proof. The original runtime
+UID and two-turn transcript remain unchanged.
+
+Commit `78a25c07` adds bounded recovery for immutable parts and the final manifest:
+uncertain uploads are reconciled by exact-key full-size/SHA-256 readback before
+reposting; confirmed uploads retry only their readback. The three-attempt bound,
+server Retry-After, cancellation, private diagnostics, four-part window, 32 MiB
+parts, all integrity checks and 600-second upload lifetime are tested. All 25
+focused storage tests, 1,067 core/CMA tests and 36 isolated real-Mongo contracts
+passed, along with strict lint, formatting and secret checks. This fix is not yet
+deployed. The separate `eac56ab1` image finished building, but is held for a
+combined API update rather than a redundant rollout.
+
+The settled hierarchy initially passed four read-only views, but the subsequent
+navigation interaction exposed a mobile drawer that obscured the selected Agent.
+Web `242ae95c` closes only the narrow-screen expansion when an Agent is selected,
+including the current Agent, and preserves desktop navigation and same-Agent
+drafts. Six new viewport/navigation regressions reproduce the old failure; all
+953 frontend tests and strict checks passed. The built image passed its scan and
+remote digest readback. A web-only rollout was requested at 21:24:06 UTC and
+completed on pod `cma-web-8677874dbc-dpq2z`, with digest
+`sha256:f5b5b3d7a1677c7107fcea3957b18243a88bf37af0bd9c6200cd7c81b6595d1d`.
+All 18 manifests validated without skips or policy errors. API and runtime pins
+were unchanged. Post-rollout interaction evidence in `settled-sidebar-ViEEiz/`
+passes automatic mobile closure, retained desktop navigation, exact rendered
+history and all 168 observed GET responses; settled mobile screenshots are being
+checked separately after the navigation transition. The subsequent settled
+mobile evidence in `settled-sidebar-bzbCiC/` passed both themes with 84 further
+HTTP-200 reads, automatic drawer closure and no overflow. Both observers retained
+the exact 20 rendered messages and closed their browser processes.
+
+The first Pause capture did not publish. The recorded lifecycle advanced to
+retry attempt 1 at 21:25:42 UTC, with the same requested Pause, runtime identity
+and conversation. Its second archive `cpa_a523fe0054fd44f0b293c35b27baeaf4`,
+6,265,740,096 bytes, began uploading at 21:33:54. Publication and completed Pause
+remain separate requirements; the already published epoch-2 checkpoint remains
+available. No extra Pause command, message or database repair was submitted.
+
+Commit `0327a382` adds a durable 120-second cooldown after confirmed periodic
+writer release, including failed captures. The model and transactional stores
+refuse early recapture and timestamp forgery; legacy records gain a timestamp
+only after a real completion. Manual lifecycle and existing writer-debt recovery
+remain ungated. All 1,519 workspace tests passed with 168 intentional skips, plus
+37 isolated Mongo contracts and strict lint, format, doc and secret checks.
+The combined API image, including `78a25c07` and `eac56ab1`, started building at
+21:32 UTC and is not yet deployed. Preserved test-failure explanations document
+the one-line debug fixture boxing and two public fixture-clock corrections;
+assertions and default stack limits were not weakened.
+
+A further screenshot review exposed missing composer holds during explicit
+Sandbox lifecycle operations. Commit `a5d6fb4b` holds Send and approval decisions
+with the existing visible notice while preserving drafts, history, real-turn
+Stop, and eligible paused-message revival. All 981 frontend tests and strict
+checks passed, including 28 new regressions; its web image is building. This
+production composer acceptance remains pending its rollout.
+
+Four obsolete local runtime OCI archives and their extracted copies were removed
+to recover approximately 3 GiB. Their published registry images, image metadata,
+test records and failed production evidence remain available. The current runtime
+archive, active source directories, shared Rust target and builder caches were
+not removed.
 
 ## Historical Observation
 
