@@ -14,6 +14,125 @@ async fn lifecycle_worker_future_stays_within_the_stack_budget() {
 }
 
 #[tokio::test]
+async fn lifecycle_checkpoint_replays_exact_exclusions_after_agent_becomes_a_tombstone() {
+    let (harness, current, mut agent, now) = late_pause(false).await;
+    let before = harness
+        .backend
+        .requests()
+        .await
+        .into_iter()
+        .find_map(|(_, request)| match request {
+            RequestFrame::CheckpointForTeardown(hold) => Some(hold),
+            _ => None,
+        })
+        .unwrap();
+    assert_eq!(
+        before.checkpoint.exclusions,
+        [format!(".cma/agents/{}/home/tmp/arg0", agent.id)]
+    );
+    let revision = agent.revision;
+    agent
+        .transition(
+            AgentStatus::Stopped,
+            rfc3339_at(now),
+            Some(layer2_core::sandbox::AgentStopReason::Owner),
+        )
+        .unwrap();
+    harness
+        .store
+        .save_agent(revision, agent.clone())
+        .await
+        .unwrap();
+    let revision = agent.revision;
+    agent
+        .transition(AgentStatus::Deleted, rfc3339_at(now), None)
+        .unwrap();
+    harness.store.save_agent(revision, agent).await.unwrap();
+    harness.run(&current.id, now).await;
+    harness.run(&current.id, now).await;
+    let holds = harness
+        .backend
+        .requests()
+        .await
+        .into_iter()
+        .filter_map(|(_, request)| match request {
+            RequestFrame::CheckpointForTeardown(hold) => Some(hold),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(holds.len(), 3);
+    assert!(holds.iter().all(|hold| hold == &before));
+    assert_pause_phase(
+        &harness.stored(&current.id).await,
+        SandboxPausePhase::PublishPaused,
+    );
+}
+
+#[tokio::test]
+async fn superseded_lifecycle_does_not_replay_hold_or_discard_transferred_writer_debt() {
+    let (harness, current, _, now) = late_pause(false).await;
+    let claimed = harness
+        .store
+        .claim_sandbox_work(
+            &current.id,
+            "worker-a",
+            rfc3339_at(now),
+            rfc3339_at(now + Duration::from_secs(60)),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    let token = claimed
+        .lifecycle
+        .operation
+        .as_ref()
+        .unwrap()
+        .authority()
+        .writer_resume_token
+        .clone();
+    let mut retiring = claimed.clone();
+    retiring.begin_retirement(rfc3339_at(now)).unwrap();
+    harness
+        .store
+        .save_sandbox(claimed.revision, retiring.clone())
+        .await
+        .unwrap();
+    let holds_before = harness
+        .backend
+        .requests()
+        .await
+        .iter()
+        .filter(|(_, request)| matches!(request, RequestFrame::CheckpointForTeardown(_)))
+        .count();
+    assert_eq!(
+        harness.worker.execute_claimed_for_test(claimed, now).await,
+        Err(SandboxStoreError::Conflict)
+    );
+    assert_eq!(
+        harness
+            .backend
+            .requests()
+            .await
+            .iter()
+            .filter(|(_, request)| matches!(request, RequestFrame::CheckpointForTeardown(_)))
+            .count(),
+        holds_before
+    );
+    let stored = harness.stored(&current.id).await;
+    assert_eq!(stored, retiring);
+    assert_eq!(
+        stored
+            .lifecycle
+            .checkpoint_capture
+            .as_ref()
+            .unwrap()
+            .authority
+            .writer_resume_token,
+        token
+    );
+}
+
+#[tokio::test]
 async fn retry_after_confirmed_writer_resume_uses_a_new_durable_hold_token() {
     let harness = Harness::new(Vec::new(), 0, Duration::from_secs(60)).await;
     let created = harness.create().await;

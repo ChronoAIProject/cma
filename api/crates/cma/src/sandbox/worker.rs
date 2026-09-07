@@ -185,6 +185,15 @@ impl SandboxWorker {
         Ok(true)
     }
 
+    #[cfg(test)]
+    pub(super) async fn execute_claimed_for_test(
+        &self,
+        sandbox: Sandbox,
+        now: SystemTime,
+    ) -> Result<(), SandboxStoreError> {
+        self.execute(sandbox, now).await
+    }
+
     async fn execute(&self, sandbox: Sandbox, now: SystemTime) -> Result<(), SandboxStoreError> {
         if sandbox.lifecycle.checkpoint_capture.is_some() {
             return self

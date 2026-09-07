@@ -147,6 +147,39 @@ fn bridge_launch_uses_per_agent_home_worktree_slot_and_acp_resume() {
 }
 
 #[test]
+fn checkpoint_exclusions_are_exact_sorted_disposable_alias_roots() {
+    let (adapter, _) = CodexAdapter::in_memory(CodexSandboxSpec::default());
+    assert!(adapter.checkpoint_exclusions(&[]).unwrap().is_empty());
+    assert_eq!(
+        adapter
+            .checkpoint_exclusions(&[
+                AgentSlot::new("agent-z"),
+                AgentSlot::new("agent-a"),
+                AgentSlot::new("agent-z"),
+            ])
+            .unwrap(),
+        [
+            ".cma/agents/agent-a/home/tmp/arg0",
+            ".cma/agents/agent-z/home/tmp/arg0"
+        ]
+    );
+    for slot in [
+        "",
+        ".",
+        "..",
+        "../outside",
+        "agent/home",
+        "agent\\home",
+        "agent*",
+        "agent\n",
+    ] {
+        assert!(adapter
+            .checkpoint_exclusions(&[AgentSlot::new(slot)])
+            .is_err());
+    }
+}
+
+#[test]
 fn bridge_launch_rejects_non_normalized_or_misplaced_worktree_paths() {
     for cwd in [
         "home/cma/repo/.worktrees/wt-7",

@@ -151,6 +151,12 @@ pub trait SandboxAdapter: Send + Sync {
         agent: &AgentSlot,
     ) -> Result<ConversationSnapshot>;
 
+    /// Exact disposable paths relative to the sandbox home, in canonical order.
+    /// Callers supply every retained agent slot, including terminal agents.
+    fn checkpoint_exclusions(&self, _agents: &[AgentSlot]) -> Result<Vec<String>> {
+        Ok(Vec::new())
+    }
+
     async fn checkpoint(
         &self,
         handle: &RuntimeHandle,
