@@ -246,7 +246,7 @@ export function Console({
       overlay={actions.overlay}
       sidebarCollapsed={sidebarCollapsed}
       onSidebarCollapsedChange={setSidebarCollapsed}
-      sidebar={({ collapsed, onToggle }) => (
+      sidebar={({ collapsed, onToggle, onNavigate: onSidebarNavigate }) => (
         <Sidebar
           collapsed={collapsed}
           onToggleCollapsed={onToggle}
@@ -262,7 +262,10 @@ export function Console({
                 lifecycleBusy={actions.pending}
                 route={route}
                 permissions={permissions}
-                onNavigate={onNavigate}
+                onNavigate={(next) => {
+                  onSidebarNavigate();
+                  onNavigate(next);
+                }}
                 onAction={actions.select}
               />
             ) : navigation.status === 'loading' ? (
