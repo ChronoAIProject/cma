@@ -321,7 +321,7 @@ impl HostedBackend for InMemoryHostedBackend {
         {
             return refused(WireOperation::OpenAgent, "operation_request_invalid");
         }
-        let payload = fingerprint(&(launch.clone(), resume_conversation.clone()))?;
+        let payload = fingerprint(&launch)?;
         authority::admit(
             runtime,
             authority::ResourceKey::AgentProcess(launch.agent_id.clone()),

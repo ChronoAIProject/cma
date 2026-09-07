@@ -138,6 +138,17 @@ pub trait SandboxAdapter: Send + Sync {
         updates: mpsc::Sender<ConversationUpdate>,
     ) -> Result<ConversationChannel>;
 
+    /// Replay the original open operation while attaching its recorded conversation.
+    /// The connection identity does not change the durable launch fingerprint.
+    async fn reconnect_agent(
+        &self,
+        handle: &RuntimeHandle,
+        authority_fence: u64,
+        request: &AgentOpenRequest,
+        conversation_id: &str,
+        updates: mpsc::Sender<ConversationUpdate>,
+    ) -> Result<ConversationChannel>;
+
     async fn close_agent(
         &self,
         handle: &RuntimeHandle,

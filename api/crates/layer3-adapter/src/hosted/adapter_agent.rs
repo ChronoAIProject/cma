@@ -172,8 +172,23 @@ pub(super) async fn open_agent(
     handle: &RuntimeHandle,
     authority_fence: u64,
     request: &AgentOpenRequest,
+    held_conversation: Option<&str>,
     updates: mpsc::Sender<ConversationUpdate>,
 ) -> crate::Result<ConversationChannel> {
+    if held_conversation.is_some_and(|id| {
+        id.is_empty()
+            || id.len() > 512
+            || id.trim() != id
+            || id.chars().any(char::is_control)
+            || request
+                .resume_conversation
+                .as_deref()
+                .is_some_and(|resume| resume != id)
+    }) {
+        return Err(AdapterError::Rejected(
+            "recorded conversation identity is invalid or conflicts with the open request".into(),
+        ));
+    }
     adapter.validate_options(handle, &request.options).await?;
     validate_request(
         request,
@@ -202,7 +217,9 @@ pub(super) async fn open_agent(
         .open_agent(
             handle,
             FencedRequest::new(authority_fence, launch),
-            request.resume_conversation.clone(),
+            held_conversation
+                .map(str::to_owned)
+                .or_else(|| request.resume_conversation.clone()),
             settings,
             updates,
         )
@@ -214,6 +231,7 @@ pub(super) async fn open_agent(
         || receipt.receipt.cwd != request.options.working_directory
         || receipt.receipt.home != request.options.home_directory
         || receipt.receipt.conversation_id != channel.conversation_id
+        || held_conversation.is_some_and(|id| channel.conversation_id.as_deref() != Some(id))
     {
         return Err(AdapterError::Rejected(
             "runtime returned a receipt for another agent open operation".into(),
