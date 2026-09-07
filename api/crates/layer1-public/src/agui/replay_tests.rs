@@ -156,6 +156,10 @@ async fn resumed_run_finishes_with_approvals_recorded_before_its_cursor() {
     assert_eq!(interrupts[0]["id"], "second");
     assert_eq!(interrupts[1]["id"], "third");
     assert!(!wire.contains("private-runtime-locator"));
+    assert!(
+        wire.trim_end().ends_with("id: 9"),
+        "the terminal snapshot must complete the SDK projection at the current head"
+    );
     assert_eq!(
         wire.lines()
             .filter(|line| line.starts_with("id:"))
