@@ -3,7 +3,10 @@ use std::sync::atomic::AtomicUsize;
 use async_trait::async_trait;
 use layer3_adapter::{ConversationInputSender, ConversationUpdate, PromptResponse, TurnStopReason};
 
-use crate::sandbox::store::{AgentConversationMutation, SandboxMutationGuard, SandboxStore};
+use crate::sandbox::store::{
+    AgentConversationMutation, SandboxLifecycleAgentScope, SandboxLifecycleExecutionStore,
+    SandboxLifecycleMutation, SandboxMutationGuard, SandboxStore,
+};
 use crate::SandboxId;
 
 use super::*;
@@ -13,6 +16,7 @@ enum ParentChange {
     Pause,
     Retire,
     Revision,
+    Checkpoint,
 }
 
 struct ChangingParentRegistry {
@@ -35,6 +39,13 @@ impl AgentRuntimeRegistry for ChangingParentRegistry {
             let mut sandbox = self.store.get_sandbox(&id).await.unwrap().unwrap();
             let expected = sandbox.revision;
             match self.change {
+                ParentChange::Checkpoint => {
+                    begin_capture(&self.store, sandbox).await;
+                    return Ok(AgentRuntimeConnection {
+                        capabilities: full_capabilities(),
+                        input: self.sender.clone(),
+                    });
+                }
                 ParentChange::Pause => sandbox.begin_pause(LATER.into(), None).unwrap(),
                 ParentChange::Retire => sandbox.begin_retirement(LATER.into()).unwrap(),
                 ParentChange::Revision => sandbox.revision += 1,
@@ -50,6 +61,60 @@ impl AgentRuntimeRegistry for ChangingParentRegistry {
     async fn fence(&self, _: &crate::AgentId, _: u64) -> Result<(), AgentRuntimeError> {
         Ok(())
     }
+}
+
+#[tokio::test]
+async fn checkpoint_between_policy_read_and_commit_refuses_without_retry_or_admission() {
+    let store = Arc::new(InMemorySandboxStore::default());
+    let mut parent = crate::sandbox::lifecycle_test_support::sandbox();
+    parent.id = SandboxId("sbx_operations".into());
+    parent.revision = 1;
+    parent.runtime.as_mut().unwrap().provision_generation = Some(1);
+    parent.lifecycle.runtime_generation_high_water = 1;
+    store.create_sandbox(parent).await.unwrap();
+    let ready = test_agent(AgentStatus::Ready, None);
+    store.create_agent(ready.clone()).await.unwrap();
+    let (sender, inputs) = recording_sender(Ok(()));
+    let registry = changing_registry(store.clone(), sender, ParentChange::Checkpoint, 1);
+    let service = AgentOperationService::new(store.clone(), registry.clone());
+    assert_eq!(
+        service
+            .send_message(&owner(), &ready.id, "Not accepted".into())
+            .await,
+        Err(AgentOperationError::CheckpointInProgress)
+    );
+    assert_eq!(registry.resolution.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        store.get_agent(&ready.id).await.unwrap(),
+        Some(ready.clone())
+    );
+    assert!(store.agent_log(&ready.id, 0, 100).await.unwrap().is_empty());
+    assert!(inputs.lock().unwrap().is_empty());
+    assert_eq!(
+        service
+            .send_message(&owner(), &ready.id, "Still not accepted".into())
+            .await,
+        Err(AgentOperationError::CheckpointInProgress)
+    );
+    assert_eq!(registry.resolution.load(Ordering::SeqCst), 1);
+}
+
+async fn begin_capture(store: &InMemorySandboxStore, parent: Sandbox) {
+    let mut next = parent.clone();
+    next.begin_checkpoint_capture(LATER.into()).unwrap();
+    store
+        .commit_sandbox_lifecycle(SandboxLifecycleMutation {
+            guard: SandboxMutationGuard::capture(&parent),
+            sandbox: next,
+            agents: vec![],
+            agent_scope: SandboxLifecycleAgentScope::Touched,
+            appended_at: LATER.into(),
+            events: vec![SandboxEventKind::WorkStepCompleted {
+                step: SandboxWorkStep::RunLifecycleOperation,
+            }],
+        })
+        .await
+        .unwrap();
 }
 
 #[tokio::test]

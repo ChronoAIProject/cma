@@ -24,6 +24,7 @@ pub(crate) enum InstanceProblem {
     ApprovalNotPending { approval_id: String },
     CapabilityUnsupported { capability: RuntimeCapability },
     OperationInFlight,
+    CheckpointInProgress,
     DeliveryAmbiguous,
     ResourcesUnsupported,
     Unavailable,
@@ -120,6 +121,7 @@ impl From<AgentOperationError> for InstanceProblem {
             | AgentOperationError::DispatchRecoveryRequired { .. }
             | AgentOperationError::PreviousTurnConflict
             | AgentOperationError::Conflict => Self::OperationInFlight,
+            AgentOperationError::CheckpointInProgress => Self::CheckpointInProgress,
             AgentOperationError::DeliveryAmbiguous { .. } => Self::DeliveryAmbiguous,
             AgentOperationError::LogCapacityExceeded
             | AgentOperationError::Corrupt(_)
@@ -216,6 +218,12 @@ impl IntoResponse for InstanceProblem {
                 "agent-operation-in-flight",
                 "Another durable operation currently owns this agent.",
                 "agent_operation_in_flight",
+            ),
+            Self::CheckpointInProgress => (
+                StatusCode::CONFLICT,
+                "sandbox-checkpoint-in-progress",
+                "The Sandbox is saving a checkpoint. Input was not accepted; retry after the checkpoint completes.",
+                "sandbox_checkpoint_in_progress",
             ),
             Self::DeliveryAmbiguous => (
                 StatusCode::SERVICE_UNAVAILABLE,

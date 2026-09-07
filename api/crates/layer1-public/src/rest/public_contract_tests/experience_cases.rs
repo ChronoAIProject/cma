@@ -1,12 +1,16 @@
 use std::sync::Arc;
 
 use layer2_core::profiles::InMemoryProfileStore;
-use layer2_core::sandbox::store::{AgentLogStore, AgentStore, InMemorySandboxStore, WorktreeStore};
+use layer2_core::sandbox::store::{
+    AgentLogStore, AgentStore, InMemorySandboxStore, SandboxLifecycleAgentScope,
+    SandboxLifecycleExecutionStore, SandboxLifecycleMutation, SandboxMutationGuard, SandboxStore,
+    WorktreeStore,
+};
 use layer2_core::sandbox::{
     Agent, AgentContextDefaults, AgentContextError, AgentContextService, AgentLogKind,
     AgentOperationDelivery, AgentOperationIntent, AgentOperationKind, AgentOperationRecord,
-    AgentService, AgentStatus, AgentStopReason, SandboxPolicy, SandboxService, TypedFailure,
-    WorkspaceService, WorktreeStatus,
+    AgentService, AgentStatus, AgentStopReason, SandboxEventKind, SandboxPolicy, SandboxService,
+    SandboxWorkStep, TypedFailure, WorkspaceService, WorktreeStatus,
 };
 use layer2_core::{
     Authorization, Capability, PlatformDefaults, RuntimeCapabilities, RuntimeCapability,
@@ -38,6 +42,7 @@ impl AgentContextDefaults for DefaultsPort {
 pub(super) async fn scenario(name: &str) -> Option<Scenario> {
     let (subject, capabilities) = match name {
         "experience_owner"
+        | "experience_checkpoint"
         | "experience_agui_admission"
         | "experience_responses_admission"
         | "experience_working"
@@ -200,6 +205,9 @@ async fn composition(name: &str) -> crate::AgentConversationState {
         };
     }
     let agent = insert_agent(&store, agent, logs).await;
+    if name == "experience_checkpoint" {
+        begin_checkpoint(&store, &agent.sandbox_id).await;
+    }
     if name == "experience_response_unavailable" {
         state.reads = super::agent_cases::unavailable_log_reads(store.clone());
     }
@@ -254,6 +262,25 @@ async fn composition(name: &str) -> crate::AgentConversationState {
         );
     }
     state
+}
+
+pub(super) async fn begin_checkpoint(store: &InMemorySandboxStore, id: &layer2_core::SandboxId) {
+    let parent = store.get_sandbox(id).await.unwrap().unwrap();
+    let mut sandbox = parent.clone();
+    sandbox.begin_checkpoint_capture(NOW.into()).unwrap();
+    store
+        .commit_sandbox_lifecycle(SandboxLifecycleMutation {
+            guard: SandboxMutationGuard::capture(&parent),
+            sandbox,
+            agents: vec![],
+            agent_scope: SandboxLifecycleAgentScope::Touched,
+            appended_at: NOW.into(),
+            events: vec![SandboxEventKind::WorkStepCompleted {
+                step: SandboxWorkStep::RunLifecycleOperation,
+            }],
+        })
+        .await
+        .unwrap();
 }
 
 fn stop_reason(reason: &str) -> Option<AgentStopReason> {

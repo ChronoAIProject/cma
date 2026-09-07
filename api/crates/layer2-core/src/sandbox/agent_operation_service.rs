@@ -73,6 +73,8 @@ pub enum AgentOperationError {
     InvalidRequest(String),
     #[error("agent changed while the operation was being fenced")]
     Conflict,
+    #[error("sandbox checkpoint is in progress; input was not admitted")]
+    CheckpointInProgress,
     #[error("the previous turn does not match the conversation's latest turn")]
     PreviousTurnConflict,
     #[error("agent log capacity exceeded")]
@@ -108,6 +110,7 @@ impl AgentOperationError {
             Self::StaleWorkAuthority => "agent_work_authority_stale",
             Self::InvalidRequest(_) => "invalid_agent_operation",
             Self::Conflict => "agent_operation_conflict",
+            Self::CheckpointInProgress => "sandbox_checkpoint_in_progress",
             Self::PreviousTurnConflict => "agent_previous_turn_conflict",
             Self::LogCapacityExceeded => "agent_log_capacity_exceeded",
             Self::Corrupt(_) => "stored_agent_corrupt",
@@ -200,7 +203,7 @@ impl AgentOperationService {
             ));
         }
         if sandbox.lifecycle.checkpoint_capture.is_some() {
-            return Err(AgentOperationError::Conflict);
+            return Err(AgentOperationError::CheckpointInProgress);
         }
         let queues = match sandbox.status {
             SandboxStatus::Pausing | SandboxStatus::Paused => Ok(true),
@@ -421,6 +424,7 @@ pub(super) fn operation_store_error(error: SandboxStoreError) -> AgentOperationE
     match error {
         SandboxStoreError::NotFound => AgentOperationError::NotFound,
         SandboxStoreError::Conflict => AgentOperationError::Conflict,
+        SandboxStoreError::CheckpointInProgress => AgentOperationError::CheckpointInProgress,
         SandboxStoreError::SequenceConflict => {
             AgentOperationError::Corrupt("agent log sequence is inconsistent".into())
         }

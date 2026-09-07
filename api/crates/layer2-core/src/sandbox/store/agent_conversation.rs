@@ -36,12 +36,17 @@ pub fn validate_agent_conversation_admission(
     };
     let parent = parent.ok_or(SandboxStoreError::Conflict)?;
     if !admission
-        || parent.lifecycle.checkpoint_capture.is_some()
-        || *guard != SandboxMutationGuard::capture(parent)
         || parent.id != current.sandbox_id
         || parent.owner != current.owner
         || parent.id != mutation.agent.sandbox_id
         || parent.owner != mutation.agent.owner
+    {
+        return Err(SandboxStoreError::Conflict);
+    }
+    if parent.lifecycle.checkpoint_capture.is_some() {
+        return Err(SandboxStoreError::CheckpointInProgress);
+    }
+    if *guard != SandboxMutationGuard::capture(parent)
         || !matches!(
             parent.status,
             SandboxStatus::Active

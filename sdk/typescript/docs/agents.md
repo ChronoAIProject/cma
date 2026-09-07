@@ -37,6 +37,12 @@ Input returns HTTP 202 with `queued`. `steer`, `interrupt`, `answerApproval`,
 `stop` and `delete` return empty HTTP 202 responses. Acceptance is not completion.
 Retain each logical command's key and exact payload until its outcome is known.
 
+While a Sandbox checkpoint is active, input is refused before admission with
+HTTP 409 `sandbox_checkpoint_in_progress`. No prompt is queued for later execution.
+Refresh the Sandbox and submit again after `lifecycle.checkpoint` clears. This
+also applies to AG-UI and Responses input; paused conversations still revive
+automatically, and durable Trigger provisioning retains its own retry flow.
+
 Usage and resources preserve unavailable metrics: `null` is not zero, and a
 missing context window is not a measured empty window. Transcript/event unions
 reject unknown closed discriminators instead of silently dropping conversation
