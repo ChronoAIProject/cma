@@ -2,7 +2,7 @@ import { lstatSync, readFileSync } from 'node:fs';
 import { identifier, object, origin, outsideRepository, required } from './environment';
 
 export const ownerCase =
-  'OWNER-resource-lifecycle provisions exact profiles, preserves its first answer across browser return and pause/resume';
+  'OWNER-resource-lifecycle preserves its first answer across browser return and completes a second answer after pause/resume';
 export const ownerCapabilities = [
   'create_sandbox',
   'use_own_sandboxes',

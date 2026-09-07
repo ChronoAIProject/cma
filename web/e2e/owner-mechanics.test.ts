@@ -35,7 +35,8 @@ import {
   ownerSettings,
 } from './owner-environment';
 import { ownerRead, validateOwnerPrerequisites } from './owner-preflight';
-import { OwnerHarness, ownerMutationAllowed } from './owner-harness';
+import { OwnerHarness, ownerMutationAllowed, ownerConversationReadAllowed } from './owner-harness';
+import { inspectOwnerStream, ownerStreamTap, streamBounds } from './owner-stream';
 import OwnerReporter from './owner-reporter';
 import { prepareEvidenceDirectory } from './security';
 import { Journal } from './journal';
@@ -128,6 +129,8 @@ function ownerBrowser(session: Record<string, unknown>) {
     request: reads.api,
     route,
     on: vi.fn(),
+    exposeBinding: vi.fn().mockResolvedValue(undefined),
+    addInitScript: vi.fn().mockResolvedValue(undefined),
     newPage: vi.fn().mockResolvedValue({}),
   };
   const browser = { newContext: vi.fn().mockResolvedValue(context) } as unknown as Browser;
@@ -168,8 +171,88 @@ async function loopback(handler: RequestListener) {
   };
 }
 
+function streamFrame(type: string, fields: Record<string, unknown> = {}) {
+  return `data: ${JSON.stringify({ type, threadId: 'agt_run', runId: '9', ...fields })}\n\n`;
+}
+function completedStream() {
+  return (
+    streamFrame('RUN_STARTED') +
+    streamFrame('TEXT_MESSAGE_CONTENT', { messageId: 'answer', delta: 'Second answer' }) +
+    streamFrame('RUN_FINISHED', { outcome: { type: 'complete' } })
+  );
+}
+function continuationBrowser() {
+  const setup = ownerBrowser({});
+  prepareEvidenceDirectory(setup.owner.config.output, 'owner-continuation-mechanics')();
+  for (const [kind, id] of [
+    ['sandboxes', 'sbx_run'],
+    ['workspaces', 'wks_run'],
+    ['agents', 'agt_run'],
+  ] as const)
+    setup.owner.journal.own(kind, id, setup.owner.fixture.subject);
+  setup.reads.rows.set('/api/v1/agents/agt_run', {
+    id: 'agt_run',
+    status: 'ready',
+    sandbox: { id: 'sbx_run', status: 'active' },
+    workspace: { id: 'wks_run' },
+    worktree: { id: 'wkt_run' },
+  });
+  setup.owner.armContinuation('agt_run', 'wkt_run', 'Repeat the first marker.');
+  const page = {} as Page;
+  const body = {
+    threadId: 'agt_run',
+    runId: 'correlation-only',
+    messages: [{ role: 'user', content: 'Repeat the first marker.' }],
+  };
+  const route = (
+    override: {
+      url?: string;
+      method?: string;
+      resourceType?: string;
+      body?: unknown;
+      raw?: string;
+      headers?: Record<string, string | undefined>;
+    } = {},
+  ) => {
+    const abort = vi.fn().mockResolvedValue(undefined);
+    const proceed = vi.fn().mockResolvedValue(undefined);
+    const request = {
+      url: () => override.url ?? `${setup.owner.config.baseURL}/api/v1/agui/run`,
+      method: () => override.method ?? 'POST',
+      resourceType: () => override.resourceType ?? 'fetch',
+      postData: () => override.raw ?? JSON.stringify(override.body ?? body),
+      headers: () => ({
+        'content-type': 'application/json',
+        origin: setup.owner.config.baseURL,
+        ...override.headers,
+      }),
+      frame: () => ({ page: () => page }),
+    };
+    return {
+      abort,
+      proceed,
+      route: { request: () => request, abort, continue: proceed } as unknown as Route,
+    };
+  };
+  const report = (event: Record<string, unknown>, source = page) =>
+    setup.context.exposeBinding.mock.calls[0]![1](
+      { page: source },
+      { runId: body.runId, ...event },
+    ) as Promise<void>;
+  const finish = async () => {
+    await report({ stage: 'headers', status: 200, media: 'text/event-stream; charset=utf-8' });
+    await report({
+      stage: 'chunk',
+      bytes: Array.from(new TextEncoder().encode(completedStream())),
+    });
+    await report({ stage: 'end' });
+  };
+  return { ...setup, page, body, route, report, finish };
+}
+
 afterEach(() => {
   vi.unstubAllEnvs();
+  vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
 
@@ -464,6 +547,273 @@ describe('owner-only mutation and cleanup mechanics', () => {
       expect(cleanup).not.toHaveBeenCalled();
     },
   );
+});
+
+describe('owner-only one-shot continuation guard', () => {
+  it('refuses repeated Pause and Resume commands after reopening the browser', async () => {
+    const h = continuationBrowser();
+    await h.owner.open();
+    for (const action of ['pause', 'revive']) {
+      const command = h.route({
+        url: `${h.owner.config.baseURL}/api/v1/sandboxes/sbx_run/${action}`,
+        raw: '{}',
+      });
+      await h.context.route.mock.calls[0]![1](command.route);
+      expect(command.proceed).toHaveBeenCalledOnce();
+    }
+    await h.owner.open();
+    for (const action of ['pause', 'revive']) {
+      const repeated = h.route({
+        url: `${h.owner.config.baseURL}/api/v1/sandboxes/sbx_run/${action}`,
+        raw: '{}',
+      });
+      await h.context.route.mock.calls[1]![1](repeated.route);
+      expect(repeated.abort).toHaveBeenCalled();
+      expect(repeated.proceed).not.toHaveBeenCalled();
+    }
+    expect(h.owner.commands).toHaveLength(2);
+  });
+  it('admits one exact message, checks the live lineage and inspects its server turn', async () => {
+    const h = continuationBrowser();
+    await h.owner.open();
+    const command = h.route();
+    await h.context.route.mock.calls[0]![1](command.route);
+    expect(command.proceed).toHaveBeenCalledOnce();
+    expect(command.abort).not.toHaveBeenCalled();
+    await h.finish();
+    expect(await h.owner.completedContinuation()).toBe(9);
+    expect(h.owner.commands).toEqual([
+      {
+        path: '/api/v1/agui/run',
+        method: 'POST',
+        key: undefined,
+        bodyHash: expect.stringMatching(/^[a-f0-9]{64}$/),
+      },
+    ]);
+    const log = readFileSync(join(h.owner.config.output, 'cleanup.ndjson'), 'utf8');
+    expect(log).toContain('"correlationId":"correlation-only","retrySafe":false');
+    expect(log).not.toContain('Second answer');
+    expect(log).not.toContain('data:');
+    expect(() => h.owner.armContinuation('agt_run', 'wkt_run', 'Again')).toThrow(
+      'one run-owned Agent',
+    );
+  });
+  it.each(['same-correlation', 'new-correlation', 'reopened-context'])(
+    'rejects a second POST after %s instead of assuming correlation means idempotency',
+    async (mode) => {
+      const h = continuationBrowser();
+      await h.owner.open();
+      await h.context.route.mock.calls[0]![1](h.route().route);
+      await h.finish();
+      await h.owner.completedContinuation();
+      if (mode === 'reopened-context') await h.owner.open();
+      const second = h.route({
+        body: {
+          ...h.body,
+          runId: mode === 'new-correlation' ? 'another-correlation' : h.body.runId,
+        },
+      });
+      await h.context.route.mock.calls.at(-1)![1](second.route);
+      expect(second.abort).toHaveBeenCalledExactlyOnceWith('blockedbyclient');
+      expect(second.proceed).not.toHaveBeenCalled();
+      expect(h.owner.commands).toHaveLength(1);
+      expect(h.owner.violations).toHaveLength(1);
+    },
+  );
+  it.each([
+    {
+      body: {
+        threadId: 'agt_foreign',
+        runId: 'correlation-only',
+        messages: [{ role: 'user', content: 'Repeat the first marker.' }],
+      },
+    },
+    {
+      body: {
+        threadId: 'agt_run',
+        runId: 'correlation-only',
+        messages: [{ role: 'user', content: 'Different text' }],
+      },
+    },
+    {
+      body: {
+        threadId: 'agt_run',
+        runId: 'correlation-only',
+        messages: [{ role: 'assistant', content: 'Repeat the first marker.' }],
+      },
+    },
+    { body: { threadId: 'agt_run', runId: 'correlation-only', resume: [] } },
+    { body: { threadId: 'agt_run', runId: 'correlation-only', forwardedProps: {} } },
+    {
+      body: {
+        threadId: 'agt_run',
+        messages: [{ role: 'user', content: 'Repeat the first marker.' }],
+      },
+    },
+    { raw: 'not JSON' },
+    { headers: { 'idempotency-key': 'not-retry-authority' } },
+    { headers: { origin: 'https://foreign.example.test' } },
+    { headers: { 'content-type': 'text/plain' } },
+    { resourceType: 'document' },
+    { method: 'PUT' },
+    { url: 'https://owner.example.test/api/v1/agui/run?extra=1' },
+    { url: 'https://owner.example.test/api/v1/agui/other' },
+  ])('refuses an altered conversation command %j', async (override) => {
+    const h = continuationBrowser();
+    await h.owner.open();
+    const command = h.route(override);
+    await h.context.route.mock.calls[0]![1](command.route);
+    expect(command.abort).toHaveBeenCalledExactlyOnceWith('blockedbyclient');
+    expect(command.proceed).not.toHaveBeenCalled();
+    expect(h.owner.commands).toEqual([]);
+    expect(h.owner.violations).toHaveLength(1);
+  });
+  it.each(['identity', 'worktree', 'workspace', 'sandbox', 'working'])(
+    'refuses changed live %s before the run reaches the network',
+    async (fault) => {
+      const h = continuationBrowser();
+      await h.owner.open();
+      const agent = h.reads.rows.get('/api/v1/agents/agt_run') as Record<string, unknown>;
+      if (fault === 'identity') h.reads.rows.set('/auth/session', { subject: 'other-owner' });
+      else if (fault === 'working') agent.status = 'working';
+      else agent[fault] = { id: 'foreign', status: 'active' };
+      const command = h.route();
+      await h.context.route.mock.calls[0]![1](command.route);
+      expect(command.abort).toHaveBeenCalled();
+      expect(command.proceed).not.toHaveBeenCalled();
+      expect(h.owner.commands).toEqual([]);
+    },
+  );
+  it('refuses an unarmed or foreign Agent', async () => {
+    const h = ownerBrowser({});
+    expect(() => h.owner.armContinuation('agt_foreign', 'wkt_foreign', 'Message')).toThrow(
+      'one run-owned Agent',
+    );
+  });
+  it.each([
+    { stage: 'headers', status: 307, media: 'text/event-stream' },
+    { stage: 'headers', status: 200, media: 'application/json' },
+    { stage: 'chunk', bytes: [1] },
+    { stage: 'failed' },
+    { stage: 'headers', status: 200, media: 'text/event-stream', runId: 'foreign' },
+  ])('fails closed on stream handoff %j', async (event) => {
+    const h = continuationBrowser();
+    await h.owner.open();
+    await h.context.route.mock.calls[0]![1](h.route().route);
+    await expect(h.report(event)).rejects.toThrow('inspection refused');
+    await expect(h.owner.completedContinuation()).rejects.toThrow();
+    expect(h.owner.violations).toContain('conversation_stream_transport_failed');
+  });
+  it('accepts only exact parsed read-only AG-UI companions for a run-owned Agent', () => {
+    const owned = [{ kind: 'agents' as const, id: 'agt_run', subject: 'owner' }];
+    for (const path of [
+      '/api/v1/agui/capabilities',
+      '/api/v1/agui/agents/agt_run/sandbox',
+      '/api/v1/agui/events?thread_id=agt_run&starting_after=0&follow=true',
+    ])
+      expect(ownerConversationReadAllowed(new URL(path, 'https://owner.example.test'), owned)).toBe(
+        true,
+      );
+    for (const path of [
+      '/api/v1/agui/run',
+      '/api/v1/agui/agents/agt_other/sandbox',
+      '/api/v1/agui/capabilities?extra=1',
+      '/api/v1/agui/events?thread_id=agt_other&starting_after=0&follow=true',
+      '/api/v1/agui/events?thread_id=agt_run&starting_after=0&follow=true&thread_id=agt_other',
+      '/api/v1/agui/events?thread_id=agt_run&starting_after=-1&follow=true',
+    ])
+      expect(ownerConversationReadAllowed(new URL(path, 'https://owner.example.test'), owned)).toBe(
+        false,
+      );
+  });
+});
+
+describe('owner continuation stream inspection', () => {
+  it('parses the real SDK frame contract and returns the durable server turn, not correlation', async () => {
+    expect(
+      await inspectOwnerStream(
+        new Response(completedStream()),
+        'agt_run',
+        [],
+        AbortSignal.timeout(1000),
+      ),
+    ).toBe(9);
+  });
+  it.each([
+    streamFrame('RUN_STARTED', { threadId: 'agt_foreign' }),
+    streamFrame('RUN_STARTED', { runId: 'client-correlation' }),
+    streamFrame('RUN_STARTED') +
+      streamFrame('RUN_FINISHED', { runId: '10', outcome: { type: 'complete' } }),
+    streamFrame('RUN_STARTED') + streamFrame('RUN_ERROR', { message: 'failed' }),
+    streamFrame('RUN_STARTED') + streamFrame('RUN_FINISHED', { outcome: { type: 'interrupt' } }),
+    streamFrame('RUN_STARTED'),
+    'data: not JSON\n\n',
+  ])('rejects mismatched, malformed, failed or incomplete SSE %#', async (body) => {
+    await expect(
+      inspectOwnerStream(new Response(body), 'agt_run', [], AbortSignal.timeout(1000)),
+    ).rejects.toThrow();
+  });
+  it.each([
+    `: redacted-owner-probe\n\n${completedStream()}`,
+    streamFrame('RUN_STARTED') +
+      streamFrame('TEXT_MESSAGE_CONTENT', { delta: 'redacted-owner-probe' }),
+    streamFrame('RUN_STARTED') +
+      streamFrame('TEXT_MESSAGE_CONTENT', { delta: 'redacted-owner-' }) +
+      streamFrame('TEXT_MESSAGE_CONTENT', { delta: 'probe' }),
+    `${streamFrame('RUN_STARTED')}data: {"type":"TEXT_MESSAGE_CONTENT","threadId":"agt_run","runId":"9","delta":"redacted-owner-\\u0070robe"}\n\n`,
+  ])(
+    'refuses credential sentinels in comments, decoded fields and fragmented deltas %#',
+    async (body) => {
+      await expect(
+        inspectOwnerStream(
+          new Response(body),
+          'agt_run',
+          ['redacted-owner-probe'],
+          AbortSignal.timeout(1000),
+        ),
+      ).rejects.toThrow('Credential material');
+    },
+  );
+  it('caps streamed bytes independently of declared Content-Length', async () => {
+    const body = new Uint8Array(streamBounds.maxBytes + 1);
+    await expect(
+      inspectOwnerStream(new Response(body), 'agt_run', [], AbortSignal.timeout(1000)),
+    ).rejects.toThrow('byte limit');
+  });
+  it('cancels an unfinished source on the observation deadline', async () => {
+    const cancel = vi.fn();
+    const abort = new AbortController();
+    const pending = inspectOwnerStream(
+      new Response(new ReadableStream({ cancel })),
+      'agt_run',
+      [],
+      abort.signal,
+    );
+    const rejected = expect(pending).rejects.toThrow();
+    abort.abort(new Error('bounded observation expired'));
+    await rejected;
+    await vi.waitFor(() => expect(cancel).toHaveBeenCalledOnce());
+  });
+  it('taps a finite browser POST without consuming or replacing its returned response', async () => {
+    const response = new Response(completedStream(), {
+      headers: { 'content-type': 'text/event-stream' },
+    });
+    const fetch = vi.fn().mockResolvedValue(response);
+    const report = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal('window', { fetch, Request, __cmaOwnerStream: report });
+    ownerStreamTap({ origin: 'https://owner.example.test', ...streamBounds });
+    const returned = await window.fetch('https://owner.example.test/api/v1/agui/run', {
+      method: 'POST',
+      body: JSON.stringify({ runId: 'correlation' }),
+    });
+    expect(returned).toBe(response);
+    expect(await returned.text()).toBe(completedStream());
+    await vi.waitFor(() =>
+      expect(report).toHaveBeenLastCalledWith({ stage: 'end', runId: 'correlation' }),
+    );
+    expect(report.mock.calls.map(([event]) => event.stage)).toEqual(['headers', 'chunk', 'end']);
+    expect(fetch).toHaveBeenCalledOnce();
+  });
 });
 
 describe('shared cleanup transport bounds', () => {

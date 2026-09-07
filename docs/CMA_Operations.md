@@ -405,9 +405,21 @@ outside the repository. Never place credentials in process arguments or reports.
 `web/e2e/owner-config.ts` is a separate opt-in entry point with exactly one
 `OWNER-resource-lifecycle` scenario. It creates one Sandbox, Workspace and Agent
 from reviewed owner-published revisions, observes a completed first answer,
-checks browser return and ordinary pause/resume, then cleans only resources
-recorded in its owner-bound journal. It does not use operator fault controls.
+checks browser return and ordinary pause/resume, then submits exactly one public
+AG-UI continuation. The second completed answer must recall the first-turn
+marker and reported Worktree directory. Exact first-turn history and the
+Agent/Workspace/Sandbox/Worktree identities must remain unchanged. Another
+browser reopen must retain both durable turns without another create, run,
+Pause or Resume command. Cleanup touches only resources recorded in its
+owner-bound journal. It does not use operator fault controls.
 Ambiguous creation retains cleanup ownership instead of deleting possible parents.
+
+AG-UI `runId` is correlation, not idempotency; the harness refuses every repeat
+submission. The finite POST stream is inspected in memory through the SDK frame
+decoder, with an 8 MiB total bound, the existing frame limits and a 180-second
+deadline. Raw SSE is not persisted. Local transport and guard tests do not prove
+that the deployed model continues successfully; that requires executing the
+remote scenario against the independently verified deployment.
 
 Supply `CMA_OWNER_E2E_TARGET` and `CMA_OWNER_E2E_MUTATION_TARGET` as the same exact
 HTTPS origin, `CMA_OWNER_E2E_SUBJECT`, `CMA_OWNER_E2E_FIXTURE_FILE`, and a fresh
@@ -427,7 +439,7 @@ provenance remains operator-declared until independently verified. This does
 not advance the full J/G campaign. Fresh signup, restricted-visitor behavior,
 cross-owner isolation and second-owner forks remain unproved without another
 account. The lifecycle baseline also does not prove runtime rotation, restart
-fault recovery, post-resume model continuation, external storage cleanup,
+fault recovery, external storage cleanup,
 provider login, real embeds, or public readiness. Existing full-campaign inputs
 and gates remain unchanged.
 

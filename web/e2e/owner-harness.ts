@@ -6,6 +6,7 @@ import {
   type Browser,
   type BrowserContext,
   type Page,
+  type Request,
 } from '@playwright/test';
 import { identifier, object } from './environment';
 import { Journal } from './journal';
@@ -22,6 +23,18 @@ import {
   ownerSettings,
 } from './owner-environment';
 import { ownerRead } from './owner-preflight';
+import { inspectOwnerStream, ownerStreamTap, streamBounds } from './owner-stream';
+
+interface Continuation {
+  agentId: string;
+  worktreeId: string;
+  message: string;
+  request?: Request;
+  runId?: string;
+  writer?: WritableStreamDefaultWriter<Uint8Array>;
+  headersSeen?: boolean;
+  turnSequence?: number;
+}
 
 export function ownerMutationAllowed(path: string, method: string, owned: Journal['resources']) {
   return (
@@ -31,6 +44,27 @@ export function ownerMutationAllowed(path: string, method: string, owned: Journa
         row.kind === 'sandboxes' &&
         [`/api/v1/sandboxes/${row.id}/pause`, `/api/v1/sandboxes/${row.id}/revive`].includes(path),
     )
+  );
+}
+
+export function ownerConversationReadAllowed(url: URL, owned: Journal['resources']) {
+  if (url.pathname === '/api/v1/agui/capabilities') return !url.search && !url.hash;
+  const agents = owned.filter((row) => row.kind === 'agents');
+  if (url.pathname === '/api/v1/agui/events') {
+    const query = url.searchParams;
+    return (
+      !url.hash &&
+      [...query.keys()].sort().join(',') === 'follow,starting_after,thread_id' &&
+      agents.some((row) => row.id === query.get('thread_id')) &&
+      /^(0|[1-9]\d*)$/.test(query.get('starting_after') ?? '') &&
+      Number.isSafeInteger(Number(query.get('starting_after'))) &&
+      ['true', 'false'].includes(query.get('follow') ?? '')
+    );
+  }
+  return (
+    !url.search &&
+    !url.hash &&
+    agents.some((row) => url.pathname === `/api/v1/agui/agents/${row.id}/sandbox`)
   );
 }
 
@@ -45,6 +79,8 @@ export class OwnerHarness {
   private readonly contexts: BrowserContext[] = [];
   private readonly observations = new Set<Promise<void>>();
   private unresolvedCreation = false;
+  private continuation?: Continuation;
+  private readonly lifecycleCommands = new Set<string>();
   constructor(private readonly browser: Browser) {}
 
   async read<T>(page: Page, path: string): Promise<T> {
@@ -57,6 +93,106 @@ export class OwnerHarness {
     assertOwnerSession(session, this.fixture.subject);
     return session;
   }
+  armContinuation(agentId: string, worktreeId: string, message: string) {
+    if (
+      this.continuation ||
+      !this.journal.resources.some(
+        (row) =>
+          row.kind === 'agents' && row.id === agentId && row.subject === this.fixture.subject,
+      )
+    )
+      throw new Error('Owner continuation requires its one run-owned Agent');
+    assertCredentialFree(message, this.forbidden);
+    if (message.trim() !== message || message.length === 0 || message.length > 1024)
+      throw new Error('Owner continuation requires one bounded message');
+    this.continuation = { agentId, worktreeId: identifier(worktreeId, 'owner Worktree'), message };
+  }
+  async completedContinuation() {
+    await Promise.all([...this.observations]);
+    expect(this.violations).toEqual([]);
+    if (this.continuation?.turnSequence === undefined)
+      throw new Error('Owner continuation has no inspected completed stream');
+    return this.continuation.turnSequence;
+  }
+  private async admitContinuation(request: Request, context: BrowserContext) {
+    const next = this.continuation;
+    const headers = request.headers();
+    const body = object(JSON.parse(request.postData() ?? ''));
+    const message =
+      Array.isArray(body.messages) && body.messages.length === 1 ? object(body.messages[0]) : {};
+    if (
+      !next ||
+      next.request ||
+      request.resourceType() !== 'fetch' ||
+      !isJsonMediaType(headers['content-type'] ?? '') ||
+      headers.origin !== this.config.baseURL ||
+      headers['idempotency-key'] !== undefined ||
+      Object.keys(body).sort().join(',') !== 'messages,runId,threadId' ||
+      body.threadId !== next.agentId ||
+      typeof body.runId !== 'string' ||
+      !/^[a-zA-Z0-9_-]{1,128}$/.test(body.runId) ||
+      Object.keys(message).sort().join(',') !== 'content,role' ||
+      message.role !== 'user' ||
+      message.content !== next.message
+    )
+      throw new Error('Owner conversation command is outside its single admission');
+    // A correlation runId does not make an AG-UI POST idempotent. Consume before any await.
+    next.request = request;
+    next.runId = body.runId;
+    await this.account(context);
+    const agent = object(
+      await ownerRead(
+        context.request,
+        this.config.baseURL,
+        `/api/v1/agents/${next.agentId}`,
+        this.forbidden,
+      ),
+    );
+    if (
+      agent.id !== next.agentId ||
+      agent.status !== 'ready' ||
+      object(agent.worktree).id !== next.worktreeId ||
+      object(agent.sandbox).status !== 'active' ||
+      !this.journal.resources.some(
+        (row) =>
+          row.kind === 'sandboxes' &&
+          row.id === object(agent.sandbox).id &&
+          row.subject === this.fixture.subject,
+      ) ||
+      !this.journal.resources.some(
+        (row) =>
+          row.kind === 'workspaces' &&
+          row.id === object(agent.workspace).id &&
+          row.subject === this.fixture.subject,
+      )
+    )
+      throw new Error('Owner continuation lineage or readiness changed');
+    const stream = new TransformStream<Uint8Array, Uint8Array>();
+    next.writer = stream.writable.getWriter();
+    const observation = inspectOwnerStream(
+      new Response(stream.readable),
+      next.agentId,
+      this.forbidden,
+      AbortSignal.timeout(streamBounds.timeoutMs),
+    )
+      .then((turn) => {
+        next.turnSequence = turn;
+      })
+      .catch(() => {
+        this.violations.push('conversation_stream_inspection_failed');
+      })
+      .finally(() => {
+        void next.writer?.abort().catch(() => undefined);
+      });
+    this.observations.add(observation);
+    void observation.finally(() => this.observations.delete(observation));
+    this.journal.record({
+      action: 'conversation_admission',
+      agentId: next.agentId,
+      correlationId: next.runId,
+      retrySafe: false,
+    });
+  }
   async open(): Promise<Page> {
     const context = await this.browser.newContext({
       storageState: this.fixture.storageState,
@@ -64,6 +200,38 @@ export class OwnerHarness {
     });
     this.contexts.push(context);
     const session = await this.account(context);
+    await context.exposeBinding('__cmaOwnerStream', async ({ page }, value: unknown) => {
+      try {
+        const event = object(value);
+        const next = this.continuation;
+        if (!next?.writer || next.request?.frame().page() !== page || event.runId !== next.runId)
+          throw new Error('Owner stream source mismatch');
+        if (event.stage === 'headers') {
+          if (
+            next.headersSeen ||
+            event.status !== 200 ||
+            typeof event.media !== 'string' ||
+            !/^text\/event-stream(?:\s*;|$)/i.test(event.media)
+          )
+            throw new Error('Owner stream response mismatch');
+          next.headersSeen = true;
+        } else if (
+          event.stage === 'chunk' &&
+          next.headersSeen &&
+          Array.isArray(event.bytes) &&
+          event.bytes.length <= 65_536 &&
+          event.bytes.every((byte) => Number.isInteger(byte) && byte >= 0 && byte <= 255)
+        ) {
+          await next.writer.write(Uint8Array.from(event.bytes));
+        } else if (event.stage === 'end' && next.headersSeen) await next.writer.close();
+        else throw new Error('Owner stream inspection failed');
+      } catch {
+        this.violations.push('conversation_stream_transport_failed');
+        void this.continuation?.writer?.abort().catch(() => undefined);
+        throw new Error('Owner stream inspection refused');
+      }
+    });
+    await context.addInitScript(ownerStreamTap, { origin: this.config.baseURL, ...streamBounds });
     let avatarURL: string | undefined;
     if (typeof session.avatar_url === 'string') {
       try {
@@ -88,19 +256,38 @@ export class OwnerHarness {
       }
       if (
         url.pathname.includes('/admin') ||
-        (url.pathname.startsWith('/auth/') && url.pathname !== '/auth/session')
+        (url.pathname.startsWith('/auth/') && url.pathname !== '/auth/session') ||
+        (url.pathname.startsWith('/api/v1/agui/') &&
+          request.method() !== 'POST' &&
+          (request.method() !== 'GET' ||
+            !ownerConversationReadAllowed(
+              url,
+              this.journal.resources.filter((row) => row.subject === this.fixture.subject),
+            )))
       ) {
         this.violations.push('out_of_scope_browser_request');
         return route.abort('blockedbyclient');
       }
       if (!['GET', 'HEAD', 'OPTIONS'].includes(request.method())) {
-        if (!ownerMutationAllowed(url.pathname, request.method(), this.journal.resources)) {
+        const conversation = url.pathname === '/api/v1/agui/run' && request.method() === 'POST';
+        if (
+          url.search ||
+          url.hash ||
+          (!conversation &&
+            !ownerMutationAllowed(url.pathname, request.method(), this.journal.resources))
+        ) {
           this.violations.push('out_of_scope_browser_mutation');
           return route.abort('blockedbyclient');
         }
         try {
-          await this.account(context);
           assertCredentialFree(request.postData() ?? '', this.forbidden);
+          if (conversation) await this.admitContinuation(request, context);
+          else {
+            if (this.lifecycleCommands.has(url.pathname))
+              throw new Error('Owner baseline refuses a repeated lifecycle command');
+            this.lifecycleCommands.add(url.pathname);
+            await this.account(context);
+          }
         } catch {
           this.violations.push('browser_mutation_identity_or_credential_check_failed');
           return route.abort('blockedbyclient');
@@ -167,7 +354,7 @@ export class OwnerHarness {
       ...(kind === 'agent'
         ? {
             title: 'Owner-only baseline',
-            first_message: 'Reply once with your working directory. Do not modify files.',
+            first_message: `Remember the marker OWNER-${this.run}. Reply once with the marker and your working directory. Do not modify files.`,
           }
         : {}),
     };
