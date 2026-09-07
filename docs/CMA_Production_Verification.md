@@ -16,12 +16,12 @@ acceptance of this campaign.
 | 3. Public Sandbox Profile | 4000 millicores, 8192 MiB, two requested services, 4/4 limits, working toolchain | Exact configuration verified in production; actual Agent workload exposed a login-shell PATH defect; corrected-image workload pending |
 | 4. Public Trigger | Exact title/message, all-level reuse, Try It, visitor theme, no review, README placement | Exact revision published after first rollout; README-only PR #841 merged after all 12 protected checks; default README snippet read back exactly |
 | 5. Login without bootstrap | No Sandbox, Workspace, Agent, or Profile created by login alone | Existing-owner fresh-browser production sign-in created no resources before or after rollout; fresh signup not tested |
-| 6. Complete external-click flow | Login then automatic provisioning; exact first message once; correct software, skills, scopes | Corrected production first click and repeat reuse passed with no extra clicks; exact skills/scopes verified; actual workload and final-image rerun pending |
+| 6. Complete external-click flow | Login then automatic provisioning; exact first message once; correct software, skills, scopes | Initial corrected first click and active reuse passed; paused repeat exposed restore reconnection defects and timed out; corrected paused flow and actual workload pending |
 | 7. Previous UI style | Original rotating 3D mark and established controls; desktop/mobile screenshots | Live home and provisioning animation passed in desktop/mobile, both themes and reduced motion; final chat corrections awaiting rollout |
 | 8. Autonomous YOLO | Pinned provider runs full-access mode with no approval requests | Actual provider configuration verified; first response and subsequent workload attempt completed with zero approvals |
-| 9. Lifecycle | Active to paused to active; paused to terminated; history retained | Compressed periodic production checkpoints published; heavy built-home pause/restore and final runtime rotation still pending |
+| 9. Lifecycle | Active to paused to active; paused to terminated; history retained | Natural idle pause and original conversation/home restoration observed; final Active publication blocked by reconnect defects; manual heavy-home lifecycle pending |
 | 10. Cleanup | Only identified stale state removed; new published flow remains usable | Two old Sandboxes retired through the public API under explicit authorization; final environment pending |
-| 11. Conversation UI | Thinking, Send/Stop, CPU, RAM, context, token, network metrics | Live observations found missing gVisor limits, clipping and follow defects; exact configured-capacity fallback and layout fixes tested locally; production acceptance pending |
+| 11. Conversation UI | Thinking, Send/Stop, CPU, RAM, context, token, network metrics | Capacity/layout fixes deployed; real hierarchy expansion passed; transient activity-read recovery deployed; active metrics, streaming and actual Stop acceptance pending |
 
 Private campaign evidence is kept under `/tmp/cma-trureturing-loop.LvTezb` and
 must not be committed or uploaded wholesale. One existing NyxID owner account is
@@ -181,6 +181,75 @@ exact login record was revoked and replay with the original cookie returned
 401. A fresh sign-in-only check in `login-alone-moMaAS/` created zero resources;
 the NyxID CLI credential was unchanged. The earlier first/repeat evidence is
 retained, but its revoked authentication state must not be reused.
+
+### First Pause And Runtime Upgrade
+
+The test Sandbox naturally paused at 2026-09-07 17:29:36 UTC with no outstanding
+work lease, capture or lifecycle operation. Its two completed turns and original
+conversation identity were unchanged. Epoch 5 retained a 1,680,789,718-byte gzip
+archive; its verified upload took 123.315 seconds, within the 600-second upload
+lifetime. Agent parking and teardown each replayed and verified that archive in
+approximately one hundred seconds. This is the pre-build home, not acceptance
+of the heavier repository workload's checkpoint.
+
+API `f88d7cf0` and runtime `8ebb0db9` were then deliberately deployed at
+17:30 UTC, after the old controller's long lifecycle lease was gone. Its
+shutdown has no early lease-release path, so interrupting the prior capture
+could otherwise have left work waiting for the 31-minute lease expiry. No
+running Agent, writer token, or database record was manually repaired.
+Web `83aa8a36` had deployed independently; web `e4f495fc` followed at 17:52 UTC.
+
+Launch `lch_8591474c829b4d0191e8e6e2734eb7b7` came from a real repeat README
+click at 17:31 UTC. It reused the exact existing Sandbox, Workspace, Worktree
+and Agent, without a review step or another first prompt. The replacement pod
+`dcaae4ca-8e74-4d51-81a9-bb378a897b32-0` ran runtime `8ebb0db9`. Bootstrap
+import completed, followed by a second whole-home import, validation,
+extraction and installation. Temporary import, staging and backup artifacts
+were gone by 17:38:36 UTC. The original conversation
+`01a07cc9-7c4e-7590-90f4-49c6da3fb499` reopened in runtime generation 7;
+both complete turns remained byte-for-byte unchanged.
+
+Final Active publication did not complete. A reconciler admitted
+`PublishConnection` after lifecycle reopen; that worker required Active while
+Active publication required the connection work to finish. Source `22e2bc98`
+permits only validated restore-participant reconnection in the final two
+restore phases, retaining quiet-work and writer-fence checks. It passed the
+persisted-stuck and interleaving regressions, 35 Agent worker tests and 64
+Sandbox worker tests. These tests exposed a further missing transport case:
+lifecycle reopen used a resume-bearing request, whereas reconnection replayed
+the original non-resume request. The live runtime journal and durable original
+receipt had different request hashes. A bounded, exact-identity compatibility
+correction and canonical future restore request are still being verified.
+
+The browser attempt `production-paused-revive-8ebb0db9/` timed out at its
+thirty-minute provisioning deadline. It remains a failed attempt even if its
+durable Launch later recovers. Evidence of successful file/conversation
+restoration is not evidence of successful final activation. Read-only samples
+and timings are retained in `rotation-observer-uAqj0t/`.
+
+### Conversation Read Recovery
+
+Real reloads intermittently returned authentication-authority 503 responses,
+including event and sidebar reads, while other authorized conversation reads
+succeeded. The previous client discarded already fetched history when event
+pagination failed. Web `e4f495fc` preserves that history and draft, explicitly
+marks incomplete activity, withholds dispatch/replay until complete history
+is available, and retries from cursor zero with bounded backoff. Authentication
+denials and malformed data remain failures. All 903 tests and four browser
+configurations passed before deployment. A separate real hierarchy probe
+confirmed the current Agent is present and navigable beneath its exact
+Workspace; the similarly named top sidebar branch was another Sandbox.
+
+The original upstream 503 cause is unproven. An eight-request cookie burst and
+a separately authorized, session-bound probe of sixteen userinfo/introspection
+pairs returned only 200 responses with unchanged durable authority. No 429 was
+reproduced, and no credential, refresh, revocation or database mutation was part
+of that probe. Source `3e1a755a` coalesces only unfinished verification for exact
+authority identity, gives each caller its own deadline and durable recheck,
+and adds static failure-stage/status diagnostics without a TTL authorization
+cache. Its twenty cookie-authority tests, 97 broader auth tests and Clippy
+passed; four existing Mongo auth integration tests were not run. This API
+source is built for the next corrected release, not yet production acceptance.
 
 ## Historical Observation
 
