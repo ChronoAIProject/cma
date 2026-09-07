@@ -452,6 +452,17 @@ writer fences, publication authority and deletion intents; external objects own
 the bytes. GridFS is not an acceptable substitute for the required external
 persistence boundary.
 
+Archives above 32 MiB use bounded 32 MiB physical objects through that same
+authenticated storage route. The Mongo stage's opaque key records the versioned
+part layout and total size before any upload; cleanup can therefore enumerate
+every part after an interrupted upload, even if no part manifest was published.
+A bounded manifest is uploaded only after every part is readable and both the
+part digests and whole-archive digest match. Restore verifies the manifest,
+each part and the complete archive. Existing single-object checkpoints remain
+readable. Do not roll back to an API that cannot read the part layout after a
+multipart checkpoint is published. This avoids the production ingress's HTTP
+413 limit without changing runtime archive bytes or writer-fence authority.
+
 Publish only after bounded upload, size/digest verification and readable bytes.
 Use immutable physical object identities so cleanup of a losing upload cannot
 delete a concurrent winner. Retention preserves the two recorded checkpoints

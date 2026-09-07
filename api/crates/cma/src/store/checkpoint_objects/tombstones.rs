@@ -174,7 +174,11 @@ fn read(document: Document) -> AdapterResult<Tombstone> {
     };
     if value.document_schema_version != DOCUMENT_SCHEMA_VERSION
         || !id.is_some_and(|id| hex(id, 32))
-        || !key.is_some_and(|(owner, name)| hex(owner, 64) && name == format!("{}.cma", value.id))
+        || !key.is_some_and(|(owner, name)| {
+            hex(owner, 64)
+                && crate::store::checkpoint_storage::checkpoint_object_key_base(name)
+                    .is_ok_and(|base| base == format!("{}.cma", value.id))
+        })
         || !(0..=20).contains(&value.attempts)
         || value.next_attempt_at.timestamp_millis() <= 0
     {
@@ -195,6 +199,27 @@ mod tests {
         let id = format!("cpa_{}", "a".repeat(32));
         let valid = doc! { "_id": &id, "document_schema_version": DOCUMENT_SCHEMA_VERSION, "object_key": format!("cma/checkpoints/{}/{id}.cma", "b".repeat(64)), "next_attempt_at": now, "attempts": 0_i64 };
         assert!(read(valid.clone()).is_ok());
+        let base = valid.get_str("object_key").unwrap();
+        for size in [
+            33_554_433,
+            222_838_896,
+            layer3_adapter::hosted::MAX_CHECKPOINT_ARCHIVE_BYTES,
+        ] {
+            let mut multipart = valid.clone();
+            multipart.insert("object_key", format!("{base}.parts-v1-{size}"));
+            assert!(read(multipart).is_ok());
+        }
+        for suffix in [
+            "0",
+            "33554432",
+            "0222838896",
+            "222838896/0000",
+            "999999999999999999999",
+        ] {
+            let mut corrupt = valid.clone();
+            corrupt.insert("object_key", format!("{base}.parts-v1-{suffix}"));
+            assert!(read(corrupt).is_err());
+        }
         for (field, value) in [
             ("object_key", "cma/checkpoints/other/object.cma"),
             ("_id", "foreign"),
