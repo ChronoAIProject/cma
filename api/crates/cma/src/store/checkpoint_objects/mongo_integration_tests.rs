@@ -161,6 +161,87 @@ async fn exact_replay_is_idempotent_and_changed_bytes_do_not_replace_authority()
 
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable real MongoDB"]
+async fn cleanup_respects_extended_and_legacy_recorded_upload_deadlines() {
+    let (client, store, database) = test_store("upload_deadline").await;
+    let archive = b"staged upload with a retained deadline";
+    let (reference, sha256) = sealed(archive);
+    let identity = ArchiveIdentity::from_input(reference, sha256, archive.len() as u64).unwrap();
+    let now = DateTime::now();
+    let current = ManifestDoc::new("sbx_upload_deadline", &identity, now);
+    let mut legacy = ManifestDoc::new("sbx_upload_deadline", &identity, now);
+    legacy.cleanup_after = DateTime::from_millis(now.timestamp_millis() + 600_000);
+    assert_eq!(
+        current.cleanup_after.timestamp_millis() - now.timestamp_millis(),
+        1_200_000
+    );
+    for stage in [&legacy, &current] {
+        super::publication::admit(&store, stage).await.unwrap();
+        store
+            .objects
+            .upload(&stage.object_key, upload(archive.to_vec()))
+            .await
+            .unwrap();
+    }
+    drop(store);
+    let store = MongoCheckpointObjectStore::open(&client, &database)
+        .await
+        .unwrap();
+    for stage in [&legacy, &current] {
+        let recorded = store
+            .manifests
+            .find_one(doc! { "_id": &stage.id })
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(super::model::read_manifest(recorded).unwrap(), *stage);
+    }
+
+    for elapsed in [599_u64, 600, 1_199, 1_200] {
+        store
+            .cleanup_due(now.to_system_time() + std::time::Duration::from_secs(elapsed))
+            .await
+            .unwrap();
+        for (stage, deadline) in [(&legacy, 600), (&current, 1_200)] {
+            let recorded = store
+                .manifests
+                .find_one(doc! { "_id": &stage.id })
+                .await
+                .unwrap();
+            let downloaded = store
+                .objects
+                .download(
+                    &stage.object_key,
+                    &identity.object_reference,
+                    &identity.sha256,
+                    identity.size_bytes,
+                )
+                .await;
+            if elapsed < deadline {
+                assert_eq!(
+                    super::model::read_manifest(recorded.unwrap()).unwrap(),
+                    *stage
+                );
+                assert_eq!(bytes(downloaded.unwrap()).await.unwrap(), archive);
+            } else {
+                assert!(recorded.is_none());
+                assert!(downloaded.is_err());
+                assert!(store
+                    .tombstones
+                    .find_one(doc! { "_id": &stage.id, "object_key": &stage.object_key })
+                    .await
+                    .unwrap()
+                    .is_some());
+                assert!(super::publication::publish(&store, stage, &identity)
+                    .await
+                    .is_err());
+            }
+        }
+    }
+    client.database(&database).drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable real MongoDB"]
 async fn ownership_is_sandbox_confined_and_purge_does_not_cross_scope() {
     let (client, store, database) = test_store("ownership").await;
     let archive = b"same independently owned archive".to_vec();

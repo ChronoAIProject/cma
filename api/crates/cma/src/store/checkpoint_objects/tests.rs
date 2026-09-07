@@ -118,6 +118,7 @@ fn large_archive_stage_records_all_parts_before_upload_and_accepts_legacy_keys()
 
 #[test]
 fn manifest_round_trips_with_a_bounded_ambiguous_upload_lifetime() {
+    assert_eq!(UPLOAD_LIFETIME, std::time::Duration::from_secs(1_200));
     let now = DateTime::now();
     let expected = ManifestDoc::new(SANDBOX, &identity(b"round trip archive"), now);
     assert_eq!(
