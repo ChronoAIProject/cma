@@ -340,6 +340,7 @@ dependencies = [
  "flate2",
  "futures-util",
  "governor",
+ "httpdate",
  "ipnet",
  "layer1-public",
  "layer2-core",
