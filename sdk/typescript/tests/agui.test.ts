@@ -122,6 +122,33 @@ describe('Agent conversation projection', () => {
     expect(new Headers(h.fetch.mock.calls[0]?.[1]?.headers).get('last-event-id')).toBeNull();
   });
 
+  it('finishes an approval resume with remaining requests at the committed head', async () => {
+    const h = harness();
+    const pending = { id: 'approval-2', reason: 'confirmation', message: 'Read instructions' };
+    h.fetch.mockResolvedValueOnce(
+      sse(
+        frame('RUN_STARTED') +
+          frame('STATE_DELTA', undefined, {
+            delta: [{ op: 'remove', path: '/pendingApprovals/approval-1' }],
+          }) +
+          frame('STATE_DELTA', undefined, {
+            delta: [{ op: 'add', path: '/pendingApprovals/approval-2', value: pending }],
+          }) +
+          frame('RUN_FINISHED', 9, { outcome: { type: 'interrupt', interrupts: [pending] } }),
+      ),
+    );
+    await h.client.run(
+      {
+        threadId: agent,
+        resume: [{ interruptId: 'approval-1', status: 'resolved', payload: { decision: 'allow' } }],
+      },
+      { onEvent: h.onEvent },
+    );
+    expect(h.events.map((event) => event.cursor)).toEqual([undefined, undefined, undefined, 9]);
+    expect(h.events.at(-1)?.outcome).toEqual({ type: 'interrupt', interrupts: [pending] });
+    expect(h.fetch).toHaveBeenCalledOnce();
+  });
+
   it('does not expose an overlapping projection before rejecting its final cursor', async () => {
     const h = harness();
     h.fetch.mockResolvedValueOnce(

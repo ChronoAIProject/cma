@@ -233,13 +233,22 @@ impl Following {
             }
         }
         if !interrupts.is_empty() {
+            // Complete this committed-state projection at the current head, never an old request.
+            if let Some(event) = self
+                .pending
+                .iter_mut()
+                .rev()
+                .find(|event| event.seq == Some(self.after))
+            {
+                event.seq = None;
+            }
             self.pending.push_back(AguiEvent {
                 kind: "RUN_FINISHED",
                 thread_id: self.id.to_string(),
                 run_id: self.turn.to_string(),
                 body: serde_json::json!({"outcome": {"type": "interrupt", "interrupts": interrupts}}),
                 timestamp: None,
-                seq: None,
+                seq: Some(self.after),
                 live: false,
             });
             self.ended = true;
