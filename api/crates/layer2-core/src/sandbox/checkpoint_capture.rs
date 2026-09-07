@@ -7,6 +7,8 @@ use super::{
     SandboxLifecycleAuthority, SandboxModelError, SandboxStatus, SandboxWorkState, SandboxWorkStep,
 };
 
+const PERIODIC_CHECKPOINT_COOLDOWN_SECONDS: u64 = 120;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SandboxCheckpointCapturePhase {
@@ -25,6 +27,23 @@ pub struct SandboxCheckpointCapture {
 }
 
 impl Sandbox {
+    /// Only a confirmed writer release starts the next periodic capture's cooldown.
+    pub fn checkpoint_capture_cooldown_elapsed(&self, at: &str) -> bool {
+        let Some(now) = crate::seconds_from_rfc3339(at) else {
+            return false;
+        };
+        self.lifecycle
+            .checkpoint_capture_completed_at
+            .as_deref()
+            .is_none_or(|completed| {
+                crate::seconds_from_rfc3339(completed)
+                    .and_then(|completed| {
+                        completed.checked_add(PERIODIC_CHECKPOINT_COOLDOWN_SECONDS)
+                    })
+                    .is_some_and(|ready| now >= ready)
+            })
+    }
+
     pub fn accepts_agent_and_workspace_admission(&self) -> bool {
         self.status == SandboxStatus::Active && self.lifecycle.checkpoint_capture.is_none()
     }
@@ -34,7 +53,10 @@ impl Sandbox {
         &self,
         next: &Sandbox,
     ) -> Result<(), SandboxModelError> {
-        if self.lifecycle.checkpoint_capture == next.lifecycle.checkpoint_capture {
+        if self.lifecycle.checkpoint_capture == next.lifecycle.checkpoint_capture
+            && self.lifecycle.checkpoint_capture_completed_at
+                == next.lifecycle.checkpoint_capture_completed_at
+        {
             return Ok(());
         }
         let mut expected = self.clone();
@@ -95,7 +117,8 @@ impl Sandbox {
     }
     pub fn begin_checkpoint_capture(&mut self, at: String) -> Result<(), SandboxModelError> {
         self.validate()?;
-        if self.status != SandboxStatus::Active
+        if !self.checkpoint_capture_cooldown_elapsed(&at)
+            || self.status != SandboxStatus::Active
             || self.lifecycle.operation.is_some()
             || self.lifecycle.checkpoint_capture.is_some()
             || self.work.lease.is_some()
@@ -219,13 +242,24 @@ impl Sandbox {
         fence: u64,
         at: String,
     ) -> Result<(), SandboxModelError> {
-        if self.require_checkpoint_capture_claim(holder, fence)?.phase
-            != SandboxCheckpointCapturePhase::ResumeWriters
+        let capture = self.require_checkpoint_capture_claim(holder, fence)?;
+        let completed = crate::seconds_from_rfc3339(&at).ok_or_else(invalid_capture)?;
+        if capture.phase != SandboxCheckpointCapturePhase::ResumeWriters
+            || crate::seconds_from_rfc3339(&self.updated_at).is_none_or(|latest| completed < latest)
+            || crate::seconds_from_rfc3339(&capture.authority.requested_at)
+                .is_none_or(|requested| completed < requested)
+            || self
+                .lifecycle
+                .checkpoint_capture_completed_at
+                .as_deref()
+                .and_then(crate::seconds_from_rfc3339)
+                .is_some_and(|previous| completed < previous)
         {
             return Err(invalid_capture());
         }
         let mut next = self.clone();
         next.lifecycle.checkpoint_capture = None;
+        next.lifecycle.checkpoint_capture_completed_at = Some(at.clone());
         self.publish_capture_change(next, at)
     }
 
@@ -341,3 +375,7 @@ const fn invalid_capture() -> SandboxModelError {
 #[cfg(test)]
 #[path = "checkpoint_capture_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "checkpoint_capture_cooldown_tests.rs"]
+mod cooldown_tests;

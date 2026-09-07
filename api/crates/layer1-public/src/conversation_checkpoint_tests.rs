@@ -12,7 +12,8 @@ use crate::rest::agents_tests::{
     conversation_fixture, insert_agent, json_response, request, seeded_agent,
 };
 
-const NOW: &str = "2026-09-05T00:00:00Z";
+// Seeded Agent logs precede this periodic capture by the required 120 seconds.
+const NOW: &str = "2026-09-05T00:02:00Z";
 const LATER: &str = "2026-09-05T00:05:00Z";
 
 #[tokio::test(start_paused = true)]
