@@ -1,0 +1,154 @@
+import { act, renderHook } from '@testing-library/react';
+import { afterEach, expect, it, vi } from 'vitest';
+import type { SandboxDetail, SandboxLifecycle, SandboxStatus } from '../api/types';
+import { agentClient } from '../test/agent';
+import { sandboxFixture } from '../test/hierarchy';
+import { useSandboxInput } from './sandboxInput';
+
+afterEach(() => {
+  vi.useRealTimers();
+  vi.restoreAllMocks();
+});
+
+function transitioning(
+  status: SandboxStatus,
+  operation?: SandboxLifecycle['operation'],
+): SandboxDetail {
+  const sandbox = sandboxFixture(status);
+  return { ...sandbox, lifecycle: { ...sandbox.lifecycle!, operation } };
+}
+
+it.each([
+  'provisioning',
+  'installing',
+  'pausing',
+  'reviving',
+  'rotating',
+  'credential_rotating',
+  'retiring',
+  'retired',
+  'failed',
+] satisfies SandboxStatus[])(
+  'holds messages for %s even without an operation projection',
+  async (status) => {
+    const client = agentClient({ readSandbox: async () => transitioning(status) });
+    const { result } = renderHook(() => useSandboxInput(client, 'agt_1', 'sbx_1'));
+    await act(async () => {});
+    expect(result.current.allowed).toBe(false);
+    expect(result.current.notice).toBeTruthy();
+  },
+);
+
+it.each([
+  ['pause', 'capture_and_publish_checkpoint', 'Pausing'],
+  ['pause', 'pause_agents', 'Pausing'],
+  ['pause', 'teardown_runtime', 'Pausing'],
+  ['pause', 'publish_paused', 'Pausing'],
+  ['revive', 'home_restore', 'Resuming'],
+  ['revive', 'publish_active', 'Resuming'],
+  ['image_rotation', 'home_restore', 'Updating sandbox'],
+  ['image_rotation', 'publish_active', 'Updating sandbox'],
+] as const)(
+  'holds input for %s/%s even while the status still says Active',
+  async (purpose, phase, label) => {
+    const client = agentClient({
+      readSandbox: async () =>
+        transitioning('active', {
+          purpose,
+          phase,
+          startedAt: '2026-09-08T00:00:00Z',
+        }),
+    });
+    const { result } = renderHook(() => useSandboxInput(client, 'agt_1', 'sbx_1'));
+    await act(async () => {});
+    expect(result.current.allowed).toBe(false);
+    expect(result.current.notice).toContain(label);
+  },
+);
+
+it.each(['work_in_progress', 'checkpoint_in_progress', 'not_paused', undefined] as const)(
+  'holds paused revival when public eligibility refuses it with %s',
+  async (reason) => {
+    const sandbox = sandboxFixture('paused');
+    const client = agentClient({
+      readSandbox: async () => ({
+        ...sandbox,
+        lifecycle: { ...sandbox.lifecycle!, revive: { allowed: false, reason } },
+      }),
+    });
+    const { result } = renderHook(() => useSandboxInput(client, 'agt_1', 'sbx_1'));
+    await act(async () => {});
+    expect(result.current.allowed).toBe(false);
+    expect(result.current.notice).toBeTruthy();
+  },
+);
+
+it.each(['checkpoint_in_progress', 'work_in_progress'] as const)(
+  'holds input for the explicitly reported %s blocker without an operation projection',
+  async (reason) => {
+    const sandbox = sandboxFixture();
+    const client = agentClient({
+      readSandbox: async () => ({
+        ...sandbox,
+        lifecycle: { ...sandbox.lifecycle!, pause: { allowed: false, reason } },
+      }),
+    });
+    const { result } = renderHook(() => useSandboxInput(client, 'agt_1', 'sbx_1'));
+    await act(async () => {});
+    expect(result.current.allowed).toBe(false);
+    expect(result.current.notice).toBeTruthy();
+  },
+);
+
+it('does not use unrelated Pause ineligibility as Active message eligibility', async () => {
+  const sandbox = sandboxFixture();
+  const client = agentClient({
+    readSandbox: async () => ({
+      ...sandbox,
+      lifecycle: { ...sandbox.lifecycle!, pause: { allowed: false, reason: 'not_active' } },
+    }),
+  });
+  const { result } = renderHook(() => useSandboxInput(client, 'agt_1', 'sbx_1'));
+  await act(async () => {});
+  expect(result.current).toEqual({ allowed: true });
+});
+
+it('follows operator Pause and Resume at the lifecycle cadence and permits only settled states', async () => {
+  vi.useFakeTimers();
+  const operation = (purpose: 'pause' | 'revive', phase: string) => ({
+    purpose,
+    phase,
+    startedAt: '2026-09-08T00:00:00Z',
+  });
+  const readSandbox = vi
+    .fn()
+    .mockResolvedValueOnce(sandboxFixture())
+    .mockResolvedValueOnce(
+      transitioning('pausing', operation('pause', 'capture_and_publish_checkpoint')),
+    )
+    .mockResolvedValueOnce(transitioning('pausing', operation('pause', 'teardown_runtime')))
+    .mockResolvedValueOnce(sandboxFixture('paused'))
+    .mockResolvedValueOnce(transitioning('reviving', operation('revive', 'home_restore')))
+    .mockRejectedValueOnce(new Error('read unavailable'))
+    .mockResolvedValue(sandboxFixture());
+  const client = agentClient({ readSandbox });
+  const { result } = renderHook(() => useSandboxInput(client, 'agt_1', 'sbx_1'));
+  await act(async () => {});
+  expect(result.current.allowed).toBe(true);
+  for (const interval of [5000, 1500]) {
+    await act(() => vi.advanceTimersByTimeAsync(interval));
+    expect(result.current.allowed).toBe(false);
+    expect(result.current.notice).toContain('Pausing');
+  }
+  await act(() => vi.advanceTimersByTimeAsync(1500));
+  expect(result.current).toEqual({ allowed: true });
+  await act(() => vi.advanceTimersByTimeAsync(5000));
+  expect(result.current.notice).toContain('Resuming');
+  expect(result.current.allowed).toBe(false);
+  await act(() => vi.advanceTimersByTimeAsync(1500));
+  expect(result.current.notice).toContain('Reconnecting');
+  expect(result.current.allowed).toBe(false);
+  await act(() => vi.advanceTimersByTimeAsync(1500));
+  expect(result.current).toEqual({ allowed: true });
+  expect(readSandbox).toHaveBeenCalledTimes(7);
+});

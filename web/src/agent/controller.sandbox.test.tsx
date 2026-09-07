@@ -17,6 +17,36 @@ const saving: SandboxDetail = {
   },
 };
 
+const pausing: SandboxDetail = {
+  ...sandboxFixture('pausing'),
+  lifecycle: {
+    ...sandboxFixture('pausing').lifecycle!,
+    operation: {
+      purpose: 'pause',
+      phase: 'capture_and_publish_checkpoint',
+      startedAt: '2026-09-08T00:00:00Z',
+    },
+  },
+};
+
+it('guards direct sends and approvals during an operator Pause without affecting retained history', async () => {
+  const runAgent = vi.fn();
+  const client = agentClient({ readSandbox: async () => pausing, runAgent });
+  const { result } = renderHook(() => useAgentController(client, 'agt_1'));
+  await waitFor(() => expect(result.current.inputAvailability.notice).toContain('Pausing'));
+  await act(() => result.current.send('Do not queue during Pause'));
+  await act(() => result.current.approve('approval-local', 'allow'));
+  expect(runAgent).not.toHaveBeenCalled();
+  expect(result.current.state).toMatchObject({
+    status: 'ready',
+    conversation: {
+      messages: expect.arrayContaining([
+        expect.objectContaining({ content: 'The repository is ready.' }),
+      ]),
+    },
+  });
+});
+
 it('guards sends and approvals during capture, missing metadata and stale reads without dropping history', async () => {
   vi.useFakeTimers();
   const readSandbox = vi
@@ -92,14 +122,14 @@ it('does not interrupt or abort pending admission, then allows Stop after a real
   expect(runSignal?.aborted).toBe(true);
 });
 
-it.each(['saving', 'read_failed'] as const)(
+it.each(['saving', 'pausing', 'read_failed'] as const)(
   'keeps an actual ongoing turn interruptible when Sandbox observation is %s',
   async (mode) => {
     const interruptAgent = vi.fn().mockResolvedValue(undefined);
     const client = agentClient({
       readSandbox:
-        mode === 'saving'
-          ? async () => saving
+        mode !== 'read_failed'
+          ? async () => (mode === 'saving' ? saving : pausing)
           : async () => {
               throw new Error('offline');
             },
