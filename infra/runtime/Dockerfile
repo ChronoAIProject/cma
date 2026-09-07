@@ -189,6 +189,30 @@ RUN test -n "${OS_SECURITY_REFRESH}" \
     && apt-get upgrade -y \
     && rm -rf /var/lib/apt/lists/*
 
+# Login shells keep the Sandbox Profile PATH even with a distinct Agent home.
+# Match the pinned Debian stanza exactly so base-file drift fails the build.
+RUN node <<'NODE'
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const profile = fs.readFileSync('/etc/profile', 'utf8');
+const defaults = [
+  'if [ "$(id -u)" -eq 0 ]; then',
+  '  PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"',
+  'else',
+  '  PATH="/usr/local/bin:/usr/bin:/bin:/usr/local/games:/usr/games"',
+  'fi',
+  'export PATH',
+].join('\n');
+assert.equal(profile.split(defaults).length, 2, 'unexpected Debian login PATH defaults');
+const fallback = [
+  'if [ -z "${PATH:-}" ]; then',
+  ...defaults.split('\n').slice(0, -1).map((line) => `  ${line.replace('$(id -u)', '$(/usr/bin/id -u)')}`),
+  'fi',
+  'export PATH',
+].join('\n');
+fs.writeFileSync('/etc/profile', profile.replace(defaults, fallback));
+NODE
+
 WORKDIR /home/cma
 USER 10001:10001
 ENV HOME=/home/cma \
