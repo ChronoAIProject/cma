@@ -53,10 +53,17 @@ impl AgentStopReason {
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum AgentOrigin {
     Manual,
+    WorkspaceProfile {
+        index: u16,
+    },
     Trigger {
         trigger_id: String,
         launch_id: String,
     },
+}
+
+pub(crate) fn profile_agent_creation_key(workspace_id: &WorkspaceId, index: u16) -> String {
+    format!("workspace-profile:{workspace_id}:{index}")
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

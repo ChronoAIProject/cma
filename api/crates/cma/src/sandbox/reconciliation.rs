@@ -9,7 +9,7 @@ use layer2_core::sandbox::store::{
     SandboxMaintenanceOutcome, SandboxMaintenanceStore, SandboxReconciliationStore,
     SandboxRuntimeLossRequest, SandboxStore, SandboxStoreError,
 };
-use layer2_core::sandbox::{Sandbox, SandboxPolicySource};
+use layer2_core::sandbox::{AgentService, Sandbox, SandboxPolicySource};
 use layer2_core::{rfc3339_at, SandboxId};
 use layer3_adapter::{RuntimeAdoptionRequest, RuntimeObservation, SandboxAdapter};
 use tokio::sync::watch;
@@ -36,6 +36,7 @@ pub(crate) struct SandboxReconciler {
     policy: Arc<dyn SandboxPolicySource>,
     deployment_id: String,
     runtime_version: String,
+    profile_agents: Option<Arc<AgentService>>,
 }
 
 impl SandboxReconciler {
@@ -52,7 +53,13 @@ impl SandboxReconciler {
             policy,
             deployment_id,
             runtime_version,
+            profile_agents: None,
         }
+    }
+
+    pub(crate) fn with_profile_agents(mut self, agents: Arc<AgentService>) -> Self {
+        self.profile_agents = Some(agents);
+        self
     }
 
     /// Fail closed before starting any worker if either authority is incomplete.
@@ -255,6 +262,11 @@ impl SandboxReconciler {
         loop {
             let candidates = self.store.sandbox_maintenance_candidates(&page).await?;
             for sandbox_id in candidates.items {
+                if let Some(agents) = &self.profile_agents {
+                    if let Err(error) = agents.reconcile_profile_agents(&sandbox_id).await {
+                        tracing::error!(sandbox_id = %sandbox_id, error = %error, "automatic profile agent reconciliation failed");
+                    }
+                }
                 let rotation = self
                     .store
                     .schedule_image_rotation(SandboxImageRotationRequest {

@@ -3,8 +3,8 @@
 use std::sync::Arc;
 
 use layer2_core::sandbox::{
-    AgentOperationService, AgentTitleService, AgentUpdateRecorder, DurableAgentUpdateRecorder,
-    SandboxPolicySource, WorkspaceService,
+    AgentOperationService, AgentService, AgentTitleService, AgentUpdateRecorder,
+    DurableAgentUpdateRecorder, SandboxPolicySource, WorkspaceService,
 };
 use layer3_adapter::SandboxAdapter;
 
@@ -38,6 +38,7 @@ pub(crate) struct SandboxLifecycleDependencies {
     pub checkpoints: Arc<dyn CheckpointObjectPurger>,
     pub registry: Arc<LiveAgentRegistry>,
     pub workspaces: Arc<WorkspaceService>,
+    pub agents: Arc<AgentService>,
     pub operations: Arc<AgentOperationService>,
     pub policy: Arc<dyn SandboxPolicySource>,
     pub skills: Arc<dyn AgentSkillResolver>,
@@ -74,7 +75,8 @@ impl SandboxLifecycleComposition {
             Arc::clone(&dependencies.policy),
             config.deployment_id.clone(),
             config.runtime_version.clone(),
-        );
+        )
+        .with_profile_agents(Arc::clone(&dependencies.agents));
         let checkpoints = SandboxScheduler::for_checkpoints(SandboxCheckpointMaintenance::new(
             dependencies.store.clone(),
             Arc::clone(&dependencies.adapter),

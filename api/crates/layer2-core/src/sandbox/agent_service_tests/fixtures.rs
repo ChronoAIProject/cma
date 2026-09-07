@@ -363,6 +363,44 @@ pub(super) fn request(profile: AgentProfileRef, origin: AgentOrigin) -> CreateAg
     }
 }
 
+pub(super) async fn setup_profile_children(
+    status: SandboxStatus,
+    workspace_status: WorkspaceStatus,
+    count: u16,
+) -> (
+    Arc<AgentService>,
+    Arc<InMemorySandboxStore>,
+    Arc<InMemoryProfileStore>,
+    Workspace,
+) {
+    let profiles = Arc::new(InMemoryProfileStore::default());
+    let mut workspace = workspace(workspace_status);
+    for index in 0..count {
+        workspace.profile.content.agent_profiles.push(
+            publish(
+                &profiles,
+                profile(
+                    &format!("agp_profile_{index}"),
+                    "owner",
+                    ProfileVisibility::Private,
+                ),
+            )
+            .await,
+        );
+    }
+    workspace.profile.digest = crate::profiles::content_digest(&workspace.profile.content).unwrap();
+    let store = Arc::new(InMemorySandboxStore::default());
+    store.create_sandbox(sandbox(status, 4)).await.unwrap();
+    store.create_workspace(workspace.clone()).await.unwrap();
+    let service = AgentService::new(
+        store.clone(),
+        profiles.clone(),
+        TestAgentRuntimeRegistry::new(false),
+        agent_capabilities(),
+    );
+    (service, store, profiles, workspace)
+}
+
 pub(super) async fn uses(profiles: &InMemoryProfileStore, id: &AgentProfileId) -> u64 {
     profiles
         .agent_profile(id)

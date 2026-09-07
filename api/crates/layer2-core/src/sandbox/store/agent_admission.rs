@@ -37,6 +37,24 @@ impl AgentAdmission {
                 "agent admission identity is invalid",
             ));
         }
+        if let AgentOrigin::WorkspaceProfile { index } = self.origin {
+            let expected = workspace
+                .profile
+                .content
+                .agent_profiles
+                .get(usize::from(index));
+            if expected.is_none_or(|reference| {
+                reference.id != self.profile.id || reference.revision != self.profile.revision
+            }) || self.creation_key
+                != crate::sandbox::agent::profile_agent_creation_key(&workspace.id, index)
+                || self.first_message.is_some()
+                || self.title.is_some()
+            {
+                return Err(SandboxStoreError::InvalidTransaction(
+                    "automatic agent admission does not match the pinned workspace profile",
+                ));
+            }
+        }
         let number = workspace.next_worktree_number;
         let name = format!("wt-{number}");
         let base_commit = workspace

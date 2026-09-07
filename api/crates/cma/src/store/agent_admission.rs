@@ -214,6 +214,11 @@ async fn apply_admission(
     if !sandbox.accepts_creation_admission() {
         return Err(ApplyError::Domain(SandboxStoreError::SandboxNotReady));
     }
+    if matches!(admission.origin, AgentOrigin::WorkspaceProfile { .. })
+        && sandbox.status != layer2_core::sandbox::SandboxStatus::Active
+    {
+        return Err(ApplyError::Domain(SandboxStoreError::SandboxNotReady));
+    }
 
     let live = store
         .agents
@@ -250,7 +255,9 @@ async fn apply_admission(
         .checked_add(1)
         .ok_or(ApplyError::Domain(SandboxStoreError::Conflict))?;
     let cause = match admission.origin {
-        AgentOrigin::Manual => SandboxReviveCause::AgentCreation,
+        AgentOrigin::Manual | AgentOrigin::WorkspaceProfile { .. } => {
+            SandboxReviveCause::AgentCreation
+        }
         AgentOrigin::Trigger { .. } => SandboxReviveCause::TriggerLaunch,
     };
     let revival = next_sandbox

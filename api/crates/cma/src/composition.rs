@@ -197,6 +197,7 @@ impl ControlPlaneComposition {
                 )),
                 registry: Arc::clone(&live_agents),
                 workspaces: Arc::clone(&workspace_service),
+                agents: projections.agents(),
                 operations: projections.operations(),
                 policy: sandbox_policy,
                 skills: agent_skills,
