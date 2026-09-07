@@ -34,7 +34,11 @@ import './AppFrame.css';
 interface AppFrameProps {
   readonly sidebar:
     | ReactNode
-    | ((state: { readonly collapsed: boolean; readonly onToggle: () => void }) => ReactNode);
+    | ((state: {
+        readonly collapsed: boolean;
+        readonly onToggle: () => void;
+        readonly onNavigate: () => void;
+      }) => ReactNode);
   readonly center: ReactNode;
   /** Always rendered. A closed details column is zero-wide, never unmounted. */
   readonly details?: ReactNode;
@@ -169,7 +173,13 @@ export function AppFrame({
 
   const sidebarOwnsToggle = typeof sidebar === 'function';
   const renderedSidebar = sidebarOwnsToggle
-    ? sidebar({ collapsed: effectiveSidebarCollapsed, onToggle: toggleSidebar })
+    ? sidebar({
+        collapsed: effectiveSidebarCollapsed,
+        onToggle: toggleSidebar,
+        onNavigate: () => {
+          if (narrow) setExpandedAnyway(false);
+        },
+      })
     : sidebar;
 
   const onSidebarDrag = useCallback((to: number) => {
