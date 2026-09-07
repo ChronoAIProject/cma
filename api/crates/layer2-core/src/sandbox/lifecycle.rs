@@ -171,6 +171,8 @@ pub struct SandboxLifecycleState {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub checkpoint_capture: Option<SandboxCheckpointCapture>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub checkpoint_capture_completed_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub operation: Option<SandboxLifecycleOperation>,
     #[serde(default)]
     pub checkpoints: SandboxCheckpointHistory,
@@ -187,6 +189,7 @@ impl Default for SandboxLifecycleState {
             runtime_generation_high_water: 0,
             runtime_provision: None,
             checkpoint_capture: None,
+            checkpoint_capture_completed_at: None,
             operation: None,
             checkpoints: SandboxCheckpointHistory::default(),
             paused_notice: None,
@@ -197,7 +200,12 @@ impl Default for SandboxLifecycleState {
 
 impl SandboxLifecycleState {
     pub fn validate(&self, sandbox: &Sandbox) -> Result<(), SandboxModelError> {
-        if self.next_authority == 0 {
+        if self.next_authority == 0
+            || self
+                .checkpoint_capture_completed_at
+                .as_deref()
+                .is_some_and(|at| seconds_from_rfc3339(at).is_none())
+        {
             return Err(invalid_lifecycle());
         }
         self.checkpoints.validate()?;

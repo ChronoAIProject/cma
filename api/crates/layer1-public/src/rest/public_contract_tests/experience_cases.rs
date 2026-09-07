@@ -265,16 +265,17 @@ async fn composition(name: &str) -> crate::AgentConversationState {
 }
 
 pub(super) async fn begin_checkpoint(store: &InMemorySandboxStore, id: &layer2_core::SandboxId) {
+    const CAPTURE_AT: &str = "2026-09-05T00:02:00Z";
     let parent = store.get_sandbox(id).await.unwrap().unwrap();
     let mut sandbox = parent.clone();
-    sandbox.begin_checkpoint_capture(NOW.into()).unwrap();
+    sandbox.begin_checkpoint_capture(CAPTURE_AT.into()).unwrap();
     store
         .commit_sandbox_lifecycle(SandboxLifecycleMutation {
             guard: SandboxMutationGuard::capture(&parent),
             sandbox,
             agents: vec![],
             agent_scope: SandboxLifecycleAgentScope::Touched,
-            appended_at: NOW.into(),
+            appended_at: CAPTURE_AT.into(),
             events: vec![SandboxEventKind::WorkStepCompleted {
                 step: SandboxWorkStep::RunLifecycleOperation,
             }],

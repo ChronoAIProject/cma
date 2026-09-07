@@ -283,12 +283,15 @@ impl SandboxCheckpointHistory {
     }
 }
 
-/// Active sandboxes without a checkpoint are due immediately; later captures are spaced.
+/// Periodic captures require both checkpoint age and confirmed writer-release cooldown.
 pub fn sandbox_checkpoint_due(sandbox: &Sandbox, now: &str) -> bool {
-    let Some(now) = seconds_from_rfc3339(now) else {
+    let Some(now_seconds) = seconds_from_rfc3339(now) else {
         return false;
     };
-    if sandbox.status != SandboxStatus::Active || sandbox.runtime.is_none() {
+    if sandbox.status != SandboxStatus::Active
+        || sandbox.runtime.is_none()
+        || !sandbox.checkpoint_capture_cooldown_elapsed(now)
+    {
         return false;
     }
     sandbox
@@ -299,7 +302,7 @@ pub fn sandbox_checkpoint_due(sandbox: &Sandbox, now: &str) -> bool {
         .is_none_or(|checkpoint| {
             checkpoint.validate().is_ok()
                 && seconds_from_rfc3339(&checkpoint.sealed_at).is_some_and(|sealed| {
-                    now >= sealed.saturating_add(SANDBOX_CHECKPOINT_INTERVAL_SECONDS)
+                    now_seconds >= sealed.saturating_add(SANDBOX_CHECKPOINT_INTERVAL_SECONDS)
                 })
         })
 }

@@ -146,6 +146,9 @@ pub(super) fn validate_capture_mutation(
         &next.lifecycle.checkpoint_capture,
     ) {
         (None, Some(_)) => {
+            if !current.checkpoint_capture_cooldown_elapsed(at) {
+                return Err(SandboxStoreError::Conflict);
+            }
             if agents
                 .iter()
                 .any(|(agent, tail)| agent.conversation.last_seq != *tail)
