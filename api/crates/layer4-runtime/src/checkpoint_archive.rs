@@ -1,11 +1,14 @@
-use std::io::{Read as _, Seek as _, Write as _};
+use std::io::{BufWriter, Read as _, Write as _};
 use std::path::{Path, PathBuf};
 
+use flate2::{write::GzEncoder, Compression};
 use sha2::{Digest, Sha256};
 
 use crate::checkpoint_manifest::{EntryKind, Manifest, ManifestEntry};
 use crate::command::hex;
 use crate::failure::{Result, RuntimeError};
+
+mod reader;
 
 const MAGIC: &[u8; 16] = b"CMAHOMEARCHIVE1\n";
 const HEADER_BYTES: u64 = 24;
@@ -42,11 +45,16 @@ pub(crate) fn seal(root: &Path, store: &Path, exclusions: &[String]) -> Result<S
     }
     let temporary = store.join(format!(".capture-{}-{}.tmp", std::process::id(), stamp()));
     let mut cleanup = Cleanup::new(temporary.clone());
-    let mut archive = std::fs::OpenOptions::new()
+    let file = std::fs::OpenOptions::new()
         .create_new(true)
         .write(true)
         .open(&temporary)
         .map_err(archive_io("create checkpoint archive"))?;
+    let output = ArchiveWriter {
+        file: BufWriter::new(file),
+        size: 0,
+    };
+    let mut archive = GzEncoder::new(output, Compression::fast());
     archive
         .write_all(MAGIC)
         .and_then(|_| archive.write_all(&(encoded.len() as u64).to_be_bytes()))
@@ -59,10 +67,15 @@ pub(crate) fn seal(root: &Path, store: &Path, exclusions: &[String]) -> Result<S
     {
         copy_source(root, entry, &mut archive)?;
     }
+    let mut archive = archive
+        .finish()
+        .map_err(archive_io("finish compressed checkpoint archive"))?;
     archive
         .flush()
         .map_err(archive_io("flush checkpoint archive"))?;
     archive
+        .file
+        .get_ref()
         .sync_all()
         .map_err(archive_io("sync checkpoint archive"))?;
     drop(archive);
@@ -113,8 +126,8 @@ pub(crate) fn inspect(path: &Path, expected_sha256: &str, home: &Path) -> Result
             "checkpoint archive did not match its sealed SHA-256",
         ));
     }
-    let mut archive = std::fs::File::open(path).map_err(archive_io("open checkpoint archive"))?;
-    if length < HEADER_BYTES {
+    let mut archive = reader::ArchiveReader::open(path)?;
+    if !archive.is_compressed() && length < HEADER_BYTES {
         return Err(invalid("checkpoint archive is truncated"));
     }
     let mut magic = [0_u8; 16];
@@ -133,7 +146,7 @@ pub(crate) fn inspect(path: &Path, expected_sha256: &str, home: &Path) -> Result
     let payload_start = HEADER_BYTES
         .checked_add(manifest_length)
         .ok_or_else(|| invalid("checkpoint manifest length overflows"))?;
-    if payload_start > length {
+    if !archive.is_compressed() && payload_start > length {
         return Err(invalid(
             "checkpoint archive is truncated before its payload",
         ));
@@ -148,7 +161,19 @@ pub(crate) fn inspect(path: &Path, expected_sha256: &str, home: &Path) -> Result
             format!("decode checkpoint manifest: {error}"),
         )
     })?;
-    crate::checkpoint_manifest::validate(&manifest, home, length - payload_start)?;
+    let payload_bytes = if archive.is_compressed() {
+        manifest.entries.iter().try_fold(0_u64, |size, entry| {
+            size.checked_add(entry.size)
+                .filter(|size| *size <= crate::checkpoint_manifest::MAX_PAYLOAD_BYTES)
+                .ok_or_else(|| invalid("checkpoint payload exceeds its size limit"))
+        })?
+    } else {
+        length - payload_start
+    };
+    crate::checkpoint_manifest::validate(&manifest, home, payload_bytes)?;
+    if archive.is_compressed() {
+        archive.verify_payload(payload_bytes)?;
+    }
     Ok(InspectedArchive {
         manifest,
         payload_start,
@@ -161,8 +186,8 @@ pub(crate) fn extract(
     destination: &Path,
 ) -> Result<()> {
     std::fs::create_dir(destination).map_err(archive_io("create restore staging directory"))?;
-    let mut archive =
-        std::fs::File::open(archive_path).map_err(archive_io("open restore archive"))?;
+    let mut archive = reader::ArchiveReader::open(archive_path)?;
+    archive.skip_exact(inspected.payload_start)?;
     let mut directories = Vec::new();
     for entry in &inspected.manifest.entries {
         let path = destination.join(&entry.path);
@@ -171,10 +196,11 @@ pub(crate) fn extract(
                 std::fs::create_dir(&path).map_err(archive_io("create restored directory"))?;
                 directories.push((path, entry.mode));
             }
-            EntryKind::File => extract_file(&mut archive, inspected.payload_start, entry, &path)?,
+            EntryKind::File => extract_file(&mut archive, entry, &path)?,
             EntryKind::Symlink => {}
         }
     }
+    archive.finish()?;
     for entry in inspected
         .manifest
         .entries
@@ -195,7 +221,7 @@ pub(crate) fn extract(
     Ok(())
 }
 
-fn copy_source(root: &Path, entry: &ManifestEntry, output: &mut std::fs::File) -> Result<()> {
+fn copy_source(root: &Path, entry: &ManifestEntry, output: &mut impl std::io::Write) -> Result<()> {
     let path = root.join(&entry.path);
     let metadata =
         std::fs::symlink_metadata(&path).map_err(archive_io("recheck checkpoint file"))?;
@@ -217,6 +243,12 @@ fn copy_source(root: &Path, entry: &ManifestEntry, output: &mut std::fs::File) -
         if read == 0 {
             break;
         }
+        if copied.saturating_add(read as u64) > entry.size {
+            return Err(RuntimeError::rejected(
+                "checkpoint_changed",
+                "checkpoint file grew during capture",
+            ));
+        }
         output
             .write_all(&buffer[..read])
             .map_err(archive_io("write checkpoint payload"))?;
@@ -233,15 +265,10 @@ fn copy_source(root: &Path, entry: &ManifestEntry, output: &mut std::fs::File) -
 }
 
 fn extract_file(
-    archive: &mut std::fs::File,
-    payload_start: u64,
+    archive: &mut impl std::io::Read,
     entry: &ManifestEntry,
     destination: &Path,
 ) -> Result<()> {
-    let offset = entry.offset.expect("validated file has an offset");
-    archive
-        .seek(std::io::SeekFrom::Start(payload_start + offset))
-        .map_err(archive_io("seek checkpoint payload"))?;
     let mut output = std::fs::OpenOptions::new()
         .create_new(true)
         .write(true)
@@ -272,6 +299,28 @@ fn extract_file(
     }
     output.flush().map_err(archive_io("flush restored file"))?;
     set_mode(destination, entry.mode)
+}
+
+struct ArchiveWriter {
+    file: BufWriter<std::fs::File>,
+    size: u64,
+}
+
+impl std::io::Write for ArchiveWriter {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        if self.size.saturating_add(bytes.len() as u64) > MAX_ARCHIVE_BYTES {
+            return Err(std::io::Error::other(
+                "compressed checkpoint exceeds its size limit",
+            ));
+        }
+        let written = self.file.write(bytes)?;
+        self.size += written as u64;
+        Ok(written)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.file.flush()
+    }
 }
 
 fn ensure_store(store: &Path) -> Result<()> {
@@ -352,3 +401,7 @@ impl Drop for Cleanup {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "checkpoint_archive_tests.rs"]
+mod tests;

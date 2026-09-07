@@ -6,6 +6,7 @@ publish = false
 
 [dependencies]
 axum = { workspace = true }
+flate2 = { workspace = true }
 futures-util = { workspace = true }
 layer3-adapter = { workspace = true }
 libc = { workspace = true }
