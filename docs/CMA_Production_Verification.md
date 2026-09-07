@@ -17,9 +17,9 @@ acceptance of this campaign.
 | 4. Public Trigger | Exact title/message, all-level reuse, Try It, visitor theme, no review, README placement | Exact revision published after first rollout; README-only PR #841 merged after all 12 protected checks; default README snippet read back exactly |
 | 5. Login without bootstrap | No Sandbox, Workspace, Agent, or Profile created by login alone | Existing-owner fresh-browser sign-in created no resources; successful unseen-CMA-identity callback contract passes default/home/Trigger returns; external fresh signup not tested |
 | 6. Complete external-click flow | Login then automatic provisioning; exact first message once; correct software, skills, scopes | Fresh `streaming-fixed` README entry, first response, live configuration and actual workload passed; matching built-home restore and final first/repeat cycle pending |
-| 7. Previous UI style | Original rotating 3D mark and established controls; desktop/mobile screenshots | Live home/provisioning motion passed; four-view chat checks passed; deployed web `242ae95c` fixes mobile Agent navigation and preserves desktop navigation and history |
+| 7. Previous UI style | Original rotating 3D mark and established controls; desktop/mobile screenshots | Live home/provisioning motion passed; four-view chat checks passed; deployed web `a5d6fb4b` preserves mobile navigation and verifies lifecycle input holds in all four views |
 | 8. Autonomous YOLO | Pinned provider runs full-access mode with no approval requests | Actual provider configuration verified; latest first response and successful subsequent workload completed with zero approvals |
-| 9. Lifecycle | Active to paused to active; paused to terminated; history retained | Heavy epoch-2 checkpoint published at 21:16:07 UTC; UI Pause admitted at 21:16:10; matching full-home restore, manual Resume and paused Delete remain pending |
+| 9. Lifecycle | Active to paused to active; paused to terminated; history retained | Heavy epoch-2 checkpoint published; one UI Pause admitted at 21:16:10 UTC exceeded its 30-minute test deadline and remains in progress; restore, manual Resume and paused Delete remain pending |
 | 10. Cleanup | Only identified stale state removed; new published flow remains usable | Two old Sandboxes retired through the public API under explicit authorization; final environment pending |
 | 11. Conversation UI | Thinking, Send/Stop, CPU, RAM, context, token, network metrics | Four-view active metrics, Thinking, live follow/manual scroll/re-follow, completion, hierarchy and reload passed; actual Send/Stop acceptance in progress |
 
@@ -565,6 +565,40 @@ to recover approximately 3 GiB. Their published registry images, image metadata,
 test records and failed production evidence remain available. The current runtime
 archive, active source directories, shared Rust target and builder caches were
 not removed.
+
+### Lifecycle Composer Production Verification
+
+Web `a5d6fb4b` rolled out at 2026-09-07 21:47 UTC to
+`cma-web-7dbbf89fc8-wppmf`, with registry digest
+`sha256:61d0c52e45b508001e9381b8094a2d5e6b8534da0f13b81d62350beb63a09629`.
+The scan, remote digest verification and all 18 manifest validations passed.
+API and runtime pins were unchanged. Manifest commit `e94d5d46` and the source
+commits were pushed to the campaign branch as `chronoai-shining`.
+
+Production evidence in `pausing-input-DTMHTk/` passed desktop/mobile and both
+themes on that exact web build. During the real Pause capture, a nonempty draft
+remained editable, Send remained disabled, Enter submitted nothing, and the
+accessible lifecycle notice remained visible without overlap. All 20 rendered
+messages retained SHA-256
+`e11477fb4dde0650b645b8479f01fbfd41baf1d0f20a60b721abeab6181f0604`.
+All 168 observed requests were GETs returning 200, with no mutations, replaced
+responses, browser errors or rate limits. Root inspected the mobile-light and
+desktop-dark screenshots. The browser closed and its PID was confirmed absent.
+The additional four-view canvas checks sampled the 44-pixel loading character
+during Home navigation, not the large settled Home character.
+
+The original `lifecycle-streaming-fixed-heavy-pause/` test exceeded its
+30-minute post-dispatch deadline and remains failed. Its one admitted Pause is
+observed separately; no duplicate command or manual database repair was issued.
+At 21:52:33 UTC the third capture had entered upload as object
+`cpa_c5504a2420f8445c81f5a677e8786382`, 6,265,725,637 bytes, with staged deadline
+22:02:04.218 UTC. The previous epoch-2 object remains published. Runtime samples
+showed 416 MB of local archive growth over 16 seconds before that upload; the
+current transfer must not be described as stalled on that evidence. The native
+conversation, all four resource identifiers and two-turn transcript SHA-256
+`2d50df491bf47c2555f4e634ce61ac59f15f95581b0f5f3df382c8178f8f6edc`
+remain unchanged. The combined API image is still building; no successful Pause,
+restoration or final Trigger acceptance is inferred from these observations.
 
 ## Historical Observation
 
