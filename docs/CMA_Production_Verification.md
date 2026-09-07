@@ -23,11 +23,11 @@ acceptance of this campaign.
 | 10. Cleanup | Only identified stale state removed; new published flow remains usable | Identified old Sandboxes and the verified heavy test baseline were retired through supported owner commands; the latest Delete began from Pausing, not Paused; final environment remains pending |
 | 11. Conversation UI | Thinking, Send/Stop, CPU, RAM, context, token, network metrics | Four-view active metrics, Thinking, live follow/manual scroll/re-follow, completion, hierarchy, reload and ready-page checkpoint input holds passed; actual Send/Stop acceptance remains pending on a fresh lifecycle test baseline |
 
-The latest observed production versions are API `553e180b`, web `1eb60be1`, and
-runtime `137b489d`. The heavy baseline's retirement was independently verified
-at 2026-09-07 23:13 UTC. API `619535ad` and all remaining final-flow acceptance
-are still pending; the historical deployed-component table below is not the
-current campaign's image inventory.
+The latest observed production versions are API `619535ad`, web `1eb60be1`, and
+runtime `137b489d`, independently verified at 2026-09-07 23:42 UTC after a fresh
+all-owner quiet-state guard. The separate `lifecycle-fresh` Trigger journey has
+started, but all remaining final-flow acceptance is still pending. The historical
+deployed-component table below is not the current campaign's image inventory.
 
 Private campaign evidence is kept under `/tmp/cma-trureturing-loop.LvTezb` and
 must not be committed or uploaded wholesale. One existing NyxID owner account is
@@ -681,7 +681,7 @@ bootstrap. Bootstrap only validates and records inherited installation identity;
 actual credentialed home Restore retains transfer and integrity checks. Four
 transport regressions and all 111 Layer 3 tests pass, with strict Clippy, format
 and secret checks. Its duplicate-bootstrap-transfer correction is included in
-the pending combined API `619535ad`; no intermediate `d46abe08` rollout is
+the combined API `619535ad`, deployed below; no intermediate `d46abe08` rollout is
 required. The separate `553e180b` deployment and its timing error are recorded
 below. Final acceptance still requires a genuinely paused README repeat, not an
 already-active reopen.
@@ -755,28 +755,63 @@ mutations. This completes the identified cleanup proof, not paused-Delete or
 successful Pause-recovery acceptance. A fresh all-quiet observation is still
 required immediately before the next API deployment.
 
-### Pending Corrected Acceptance
+### Corrected API Deployment
 
 API `619535ad7b898b79b7932f8f0c3802dce4a43ae4` combines the restore-bootstrap
 correction with a fixed 1,200-second budget for newly staged checkpoint uploads.
 Previously recorded deadlines are not extended. The 180-second per-request
 timeout, four concurrent 32 MiB parts, three bounded part retries, integrity
-checks and outer 1,800-second capture limits remain unchanged. Its image build,
-scan, registry verification, manifest pin and production rollout are pending;
-none of this source work counts as final production acceptance.
+checks and outer 1,800-second capture limits remain unchanged. Its image build
+completed at 2026-09-07 23:31:36 UTC, the image scan passed, and registry push
+with exact digest readback passed at 23:32:36. Manifest commit `077cefa4` pins
+digest `sha256:a0c90ef63c8a6cb9edcf6eeb0b75dda267ac6036a1a9a1186b5a0e35f63e8674`
+and was pushed to the campaign branch. These image checks do not establish
+successful production upload, restoration or final visitor-flow acceptance.
 
-The 23:06 UTC superseding sequence in private `final-flow-audit.md` requires:
+The first all-owner guard was blocked at 23:33:23 UTC and remains preserved in
+`all-owner-rollout-guard-pai6mF/`. It classified retained conversation metadata
+on stopped Agents and an old terminal Agent-creation failure as runnable work.
+The scratch verifier was corrected against the source-backed terminal-state
+rules, with 20 passing positive/negative tests. Historical fields remain visible;
+only exact stopped/retired, work-free cases are classified as retained metadata.
+Pending work, leases, queued messages, writer debt and unsettled resources still
+block rollout. No production record or runtime was repaired to make this pass.
 
-1. With independent retirement checks now passed, deploy verified API `619535ad`
-   only after a fresh, separately completed all-quiet observation. Keep runtime
-   `137b489d` and web `1eb60be1` unchanged.
-2. Create a separate `lifecycle-fresh` README baseline and prove actual Send/Stop,
+Fresh `all-owner-rollout-guard-a4AxzC/result.json` passed at 23:41:02 UTC over
+all eight Sandboxes, seven Workspaces, eleven Agents and twelve Launches across
+the one owner present. The consistent snapshot found retired Sandboxes without
+runtimes, capture, writer debt or lifecycle work, and no runnable resource work.
+This is a point-in-time guard, not an atomic writer lease or independent
+deployment authorization. Deployment ran in a separate completed step at
+**23:41:16 UTC**, after the guard had returned, rather than sharing an
+unconditional script with asynchronous polling.
+
+`rollout-619-independent-LBWQn8/result.json` independently passed at
+23:42:31 UTC. API pod `cma-api-645895fd68-v4g4m` was Ready on the exact pinned
+digest above, its container image identity matched, and the owner session returned
+200. Web `1eb60be1` and configured runtime `137b489d` were unchanged. This accepts
+the guarded deployment only; it does not relabel the earlier 22:57 UTC rollout
+error, expired upload or failed browser journey.
+
+### Pending Corrected Acceptance
+
+The sole mutating verifier has started the fresh `lifecycle-fresh` README
+journey, with private evidence in `production-lifecycle-fresh/`. Its durable
+admission records Launch `lch_18206b47cf8546f3ac0cf064591e4e5b` started at
+23:42:57 UTC. There is no completed acceptance result from that run yet. No
+parallel lifecycle or message command, repeated admission or redeployment is
+authorized by this documentation update.
+
+With the deployment prerequisite complete, the remaining 23:06 UTC superseding
+sequence in private `final-flow-audit.md` requires:
+
+1. Complete the separate `lifecycle-fresh` README baseline and prove actual Send/Stop,
    UI Pause/Resume, and another UI Pause followed by Delete from genuinely Paused.
-3. Run the final fresh README journey and admission-bound configuration observer
+2. Run the final fresh README journey and admission-bound configuration observer
    as `final-fresh`, then explicitly Pause that baseline and run `final-repeat`.
    The repeat must revive automatically, retain all identities and history, and
    add no first prompt, approval workaround or manual continuation click.
-4. Leave the final environment, published profile pins, Trigger and default
+3. Leave the final environment, published profile pins, Trigger and default
    README intact. Preserve all failed attempts and keep fresh-signup,
    cross-owner and authenticated GitHub-page browser limits explicit.
 
