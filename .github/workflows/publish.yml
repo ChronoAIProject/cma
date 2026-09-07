@@ -412,9 +412,63 @@ jobs:
           compression-level: 0
           overwrite: true
 
+  runtime-image-gate:
+    name: Runtime image evidence
+    needs: [plan, images, image-exports]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 26
+      - name: Resolve exact runtime artifact
+        id: artifact
+        env:
+          RELEASE_VERSION: ${{ needs.plan.outputs.version }}
+        run: echo "name=cma-runtime-${RELEASE_VERSION}-${GITHUB_SHA:0:7}-oci" >> "$GITHUB_OUTPUT"
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ steps.artifact.outputs.name }}
+          path: ${{ runner.temp }}/runtime-export
+      - name: Verify exact runtime artifact bytes and source
+        id: runtime
+        env:
+          RELEASE_VERSION: ${{ needs.plan.outputs.version }}
+        run: node .github/scripts/release-runtime-input.mjs "$RUNNER_TEMP/runtime-export" "$GITHUB_SHA" "$RELEASE_VERSION"
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Pull verified immutable runtime
+        env:
+          RUNTIME_REFERENCE: ${{ steps.runtime.outputs.reference }}
+        run: docker pull "$RUNTIME_REFERENCE"
+      - name: Execute published runtime image contract
+        env:
+          RUNTIME_REFERENCE: ${{ steps.runtime.outputs.reference }}
+        run: node .github/scripts/runtime-image-evidence.mjs run "$RUNTIME_REFERENCE" "$GITHUB_SHA" "$RUNNER_TEMP/runtime-image-evidence.json"
+      - name: Retain runtime image evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-runtime-image-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/runtime-image-evidence.json
+          if-no-files-found: error
+          retention-days: 90
+      - name: Require passing runtime image evidence
+        if: always()
+        env:
+          RUNTIME_REFERENCE: ${{ steps.runtime.outputs.reference }}
+        run: node .github/scripts/runtime-image-evidence.mjs verify "$RUNTIME_REFERENCE" "$GITHUB_SHA" "$RUNNER_TEMP/runtime-image-evidence.json"
+
   release:
     name: Tag and release
-    needs: [plan, images, image-exports]
+    needs: [plan, images, image-exports, runtime-image-gate]
     runs-on: ubuntu-latest
     permissions:
       actions: read
