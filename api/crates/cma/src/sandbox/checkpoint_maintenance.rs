@@ -16,6 +16,9 @@ use layer3_adapter::{writer_resume_tokens_match, CheckpointWriterResumeRequest, 
 use super::runtime_attachment::adopt_bound_runtime;
 
 mod capture;
+mod lease;
+
+use lease::CaptureClock;
 
 const CLAIM_DURATION: Duration = Duration::from_secs(5 * 60);
 const RETRY_DELAY: Duration = Duration::from_secs(30);
@@ -53,6 +56,7 @@ impl SandboxCheckpointMaintenance {
     }
 
     pub(crate) async fn run_once(&self, now: SystemTime) -> Result<usize, SandboxStoreError> {
+        let clock = CaptureClock::new(now);
         let mut cursor = None;
         let mut progressed = 0;
         let mut first_error = None;
@@ -65,7 +69,7 @@ impl SandboxCheckpointMaintenance {
                 )
                 .await?;
             for sandbox in page.items {
-                match self.process(sandbox, now).await {
+                match self.process(sandbox, &clock).await {
                     Ok(changed) => progressed += usize::from(changed),
                     Err(SandboxStoreError::Conflict | SandboxStoreError::NotFound) => {}
                     Err(error) => {
@@ -79,7 +83,12 @@ impl SandboxCheckpointMaintenance {
         first_error.map_or(Ok(progressed), Err)
     }
 
-    async fn process(&self, sandbox: Sandbox, now: SystemTime) -> Result<bool, SandboxStoreError> {
+    async fn process(
+        &self,
+        sandbox: Sandbox,
+        clock: &CaptureClock,
+    ) -> Result<bool, SandboxStoreError> {
+        let now = clock.now();
         let stamp = rfc3339_at(now);
         let Some(capture) = sandbox.lifecycle.checkpoint_capture.as_ref() else {
             if !sandbox_checkpoint_due(&sandbox, &stamp) {
@@ -91,6 +100,7 @@ impl SandboxCheckpointMaintenance {
                 return Ok(false);
             }
             let mut next = sandbox.clone();
+            let stamp = rfc3339_at(clock.now());
             if next.begin_checkpoint_capture(stamp.clone()).is_err() {
                 return Ok(false);
             }
@@ -118,17 +128,21 @@ impl SandboxCheckpointMaintenance {
             .expect("claimed capture remains present");
         if capture.phase == SandboxCheckpointCapturePhase::Capture {
             if abandoned || claimed.status != SandboxStatus::Active {
-                self.require_resume(&claimed, now).await?;
+                self.require_resume(&claimed, clock.now()).await?;
             } else {
-                self.capture_and_publish(&claimed, now).await?;
+                self.capture_and_publish(claimed, clock).await?;
             }
         } else {
-            self.resume(&claimed, now).await?;
+            self.resume(&claimed, clock).await?;
         }
         Ok(true)
     }
 
-    async fn resume(&self, claimed: &Sandbox, now: SystemTime) -> Result<(), SandboxStoreError> {
+    async fn resume(
+        &self,
+        claimed: &Sandbox,
+        clock: &CaptureClock,
+    ) -> Result<(), SandboxStoreError> {
         let capture = claimed
             .lifecycle
             .checkpoint_capture
@@ -144,7 +158,7 @@ impl SandboxCheckpointMaintenance {
             .writer_resume_token
             .as_ref()
             .ok_or(SandboxStoreError::Conflict)?;
-        let result = async {
+        let result = tokio::time::timeout(lease::FINALIZE_TIMEOUT, async {
             let handle =
                 adopt_bound_runtime(self.adapter.as_ref(), claimed, &self.deployment_id).await?;
             self.adapter
@@ -155,12 +169,13 @@ impl SandboxCheckpointMaintenance {
                     },
                 )
                 .await
-        }
+        })
         .await;
+        let now = clock.now();
         let mut next = claimed.clone();
         let stamp = rfc3339_at(now);
         match result {
-            Ok(receipt)
+            Ok(Ok(receipt))
                 if receipt.writers_resumed
                     && writer_resume_tokens_match(&receipt.writer_resume_token, token) =>
             {

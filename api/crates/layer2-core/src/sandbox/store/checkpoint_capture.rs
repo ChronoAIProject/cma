@@ -127,11 +127,20 @@ pub(super) fn validate_capture_mutation(
             if submitted.work.lease.is_some() && submitted.work.lease != capture.work.lease =>
         {
             let lease = submitted.work.lease.as_ref().ok_or_else(invalid)?;
-            expected.claim_checkpoint_capture(
-                lease.holder.clone(),
-                at.clone(),
-                lease.expires_at.clone(),
-            )
+            if capture.work.owns(&lease.holder, lease.fence) {
+                expected.renew_checkpoint_capture(
+                    &lease.holder,
+                    lease.fence,
+                    at.clone(),
+                    lease.expires_at.clone(),
+                )
+            } else {
+                expected.claim_checkpoint_capture(
+                    lease.holder.clone(),
+                    at.clone(),
+                    lease.expires_at.clone(),
+                )
+            }
         }
         (Some(capture), submitted) => {
             let lease = capture.work.lease.as_ref().ok_or_else(invalid)?;
