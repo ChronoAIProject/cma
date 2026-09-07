@@ -10,6 +10,15 @@ pub(super) struct VerifiedSubject {
     pub profile: Profile,
 }
 
+pub(super) fn verification_failure(stage: &'static str, reason: &'static str, status: Option<u16>) {
+    tracing::warn!(
+        stage,
+        reason,
+        status,
+        "identity provider verification failed"
+    );
+}
+
 pub(super) async fn request_for_bearer(
     auth: &AuthState,
     token: String,
@@ -66,8 +75,12 @@ pub(super) async fn verify_subject(
         .bearer_auth(access_token)
         .send()
         .await
-        .map_err(|error| format!("userinfo request failed: {error}"))?;
+        .map_err(|error| {
+            verification_failure("userinfo", "transport", None);
+            format!("userinfo request failed: {error}")
+        })?;
     if !response.status().is_success() {
+        verification_failure("userinfo", "http_status", Some(response.status().as_u16()));
         return Err(format!(
             "userinfo returned HTTP {}",
             response.status().as_u16()
@@ -76,7 +89,10 @@ pub(super) async fn verify_subject(
     let body = response
         .json::<serde_json::Value>()
         .await
-        .map_err(|error| format!("userinfo response is invalid: {error}"))?;
+        .map_err(|error| {
+            verification_failure("userinfo", "invalid_json", None);
+            format!("userinfo response is invalid: {error}")
+        })?;
     let subject = body
         .get("sub")
         .and_then(serde_json::Value::as_str)

@@ -81,15 +81,27 @@ pub(super) async fn introspect_permissions(
         // The form carries the secret, so nothing here logs it.
         .send()
         .await
-        .map_err(|e| format!("introspection request failed: {e}"))?;
+        .map_err(|e| {
+            super::identity::verification_failure("introspection", "transport", None);
+            format!("introspection request failed: {e}")
+        })?;
     if !resp.status().is_success() {
+        super::identity::verification_failure(
+            "introspection",
+            "http_status",
+            Some(resp.status().as_u16()),
+        );
         return Err(format!("introspection returned {}", resp.status()));
     }
-    let body: serde_json::Value = resp
-        .json()
-        .await
-        .map_err(|e| format!("introspection body not usable: {e}"))?;
-    introspection_claim(&body, expected_subject).map(Some)
+    let body: serde_json::Value = resp.json().await.map_err(|e| {
+        super::identity::verification_failure("introspection", "invalid_json", None);
+        format!("introspection body not usable: {e}")
+    })?;
+    introspection_claim(&body, expected_subject)
+        .map(Some)
+        .inspect_err(|_| {
+            super::identity::verification_failure("introspection", "invalid_evidence", None);
+        })
 }
 
 #[cfg(test)]
