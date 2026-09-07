@@ -1,6 +1,7 @@
 //! Hosted sandbox provider lifecycle client.
 
 mod client;
+mod metadata;
 mod model;
 mod reclaimer;
 
