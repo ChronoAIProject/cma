@@ -1,6 +1,57 @@
 import { test, expect, type Page, type TestInfo } from '@playwright/test';
 import { LocalStartup, localTime } from './agent-startup-fixtures';
 
+test('LOCAL long tool paths preserve visible status at desktop and mobile widths', async ({
+  page,
+  baseURL,
+}, info) => {
+  const boundary = new LocalStartup();
+  const title = `Read file '/home/cma/research/.worktrees/${'worktree-'.repeat(12)}/CLAUDE.md'`;
+  boundary.events = [
+    {
+      seq: 1,
+      appended_at: localTime,
+      kind: {
+        type: 'tool_call_started',
+        call_id: 'local-read',
+        title,
+        kind: 'read',
+        status: 'completed',
+      },
+    },
+  ];
+  await boundary.route(page, baseURL!);
+  await page.goto('/agents/agt_contract');
+  await expect(page.locator('.agent-event--tool strong')).toHaveText(title);
+  for (const width of [1440, 390, 320]) {
+    await page.setViewportSize({ width, height: 900 });
+    await expect
+      .poll(() =>
+        page.locator('.agent-event--tool').evaluate((row) => {
+          const bounds = row.getBoundingClientRect();
+          return {
+            rowFits: bounds.left >= 0 && bounds.right <= innerWidth + 1,
+            overflowing: [...row.querySelectorAll<HTMLElement>('strong, span')].filter(
+              (child) =>
+                child.scrollWidth > child.clientWidth + 1 ||
+                child.getBoundingClientRect().right > bounds.right ||
+                child.getBoundingClientRect().left < bounds.left,
+            ).length,
+          };
+        }),
+      )
+      .toEqual({ rowFits: true, overflowing: 0 });
+    await page.screenshot({
+      path: info.outputPath(`tool-path-${width}.png`),
+      fullPage: true,
+      animations: 'disabled',
+    });
+  }
+  expect(boundary.writes).toEqual([]);
+  expect(boundary.unexpected).toEqual([]);
+  expect(boundary.errors).toEqual([]);
+});
+
 async function captureLayouts(page: Page, info: TestInfo, state: string) {
   const originalViewport = page.viewportSize();
   const originallyDark = await page.evaluate(() =>

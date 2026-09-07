@@ -252,8 +252,25 @@
 }
 
 .agent-event--tool > div {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 4px 8px;
+  align-items: start;
   flex: 1;
+  min-width: 0;
+}
+
+.agent-event--tool strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.agent-event--tool span {
+  white-space: nowrap;
+}
+
+.agent-event--tool p {
+  grid-column: 1 / -1;
   min-width: 0;
 }
 
