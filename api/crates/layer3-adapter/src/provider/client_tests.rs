@@ -149,6 +149,39 @@ fn provider_rows_ignore_unknown_fields() {
 }
 
 #[tokio::test]
+async fn provider_hash_label_encoding_is_reversible_on_create_get_and_list() {
+    let original = format!("-{}", "a".repeat(42));
+    let wire = format!("h.{original}");
+    let row = serde_json::json!({ "id": "runtime-label", "metadata": { "cma/spec-sha256": wire } });
+    for operation in ["create", "get", "list"] {
+        let body = if operation == "list" {
+            serde_json::json!({"items":[row]}).to_string()
+        } else {
+            row.to_string()
+        };
+        let (origin, task) = serve_raw(format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len())).await;
+        let client = SandboxClient::new(origin, "fixture-provider");
+        let mut request = provider_request();
+        request
+            .metadata
+            .insert("cma/spec-sha256".into(), original.clone());
+        let received = match operation {
+            "create" => client.create(&request).await.unwrap(),
+            "get" => client.get("runtime-label").await.unwrap(),
+            _ => client.list().await.unwrap().remove(0),
+        };
+        assert_eq!(received.metadata["cma/spec-sha256"], original);
+        assert_eq!(request.metadata["cma/spec-sha256"], original);
+        let observed = task.await.unwrap();
+        if operation == "create" {
+            let (_, body) = observed.split_once("\r\n\r\n").unwrap();
+            let sent: serde_json::Value = serde_json::from_str(body).unwrap();
+            assert_eq!(sent["metadata"]["cma/spec-sha256"], wire);
+        }
+    }
+}
+
+#[tokio::test]
 async fn provider_lifecycle_uses_published_paths_and_header_authentication() {
     let fixture = serve(vec![
         Reply {
