@@ -6,7 +6,10 @@ use super::store::{
     SandboxLifecycleCommand, SandboxLifecycleCommandKind, SandboxLifecycleCommandResult,
     SandboxStoreError,
 };
-use super::{SandboxLifecycleCommandOutcome, SandboxReviveCause, SandboxService, SandboxStatus};
+use super::{
+    SandboxLifecycleBlocker, SandboxLifecycleCommandOutcome, SandboxReviveCause, SandboxService,
+    SandboxStatus,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum SandboxLifecycleCommandError {
@@ -18,6 +21,11 @@ pub enum SandboxLifecycleCommandError {
     SandboxNotActive { status: SandboxStatus },
     #[error("sandbox is not paused (current status: {status:?})")]
     SandboxNotPaused { status: SandboxStatus },
+    #[error("sandbox lifecycle is busy (current status: {status:?}, reason: {reason:?})")]
+    SandboxBusy {
+        status: SandboxStatus,
+        reason: SandboxLifecycleBlocker,
+    },
     #[error("sandbox data is not usable: {0}")]
     Corrupt(String),
     #[error("sandbox lifecycle dependency is unavailable: {0}")]
@@ -31,6 +39,7 @@ impl SandboxLifecycleCommandError {
             Self::NotFound => "sandbox_not_found",
             Self::SandboxNotActive { .. } => "sandbox_not_active",
             Self::SandboxNotPaused { .. } => "sandbox_not_paused",
+            Self::SandboxBusy { .. } => "sandbox_lifecycle_busy",
             Self::Corrupt(_) => "stored_sandbox_corrupt",
             Self::Unavailable(_) => "sandbox_lifecycle_unavailable",
         }
@@ -77,6 +86,19 @@ impl SandboxService {
         {
             SandboxLifecycleCommandResult::Accepted(outcome) => Ok(outcome),
             SandboxLifecycleCommandResult::NotEligible(sandbox) => match kind {
+                SandboxLifecycleCommandKind::Pause { .. }
+                    if sandbox.status == SandboxStatus::Active =>
+                {
+                    Err(busy_or_corrupt(sandbox.status, sandbox.pause_eligibility()))
+                }
+                SandboxLifecycleCommandKind::Revive { .. }
+                    if sandbox.status == SandboxStatus::Paused =>
+                {
+                    Err(busy_or_corrupt(
+                        sandbox.status,
+                        sandbox.revive_eligibility(),
+                    ))
+                }
                 SandboxLifecycleCommandKind::Pause { .. } => {
                     Err(SandboxLifecycleCommandError::SandboxNotActive {
                         status: sandbox.status,
@@ -89,6 +111,18 @@ impl SandboxService {
                 }
             },
         }
+    }
+}
+
+fn busy_or_corrupt(
+    status: SandboxStatus,
+    eligibility: Result<(), SandboxLifecycleBlocker>,
+) -> SandboxLifecycleCommandError {
+    match eligibility {
+        Err(reason) => SandboxLifecycleCommandError::SandboxBusy { status, reason },
+        Ok(()) => SandboxLifecycleCommandError::Corrupt(
+            "eligible sandbox could not begin its lifecycle transition".into(),
+        ),
     }
 }
 

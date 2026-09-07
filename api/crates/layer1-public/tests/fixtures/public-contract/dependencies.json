@@ -1170,6 +1170,21 @@
             "max_workspaces": 4,
             "max_agents_per_workspace": 4
           },
+          "lifecycle": {
+            "pause": {
+              "allowed": false,
+              "reason": "not_active"
+            },
+            "revive": {
+              "allowed": false,
+              "reason": "not_paused"
+            },
+            "operation": {
+              "purpose": "revive",
+              "phase": "checkpoint_verification",
+              "started_at": "2026-09-05T00:00:00Z"
+            }
+          },
           "last_activity_at": "2026-09-05T00:00:00Z",
           "created_at": "2026-09-05T00:00:00Z",
           "updated_at": "2026-09-05T00:00:00Z",

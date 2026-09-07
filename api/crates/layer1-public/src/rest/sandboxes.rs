@@ -194,7 +194,7 @@ pub(super) async fn remove(
         (status = 401, description = "not_authenticated", body = crate::rest::ProblemDocument, content_type = "application/problem+json"),
         (status = 403, description = "forbidden", body = crate::rest::ProblemDocument, content_type = "application/problem+json"),
         (status = 404, description = "sandbox_not_found", body = crate::rest::ProblemDocument, content_type = "application/problem+json"),
-        (status = 409, description = "sandbox_not_active or idempotency operation conflict", body = crate::rest::ProblemDocument, content_type = "application/problem+json"),
+        (status = 409, description = "sandbox_not_active, sandbox_lifecycle_busy, or idempotency operation conflict", body = crate::rest::ProblemDocument, content_type = "application/problem+json"),
         (status = 422, description = "idempotency_key_reused", body = crate::rest::ProblemDocument, content_type = "application/problem+json"),
         (status = 503, description = "Sandbox lifecycle unavailable", body = crate::rest::ProblemDocument, content_type = "application/problem+json")
     )
@@ -240,7 +240,7 @@ pub(super) async fn pause(
         (status = 401, description = "not_authenticated", body = crate::rest::ProblemDocument, content_type = "application/problem+json"),
         (status = 403, description = "forbidden", body = crate::rest::ProblemDocument, content_type = "application/problem+json"),
         (status = 404, description = "sandbox_not_found", body = crate::rest::ProblemDocument, content_type = "application/problem+json"),
-        (status = 409, description = "sandbox_not_paused or idempotency operation conflict", body = crate::rest::ProblemDocument, content_type = "application/problem+json"),
+        (status = 409, description = "sandbox_not_paused, sandbox_lifecycle_busy, or idempotency operation conflict", body = crate::rest::ProblemDocument, content_type = "application/problem+json"),
         (status = 422, description = "idempotency_key_reused", body = crate::rest::ProblemDocument, content_type = "application/problem+json"),
         (status = 503, description = "Sandbox lifecycle unavailable", body = crate::rest::ProblemDocument, content_type = "application/problem+json")
     )

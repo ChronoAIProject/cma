@@ -1,4 +1,6 @@
 import { profileReference } from '../profiles/types.js';
+import { sandboxLifecycle } from './lifecycle.js';
+export type * from './lifecycle.js';
 import {
   array,
   boolean,
@@ -51,6 +53,7 @@ const sandboxFields = {
   status: sandboxStatus,
   profile: profileReference,
   limits: object({ max_workspaces: positiveInteger, max_agents_per_workspace: positiveInteger }),
+  lifecycle: optional(sandboxLifecycle),
   runtime_version: optional(text),
   failure: optional(failure),
   last_activity_at: text,

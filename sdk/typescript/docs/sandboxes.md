@@ -39,6 +39,17 @@ Create returns HTTP 201 and a base view, not a ready runtime. `pause`, `revive` 
 progress. Do not replace resource identifiers or clear a conversation during
 pause, revival or runtime rotation.
 
+Read `lifecycle.pause` and `lifecycle.revive` for eligibility to begin a new
+transition. An active Sandbox can still be temporarily busy: `reason` distinguishes
+`checkpoint_in_progress` from `work_in_progress`. `lifecycle.checkpoint` records
+`capture` or `resume_writers`, its `started_at` timestamp and checkpoint `epoch`;
+`lifecycle.operation` records an admitted pause, revival or image rotation phase.
+These fields contain no worker or writer credentials. Older servers can omit
+`lifecycle`; treat that as unavailable eligibility, not permission inferred from
+`status`. A command can race with new work and return HTTP 409
+`sandbox_lifecycle_busy`; refresh before retrying. Idempotent command replays may
+still succeed when a new transition is not eligible.
+
 Use `workspaces.create(sandboxId, body, options)` to add a Workspace within the
 pinned limits. `worktrees.list(workspaceId)` and `worktrees.read(id)` expose the
 Agent's real working checkout; a Worktree is not an independent terminal surface.

@@ -764,6 +764,16 @@
             "max_workspaces": 4,
             "max_agents_per_workspace": 4
           },
+          "lifecycle": {
+            "pause": {
+              "allowed": false,
+              "reason": "not_active"
+            },
+            "revive": {
+              "allowed": false,
+              "reason": "not_paused"
+            }
+          },
           "runtime_version": "sha256:runtime",
           "last_activity_at": "2026-09-05T00:00:00Z",
           "created_at": "2026-09-05T00:00:00Z",

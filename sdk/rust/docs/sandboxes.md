@@ -40,3 +40,13 @@ Worktree mutation helper. Sandbox `pause`, `revive`, and `delete`, and Workspace
 `delete`, return recorded lifecycle state. Poll events and resources until the
 requested outcome is observed. Deletion and retirement are explicit owner
 actions, not cleanup implied by a dropped stream or failed Launch.
+
+The optional `Sandbox.lifecycle` contains authoritative `pause` and `revive`
+eligibility for beginning a new transition. An active Sandbox can be busy with
+`checkpoint_in_progress` or `work_in_progress`. Recorded checkpoint progress
+contains the `capture` or `resume_writers` phase, request timestamp and epoch;
+the optional operation records a pause, revival or image rotation phase without
+worker or writer credentials. Missing lifecycle data from an older server means
+eligibility is unavailable, not that status alone authorizes an action. A race
+with new work can return HTTP 409 `sandbox_lifecycle_busy`; refresh before
+retrying. Existing command replay semantics are unchanged.

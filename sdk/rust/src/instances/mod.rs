@@ -8,8 +8,10 @@ use crate::{
 };
 
 mod events;
+mod lifecycle;
 mod types;
 pub use events::*;
+pub use lifecycle::*;
 pub use types::*;
 
 /// Pagination and optional status filter for owned Sandboxes.

@@ -42,6 +42,9 @@ use crate::rest::instances_problem::HierarchyProblem;
 use crate::AuthenticatedSubject;
 
 const NOW: &str = "2026-09-05T00:00:00Z";
+
+#[path = "sandbox_lifecycle_view_tests.rs"]
+mod lifecycle_view_tests;
 type OperationKey = (String, String, String);
 type OperationRecord = ([u8; 32], Option<Vec<u8>>);
 

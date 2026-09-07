@@ -57,6 +57,8 @@ pub struct Sandbox {
     pub profile: ProfileReference,
     /// Captured admission limits.
     pub limits: SandboxLimits,
+    /// Authoritative lifecycle eligibility and recorded progress; absent on older servers.
+    pub lifecycle: Option<super::SandboxLifecycle>,
     /// Currently bound runtime version, when present.
     pub runtime_version: Option<String>,
     /// Last recorded failure.

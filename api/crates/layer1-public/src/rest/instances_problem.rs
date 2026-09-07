@@ -1,6 +1,7 @@
 use axum::{http::StatusCode, response::IntoResponse, response::Response};
 use layer2_core::sandbox::{
-    HierarchyReadError, SandboxLifecycleCommandError, SandboxServiceError, WorkspaceServiceError,
+    HierarchyReadError, SandboxLifecycleBlocker, SandboxLifecycleCommandError, SandboxServiceError,
+    WorkspaceServiceError,
 };
 
 use super::{problem_document, problem_response};
@@ -24,6 +25,7 @@ pub(crate) enum HierarchyProblem {
     InvalidPage,
     Unavailable,
     SandboxLifecycleUnavailable(&'static str),
+    SandboxLifecycleBusy(SandboxLifecycleBlocker),
 }
 
 impl HierarchyProblem {
@@ -86,6 +88,9 @@ impl HierarchyProblem {
             }
             SandboxLifecycleCommandError::SandboxNotPaused { .. } => {
                 Self::Conflict("sandbox_not_paused")
+            }
+            SandboxLifecycleCommandError::SandboxBusy { reason, .. } => {
+                Self::SandboxLifecycleBusy(reason)
             }
             SandboxLifecycleCommandError::Corrupt(_) => {
                 Self::SandboxLifecycleUnavailable("stored_sandbox_corrupt")
@@ -206,6 +211,13 @@ impl IntoResponse for HierarchyProblem {
                 "The Sandbox lifecycle service could not complete this operation.",
                 code.to_owned(),
                 vec![],
+            ),
+            Self::SandboxLifecycleBusy(reason) => (
+                StatusCode::CONFLICT,
+                "sandbox-lifecycle-busy",
+                "The Sandbox is completing lifecycle work. Refresh its state before retrying.",
+                "sandbox_lifecycle_busy".to_owned(),
+                vec![("reason", serde_json::json!(reason))],
             ),
         };
         let mut body = problem_document(status, slug, detail, &code);
