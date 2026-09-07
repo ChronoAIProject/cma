@@ -1,0 +1,1323 @@
+name: CMA Trigger provider smoke
+run-name: CMA Trigger provider smoke ${{ inputs.dispatch_nonce }}
+
+# This is deliberately outside pull-request and push CI. It writes durable
+# resources through CMA, NyxID, and GitHub and therefore runs only after an
+# operator chooses it, confirms the preservation policy, and passes a
+# pre-provisioned, non-bypassable cma-trigger-smoke environment gate. Merely
+# naming an environment in this file does not prove that GitHub has protection
+# rules for it, so the plan job verifies the live configuration before any
+# credential-bearing job can start.
+on:
+  workflow_dispatch:
+    inputs:
+      dispatch_nonce:
+        description: One operator-generated 128-bit correlation nonce
+        required: true
+        type: string
+      expected_fork_mode:
+        description: Require the contributor fork to be absent or already reusable before the run
+        required: true
+        type: choice
+        options: [new, reuse]
+      expected_head_sha:
+        description: Exact reviewed lowercase develop commit SHA that this run must execute
+        required: true
+        type: string
+      handoff_secret_name:
+        description: Nonce-bound one-run protected handoff secret name
+        required: true
+        type: string
+      preservation_confirmation:
+        description: Type PRESERVE to retain the fork, branch, commit, and pull request after the run
+        required: true
+        type: string
+
+# One configured contributor identity owns one fork-network slot. Concurrent runs would
+# make exact resource deltas unknowable even if their Launch ids differed.
+concurrency:
+  group: cma-trigger-provider-smoke
+  cancel-in-progress: false
+
+permissions:
+  # GitHub's environment-read endpoint advertises actions=read. Keep this
+  # read-only permission so the plan job can prove the live protection rules;
+  # the workflow token still cannot mutate repository or provider state.
+  actions: read
+  contents: read
+
+jobs:
+  plan:
+    name: Validate smoke plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    outputs:
+      approved_manifest_artifact_digest: ${{ steps.approved_manifest_upload.outputs.artifact-digest }}
+      approved_manifest_artifact_id: ${{ steps.approved_manifest_upload.outputs.artifact-id }}
+      approved_manifest_sha256: ${{ steps.approved_manifest.outputs.manifest_sha256 }}
+      api_artifact_digest: ${{ steps.ci_images.outputs.api_artifact_digest }}
+      api_artifact_id: ${{ steps.ci_images.outputs.api_artifact_id }}
+      ci_run_attempt: ${{ steps.ci_images.outputs.ci_run_attempt }}
+      ci_run_id: ${{ steps.ci_images.outputs.ci_run_id }}
+      runtime_artifact_digest: ${{ steps.ci_images.outputs.runtime_artifact_digest }}
+      runtime_artifact_id: ${{ steps.ci_images.outputs.runtime_artifact_id }}
+    steps:
+      - name: Require the deployed develop workflow and preservation consent
+        env:
+          DISPATCH_NONCE: ${{ inputs.dispatch_nonce }}
+          DISPATCH_REF: ${{ github.ref }}
+          EXPECTED_HEAD_SHA: ${{ inputs.expected_head_sha }}
+          HANDOFF_SECRET_NAME: ${{ inputs.handoff_secret_name }}
+          PRESERVATION_CONFIRMATION: ${{ inputs.preservation_confirmation }}
+          WORKFLOW_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          if [ "$DISPATCH_REF" != "refs/heads/develop" ]; then
+            echo "::error::provider smoke runs only from refs/heads/develop (got '$DISPATCH_REF')"
+            exit 1
+          fi
+          if [[ ! "$DISPATCH_NONCE" =~ ^[0-9a-f]{32}$ ]]; then
+            echo "::error::dispatch_nonce must be exactly 128 bits of lowercase hexadecimal"
+            exit 1
+          fi
+          expected_handoff_secret_name="CMA_TRIGGER_SMOKE_NYXID_BOOTSTRAP_${DISPATCH_NONCE^^}"
+          if [ "$HANDOFF_SECRET_NAME" != "$expected_handoff_secret_name" ]; then
+            echo "::error::handoff_secret_name is not bound to dispatch_nonce"
+            exit 1
+          fi
+          if [[ ! "$EXPECTED_HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::expected_head_sha must be exactly one lowercase 40-character commit SHA"
+            exit 1
+          fi
+          if [ "$WORKFLOW_SHA" != "$EXPECTED_HEAD_SHA" ]; then
+            echo "::error::dispatched workflow SHA '$WORKFLOW_SHA' does not match reviewed develop SHA '$EXPECTED_HEAD_SHA'"
+            exit 1
+          fi
+          if [ "$PRESERVATION_CONFIRMATION" != "PRESERVE" ]; then
+            echo "::error::preservation_confirmation must be exactly PRESERVE"
+            exit 1
+          fi
+
+      - name: Require the live protected smoke environment
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          environment="$RUNNER_TEMP/cma-trigger-smoke-environment.json"
+          if ! gh api \
+            "repos/$GITHUB_REPOSITORY/environments/cma-trigger-smoke" \
+            > "$environment"; then
+            echo "::error::cma-trigger-smoke must be created and protected before this workflow is dispatched"
+            exit 1
+          fi
+          if ! jq -e '
+            .name == "cma-trigger-smoke"
+            and .can_admins_bypass == false
+            and (.protection_rules | type == "array")
+            and (.protection_rules | length == 2)
+            and ([.protection_rules[] | select(.type == "branch_policy")] | length == 1)
+            and ([.protection_rules[] | select(.type == "required_reviewers")] | length == 1)
+            and any(.protection_rules[];
+              .type == "required_reviewers"
+              and .prevent_self_review == true
+              and (.reviewers | type == "array")
+              and (.reviewers | length == 1)
+              and .reviewers[0].type == "Team"
+              and .reviewers[0].reviewer.id == 15748251
+              and .reviewers[0].reviewer.node_id == "T_kwDODyHfns4A8Eyb"
+              and .reviewers[0].reviewer.slug == "ai-application")
+            and .deployment_branch_policy.protected_branches == true
+            and .deployment_branch_policy.custom_branch_policies == false
+          ' "$environment" >/dev/null; then
+            echo "::error::cma-trigger-smoke must require independent review, forbid administrator bypass, and admit only protected branches"
+            exit 1
+          fi
+
+      - name: Resolve exact successful CI image artifacts
+        id: ci_images
+        env:
+          EXPECTED_REPOSITORY_ID: "1330597394"
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          umask 077
+          if [ "$GITHUB_REPOSITORY_ID" != "$EXPECTED_REPOSITORY_ID" ] \
+            || [[ ! "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::provider image planning has an unreviewed repository or source SHA"
+            exit 1
+          fi
+
+          plan_root="$RUNNER_TEMP/cma-trigger-image-provenance-plan"
+          if [ -e "$plan_root" ]; then
+            echo "::error::provider image planning output already exists"
+            exit 1
+          fi
+          install -d -m 0700 "$plan_root"
+
+          runs_path="$plan_root/ci-runs.json"
+          gh api --paginate --slurp \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?branch=develop&event=push&status=completed&per_page=100" \
+            > "$runs_path"
+          run_count=$(jq \
+            --arg source_sha "$SOURCE_SHA" \
+            --argjson repository_id "$GITHUB_REPOSITORY_ID" \
+            '[.[].workflow_runs[]
+              | select(
+                  .name == "CI"
+                  and .path == ".github/workflows/ci.yml"
+                  and .event == "push"
+                  and .status == "completed"
+                  and .conclusion == "success"
+                  and .head_branch == "develop"
+                  and .head_sha == $source_sha
+                  and .repository.id == $repository_id
+                  and .head_repository.id == $repository_id
+                  and (.id | type) == "number" and .id > 0
+                  and (.run_attempt | type) == "number" and .run_attempt > 0)]
+             | length' \
+            "$runs_path")
+          if [ "$run_count" -ne 1 ]; then
+            echo "::error::expected exactly one successful CI push run for develop SHA $SOURCE_SHA; found $run_count"
+            exit 1
+          fi
+          ci_run=$(jq -c \
+            --arg source_sha "$SOURCE_SHA" \
+            --argjson repository_id "$GITHUB_REPOSITORY_ID" \
+            '[.[].workflow_runs[]
+              | select(
+                  .name == "CI"
+                  and .path == ".github/workflows/ci.yml"
+                  and .event == "push"
+                  and .status == "completed"
+                  and .conclusion == "success"
+                  and .head_branch == "develop"
+                  and .head_sha == $source_sha
+                  and .repository.id == $repository_id
+                  and .head_repository.id == $repository_id)]
+             | .[0]' \
+            "$runs_path")
+          ci_run_id=$(jq -r '.id' <<< "$ci_run")
+          ci_run_attempt=$(jq -r '.run_attempt' <<< "$ci_run")
+
+          jobs_path="$plan_root/ci-jobs.json"
+          gh api --paginate --slurp \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "repos/$GITHUB_REPOSITORY/actions/runs/$ci_run_id/jobs?filter=latest&per_page=100" \
+            > "$jobs_path"
+          if ! jq -e \
+            --arg source_sha "$SOURCE_SHA" \
+            --argjson run_id "$ci_run_id" \
+            '([.[].jobs[] | select(.name == "Images (api)")] | length) == 1
+             and ([.[].jobs[] | select(.name == "Images (runtime)")] | length) == 1
+             and all(.[].jobs[]
+               | select(.name == "Images (api)" or .name == "Images (runtime)");
+                 .run_id == $run_id
+                 and .head_sha == $source_sha
+                 and .status == "completed"
+                 and .conclusion == "success")' \
+            "$jobs_path" >/dev/null; then
+            echo "::error::the exact CI run did not complete both approved image jobs successfully"
+            exit 1
+          fi
+
+          artifacts_path="$plan_root/ci-artifacts.json"
+          gh api --paginate --slurp \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "repos/$GITHUB_REPOSITORY/actions/runs/$ci_run_id/artifacts?per_page=100" \
+            > "$artifacts_path"
+          for component in api runtime; do
+            artifact_name="cma-trigger-ci-image-${component}-${SOURCE_SHA}"
+            artifact_count=$(jq \
+              --arg artifact_name "$artifact_name" \
+              '[.[].artifacts[] | select(.name == $artifact_name)] | length' \
+              "$artifacts_path")
+            if [ "$artifact_count" -ne 1 ]; then
+              echo "::error::expected exactly one CI artifact named $artifact_name; found $artifact_count"
+              exit 1
+            fi
+            artifact=$(jq -c \
+              --arg artifact_name "$artifact_name" \
+              '[.[].artifacts[] | select(.name == $artifact_name)] | .[0]' \
+              "$artifacts_path")
+            if ! jq -e \
+              --arg artifact_name "$artifact_name" \
+              --arg source_sha "$SOURCE_SHA" \
+              --argjson repository_id "$GITHUB_REPOSITORY_ID" \
+              --argjson run_id "$ci_run_id" \
+              '.name == $artifact_name
+               and .expired == false
+               and (.id | type) == "number" and .id > 0
+               and (.size_in_bytes | type) == "number" and .size_in_bytes > 0
+               and (.digest | type) == "string"
+               and (.digest | test("^sha256:[0-9a-f]{64}$"))
+               and .workflow_run.id == $run_id
+               and .workflow_run.repository_id == $repository_id
+               and .workflow_run.head_repository_id == $repository_id
+               and .workflow_run.head_branch == "develop"
+               and .workflow_run.head_sha == $source_sha' \
+              <<< "$artifact" >/dev/null; then
+              echo "::error::CI artifact $artifact_name has invalid immutable provenance"
+              exit 1
+            fi
+            artifact_id=$(jq -r '.id' <<< "$artifact")
+            artifact_digest=$(jq -r '.digest' <<< "$artifact")
+            {
+              echo "${component}_artifact_id=$artifact_id"
+              echo "${component}_artifact_digest=$artifact_digest"
+            } >> "$GITHUB_OUTPUT"
+          done
+          {
+            echo "ci_run_id=$ci_run_id"
+            echo "ci_run_attempt=$ci_run_attempt"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Download exact API image artifact for approval
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          artifact-ids: ${{ steps.ci_images.outputs.api_artifact_id }}
+          path: ${{ runner.temp }}/cma-trigger-image-provenance-plan/api
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ steps.ci_images.outputs.ci_run_id }}
+
+      - name: Download exact runtime image artifact for approval
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          artifact-ids: ${{ steps.ci_images.outputs.runtime_artifact_id }}
+          path: ${{ runner.temp }}/cma-trigger-image-provenance-plan/runtime
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ steps.ci_images.outputs.ci_run_id }}
+
+      - name: Build closed approved image provenance manifest
+        id: approved_manifest
+        env:
+          API_ARTIFACT_DIGEST: ${{ steps.ci_images.outputs.api_artifact_digest }}
+          API_ARTIFACT_ID: ${{ steps.ci_images.outputs.api_artifact_id }}
+          CI_RUN_ATTEMPT: ${{ steps.ci_images.outputs.ci_run_attempt }}
+          CI_RUN_ID: ${{ steps.ci_images.outputs.ci_run_id }}
+          EXPECTED_REPOSITORY_ID: "1330597394"
+          RUNTIME_ARTIFACT_DIGEST: ${{ steps.ci_images.outputs.runtime_artifact_digest }}
+          RUNTIME_ARTIFACT_ID: ${{ steps.ci_images.outputs.runtime_artifact_id }}
+          SOURCE_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          umask 077
+          plan_root="$RUNNER_TEMP/cma-trigger-image-provenance-plan"
+          manifest_root="$RUNNER_TEMP/cma-trigger-approved-image-provenance"
+          manifest_path="$manifest_root/approved-image-provenance.json"
+          if [ -e "$manifest_root" ]; then
+            echo "::error::approved image provenance output already exists"
+            exit 1
+          fi
+          install -d -m 0700 "$manifest_root"
+
+          validate_component() {
+            local component=$1
+            local artifact_id=$2
+            local artifact_digest=$3
+            local artifact_dir="$plan_root/$component"
+            local artifact_name="cma-trigger-ci-image-${component}-${SOURCE_SHA}"
+            local archive_name="cma-trigger-${component}.tar"
+            local metadata_name="cma-trigger-${component}.json"
+            local archive_path="$artifact_dir/$archive_name"
+            local metadata_path="$artifact_dir/$metadata_name"
+            local image_reference="cma-${component}:ci"
+
+            if [ "$(find "$artifact_dir" -mindepth 1 -maxdepth 1 -print | wc -l | tr -d ' ')" -ne 2 ] \
+              || [ ! -f "$archive_path" ] || [ -L "$archive_path" ] \
+              || [ ! -f "$metadata_path" ] || [ -L "$metadata_path" ]; then
+              echo "::error::$component provenance artifact must contain exactly its regular archive and metadata files"
+              exit 1
+            fi
+            if ! jq -e \
+              --arg archive_name "$archive_name" \
+              --arg component "$component" \
+              --arg image_reference "$image_reference" \
+              --argjson repository_id "$EXPECTED_REPOSITORY_ID" \
+              --argjson run_attempt "$CI_RUN_ATTEMPT" \
+              --argjson run_id "$CI_RUN_ID" \
+              --arg source_sha "$SOURCE_SHA" \
+              'type == "object"
+               and (keys == [
+                 "archive_name", "archive_sha256", "archive_size", "component",
+                 "image_id", "image_reference", "kind", "repository_id",
+                 "run_attempt", "run_id", "schema_version", "source_sha"
+               ])
+               and .schema_version == 1
+               and .kind == "cma-trigger-ci-image"
+               and .repository_id == $repository_id
+               and .source_sha == $source_sha
+               and .run_id == $run_id
+               and .run_attempt == $run_attempt
+               and .component == $component
+               and .image_reference == $image_reference
+               and (.image_id | type) == "string"
+               and (.image_id | test("^sha256:[0-9a-f]{64}$"))
+               and .archive_name == $archive_name
+               and (.archive_sha256 | type) == "string"
+               and (.archive_sha256 | test("^[0-9a-f]{64}$"))
+               and (.archive_size | type) == "number"
+               and .archive_size > 0
+               and (.archive_size | floor) == .archive_size' \
+              "$metadata_path" >/dev/null; then
+              echo "::error::$component CI image metadata is not closed and source-bound"
+              exit 1
+            fi
+
+            local archive_sha256
+            local archive_size
+            local expected_archive_sha256
+            local expected_archive_size
+            archive_sha256=$(sha256sum "$archive_path" | awk '{print $1}')
+            archive_size=$(stat --format='%s' "$archive_path")
+            expected_archive_sha256=$(jq -r '.archive_sha256' "$metadata_path")
+            expected_archive_size=$(jq -r '.archive_size' "$metadata_path")
+            if [ "$archive_sha256" != "$expected_archive_sha256" ] \
+              || [ "$archive_size" != "$expected_archive_size" ]; then
+              echo "::error::$component archive bytes do not match CI metadata"
+              exit 1
+            fi
+
+            docker image load --input "$archive_path" >/dev/null
+            local actual_image_id
+            local expected_image_id
+            actual_image_id=$(docker image inspect --format '{{.Id}}' "$image_reference")
+            expected_image_id=$(jq -r '.image_id' "$metadata_path")
+            if [ "$actual_image_id" != "$expected_image_id" ]; then
+              echo "::error::$component archive does not load to its claimed immutable image ID"
+              exit 1
+            fi
+
+            local metadata_sha256
+            metadata_sha256=$(sha256sum "$metadata_path" | awk '{print $1}')
+            jq -n \
+              --arg archive_name "$archive_name" \
+              --arg archive_sha256 "$archive_sha256" \
+              --argjson archive_size "$archive_size" \
+              --arg artifact_digest "$artifact_digest" \
+              --argjson artifact_id "$artifact_id" \
+              --arg artifact_name "$artifact_name" \
+              --arg image_id "$actual_image_id" \
+              --arg image_reference "$image_reference" \
+              --arg metadata_name "$metadata_name" \
+              --arg metadata_sha256 "$metadata_sha256" \
+              '{
+                artifact_id: $artifact_id,
+                artifact_digest: $artifact_digest,
+                artifact_name: $artifact_name,
+                archive_name: $archive_name,
+                archive_sha256: $archive_sha256,
+                archive_size: $archive_size,
+                metadata_name: $metadata_name,
+                metadata_sha256: $metadata_sha256,
+                image_reference: $image_reference,
+                image_id: $image_id
+              }' > "$plan_root/${component}-approved.json"
+          }
+
+          validate_component api "$API_ARTIFACT_ID" "$API_ARTIFACT_DIGEST"
+          validate_component runtime "$RUNTIME_ARTIFACT_ID" "$RUNTIME_ARTIFACT_DIGEST"
+          jq -n \
+            --argjson repository_id "$EXPECTED_REPOSITORY_ID" \
+            --arg source_sha "$SOURCE_SHA" \
+            --argjson ci_run_id "$CI_RUN_ID" \
+            --argjson ci_run_attempt "$CI_RUN_ATTEMPT" \
+            --slurpfile api "$plan_root/api-approved.json" \
+            --slurpfile runtime "$plan_root/runtime-approved.json" \
+            '{
+              schema_version: 1,
+              kind: "cma-trigger-approved-ci-images",
+              repository_id: $repository_id,
+              source_sha: $source_sha,
+              ci_run: {
+                id: $ci_run_id,
+                attempt: $ci_run_attempt,
+                event: "push",
+                head_branch: "develop",
+                head_sha: $source_sha,
+                conclusion: "success",
+                workflow_path: ".github/workflows/ci.yml"
+              },
+              images: {api: $api[0], runtime: $runtime[0]}
+            }' > "$manifest_path"
+          jq -e \
+            --arg source_sha "$SOURCE_SHA" \
+            --argjson repository_id "$EXPECTED_REPOSITORY_ID" \
+            --argjson ci_run_id "$CI_RUN_ID" \
+            --argjson ci_run_attempt "$CI_RUN_ATTEMPT" \
+            'def sha256: (type == "string") and test("^[0-9a-f]{64}$");
+             def artifact_digest: (type == "string") and test("^sha256:[0-9a-f]{64}$");
+             def image($component):
+               type == "object"
+               and (keys == [
+                 "archive_name", "archive_sha256", "archive_size",
+                 "artifact_digest", "artifact_id", "artifact_name", "image_id",
+                 "image_reference", "metadata_name", "metadata_sha256"
+               ])
+               and .artifact_id > 0 and (.artifact_id | floor) == .artifact_id
+               and (.artifact_digest | artifact_digest)
+               and .artifact_name == ("cma-trigger-ci-image-" + $component + "-" + $source_sha)
+               and .archive_name == ("cma-trigger-" + $component + ".tar")
+               and (.archive_sha256 | sha256)
+               and .archive_size > 0 and (.archive_size | floor) == .archive_size
+               and .metadata_name == ("cma-trigger-" + $component + ".json")
+               and (.metadata_sha256 | sha256)
+               and .image_reference == ("cma-" + $component + ":ci")
+               and (.image_id | artifact_digest);
+             type == "object"
+             and (keys == ["ci_run", "images", "kind", "repository_id", "schema_version", "source_sha"])
+             and .schema_version == 1
+             and .kind == "cma-trigger-approved-ci-images"
+             and .repository_id == $repository_id
+             and .source_sha == $source_sha
+             and (.ci_run | type) == "object"
+             and (.ci_run | keys) == [
+               "attempt", "conclusion", "event", "head_branch", "head_sha", "id", "workflow_path"
+             ]
+             and .ci_run.id == $ci_run_id
+             and .ci_run.attempt == $ci_run_attempt
+             and .ci_run.event == "push"
+             and .ci_run.head_branch == "develop"
+             and .ci_run.head_sha == $source_sha
+             and .ci_run.conclusion == "success"
+             and .ci_run.workflow_path == ".github/workflows/ci.yml"
+             and (.images | type) == "object"
+             and (.images | keys) == ["api", "runtime"]
+             and (.images.api | image("api"))
+             and (.images.runtime | image("runtime"))
+             and .images.api.artifact_id != .images.runtime.artifact_id
+             and .images.api.image_id != .images.runtime.image_id' \
+            "$manifest_path" >/dev/null
+          chmod 0400 "$manifest_path"
+          manifest_sha256=$(sha256sum "$manifest_path" | awk '{print $1}')
+          if [[ ! "$manifest_sha256" =~ ^[0-9a-f]{64}$ ]]; then
+            echo "::error::approved image manifest has a malformed SHA-256"
+            exit 1
+          fi
+          echo "manifest_sha256=$manifest_sha256" >> "$GITHUB_OUTPUT"
+
+      - name: Persist approved image provenance manifest
+        id: approved_manifest_upload
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: cma-trigger-approved-ci-images-${{ github.run_id }}
+          path: ${{ runner.temp }}/cma-trigger-approved-image-provenance/approved-image-provenance.json
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+          overwrite: true
+
+      - name: Summarize approved image provenance
+        env:
+          APPROVED_MANIFEST_ARTIFACT_DIGEST: ${{ steps.approved_manifest_upload.outputs.artifact-digest }}
+          APPROVED_MANIFEST_ARTIFACT_ID: ${{ steps.approved_manifest_upload.outputs.artifact-id }}
+          APPROVED_MANIFEST_SHA256: ${{ steps.approved_manifest.outputs.manifest_sha256 }}
+        run: |
+          set -euo pipefail
+          manifest="$RUNNER_TEMP/cma-trigger-approved-image-provenance/approved-image-provenance.json"
+          if [[ ! "$APPROVED_MANIFEST_ARTIFACT_ID" =~ ^[1-9][0-9]*$ ]] \
+            || [[ ! "$APPROVED_MANIFEST_ARTIFACT_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]] \
+            || [[ ! "$APPROVED_MANIFEST_SHA256" =~ ^[0-9a-f]{64}$ ]]; then
+            echo "::error::persisted approval manifest has malformed GitHub artifact identity"
+            exit 1
+          fi
+          {
+            echo "## Approved CI image provenance"
+            echo
+            echo "| Field | Approved value |"
+            echo "| --- | --- |"
+            echo "| Source SHA | \`$(jq -r '.source_sha' "$manifest")\` |"
+            echo "| CI run / attempt | \`$(jq -r '.ci_run.id' "$manifest") / $(jq -r '.ci_run.attempt' "$manifest")\` |"
+            echo "| API artifact ID | \`$(jq -r '.images.api.artifact_id' "$manifest")\` |"
+            echo "| API GitHub digest | \`$(jq -r '.images.api.artifact_digest' "$manifest")\` |"
+            echo "| API archive SHA-256 | \`$(jq -r '.images.api.archive_sha256' "$manifest")\` |"
+            echo "| API archive bytes | \`$(jq -r '.images.api.archive_size' "$manifest")\` |"
+            echo "| API image ID | \`$(jq -r '.images.api.image_id' "$manifest")\` |"
+            echo "| Runtime artifact ID | \`$(jq -r '.images.runtime.artifact_id' "$manifest")\` |"
+            echo "| Runtime GitHub digest | \`$(jq -r '.images.runtime.artifact_digest' "$manifest")\` |"
+            echo "| Runtime archive SHA-256 | \`$(jq -r '.images.runtime.archive_sha256' "$manifest")\` |"
+            echo "| Runtime archive bytes | \`$(jq -r '.images.runtime.archive_size' "$manifest")\` |"
+            echo "| Runtime image ID | \`$(jq -r '.images.runtime.image_id' "$manifest")\` |"
+            echo "| Approval manifest artifact ID | \`$APPROVED_MANIFEST_ARTIFACT_ID\` |"
+            echo "| Approval manifest GitHub digest | \`$APPROVED_MANIFEST_ARTIFACT_DIGEST\` |"
+            echo "| Approval manifest file SHA-256 | \`$APPROVED_MANIFEST_SHA256\` |"
+            echo
+            echo "The protected job is permitted to consume only these exact artifact IDs and bytes."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 26
+
+      - name: Validate the checked-in harness contract
+        run: |
+          set -euo pipefail
+          node --check .github/scripts/cma-trigger-provider-smoke.mjs
+          node .github/scripts/cma-trigger-provider-smoke.mjs --self-test
+          node .github/scripts/cma-trigger-provider-smoke.mjs \
+            --validate-config .github/cma-trigger-provider-smoke.example.json
+          node --check .github/scripts/cma-trigger-provider-object-settlement.mjs
+          node --check .github/scripts/cma-trigger-provider-object-settlement-tests.mjs
+          node .github/scripts/cma-trigger-provider-object-settlement-tests.mjs
+          node --check .github/scripts/cma-trigger-kind-staging-fixture.mjs
+          node --check .github/scripts/cma-trigger-nyxid-smoke-bootstrap.mjs
+          node --check .github/scripts/cma-trigger-nyxid-smoke-bootstrap-tests.mjs
+          node .github/scripts/cma-trigger-nyxid-smoke-bootstrap-tests.mjs
+          node --check .github/tools/cma-trigger-smoke-environment/operator.mjs
+          node --check .github/tools/cma-trigger-smoke-environment/operator-tests.mjs
+          node --check .github/tools/cma-trigger-smoke-environment/operator-contract-tests.mjs
+          node .github/tools/cma-trigger-smoke-environment/operator.mjs --self-test
+          node --test .github/tools/cma-trigger-smoke-environment/operator-tests.mjs
+          node .github/tools/cma-trigger-smoke-environment/operator-contract-tests.mjs
+          bash -n .github/scripts/cma-trigger-kind-staging.sh
+          bash -n .github/scripts/cma-trigger-kind-staging-tests.sh
+          shellcheck .github/scripts/cma-trigger-kind-staging.sh
+          shellcheck .github/scripts/cma-trigger-kind-staging-tests.sh
+          .github/scripts/cma-trigger-kind-staging-tests.sh
+
+  provider:
+    name: Real GitHub and NyxID smoke
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    environment: cma-trigger-smoke
+    outputs:
+      evidence_id: ${{ steps.evidence_audit.outputs.evidence_id }}
+      evidence_result: ${{ steps.evidence_audit.outputs.evidence_result }}
+      retained_artifact_url: ${{ steps.evidence_upload.outputs.artifact-url }}
+    env:
+      CMA_TRIGGER_SMOKE_SANDBOX_NAMESPACE: ${{ vars.CMA_TRIGGER_SMOKE_SANDBOX_NAMESPACE }}
+      CMA_TRIGGER_SMOKE_UPSTREAM_REPOSITORY_ID: ${{ vars.CMA_TRIGGER_SMOKE_UPSTREAM_REPOSITORY_ID }}
+      CMA_TRIGGER_SMOKE_UPSTREAM_OWNER: ${{ vars.CMA_TRIGGER_SMOKE_UPSTREAM_OWNER }}
+      CMA_TRIGGER_SMOKE_UPSTREAM_REPOSITORY: ${{ vars.CMA_TRIGGER_SMOKE_UPSTREAM_REPOSITORY }}
+      CMA_TRIGGER_SMOKE_UPSTREAM_DEFAULT_BRANCH: ${{ vars.CMA_TRIGGER_SMOKE_UPSTREAM_DEFAULT_BRANCH }}
+      CMA_TRIGGER_SMOKE_CONTRIBUTOR_LOGIN: ${{ vars.CMA_TRIGGER_SMOKE_CONTRIBUTOR_LOGIN }}
+      CMA_TRIGGER_SMOKE_FORK_REPOSITORY: ${{ vars.CMA_TRIGGER_SMOKE_FORK_REPOSITORY }}
+      CMA_TRIGGER_SMOKE_MARKER_INPUT: ${{ vars.CMA_TRIGGER_SMOKE_MARKER_INPUT }}
+      CMA_TRIGGER_SMOKE_EXPECTED_PATH_TEMPLATE: ${{ vars.CMA_TRIGGER_SMOKE_EXPECTED_PATH_TEMPLATE }}
+      CMA_TRIGGER_SMOKE_EXPECTED_CONTENT_TEMPLATE: ${{ vars.CMA_TRIGGER_SMOKE_EXPECTED_CONTENT_TEMPLATE }}
+      CMA_TRIGGER_SMOKE_EXPECTED_FORK_MODE: ${{ inputs.expected_fork_mode }}
+      CMA_TRIGGER_SMOKE_RUN_MARKER: gha-${{ github.run_id }}-${{ github.run_attempt }}
+    steps:
+      # Recheck after the environment approval. The plan check prevents an
+      # unprotected job from being queued; this closes a protection-change
+      # race before any step is given a provider credential.
+      - name: Revalidate the protected smoke environment after approval
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          environment="$RUNNER_TEMP/cma-trigger-smoke-environment.json"
+          gh api \
+            "repos/$GITHUB_REPOSITORY/environments/cma-trigger-smoke" \
+            > "$environment"
+          jq -e '
+            .name == "cma-trigger-smoke"
+            and .can_admins_bypass == false
+            and (.protection_rules | type == "array")
+            and (.protection_rules | length == 2)
+            and ([.protection_rules[] | select(.type == "branch_policy")] | length == 1)
+            and ([.protection_rules[] | select(.type == "required_reviewers")] | length == 1)
+            and any(.protection_rules[];
+              .type == "required_reviewers"
+              and .prevent_self_review == true
+              and (.reviewers | type == "array")
+              and (.reviewers | length == 1)
+              and .reviewers[0].type == "Team"
+              and .reviewers[0].reviewer.id == 15748251
+              and .reviewers[0].reviewer.node_id == "T_kwDODyHfns4A8Eyb"
+              and .reviewers[0].reviewer.slug == "ai-application")
+            and .deployment_branch_policy.protected_branches == true
+            and .deployment_branch_policy.custom_branch_policies == false
+          ' "$environment" >/dev/null
+
+      - name: Capture independent approval provenance
+        id: approval
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          approvals="$RUNNER_TEMP/cma-trigger-smoke-approvals.json"
+          gh api \
+            "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/approvals" \
+            > "$approvals"
+
+          operator=$(gh api \
+            "users/$GITHUB_TRIGGERING_ACTOR" \
+            --jq '{login: .login, account_id: .id}')
+          approval_observed_at=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
+          reviewers=$(jq -c \
+            --arg approval_observed_at "$approval_observed_at" \
+            '[.[]
+              | select((.state | ascii_downcase) == "approved")
+              | select(any(.environments[]?; .name == "cma-trigger-smoke"))
+              | {login: .user.login, account_id: .user.id, approval_observed_at: $approval_observed_at}]
+             | unique_by(.account_id)
+             | sort_by(.account_id)' \
+            "$approvals")
+          jq -e \
+            --argjson operator "$operator" \
+            'type == "array"
+             and length > 0
+             and all(.[];
+               (.login | type) == "string"
+               and (.account_id | type) == "number"
+               and .account_id > 0
+               and (.approval_observed_at | type) == "string"
+               and .account_id != $operator.account_id
+               and (.login | ascii_downcase) != ($operator.login | ascii_downcase))' \
+            <<< "$reviewers" >/dev/null
+
+          {
+            echo "operator_login=$(jq -r '.login' <<< "$operator")"
+            echo "operator_account_id=$(jq -r '.account_id' <<< "$operator")"
+            echo "reviewers_json=$reviewers"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Revalidate approved image artifact identities after approval
+        env:
+          API_ARTIFACT_DIGEST: ${{ needs.plan.outputs.api_artifact_digest }}
+          API_ARTIFACT_ID: ${{ needs.plan.outputs.api_artifact_id }}
+          APPROVED_MANIFEST_ARTIFACT_DIGEST: ${{ needs.plan.outputs.approved_manifest_artifact_digest }}
+          APPROVED_MANIFEST_ARTIFACT_ID: ${{ needs.plan.outputs.approved_manifest_artifact_id }}
+          APPROVED_MANIFEST_SHA256: ${{ needs.plan.outputs.approved_manifest_sha256 }}
+          CI_RUN_ATTEMPT: ${{ needs.plan.outputs.ci_run_attempt }}
+          CI_RUN_ID: ${{ needs.plan.outputs.ci_run_id }}
+          EXPECTED_REPOSITORY_ID: "1330597394"
+          GH_TOKEN: ${{ github.token }}
+          RUNTIME_ARTIFACT_DIGEST: ${{ needs.plan.outputs.runtime_artifact_digest }}
+          RUNTIME_ARTIFACT_ID: ${{ needs.plan.outputs.runtime_artifact_id }}
+          SOURCE_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          if [ "$GITHUB_REPOSITORY_ID" != "$EXPECTED_REPOSITORY_ID" ] \
+            || [[ ! "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]] \
+            || [[ ! "$CI_RUN_ID" =~ ^[1-9][0-9]*$ ]] \
+            || [[ ! "$CI_RUN_ATTEMPT" =~ ^[1-9][0-9]*$ ]] \
+            || [[ ! "$API_ARTIFACT_ID" =~ ^[1-9][0-9]*$ ]] \
+            || [[ ! "$RUNTIME_ARTIFACT_ID" =~ ^[1-9][0-9]*$ ]] \
+            || [[ ! "$APPROVED_MANIFEST_ARTIFACT_ID" =~ ^[1-9][0-9]*$ ]] \
+            || [[ ! "$APPROVED_MANIFEST_SHA256" =~ ^[0-9a-f]{64}$ ]] \
+            || [[ ! "$API_ARTIFACT_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]] \
+            || [[ ! "$RUNTIME_ARTIFACT_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]] \
+            || [[ ! "$APPROVED_MANIFEST_ARTIFACT_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "::error::approved image provenance outputs are malformed"
+            exit 1
+          fi
+
+          ci_run=$(gh api \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "repos/$GITHUB_REPOSITORY/actions/runs/$CI_RUN_ID")
+          if ! jq -e \
+            --arg source_sha "$SOURCE_SHA" \
+            --argjson repository_id "$GITHUB_REPOSITORY_ID" \
+            --argjson run_attempt "$CI_RUN_ATTEMPT" \
+            --argjson run_id "$CI_RUN_ID" \
+            '.id == $run_id
+             and .run_attempt == $run_attempt
+             and .name == "CI"
+             and .path == ".github/workflows/ci.yml"
+             and .event == "push"
+             and .status == "completed"
+             and .conclusion == "success"
+             and .head_branch == "develop"
+             and .head_sha == $source_sha
+             and .repository.id == $repository_id
+             and .head_repository.id == $repository_id' \
+            <<< "$ci_run" >/dev/null; then
+            echo "::error::approved CI image run no longer has its exact successful identity"
+            exit 1
+          fi
+
+          validate_artifact_identity() {
+            local artifact_id=$1
+            local artifact_digest=$2
+            local artifact_name=$3
+            local run_id=$4
+            local head_branch=$5
+            local artifact
+            artifact=$(gh api \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "repos/$GITHUB_REPOSITORY/actions/artifacts/$artifact_id")
+            if ! jq -e \
+              --arg artifact_digest "$artifact_digest" \
+              --arg artifact_name "$artifact_name" \
+              --arg head_branch "$head_branch" \
+              --arg source_sha "$SOURCE_SHA" \
+              --argjson artifact_id "$artifact_id" \
+              --argjson repository_id "$GITHUB_REPOSITORY_ID" \
+              --argjson run_id "$run_id" \
+              '.id == $artifact_id
+               and .name == $artifact_name
+               and .digest == $artifact_digest
+               and .expired == false
+               and (.size_in_bytes | type) == "number" and .size_in_bytes > 0
+               and .workflow_run.id == $run_id
+               and .workflow_run.repository_id == $repository_id
+               and .workflow_run.head_repository_id == $repository_id
+               and .workflow_run.head_branch == $head_branch
+               and .workflow_run.head_sha == $source_sha' \
+              <<< "$artifact" >/dev/null; then
+              echo "::error::approved artifact $artifact_name changed identity or expired"
+              exit 1
+            fi
+          }
+
+          validate_artifact_identity \
+            "$APPROVED_MANIFEST_ARTIFACT_ID" \
+            "$APPROVED_MANIFEST_ARTIFACT_DIGEST" \
+            "cma-trigger-approved-ci-images-${GITHUB_RUN_ID}" \
+            "$GITHUB_RUN_ID" \
+            "develop"
+          validate_artifact_identity \
+            "$API_ARTIFACT_ID" \
+            "$API_ARTIFACT_DIGEST" \
+            "cma-trigger-ci-image-api-${SOURCE_SHA}" \
+            "$CI_RUN_ID" \
+            "develop"
+          validate_artifact_identity \
+            "$RUNTIME_ARTIFACT_ID" \
+            "$RUNTIME_ARTIFACT_DIGEST" \
+            "cma-trigger-ci-image-runtime-${SOURCE_SHA}" \
+            "$CI_RUN_ID" \
+            "develop"
+
+      - name: Download exact approved image provenance manifest
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          artifact-ids: ${{ needs.plan.outputs.approved_manifest_artifact_id }}
+          path: ${{ runner.temp }}/cma-trigger-ci-images/manifest
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ github.run_id }}
+
+      - name: Download exact approved API image artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          artifact-ids: ${{ needs.plan.outputs.api_artifact_id }}
+          path: ${{ runner.temp }}/cma-trigger-ci-images/api
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ needs.plan.outputs.ci_run_id }}
+
+      - name: Download exact approved runtime image artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          artifact-ids: ${{ needs.plan.outputs.runtime_artifact_id }}
+          path: ${{ runner.temp }}/cma-trigger-ci-images/runtime
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ needs.plan.outputs.ci_run_id }}
+
+      - name: Verify approved image bytes and expose staging contract
+        env:
+          API_ARTIFACT_DIGEST: ${{ needs.plan.outputs.api_artifact_digest }}
+          API_ARTIFACT_ID: ${{ needs.plan.outputs.api_artifact_id }}
+          APPROVED_MANIFEST_SHA256: ${{ needs.plan.outputs.approved_manifest_sha256 }}
+          CI_RUN_ATTEMPT: ${{ needs.plan.outputs.ci_run_attempt }}
+          CI_RUN_ID: ${{ needs.plan.outputs.ci_run_id }}
+          EXPECTED_REPOSITORY_ID: "1330597394"
+          RUNTIME_ARTIFACT_DIGEST: ${{ needs.plan.outputs.runtime_artifact_digest }}
+          RUNTIME_ARTIFACT_ID: ${{ needs.plan.outputs.runtime_artifact_id }}
+          SOURCE_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          umask 077
+          image_root="$RUNNER_TEMP/cma-trigger-ci-images"
+          manifest_download_dir="$image_root/manifest"
+          downloaded_manifest="$manifest_download_dir/approved-image-provenance.json"
+          approved_manifest="$image_root/approved-image-provenance.json"
+          if [ "$(find "$manifest_download_dir" -mindepth 1 -maxdepth 1 -print | wc -l | tr -d ' ')" -ne 1 ] \
+            || [ ! -f "$downloaded_manifest" ] || [ -L "$downloaded_manifest" ] \
+            || [ -e "$approved_manifest" ]; then
+            echo "::error::approved image manifest artifact must contain exactly one regular manifest"
+            exit 1
+          fi
+          if [ "$(sha256sum "$downloaded_manifest" | awk '{print $1}')" != "$APPROVED_MANIFEST_SHA256" ]; then
+            echo "::error::downloaded approval manifest bytes differ from the approved SHA-256"
+            exit 1
+          fi
+
+          if ! jq -e \
+            --arg api_digest "$API_ARTIFACT_DIGEST" \
+            --arg runtime_digest "$RUNTIME_ARTIFACT_DIGEST" \
+            --arg source_sha "$SOURCE_SHA" \
+            --argjson api_id "$API_ARTIFACT_ID" \
+            --argjson ci_run_attempt "$CI_RUN_ATTEMPT" \
+            --argjson ci_run_id "$CI_RUN_ID" \
+            --argjson repository_id "$EXPECTED_REPOSITORY_ID" \
+            --argjson runtime_id "$RUNTIME_ARTIFACT_ID" \
+            'def sha256: (type == "string") and test("^[0-9a-f]{64}$");
+             def artifact_digest: (type == "string") and test("^sha256:[0-9a-f]{64}$");
+             def image($component; $artifact_id; $digest):
+               type == "object"
+               and (keys == [
+                 "archive_name", "archive_sha256", "archive_size",
+                 "artifact_digest", "artifact_id", "artifact_name", "image_id",
+                 "image_reference", "metadata_name", "metadata_sha256"
+               ])
+               and .artifact_id == $artifact_id
+               and .artifact_digest == $digest
+               and (.artifact_digest | artifact_digest)
+               and .artifact_name == ("cma-trigger-ci-image-" + $component + "-" + $source_sha)
+               and .archive_name == ("cma-trigger-" + $component + ".tar")
+               and (.archive_sha256 | sha256)
+               and (.archive_size | type) == "number"
+               and .archive_size > 0 and (.archive_size | floor) == .archive_size
+               and .metadata_name == ("cma-trigger-" + $component + ".json")
+               and (.metadata_sha256 | sha256)
+               and .image_reference == ("cma-" + $component + ":ci")
+               and (.image_id | artifact_digest);
+             type == "object"
+             and (keys == ["ci_run", "images", "kind", "repository_id", "schema_version", "source_sha"])
+             and .schema_version == 1
+             and .kind == "cma-trigger-approved-ci-images"
+             and .repository_id == $repository_id
+             and .source_sha == $source_sha
+             and (.ci_run | type) == "object"
+             and (.ci_run | keys) == [
+               "attempt", "conclusion", "event", "head_branch", "head_sha", "id", "workflow_path"
+             ]
+             and .ci_run.id == $ci_run_id
+             and .ci_run.attempt == $ci_run_attempt
+             and .ci_run.event == "push"
+             and .ci_run.head_branch == "develop"
+             and .ci_run.head_sha == $source_sha
+             and .ci_run.conclusion == "success"
+             and .ci_run.workflow_path == ".github/workflows/ci.yml"
+             and (.images | type) == "object"
+             and (.images | keys) == ["api", "runtime"]
+             and (.images.api | image("api"; $api_id; $api_digest))
+             and (.images.runtime | image("runtime"; $runtime_id; $runtime_digest))
+             and .images.api.artifact_id != .images.runtime.artifact_id
+             and .images.api.image_id != .images.runtime.image_id' \
+            "$downloaded_manifest" >/dev/null; then
+            echo "::error::downloaded approval manifest is not the exact closed approved schema"
+            exit 1
+          fi
+
+          verify_component() {
+            local component=$1
+            local artifact_dir="$image_root/$component"
+            local archive_name="cma-trigger-${component}.tar"
+            local metadata_name="cma-trigger-${component}.json"
+            local archive_path="$artifact_dir/$archive_name"
+            local metadata_path="$artifact_dir/$metadata_name"
+            local image_reference="cma-${component}:ci"
+            if [ "$(find "$artifact_dir" -mindepth 1 -maxdepth 1 -print | wc -l | tr -d ' ')" -ne 2 ] \
+              || [ ! -f "$archive_path" ] || [ -L "$archive_path" ] \
+              || [ ! -f "$metadata_path" ] || [ -L "$metadata_path" ]; then
+              echo "::error::$component image artifact must contain exactly its regular archive and metadata files"
+              exit 1
+            fi
+
+            local approved_archive_sha256
+            local approved_archive_size
+            local approved_image_id
+            local approved_metadata_sha256
+            approved_archive_sha256=$(jq -r ".images.${component}.archive_sha256" "$downloaded_manifest")
+            approved_archive_size=$(jq -r ".images.${component}.archive_size" "$downloaded_manifest")
+            approved_image_id=$(jq -r ".images.${component}.image_id" "$downloaded_manifest")
+            approved_metadata_sha256=$(jq -r ".images.${component}.metadata_sha256" "$downloaded_manifest")
+            if [ "$(sha256sum "$metadata_path" | awk '{print $1}')" != "$approved_metadata_sha256" ]; then
+              echo "::error::$component metadata bytes differ from the approved manifest"
+              exit 1
+            fi
+            if ! jq -e \
+              --arg archive_name "$archive_name" \
+              --arg archive_sha256 "$approved_archive_sha256" \
+              --arg component "$component" \
+              --arg image_id "$approved_image_id" \
+              --arg image_reference "$image_reference" \
+              --arg source_sha "$SOURCE_SHA" \
+              --argjson archive_size "$approved_archive_size" \
+              --argjson repository_id "$EXPECTED_REPOSITORY_ID" \
+              --argjson run_attempt "$CI_RUN_ATTEMPT" \
+              --argjson run_id "$CI_RUN_ID" \
+              'type == "object"
+               and (keys == [
+                 "archive_name", "archive_sha256", "archive_size", "component",
+                 "image_id", "image_reference", "kind", "repository_id",
+                 "run_attempt", "run_id", "schema_version", "source_sha"
+               ])
+               and .schema_version == 1
+               and .kind == "cma-trigger-ci-image"
+               and .repository_id == $repository_id
+               and .source_sha == $source_sha
+               and .run_id == $run_id
+               and .run_attempt == $run_attempt
+               and .component == $component
+               and .image_reference == $image_reference
+               and .image_id == $image_id
+               and .archive_name == $archive_name
+               and .archive_sha256 == $archive_sha256
+               and .archive_size == $archive_size' \
+              "$metadata_path" >/dev/null; then
+              echo "::error::$component metadata no longer matches the approved manifest"
+              exit 1
+            fi
+
+            local actual_archive_sha256
+            local actual_archive_size
+            actual_archive_sha256=$(sha256sum "$archive_path" | awk '{print $1}')
+            actual_archive_size=$(stat --format='%s' "$archive_path")
+            if [ "$actual_archive_sha256" != "$approved_archive_sha256" ] \
+              || [ "$actual_archive_size" != "$approved_archive_size" ]; then
+              echo "::error::$component archive bytes differ from the approved manifest"
+              exit 1
+            fi
+            docker image load --input "$archive_path" >/dev/null
+            if [ "$(docker image inspect --format '{{.Id}}' "$image_reference")" != "$approved_image_id" ]; then
+              echo "::error::$component archive loads to an unapproved image ID"
+              exit 1
+            fi
+          }
+
+          verify_component api
+          verify_component runtime
+          install -m 0400 "$downloaded_manifest" "$approved_manifest"
+          {
+            echo "CMA_TRIGGER_KIND_STAGING_IMAGE_PROVENANCE_PATH=$approved_manifest"
+            echo "CMA_TRIGGER_KIND_STAGING_API_IMAGE_ARCHIVE=$image_root/api/cma-trigger-api.tar"
+            echo "CMA_TRIGGER_KIND_STAGING_RUNTIME_IMAGE_ARCHIVE=$image_root/runtime/cma-trigger-runtime.tar"
+            echo "CMA_TRIGGER_KIND_STAGING_API_IMAGE_ID=$(jq -r '.images.api.image_id' "$approved_manifest")"
+            echo "CMA_TRIGGER_KIND_STAGING_RUNTIME_IMAGE_ID=$(jq -r '.images.runtime.image_id' "$approved_manifest")"
+          } >> "$GITHUB_ENV"
+
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 26
+          cache: npm
+          cache-dependency-path: sdk/typescript/package-lock.json
+
+      - name: Install the pinned Kubernetes inventory client
+        uses: azure/setup-kubectl@776406bce94f63e41d621b960d78ee25c8b76ede # v4
+        with:
+          version: v1.34.1
+
+      - name: Install and build the reviewed CMA SDK
+        working-directory: sdk/typescript
+        run: |
+          set -euo pipefail
+          npm ci
+          npm run build
+
+      - name: Bind ephemeral staging custody paths
+        run: |
+          set -euo pipefail
+          umask 077
+          if [[ ! "$RUNNER_TEMP" =~ ^/[^[:space:]]+$ ]]; then
+            echo "::error::RUNNER_TEMP is not one normalized absolute path"
+            exit 1
+          fi
+          staging_root="$RUNNER_TEMP/cma-trigger-kind-staging"
+          handoff_path="$staging_root/credentials/nyxid-handoff.json"
+          if [ -e "$staging_root" ] || [ -L "$staging_root" ]; then
+            echo "::error::ephemeral staging custody already exists"
+            exit 1
+          fi
+          {
+            printf 'CMA_TRIGGER_KIND_STAGING_ROOT=%s\n' "$staging_root"
+            printf 'CMA_TRIGGER_SMOKE_NYXID_BOOTSTRAP_PATH=%s\n' "$handoff_path"
+          } >> "$GITHUB_ENV"
+
+      - name: Validate the protected ephemeral staging bootstrap
+        env:
+          CMA_TRIGGER_SMOKE_KUBECONFIG_B64: ${{ secrets.CMA_TRIGGER_SMOKE_KUBECONFIG_B64 }}
+          CMA_TRIGGER_SMOKE_KUBECONFIG_SHA256: ${{ vars.CMA_TRIGGER_SMOKE_KUBECONFIG_SHA256 }}
+          CMA_TRIGGER_SMOKE_KIND_CA_KEY_B64: ${{ secrets.CMA_TRIGGER_SMOKE_KIND_CA_KEY_B64 }}
+        run: .github/scripts/cma-trigger-kind-staging.sh validate
+
+      - name: Build and provision the ephemeral Kind provider lanes
+        run: .github/scripts/cma-trigger-kind-staging.sh prepare
+
+      - name: Materialize and accept the closed NyxID handoff
+        env:
+          DISPATCH_NONCE: ${{ inputs.dispatch_nonce }}
+          HANDOFF_SECRET_NAME: ${{ inputs.handoff_secret_name }}
+          NYXID_BOOTSTRAP_B64: ${{ secrets[inputs.handoff_secret_name] }}
+          PROTECTED_SERVICE_ID: ${{ secrets.CMA_TRIGGER_SMOKE_SERVICE_ID }}
+        run: |
+          { set +x; } 2>/dev/null
+          set -euo pipefail
+          umask 077
+          handoff="$CMA_TRIGGER_SMOKE_NYXID_BOOTSTRAP_PATH"
+          expected_handoff_secret_name="CMA_TRIGGER_SMOKE_NYXID_BOOTSTRAP_${DISPATCH_NONCE^^}"
+          if [[ ! "$DISPATCH_NONCE" =~ ^[0-9a-f]{32}$ ]] || [ "$HANDOFF_SECRET_NAME" != "$expected_handoff_secret_name" ]; then
+            echo "::error::the protected handoff secret is not bound to this dispatch"
+            exit 1
+          fi
+          if [ -z "$NYXID_BOOTSTRAP_B64" ] || [ -z "$PROTECTED_SERVICE_ID" ]; then
+            echo "::error::the protected NyxID handoff and UserService ID are required"
+            exit 1
+          fi
+          if [ "$handoff" != "$CMA_TRIGGER_KIND_STAGING_ROOT/credentials/nyxid-handoff.json" ]; then
+            echo "::error::the NyxID handoff path escaped staging custody"
+            exit 1
+          fi
+          if ! printf '%s' "$NYXID_BOOTSTRAP_B64" | base64 --decode > "$handoff"; then
+            echo "::error::the nonce-bound protected NyxID handoff secret is not valid base64"
+            exit 1
+          fi
+          unset NYXID_BOOTSTRAP_B64
+          unset DISPATCH_NONCE HANDOFF_SECRET_NAME expected_handoff_secret_name
+          chmod 0600 "$handoff"
+          CMA_TRIGGER_SMOKE_SERVICE_ID="$PROTECTED_SERVICE_ID" \
+            .github/scripts/cma-trigger-kind-staging.sh accept-handoff
+          jq -er '
+            .nyxid_client_id,
+            .nyxid_client_secret,
+            .storage_client_id,
+            .storage_client_secret,
+            .context_bucket,
+            .trigger_workspace_bucket,
+            .storage_owner_service_account_id,
+            .subject_id,
+            .access_token
+          ' "$handoff" | while IFS= read -r protected_value; do
+            printf '::add-mask::%s\n' "$protected_value"
+          done
+          printf '::add-mask::%s\n' "$PROTECTED_SERVICE_ID"
+          unset PROTECTED_SERVICE_ID
+
+      - name: Deploy the reviewed CMA build into ephemeral staging
+        run: .github/scripts/cma-trigger-kind-staging.sh deploy
+
+      - name: Seal all ephemeral staging bootstrap authority
+        run: .github/scripts/cma-trigger-kind-staging.sh seal
+
+      - name: Verify exact read-only BatchSandbox inventory authority
+        env:
+          KUBECONFIG_PATH: ${{ runner.temp }}/cma-trigger-smoke-kubeconfig
+          SANDBOX_NAMESPACE: ${{ vars.CMA_TRIGGER_SMOKE_SANDBOX_NAMESPACE }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$SANDBOX_NAMESPACE" =~ ^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$ ]]; then
+            echo "::error::CMA_TRIGGER_SMOKE_SANDBOX_NAMESPACE must be one nonempty DNS-1123 label"
+            exit 1
+          fi
+          resource='batchsandboxes.sandbox.opensandbox.io'
+          allowed=$(kubectl --kubeconfig "$KUBECONFIG_PATH" auth can-i \
+            list "$resource" --namespace "$SANDBOX_NAMESPACE")
+          if [ "$allowed" != 'yes' ]; then
+            echo "::error::inventory credential cannot list BatchSandboxes in the exact Trigger namespace"
+            exit 1
+          fi
+          for verb in get watch create update patch delete deletecollection; do
+            allowed=$(kubectl --kubeconfig "$KUBECONFIG_PATH" auth can-i \
+              "$verb" "$resource" --namespace "$SANDBOX_NAMESPACE")
+            if [ "$allowed" != 'no' ]; then
+              echo "::error::inventory credential unexpectedly has $verb authority on BatchSandboxes"
+              exit 1
+            fi
+          done
+          allowed=$(kubectl --kubeconfig "$KUBECONFIG_PATH" auth can-i \
+            list "$resource" --all-namespaces)
+          if [ "$allowed" != 'no' ]; then
+            echo "::error::inventory credential is not confined to the exact Trigger namespace"
+            exit 1
+          fi
+          for resource in secrets configmaps pods; do
+            allowed=$(kubectl --kubeconfig "$KUBECONFIG_PATH" auth can-i \
+              list "$resource" --namespace "$SANDBOX_NAMESPACE")
+            if [ "$allowed" != 'no' ]; then
+              echo "::error::inventory credential unexpectedly reads $resource"
+              exit 1
+            fi
+          done
+          allowed=$(kubectl --kubeconfig "$KUBECONFIG_PATH" auth can-i \
+            get configmap/cma-trigger-runtime-provenance \
+            --namespace cma-trigger-system)
+          if [ "$allowed" != 'yes' ]; then
+            echo "::error::inventory credential cannot read the one redacted runtime attestation"
+            exit 1
+          fi
+          for verb in list watch create update patch delete; do
+            allowed=$(kubectl --kubeconfig "$KUBECONFIG_PATH" auth can-i \
+              "$verb" configmaps --namespace cma-trigger-system)
+            if [ "$allowed" != 'no' ]; then
+              echo "::error::inventory credential unexpectedly has $verb authority on system ConfigMaps"
+              exit 1
+            fi
+          done
+
+      - name: Publish the ephemeral Trigger fixture and export provenance
+        run: |
+          set -euo pipefail
+          .github/scripts/cma-trigger-kind-staging.sh bootstrap-fixture
+          .github/scripts/cma-trigger-kind-staging.sh export-env
+
+      - name: Materialize the non-secret pinned fixture contract
+        env:
+          CONFIG_PATH: ${{ runner.temp }}/cma-trigger-smoke-config.json
+        run: |
+          set -euo pipefail
+          jq -n \
+            --arg base_url "$CMA_TRIGGER_SMOKE_BASE_URL" \
+            --arg build_sha "$CMA_TRIGGER_SMOKE_EXPECTED_BUILD_SHA" \
+            --arg runtime_image_digest "$CMA_TRIGGER_SMOKE_RUNTIME_IMAGE_DIGEST" \
+            --argjson runtime_image_ids "$CMA_TRIGGER_SMOKE_RUNTIME_IMAGE_IDS_JSON" \
+            --arg runtime_version "$CMA_TRIGGER_SMOKE_EXPECTED_RUNTIME_VERSION" \
+            --arg configuration_revision "$CMA_TRIGGER_SMOKE_CONFIGURATION_REVISION" \
+            --arg trigger_sandbox_namespace "$CMA_TRIGGER_SMOKE_SANDBOX_NAMESPACE" \
+            --arg public_id "$CMA_TRIGGER_SMOKE_PUBLIC_ID" \
+            --arg revision_digest "$CMA_TRIGGER_SMOKE_REVISION_DIGEST" \
+            --arg source_sha "$CMA_TRIGGER_SMOKE_SOURCE_SHA" \
+            --argjson repository_id "$CMA_TRIGGER_SMOKE_UPSTREAM_REPOSITORY_ID" \
+            --arg upstream_owner "$CMA_TRIGGER_SMOKE_UPSTREAM_OWNER" \
+            --arg upstream_repository "$CMA_TRIGGER_SMOKE_UPSTREAM_REPOSITORY" \
+            --arg default_branch "$CMA_TRIGGER_SMOKE_UPSTREAM_DEFAULT_BRANCH" \
+            --arg contributor_login "$CMA_TRIGGER_SMOKE_CONTRIBUTOR_LOGIN" \
+            --arg fork_repository "$CMA_TRIGGER_SMOKE_FORK_REPOSITORY" \
+            --arg expected_fork_mode "$CMA_TRIGGER_SMOKE_EXPECTED_FORK_MODE" \
+            --arg marker_input "$CMA_TRIGGER_SMOKE_MARKER_INPUT" \
+            --arg path_template "$CMA_TRIGGER_SMOKE_EXPECTED_PATH_TEMPLATE" \
+            --arg content_template "$CMA_TRIGGER_SMOKE_EXPECTED_CONTENT_TEMPLATE" \
+            '{
+              schema_version: 3,
+              base_url: $base_url,
+              expected_build_sha: $build_sha,
+              runtime_image_digest: $runtime_image_digest,
+              runtime_image_ids: $runtime_image_ids,
+              expected_runtime_version: $runtime_version,
+              configuration_revision: $configuration_revision,
+              trigger_sandbox_namespace: $trigger_sandbox_namespace,
+              public_id: $public_id,
+              revision_digest: $revision_digest,
+              source_sha: $source_sha,
+              upstream: {
+                repository_id: $repository_id,
+                owner: $upstream_owner,
+                repository: $upstream_repository,
+                default_branch: $default_branch
+              },
+              contributor: {
+                login: $contributor_login,
+                fork_repository: $fork_repository,
+                expected_fork_mode: $expected_fork_mode
+              },
+              task: {
+                marker_input: $marker_input,
+                expected_path_template: $path_template,
+                expected_content_template: $content_template
+              },
+              fixture_policy: {
+                repository_owner: "ChronoAIProject",
+                lifecycle: "persistent_public_fixture",
+                secrets: "forbidden",
+                github_cleanup: "preserve",
+                cma_state_cleanup: "destroy_with_terminal_ephemeral_environment",
+                session_cleanup: "stop_runtime_before_terminal_ephemeral_teardown"
+              },
+              timeouts: {launch_seconds: 2400, effect_seconds: 600, poll_seconds: 5},
+              github_api_url: "https://api.github.com"
+            }' > "$CONFIG_PATH"
+          node .github/scripts/cma-trigger-provider-smoke.mjs \
+            --validate-config "$CONFIG_PATH"
+
+      - name: Run one exact provider path
+        env:
+          CONFIG_PATH: ${{ runner.temp }}/cma-trigger-smoke-config.json
+          EVIDENCE_PATH: ${{ runner.temp }}/cma-trigger-smoke-evidence.json
+          CMA_TRIGGER_SMOKE_KUBECONFIG: ${{ runner.temp }}/cma-trigger-smoke-kubeconfig
+          CMA_TRIGGER_SMOKE_OPERATOR_LOGIN: ${{ steps.approval.outputs.operator_login }}
+          CMA_TRIGGER_SMOKE_OPERATOR_ACCOUNT_ID: ${{ steps.approval.outputs.operator_account_id }}
+          CMA_TRIGGER_SMOKE_REVIEWERS_JSON: ${{ steps.approval.outputs.reviewers_json }}
+        run: |
+          { set +x; } 2>/dev/null
+          set -euo pipefail
+          CMA_TRIGGER_SMOKE_ACCESS_TOKEN="$(<"$CMA_TRIGGER_KIND_STAGING_ROOT/credentials/caller-access-token")"
+          CMA_TRIGGER_SMOKE_SERVICE_ID="$(<"$CMA_TRIGGER_KIND_STAGING_ROOT/credentials/github-service-id")"
+          export CMA_TRIGGER_SMOKE_ACCESS_TOKEN CMA_TRIGGER_SMOKE_SERVICE_ID
+          node .github/scripts/cma-trigger-provider-smoke.mjs \
+            --run "$CONFIG_PATH" "$EVIDENCE_PATH"
+
+      - name: Audit and validate closed provider evidence
+        id: evidence_audit
+        if: always()
+        env:
+          EVIDENCE_PATH: ${{ runner.temp }}/cma-trigger-smoke-evidence.json
+        run: |
+          { set +x; } 2>/dev/null
+          set -euo pipefail
+          CMA_TRIGGER_SMOKE_ACCESS_TOKEN="$(<"$CMA_TRIGGER_KIND_STAGING_ROOT/credentials/caller-access-token")"
+          CMA_TRIGGER_SMOKE_SERVICE_ID="$(<"$CMA_TRIGGER_KIND_STAGING_ROOT/credentials/github-service-id")"
+          export CMA_TRIGGER_SMOKE_ACCESS_TOKEN CMA_TRIGGER_SMOKE_SERVICE_ID
+          node .github/scripts/cma-trigger-provider-smoke.mjs \
+            --audit-evidence "$EVIDENCE_PATH"
+          node .github/scripts/cma-trigger-provider-smoke.mjs \
+            --validate-evidence "$EVIDENCE_PATH"
+          evidence_id=$(jq -r '.evidence_id' "$EVIDENCE_PATH")
+          evidence_result=$(jq -r '.result' "$EVIDENCE_PATH")
+          artifact_name=$(jq -r '.provenance.workflow.artifact_name' "$EVIDENCE_PATH")
+          {
+            echo "evidence_id=$evidence_id"
+            echo "evidence_result=$evidence_result"
+            echo "artifact_name=$artifact_name"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Destroy staging, settle provider objects, and purge runner custody
+        id: staging_cleanup
+        if: always()
+        env:
+          EVIDENCE_AUDIT_OUTCOME: ${{ steps.evidence_audit.outcome }}
+          EVIDENCE_PATH: ${{ runner.temp }}/cma-trigger-smoke-evidence.json
+          SETTLEMENT_RECEIPT_PATH: ${{ runner.temp }}/cma-trigger-provider-object-settlement.json
+        run: |
+          { set +x; } 2>/dev/null
+          set -uo pipefail
+          status=0
+          observer="$RUNNER_TEMP/cma-trigger-smoke-kubeconfig"
+          if [ -f "$CMA_TRIGGER_KIND_STAGING_ROOT/ownership.json" ]; then
+            .github/scripts/cma-trigger-kind-staging.sh destroy || status=1
+            if [ "$EVIDENCE_AUDIT_OUTCOME" = "success" ] \
+              && [ -f "$CMA_TRIGGER_KIND_STAGING_ROOT/phase-destroyed" ]; then
+              evidence_result=$(jq -er '.result' "$EVIDENCE_PATH") || status=1
+              if [ "${evidence_result:-}" = "pass" ]; then
+                node .github/scripts/cma-trigger-provider-object-settlement.mjs settle \
+                  --handoff "$CMA_TRIGGER_SMOKE_NYXID_BOOTSTRAP_PATH" \
+                  --evidence "$EVIDENCE_PATH" \
+                  --output "$SETTLEMENT_RECEIPT_PATH" || status=1
+              elif [[ ! "${evidence_result:-}" =~ ^(fail|inconclusive|blocked)$ ]]; then
+                echo "::error::provider evidence has no terminal result eligible for cleanup"
+                status=1
+              fi
+            fi
+            .github/scripts/cma-trigger-kind-staging.sh remove-observer || status=1
+            .github/scripts/cma-trigger-kind-staging.sh purge || status=1
+            .github/scripts/cma-trigger-kind-staging.sh verify-cleanup || status=1
+          elif [ -e "$CMA_TRIGGER_KIND_STAGING_ROOT" ] || [ -e "$observer" ]; then
+            echo "::error::unowned ephemeral staging custody remains"
+            status=1
+          fi
+          exit "$status"
+
+      - name: Finalize evidence against terminal ephemeral cleanup
+        id: evidence_finalize
+        if: ${{ always() && steps.evidence_audit.outcome == 'success' && steps.staging_cleanup.outcome == 'success' }}
+        env:
+          EVIDENCE_PATH: ${{ runner.temp }}/cma-trigger-smoke-evidence.json
+          CLEANUP_RECEIPT_PATH: ${{ runner.temp }}/cma-trigger-kind-staging-cleanup.json
+        run: |
+          set -euo pipefail
+          node .github/scripts/cma-trigger-provider-smoke.mjs \
+            --finalize-ephemeral-cleanup "$EVIDENCE_PATH" "$CLEANUP_RECEIPT_PATH"
+          node .github/scripts/cma-trigger-provider-smoke.mjs \
+            --validate-evidence "$EVIDENCE_PATH"
+
+      - name: Upload redacted provider evidence
+        id: evidence_upload
+        if: ${{ always() && steps.evidence_audit.outcome == 'success' && steps.staging_cleanup.outcome == 'success' && steps.evidence_finalize.outcome == 'success' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ${{ steps.evidence_audit.outputs.artifact_name }}
+          path: ${{ runner.temp }}/cma-trigger-smoke-evidence.json
+          if-no-files-found: error
+          retention-days: 30
