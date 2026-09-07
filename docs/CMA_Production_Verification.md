@@ -13,12 +13,12 @@ acceptance of this campaign.
 | --- | --- | --- |
 | 1. Public Agent Profile | Exact text, model, effort, Autonomous, four latest public skill pins | Created and published at revision 1; exact configuration and archive checksums verified |
 | 2. Public Workspace Profile | Exact metadata, repository `dev`, no setup, one Agent Profile | Created and published at revision 1; exact configuration verified |
-| 3. Public Sandbox Profile | 4000 millicores, 8192 MiB, two requested services, 4/4 limits, working toolchain | Exact live configuration and four actual Agent workload checks passed on runtime `8ebb0db9`; independent receipt confirms unchanged tracked source |
+| 3. Public Sandbox Profile | 4000 millicores, 8192 MiB, two requested services, 4/4 limits, working toolchain | Exact live configuration and all four actual Agent workload checks passed on runtime `137b489d`; independent receipt confirms unchanged tracked source |
 | 4. Public Trigger | Exact title/message, all-level reuse, Try It, visitor theme, no review, README placement | Exact revision published after first rollout; README-only PR #841 merged after all 12 protected checks; default README snippet read back exactly |
 | 5. Login without bootstrap | No Sandbox, Workspace, Agent, or Profile created by login alone | Existing-owner fresh-browser sign-in created no resources, including a new run on API `217dda6a`; fresh signup not tested |
-| 6. Complete external-click flow | Login then automatic provisioning; exact first message once; correct software, skills, scopes | Initial corrected first click and new post-recovery README reuse passed; actual workload and configuration passed; fresh paused cycle and final clean first click pending |
+| 6. Complete external-click flow | Login then automatic provisioning; exact first message once; correct software, skills, scopes | Fresh `streaming-fixed` README entry, first response, live configuration and actual workload passed; matching built-home restore and final first/repeat cycle pending |
 | 7. Previous UI style | Original rotating 3D mark and established controls; desktop/mobile screenshots | Live home/provisioning motion passed; latest deployed chat passed four desktop/mobile theme configurations, including layout, hierarchy and reload |
-| 8. Autonomous YOLO | Pinned provider runs full-access mode with no approval requests | Actual provider configuration verified; first response and subsequent workload attempt completed with zero approvals |
+| 8. Autonomous YOLO | Pinned provider runs full-access mode with no approval requests | Actual provider configuration verified; latest first response and successful subsequent workload completed with zero approvals |
 | 9. Lifecycle | Active to paused to active; paused to terminated; history retained | Legacy revival recovered automatically with exact history; normal checkpoint then one waiting command passed; full built-home manual lifecycle pending |
 | 10. Cleanup | Only identified stale state removed; new published flow remains usable | Two old Sandboxes retired through the public API under explicit authorization; final environment pending |
 | 11. Conversation UI | Thinking, Send/Stop, CPU, RAM, context, token, network metrics | Four-view active metrics, Thinking, live follow/manual scroll/re-follow, completion, hierarchy and reload passed; actual Send/Stop acceptance in progress |
@@ -400,6 +400,53 @@ green completed and yellow pending marks remain still, reduced motion is
 honored, all canvas states match public Launch records, and layout does not
 overlap. Evidence is in `live-provisioning-CRlmuc/`. Provisioning, first response,
 heavy workload, lifecycle and final Send/Stop remain separate acceptance steps.
+
+### Fresh Streamed Runtime Evidence
+
+The `streaming-fixed` first journey passed at 2026-09-07 20:19:28 UTC:
+one README anchor click, one existing-owner NyxID OAuth exchange, zero further
+CMA clicks, the exact configured first prompt once, and a completed response.
+Sandbox `sbx_0354b0d3126a44ed84eba1d96f68bfff` contains Workspace
+`wks_5a7e012d331f482d9d063d1872b306d1`, Worktree
+`wkt_b7ea8e2512394e69a3ed09f162f30d6f`, and Agent
+`agt_7a91ca256fca4c0988b3dac711046e4d`. Its native conversation is
+`01a07d7f-2374-7470-aace-8cd211f6ed26` on repository commit
+`edc52b0f71fc5b3a55b446965ce50870e98898e7`. This remains a real browser click
+on authenticated GitHub-API-rendered README HTML at the source origin, not
+authenticated GitHub web-page access or fresh signup.
+
+The initial configured-home checkpoint published epoch 1 at 20:24:43 UTC and
+released its writer hold at 20:24:44. Scoped store readback confirms publication
+and upload acceptance of the 2,125,877,335-byte archive, with the original native
+conversation and no remaining capture. The workload draft remained unsubmitted
+while saving and was sent exactly once after release.
+
+The actual Agent workload completed at 20:32:39 UTC. Independent receipt
+readback proves exit 0 for the .NET build (53.431 seconds), fast checks
+(37.251 seconds), selftest (17.242 seconds), and Lean conventions target
+(260.683 seconds). Tracked source remains unchanged, the receipt is a regular
+mode-0600 file, and there were no approval requests. The original observing
+harness failed at 20:28 and remains failed: its catch block discarded the
+assertion details. Rate-limit warnings were observed at the same time, but its
+original HTTP status was not recorded. Separate read-only recovery evidence
+in `workload-recovery-inspect-streaming-fixed-j77bgY/` binds the exact original
+admitted prompt, preserves the original failed evidence, and verifies completion
+without replay. `workload-streaming-fixed/receipt-readback.json` independently
+checks the receipt on the exact runtime pod.
+
+`production-follow-0deyiO/` passed live SSE default follow, preserved manual
+scroll position, Thinking disclosure, re-follow, completion, and durable history
+in desktop/mobile light/dark views. A temporary sidebar reconnect warning was
+visible during the concurrent observers; these results are not a claim that no
+read request ever failed. `workload-streaming-fixed/heavy-home-before.json`
+records the two-turn conversation, native identity, exact runtime digest, and
+nine selected artifact hashes totaling 7,342,129 bytes. The matching replacement
+pod and heavy-after evidence remain required; this is not a full-home hash.
+
+API `2b930ca4` has now built, passed its image scan, and been pushed with exact
+digest verification. Manifest commit `60cd2354` stages that API-only update;
+it has not yet been deployed. All 18 manifests validate with no skips and no
+policy errors. Web and runtime pins are unchanged.
 
 ## Historical Observation
 
