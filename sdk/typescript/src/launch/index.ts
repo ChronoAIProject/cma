@@ -13,7 +13,7 @@ import {
   type EventOptions,
   type PageOptions,
 } from '../resources.js';
-import { array, integer, object, optional, text } from '../schema.js';
+import { array, boolean, integer, object, optional, text } from '../schema.js';
 import { launchEvent } from './events.js';
 import { streamLaunchEvents, type LaunchStreamOptions } from './stream.js';
 import {
@@ -53,6 +53,14 @@ export class Launches {
 
   preview(publicId: string, options: OperationOptions = {}) {
     return readTriggerPreview(this.config, publicId, options);
+  }
+  entryIntent(publicId: string, options: OperationOptions = {}) {
+    return read(
+      { ...this.config, credential: undefined },
+      `/api/v1/triggers/public/${segment(publicId)}/entry-intent`,
+      object({ accepted: boolean, placement_id: optional(text) }),
+      { ...options, method: 'POST', expectedStatus: 200 },
+    );
   }
   createOrResume(publicId: string, body: CreateLaunchRequest, options: CommandOptions) {
     return read(this.config, `/api/v1/triggers/public/${segment(publicId)}/launches`, launch, {

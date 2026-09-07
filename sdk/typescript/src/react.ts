@@ -59,7 +59,12 @@ export function CmaTriggerButton({
     throw new ValidationError(
       'baseUrl must be an HTTP(S) origin without credentials, path, or query',
     );
-  const href = new URL(`/t/${trigger}${placement === undefined ? '' : `/${placement}`}`, origin);
+  const href = new URL(
+    placement === undefined
+      ? `/t/${trigger}`
+      : `/api/v1/triggers/public/${trigger}/open/${placement}`,
+    origin,
+  );
   const badge = new URL(`/api/v1/triggers/public/${trigger}/badge.svg`, origin);
   badge.searchParams.set('label', label);
   badge.searchParams.set('theme', theme);

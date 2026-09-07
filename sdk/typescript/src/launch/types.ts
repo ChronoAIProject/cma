@@ -183,6 +183,7 @@ export const triggerPreview = object({
   description: text,
   button_label: triggerButtonLabel,
   theme: triggerTheme,
+  always_review: optional(boolean),
   signup_hint: optional(text),
   publisher_display_name: text,
   what_happens: array(text),

@@ -275,6 +275,9 @@ pub struct Technical {
 /// Credential-suppressed public preview, which never starts work.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct TriggerPreview {
+    /// Whether the publisher requires a separate review before Launch admission.
+    #[serde(default)]
+    pub always_review: Option<bool>,
     /// Public presentation fields.
     #[serde(flatten)]
     pub presentation: Presentation,
