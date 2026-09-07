@@ -16,7 +16,10 @@ RUN cargo build --release --locked --bin layer4-runtime
 FROM debian:trixie-slim@sha256:d7e12182ce18b85b93007c1dedf31f2d29e01ccf3182cc4017c709b6259bc132 AS runtime
 
 ARG CHRONO_BUILD_SHA=local-unpinned
-LABEL org.opencontainers.image.revision="${CHRONO_BUILD_SHA}" \
+ARG CHRONO_BUILD=development
+LABEL org.opencontainers.image.source="https://github.com/ChronoAIProject/cma" \
+      org.opencontainers.image.revision="${CHRONO_BUILD_SHA}" \
+      org.opencontainers.image.version="${CHRONO_BUILD}" \
       dev.chrono.cma.runtime-contract="3"
 
 ARG NYXID_CLI_VERSION=v0.10.0

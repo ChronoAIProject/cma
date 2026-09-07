@@ -58,6 +58,23 @@ The historical cluster context in [Sandbox Provider](Sandbox_Provider.md) is
 Confirm it is still the target before any context-pinned command. Do not change
 account/project context globally while other work may be active.
 
+### Image Identity
+
+All three Dockerfiles declare final-image OCI source, revision and version
+labels, including direct builds that do not use the release workflow. The
+source is exactly `https://github.com/ChronoAIProject/cma`; supply the complete
+reviewed source commit as `CHRONO_BUILD_SHA` and the chosen deployment build
+name as `CHRONO_BUILD`. Default development values are not deployable identity.
+
+Inspect every built platform's image configuration before publishing or
+deploying. Require those exact three labels and the runtime contract label on
+the Sandbox image. An inherited base-image source label, a build log, or a
+Dockerfile source check does not establish the installed image's identity.
+Labels themselves are assertions, not proof of origin: retain the immutable
+source snapshot, build inputs, build result and scan evidence bound to each
+digest. Rebuild after source changes; do not relabel older executable content
+as a newer commit.
+
 ## NyxID Prerequisites
 
 CMA uses two independent origins. `CHRONO_NYXID_BASE_URL` is the API/OAuth

@@ -16,6 +16,12 @@ ENV CHRONO_BUILD=$CHRONO_BUILD
 RUN npm run build
 
 FROM nginxinc/nginx-unprivileged:1.29-alpine AS runtime
+ARG CHRONO_BUILD=dev
+ARG CHRONO_BUILD_SHA=development
+LABEL org.opencontainers.image.source="https://github.com/ChronoAIProject/cma" \
+      org.opencontainers.image.revision="${CHRONO_BUILD_SHA}" \
+      org.opencontainers.image.version="${CHRONO_BUILD}"
+
 # Pull security fixes published after the base image was cut. Without this the
 # image ships known-fixed CVEs and the vulnerability gate fails, correctly.
 # CI and release builds change this value on every attempt so Docker cannot
