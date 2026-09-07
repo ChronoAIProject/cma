@@ -2,7 +2,12 @@ import { useEffect, useRef, useState } from 'react';
 import type { TriggerDocument } from '@chronoai/cma-sdk';
 import type { AppRoute } from '../routing/routes';
 import { Button } from '../ui/Button';
-import { IconPlusOutline16, IconRefreshOutline16, IconEditOutline16 } from '../ui/icons';
+import {
+  IconPlusOutline16,
+  IconRefreshOutline16,
+  IconEditOutline16,
+  IconCodeOutline16,
+} from '../ui/icons';
 import type { TriggerPublisherClient } from './client';
 import { EmbedPanel } from './EmbedPanel';
 import { TriggerWizard } from './TriggerWizard';
@@ -87,7 +92,17 @@ export function TriggerPublisherPage({
   const navigate = (id: string) => {
     if (locked) return;
     setInitialStep(0);
-    onNavigate(id === '' ? { kind: 'triggers' } : { kind: 'trigger', triggerId: id });
+    onNavigate(
+      id === ''
+        ? { kind: 'triggers' }
+        : {
+            kind:
+              (items.find((item) => item.id === id)?.revision_count ?? 0) > 0
+                ? 'trigger_embed'
+                : 'trigger',
+            triggerId: id,
+          },
+    );
   };
   const more = async () => {
     if (next === undefined || listLoading) return;
@@ -149,7 +164,7 @@ export function TriggerPublisherPage({
             {items.map((item) => (
               <li key={item.id}>
                 <a
-                  href={`/triggers/manage/${encodeURIComponent(item.id)}`}
+                  href={`/triggers/manage/${encodeURIComponent(item.id)}${item.revision_count > 0 ? '/embed' : ''}`}
                   aria-current={selectedId === item.id ? 'page' : undefined}
                   aria-disabled={locked}
                   onClick={(event) => {
@@ -200,6 +215,17 @@ export function TriggerPublisherPage({
           )}
         </nav>
         <div className="trigger-publisher__editor">
+          {view !== 'embed' && document !== undefined && document.revision_count > 0 ? (
+            <div className="trigger-section-heading">
+              <Button
+                icon={<IconCodeOutline16 />}
+                disabled={locked}
+                onClick={() => onNavigate({ kind: 'trigger_embed', triggerId: document.id })}
+              >
+                Get embed code
+              </Button>
+            </div>
+          ) : null}
           {loading ? (
             <p role="status">Loading Trigger</p>
           ) : failure ? (
