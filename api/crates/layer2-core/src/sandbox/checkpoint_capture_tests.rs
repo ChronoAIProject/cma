@@ -1,9 +1,9 @@
 use crate::sandbox::lifecycle_test_support::{agent, checkpoint, sandbox, NOW};
 use crate::sandbox::store::{
-    checkpoint_capture::validate_checkpoint_capture_work, AgentStore, AgentWorkerStore,
-    SandboxLifecycleAgentScope, SandboxLifecycleExecutionStore, SandboxLifecycleMutation,
-    SandboxMutationGuard, SandboxStore, SandboxStoreError, SandboxTransaction,
-    SandboxTransactionStore, SandboxWorkerStore, WorkspaceStore,
+    checkpoint_capture::validate_checkpoint_capture_work, AgentLogStore, AgentStore,
+    AgentWorkerStore, SandboxLifecycleAgentScope, SandboxLifecycleExecutionStore,
+    SandboxLifecycleMutation, SandboxMutationGuard, SandboxStore, SandboxStoreError,
+    SandboxTransaction, SandboxTransactionStore, SandboxWorkerStore, WorkspaceStore,
 };
 use crate::sandbox::*;
 
@@ -346,6 +346,17 @@ async fn begin_rejects_busy_or_expired_writer_authority_and_blocks_child_claims(
         Err(SandboxStoreError::Conflict)
     );
     writer.work = AgentWorkState::new(AgentWorkStep::None, NOW.into());
+    writer.conversation.last_seq = 1;
+    store
+        .append_agent_log(
+            &writer.id,
+            "2026-09-05T00:28:00Z".into(),
+            AgentLogKind::WorkStepCompleted {
+                step: AgentWorkStep::None,
+            },
+        )
+        .await
+        .unwrap();
     writer.revision += 1;
     store.save_agent(1, writer.clone()).await.unwrap();
     let mut next = current.clone();
@@ -390,7 +401,18 @@ async fn begin_waits_for_pinned_profile_agents_before_fencing_a_ready_workspace(
         store.get_sandbox(&current.id).await.unwrap(),
         Some(current.clone())
     );
-    store.create_agent(child).await.unwrap();
+    child.conversation.last_seq = 1;
+    store.create_agent(child.clone()).await.unwrap();
+    store
+        .append_agent_log(
+            &child.id,
+            "2026-09-05T00:28:00Z".into(),
+            AgentLogKind::WorkStepCompleted {
+                step: AgentWorkStep::None,
+            },
+        )
+        .await
+        .unwrap();
     store
         .commit_sandbox_lifecycle(mutation(&current, next))
         .await

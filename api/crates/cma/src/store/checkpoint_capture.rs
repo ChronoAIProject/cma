@@ -1,9 +1,11 @@
 //! Complete writer eligibility and row fences for checkpoint capture admission.
 
 use futures_util::TryStreamExt;
-use layer2_core::sandbox::store::checkpoint_capture::validate_checkpoint_capture_work;
+use layer2_core::sandbox::store::checkpoint_capture::{
+    validate_checkpoint_capture_quiet, validate_checkpoint_capture_work,
+};
 use layer2_core::sandbox::store::SandboxStoreError;
-use layer2_core::sandbox::{Agent, Sandbox};
+use layer2_core::sandbox::{Agent, Sandbox, SandboxAgentActivity};
 use mongodb::bson::{doc, Document};
 use mongodb::{ClientSession, Collection};
 
@@ -44,20 +46,37 @@ pub(super) async fn validate_and_fence_begin(
     validate_checkpoint_capture_work(current, agents, &workspaces)
         .map_err(LifecycleLoadError::Domain)?;
 
-    // Rows fence callbacks and schedulers; the Sandbox write fences all new writer claims.
+    let mut activities = Vec::new();
     for agent in agents {
+        let mut newest = None;
         scan_complete_log_with_session(
             store,
             &agent.id,
             agent.conversation.last_seq,
             session,
-            |_| Ok(()),
+            |entry| {
+                newest = Some(entry);
+                Ok(())
+            },
         )
         .await
         .map_err(|error| match error {
             TransactionLogError::Domain(error) => LifecycleLoadError::Domain(error),
             TransactionLogError::Driver(error) => LifecycleLoadError::Driver(error),
         })?;
+        if agent.status.is_live() {
+            activities.push(
+                SandboxAgentActivity::from_live_agent(agent, newest.as_ref()).map_err(|error| {
+                    LifecycleLoadError::Domain(SandboxStoreError::Corrupt(error.to_string()))
+                })?,
+            );
+        }
+    }
+    validate_checkpoint_capture_quiet(current, &activities, &next.updated_at)
+        .map_err(LifecycleLoadError::Domain)?;
+
+    // Rows fence callbacks and schedulers; the Sandbox write fences all new writer claims.
+    for agent in agents {
         fence_row(
             &store.agents,
             agent.id.as_str(),

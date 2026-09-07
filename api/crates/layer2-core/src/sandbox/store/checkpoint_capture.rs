@@ -1,9 +1,45 @@
+use std::collections::BTreeSet;
+
 use crate::sandbox::{
-    Agent, AgentOrigin, AgentStatus, Sandbox, SandboxCheckpointCapturePhase, SandboxEventKind,
-    SandboxStatus, SandboxWorkStep, Workspace, WorkspaceStatus,
+    Agent, AgentOrigin, AgentStatus, Sandbox, SandboxAgentActivity, SandboxCheckpointCapturePhase,
+    SandboxEventKind, SandboxStatus, SandboxWorkStep, Workspace, WorkspaceStatus,
 };
+use crate::seconds_from_rfc3339;
 
 use super::{SandboxLifecycleAgentScope, SandboxLifecycleMutation, SandboxStoreError};
+
+pub const PERIODIC_CHECKPOINT_QUIET_SECONDS: u64 = 120;
+
+/// Begin must supply every live Agent's exact durable log head in its transaction.
+/// This debounce does not apply to explicit lifecycle checkpoints or writer recovery.
+pub fn validate_checkpoint_capture_quiet(
+    sandbox: &Sandbox,
+    live_agents: &[SandboxAgentActivity],
+    at: &str,
+) -> Result<(), SandboxStoreError> {
+    let now = seconds_from_rfc3339(at).ok_or(SandboxStoreError::Conflict)?;
+    let mut ids = BTreeSet::new();
+    if live_agents.iter().any(|activity| {
+        activity.sandbox_id != sandbox.id
+            || !ids.insert(&activity.agent_id)
+            || !matches!(activity.status, AgentStatus::Ready | AgentStatus::Paused)
+            || activity.active_turn.is_some()
+            || activity.work_pending
+            || activity.stop_requested
+            || activity.queued_messages_present
+            || activity.newest_log.as_ref().is_none_or(|newest| {
+                newest.agent_id != activity.agent_id
+                    || newest.seq == 0
+                    || newest.seq != activity.last_seq
+                    || seconds_from_rfc3339(&newest.appended_at).is_none_or(|appended| {
+                        now < appended.saturating_add(PERIODIC_CHECKPOINT_QUIET_SECONDS)
+                    })
+            })
+    }) {
+        return Err(SandboxStoreError::Conflict);
+    }
+    Ok(())
+}
 
 /// Stores must inspect all writer-capable rows in the same transaction as Begin.
 pub fn validate_checkpoint_capture_work(
@@ -179,3 +215,7 @@ pub(super) fn validate_capture_mutation(
 const fn invalid() -> SandboxStoreError {
     SandboxStoreError::InvalidTransaction("checkpoint capture transition is not exact")
 }
+
+#[cfg(test)]
+#[path = "checkpoint_capture_quiet_tests.rs"]
+mod quiet_tests;
