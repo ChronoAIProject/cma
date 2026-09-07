@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { CmaWebClient } from '../api/client';
 import type { SandboxDetail } from '../api/types';
-import { sandboxLifecycleLabel } from '../sandbox/lifecycle';
+import { sandboxLifecycleLabel, sandboxRefreshDelay } from '../sandbox/lifecycle';
 
 export interface SandboxInputAvailability {
   readonly allowed: boolean;
@@ -60,7 +60,7 @@ export function useSandboxInput(
           setObservation({ agentId, sandboxId, sandbox, stale: false });
           clearTimeout(expiry);
           expiry = setTimeout(markStale, 10000);
-          pollInterval = sandbox.lifecycle?.checkpoint === undefined ? 5000 : 1500;
+          pollInterval = sandboxRefreshDelay(sandbox);
           timer = setTimeout(poll, pollInterval);
         })
         .catch(() => {
@@ -110,5 +110,35 @@ export function useSandboxInput(
       notice: `${sandboxLifecycleLabel(sandbox)}. Messages will be available when saving finishes.`,
       savingStartedAt,
     };
+  if (sandbox.status === 'failed' || sandbox.status === 'retired')
+    return { allowed: false, notice: 'This Sandbox is unavailable. Messages cannot be sent.' };
+  if (
+    sandbox.lifecycle.operation !== undefined ||
+    (sandbox.status !== 'active' && sandbox.status !== 'paused')
+  )
+    return {
+      allowed: false,
+      notice: `${sandboxLifecycleLabel(sandbox)}. Messages cannot be sent while the Sandbox is changing state.`,
+    };
+  // Pause itself is not required for messaging; only its reported lifecycle blockers apply.
+  const eligibility =
+    sandbox.status === 'paused' ? sandbox.lifecycle.revive : sandbox.lifecycle.pause;
+  if (!eligibility.allowed) {
+    if (eligibility.reason === 'checkpoint_in_progress')
+      return {
+        allowed: false,
+        notice: 'Progress is being saved. Messages will be available when saving finishes.',
+      };
+    if (eligibility.reason === 'work_in_progress')
+      return {
+        allowed: false,
+        notice: 'Sandbox work is in progress. Messages will be available when it finishes.',
+      };
+    if (sandbox.status === 'paused')
+      return {
+        allowed: false,
+        notice: 'This Sandbox cannot resume yet. Messages are unavailable.',
+      };
+  }
   return { allowed: true };
 }
