@@ -48,14 +48,23 @@ RUN apt-get update \
         bubblewrap \
         ca-certificates \
         curl \
+        build-essential \
         git \
         gzip \
         libdbus-1-3 \
+        libgmp-dev \
+        libgssapi-krb5-2 \
+        libicu76 \
+        libssl3t64 \
+        libunwind8 \
         ncurses-term \
         python3 \
+        ripgrep \
         tar \
         unzip \
         xz-utils \
+        zlib1g \
+        zstd \
     && git --version \
     && rm -rf /var/lib/apt/lists/*
 
