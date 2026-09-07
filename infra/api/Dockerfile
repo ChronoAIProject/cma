@@ -66,11 +66,16 @@ FROM rust:1.96.1-alpine AS build
 RUN apk add --no-cache musl-dev
 WORKDIR /build
 COPY api/ ./
+ARG TARGETARCH
 ARG CHRONO_BUILD=development
 ARG CHRONO_BUILD_SHA=development
-RUN CHRONO_BUILD="${CHRONO_BUILD}" \
+RUN --mount=type=cache,id=cma-api-registry,target=/usr/local/cargo/registry,sharing=locked \
+    --mount=type=cache,id=cma-api-target-${TARGETARCH},target=/build/target,sharing=locked \
+    CHRONO_BUILD="${CHRONO_BUILD}" \
     CHRONO_BUILD_SHA="${CHRONO_BUILD_SHA}" \
-    cargo build --release --locked --bin cma
+    cargo build --release --locked --bin cma \
+    && mkdir /out \
+    && cp /build/target/release/cma /out/cma
 
 FROM alpine:3.22 AS runtime
 ARG CHRONO_BUILD=development
@@ -89,7 +94,7 @@ RUN test -n "${OS_SECURITY_REFRESH}" \
     && apk add --no-cache ca-certificates \
     && adduser -D -u 10001 chrono
 USER 10001:10001
-COPY --from=build /build/target/release/cma /usr/local/bin/cma
+COPY --from=build /out/cma /usr/local/bin/cma
 COPY --from=secret-scanner /usr/local/bin/gitleaks /usr/local/bin/gitleaks
 COPY --from=secret-scanner /usr/local/share/gitleaks /usr/local/share/gitleaks
 EXPOSE 8080

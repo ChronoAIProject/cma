@@ -9,18 +9,16 @@ FROM rust:1.96.1-alpine@sha256:a41f7740f8b45d45795624eec13a8b42263cc700f19f7e4e8
 RUN apk add --no-cache musl-dev
 WORKDIR /build
 COPY api/ ./
+ARG TARGETARCH
 # Statically linked against musl, so it runs on any base the runtime stage uses.
-RUN cargo build --release --locked --bin layer4-runtime
+RUN --mount=type=cache,id=cma-runtime-registry,target=/usr/local/cargo/registry,sharing=locked \
+    --mount=type=cache,id=cma-runtime-target-${TARGETARCH},target=/build/target,sharing=locked \
+    cargo build --release --locked --bin layer4-runtime \
+    && mkdir /out \
+    && cp /build/target/release/layer4-runtime /out/layer4-runtime
 
 # The NyxID CLI is published as a *-unknown-linux-gnu binary.
 FROM debian:trixie-slim@sha256:d7e12182ce18b85b93007c1dedf31f2d29e01ccf3182cc4017c709b6259bc132 AS runtime
-
-ARG CHRONO_BUILD_SHA=local-unpinned
-ARG CHRONO_BUILD=development
-LABEL org.opencontainers.image.source="https://github.com/ChronoAIProject/cma" \
-      org.opencontainers.image.revision="${CHRONO_BUILD_SHA}" \
-      org.opencontainers.image.version="${CHRONO_BUILD}" \
-      dev.chrono.cma.runtime-contract="3"
 
 ARG NYXID_CLI_VERSION=v0.10.0
 ARG CODEX_VERSION=0.147.0
@@ -169,7 +167,7 @@ RUN set -eux; \
     chown -R 10001:10001 /home/cma /var/lib/cma-runtime; \
     rm -rf /tmp/baseline-skills /tmp/nyxid-source.tar.gz /tmp/ornn-source.tar.gz
 
-COPY --from=build /build/target/release/layer4-runtime /usr/local/bin/layer4-runtime
+COPY --from=build /out/layer4-runtime /usr/local/bin/layer4-runtime
 
 # Refresh the final filesystem after expensive dependency layers are cached.
 # CI and release builds vary this value so cached OS packages cannot hide a
@@ -187,3 +185,10 @@ ENV HOME=/home/cma \
     TERM=xterm-256color
 EXPOSE 9090
 ENTRYPOINT ["/usr/local/bin/layer4-runtime"]
+
+ARG CHRONO_BUILD_SHA=local-unpinned
+ARG CHRONO_BUILD=development
+LABEL org.opencontainers.image.source="https://github.com/ChronoAIProject/cma" \
+      org.opencontainers.image.revision="${CHRONO_BUILD_SHA}" \
+      org.opencontainers.image.version="${CHRONO_BUILD}" \
+      dev.chrono.cma.runtime-contract="3"

@@ -75,6 +75,13 @@ source snapshot, build inputs, build result and scan evidence bound to each
 digest. Rebuild after source changes; do not relabel older executable content
 as a newer commit.
 
+The Rust builders use locked, component- and architecture-scoped target caches
+to reuse compilation during verification cycles. Each build still runs Cargo
+with `--locked` and copies its selected executable out of the cache into the
+build layer; final images contain neither compiler nor cache. Cached artifacts
+are not acceptance evidence. Build, identity, runtime and vulnerability gates
+apply to the resulting immutable image on every delivery.
+
 ## NyxID Prerequisites
 
 CMA uses two independent origins. `CHRONO_NYXID_BASE_URL` is the API/OAuth
