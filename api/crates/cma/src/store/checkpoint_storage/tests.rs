@@ -13,7 +13,7 @@ use axum::{
     Form, Json, Router,
 };
 use sha2::{Digest, Sha256};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, Notify, Semaphore};
 
 use super::*;
 
@@ -28,6 +28,8 @@ struct Fixture {
     corrupt: AtomicBool,
     ignore_delete: AtomicBool,
     redirect: AtomicBool,
+    read_gates: Mutex<BTreeMap<String, Arc<Semaphore>>>,
+    requests_changed: Notify,
 }
 
 async fn mint(
@@ -83,6 +85,7 @@ async fn upload(
         .lock()
         .unwrap()
         .push(("POST".into(), query["key"].clone()));
+    fixture.requests_changed.notify_one();
     if fixture.redirect.load(Ordering::SeqCst) {
         return (StatusCode::TEMPORARY_REDIRECT, [("location", "/forbidden")]).into_response();
     }
@@ -105,6 +108,16 @@ async fn download(
         .lock()
         .unwrap()
         .push(("GET".into(), query["key"].clone()));
+    fixture.requests_changed.notify_one();
+    let gate = fixture
+        .read_gates
+        .lock()
+        .unwrap()
+        .get(&query["key"])
+        .cloned();
+    if let Some(gate) = gate {
+        gate.acquire().await.unwrap().forget();
+    }
     match fixture.objects.lock().unwrap().get(&query["key"]).cloned() {
         Some(mut bytes) => {
             if fixture.corrupt.load(Ordering::SeqCst) && !bytes.is_empty() {
@@ -185,6 +198,165 @@ async fn consume(mut download: CheckpointArchiveDownload) -> Result<Vec<u8>> {
         bytes.extend(chunk?);
     }
     Ok(bytes)
+}
+
+fn multipart_archive(full_parts: usize) -> CheckpointArchiveUpload {
+    let size_bytes = (full_parts * multipart::PART_BYTES + 4096) as u64;
+    let mut digest = Sha256::new();
+    for index in 0..=full_parts {
+        let block = vec![index as u8; 64 * 1024];
+        let size = if index == full_parts {
+            4096
+        } else {
+            multipart::PART_BYTES
+        };
+        for offset in (0..size).step_by(block.len()) {
+            digest.update(&block[..(size - offset).min(block.len())]);
+        }
+    }
+    let sha256 = format!("{:x}", digest.finalize());
+    let (sender, chunks) = mpsc::channel(2);
+    tokio::spawn(async move {
+        for index in 0..=full_parts {
+            let size = if index == full_parts {
+                4096
+            } else {
+                multipart::PART_BYTES
+            };
+            for offset in (0..size).step_by(64 * 1024) {
+                let chunk = vec![index as u8; (size - offset).min(64 * 1024)];
+                if sender.send(Ok(chunk)).await.is_err() {
+                    return;
+                }
+            }
+        }
+    });
+    CheckpointArchiveUpload {
+        object_reference: format!("home-{sha256}.cma"),
+        sha256,
+        size_bytes,
+        chunks,
+    }
+}
+
+async fn wait_for_part_reads(fixture: &Fixture, key: &str, count: usize) {
+    tokio::time::timeout(Duration::from_secs(30), async {
+        loop {
+            let changed = fixture.requests_changed.notified();
+            let reads = fixture
+                .calls
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|(method, target)| {
+                    method == "GET" && target.starts_with(&format!("{key}/"))
+                })
+                .count();
+            if reads >= count {
+                return;
+            }
+            changed.await;
+        }
+    })
+    .await
+    .expect("expected concurrent part readbacks");
+}
+
+#[tokio::test]
+async fn multipart_upload_bounds_concurrency_and_publishes_ordered_manifest_after_readbacks() {
+    let (store, fixture, server) = fixture().await;
+    let count = multipart::UPLOAD_CONCURRENCY + 1;
+    let request = multipart_archive(count);
+    let size = request.size_bytes;
+    let sha = request.sha256.clone();
+    let key = checkpoint_object_key("cma/checkpoints/concurrent.cma".into(), size);
+    let gates = (0..=count)
+        .map(|index| {
+            let gate = Arc::new(Semaphore::new(0));
+            fixture
+                .read_gates
+                .lock()
+                .unwrap()
+                .insert(multipart::part_key(&key, index as u64), gate.clone());
+            gate
+        })
+        .collect::<Vec<_>>();
+    let uploading = {
+        let store = store.clone();
+        let key = key.clone();
+        tokio::spawn(async move { store.upload(&key, request).await })
+    };
+    wait_for_part_reads(&fixture, &key, multipart::UPLOAD_CONCURRENCY).await;
+    {
+        let calls = fixture.calls.lock().unwrap();
+        assert_eq!(
+            calls.iter().filter(|(method, _)| method == "POST").count(),
+            multipart::UPLOAD_CONCURRENCY
+        );
+        assert!(!calls.iter().any(|(_, target)| target == &key));
+    }
+    assert!(!fixture.objects.lock().unwrap().contains_key(&key));
+    for gate in gates[..multipart::UPLOAD_CONCURRENCY].iter().rev() {
+        gate.add_permits(1);
+    }
+    wait_for_part_reads(&fixture, &key, count + 1).await;
+    assert!(!fixture.objects.lock().unwrap().contains_key(&key));
+    for gate in gates[multipart::UPLOAD_CONCURRENCY..].iter().rev() {
+        gate.add_permits(1);
+    }
+    uploading.await.unwrap().unwrap();
+    {
+        let objects = fixture.objects.lock().unwrap();
+        let manifest: serde_json::Value = serde_json::from_slice(&objects[&key]).unwrap();
+        assert_eq!(manifest["size_bytes"], size);
+        assert_eq!(manifest["sha256"], sha);
+        assert_eq!(manifest["parts"].as_array().unwrap().len(), count + 1);
+        for index in 0..=count {
+            let bytes = &objects[&multipart::part_key(&key, index as u64)];
+            assert!(bytes.iter().all(|byte| *byte == index as u8));
+            assert_eq!(
+                manifest["parts"][index],
+                format!("{:x}", Sha256::digest(bytes))
+            );
+        }
+    }
+    assert_eq!(
+        fixture
+            .calls
+            .lock()
+            .unwrap()
+            .iter()
+            .rev()
+            .take(2)
+            .cloned()
+            .collect::<Vec<_>>(),
+        vec![("GET".into(), key.clone()), ("POST".into(), key.clone())]
+    );
+    assert_eq!(fixture.tokens.load(Ordering::SeqCst), 1);
+    fixture.read_gates.lock().unwrap().clear();
+    store.delete(&key).await.unwrap();
+    assert!(fixture.objects.lock().unwrap().is_empty());
+    server.abort();
+}
+
+#[tokio::test]
+async fn concurrent_part_readback_failure_never_publishes_a_manifest() {
+    let (store, fixture, server) = fixture().await;
+    fixture.corrupt.store(true, Ordering::SeqCst);
+    let request = multipart_archive(2);
+    let key = checkpoint_object_key("cma/checkpoints/failed-part.cma".into(), request.size_bytes);
+    assert!(store.upload(&key, request).await.is_err());
+    assert!(!fixture.objects.lock().unwrap().contains_key(&key));
+    assert!(!fixture
+        .calls
+        .lock()
+        .unwrap()
+        .iter()
+        .any(|(method, target)| method == "POST" && target == &key));
+    fixture.corrupt.store(false, Ordering::SeqCst);
+    store.delete(&key).await.unwrap();
+    assert!(fixture.objects.lock().unwrap().is_empty());
+    server.abort();
 }
 
 #[tokio::test]

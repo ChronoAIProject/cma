@@ -1,4 +1,4 @@
-use futures_util::StreamExt;
+use futures_util::{stream::FuturesOrdered, StreamExt};
 use layer3_adapter::hosted::{
     CheckpointArchiveDownload, CheckpointArchiveUpload, MAX_CHECKPOINT_ARCHIVE_BYTES,
 };
@@ -9,6 +9,7 @@ use tokio::sync::mpsc;
 use super::{rejected, transfer, unavailable, ChronoStorage, Result};
 
 pub(super) const PART_BYTES: usize = 32 * 1024 * 1024;
+pub(super) const UPLOAD_CONCURRENCY: usize = 4;
 const MANIFEST_BYTES: usize = 64 * 1024;
 const SCHEMA: &str = "cma-checkpoint-parts-v1";
 
@@ -56,7 +57,18 @@ pub(super) async fn upload(
     let mut digest = Sha256::new();
     let mut size = 0_u64;
     let mut buffer = Vec::with_capacity(PART_BYTES);
-    while let Some(chunk) = archive.chunks.recv().await {
+    // Keep at most four parts in flight; ordered completion also fixes manifest order.
+    let mut pending = FuturesOrdered::new();
+    let mut next_part = 0_u64;
+    loop {
+        let chunk = tokio::select! {
+            result = pending.next(), if !pending.is_empty() => {
+                manifest.parts.push(result.expect("pending part remains present")?);
+                continue;
+            }
+            chunk = archive.chunks.recv() => chunk,
+        };
+        let Some(chunk) = chunk else { break };
         let chunk = chunk?;
         size = size
             .checked_add(chunk.len() as u64)
@@ -70,20 +82,27 @@ pub(super) async fn upload(
             remaining = &remaining[taken..];
             if buffer.len() == PART_BYTES {
                 let bytes = std::mem::replace(&mut buffer, Vec::with_capacity(PART_BYTES));
-                let sha =
-                    upload_bytes(store, &part_key(key, manifest.parts.len() as u64), bytes).await?;
-                manifest.parts.push(sha);
+                pending.push_back(upload_part(store, part_key(key, next_part), bytes));
+                next_part += 1;
+                if pending.len() == UPLOAD_CONCURRENCY {
+                    manifest
+                        .parts
+                        .push(pending.next().await.expect("upload window is full")?);
+                }
             }
         }
     }
-    if size != expected_size || format!("{:x}", digest.finalize()) != manifest.sha256 {
+    let verified = size == expected_size && format!("{:x}", digest.finalize()) == manifest.sha256;
+    if verified && !buffer.is_empty() {
+        pending.push_back(upload_part(store, part_key(key, next_part), buffer));
+    }
+    while let Some(result) = pending.next().await {
+        manifest.parts.push(result?);
+    }
+    if !verified {
         return Err(rejected(
             "checkpoint archive upload failed integrity verification",
         ));
-    }
-    if !buffer.is_empty() {
-        let sha = upload_bytes(store, &part_key(key, manifest.parts.len() as u64), buffer).await?;
-        manifest.parts.push(sha);
     }
     let bytes = serde_json::to_vec(&manifest)
         .map_err(|_| rejected("checkpoint part manifest is invalid"))?;
@@ -92,6 +111,10 @@ pub(super) async fn upload(
     }
     upload_bytes(store, key, bytes).await?;
     Ok(())
+}
+
+async fn upload_part(store: &ChronoStorage, key: String, bytes: Vec<u8>) -> Result<String> {
+    upload_bytes(store, &key, bytes).await
 }
 
 async fn upload_bytes(store: &ChronoStorage, key: &str, bytes: Vec<u8>) -> Result<String> {
