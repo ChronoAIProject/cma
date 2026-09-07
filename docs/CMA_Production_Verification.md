@@ -1,5 +1,35 @@
 # Production Trigger Verification
 
+## Current Acceptance Campaign
+
+The later 2026-09-07 Truretruing request supersedes the historical runtime-change
+restriction below. It explicitly authorizes Autonomous agents to use YOLO without
+user approvals, runtime replacement, and targeted production-state cleanup. Work
+is built from `feat/trureturing-trigger-loop-20260907`; no aggregate branch merge
+is needed for deployment. Earlier observations remain historical evidence, not
+acceptance of this campaign.
+
+| Requirement | Required Production Evidence | Status |
+| --- | --- | --- |
+| 1. Public Agent Profile | Exact text, model, effort, Autonomous, four latest public skill pins | Catalog and archive checksums verified; creation pending |
+| 2. Public Workspace Profile | Exact metadata, repository `dev`, no setup, one Agent Profile | Configuration prepared; creation pending |
+| 3. Public Sandbox Profile | 4000 millicores, 8192 MiB, two requested services, 4/4 limits, working toolchain | Pinned .NET/Lean installers prepared; runtime proof pending |
+| 4. Public Trigger | Exact title/message, all-level reuse, Try It, visitor theme, no review, README placement | Configuration prepared; creation pending |
+| 5. Login without bootstrap | No Sandbox, Workspace, Agent, or Profile created by login alone | Regression and production verification pending |
+| 6. Complete external-click flow | Login then automatic provisioning; exact first message once; correct software, skills, scopes | Production browser verification pending |
+| 7. Previous UI style | Original rotating 3D mark and established controls; desktop/mobile screenshots | Restoration in progress |
+| 8. Autonomous YOLO | Pinned provider runs full-access mode with no approval requests | Provider correction in progress |
+| 9. Lifecycle | Active to paused to active; paused to terminated; history retained | Checkpoint correction and production exercise pending |
+| 10. Cleanup | Only identified stale state removed; new published flow remains usable | No campaign state deleted yet |
+| 11. Conversation UI | Thinking, Send/Stop, CPU, RAM, context, token, network metrics | Restoration in progress |
+
+Private campaign evidence is kept under `/tmp/cma-trureturing-loop.LvTezb` and
+must not be committed or uploaded wholesale. One existing NyxID owner account is
+available; fresh signup and cross-owner browser isolation are not represented as
+tested by reusing that account.
+
+## Historical Observation
+
 Recorded on 2026-09-07, Singapore time. This is a bounded production observation,
 not a complete refactor acceptance or an unattended end-to-end pass.
 

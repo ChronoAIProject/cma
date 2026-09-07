@@ -74,6 +74,6 @@ data:
   # Provider ownership label. Other control planes must use distinct values;
   # untagged or foreign runtime resources are never adopted or deleted.
   CHRONO_DEPLOYMENT_ID: "chrono-bot-prod"
-  # AgentKey service floor. Registry API and runtime are distinct services.
-  CHRONO_BASELINE_SERVICES: "chrono-llm,ornn-api,ornn"
+  # AgentKey service floor. Public skill material is served by ornn-api.
+  CHRONO_BASELINE_SERVICES: "chrono-llm,ornn-api"
   RUST_LOG: "info"
