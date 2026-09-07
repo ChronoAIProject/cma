@@ -117,7 +117,10 @@ export function Progress({
       <ol className="public-timeline">
         {stepOrder.map((key) => {
           const step = record.steps.find((item) => item.key === key);
-          const state = step?.status ?? 'pending';
+          const state =
+            step?.status === 'blocked' && blocked?.type === 'sandbox_paused_reviving'
+              ? 'running'
+              : (step?.status ?? 'pending');
           const label =
             state === 'blocked' && blocked?.type === 'orchestration_paused'
               ? blockedStates.orchestration_paused
