@@ -14,6 +14,9 @@ use super::*;
 use crate::auth::persistence::{AuthStore, DurableSubjectTokens, MemoryAuthStore, SecretValue};
 use crate::auth::{profile::Profile, AuthMode};
 
+#[path = "cookie_authorization_tests/concurrency_tests.rs"]
+mod concurrency_tests;
+
 #[derive(Default)]
 struct Gate {
     reached: Notify,
