@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { ApiError, type AgentResources } from '@chronoai/cma-sdk';
 import { useCmaClient } from '../api/context';
-import type { AgentUsage } from '../api/types';
+import type { AgentUsage, ConfiguredSandboxCapacity, ProfileReference } from '../api/types';
 import './Resources.css';
 
 export function cpuMillis(
@@ -33,12 +33,14 @@ function BoundedReading({
   label,
   value,
   limit,
+  configured = false,
   format,
   missing = 'not reported',
 }: {
   readonly label: string;
   readonly value?: number | null;
   readonly limit?: number | null;
+  readonly configured?: boolean;
   readonly format: (value: number) => string;
   readonly missing?: string;
 }) {
@@ -55,7 +57,9 @@ function BoundedReading({
         ) : (
           <>
             {format(value)}
-            {limit === undefined || limit === null ? '' : ` / ${format(limit)}`}
+            {limit === undefined || limit === null
+              ? ''
+              : ` / ${format(limit)}${configured ? ' configured' : ''}`}
           </>
         )}
       </span>
@@ -67,7 +71,7 @@ function BoundedReading({
           aria-valuemin={0}
           aria-valuemax={limit ?? 0}
           aria-valuenow={Math.min(limit ?? 0, value ?? 0)}
-          aria-valuetext={`${format(value ?? 0)} of ${format(limit ?? 0)}`}
+          aria-valuetext={`${format(value ?? 0)} of ${format(limit ?? 0)}${configured ? ' configured' : ''}`}
         >
           <span className="resources__fill" style={{ width: `${String(percent)}%` }} />
         </span>
@@ -83,13 +87,46 @@ const cores = (value: number) =>
 export function Resources({
   agentId,
   sandboxId,
+  sandboxProfile,
   usage,
 }: {
   readonly agentId: string;
   readonly sandboxId: string;
+  readonly sandboxProfile?: ProfileReference;
   readonly usage?: AgentUsage;
 }) {
   const client = useCmaClient();
+  const profileId = sandboxProfile?.id;
+  const profileRevision = sandboxProfile?.revision;
+  const profileDigest = sandboxProfile?.digest;
+  const [capacityState, setCapacityState] = useState<{
+    readonly agentId: string;
+    readonly sandboxId: string;
+    readonly profile: ProfileReference;
+    readonly capacity: ConfiguredSandboxCapacity;
+  }>();
+  useEffect(() => {
+    if (profileId === undefined || profileRevision === undefined) return;
+    const request = new AbortController();
+    const profile = { id: profileId, revision: profileRevision, digest: profileDigest };
+    void client.readSandboxProfileCapacity(profile, { signal: request.signal }).then(
+      (capacity) => {
+        if (!request.signal.aborted) setCapacityState({ agentId, sandboxId, profile, capacity });
+      },
+      () => {
+        if (!request.signal.aborted) setCapacityState(undefined);
+      },
+    );
+    return () => request.abort();
+  }, [agentId, client, profileDigest, profileId, profileRevision, sandboxId]);
+  const capacity =
+    capacityState?.agentId === agentId &&
+    capacityState.sandboxId === sandboxId &&
+    capacityState.profile.id === profileId &&
+    capacityState.profile.revision === profileRevision &&
+    capacityState.profile.digest === profileDigest
+      ? capacityState.capacity
+      : undefined;
   const [state, setState] = useState<{
     readonly agentId: string;
     readonly reading?: AgentResources;
@@ -148,6 +185,8 @@ export function Resources({
   }, [agentId, client, sandboxId]);
   const current = state.agentId === agentId ? state : undefined;
   const reading = current?.reading;
+  const memoryObserved = (reading?.memory_bytes_limit ?? 0) > 0;
+  const cpuObserved = (reading?.cpu_millis_limit ?? 0) > 0;
   return (
     <section className="agent-instruments" aria-label="Agent metrics">
       <div className="agent-instruments__usage" aria-label="Agent usage">
@@ -170,7 +209,8 @@ export function Resources({
         <BoundedReading
           label="RAM"
           value={reading?.memory_bytes_used}
-          limit={reading?.memory_bytes_limit}
+          limit={memoryObserved ? reading?.memory_bytes_limit : capacity?.memoryBytes}
+          configured={!memoryObserved && capacity !== undefined}
           format={formatBytes}
           missing={
             reading === undefined && current?.error === undefined ? 'waiting' : 'not reported'
@@ -179,7 +219,8 @@ export function Resources({
         <BoundedReading
           label="CPU"
           value={current?.cpu}
-          limit={reading?.cpu_millis_limit}
+          limit={cpuObserved ? reading?.cpu_millis_limit : capacity?.cpuMillis}
+          configured={!cpuObserved && capacity !== undefined}
           format={cores}
           missing={
             reading === undefined

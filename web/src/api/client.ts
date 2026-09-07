@@ -5,9 +5,11 @@ import type {
   AgentRunRequest,
   AgentTranscript,
   AgentUsage,
+  ConfiguredSandboxCapacity,
   CreateAgentInput,
   CreateSandboxInput,
   CreateWorkspaceInput,
+  ProfileReference,
   ResourcePage,
   SandboxDetail,
   SandboxEvent,
@@ -46,6 +48,10 @@ export interface CmaWebClient {
   readAgentTranscript(id: string, options?: ReadOptions): Promise<AgentTranscript>;
   readAgentUsage(id: string, options?: ReadOptions): Promise<AgentUsage>;
   readAgentResources(id: string, options?: ReadOptions): Promise<AgentResources>;
+  readSandboxProfileCapacity(
+    reference: ProfileReference,
+    options?: ReadOptions,
+  ): Promise<ConfiguredSandboxCapacity>;
   readSandboxEvents(id: string, options?: PageOptions<number>): Promise<readonly SandboxEvent[]>;
   replayAgent(threadId: string, options: AgentStreamOptions): Promise<void>;
   runAgent(request: AgentRunRequest, options: AgentStreamOptions): Promise<void>;
@@ -90,6 +96,7 @@ export const unavailableClient: CmaWebClient = {
   readAgentTranscript: unavailable,
   readAgentUsage: unavailable,
   readAgentResources: unavailable,
+  readSandboxProfileCapacity: unavailable,
   readSandboxEvents: unavailable,
   replayAgent: unavailable,
   runAgent: unavailable,

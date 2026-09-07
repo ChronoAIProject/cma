@@ -1,6 +1,7 @@
 .agent-surface {
   flex: 1;
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   grid-template-rows: auto auto minmax(0, 1fr) auto auto;
   width: 100%;
   min-width: 0;
@@ -391,7 +392,7 @@
   color: var(--dsw-alias-label-tertiary);
 }
 
-.agent-composer__submit {
+.agent-composer .agent-composer__submit {
   align-self: center;
   width: 34px;
   height: 34px;
@@ -485,7 +486,7 @@
     grid-template-columns: minmax(0, 1fr) 44px;
   }
 
-  .agent-composer__submit {
+  .agent-composer .agent-composer__submit {
     width: 44px;
     height: 44px;
   }

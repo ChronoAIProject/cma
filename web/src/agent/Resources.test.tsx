@@ -107,3 +107,110 @@ it('never displays a resource response for a different Agent', async () => {
   expect(await screen.findByText('Resources unavailable')).toBeInTheDocument();
   expect(screen.queryByText('RAM · 1 GiB / 8 GiB')).not.toBeInTheDocument();
 });
+
+it.each([null, 4000])(
+  'labels configured capacity per metric and prefers observed limits (%s)',
+  async (cpuLimit) => {
+    vi.useFakeTimers();
+    const first = { ...reading, memory_bytes_limit: null, cpu_millis_limit: cpuLimit };
+    const read = vi
+      .fn()
+      .mockResolvedValueOnce(first)
+      .mockResolvedValue({
+        ...first,
+        uptime_ms: 15000,
+        cpu_usage_usec: 11000000,
+      });
+    const readCapacity = vi
+      .fn()
+      .mockResolvedValue({ cpuMillis: 8000, memoryBytes: 16 * 1024 ** 3 });
+    const client = testClient({
+      readAgentResources: read,
+      readSandboxProfileCapacity: readCapacity,
+    });
+    const draw = () => (
+      <CmaClientProvider client={client}>
+        <Resources
+          agentId="agt_1"
+          sandboxId="sbx_1"
+          sandboxProfile={{ id: 'profile', revision: 2, digest: 'digest' }}
+        />
+      </CmaClientProvider>
+    );
+    const { rerender } = render(draw());
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5000);
+    });
+    expect(screen.getByText('RAM · 1 GiB / 16 GiB configured')).toBeInTheDocument();
+    expect(screen.getByRole('progressbar', { name: 'RAM' })).toHaveAttribute(
+      'aria-valuetext',
+      '1 GiB of 16 GiB configured',
+    );
+    expect(screen.getByRole('progressbar', { name: 'CPU' })).toHaveAttribute(
+      'aria-valuetext',
+      cpuLimit === null ? '2 cores of 8 cores configured' : '2 cores of 4 cores',
+    );
+    rerender(draw());
+    expect(readCapacity).toHaveBeenCalledOnce();
+  },
+);
+
+it('leaves absolute readings without bars when pinned capacity cannot be read', async () => {
+  render(
+    <CmaClientProvider
+      client={testClient({
+        readAgentResources: vi
+          .fn()
+          .mockResolvedValue({ ...reading, memory_bytes_limit: null, cpu_millis_limit: null }),
+        readSandboxProfileCapacity: vi.fn().mockRejectedValue(new Error('forbidden')),
+      })}
+    >
+      <Resources
+        agentId="agt_1"
+        sandboxId="sbx_1"
+        sandboxProfile={{ id: 'profile', revision: 1 }}
+      />
+    </CmaClientProvider>,
+  );
+  expect(await screen.findByText('RAM · 1 GiB')).toBeInTheDocument();
+  expect(screen.queryByRole('progressbar', { name: 'RAM' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('status')).not.toBeInTheDocument();
+});
+
+it('ignores an old profile response and never carries configured capacity into another Agent', async () => {
+  let resolveOld: ((value: { cpuMillis: number; memoryBytes: number }) => void) | undefined;
+  const readCapacity = vi
+    .fn()
+    .mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveOld = resolve;
+        }),
+    )
+    .mockRejectedValue(new Error('not found'));
+  const client = testClient({
+    readAgentResources: vi.fn().mockImplementation(async (id: string) => ({
+      ...reading,
+      agent_id: id,
+      memory_bytes_limit: null,
+      cpu_millis_limit: null,
+    })),
+    readSandboxProfileCapacity: readCapacity,
+  });
+  const draw = (agentId: string, revision: number) => (
+    <CmaClientProvider client={client}>
+      <Resources agentId={agentId} sandboxId="sbx_1" sandboxProfile={{ id: 'profile', revision }} />
+    </CmaClientProvider>
+  );
+  const { rerender } = render(draw('agt_1', 1));
+  await act(async () => {
+    await Promise.resolve();
+  });
+  rerender(draw('agt_2', 2));
+  await act(async () => {
+    resolveOld?.({ cpuMillis: 8000, memoryBytes: 16 * 1024 ** 3 });
+  });
+  expect(screen.getByText('RAM · 1 GiB')).toBeInTheDocument();
+  expect(screen.queryByRole('progressbar', { name: 'RAM' })).not.toBeInTheDocument();
+  expect(readCapacity.mock.calls[0]?.[1].signal.aborted).toBe(true);
+});

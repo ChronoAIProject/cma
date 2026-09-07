@@ -1,4 +1,4 @@
-import type { Cma } from '@chronoai/cma-sdk';
+import { ProtocolError, type Cma } from '@chronoai/cma-sdk';
 import type { CmaWebClient } from './client';
 import { agentDetail, sandboxDetail, sandboxSummary, workspaceDetail } from './rest/hierarchy';
 
@@ -40,6 +40,29 @@ export function createRestWebClient(sdk: Cma): CmaWebClient {
     readWorkspace: async (id, options) => workspaceDetail(await sdk.workspaces.read(id, options)),
     readAgent: async (id, options) => agentDetail(await sdk.agents.read(id, options)),
     readAgentResources: (id, options) => sdk.agents.resources(id, options),
+    readSandboxProfileCapacity: async (reference, options) => {
+      const profile = await sdk.sandboxProfiles.readRevision(
+        reference.id,
+        reference.revision,
+        options,
+      );
+      if (
+        profile.profile_id !== reference.id ||
+        profile.revision !== reference.revision ||
+        (reference.digest !== undefined && profile.digest !== reference.digest)
+      )
+        throw new ProtocolError('Sandbox Profile identity mismatch');
+      const cpuMillis = profile.content.cpu_millis;
+      const memoryBytes = profile.content.memory_mib * 1024 ** 2;
+      if (
+        !Number.isSafeInteger(cpuMillis) ||
+        cpuMillis <= 0 ||
+        !Number.isSafeInteger(memoryBytes) ||
+        memoryBytes <= 0
+      )
+        throw new ProtocolError('Invalid configured Sandbox capacity');
+      return { cpuMillis, memoryBytes };
+    },
     readAgentEvents: async (id, options) => {
       const page = await sdk.agents.events(id, { after: options?.cursor, signal: options?.signal });
       return {
