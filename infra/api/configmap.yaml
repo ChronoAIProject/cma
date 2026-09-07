@@ -62,7 +62,7 @@ data:
   # Image/contract checks passed, but provider sandbox compatibility and complete
   # production pause/restore verification remain open. Do not infer those from
   # this pin or change it without the explicit runtime-rotation decision.
-  CHRONO_SANDBOX_IMAGE: "us-central1-docker.pkg.dev/aelf-shared-k8s-prod/aelf-prod-registry/cma-runtime@sha256:3c25afbf4d5de4cc18f69b98051ea9f518372bf600116ea84314157dd5d5f9f4"
+  CHRONO_SANDBOX_IMAGE: "us-central1-docker.pkg.dev/aelf-shared-k8s-prod/aelf-prod-registry/cma-runtime@sha256:fa7f23e0daba02ff6609e00e298b62648fa76baffce4210caffabea791c97bf6"
   # Default resource profiles are seeded only when no corresponding default
   # exists. Durable operator settings and published profiles own later choices.
   CHRONO_SANDBOX_CPU: "1"
