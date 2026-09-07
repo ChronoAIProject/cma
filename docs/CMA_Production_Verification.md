@@ -14,9 +14,9 @@ acceptance of this campaign.
 | 1. Public Agent Profile | Exact text, model, effort, Autonomous, four latest public skill pins | Created and published at revision 1; exact configuration and archive checksums verified |
 | 2. Public Workspace Profile | Exact metadata, repository `dev`, no setup, one Agent Profile | Created and published at revision 1; exact configuration verified |
 | 3. Public Sandbox Profile | 4000 millicores, 8192 MiB, two requested services, 4/4 limits, working toolchain | Created and published at revision 1; isolated real-repository toolchain proof passed; production proof pending |
-| 4. Public Trigger | Exact title/message, all-level reuse, Try It, visitor theme, no review, README placement | Exact draft and placement created; publication and README update follow deployment |
-| 5. Login without bootstrap | No Sandbox, Workspace, Agent, or Profile created by login alone | Callback has no resource-creation path; production observation pending |
-| 6. Complete external-click flow | Login then automatic provisioning; exact first message once; correct software, skills, scopes | Browser regression and real Mongo admission race passed; production browser verification pending |
+| 4. Public Trigger | Exact title/message, all-level reuse, Try It, visitor theme, no review, README placement | Exact revision published after first rollout; README-only PR #841 pending protected checks |
+| 5. Login without bootstrap | No Sandbox, Workspace, Agent, or Profile created by login alone | Existing-owner fresh-browser production sign-in created no resources before or after rollout; fresh signup not tested |
+| 6. Complete external-click flow | Login then automatic provisioning; exact first message once; correct software, skills, scopes | First live click/sign-in/Sandbox/Workspace passed; checkpoint race blocked Agent creation and exhausted Launch retries; corrected rerun pending |
 | 7. Previous UI style | Original rotating 3D mark and established controls; desktop/mobile screenshots | Restored; local desktop/mobile, both-theme, animation and canvas checks passed; production proof pending |
 | 8. Autonomous YOLO | Pinned provider runs full-access mode with no approval requests | Corrected to never/danger-full-access and provider full-access mode; production first turn pending |
 | 9. Lifecycle | Active to paused to active; paused to terminated; history retained | Checkpoint exclusions and large-home metadata limits corrected and tested; production exercise pending |
@@ -43,6 +43,41 @@ This is executable compatibility evidence, not production acceptance. The full
 workload's 346,244 entries and 85.16 MiB manifest required raising checkpoint
 metadata limits to 500,000 entries / 128 MiB; production pause/restore remains
 unverified until that runtime is deployed and exercised.
+
+### First Live Attempt
+
+At 2026-09-07 15:45 UTC, API `d4869f15`, web `d55e581e`, and runtime `36f7e8f5`
+were deployed and became ready. The exact Trigger was then published as
+`pub_d77caf24c76f4ce188e569a83c71b8a1`. README-only PR #841 uses its published
+snippet, without merging the implementation branch into `develop`.
+
+A real browser click on GitHub-rendered README HTML delivered at the source
+origin completed NyxID sign-in and admitted one Launch without additional CMA
+clicks. This method does not claim authenticated access to the GitHub web page.
+Launch `lch_cb061b4385e3470495cbf30faef521dc` created Sandbox
+`sbx_2990e2353c61408a86b45f70d4544140`, completed all five software commands,
+activated the exact two-service NyxID key, and cloned `trureturing` `dev` into
+one Workspace. The repository had advanced to commit
+`65457467c879007d1e91f71ef861a4d3f7d462c3` since the isolated toolchain test.
+
+The attempt failed before Agent creation. An immediate periodic checkpoint
+treated the Workspace as quiet before its configured Agent had been admitted,
+then fenced creation. The runtime sealed its 4,000,983,562-byte home archive, but
+sequential 32 MiB upload/readback exceeded the 600-second upload lifetime. Launch
+dependency retries were exhausted while this legitimate writer hold remained.
+No first prompt ran. The failing browser evidence is retained in
+`production-first/`; it must not be relabeled as a passing end-to-end run.
+
+The configured-Agent-before-checkpoint correction is committed in `e132f0a2`,
+with real Mongo regression evidence in `9fa6cff7`. Checkpoint waiting and bounded
+concurrent transfer corrections are being verified before the next rollout.
+Retirement was requested through the public API for this identified test
+Sandbox, which had zero Agents and zero Worktrees. No database repair was used.
+
+Live production browser evidence verifies the original green/yellow 3D marks,
+still states, four desktop/mobile theme layouts, and the absence of creation
+during login alone. Running-step motion and a completed Agent conversation are
+still pending the corrected production run.
 
 ## Historical Observation
 
