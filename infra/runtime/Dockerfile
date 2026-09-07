@@ -1,4 +1,6 @@
 # syntax=docker/dockerfile:1
+# Managed Sandbox requests initialize CHRONO_UPSTREAM_PLACEHOLDER_KEY before
+# supervisor startup; own-credential Sandboxes must not receive that variable.
 # Bot-pod image for a contract-3 CMA Sandbox.
 #
 # The sandbox provider schedules this image and starts the kernel-neutral Layer

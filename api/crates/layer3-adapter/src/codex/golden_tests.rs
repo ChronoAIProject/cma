@@ -204,6 +204,42 @@ fn bridge_launch_rejects_non_normalized_or_misplaced_worktree_paths() {
 }
 
 #[test]
+fn managed_launch_placeholder_matches_the_reserved_sandbox_environment() {
+    for own_credential in [false, true] {
+        let spec = crate::SandboxSpec {
+            sandbox_id: "sandbox-7".into(),
+            own_credential,
+            ..crate::SandboxSpec::default()
+        };
+        let deployment = crate::hosted::HostedDeployment::default();
+        let launch = render_launch(&AgentOpenRequest::new(
+            "agent:agent-7:open:v1",
+            options(
+                own_credential,
+                PermissionLevel::Guarded,
+                ReasoningEffort::High,
+            ),
+            None,
+        ))
+        .expect("valid launch");
+        for generation in [1, 2] {
+            let runtime = deployment
+                .render_runtime(&spec, generation)
+                .expect("valid runtime");
+            let name = "CHRONO_UPSTREAM_PLACEHOLDER_KEY";
+            assert_eq!(runtime.env.get(name), launch.env.get(name));
+            assert_eq!(runtime.env.contains_key(name), !own_credential);
+        }
+        let mut overridden = spec;
+        overridden.environment.insert(
+            "CHRONO_UPSTREAM_PLACEHOLDER_KEY".into(),
+            "owner-supplied-value".into(),
+        );
+        assert!(deployment.render(&overridden).is_err());
+    }
+}
+
+#[test]
 fn own_credentials_never_receive_the_managed_placeholder() {
     let launch = render_launch(&AgentOpenRequest::new(
         "agent:agent-7:open:v1",
