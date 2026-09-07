@@ -347,7 +347,9 @@ pub(super) fn adapter_failure(error: AdapterError) -> WorkerFailure {
             WorkerFailure::retryable("agent_runtime_unavailable", detail)
         }
         AdapterError::AtCapacity(detail) => WorkerFailure::terminal("agent_resource_quota", detail),
-        AdapterError::Rejected(detail) => WorkerFailure::terminal("agent_runtime_rejected", detail),
+        AdapterError::Rejected(detail) | AdapterError::OperationIdentityConflict(detail) => {
+            WorkerFailure::terminal("agent_runtime_rejected", detail)
+        }
         AdapterError::Unsupported(detail) => {
             WorkerFailure::terminal("agent_runtime_unsupported", detail)
         }

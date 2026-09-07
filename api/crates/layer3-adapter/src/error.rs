@@ -17,6 +17,8 @@ pub enum AdapterError {
     Unavailable(String),
     #[error("runtime rejected request: {0}")]
     Rejected(String),
+    #[error("runtime rejected conflicting operation identity: {0}")]
+    OperationIdentityConflict(String),
     #[error("no capacity for the requested runtime: {0}")]
     AtCapacity(String),
     #[error("runtime capability is not supported: {0}")]
@@ -32,6 +34,9 @@ impl AdapterError {
         match self {
             Self::Unavailable(message) => Self::Unavailable(format!("{context}: {message}")),
             Self::Rejected(message) => Self::Rejected(format!("{context}: {message}")),
+            Self::OperationIdentityConflict(message) => {
+                Self::OperationIdentityConflict(format!("{context}: {message}"))
+            }
             Self::AtCapacity(message) => Self::AtCapacity(format!("{context}: {message}")),
             Self::Unsupported(message) => Self::Unsupported(format!("{context}: {message}")),
             mismatch @ Self::RuntimeContractMismatch(_) => mismatch,

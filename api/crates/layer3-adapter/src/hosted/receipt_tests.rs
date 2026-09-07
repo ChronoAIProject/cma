@@ -17,6 +17,9 @@ use crate::{
     WorktreeRequest,
 };
 
+#[path = "reconnect_tests.rs"]
+mod reconnect_tests;
+
 #[derive(Clone, Copy)]
 enum Corruption {
     Credential,

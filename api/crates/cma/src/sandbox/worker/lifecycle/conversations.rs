@@ -78,14 +78,20 @@ impl SandboxWorker {
             let request = AgentOpenRequest::new(
                 format!("agent:{}:open:v1", agent.id),
                 runtime_options(agent, &sandbox, worktree),
-                Some(conversation_id.clone()),
+                None,
             );
             let authority_fence = agent.work.next_fence;
             let (updates, receiver) = mpsc::channel(UPDATE_BUFFER);
             let channel = match self
                 .dependencies
                 .adapter
-                .open_agent(&runtime, authority_fence, &request, updates)
+                .reconnect_agent(
+                    &runtime,
+                    authority_fence,
+                    &request,
+                    &conversation_id,
+                    updates,
+                )
                 .await
             {
                 Ok(channel) if channel.conversation_id.as_deref() == Some(&conversation_id) => {

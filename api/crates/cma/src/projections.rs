@@ -156,11 +156,11 @@ fn resource_failure(sandbox_id: &str, error: AdapterError) -> SandboxResourceRea
         AdapterError::Unsupported(_) => SandboxResourceReadError::Unsupported(
             "the runtime does not support resource readings".into(),
         ),
-        AdapterError::Rejected(_) | AdapterError::RuntimeContractMismatch(_) => {
-            SandboxResourceReadError::Corrupt(
-                "the runtime resource authority or reply is invalid".into(),
-            )
-        }
+        AdapterError::Rejected(_)
+        | AdapterError::OperationIdentityConflict(_)
+        | AdapterError::RuntimeContractMismatch(_) => SandboxResourceReadError::Corrupt(
+            "the runtime resource authority or reply is invalid".into(),
+        ),
         AdapterError::Unavailable(_) | AdapterError::AtCapacity(_) => {
             SandboxResourceReadError::Unavailable(
                 "the runtime resource transport is unavailable".into(),

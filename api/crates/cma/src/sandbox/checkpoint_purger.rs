@@ -42,11 +42,11 @@ fn classify(sandbox_id: &str, error: AdapterError) -> SandboxDependencyError {
         AdapterError::Unavailable(_) | AdapterError::AtCapacity(_) => {
             SandboxDependencyError::Transient("checkpoint archive storage is unavailable".into())
         }
-        AdapterError::Rejected(_) | AdapterError::RuntimeContractMismatch(_) => {
-            SandboxDependencyError::Security(
-                "checkpoint archive authority refused the sandbox boundary".into(),
-            )
-        }
+        AdapterError::Rejected(_)
+        | AdapterError::OperationIdentityConflict(_)
+        | AdapterError::RuntimeContractMismatch(_) => SandboxDependencyError::Security(
+            "checkpoint archive authority refused the sandbox boundary".into(),
+        ),
         AdapterError::Unsupported(_) => {
             SandboxDependencyError::Validation("checkpoint archive cleanup is not supported".into())
         }
