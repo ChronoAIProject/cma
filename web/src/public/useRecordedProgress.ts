@@ -26,7 +26,7 @@ export function useRecordedProgress(client: PublicClient, id: string) {
     let cursor = 0;
     let latest: Launch | undefined;
     let failures = 0;
-    const beganAt = Date.now();
+    let outageBeganAt: number | undefined;
     const read = async (minimum = cursor) => {
       const value = await client.requests.read(id, { signal: controller.signal });
       if (controller.signal.aborted) return;
@@ -42,13 +42,17 @@ export function useRecordedProgress(client: PublicClient, id: string) {
       try {
         await read();
         failures = 0;
+        outageBeganAt = undefined;
       } catch (cause) {
         if (controller.signal.aborted) return;
         failures += 1;
+        outageBeganAt ??= Date.now();
         setError(refusalSentence(cause));
       }
       if (controller.signal.aborted || (latest !== undefined && stopped(latest))) return;
-      const remaining = 300_000 - (Date.now() - beganAt);
+      // Healthy preparation can outlast five minutes; bound only uninterrupted read outages.
+      const remaining =
+        outageBeganAt === undefined ? 300_000 : 300_000 - (Date.now() - outageBeganAt);
       if (remaining <= 0) {
         setError(publicCopy.updatesPaused);
         return;
