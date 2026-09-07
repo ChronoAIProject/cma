@@ -45,7 +45,7 @@ fn golden(own_credential: bool, permission: PermissionLevel, effort: ReasoningEf
              [model_providers.cma]\n\
              name = \"CMA Loopback\"\n\
              base_url = \"http://127.0.0.1:9091\"\n\
-             env_key = \"CHRONO_UPSTREAM_PLACEHOLDER_KEY\"\n\
+             env_key = \"CMA_MODEL_PROXY_PLACEHOLDER\"\n\
              wire_api = \"responses\"\n",
             effort.as_str()
         )
@@ -204,7 +204,7 @@ fn bridge_launch_rejects_non_normalized_or_misplaced_worktree_paths() {
 }
 
 #[test]
-fn managed_launch_placeholder_matches_the_reserved_sandbox_environment() {
+fn managed_launch_placeholder_does_not_change_the_pinned_sandbox_environment() {
     for own_credential in [false, true] {
         let spec = crate::SandboxSpec {
             sandbox_id: "sandbox-7".into(),
@@ -226,9 +226,19 @@ fn managed_launch_placeholder_matches_the_reserved_sandbox_environment() {
             let runtime = deployment
                 .render_runtime(&spec, generation)
                 .expect("valid runtime");
-            let name = "CHRONO_UPSTREAM_PLACEHOLDER_KEY";
-            assert_eq!(runtime.env.get(name), launch.env.get(name));
-            assert_eq!(runtime.env.contains_key(name), !own_credential);
+            let name = "CMA_MODEL_PROXY_PLACEHOLDER";
+            assert!(!runtime.env.contains_key(name));
+            assert!(!runtime.env.contains_key("CHRONO_UPSTREAM_PLACEHOLDER_KEY"));
+            assert_eq!(launch.env.contains_key(name), !own_credential);
+            for (name, value) in &launch.env {
+                if name == "HOME"
+                    || name == "PATH"
+                    || name.starts_with("CHRONO_")
+                    || name.starts_with("NYXID_")
+                {
+                    assert_eq!(runtime.env.get(name), Some(value));
+                }
+            }
         }
         let mut overridden = spec;
         overridden.environment.insert(
@@ -248,6 +258,7 @@ fn own_credentials_never_receive_the_managed_placeholder() {
     ))
     .expect("own-credential launch");
     assert!(!launch.env.contains_key("CHRONO_UPSTREAM_PLACEHOLDER_KEY"));
+    assert!(!launch.env.contains_key("CMA_MODEL_PROXY_PLACEHOLDER"));
 }
 
 #[test]

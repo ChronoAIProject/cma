@@ -11,7 +11,9 @@ pub const BRIDGE_PROGRAM: &str = "codex-acp";
 pub const SHARED_AUTH_PATH: &str = "/home/cma/.cma/provider/codex/auth.json";
 pub const AGENT_HOME_ROOT: &str = "/home/cma/.cma/agents";
 const HOME_ENVIRONMENT_NAME: &str = "CODEX_HOME";
-pub(crate) const RESERVED_ENVIRONMENT_NAMES: &[&str] = &[HOME_ENVIRONMENT_NAME];
+pub(super) const MANAGED_PROXY_ENVIRONMENT_NAME: &str = "CMA_MODEL_PROXY_PLACEHOLDER";
+pub(crate) const RESERVED_ENVIRONMENT_NAMES: &[&str] =
+    &[HOME_ENVIRONMENT_NAME, MANAGED_PROXY_ENVIRONMENT_NAME];
 const BASELINE_SKILLS: [(&str, &str); 2] = [
     ("nyxid", "/home/cma/.codex/skills/nyxid"),
     (
@@ -105,7 +107,7 @@ pub fn render_launch(request: &AgentOpenRequest) -> crate::Result<AgentLaunch> {
     )]);
     if !request.options.own_credential {
         env.insert(
-            "CHRONO_UPSTREAM_PLACEHOLDER_KEY".into(),
+            MANAGED_PROXY_ENVIRONMENT_NAME.into(),
             crate::hosted::PLACEHOLDER_CREDENTIAL.into(),
         );
     }

@@ -18,6 +18,6 @@ fn provider_selection_preserves_its_closed_wire_contract() {
 fn provider_policy_protects_the_agent_home_environment_key() {
     assert_eq!(
         AgentProvider::Codex.reserved_environment_names(),
-        &["CODEX_HOME"]
+        &["CODEX_HOME", "CMA_MODEL_PROXY_PLACEHOLDER"]
     );
 }

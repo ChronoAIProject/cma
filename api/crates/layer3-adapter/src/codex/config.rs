@@ -45,6 +45,7 @@ pub fn render_config(options: &RuntimeOptions, config: &CodexConfig) -> crate::R
     let base_url = toml_string(config.managed_base_url.trim_end_matches('/'))?;
     let wire_api = toml_string(&config.managed_wire_api);
     let wire_api = wire_api?;
+    let environment_name = super::home::MANAGED_PROXY_ENVIRONMENT_NAME;
     Ok(format!(
         "model = {model}\n\
          model_provider = \"cma\"\n\
@@ -55,7 +56,7 @@ pub fn render_config(options: &RuntimeOptions, config: &CodexConfig) -> crate::R
          [model_providers.cma]\n\
          name = \"CMA Loopback\"\n\
          base_url = {base_url}\n\
-         env_key = \"CHRONO_UPSTREAM_PLACEHOLDER_KEY\"\n\
+         env_key = \"{environment_name}\"\n\
          wire_api = {wire_api}\n"
     ))
 }
