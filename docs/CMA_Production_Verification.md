@@ -11,22 +11,38 @@ acceptance of this campaign.
 
 | Requirement | Required Production Evidence | Status |
 | --- | --- | --- |
-| 1. Public Agent Profile | Exact text, model, effort, Autonomous, four latest public skill pins | Catalog and archive checksums verified; creation pending |
-| 2. Public Workspace Profile | Exact metadata, repository `dev`, no setup, one Agent Profile | Configuration prepared; creation pending |
-| 3. Public Sandbox Profile | 4000 millicores, 8192 MiB, two requested services, 4/4 limits, working toolchain | Pinned .NET/Lean installers prepared; runtime proof pending |
-| 4. Public Trigger | Exact title/message, all-level reuse, Try It, visitor theme, no review, README placement | Configuration prepared; creation pending |
-| 5. Login without bootstrap | No Sandbox, Workspace, Agent, or Profile created by login alone | Regression and production verification pending |
-| 6. Complete external-click flow | Login then automatic provisioning; exact first message once; correct software, skills, scopes | Production browser verification pending |
-| 7. Previous UI style | Original rotating 3D mark and established controls; desktop/mobile screenshots | Restoration in progress |
-| 8. Autonomous YOLO | Pinned provider runs full-access mode with no approval requests | Provider correction in progress |
-| 9. Lifecycle | Active to paused to active; paused to terminated; history retained | Checkpoint correction and production exercise pending |
-| 10. Cleanup | Only identified stale state removed; new published flow remains usable | No campaign state deleted yet |
-| 11. Conversation UI | Thinking, Send/Stop, CPU, RAM, context, token, network metrics | Restoration in progress |
+| 1. Public Agent Profile | Exact text, model, effort, Autonomous, four latest public skill pins | Created and published at revision 1; exact configuration and archive checksums verified |
+| 2. Public Workspace Profile | Exact metadata, repository `dev`, no setup, one Agent Profile | Created and published at revision 1; exact configuration verified |
+| 3. Public Sandbox Profile | 4000 millicores, 8192 MiB, two requested services, 4/4 limits, working toolchain | Created and published at revision 1; isolated real-repository toolchain proof passed; production proof pending |
+| 4. Public Trigger | Exact title/message, all-level reuse, Try It, visitor theme, no review, README placement | Exact draft and placement created; publication and README update follow deployment |
+| 5. Login without bootstrap | No Sandbox, Workspace, Agent, or Profile created by login alone | Callback has no resource-creation path; production observation pending |
+| 6. Complete external-click flow | Login then automatic provisioning; exact first message once; correct software, skills, scopes | Browser regression and real Mongo admission race passed; production browser verification pending |
+| 7. Previous UI style | Original rotating 3D mark and established controls; desktop/mobile screenshots | Restored; local desktop/mobile, both-theme, animation and canvas checks passed; production proof pending |
+| 8. Autonomous YOLO | Pinned provider runs full-access mode with no approval requests | Corrected to never/danger-full-access and provider full-access mode; production first turn pending |
+| 9. Lifecycle | Active to paused to active; paused to terminated; history retained | Checkpoint exclusions and large-home metadata limits corrected and tested; production exercise pending |
+| 10. Cleanup | Only identified stale state removed; new published flow remains usable | Two old Sandboxes retired through the public API under explicit authorization; final environment pending |
+| 11. Conversation UI | Thinking, Send/Stop, CPU, RAM, context, token, network metrics | Restored and browser-tested with measured fixtures; real production metrics verification pending |
 
 Private campaign evidence is kept under `/tmp/cma-trureturing-loop.LvTezb` and
 must not be committed or uploaded wholesale. One existing NyxID owner account is
 available; fresh signup and cross-owner browser isolation are not represented as
 tested by reusing that account.
+
+The exact profile pins are Agent `agp_5119efbbf5fe444db826efcb7b347e54`,
+Workspace `wkp_0720afc39fba43e1a66e0d8ce56d2ab9`, and Sandbox
+`sbp_3310b0ac32ee4ad495e77e6412924676`, all revision 1. Trigger draft
+`trg_b818aaafa3284e8495faed7eefe27219` uses placement
+`plc_08e81ca7da574d86a8addfb61d550ecd`.
+
+The isolated Linux runtime installed .NET 10.0.103, Elan 4.2.4 and Lean/Lake
+4.33.0 as UID 10001 with the requested 4 CPU / 8 GiB resources. Against repository
+`dev` commit `63ba7cc8376be34ff5ba4ed3bb73c0eab56f1f6d` in a separate worktree,
+the .NET build, 16 fast checks, selftest and the 890-job Lean conventions build
+passed. Codex 0.147.0 discovered each of the four selected skill archives once.
+This is executable compatibility evidence, not production acceptance. The full
+workload's 346,244 entries and 85.16 MiB manifest required raising checkpoint
+metadata limits to 500,000 entries / 128 MiB; production pause/restore remains
+unverified until that runtime is deployed and exercised.
 
 ## Historical Observation
 
