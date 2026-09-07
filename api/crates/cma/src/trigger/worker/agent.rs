@@ -315,7 +315,7 @@ fn valid_agent(
                     launch_id == launch.id.as_str()
                 }
         }
-        AgentOrigin::Manual => false,
+        AgentOrigin::Manual | AgentOrigin::WorkspaceProfile { .. } => false,
     };
     launch.resolution.agent.id() == Some(&agent.id)
         && launch.resolution.workspace.id() == Some(&agent.workspace_id)

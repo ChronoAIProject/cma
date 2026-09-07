@@ -698,7 +698,9 @@ impl LaunchResourceDriver for FakeDriver {
                         trigger_id,
                         launch_id,
                     } => (trigger_id.clone(), launch_id.clone()),
-                    AgentOrigin::Manual => return Err(Self::missing_profile()),
+                    AgentOrigin::Manual | AgentOrigin::WorkspaceProfile { .. } => {
+                        return Err(Self::missing_profile())
+                    }
                 };
                 let context = self
                     .context_for_agent(&request.profile)

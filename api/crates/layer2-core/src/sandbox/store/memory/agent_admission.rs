@@ -60,6 +60,11 @@ impl AgentAdmissionStore for InMemorySandboxStore {
         if !sandbox.accepts_creation_admission() {
             return Err(SandboxStoreError::SandboxNotReady);
         }
+        if matches!(admission.origin, AgentOrigin::WorkspaceProfile { .. })
+            && sandbox.status != crate::sandbox::SandboxStatus::Active
+        {
+            return Err(SandboxStoreError::SandboxNotReady);
+        }
         let live = state
             .agents
             .values()
@@ -106,7 +111,9 @@ impl AgentAdmissionStore for InMemorySandboxStore {
             .checked_add(1)
             .ok_or(SandboxStoreError::Conflict)?;
         let cause = match admission.origin {
-            AgentOrigin::Manual => SandboxReviveCause::AgentCreation,
+            AgentOrigin::Manual | AgentOrigin::WorkspaceProfile { .. } => {
+                SandboxReviveCause::AgentCreation
+            }
             AgentOrigin::Trigger { .. } => SandboxReviveCause::TriggerLaunch,
         };
         let revival = next_sandbox

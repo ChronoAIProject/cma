@@ -1,5 +1,8 @@
 use std::sync::Arc;
 
+#[path = "agent_profile_provisioning.rs"]
+mod profile_provisioning;
+
 use serde::{Deserialize, Serialize};
 
 use crate::profiles::store::{AgentProfileStore, ProfileStoreError, ProfileUseRecorder};
@@ -399,6 +402,9 @@ impl AgentService {
 fn creation_key(origin: &AgentOrigin, agent_id: &AgentId) -> Result<String, AgentServiceError> {
     match origin {
         AgentOrigin::Manual => Ok(format!("manual:{agent_id}")),
+        AgentOrigin::WorkspaceProfile { .. } => Err(AgentServiceError::InvalidRequest(
+            "workspace profile origin requires automatic admission".into(),
+        )),
         AgentOrigin::Trigger {
             trigger_id,
             launch_id,

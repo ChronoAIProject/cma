@@ -36,6 +36,67 @@ const NOW: &str = "2026-09-05T00:00:00Z";
 #[path = "agent_admission_mongo_integration_tests/creation_revival.rs"]
 mod creation_revival;
 
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn automatic_profile_admission_is_pinned_and_replayed_atomically() {
+    let uri = std::env::var("CHRONO_TEST_MONGODB_URI").unwrap();
+    let client = Client::with_uri_str(uri).await.unwrap();
+    let database = format!("cma_profile_admission_{}", uuid::Uuid::new_v4().simple());
+    let store = MongoSandboxStore::open(&client, &database).await.unwrap();
+    let parent = sandbox("automatic");
+    let mut workspace = workspace(&parent, "automatic");
+    let mut input = admission(&workspace, "automatic");
+    workspace.profile.content.agent_profiles = vec![layer2_core::profiles::AgentProfileRef::new(
+        input.profile.id.clone(),
+        input.profile.revision,
+    )];
+    workspace.profile.digest =
+        layer2_core::profiles::content_digest(&workspace.profile.content).unwrap();
+    store.create_sandbox(parent.clone()).await.unwrap();
+    store.create_workspace(workspace.clone()).await.unwrap();
+    input.origin = AgentOrigin::WorkspaceProfile { index: 0 };
+    input.creation_key = format!("workspace-profile:{}:0", workspace.id);
+    let mut invalid = input.clone();
+    invalid.origin = AgentOrigin::WorkspaceProfile { index: 1 };
+    invalid.creation_key = format!("workspace-profile:{}:1", workspace.id);
+    assert!(matches!(
+        store.admit_agent(invalid).await,
+        Err(SandboxStoreError::InvalidTransaction(_))
+    ));
+    let mut attempts = tokio::task::JoinSet::new();
+    for _ in 0..8 {
+        let store = store.clone();
+        let mut candidate = input.clone();
+        candidate.agent_id = AgentId::generate();
+        candidate.worktree_id = WorktreeId::generate();
+        attempts.spawn(async move { store.admit_agent(candidate).await });
+    }
+    let mut created = 0;
+    let mut identities = std::collections::BTreeSet::new();
+    while let Some(result) = attempts.join_next().await {
+        let result = result.unwrap().unwrap();
+        created += usize::from(matches!(result, AgentAdmissionResult::Created(_)));
+        identities.insert(result.creation().agent.id.clone());
+    }
+    assert_eq!(created, 1);
+    assert_eq!(identities.len(), 1);
+    let reopened = MongoSandboxStore::open(&client, &database).await.unwrap();
+    let replay = reopened.admit_agent(input.clone()).await.unwrap();
+    assert!(matches!(replay, AgentAdmissionResult::Existing(_)));
+    assert!(identities.contains(&replay.creation().agent.id));
+    let mut paused = reopened.get_sandbox(&parent.id).await.unwrap().unwrap();
+    let revision = paused.revision;
+    paused.status = SandboxStatus::Installing;
+    paused.revision += 1;
+    reopened.save_sandbox(revision, paused).await.unwrap();
+    input.creation_key.push_str("-new");
+    assert_eq!(
+        reopened.admit_agent(input).await,
+        Err(SandboxStoreError::SandboxNotReady)
+    );
+    client.database(&database).drop().await.unwrap();
+}
+
 async fn fixture(
     suffix: &str,
 ) -> (
