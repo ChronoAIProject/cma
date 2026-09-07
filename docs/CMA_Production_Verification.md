@@ -361,6 +361,46 @@ was removed; `retire-checkpoint-failure-GDUebo/` preserves the evidence. This
 does not count as a passing heavy restore or paused-deletion acceptance. Fresh
 production verification on the corrected images remains required.
 
+### Streamed Checkpoint Rollout
+
+At 2026-09-07 20:06 UTC, the corrected API `74e3a95b`, runtime `137b489d`
+and web `8d517d62` were deployed from the campaign branch. API and web reached
+Ready, and a public read confirmed the new lifecycle projection. Manifest commit
+`14dd7398` pins the exact registry digests. All three images passed vulnerability
+scanning; all 18 manifest resources validated without skips, with no policy or
+HTTPRoute ownership errors. Immediately before rollout, the owner's seven
+Sandboxes were retired and all Agents stopped or deleted.
+
+The native-loaded runtime OCI manifest
+`sha256:3c47370e24aa95915aa6c74567a981358ab333e44ba766ca4389e9827b32b5b8`
+passed all 17 image contract checks and the non-root PATH/tool probe. Evidence
+binds to that exact manifest and source revision, with no remaining disposable
+containers or volumes. An earlier Docker-format import had identical executable
+configuration and filesystem layers but a different manifest; its passing
+evidence is retained separately and is not the deployed-manifest proof.
+
+Web `8d517d62` passed 947 tests plus type, lint, format, CSS ownership and secret
+checks. Local desktop/mobile light/dark browser tests verified editable drafts
+and visible history during saving, failed-read input holds, automatic recovery,
+admission-pending Starting without Stop, and Stop only for a real active turn.
+Backend follow-up `2b930ca4` adds immediate checkpoint-input refusals without
+queuing a later prompt, while preserving paused revival and durable Trigger
+first-message retries. Its 569 core tests, 172 public tests, both SDK contract
+projections and scoped lint passed. All 33 disposable real-Mongo contract tests
+also passed, including the checkpoint-at-transaction refusal assertions; exact
+container cleanup was verified. This follow-up API image is still building and
+was not included in the 20:06 rollout.
+
+Fresh campaign `streaming-fixed` admitted Launch
+`lch_583a96ffe5aa4695a4ebe20f67e6397c` through one README click and one NyxID
+OAuth exchange, without additional CMA clicks. It created Sandbox
+`sbx_0354b0d3126a44ed84eba1d96f68bfff` on the corrected runtime. The actual
+provisioning UI passed all four viewport/theme checks: blue running marks move,
+green completed and yellow pending marks remain still, reduced motion is
+honored, all canvas states match public Launch records, and layout does not
+overlap. Evidence is in `live-provisioning-CRlmuc/`. Provisioning, first response,
+heavy workload, lifecycle and final Send/Stop remain separate acceptance steps.
+
 ## Historical Observation
 
 Recorded on 2026-09-07, Singapore time. This is a bounded production observation,
