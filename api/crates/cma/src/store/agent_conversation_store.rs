@@ -4,7 +4,7 @@ use layer2_core::ids::AgentId;
 use layer2_core::sandbox::store::{
     AgentConversationMutation, AgentConversationStore, SandboxStoreError,
 };
-use layer2_core::sandbox::{Agent, AgentLogEntry, AgentLogKind, PendingAgentApprovals};
+use layer2_core::sandbox::{Agent, AgentLogEntry, PendingAgentApprovals};
 use layer2_core::seconds_from_rfc3339;
 use mongodb::bson::doc;
 use mongodb::options::ReadConcern;
