@@ -12,6 +12,7 @@ import type {
 } from '../api/types';
 import { readSandboxHistory } from '../sandbox/eventHistory';
 import { mergeTranscriptSnapshot } from './chronology';
+import { useSandboxInput, type SandboxInputAvailability } from './sandboxInput';
 import {
   conversationFromTranscript,
   foldAgentEvent,
@@ -38,6 +39,7 @@ export type ApprovalDecision = 'allow' | 'deny' | 'abort';
 
 export interface AgentController {
   readonly state: AgentResourceState;
+  readonly inputAvailability: SandboxInputAvailability;
   readonly pending?: AgentCommand;
   readonly actionError?: string;
   readonly reload: () => void;
@@ -55,6 +57,8 @@ interface AgentControllerOptions {
 }
 
 function errorMessage(error: unknown): string {
+  if (error instanceof ApiError && error.code === 'sandbox_checkpoint_in_progress')
+    return 'Progress is being saved. Your input was not accepted. Try again after saving finishes.';
   return error instanceof Error ? error.message : 'The Agent operation did not complete.';
 }
 
@@ -147,6 +151,15 @@ export function useAgentController(
   const [state, setState] = useState<AgentResourceState>(
     agentId === undefined ? { status: 'idle' } : { status: 'loading' },
   );
+  const inputAvailability = useSandboxInput(
+    client,
+    agentId,
+    state.status === 'ready' && state.detail.id === agentId ? state.detail.sandbox.id : undefined,
+  );
+  const activeTurn =
+    state.status === 'ready' &&
+    state.detail.id === agentId &&
+    state.conversation.activeRunId !== undefined;
   const [pending, setPending] = useState<AgentCommand>();
   const [actionError, setActionError] = useState<string>();
   const [replayError, setReplayError] = useState<string>();
@@ -332,7 +345,13 @@ export function useAgentController(
       approval: { readonly id: string; readonly decision: ApprovalDecision } | string,
       onAccepted?: () => void,
     ) => {
-      if (agentId === undefined || actionAbort.current !== undefined || historyUnavailable) return;
+      if (
+        agentId === undefined ||
+        actionAbort.current !== undefined ||
+        historyUnavailable ||
+        !inputAvailability.allowed
+      )
+        return;
       replayAbort.current?.abort();
       const controller = new AbortController();
       actionAbort.current = controller;
@@ -381,7 +400,7 @@ export function useAgentController(
         }
       }
     },
-    [agentId, applyLive, client, historyUnavailable],
+    [agentId, applyLive, client, historyUnavailable, inputAvailability.allowed],
   );
 
   const command = useCallback(
@@ -390,6 +409,7 @@ export function useAgentController(
       operation: (id: string, key: string, signal: AbortSignal) => Promise<void>,
     ) => {
       const mayPreemptSend = name === 'interrupt' && actionKind.current === 'send';
+      if (name === 'interrupt' && !activeTurn) return;
       if (agentId === undefined || (actionAbort.current !== undefined && !mayPreemptSend)) {
         return;
       }
@@ -417,11 +437,12 @@ export function useAgentController(
         }
       }
     },
-    [agentId, keys, options, reload],
+    [activeTurn, agentId, keys, options, reload],
   );
 
   return {
     state,
+    inputAvailability,
     pending,
     actionError: actionError ?? replayError,
     reload,

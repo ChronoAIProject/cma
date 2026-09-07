@@ -677,6 +677,21 @@ replacement is a quiet status notice, not an automatic failed state. When a
 checkpoint boundary is known, show its recorded time without claiming later work
 was captured. The owner never has to recreate the Agent after a rollout.
 
+The Agent conversation independently reads its exact public Sandbox while open,
+using the settled five-second and saving 1.5-second refresh cadence from §16.
+Returning from a hidden tab requires a new foreground observation; an otherwise
+allowed observation expires after ten seconds without a successful refresh.
+Actual saving phases and their recorded start time use the existing composer
+notice. While saving is known, or lifecycle information is missing or stale,
+hold Send and approval decisions without disabling draft editing or hiding
+history. Pause eligibility is not message eligibility; a normally paused Sandbox
+still resumes through the ordinary message command. No retry sends the draft.
+
+An unresolved message admission shows Starting with a disabled Send control in
+its existing circular seat. It is not an active Agent turn and exposes no Stop
+response command. Stop is available only after an active turn is recorded, and
+remains available during saving or failed Sandbox reads for a known active turn.
+
 ### Details and readings
 
 The Details drawer contains Sandbox status, pinned profile, size and services;
@@ -1412,3 +1427,4 @@ Append-only. Never edit or delete an entry.
 | 2026-09-08 | Kept the Agent grid within the available center width for long titles and Markdown tables, and enforced the established 34px/44px square composer control against shared icon-button width rules. |
 | 2026-09-08 | Preserved an authorized transcript when initial event-history loading fails transiently. Reused the status band for incomplete activity and retry; retained drafts while holding commands and replay until all event pages are recovered, without masking authentication or permission denials. |
 | 2026-09-08 | Bound Sandbox page and tree Pause/Resume controls to public lifecycle eligibility. Reused status seats for actual saving phases and start time, added visible nonoverlapping refresh while Active, and preserved the hierarchy with readable unavailable reasons after a failed refresh. Workspace and Agent creation rules remain unchanged. |
+| 2026-09-08 | Added public Sandbox capture observation to the Agent composer. Preserved drafts and history while holding new messages and approval decisions during saving or unavailable lifecycle reads, kept ordinary paused-message revival, and distinguished pending admission from a durably active turn before offering Stop response. |
