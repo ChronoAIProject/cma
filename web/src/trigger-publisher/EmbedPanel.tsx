@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { TriggerDocument, TriggerEmbed, TriggerStatistics } from '@chronoai/cma-sdk';
 import { Button } from '../ui/Button';
-import { IconEditOutline16, IconRefreshOutline16 } from '../ui/icons';
+import { IconEditOutline16, IconPlusOutline16, IconRefreshOutline16 } from '../ui/icons';
 import type { TriggerPublisherClient } from './client';
 import { BadgePreview } from './BadgePreview';
 import { SnippetTabs } from './SnippetTabs';
@@ -77,7 +77,14 @@ export function EmbedPanel({
       {document.availability !== 'published' ? (
         <p>This Trigger is not available for new launches.</p>
       ) : placements.length === 0 ? (
-        <p>Add a source URL to get a button snippet.</p>
+        <div>
+          <p>
+            Add the HTTPS URL of the page where this button will appear to generate its embed code.
+          </p>
+          <Button icon={<IconPlusOutline16 />} onClick={onManageSources}>
+            Add source URL
+          </Button>
+        </div>
       ) : (
         <>
           <div className="trigger-field">
