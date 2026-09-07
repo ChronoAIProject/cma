@@ -9,7 +9,7 @@ use crate::failure::{Result, RuntimeError};
 
 const MAGIC: &[u8; 16] = b"CMAHOMEARCHIVE1\n";
 const HEADER_BYTES: u64 = 24;
-const MAX_MANIFEST_BYTES: u64 = 64 * 1024 * 1024;
+const MAX_MANIFEST_BYTES: u64 = 128 * 1024 * 1024;
 pub(crate) const MAX_ARCHIVE_BYTES: u64 =
     HEADER_BYTES + MAX_MANIFEST_BYTES + crate::checkpoint_manifest::MAX_PAYLOAD_BYTES;
 

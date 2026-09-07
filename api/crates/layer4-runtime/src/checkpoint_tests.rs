@@ -205,6 +205,33 @@ fn a_truncated_archive_is_refused_even_with_its_own_digest() {
     std::fs::remove_dir_all(config.checkpoint_root).unwrap();
 }
 
+#[test]
+fn archive_metadata_budget_covers_large_homes_but_remains_bounded() {
+    let config = config("metadata-budget");
+    std::fs::create_dir_all(&config.checkpoint_root).unwrap();
+    let archive = config.checkpoint_root.join("header-only.cma");
+    for (declared_size, expected_detail) in [
+        (64 * 1024 * 1024 + 1_u64, "truncated before its payload"),
+        (128 * 1024 * 1024, "truncated before its payload"),
+        (128 * 1024 * 1024 + 1, "manifest length is invalid"),
+    ] {
+        let mut bytes = b"CMAHOMEARCHIVE1\n".to_vec();
+        bytes.extend_from_slice(&declared_size.to_be_bytes());
+        std::fs::write(&archive, &bytes).unwrap();
+        let digest = hex(&Sha256::digest(&bytes));
+        let error =
+            crate::checkpoint_archive::inspect(&archive, &digest, &config.home).unwrap_err();
+        assert_eq!(error.code, "checkpoint_invalid");
+        assert!(error.detail.contains(expected_detail), "{error:?}");
+    }
+    assert_eq!(
+        crate::checkpoint_archive::MAX_ARCHIVE_BYTES,
+        layer3_adapter::hosted::MAX_CHECKPOINT_ARCHIVE_BYTES
+    );
+    std::fs::remove_dir_all(config.home).unwrap();
+    std::fs::remove_dir_all(config.checkpoint_root).unwrap();
+}
+
 #[cfg(unix)]
 #[test]
 fn checkpoint_download_refuses_a_symlinked_object() {
