@@ -144,6 +144,37 @@ impl Sandbox {
         self.publish_capture_change(next, at)
     }
 
+    pub fn renew_checkpoint_capture(
+        &mut self,
+        holder: &str,
+        fence: u64,
+        at: String,
+        lease_expires_at: String,
+    ) -> Result<(), SandboxModelError> {
+        let capture = self.require_checkpoint_capture_claim(holder, fence)?;
+        let lease = capture.work.lease.as_ref().ok_or_else(invalid_capture)?;
+        if self.status != SandboxStatus::Active
+            || capture.phase != SandboxCheckpointCapturePhase::Capture
+            || at < self.updated_at
+            || at >= lease.expires_at
+            || lease_expires_at <= lease.expires_at
+            || crate::seconds_from_rfc3339(&lease_expires_at).is_none()
+        {
+            return Err(invalid_capture());
+        }
+        let mut next = self.clone();
+        next.lifecycle
+            .checkpoint_capture
+            .as_mut()
+            .ok_or_else(invalid_capture)?
+            .work
+            .lease
+            .as_mut()
+            .ok_or_else(invalid_capture)?
+            .expires_at = lease_expires_at;
+        self.publish_capture_change(next, at)
+    }
+
     /// Publication keeps the exact writer token until resumption is confirmed.
     pub fn publish_captured_checkpoint(
         &mut self,

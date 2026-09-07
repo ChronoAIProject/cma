@@ -494,6 +494,107 @@ fn active() -> Sandbox {
     value
 }
 
+#[tokio::test]
+async fn checkpoint_renewal_is_exact_fenced_unexpired_and_capture_only() {
+    let store = InMemorySandboxStore::default();
+    let mut current = active();
+    current.revision = 1;
+    store.create_sandbox(current.clone()).await.unwrap();
+    let mut begun = current.clone();
+    begun.begin_checkpoint_capture(LATER.into()).unwrap();
+    store
+        .commit_sandbox_lifecycle(mutation(&current, begun.clone()))
+        .await
+        .unwrap();
+    let mut claimed = begun.clone();
+    claim(&mut claimed);
+    store
+        .commit_sandbox_lifecycle(mutation(&begun, claimed.clone()))
+        .await
+        .unwrap();
+    let at = "2026-09-05T00:32:00Z";
+    let expires = "2026-09-05T00:37:00Z";
+    let mut renewed = claimed.clone();
+    renewed
+        .renew_checkpoint_capture(HOLDER, fence(&claimed), at.into(), expires.into())
+        .unwrap();
+    let mut valid = mutation(&claimed, renewed.clone());
+    valid.appended_at = at.into();
+    for change in [0, 1, 2] {
+        let mut invalid = valid.clone();
+        let capture = invalid
+            .sandbox
+            .lifecycle
+            .checkpoint_capture
+            .as_mut()
+            .unwrap();
+        match change {
+            0 => capture.phase = SandboxCheckpointCapturePhase::ResumeWriters,
+            1 => capture.authority.writer_resume_token = Some("a".repeat(64)),
+            _ => capture.work.attempts += 1,
+        }
+        assert!(store.commit_sandbox_lifecycle(invalid).await.is_err());
+        assert_eq!(
+            store.get_sandbox(&current.id).await.unwrap(),
+            Some(claimed.clone())
+        );
+    }
+    store.commit_sandbox_lifecycle(valid.clone()).await.unwrap();
+    assert_eq!(
+        store.commit_sandbox_lifecycle(valid).await,
+        Err(SandboxStoreError::Conflict)
+    );
+    assert_eq!(fence(&renewed), fence(&claimed));
+    assert_eq!(
+        renewed
+            .lifecycle
+            .checkpoint_capture
+            .as_ref()
+            .unwrap()
+            .authority,
+        claimed
+            .lifecycle
+            .checkpoint_capture
+            .as_ref()
+            .unwrap()
+            .authority
+    );
+    assert_eq!(
+        renewed
+            .lifecycle
+            .checkpoint_capture
+            .as_ref()
+            .unwrap()
+            .work
+            .attempts,
+        0
+    );
+    for (holder, lease_fence, at, until) in [
+        ("other", fence(&claimed), at, "2026-09-05T00:38:00Z"),
+        (HOLDER, fence(&claimed) + 1, at, "2026-09-05T00:38:00Z"),
+        (HOLDER, fence(&claimed), expires, "2026-09-05T00:38:00Z"),
+        (HOLDER, fence(&claimed), at, EXPIRES),
+    ] {
+        let mut value = renewed.clone();
+        assert!(value
+            .renew_checkpoint_capture(holder, lease_fence, at.into(), until.into())
+            .is_err());
+        assert_eq!(value, renewed);
+    }
+    let mut resuming = renewed.clone();
+    resuming
+        .require_checkpoint_writer_resume(HOLDER, fence(&renewed), at.into())
+        .unwrap();
+    resuming
+        .claim_checkpoint_capture(HOLDER.into(), at.into(), expires.into())
+        .unwrap();
+    let before = resuming.clone();
+    assert!(resuming
+        .renew_checkpoint_capture(HOLDER, fence(&before), at.into(), expires.into())
+        .is_err());
+    assert_eq!(resuming, before);
+}
+
 fn claim(value: &mut Sandbox) {
     value
         .claim_checkpoint_capture(HOLDER.into(), LATER.into(), EXPIRES.into())
