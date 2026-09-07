@@ -3,6 +3,9 @@ import { join } from 'node:path';
 import type { APIRequestContext } from '@playwright/test';
 import { identifier, object } from './environment';
 
+// APIRequestContext bypasses browser routes; cleanup never follows redirects.
+const cleanupHttp = { maxRedirects: 0, timeout: 30_000 } as const;
+
 export type ResourceKind =
   | 'launches'
   | 'sandboxes'
@@ -82,7 +85,7 @@ export class Journal {
   }
   async cleanup(api: APIRequestContext, baseURL: string, subject: string) {
     if (!this.resources.some((row) => row.subject === subject)) return;
-    const identity = await api.get(`${baseURL}/auth/session`);
+    const identity = await api.get(`${baseURL}/auth/session`, cleanupHttp);
     if (!identity.ok() || object(await identity.json()).subject !== subject) {
       this.record({ action: 'cleanup_refused', reason: 'identity_mismatch', subject });
       throw new Error(
@@ -94,13 +97,14 @@ export class Journal {
     // A 409 can mean already ready or a racing worker. Keep harvesting before any child cleanup.
     for (const resource of owned.filter((row) => row.kind === 'launches')) {
       const response = await api.post(`${baseURL}/api/v1/launches/${resource.id}/cancel`, {
+        ...cleanupHttp,
         headers: { 'Idempotency-Key': crypto.randomUUID(), Origin: baseURL },
       });
       this.record({ action: 'cancel_requested', ...resource, status: response.status() });
       let quiescent = false;
       const deadline = Date.now() + 90_000;
       while (Date.now() < deadline) {
-        const current = await api.get(`${baseURL}/api/v1/launches/${resource.id}`);
+        const current = await api.get(`${baseURL}/api/v1/launches/${resource.id}`, cleanupHttp);
         if (current.ok()) {
           const row = object(await current.json());
           this.observe(`/api/v1/launches/${resource.id}`, 'GET', 200, row, subject);
@@ -143,7 +147,7 @@ export class Journal {
         .filter((row) => row.subject === subject && row.kind === kind)
         .reverse()) {
         const path = `/api/v1/${kind}/${resource.id}`;
-        const read = await api.get(`${baseURL}${path}`);
+        const read = await api.get(`${baseURL}${path}`, cleanupHttp);
         if (read.status() === 404) {
           this.record({ action: 'already_absent', ...resource });
           continue;
@@ -158,6 +162,7 @@ export class Journal {
           throw new Error('Cleanup resource owner mismatch');
         if (kind === 'agents' && !['stopped', 'failed', 'deleted'].includes(String(row.status))) {
           const stop = await api.post(`${baseURL}${path}/stop`, {
+            ...cleanupHttp,
             data: {},
             headers: { 'Idempotency-Key': crypto.randomUUID(), Origin: baseURL },
           });
@@ -169,7 +174,7 @@ export class Journal {
           let stopped = false;
           const deadline = Date.now() + 90_000;
           while (Date.now() < deadline) {
-            const current = await api.get(`${baseURL}${path}`);
+            const current = await api.get(`${baseURL}${path}`, cleanupHttp);
             if (
               current.status() === 404 ||
               (current.ok() &&
@@ -191,6 +196,7 @@ export class Journal {
         const retire =
           kind.endsWith('-profiles') || (kind === 'triggers' && row.availability !== 'draft');
         const response = await api.fetch(`${baseURL}${path}${retire ? '/retire' : ''}`, {
+          ...cleanupHttp,
           method: retire ? 'POST' : 'DELETE',
           headers: { 'Idempotency-Key': crypto.randomUUID(), Origin: baseURL },
         });
@@ -206,7 +212,7 @@ export class Journal {
         let complete = false;
         const deadline = Date.now() + 90_000;
         while (Date.now() < deadline) {
-          const current = await api.get(`${baseURL}${path}`);
+          const current = await api.get(`${baseURL}${path}`, cleanupHttp);
           if (current.status() === 404) {
             complete = true;
             break;
