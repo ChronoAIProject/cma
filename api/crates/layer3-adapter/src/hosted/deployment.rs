@@ -135,13 +135,6 @@ impl HostedDeployment {
                 PLACEHOLDER_CREDENTIAL.to_string(),
             ),
         ]);
-        if !spec.own_credential {
-            // Reserved launch values must already match the supervisor's environment.
-            env.insert(
-                "CHRONO_UPSTREAM_PLACEHOLDER_KEY".to_string(),
-                PLACEHOLDER_CREDENTIAL.to_string(),
-            );
-        }
         for (name, value) in &spec.environment {
             if env.contains_key(name) || name.starts_with("CHRONO_") || name.starts_with("NYXID_") {
                 return Err(AdapterError::Rejected(format!(
