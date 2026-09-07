@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 use std::sync::{
     atomic::{AtomicBool, AtomicUsize, Ordering},
     Mutex,
@@ -17,7 +17,57 @@ use tokio::sync::{mpsc, Notify, Semaphore};
 
 use super::*;
 
+mod part_recovery;
+
 const OBJECTS: &str = "/api/v1/proxy/s/chrono-storage-service/api/buckets/checkpoint-test/objects";
+
+struct Fault {
+    status: StatusCode,
+    retry_after: Option<&'static str>,
+    commit: bool,
+    disconnect: bool,
+    chunked: bool,
+    body: Option<Vec<u8>>,
+}
+
+impl Fault {
+    fn status(status: StatusCode) -> Self {
+        Self {
+            status,
+            retry_after: None,
+            commit: false,
+            disconnect: false,
+            chunked: false,
+            body: None,
+        }
+    }
+
+    fn response(self) -> Response {
+        let mut response = if self.disconnect {
+            let stream = futures_util::stream::once(async {
+                Err::<Bytes, _>(std::io::Error::other("fixture interrupted response"))
+            });
+            (self.status, axum::body::Body::from_stream(stream)).into_response()
+        } else if self.chunked {
+            let stream = futures_util::stream::iter(
+                self.body
+                    .unwrap_or_default()
+                    .chunks(7)
+                    .map(|chunk| Ok::<_, std::io::Error>(Bytes::copy_from_slice(chunk)))
+                    .collect::<Vec<_>>(),
+            );
+            (self.status, axum::body::Body::from_stream(stream)).into_response()
+        } else {
+            (self.status, self.body.unwrap_or_default()).into_response()
+        };
+        if let Some(value) = self.retry_after {
+            response
+                .headers_mut()
+                .insert("retry-after", value.parse().unwrap());
+        }
+        response
+    }
+}
 
 #[derive(Default)]
 struct Fixture {
@@ -29,7 +79,18 @@ struct Fixture {
     ignore_delete: AtomicBool,
     redirect: AtomicBool,
     read_gates: Mutex<BTreeMap<String, Arc<Semaphore>>>,
+    faults: Mutex<BTreeMap<(String, String), VecDeque<Fault>>>,
     requests_changed: Notify,
+}
+
+impl Fixture {
+    fn fault(&self, method: &str, key: &str) -> Option<Fault> {
+        self.faults
+            .lock()
+            .unwrap()
+            .get_mut(&(method.into(), key.into()))
+            .and_then(VecDeque::pop_front)
+    }
 }
 
 async fn mint(
@@ -89,6 +150,16 @@ async fn upload(
     if fixture.redirect.load(Ordering::SeqCst) {
         return (StatusCode::TEMPORARY_REDIRECT, [("location", "/forbidden")]).into_response();
     }
+    if let Some(fault) = fixture.fault("POST", &query["key"]) {
+        if fault.commit {
+            fixture
+                .objects
+                .lock()
+                .unwrap()
+                .insert(query["key"].clone(), body.to_vec());
+        }
+        return fault.response();
+    }
     fixture
         .objects
         .lock()
@@ -117,6 +188,9 @@ async fn download(
         .cloned();
     if let Some(gate) = gate {
         gate.acquire().await.unwrap().forget();
+    }
+    if let Some(fault) = fixture.fault("GET", &query["key"]) {
+        return fault.response();
     }
     match fixture.objects.lock().unwrap().get(&query["key"]).cloned() {
         Some(mut bytes) => {

@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tokio::sync::mpsc;
 
-use super::{rejected, transfer, unavailable, ChronoStorage, Result};
+use super::{part_transfer, rejected, transfer, unavailable, ChronoStorage, Result};
 
 pub(super) const PART_BYTES: usize = 32 * 1024 * 1024;
 pub(super) const UPLOAD_CONCURRENCY: usize = 4;
@@ -118,25 +118,7 @@ async fn upload_part(store: &ChronoStorage, key: String, bytes: Vec<u8>) -> Resu
 }
 
 async fn upload_bytes(store: &ChronoStorage, key: &str, bytes: Vec<u8>) -> Result<String> {
-    let sha256 = format!("{:x}", Sha256::digest(&bytes));
-    let size_bytes = bytes.len() as u64;
-    let (sender, chunks) = mpsc::channel(1);
-    sender
-        .try_send(Ok(bytes))
-        .map_err(|_| unavailable("checkpoint part stream is unavailable"))?;
-    drop(sender);
-    transfer::upload(
-        store,
-        key,
-        CheckpointArchiveUpload {
-            object_reference: format!("home-{sha256}.cma"),
-            sha256: sha256.clone(),
-            size_bytes,
-            chunks,
-        },
-    )
-    .await?;
-    Ok(sha256)
+    part_transfer::upload(store, key, bytes).await
 }
 
 pub(super) async fn download(

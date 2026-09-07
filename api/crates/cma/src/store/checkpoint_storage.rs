@@ -10,6 +10,7 @@ use crate::config::CheckpointStorageConfig;
 #[cfg(test)]
 mod memory;
 mod multipart;
+mod part_transfer;
 #[cfg(test)]
 mod tests;
 mod token;
