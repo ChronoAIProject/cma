@@ -10,7 +10,8 @@ public routes are in [REST](API_REST.md).
 For this milestone, the maintainer's explicit instructions override the release
 step in #832: finish all development and local gates first, then deliver reviewed
 changes to `develop`, build images and deploy directly to production. **Never
-merge or push `main`, invoke the release workflow or change NyxID.** A direct
+merge or push `main`, invoke the release workflow or change NyxID configuration
+or administration.** A direct
 deployment is not a GitHub release and creates no release tag by implication.
 
 The one-time reset of historical CMA data and CMA-owned provider Sandboxes is
@@ -313,6 +314,98 @@ Health becoming Ready is not proof of checkpoint restoration, baseline visitor
 access or correct embed behavior. The API pod's termination grace must exceed
 its bounded HTTP and worker drains; review it whenever those timeouts change.
 No ordinary rollout may delete owner Sandboxes to conceal a recovery defect.
+
+### Historical Collection Isolation
+
+The reviewed September 7 inventory has 23 application collections and three
+views. The physical `system.views` namespace is not application data to export
+or restore directly. Preserve its view definitions through collection metadata:
+`sessions_v2` reads `sessions_v3`, `sessions` reads `sessions_v2`, and
+`session_events` reads `session_events_v2`; all three pipelines are empty.
+Revalidate this complete inventory at the zero-writer boundary before applying
+the procedure. A rehearsal snapshot taken while the old API is live does not
+replace the authoritative snapshot after its pod has fully exited.
+
+The new stores validate only their explicit collection names. Preserve the old
+collections whose names collide by renaming each to `legacy_20260907_<name>`
+inside the confirmed `chrono-bot` database, with `dropTarget: false` and majority
+acknowledgment. The exact collision set is `activity`, `auth_login_attempts`,
+`auth_subjects`, `operation_claims`, `platform_settings`, `trigger_launch_events`,
+`trigger_launches`, and `users`. Stop if a target already exists or the inventory
+changes. Leave all other historical application collections and views intact.
+Do not add new schema markers to old documents.
+
+An empty conflicting collection still needs isolation: the old unique
+`trigger_launch_events_by_sequence` index covers `launch_id` and `sequence`.
+New events use `seq`; retaining the old index would incorrectly reject the
+second event for a Launch because both old `sequence` values are missing.
+
+The protected snapshot must retain canonical, type-preserving BSON/EJSON
+documents, collection options, original UUIDs, validators, complete indexes,
+and view definitions. Read documents in a snapshot transaction and verify
+metadata remains stable before and after it. Restore into an isolated local
+Mongo instance, compare canonical document hashes, counts, index definitions
+and views, and rehearse the exact renames. Disable TTL only on that disposable
+Mongo instance during the comparison; do not change production-wide TTL policy.
+The ignored `archived_legacy_collections_preserve_custody_and_allow_full_new_store_bootstrap`
+test additionally exercises full new-store initialization and the event-index
+boundary beside preserved historical records.
+
+After backing up its exact index definition, remove only `auth_subject_expiry`
+from `legacy_20260907_auth_subjects`. Otherwise archived `delete_after` dates
+will erase owner token custody still needed for historical key cleanup. Verify
+the archived documents are unchanged and every other index remains intact.
+Retain the original encryption key and deployment identity: renaming preserves
+encrypted payloads, but does not make their historical schema readable by new
+workers. Preserve `auth_session_credentials`, its unresolved revocation debts,
+session tombstones, and exact legacy object-key ownership indefinitely until
+separately verified settlement. A rejected revocation is not a successful cleanup.
+
+Never start the old API against the post-rename live database to settle legacy
+debts. It would reopen the original namespaces and run renewal, checkpoint,
+host-sweep and reconciliation workers. Use a separately reviewed, narrowly
+scoped cleanup procedure; normal CMA-owned key revocation does not authorize
+NyxID role, account, service configuration or administrative changes.
+
+### Existing-Owner Verification
+
+The maintainer currently supplies one existing NyxID account. Its local CLI
+login can authenticate the real CMA authorization-code flow: preserve CMA's
+state, initiating-browser cookie and PKCE challenge, send the CLI access token
+only to the exact trusted NyxID authorization origin, and let CMA's callback
+establish its own renewable custody. Do not inject CLI refresh tokens into
+MongoDB or treat a bearer-only `/auth/session` result as browser sign-in proof.
+Keep any browser storage state and credential sentinels in regular `0600` files
+outside the repository. Never place credentials in process arguments or reports.
+
+`web/e2e/owner-config.ts` is a separate opt-in entry point with exactly one
+`OWNER-resource-lifecycle` scenario. It creates one Sandbox, Workspace and Agent
+from reviewed owner-published revisions, observes a completed first answer,
+checks browser return and ordinary pause/resume, then cleans only resources
+recorded in its owner-bound journal. It does not use operator fault controls.
+Ambiguous creation retains cleanup ownership instead of deleting possible parents.
+
+Supply `CMA_OWNER_E2E_TARGET` and `CMA_OWNER_E2E_MUTATION_TARGET` as the same exact
+HTTPS origin, `CMA_OWNER_E2E_SUBJECT`, `CMA_OWNER_E2E_FIXTURE_FILE`, and a fresh
+`CMA_OWNER_E2E_OUTPUT_DIR`. The private fixture contains the same origin/subject,
+browser storage-state and forbidden-values paths, exact Sandbox/Workspace/Agent
+profile IDs, revisions and digests, plus CMA/NyxID commit and image-digest
+provenance. Set `CMA_E2E_BROWSER_PATH` when using an installed browser. From
+`web/`, discovery requires no remote inputs:
+
+```sh
+./node_modules/.bin/playwright test --config e2e/owner-config.ts --list
+```
+
+Removing `--list` executes the explicitly configured remote run. Its evidence
+is labelled `existing_owner`, one account, and `owner_only_partial`; supplied
+provenance remains operator-declared until independently verified. This does
+not advance the full J/G campaign. Fresh signup, restricted-visitor behavior,
+cross-owner isolation and second-owner forks remain unproved without another
+account. The lifecycle baseline also does not prove runtime rotation, restart
+fault recovery, post-resume model continuation, external storage cleanup,
+provider login, real embeds, or public readiness. Existing full-campaign inputs
+and gates remain unchanged.
 
 ## Checkpoints And Cleanup
 
