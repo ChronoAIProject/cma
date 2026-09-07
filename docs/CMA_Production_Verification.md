@@ -15,7 +15,7 @@ acceptance of this campaign.
 | 2. Public Workspace Profile | Exact metadata, repository `dev`, no setup, one Agent Profile | Created and published at revision 1; exact configuration verified |
 | 3. Public Sandbox Profile | 4000 millicores, 8192 MiB, two requested services, 4/4 limits, working toolchain | Exact live configuration and all four actual Agent workload checks passed on runtime `137b489d`; independent receipt confirms unchanged tracked source |
 | 4. Public Trigger | Exact title/message, all-level reuse, Try It, visitor theme, no review, README placement | Exact revision published after first rollout; README-only PR #841 merged after all 12 protected checks; default README snippet read back exactly |
-| 5. Login without bootstrap | No Sandbox, Workspace, Agent, or Profile created by login alone | Existing-owner fresh-browser sign-in created no resources, including a new run on API `217dda6a`; fresh signup not tested |
+| 5. Login without bootstrap | No Sandbox, Workspace, Agent, or Profile created by login alone | Existing-owner fresh-browser sign-in created no resources; successful unseen-CMA-identity callback contract passes default/home/Trigger returns; external fresh signup not tested |
 | 6. Complete external-click flow | Login then automatic provisioning; exact first message once; correct software, skills, scopes | Fresh `streaming-fixed` README entry, first response, live configuration and actual workload passed; matching built-home restore and final first/repeat cycle pending |
 | 7. Previous UI style | Original rotating 3D mark and established controls; desktop/mobile screenshots | Live home/provisioning motion passed; latest deployed chat passed four desktop/mobile theme configurations, including layout, hierarchy and reload |
 | 8. Autonomous YOLO | Pinned provider runs full-access mode with no approval requests | Actual provider configuration verified; latest first response and successful subsequent workload completed with zero approvals |
@@ -443,10 +443,53 @@ records the two-turn conversation, native identity, exact runtime digest, and
 nine selected artifact hashes totaling 7,342,129 bytes. The matching replacement
 pod and heavy-after evidence remain required; this is not a full-home hash.
 
-API `2b930ca4` has now built, passed its image scan, and been pushed with exact
-digest verification. Manifest commit `60cd2354` stages that API-only update;
-it has not yet been deployed. All 18 manifests validate with no skips and no
-policy errors. Web and runtime pins are unchanged.
+API `2b930ca4` built, passed its image scan, and was pushed with exact digest
+verification. The API-only rollout was requested at 20:54:14 UTC and was Ready
+by the 20:56:01 readback. Its digest is
+`sha256:d011a9d9de2fabbda7264d2f3918c27e5520470192be5df2ee75624c83cff1a2`.
+Manifest commits `60cd2354` and `01b14052` pin the image and enable scoped
+checkpoint diagnostics. All 18 manifests validate with no skips and no policy
+errors. Web and runtime pins are unchanged. The same runtime pod UID and exact
+two-turn transcript hash survived this control-plane rollout; no Agent turn
+was active and no Sandbox pod was restarted. The admitted capture remained
+recorded for lease-fenced recovery rather than being manually repaired.
+
+### Heavy Publication Still Failing
+
+The post-workload capture began at 20:32:43 UTC and sealed a
+6,265,977,876-byte runtime archive at 20:41:03.616. It did not publish a durable
+checkpoint. The runtime released its hold at 20:46:27.501 and the controller
+began another epoch-2 capture at 20:46:28; the last published checkpoint remained
+epoch 1. The failed object's automatic cleanup began after its 20:51:03 deadline.
+Metadata samples taken afterward returned 404 and cannot establish how much of
+the archive had uploaded before failure. There was no API or runtime restart
+during the original failure, and the live home and both completed turns remain.
+
+Both four-view saving observers verified editable retained drafts, visible
+history, disabled Send and no spurious Stop, but neither proves durable recovery.
+The first timed observation is honestly partial; the second was stopped locally
+after the failed publication was identified. No UI availability gap is accepted
+as proof of a published checkpoint. Full built-home pause/restore remains blocked
+on this failure, with the original evidence retained.
+
+Commit `eac56ab1` adds a transaction-enforced 120-second quiet interval before
+periodic checkpoint admission, preventing the observed immediate post-reply
+input hold. It does not change explicit Pause, rotation, ongoing capture recovery,
+or the heavy-upload path. All 1,052 affected core/CMA tests and 36 isolated real
+Mongo contracts passed, along with strict lint, formatting and secret checks.
+Its API image is building and is not yet deployed. A separate CMA-only immutable
+part-recovery correction is being developed for transient transfer failures;
+it is not yet production evidence or a confirmed explanation of the original
+failure.
+
+Commit `c60a4371` adds a successful previously unseen CMA identity callback
+contract, using the real callback router and a loopback identity-provider mock.
+Default, home and Trigger returns create only authentication, browser-login,
+user-directory and authentication-audit state; callback composition supplies no
+aggregate/profile write service. Session reads and callback replay do not add
+duplicate user/audit records. All 98 focused auth tests passed, with four separate
+Mongo tests ignored. This is not a fresh external NyxID signup or second-owner
+browser test.
 
 ## Historical Observation
 

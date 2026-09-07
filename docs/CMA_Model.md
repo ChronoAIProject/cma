@@ -281,6 +281,13 @@ and seals verified content before publishing recovery authority. Restore checks
 the manifest, digests and exact operation identity before releasing the writer
 boundary. Partial objects are never advertised as usable checkpoints.
 
+Periodic checkpoints wait until every live Agent's latest durable activity is at
+least 120 seconds old. The store enforces this quiet interval inside capture
+admission, so a concurrent message wins or the checkpoint wins, never both.
+Explicit Pause, runtime rotation, and recovery of an already admitted capture
+do not wait for this interval. This grace period permits follow-up work after a
+reply; it does not reduce the time needed to save a large home once capture starts.
+
 Runtime image drift performs a recorded rotation through this same boundary.
 Two checkpoints are retained; retention and eventual cleanup do not erase a
 currently referenced recovery point. Restart recovery resumes from database
