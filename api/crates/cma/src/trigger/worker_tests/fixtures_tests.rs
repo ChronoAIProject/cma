@@ -237,6 +237,7 @@ pub(super) struct FakeDriver {
     crash_once: Mutex<Option<layer2_core::trigger_domain::LaunchEffectKind>>,
     install_target_workspace: AtomicBool,
     invalid_result: Mutex<Option<(layer2_core::trigger_domain::LaunchEffectKind, String)>>,
+    checkpoint_once: Mutex<Option<layer2_core::trigger_domain::LaunchEffectKind>>,
 }
 
 impl FakeDriver {
@@ -256,6 +257,7 @@ impl FakeDriver {
             crash_once: Mutex::new(None),
             install_target_workspace: AtomicBool::new(false),
             invalid_result: Mutex::new(None),
+            checkpoint_once: Mutex::new(None),
         });
         driver.install_context(inputs);
         driver
@@ -279,6 +281,13 @@ impl FakeDriver {
 
     pub(super) fn set_crash_once(&self, kind: layer2_core::trigger_domain::LaunchEffectKind) {
         *self.crash_once.lock().unwrap() = Some(kind);
+    }
+
+    pub(super) fn checkpoint_before_next_creation(
+        &self,
+        kind: layer2_core::trigger_domain::LaunchEffectKind,
+    ) {
+        *self.checkpoint_once.lock().unwrap() = Some(kind);
     }
 
     pub(super) fn set_invalid_result(
@@ -526,6 +535,27 @@ impl LaunchResourceDriver for FakeDriver {
     }
 
     async fn apply(&self, effect: LaunchResourceEffect) -> Result<String, LaunchResourceError> {
+        if self.checkpoint_once.lock().unwrap().take() == Some(effect.kind()) {
+            let sandbox_id = match &effect {
+                LaunchResourceEffect::CreateWorkspace { sandbox_id, .. } => sandbox_id.clone(),
+                LaunchResourceEffect::CreateAgent { workspace_id, .. } => self
+                    .workspaces
+                    .lock()
+                    .unwrap()
+                    .get(workspace_id)
+                    .unwrap()
+                    .sandbox_id
+                    .clone(),
+                _ => panic!("checkpoint test hook only supports child creation"),
+            };
+            self.mutate_sandbox(&sandbox_id, |sandbox| {
+                sandbox.begin_checkpoint_capture(stamp(0)).unwrap()
+            });
+            return Err(LaunchResourceError::retryable(
+                "launch_sandbox_not_ready",
+                "Sandbox is checkpointing",
+            ));
+        }
         match effect {
             LaunchResourceEffect::CreateSandbox {
                 caller,

@@ -33,6 +33,17 @@ impl LaunchWorker {
                 .await?;
             return Ok(EffectOutcome::Halted);
         }
+        match self.checkpoint_blocks_effect(&launch, kind).await {
+            Ok(Some(sandbox)) => {
+                self.defer_for_checkpoint(launch, &sandbox, now).await?;
+                return Ok(EffectOutcome::Halted);
+            }
+            Ok(None) => {}
+            Err(failure) => {
+                self.settle_resource_failure(launch, failure, now).await?;
+                return Ok(EffectOutcome::Halted);
+            }
+        }
         if launch.work.effect.is_none() {
             launch = self.prepare_effect(launch, kind, now).await?;
         }
@@ -84,6 +95,12 @@ impl LaunchWorker {
                 return Ok(EffectOutcome::Halted);
             }
             Err(failure) => {
+                if failure.code == "launch_sandbox_not_ready" {
+                    if let Ok(Some(sandbox)) = self.checkpoint_blocks_effect(&launch, kind).await {
+                        self.defer_for_checkpoint(launch, &sandbox, now).await?;
+                        return Ok(EffectOutcome::Halted);
+                    }
+                }
                 self.settle_resource_failure(launch, failure, now).await?;
                 return Ok(EffectOutcome::Halted);
             }
@@ -119,6 +136,56 @@ impl LaunchWorker {
             launch: Box::new(launch),
             result_id,
         })
+    }
+
+    async fn checkpoint_blocks_effect(
+        &self,
+        launch: &Launch,
+        kind: LaunchEffectKind,
+    ) -> Result<Option<layer2_core::sandbox::Sandbox>, LaunchResourceError> {
+        if !matches!(
+            kind,
+            LaunchEffectKind::CreateWorkspace | LaunchEffectKind::CreateAgent
+        ) || launch
+            .work
+            .effect
+            .as_ref()
+            .is_some_and(|effect| effect.state == LaunchEffectState::Applied)
+        {
+            return Ok(None);
+        }
+        let Some(id) = launch.resolution.sandbox.id() else {
+            return Err(invalid_effect());
+        };
+        let sandbox = self.resources.sandbox(id).await?;
+        Ok(sandbox.filter(|sandbox| {
+            sandbox.id == *id
+                && sandbox.owner == launch.owner
+                && sandbox.status == layer2_core::sandbox::SandboxStatus::Active
+                && sandbox.lifecycle.checkpoint_capture.is_some()
+        }))
+    }
+
+    async fn defer_for_checkpoint(
+        &self,
+        mut launch: Launch,
+        sandbox: &layer2_core::sandbox::Sandbox,
+        now: SystemTime,
+    ) -> Result<(), LaunchWorkerError> {
+        let expected = launch.revision;
+        let fence = self.fence(&launch)?;
+        let at = rfc3339_at(now);
+        let events = launch
+            .defer_worker_for_checkpoint(
+                sandbox,
+                &self.config.holder,
+                fence,
+                rfc3339_at(now + self.config.poll_delay),
+                at.clone(),
+            )
+            .map_err(domain_error)?;
+        self.commit(expected, launch, at, events).await?;
+        Ok(())
     }
 
     async fn prepare_effect(

@@ -436,9 +436,8 @@ fn sandbox_service_error(error: SandboxServiceError) -> LaunchResourceError {
 
 fn workspace_service_error(error: WorkspaceServiceError) -> LaunchResourceError {
     match error {
-        WorkspaceServiceError::Unavailable(_) | WorkspaceServiceError::SandboxNotReady => {
-            dependency_unavailable()
-        }
+        WorkspaceServiceError::Unavailable(_) => dependency_unavailable(),
+        WorkspaceServiceError::SandboxNotReady => sandbox_not_ready(),
         WorkspaceServiceError::LimitReached { .. } => LaunchResourceError::terminal(
             "workspace_limit_reached",
             "Workspace capacity is unavailable for this launch",
@@ -454,14 +453,21 @@ fn agent_service_error(error: AgentServiceError) -> LaunchResourceError {
     match error {
         AgentServiceError::Unavailable(_)
         | AgentServiceError::WorkspaceNotReady
-        | AgentServiceError::SandboxNotReady
         | AgentServiceError::ControlConflict => dependency_unavailable(),
+        AgentServiceError::SandboxNotReady => sandbox_not_ready(),
         AgentServiceError::LimitReached { .. } => LaunchResourceError::terminal(
             "agent_limit_reached",
             "Agent capacity is unavailable for this launch",
         ),
         _ => LaunchResourceError::terminal("agent_launch_rejected", "Agent creation was rejected"),
     }
+}
+
+fn sandbox_not_ready() -> LaunchResourceError {
+    LaunchResourceError::retryable(
+        "launch_sandbox_not_ready",
+        "The Sandbox is not ready for launch creation",
+    )
 }
 
 fn missing_frozen_profile() -> LaunchResourceError {

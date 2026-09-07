@@ -15,6 +15,128 @@ use super::fixtures_tests::{
 };
 
 #[tokio::test]
+async fn checkpoint_held_child_creation_waits_without_spending_dependency_retries() {
+    for start in [3, 5] {
+        let harness = Harness::pending();
+        for minute in 1..start {
+            harness.run(minute).await;
+        }
+        let sandbox_id = harness.launch().resolution.sandbox.id().unwrap().clone();
+        harness.driver.mutate_sandbox(&sandbox_id, |sandbox| {
+            sandbox.begin_checkpoint_capture(stamp(start)).unwrap();
+        });
+        let before = harness.launch();
+        let calls = harness.driver.calls().len();
+        for minute in start..start + 12 {
+            harness.run(minute).await;
+            let waiting = harness.launch();
+            assert_eq!(waiting.state, before.state);
+            assert_eq!(waiting.work.attempts, 0);
+            assert!(waiting.work.effect.is_none());
+            assert!(waiting.failure.is_none());
+            assert!(waiting
+                .steps
+                .iter()
+                .any(|step| step.safe_detail == "Waiting for Sandbox checkpoint"));
+        }
+        assert_eq!(harness.driver.calls().len(), calls);
+        release_checkpoint(&harness, &sandbox_id, start + 12);
+        harness.run(start + 12).await;
+        assert_eq!(harness.driver.calls().len(), calls + 1);
+        assert!(!harness.launch().state.is_terminal());
+    }
+}
+
+#[tokio::test]
+async fn checkpoint_racing_child_admission_preserves_effect_identity_across_wait_and_restart() {
+    for (start, kind) in [
+        (3, LaunchEffectKind::CreateWorkspace),
+        (5, LaunchEffectKind::CreateAgent),
+    ] {
+        let harness = Harness::pending();
+        for minute in 1..start {
+            harness.run(minute).await;
+        }
+        harness.driver.checkpoint_before_next_creation(kind);
+        harness.run(start).await;
+        let waiting = harness.launch();
+        assert_eq!(waiting.work.attempts, 0);
+        let effect = waiting.work.effect.unwrap();
+        assert_eq!(effect.state, LaunchEffectState::RecoveryRequired);
+        let restarted = test_worker(
+            Arc::clone(&harness.store),
+            Arc::clone(&harness.driver),
+            "checkpoint-restarted",
+        );
+        for minute in start + 1..start + 12 {
+            assert!(restarted
+                .run_one(&harness.launch_id, time(minute))
+                .await
+                .unwrap());
+            let waiting = harness.launch();
+            assert_eq!(waiting.work.attempts, 0);
+            let retained = waiting.work.effect.unwrap();
+            assert_eq!(retained.state, LaunchEffectState::RecoveryRequired);
+            assert_eq!(retained.intent_key, effect.intent_key);
+            assert_eq!(retained.attempt, effect.attempt);
+        }
+        let sandbox_id = harness.launch().resolution.sandbox.id().unwrap().clone();
+        release_checkpoint(&harness, &sandbox_id, start + 12);
+        assert!(restarted
+            .run_one(&harness.launch_id, time(start + 12))
+            .await
+            .unwrap());
+        assert!(harness.launch().work.effect.is_none());
+        assert_eq!(
+            harness
+                .driver
+                .calls()
+                .iter()
+                .filter(|call| call.kind == kind)
+                .count(),
+            1
+        );
+    }
+}
+
+fn release_checkpoint(harness: &Harness, sandbox_id: &SandboxId, minute: u64) {
+    harness.driver.mutate_sandbox(sandbox_id, |sandbox| {
+        sandbox
+            .claim_checkpoint_capture("capture".into(), stamp(minute), stamp(minute + 1))
+            .unwrap();
+        let fence = sandbox
+            .lifecycle
+            .checkpoint_capture
+            .as_ref()
+            .unwrap()
+            .work
+            .lease
+            .as_ref()
+            .unwrap()
+            .fence;
+        sandbox
+            .require_checkpoint_writer_resume("capture", fence, stamp(minute))
+            .unwrap();
+        sandbox
+            .claim_checkpoint_capture("resume".into(), stamp(minute), stamp(minute + 1))
+            .unwrap();
+        let fence = sandbox
+            .lifecycle
+            .checkpoint_capture
+            .as_ref()
+            .unwrap()
+            .work
+            .lease
+            .as_ref()
+            .unwrap()
+            .fence;
+        sandbox
+            .complete_checkpoint_writer_resume("resume", fence, stamp(minute))
+            .unwrap();
+    });
+}
+
+#[tokio::test]
 async fn expired_executing_effect_replays_one_external_resource_after_restart() {
     let harness = Harness::pending();
     harness
