@@ -39,6 +39,7 @@ enum Corruption {
 struct CorruptingBackend {
     inner: InMemoryHostedBackend,
     next: Arc<Mutex<Option<Corruption>>>,
+    expected_reconnect: Arc<Mutex<Option<String>>>,
 }
 
 impl CorruptingBackend {
@@ -139,6 +140,9 @@ impl HostedBackend for CorruptingBackend {
         settings: HostedAgentOpenSettings,
         updates: mpsc::Sender<ConversationUpdate>,
     ) -> crate::Result<(ConversationChannel, FencedReceipt<AgentOpenReceipt>)> {
+        if let Some(expected) = self.expected_reconnect.lock().unwrap().as_deref() {
+            assert_eq!(resume_conversation.as_deref(), Some(expected));
+        }
         let (channel, mut receipt) = self
             .inner
             .open_agent(handle, launch, resume_conversation, settings, updates)
@@ -213,6 +217,83 @@ fn runtime_options(worktree: &WorktreeReceipt, agent_id: &str) -> RuntimeOptions
         slot: AgentSlot::new(agent_id),
         ..RuntimeOptions::default()
     }
+}
+
+#[tokio::test]
+async fn reconnect_supplies_held_identity_without_changing_the_durable_open() {
+    let backend = CorruptingBackend::default();
+    let adapter = CodexAdapter::with_backend(backend.clone(), CodexSandboxSpec::default());
+    let (handle, workspace) = ready_runtime(&adapter, "sandbox-reconnect", "reconnect").await;
+    let agent_id = "agent-reconnect";
+    let worktree = adapter
+        .add_worktree(
+            &handle,
+            1,
+            &WorktreeRequest::new(
+                format!("worktree:reconnect:{agent_id}:add:v1"),
+                "reconnect",
+                agent_id,
+                workspace.resolved_commit,
+            ),
+        )
+        .await
+        .unwrap();
+    let options = runtime_options(&worktree, agent_id);
+    adapter
+        .materialize_agent_home(
+            &handle,
+            1,
+            &AgentHomeRequest::new(
+                format!("agent:{agent_id}:home:create:v1"),
+                options.clone(),
+                "prompt",
+                Vec::new(),
+            ),
+        )
+        .await
+        .unwrap();
+    let open = AgentOpenRequest::new(format!("agent:{agent_id}:open:v1"), options, None);
+    let (updates, _receiver) = mpsc::channel(1);
+    let initial = adapter
+        .open_agent(&handle, 1, &open, updates)
+        .await
+        .unwrap();
+    let conversation = initial.conversation_id.unwrap();
+    let original = backend.inner.snapshot(&handle).await.unwrap().agents;
+    *backend.expected_reconnect.lock().unwrap() = Some(conversation.clone());
+    let (updates, _receiver) = mpsc::channel(1);
+    let attached = adapter
+        .reconnect_agent(&handle, 2, &open, &conversation, updates)
+        .await
+        .unwrap();
+    assert_eq!(
+        attached.conversation_id.as_deref(),
+        Some(conversation.as_str())
+    );
+    assert_eq!(
+        backend.inner.snapshot(&handle).await.unwrap().agents,
+        original
+    );
+    assert!(open.resume_conversation.is_none());
+    assert!(open.has_valid_sha256());
+
+    for invalid in ["", " ", "conversation\n", "other-conversation"] {
+        *backend.expected_reconnect.lock().unwrap() = Some(invalid.into());
+        let (updates, _receiver) = mpsc::channel(1);
+        rejected(
+            adapter
+                .reconnect_agent(&handle, 3, &open, invalid, updates)
+                .await,
+        );
+    }
+    let resumed =
+        AgentOpenRequest::new(open.operation_id.clone(), open.options, Some(conversation));
+    let (updates, _receiver) = mpsc::channel(1);
+    rejected(
+        adapter
+            .reconnect_agent(&handle, 4, &resumed, "different-conversation", updates)
+            .await,
+    );
 }
 
 #[tokio::test]

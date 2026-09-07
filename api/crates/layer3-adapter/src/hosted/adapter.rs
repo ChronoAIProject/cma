@@ -332,7 +332,26 @@ impl SandboxAdapter for HostedAdapter {
         request: &AgentOpenRequest,
         updates: mpsc::Sender<ConversationUpdate>,
     ) -> crate::Result<ConversationChannel> {
-        agent::open_agent(self, handle, authority_fence, request, updates).await
+        agent::open_agent(self, handle, authority_fence, request, None, updates).await
+    }
+
+    async fn reconnect_agent(
+        &self,
+        handle: &RuntimeHandle,
+        authority_fence: u64,
+        request: &AgentOpenRequest,
+        conversation_id: &str,
+        updates: mpsc::Sender<ConversationUpdate>,
+    ) -> crate::Result<ConversationChannel> {
+        agent::open_agent(
+            self,
+            handle,
+            authority_fence,
+            request,
+            Some(conversation_id),
+            updates,
+        )
+        .await
     }
 
     async fn close_agent(

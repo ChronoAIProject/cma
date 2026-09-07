@@ -230,6 +230,19 @@ impl SandboxAdapter for CodexAdapter {
             .await
     }
 
+    async fn reconnect_agent(
+        &self,
+        handle: &RuntimeHandle,
+        authority_fence: u64,
+        request: &AgentOpenRequest,
+        conversation_id: &str,
+        updates: mpsc::Sender<ConversationUpdate>,
+    ) -> crate::Result<ConversationChannel> {
+        self.hosted
+            .reconnect_agent(handle, authority_fence, request, conversation_id, updates)
+            .await
+    }
+
     async fn close_agent(
         &self,
         handle: &RuntimeHandle,

@@ -393,7 +393,9 @@ impl AgentWorker {
                 "the durable conversation-open receipt does not match replay",
             ));
         }
-        let (channel, updates) = self.open(context, connection_fence, &request).await?;
+        let (channel, updates) = self
+            .reconnect(context, connection_fence, &request, &target.conversation_id)
+            .await?;
         let conversation_id = valid_conversation_id(channel.conversation_id)?;
         if conversation_id != target.conversation_id {
             return Err(WorkerFailure::terminal(
@@ -410,11 +412,12 @@ impl AgentWorker {
         )
     }
 
-    async fn open(
+    async fn reconnect(
         &self,
         context: &AgentContext,
         authority_fence: u64,
         request: &AgentOpenRequest,
+        conversation_id: &str,
     ) -> Result<
         (
             ConversationChannel,
@@ -425,10 +428,11 @@ impl AgentWorker {
         let (updates, receiver) = mpsc::channel(UPDATE_BUFFER);
         match tokio::time::timeout(
             self.config.open_timeout,
-            self.dependencies.adapter.open_agent(
+            self.dependencies.adapter.reconnect_agent(
                 &context.runtime,
                 authority_fence,
                 request,
+                conversation_id,
                 updates,
             ),
         )
