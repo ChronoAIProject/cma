@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 
 use axum::body::{Body, Bytes};
 use axum::extract::{
@@ -11,7 +12,9 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use futures_util::{SinkExt as _, StreamExt as _};
-use layer3_adapter::wire::RequestFrame;
+use layer3_adapter::wire::{
+    CheckpointUploadResponse, RequestFrame, CHECKPOINT_UPLOAD_RECEIPT_MEDIA_TYPE,
+};
 use serde::Serialize;
 use sha2::{Digest as _, Sha256};
 use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
@@ -23,6 +26,7 @@ use crate::supervisor::{Phase, Supervisor};
 
 const CONTROL_BODY_BYTES: usize = 384 * 1024 * 1024;
 const STREAM_CHUNK_BYTES: usize = 64 * 1024;
+const CONTROL_HEARTBEAT: Duration = Duration::from_secs(15);
 
 pub(crate) fn router(supervisor: Arc<Supervisor>) -> Router {
     Router::new()
@@ -110,7 +114,50 @@ async fn control(State(supervisor): State<Arc<Supervisor>>, body: Bytes) -> Resp
             .into_response()
         }
     };
+    if matches!(
+        request,
+        RequestFrame::Checkpoint(_)
+            | RequestFrame::CheckpointForTeardown(_)
+            | RequestFrame::BootstrapRestore(_)
+            | RequestFrame::Restore(_)
+    ) {
+        let result = tokio::spawn(async move { supervisor.dispatch(request).await });
+        return heartbeat_json(result, CONTROL_HEARTBEAT);
+    }
     Json(supervisor.dispatch(request).await).into_response()
+}
+
+fn heartbeat_json<T: Serialize + Send + 'static>(
+    result: tokio::task::JoinHandle<T>,
+    interval: Duration,
+) -> Response {
+    let mut heartbeat = tokio::time::interval(interval);
+    heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    // JSON whitespace keeps proxy read deadlines alive without changing the frame.
+    // Dropping the HTTP body detaches its task, retaining operation and writer guards.
+    let stream = futures_util::stream::try_unfold(Some((result, heartbeat)), |state| async move {
+        let Some((mut result, mut heartbeat)) = state else {
+            return Ok(None);
+        };
+        tokio::select! {
+            biased;
+            value = &mut result => {
+                let value = value.map_err(std::io::Error::other)?;
+                let bytes = serde_json::to_vec(&value).map_err(std::io::Error::other)?;
+                Ok::<_, std::io::Error>(Some((Bytes::from(bytes), None)))
+            }
+            _ = heartbeat.tick() => Ok(Some((Bytes::from_static(b"\n"), Some((result, heartbeat))))),
+        }
+    });
+    let mut response = Response::new(Body::from_stream(stream));
+    response.headers_mut().insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("application/json"),
+    );
+    response
+        .headers_mut()
+        .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    response
 }
 
 async fn conversation(
@@ -370,15 +417,55 @@ async fn upload_checkpoint(
             false,
         );
     }
-    if let Err(error) = supervisor
-        .checkpoint_store()
-        .commit_upload(temporary, reference, expected)
-        .await
+    let result = tokio::spawn(async move {
+        match supervisor
+            .checkpoint_store()
+            .commit_upload(temporary, reference.clone(), expected.clone())
+            .await
+        {
+            Ok(()) => {
+                cleanup.disarm();
+                CheckpointUploadResponse::Committed {
+                    object_reference: reference,
+                    sha256: expected,
+                    size_bytes: received,
+                }
+            }
+            Err(error) => CheckpointUploadResponse::Failure {
+                code: error.code,
+                detail: error.detail,
+                retryable: error.retryable,
+            },
+        }
+    });
+    if headers
+        .get(header::ACCEPT)
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| {
+            value
+                .split(',')
+                .any(|item| item.trim() == CHECKPOINT_UPLOAD_RECEIPT_MEDIA_TYPE)
+        })
     {
-        return runtime_failure(error);
+        let mut response = heartbeat_json(result, CONTROL_HEARTBEAT);
+        response.headers_mut().insert(
+            header::CONTENT_TYPE,
+            HeaderValue::from_static(CHECKPOINT_UPLOAD_RECEIPT_MEDIA_TYPE),
+        );
+        return response;
     }
-    cleanup.disarm();
-    StatusCode::NO_CONTENT.into_response()
+    match result.await {
+        Ok(CheckpointUploadResponse::Committed { .. }) => StatusCode::NO_CONTENT.into_response(),
+        Ok(CheckpointUploadResponse::Failure {
+            code,
+            detail,
+            retryable,
+        }) => runtime_failure(RuntimeError::recorded(code, detail, retryable)),
+        Err(error) => runtime_failure(RuntimeError::unavailable(
+            "checkpoint_upload_failed",
+            format!("checkpoint upload task did not complete: {error}"),
+        )),
+    }
 }
 
 fn content_length(headers: &HeaderMap) -> Option<u64> {

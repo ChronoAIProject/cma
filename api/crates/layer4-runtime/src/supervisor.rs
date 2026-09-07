@@ -476,6 +476,9 @@ fn writers_held_error() -> RuntimeError {
 #[path = "supervisor_authority_tests.rs"]
 mod authority_tests;
 #[cfg(test)]
+#[path = "supervisor_checkpoint_http_tests.rs"]
+mod checkpoint_http_tests;
+#[cfg(test)]
 #[path = "supervisor_mutation_tests.rs"]
 mod mutation_tests;
 #[cfg(test)]

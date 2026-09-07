@@ -34,6 +34,8 @@ fn close_agent_request(request: AgentCloseRequest) -> RequestFrame {
 fn root(name: &str) -> PathBuf {
     let root = std::env::temp_dir().join(format!("cma-link-{}-{name}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
+    let _ = std::fs::remove_dir_all(root.with_extension("checkpoints"));
+    let _ = std::fs::remove_dir_all(root.with_extension("runtime-state"));
     root
 }
 
@@ -328,6 +330,29 @@ async fn checkpoint_objects_stream_between_runtime_stores() {
         .await
         .unwrap();
     assert_eq!(uploaded.status(), StatusCode::NO_CONTENT);
+    let committed = client
+        .put(format!(
+            "http://{target_address}/runtime/checkpoints/{}",
+            receipt.object_reference
+        ))
+        .header(header::ACCEPT, CHECKPOINT_UPLOAD_RECEIPT_MEDIA_TYPE)
+        .body(archive.clone())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(committed.status(), StatusCode::OK);
+    assert_eq!(
+        committed.headers()[header::CONTENT_TYPE],
+        CHECKPOINT_UPLOAD_RECEIPT_MEDIA_TYPE
+    );
+    assert_eq!(
+        committed.json::<CheckpointUploadResponse>().await.unwrap(),
+        CheckpointUploadResponse::Committed {
+            object_reference: receipt.object_reference.clone(),
+            sha256: receipt.sha256.clone(),
+            size_bytes: archive.len() as u64,
+        }
+    );
     let downloaded = client
         .get(format!(
             "http://{target_address}/runtime/checkpoints/{}",
@@ -361,4 +386,99 @@ async fn checkpoint_objects_stream_between_runtime_stores() {
     let _ = std::fs::remove_dir_all(target_home.with_extension("checkpoints"));
     std::fs::remove_dir_all(source_home).unwrap();
     std::fs::remove_dir_all(target_home).unwrap();
+}
+
+#[tokio::test]
+async fn checkpoint_upload_opt_in_reports_invalid_archive_without_publication() {
+    let home = root("invalid-streamed-upload");
+    let supervisor = supervisor(home.clone());
+    let (address, server) = serve(Arc::clone(&supervisor)).await;
+    let bytes = b"not-a-checkpoint-archive";
+    let sha256 = crate::command::hex(&Sha256::digest(bytes));
+    let reference = format!("home-{sha256}.cma");
+    let response = reqwest::Client::new()
+        .put(format!("http://{address}/runtime/checkpoints/{reference}"))
+        .header(header::ACCEPT, CHECKPOINT_UPLOAD_RECEIPT_MEDIA_TYPE)
+        .body(bytes.as_slice())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert!(matches!(
+        response.json::<CheckpointUploadResponse>().await.unwrap(),
+        CheckpointUploadResponse::Failure { code, retryable: false, .. }
+            if code == "checkpoint_invalid"
+    ));
+    assert!(supervisor
+        .checkpoint_store()
+        .download_path(&reference)
+        .is_err());
+    assert!(!std::fs::read_dir(home.with_extension("checkpoints"))
+        .unwrap()
+        .any(|entry| entry
+            .unwrap()
+            .file_name()
+            .to_string_lossy()
+            .starts_with(".upload-")));
+    server.abort();
+    let _ = server.await;
+    let _ = std::fs::remove_dir_all(home.with_extension("checkpoints"));
+    std::fs::remove_dir_all(home).unwrap();
+}
+
+#[tokio::test]
+async fn checkpoint_heartbeat_keeps_json_readable_across_multiple_idle_boundaries() {
+    let expected = serde_json::json!({"type": "committed", "size_bytes": 42});
+    let completed = expected.clone();
+    let (release, waiting) = tokio::sync::oneshot::channel();
+    let task = tokio::spawn(async move {
+        waiting.await.unwrap();
+        completed
+    });
+    let response = heartbeat_json(task, Duration::from_millis(10));
+    assert_eq!(response.headers()[header::CONTENT_TYPE], "application/json");
+    assert!(!response.headers().contains_key(header::CONTENT_LENGTH));
+    let mut stream = response.into_body().into_data_stream();
+    let mut bytes = Vec::new();
+    for _ in 0..3 {
+        let chunk = tokio::time::timeout(Duration::from_millis(250), stream.next())
+            .await
+            .expect("each heartbeat arrives before the proxy read-idle boundary")
+            .unwrap()
+            .unwrap();
+        assert_eq!(chunk.as_ref(), b"\n");
+        bytes.extend_from_slice(&chunk);
+    }
+    release.send(()).unwrap();
+    while let Some(chunk) = tokio::time::timeout(Duration::from_millis(250), stream.next())
+        .await
+        .expect("the completed JSON receipt terminates the stream")
+    {
+        let chunk = chunk.unwrap();
+        bytes.extend_from_slice(&chunk);
+    }
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&bytes).unwrap(),
+        expected
+    );
+}
+
+#[tokio::test]
+async fn checkpoint_heartbeat_disconnect_does_not_abort_validation_task() {
+    let (release, waiting) = tokio::sync::oneshot::channel();
+    let (completed, observed) = tokio::sync::oneshot::channel();
+    let task = tokio::spawn(async move {
+        waiting.await.unwrap();
+        completed.send(()).unwrap();
+        serde_json::json!({"type": "committed"})
+    });
+    let response = heartbeat_json(task, Duration::from_millis(10));
+    let mut stream = response.into_body().into_data_stream();
+    assert_eq!(stream.next().await.unwrap().unwrap().as_ref(), b"\n");
+    drop(stream);
+    release.send(()).unwrap();
+    tokio::time::timeout(Duration::from_secs(1), observed)
+        .await
+        .expect("validation remains owned after response body disconnect")
+        .unwrap();
 }
