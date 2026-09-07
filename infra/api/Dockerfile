@@ -1,18 +1,66 @@
 # syntax=docker/dockerfile:1
-FROM alpine:3.22 AS secret-scanner
+FROM --platform=$BUILDPLATFORM golang:1.26.8-alpine3.23@sha256:33ce311e5eecedee48ec1b84419c1306e9fbd71009f0d5c3f2a6904b579c1ecc AS secret-scanner-build
+ARG TARGETOS
 ARG TARGETARCH
-RUN apk add --no-cache ca-certificates curl \
-    && case "${TARGETARCH}" in \
-      amd64) archive=x64; checksum=551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb ;; \
-      arm64) archive=arm64; checksum=e4a487ee7ccd7d3a7f7ec08657610aa3606637dab924210b3aee62570fb4b080 ;; \
-      *) exit 1 ;; \
-    esac \
-    && curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
-      "https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_${archive}.tar.gz" \
-      --output /tmp/scanner.tar.gz \
-    && printf '%s  /tmp/scanner.tar.gz\n' "${checksum}" | sha256sum -c - \
-    && tar -xzf /tmp/scanner.tar.gz -C /usr/local/bin gitleaks \
-    && test "$(/usr/local/bin/gitleaks version)" = '8.30.1'
+ENV GOTOOLCHAIN=local GOENV=off GOTELEMETRY=off \
+    GOPROXY=https://proxy.golang.org GOSUMDB=sum.golang.org CGO_ENABLED=0
+WORKDIR /src/gitleaks
+# CMA security rebuild: unchanged 8.30.1 source/rules, patched Go dependencies.
+# Literal pins cannot be replaced through build arguments. See docs/Secret_Scanner_Build.md.
+RUN <<'PREPARE_SCANNER'
+set -eu
+case "${TARGETOS}/${TARGETARCH}" in
+  linux/amd64|linux/arm64) ;;
+  *) echo 'unsupported secret-scanner platform' >&2; exit 1 ;;
+esac
+test "$(go env GOVERSION)" = 'go1.26.8'
+export GOOS="${TARGETOS}" GOARCH="${TARGETARCH}"
+apk add --no-cache ca-certificates curl
+curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
+  'https://codeload.github.com/gitleaks/gitleaks/tar.gz/83d9cd684c87d95d656c1458ef04895a7f1cbd8e' \
+  --output /tmp/scanner.tar.gz
+printf '%s\n' '6b2638a733b85619dc80bdf28e84e4fed7e526a761ab5c148fbf67695aea2115  /tmp/scanner.tar.gz' | sha256sum -c -
+tar -xzf /tmp/scanner.tar.gz --strip-components=1 -C /src/gitleaks
+printf '%s\n' 'e163e53b9e7e8a8511e77271e2b323ed057759542a6d988258afe3a1fa329caf  config/gitleaks.toml' | sha256sum -c -
+go get golang.org/x/crypto@v0.55.0 golang.org/x/text@v0.41.0
+go mod download all
+go mod verify
+mkdir -p /usr/local/share/gitleaks
+printf '%s\n' \
+  'e0edfb0862afb47842aee08811984801fef09c60865c77988c814a2b58450404  go.mod' \
+  '8220b35a8d9ab7e2befe8880db36aded4fc68547ce5c2b42bb28c102d933e09c  go.sum' \
+  'e163e53b9e7e8a8511e77271e2b323ed057759542a6d988258afe3a1fa329caf  config/gitleaks.toml' \
+  > /usr/local/share/gitleaks/inputs.sha256
+sha256sum -c /usr/local/share/gitleaks/inputs.sha256
+printf '%s\n' \
+  'CMA security rebuild of upstream Gitleaks 8.30.1' \
+  'source=https://github.com/gitleaks/gitleaks' \
+  'revision=83d9cd684c87d95d656c1458ef04895a7f1cbd8e' \
+  'archive.sha256=6b2638a733b85619dc80bdf28e84e4fed7e526a761ab5c148fbf67695aea2115' \
+  'builder=golang:1.26.8-alpine3.23@sha256:33ce311e5eecedee48ec1b84419c1306e9fbd71009f0d5c3f2a6904b579c1ecc' \
+  > /usr/local/share/gitleaks/source.txt
+PREPARE_SCANNER
+
+RUN --network=none <<'BUILD_SCANNER'
+set -eu
+export GOOS="${TARGETOS}" GOARCH="${TARGETARCH}" GOPROXY=off
+sha256sum -c /usr/local/share/gitleaks/inputs.sha256
+go mod verify
+go list -mod=readonly -m all > /src/gitleaks/modules.txt
+# Upstream release archives use go-re2, selected by this build tag.
+go build -mod=readonly -trimpath -buildvcs=false -tags gore2regex \
+  -ldflags '-s -w -X=github.com/zricethezav/gitleaks/v8/version.Version=8.30.1' \
+  -o /usr/local/bin/gitleaks .
+sha256sum -c /usr/local/share/gitleaks/inputs.sha256
+go version -m /usr/local/bin/gitleaks > /usr/local/share/gitleaks/buildinfo.txt
+sha256sum /usr/local/bin/gitleaks > /usr/local/share/gitleaks/binary.sha256
+BUILD_SCANNER
+
+# Execute the version check on the target platform, not the native Go builder.
+FROM alpine:3.22 AS secret-scanner
+COPY --from=secret-scanner-build /usr/local/bin/gitleaks /usr/local/bin/gitleaks
+COPY --from=secret-scanner-build /usr/local/share/gitleaks /usr/local/share/gitleaks
+RUN --network=none test "$(/usr/local/bin/gitleaks version)" = '8.30.1'
 
 FROM rust:1.96.1-alpine AS build
 RUN apk add --no-cache musl-dev
@@ -25,6 +73,11 @@ RUN CHRONO_BUILD="${CHRONO_BUILD}" \
     cargo build --release --locked --bin cma
 
 FROM alpine:3.22 AS runtime
+ARG CHRONO_BUILD=development
+ARG CHRONO_BUILD_SHA=development
+LABEL org.opencontainers.image.source="https://github.com/ChronoAIProject/cma" \
+      org.opencontainers.image.revision="${CHRONO_BUILD_SHA}" \
+      org.opencontainers.image.version="${CHRONO_BUILD}"
 # Pull security fixes published after the base image was cut. ca-certificates is
 # required, not optional: the control plane makes outbound HTTPS calls to the
 # identity provider, and an empty trust store fails every one of them. CI and
@@ -38,6 +91,7 @@ RUN test -n "${OS_SECURITY_REFRESH}" \
 USER 10001:10001
 COPY --from=build /build/target/release/cma /usr/local/bin/cma
 COPY --from=secret-scanner /usr/local/bin/gitleaks /usr/local/bin/gitleaks
+COPY --from=secret-scanner /usr/local/share/gitleaks /usr/local/share/gitleaks
 EXPOSE 8080
 ENTRYPOINT ["/usr/local/bin/cma"]
 # Health is asserted by the Kubernetes probes in infra/api/deployment.yaml.
