@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import { createHash, randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { appendFileSync, lstatSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
+import { appendFileSync, lstatSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
@@ -116,15 +117,22 @@ export function runObserver(verifier, verifierHash, config, configHash, request,
   assert.match(configHash, /^[0-9a-f]{64}$/);
   privateFile(verifier, verifierHash);
   privateFile(config, configHash);
-  const receipt = JSON.parse(execute(process.execPath, [verifier], {
-    input: JSON.stringify(request), encoding: 'utf8', timeout: 240000, maxBuffer: 65536,
-    env: { PATH: '/usr/local/bin:/usr/bin:/bin', CMA_ATTESTATION_CONFIG: config },
-    stdio: ['pipe', 'pipe', 'pipe'],
-  }));
-  validateReceipt(receipt, request);
-  privateFile(verifier, verifierHash);
-  privateFile(config, configHash);
-  return receipt;
+  // Credential helpers may fall back to cwd when HOME is absent.
+  const directory = mkdtempSync(join(realpathSync(tmpdir()), 'cma-observer-workdir-'));
+  try {
+    const outside = relative(root, directory);
+    assert.ok(outside.startsWith('../') || isAbsolute(outside));
+    const receipt = JSON.parse(execute(process.execPath, [verifier], {
+      input: JSON.stringify(request), encoding: 'utf8', timeout: 240000, maxBuffer: 65536,
+      cwd: directory,
+      env: { PATH: '/usr/local/bin:/usr/bin:/bin', CMA_ATTESTATION_CONFIG: config },
+      stdio: ['pipe', 'pipe', 'pipe'],
+    }));
+    validateReceipt(receipt, request);
+    privateFile(verifier, verifierHash);
+    privateFile(config, configHash);
+    return receipt;
+  } finally { rmSync(directory, { recursive: true, force: true }); }
 }
 
 function attest(output) {
