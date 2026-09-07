@@ -8,7 +8,8 @@ use axum::{
 use futures_util::stream;
 use layer2_core::{
     sandbox::{
-        Agent, AgentLiveFragment, AgentLiveFragmentKind, AgentLiveSubscription, AgentLogKind,
+        Agent, AgentLiveFragment, AgentLiveFragmentKind, AgentLiveSubscription, AgentLogEntry,
+        AgentLogKind, AgentStatus, PendingAgentApprovals,
     },
     AgentId, Caller,
 };
@@ -131,7 +132,8 @@ pub(super) async fn open(
         .rev()
         .find(|entry| matches!(entry.kind, AgentLogKind::AgentMessage { .. }))
         .map_or(0, |entry| entry.seq);
-    open.queue(history);
+    open.queue(&history);
+    open.interrupt_pending(&agent, &history);
     open.queue_live(&agent);
     let stream = stream::unfold(open, |mut open| async move {
         loop {
@@ -144,7 +146,8 @@ pub(super) async fn open(
             tokio::time::sleep(Duration::from_millis(100)).await;
             match open.state.reads.log_snapshot(&open.caller, &open.id).await {
                 Ok((agent, history)) => {
-                    open.queue(history);
+                    open.queue(&history);
+                    open.interrupt_pending(&agent, &history);
                     open.queue_live(&agent);
                 }
                 Err(_) => return None,
@@ -179,7 +182,7 @@ struct Following {
 }
 
 impl Following {
-    fn queue(&mut self, history: Vec<layer2_core::sandbox::AgentLogEntry>) {
+    fn queue(&mut self, history: &[AgentLogEntry]) {
         for entry in history {
             if entry.seq <= self.after {
                 continue;
@@ -195,11 +198,51 @@ impl Following {
             if matches!(entry.kind, AgentLogKind::AgentMessage { .. }) {
                 self.committed_message_seq = entry.seq;
             }
-            self.pending.extend(project(&entry, self.turn));
+            self.pending.extend(project(entry, self.turn));
             if self.run.is_some() && ending(&entry.kind) {
                 self.ended = true;
                 break;
             }
+        }
+    }
+
+    fn interrupt_pending(&mut self, agent: &Agent, history: &[AgentLogEntry]) {
+        if self.ended
+            || self.run.is_none()
+            || self.run != agent.conversation.active_turn
+            || agent.status != AgentStatus::WaitingApproval
+        {
+            return;
+        }
+        let mut approvals = PendingAgentApprovals::default();
+        for entry in history {
+            approvals.observe(entry);
+        }
+        let mut interrupts = Vec::new();
+        for entry in approvals.into_entries() {
+            for mut event in project(&entry, self.turn) {
+                // These are current pending state, not a replay of older cursor positions.
+                event.seq = None;
+                if event.kind == "RUN_FINISHED" {
+                    if let Some(values) = event.body["outcome"]["interrupts"].as_array() {
+                        interrupts.extend(values.iter().cloned());
+                    }
+                } else {
+                    self.pending.push_back(event);
+                }
+            }
+        }
+        if !interrupts.is_empty() {
+            self.pending.push_back(AguiEvent {
+                kind: "RUN_FINISHED",
+                thread_id: self.id.to_string(),
+                run_id: self.turn.to_string(),
+                body: serde_json::json!({"outcome": {"type": "interrupt", "interrupts": interrupts}}),
+                timestamp: None,
+                seq: None,
+                live: false,
+            });
+            self.ended = true;
         }
     }
 
