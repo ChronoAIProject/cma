@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "openapi_operations": 114,
+  "openapi_operations": 116,
   "operations": {
     "GET /api/v1/profile-authoring/bounds": {
       "classification": "openapi",
@@ -600,6 +600,15 @@
         "badge-unavailable",
         "invalid-badge-query"
       ]
+    },
+    "GET /api/v1/triggers/public/{public_id}/open/{placement_id}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/trigger_entry.rs# External navigation records deliberate click evidence without creating a Launch or resources.",
+      "required_problems": [],
+      "non_problem_statuses": {
+        "404": "api/crates/layer1-public/src/rest/trigger_entry.rs# Invalid, unpublished or retired destinations return an empty not-found response.",
+        "503": "api/crates/layer1-public/src/rest/trigger_entry.rs# Unavailable Trigger or Placement storage returns an empty service-unavailable response."
+      }
     },
     "GET /api/v1/triggers/{id}": {
       "classification": "openapi",
@@ -1375,6 +1384,15 @@
         "trigger_already_exists",
         "trigger_service_unavailable"
       ]
+    },
+    "POST /api/v1/triggers/public/{public_id}/entry-intent": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/trigger_entry.rs# Same-origin consumption clears bounded browser evidence and returns its acceptance and Placement.",
+      "required_problems": [],
+      "non_problem_statuses": {
+        "403": "api/crates/layer1-public/src/rest/trigger_entry.rs# Missing or cross-origin Origin and cross-site fetch metadata cannot consume click evidence.",
+        "404": "api/crates/layer1-public/src/rest/trigger_entry.rs# Malformed public identifiers return an empty not-found response."
+      }
     },
     "POST /api/v1/triggers/public/{public_id}/launches": {
       "classification": "openapi",

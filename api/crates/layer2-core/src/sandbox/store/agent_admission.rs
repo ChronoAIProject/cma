@@ -27,6 +27,87 @@ pub struct AgentAdmission {
 }
 
 impl AgentAdmission {
+    pub fn can_reuse(&self, agent: &Agent, workspace: &Workspace, reuse_existing: bool) -> bool {
+        let explicit_reuse = reuse_existing && matches!(self.origin, AgentOrigin::Trigger { .. });
+        let automatic_slot = match self.origin {
+            AgentOrigin::WorkspaceProfile { index } => {
+                matches!(agent.origin, AgentOrigin::Trigger { .. })
+                    && agent.creation_key.starts_with("trigger-profile:")
+                    && workspace
+                        .profile
+                        .content
+                        .agent_profiles
+                        .iter()
+                        .position(|reference| {
+                            reference.id == self.profile.id
+                                && reference.revision == self.profile.revision
+                        })
+                        == Some(usize::from(index))
+            }
+            _ => false,
+        };
+        (explicit_reuse || automatic_slot)
+            && agent.owner == self.owner
+            && workspace.owner == self.owner
+            && agent.workspace_id == workspace.id
+            && workspace.id == self.workspace_id
+            && agent.sandbox_id == workspace.sandbox_id
+            && agent.profile == self.profile
+            && (automatic_slot || agent.status.is_live())
+            && (automatic_slot || agent.failure.is_none())
+            && (automatic_slot || agent.requested_stop_reason.is_none())
+    }
+
+    /// Attach a first prompt only to an untouched Agent. Preserve its origin and history.
+    pub fn initialize_reused_agent(
+        &self,
+        agent: &mut Agent,
+        has_owner_input: bool,
+    ) -> Result<Option<crate::sandbox::AgentLogKind>, SandboxStoreError> {
+        if has_owner_input
+            || agent.conversation.first_message.is_some()
+            || self.first_message.is_none()
+        {
+            return Ok(None);
+        }
+        if agent.conversation.active_turn.is_some()
+            || agent.conversation.operation.is_some()
+            || !agent.conversation.queued_messages.is_empty()
+        {
+            return Ok(None);
+        }
+        let request = self.first_message.as_ref().expect("checked first prompt");
+        let record = FirstMessageRecord::new(
+            agent.creation_key.clone(),
+            request.text.clone(),
+            self.event_at.clone(),
+        )
+        .map_err(|error| SandboxStoreError::Corrupt(error.to_string()))?;
+        if agent.status != AgentStatus::Starting {
+            if agent.work.lease.is_some() || agent.work.step != AgentWorkStep::None {
+                return Err(SandboxStoreError::Conflict);
+            }
+            agent
+                .work
+                .schedule(AgentWorkStep::DispatchFirstMessage, self.event_at.clone());
+        }
+        agent.conversation.first_message = Some(record);
+        agent.conversation.last_seq = agent
+            .conversation
+            .last_seq
+            .checked_add(1)
+            .ok_or(SandboxStoreError::SequenceConflict)?;
+        agent.revision = agent
+            .revision
+            .checked_add(1)
+            .ok_or(SandboxStoreError::Conflict)?;
+        agent.updated_at = self.event_at.clone();
+        Ok(Some(crate::sandbox::AgentLogKind::FirstMessageChanged {
+            state: crate::sandbox::FirstMessageDelivery::Queued,
+            recovery_generation: 0,
+        }))
+    }
+
     pub fn materialize(&self, workspace: &Workspace) -> Result<AgentCreation, SandboxStoreError> {
         if self.workspace_id != workspace.id
             || self.owner != workspace.owner
@@ -133,7 +214,7 @@ impl AgentAdmission {
             && creation.agent.creation_fingerprint == self.fingerprint()?)
     }
 
-    fn fingerprint(&self) -> Result<String, SandboxStoreError> {
+    pub fn fingerprint(&self) -> Result<String, SandboxStoreError> {
         let first_message = self
             .first_message
             .as_ref()
@@ -221,6 +302,15 @@ impl AgentAdmissionResult {
 
 #[async_trait]
 pub trait AgentAdmissionStore: Send + Sync {
+    async fn admit_agent_reusing_profile(
+        &self,
+        _admission: AgentAdmission,
+    ) -> Result<AgentAdmissionResult, SandboxStoreError> {
+        Err(SandboxStoreError::InvalidTransaction(
+            "atomic Agent profile reuse is unavailable",
+        ))
+    }
+
     async fn admit_agent(
         &self,
         admission: AgentAdmission,

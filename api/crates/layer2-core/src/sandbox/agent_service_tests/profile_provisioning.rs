@@ -4,6 +4,131 @@ use crate::sandbox::store::{AgentAdmission, AgentAdmissionStore};
 use crate::WorktreeId;
 
 #[tokio::test]
+async fn trigger_reuses_automatic_agent_and_initializes_its_first_prompt_once() {
+    let (service, store, profiles, workspace) =
+        setup_profile_children(SandboxStatus::Active, WorkspaceStatus::Ready, 1).await;
+    service
+        .reconcile_profile_agents(&workspace.sandbox_id)
+        .await
+        .unwrap();
+    let before = store
+        .list_agents(&workspace.owner, &Default::default())
+        .await
+        .unwrap()
+        .items
+        .remove(0);
+    let owner = launch_caller("owner", Capability::CreateSandbox);
+    let request = request(
+        workspace.profile.content.agent_profiles[0].clone(),
+        AgentOrigin::Trigger {
+            trigger_id: "trg_reuse".into(),
+            launch_id: "lch_first".into(),
+        },
+    );
+    let first = service
+        .create_or_reuse_for_launch(
+            &owner,
+            Capability::CreateSandbox,
+            &workspace.id,
+            request.clone(),
+            true,
+        )
+        .await
+        .unwrap();
+    assert_eq!(first.id, before.id);
+    assert_eq!(first.worktree_id, before.worktree_id);
+    assert_eq!(first.origin, before.origin);
+    assert_eq!(
+        first.conversation.first_message.as_ref().unwrap().text,
+        "Inspect the proof."
+    );
+    let again = service
+        .create_or_reuse_for_launch(
+            &owner,
+            Capability::CreateSandbox,
+            &workspace.id,
+            request,
+            true,
+        )
+        .await
+        .unwrap();
+    assert_eq!(again.conversation, first.conversation);
+    assert_eq!(
+        store
+            .list_agents(&workspace.owner, &Default::default())
+            .await
+            .unwrap()
+            .items
+            .len(),
+        1
+    );
+    assert_eq!(uses(&profiles, &first.profile.id).await, 1);
+    assert_eq!(
+        service
+            .reconcile_profile_agents(&workspace.sandbox_id)
+            .await
+            .unwrap(),
+        0
+    );
+}
+
+#[tokio::test]
+async fn trigger_and_automatic_profile_admission_race_for_one_agent_and_worktree() {
+    let (service, store, _, workspace) =
+        setup_profile_children(SandboxStatus::Active, WorkspaceStatus::Ready, 1).await;
+    let mut tasks = tokio::task::JoinSet::new();
+    for index in 0..8 {
+        let service = service.clone();
+        let workspace = workspace.clone();
+        tasks.spawn(async move {
+            if index % 2 == 0 {
+                service
+                    .reconcile_profile_agents(&workspace.sandbox_id)
+                    .await
+                    .map(|_| ())
+            } else {
+                let request = request(
+                    workspace.profile.content.agent_profiles[0].clone(),
+                    AgentOrigin::Trigger {
+                        trigger_id: "trg_race".into(),
+                        launch_id: format!("lch_{index}"),
+                    },
+                );
+                service
+                    .create_or_reuse_for_launch(
+                        &launch_caller("owner", Capability::CreateSandbox),
+                        Capability::CreateSandbox,
+                        &workspace.id,
+                        request,
+                        true,
+                    )
+                    .await
+                    .map(|_| ())
+            }
+        });
+    }
+    while let Some(result) = tasks.join_next().await {
+        result.unwrap().unwrap();
+    }
+    let agents = store
+        .list_agents(&workspace.owner, &Default::default())
+        .await
+        .unwrap()
+        .items;
+    assert_eq!(agents.len(), 1);
+    assert!(agents[0].conversation.first_message.is_some());
+    assert_eq!(
+        store
+            .list_worktrees(&workspace.id, &Default::default())
+            .await
+            .unwrap()
+            .items
+            .len(),
+        1
+    );
+}
+
+#[tokio::test]
 async fn automatic_profile_agents_recover_ready_workspaces_once_across_races_and_restart() {
     let (service, store, profiles, workspace) =
         setup_profile_children(SandboxStatus::Active, WorkspaceStatus::Ready, 2).await;

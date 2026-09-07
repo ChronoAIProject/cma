@@ -57,6 +57,7 @@ mod launch_quota;
 mod launches;
 mod sandboxes;
 mod service_connections;
+mod trigger_entry;
 mod trigger_openapi_shapes;
 mod trigger_placements;
 mod trigger_problem;
@@ -262,6 +263,14 @@ impl std::error::Error for InvalidPublicOrigin {}
 /// Compose the Trigger assets independently of the remaining resource routes.
 pub fn trigger_assets_router(state: TriggerAssetsState) -> Router {
     Router::new()
+        .route(
+            "/api/v1/triggers/public/{public_id}/open/{placement_id}",
+            get(trigger_entry::open),
+        )
+        .route(
+            "/api/v1/triggers/public/{public_id}/entry-intent",
+            axum::routing::post(trigger_entry::consume),
+        )
         .route(
             "/api/v1/triggers/public/{public_id}/badge.svg",
             get(badge::read),

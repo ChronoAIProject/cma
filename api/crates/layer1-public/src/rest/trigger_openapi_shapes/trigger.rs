@@ -246,6 +246,7 @@ pub struct TriggerPreviewView {
     pub description: String,
     pub button_label: TriggerButtonLabelValue,
     pub theme: TriggerThemeValue,
+    pub always_review: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub signup_hint: Option<String>,
     pub publisher_display_name: String,
@@ -263,6 +264,7 @@ impl From<domain::TriggerPreview> for TriggerPreviewView {
             description: value.description,
             button_label: value.button_label.into(),
             theme: value.theme.into(),
+            always_review: value.always_review,
             signup_hint: value.signup_hint,
             publisher_display_name: value.publisher_display_name,
             what_happens: value.what_happens,
