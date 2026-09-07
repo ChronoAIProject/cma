@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import type { CmaWebClient } from '../api/client';
 import type { SandboxDetail, SandboxEvent, WorkspaceDetail } from '../api/types';
 import type { AppRoute } from '../routing/routes';
@@ -14,6 +14,7 @@ import {
 import { ProvisioningProgress } from './ProvisioningProgress';
 import { sandboxProgress, workspaceProgress } from './progress';
 import { readSandboxHistory } from './eventHistory';
+import { sandboxLifecycleAction, sandboxLifecycleLabel, sandboxRefreshDelay } from './lifecycle';
 import { eventLabel, statusLabel } from '../vocabulary/status';
 import './SandboxPage.css';
 
@@ -62,53 +63,56 @@ export function SandboxPage({
   const [state, setState] = useState<State>({ status: 'loading' });
   const [retry, setRetry] = useState(0);
   const [pollError, setPollError] = useState(false);
+  const lifecycleReasonId = useId();
   const heading = useRef<HTMLHeadingElement>(null);
   const documentTitle = state.status === 'ready' ? state.sandbox.name : 'Sandbox';
   useEffect(() => {
     const abort = new AbortController();
     let timer: ReturnType<typeof setTimeout> | undefined;
     let previous: readonly SandboxEvent[] = [];
-    let loaded = false;
+    let inFlight = false;
     const poll = () => {
+      if (abort.signal.aborted || inFlight || document.hidden) return;
+      clearTimeout(timer);
+      inFlight = true;
       void load(client, sandboxId, abort.signal, previous)
         .then((next) => {
           if (abort.signal.aborted) return;
-          loaded = true;
           previous = next.events;
           setState(next);
           setPollError(false);
-          if (
-            [
-              'provisioning',
-              'installing',
-              'reviving',
-              'rotating',
-              'credential_rotating',
-              'retiring',
-              'pausing',
-            ].includes(next.sandbox.status) ||
+          timer = setTimeout(
+            poll,
             next.workspaces.some(
               (workspace) => workspace.status === 'preparing' || workspace.status === 'removing',
             )
-          )
-            timer = setTimeout(poll, 1500);
+              ? 1500
+              : sandboxRefreshDelay(next.sandbox),
+          );
         })
         .catch((error: unknown) => {
           if (abort.signal.aborted) return;
-          if (loaded) {
-            setPollError(true);
-            timer = setTimeout(poll, 5000);
-          } else
-            setState({
-              status: 'error',
-              message: error instanceof Error ? error.message : 'Sandbox unavailable.',
-            });
+          setPollError(true);
+          setState((current) =>
+            current.status === 'ready' && current.sandbox.id === sandboxId
+              ? current
+              : {
+                  status: 'error',
+                  message: error instanceof Error ? error.message : 'Sandbox unavailable.',
+                },
+          );
+          timer = setTimeout(poll, 5000);
+        })
+        .finally(() => {
+          inFlight = false;
         });
     };
+    document.addEventListener('visibilitychange', poll);
     poll();
     return () => {
       abort.abort();
       clearTimeout(timer);
+      document.removeEventListener('visibilitychange', poll);
     };
   }, [client, sandboxId, revision, retry]);
   useEffect(() => {
@@ -137,6 +141,9 @@ export function SandboxPage({
       </section>
     );
   const { sandbox, workspaces, events } = state;
+  const lifecycleAction = sandboxLifecycleAction(sandbox, pollError);
+  const lifecycleLabel = sandboxLifecycleLabel(sandbox);
+  const save = sandbox.lifecycle?.checkpoint;
   return (
     <section className="sandbox-page">
       <header className="sandbox-page__header">
@@ -144,7 +151,7 @@ export function SandboxPage({
           <h1 ref={heading} tabIndex={-1}>
             {sandbox.name}
           </h1>
-          <p>{statusLabel(sandbox.status)}</p>
+          <p role="status">{lifecycleLabel}</p>
         </div>
         <div className="sandbox-page__actions">
           {permissions.createWorkspace ? (
@@ -158,16 +165,25 @@ export function SandboxPage({
           ) : null}
           {permissions.pauseSandbox ? (
             <Button
-              icon={sandbox.status === 'paused' ? <IconPlayOutline16 /> : <IconPauseOutline16 />}
-              disabled={busy || !['paused', 'active'].includes(sandbox.status)}
+              icon={
+                lifecycleAction.kind === 'revive_sandbox' ? (
+                  <IconPlayOutline16 />
+                ) : (
+                  <IconPauseOutline16 />
+                )
+              }
+              disabled={busy || !lifecycleAction.allowed}
+              aria-describedby={
+                lifecycleAction.reason === undefined ? undefined : lifecycleReasonId
+              }
               onClick={() =>
                 onAction({
-                  kind: sandbox.status === 'paused' ? 'revive_sandbox' : 'pause_sandbox',
+                  kind: lifecycleAction.kind,
                   sandboxId,
                 })
               }
             >
-              {sandbox.status === 'paused' ? 'Resume' : 'Pause'}
+              {lifecycleAction.label}
             </Button>
           ) : null}
           {permissions.deleteSandbox ? (
@@ -182,6 +198,15 @@ export function SandboxPage({
           ) : null}
         </div>
       </header>
+      {permissions.pauseSandbox && lifecycleAction.reason !== undefined ? (
+        <p id={lifecycleReasonId}>{lifecycleAction.reason}</p>
+      ) : null}
+      {save === undefined ? null : (
+        <p>
+          Saving started{' '}
+          <time dateTime={save.startedAt}>{new Date(save.startedAt).toLocaleString()}</time>.
+        </p>
+      )}
       {pollError ? <p role="alert">Progress could not be refreshed. Reconnecting.</p> : null}
       {['provisioning', 'installing', 'failed'].includes(sandbox.status) ? (
         <ProvisioningProgress

@@ -106,6 +106,25 @@
   white-space: nowrap;
 }
 
+.menu__item[data-has-reason] .menu__itemlabel {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.menu__reason {
+  display: block;
+  color: var(--dsw-alias-label-secondary);
+  font: var(--dsw-font-xs-13);
+}
+
+.menu__item[data-has-reason][aria-disabled='true'] {
+  opacity: 1;
+}
+
+.menu__item[aria-disabled='true'] .menu__labeltext {
+  opacity: 0.4;
+}
+
 /*
  * Selection is the trailing check and nothing else. A fill would make a
  * selected row and a hovered row the same colour, so moving the pointer down

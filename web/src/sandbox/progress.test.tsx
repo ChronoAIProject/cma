@@ -124,7 +124,7 @@ it('uses the Agent worktree and durable readiness without claiming an uncreated 
   ).toBe(true);
 });
 
-it('polls incremental Sandbox events, preserves progress on read failure, and stops after readiness', async () => {
+it('polls incremental Sandbox events, preserves progress on read failure, and slows after readiness', async () => {
   vi.useFakeTimers();
   const readSandbox = vi
     .fn()
@@ -174,7 +174,9 @@ it('polls incremental Sandbox events, preserves progress on read failure, and st
   await act(async () => {
     await vi.advanceTimersByTimeAsync(10000);
   });
-  expect(readSandbox).toHaveBeenCalledTimes(3);
+  expect(readSandbox).toHaveBeenCalledTimes(5);
+  expect(readSandboxEvents.mock.calls.at(-1)?.[1].cursor).toBe(1);
+  expect(screen.queryByRole('region', { name: 'Sandbox preparation' })).not.toBeInTheDocument();
   view.unmount();
 });
 

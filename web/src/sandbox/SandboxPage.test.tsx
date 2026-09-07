@@ -1,5 +1,6 @@
-import { render, screen } from '@testing-library/react';
-import { expect, it, vi } from 'vitest';
+import { act, render, screen } from '@testing-library/react';
+import { afterEach, expect, it, vi } from 'vitest';
+import type { SandboxDetail } from '../api/types';
 import type { TreePermissions } from '../shell/Tree';
 import { agentClient } from '../test/agent';
 import { sandboxFixture } from '../test/hierarchy';
@@ -14,6 +15,127 @@ const permissions: TreePermissions = {
   stopAgent: true,
   deleteAgent: true,
 };
+
+afterEach(() => {
+  vi.useRealTimers();
+  vi.restoreAllMocks();
+});
+
+function lifecyclePage(readSandbox: () => Promise<SandboxDetail>) {
+  return render(
+    <SandboxPage
+      client={agentClient({ readSandbox })}
+      sandboxId="sbx_1"
+      revision={0}
+      permissions={{ ...permissions, createWorkspace: true, createAgent: true }}
+      busy={false}
+      onAction={vi.fn()}
+      onNavigate={vi.fn()}
+    />,
+  );
+}
+
+const savingSandbox = (phase: 'capture' | 'resume_writers'): SandboxDetail => ({
+  ...sandboxFixture(),
+  lifecycle: {
+    pause: { allowed: false, reason: 'checkpoint_in_progress' },
+    revive: { allowed: false, reason: 'not_paused' },
+    checkpoint: { phase, startedAt: '2026-09-08T00:00:00Z', epoch: 7 },
+  },
+});
+
+it('refreshes Active saving phases and restores Pause only after authoritative eligibility clears', async () => {
+  vi.useFakeTimers();
+  const readSandbox = vi
+    .fn()
+    .mockResolvedValueOnce(sandboxFixture())
+    .mockResolvedValueOnce(savingSandbox('capture'))
+    .mockResolvedValueOnce(savingSandbox('resume_writers'))
+    .mockResolvedValue(sandboxFixture());
+  lifecyclePage(readSandbox);
+  await act(async () => {});
+  expect(screen.getByRole('button', { name: 'Pause' })).toBeEnabled();
+  await act(() => vi.advanceTimersByTimeAsync(5000));
+  expect(screen.getByRole('status')).toHaveTextContent('Saving progress');
+  expect(screen.getByRole('button', { name: 'Pause' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: 'Pause' })).toHaveAccessibleDescription(
+    /Progress is being saved/,
+  );
+  expect(screen.getByText(/Saving started/).querySelector('time')).toHaveAttribute(
+    'dateTime',
+    '2026-09-08T00:00:00Z',
+  );
+  expect(screen.getByRole('button', { name: 'New workspace' })).toBeEnabled();
+  expect(screen.getByRole('button', { name: 'New agent' })).toBeEnabled();
+  await act(() => vi.advanceTimersByTimeAsync(1500));
+  expect(screen.getByRole('status')).toHaveTextContent('Finishing save');
+  expect(screen.getByRole('button', { name: 'Pause' })).toBeDisabled();
+  await act(() => vi.advanceTimersByTimeAsync(1500));
+  expect(screen.getByRole('button', { name: 'Pause' })).toBeEnabled();
+  expect(screen.queryByText(/Saving started/)).not.toBeInTheDocument();
+  expect(readSandbox).toHaveBeenCalledTimes(4);
+});
+
+it('keeps loaded content on a failed refresh but holds stale Pause eligibility until recovery', async () => {
+  vi.useFakeTimers();
+  const readSandbox = vi
+    .fn()
+    .mockResolvedValueOnce(sandboxFixture())
+    .mockRejectedValueOnce(new Error('temporarily unavailable'))
+    .mockResolvedValue(sandboxFixture());
+  lifecyclePage(readSandbox);
+  await act(async () => {});
+  await act(() => vi.advanceTimersByTimeAsync(5000));
+  expect(screen.getByRole('heading', { name: 'Atlas' })).toBeInTheDocument();
+  expect(screen.getByRole('link', { name: 'Agent one' })).toBeInTheDocument();
+  expect(screen.getByRole('alert')).toHaveTextContent('Reconnecting');
+  expect(screen.getByRole('button', { name: 'Pause' })).toBeDisabled();
+  await act(() => vi.advanceTimersByTimeAsync(5000));
+  expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Pause' })).toBeEnabled();
+});
+
+it('does not overlap reads and defers hidden-page refresh until visible', async () => {
+  vi.useFakeTimers();
+  let resolveRead: (sandbox: SandboxDetail) => void = () => {};
+  const readSandbox = vi
+    .fn()
+    .mockImplementationOnce(
+      () =>
+        new Promise<SandboxDetail>((resolve) => {
+          resolveRead = resolve;
+        }),
+    )
+    .mockResolvedValue(sandboxFixture());
+  const view = lifecyclePage(readSandbox);
+  await act(() => vi.advanceTimersByTimeAsync(15000));
+  expect(readSandbox).toHaveBeenCalledTimes(1);
+  await act(async () => {
+    resolveRead(sandboxFixture());
+  });
+  const hidden = vi.spyOn(document, 'hidden', 'get').mockReturnValue(true);
+  await act(() => vi.advanceTimersByTimeAsync(15000));
+  expect(readSandbox).toHaveBeenCalledTimes(1);
+  hidden.mockReturnValue(false);
+  await act(async () => {
+    document.dispatchEvent(new Event('visibilitychange'));
+  });
+  expect(readSandbox).toHaveBeenCalledTimes(2);
+  view.unmount();
+  await act(() => vi.advanceTimersByTimeAsync(15000));
+  expect(readSandbox).toHaveBeenCalledTimes(2);
+});
+
+it.each(['active', 'paused'] as const)(
+  'holds %s lifecycle controls when eligibility is unreported',
+  async (status) => {
+    lifecyclePage(async () => ({ ...sandboxFixture(status), lifecycle: undefined }));
+    expect(
+      await screen.findByRole('button', { name: status === 'paused' ? 'Resume' : 'Pause' }),
+    ).toBeDisabled();
+    expect(screen.getByText('Action availability is not reported.')).toBeInTheDocument();
+  },
+);
 
 it.each(['active', 'paused', 'reviving'] as const)(
   'allows normal child creation from a %s parent without an explicit revive action',

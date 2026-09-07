@@ -117,6 +117,7 @@
   display: inline-flex;
   gap: 5px;
   align-items: center;
+  color: var(--dsw-alias-label-secondary);
 }
 
 .tree-row__paused {
@@ -142,6 +143,13 @@
   color: var(--dsw-alias-label-tertiary);
   font-size: 12px;
   text-align: center;
+}
+
+.resource-tree__notice {
+  padding: 16px 8px;
+  color: var(--dsw-alias-label-secondary);
+  font: var(--dsw-font-xs-13);
+  overflow-wrap: anywhere;
 }
 
 @media (prefers-reduced-motion: reduce) {
