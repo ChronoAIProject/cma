@@ -1,5 +1,7 @@
 # CMA (ChronoAI Managed Agent)
 
+[![Run with CMA](https://bot.chrono-ai.fun/api/v1/triggers/public/pub_b4a26689ed1a47f7889345d6212bc155/badge.svg?label=run_with_cma&theme=dark&placement=plc_4d84d1127d6a40a0a71ee3545eae3bf5)](https://bot.chrono-ai.fun/t/pub_b4a26689ed1a47f7889345d6212bc155/plc_4d84d1127d6a40a0a71ee3545eae3bf5)
+
 Managed agent service by ChronoAI. Runs coding-agent kernels (Codex, Claude Code, DeepSeek Harness) on ChronoAI
 infrastructure and exposes them over public interfaces, so end users install nothing locally.
 
