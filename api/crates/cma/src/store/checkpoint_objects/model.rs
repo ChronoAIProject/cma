@@ -77,7 +77,10 @@ impl ManifestDoc {
     pub(super) fn new(sandbox_id: &str, identity: &ArchiveIdentity, now: DateTime) -> Self {
         let id = format!("cpa_{}", uuid::Uuid::new_v4().simple());
         Self {
-            object_key: object_key(sandbox_id, &id),
+            object_key: crate::store::checkpoint_storage::checkpoint_object_key(
+                object_key(sandbox_id, &id),
+                identity.size_bytes,
+            ),
             id,
             document_schema_version: DOCUMENT_SCHEMA_VERSION,
             sandbox_id: sandbox_id.to_owned(),
@@ -154,7 +157,12 @@ pub(super) fn read_manifest(document: Document) -> AdapterResult<ManifestDoc> {
                     .bytes()
                     .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
         })
-        && manifest.object_key == object_key(&manifest.sandbox_id, &manifest.id)
+        && (manifest.object_key == object_key(&manifest.sandbox_id, &manifest.id)
+            || manifest.object_key
+                == crate::store::checkpoint_storage::checkpoint_object_key(
+                    object_key(&manifest.sandbox_id, &manifest.id),
+                    manifest.size_bytes as u64,
+                ))
         && manifest.cleanup_after.timestamp_millis() > 0
         && (manifest.state != ArchiveState::Published || manifest.upload_confirmed)
         && (manifest.state != ArchiveState::Uploading || !manifest.upload_confirmed)

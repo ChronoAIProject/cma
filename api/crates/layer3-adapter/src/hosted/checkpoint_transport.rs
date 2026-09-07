@@ -43,8 +43,8 @@ pub(super) async fn export(
     let transfer = pump_runtime_archive(response, chunks, size_bytes, &checkpoint.sha256);
     let commit = store.upload(upload);
     let (transferred, committed) = tokio::join!(transfer, commit);
-    transferred?;
     let committed = committed?;
+    transferred?;
     if committed.object_reference != checkpoint.object_reference
         || committed.sha256 != checkpoint.sha256
         || committed.size_bytes != size_bytes

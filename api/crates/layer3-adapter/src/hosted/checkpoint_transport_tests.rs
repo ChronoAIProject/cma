@@ -110,6 +110,7 @@ struct UploadStore {
     calls: AtomicUsize,
     uploaded: Mutex<Option<UploadedArchive>>,
     alter_receipt: bool,
+    refuse_upload: bool,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -127,6 +128,11 @@ impl CheckpointArchiveStore for UploadStore {
         mut archive: CheckpointArchiveUpload,
     ) -> crate::Result<CheckpointArchiveReceipt> {
         self.calls.fetch_add(1, Ordering::SeqCst);
+        if self.refuse_upload {
+            return Err(AdapterError::Unavailable(
+                "fixture storage rejection".into(),
+            ));
+        }
         let mut bytes = Vec::new();
         while let Some(chunk) = archive.chunks.recv().await {
             bytes.extend_from_slice(&chunk?);
@@ -257,6 +263,32 @@ async fn export_rejects_missing_zero_or_oversized_content_lengths() {
         fixture.request.await.expect("fixture completes");
     }
     assert_eq!(store.calls.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn export_preserves_storage_rejection_when_the_upload_channel_closes() {
+    let bytes = vec![0x35; 128 * 1024];
+    let checkpoint = checkpoint(&bytes);
+    let fixture = serve(
+        response(
+            "200 OK",
+            &[("Content-Length", bytes.len().to_string())],
+            &bytes,
+        ),
+        "/checkpoint",
+    )
+    .await;
+    let store: Arc<dyn CheckpointArchiveStore> = Arc::new(UploadStore {
+        refuse_upload: true,
+        ..UploadStore::default()
+    });
+    assert_eq!(
+        export(&client(), fixture.url, AUTH, &checkpoint, &store)
+            .await
+            .unwrap_err(),
+        AdapterError::Unavailable("fixture storage rejection".into())
+    );
+    let _ = fixture.request.await;
 }
 
 #[tokio::test]

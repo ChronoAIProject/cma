@@ -9,6 +9,7 @@ use crate::config::CheckpointStorageConfig;
 
 #[cfg(test)]
 mod memory;
+mod multipart;
 #[cfg(test)]
 mod tests;
 mod token;
@@ -30,10 +31,11 @@ pub(crate) trait CheckpointBlobStore: Send + Sync {
     async fn delete(&self, key: &str) -> Result<()>;
 }
 
+#[derive(Clone)]
 pub(crate) struct ChronoStorage {
     objects: reqwest::Url,
     download: reqwest::Url,
-    tokens: token::StorageToken,
+    tokens: Arc<token::StorageToken>,
     http: reqwest::Client,
 }
 
@@ -82,7 +84,7 @@ impl ChronoStorage {
         Ok(Self {
             objects,
             download,
-            tokens: token::StorageToken::new(origin, config)?,
+            tokens: Arc::new(token::StorageToken::new(origin, config)?),
             http,
         })
     }
@@ -91,7 +93,11 @@ impl ChronoStorage {
 #[async_trait::async_trait]
 impl CheckpointBlobStore for ChronoStorage {
     async fn upload(&self, key: &str, archive: CheckpointArchiveUpload) -> Result<()> {
-        transfer::upload(self, key, archive).await
+        if let Some(size) = multipart::size_from_key(key)? {
+            multipart::upload(self, key, size, archive).await
+        } else {
+            transfer::upload(self, key, archive).await
+        }
     }
 
     async fn download(
@@ -101,10 +107,29 @@ impl CheckpointBlobStore for ChronoStorage {
         sha256: &str,
         size: u64,
     ) -> Result<CheckpointArchiveDownload> {
-        transfer::download(self, key, reference, sha256, size).await
+        if let Some(recorded_size) = multipart::size_from_key(key)? {
+            if recorded_size != size {
+                return Err(rejected("checkpoint part layout has a different size"));
+            }
+            multipart::download(self, key, reference, sha256, size).await
+        } else {
+            transfer::download(self, key, reference, sha256, size).await
+        }
     }
 
     async fn delete(&self, key: &str) -> Result<()> {
+        if let Some(size) = multipart::size_from_key(key)? {
+            // The durable key names every possible part, even when upload never published a manifest.
+            for index in 0..size.div_ceil(multipart::PART_BYTES as u64) {
+                self.delete_object(&multipart::part_key(key, index)).await?;
+            }
+        }
+        self.delete_object(key).await
+    }
+}
+
+impl ChronoStorage {
+    async fn delete_object(&self, key: &str) -> Result<()> {
         let response = self
             .http
             .delete(self.objects.clone())
@@ -129,6 +154,25 @@ impl CheckpointBlobStore for ChronoStorage {
         Err(unavailable(
             "checkpoint storage object remains after deletion",
         ))
+    }
+}
+
+pub(super) fn checkpoint_object_key(base: String, size: u64) -> String {
+    if size > multipart::PART_BYTES as u64 {
+        format!("{base}.parts-v1-{size}")
+    } else {
+        base
+    }
+}
+
+pub(super) fn checkpoint_object_key_base(key: &str) -> Result<&str> {
+    if multipart::size_from_key(key)?.is_some() {
+        Ok(key
+            .rsplit_once(".parts-v1-")
+            .expect("validated part layout")
+            .0)
+    } else {
+        Ok(key)
     }
 }
 

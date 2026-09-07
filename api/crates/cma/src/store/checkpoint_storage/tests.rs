@@ -280,6 +280,110 @@ async fn upload_and_download_enforce_hash_and_exact_declared_size() {
 }
 
 #[tokio::test]
+async fn large_checkpoints_use_bounded_parts_and_restore_the_exact_archive() {
+    let (store, fixture, server) = fixture().await;
+    let bytes = vec![0x35; multipart::PART_BYTES + 4096];
+    let request = archive(&bytes);
+    let reference = request.object_reference.clone();
+    let sha = request.sha256.clone();
+    let key = checkpoint_object_key("cma/checkpoints/large.cma".into(), bytes.len() as u64);
+    store.upload(&key, request).await.unwrap();
+    {
+        let objects = fixture.objects.lock().unwrap();
+        assert_eq!(objects.len(), 3);
+        assert!(objects
+            .values()
+            .all(|body| body.len() <= multipart::PART_BYTES));
+    }
+    let restored = consume(
+        store
+            .download(&key, &reference, &sha, bytes.len() as u64)
+            .await
+            .unwrap(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(restored, bytes);
+    let first_key = multipart::part_key(&key, 0);
+    fixture.objects.lock().unwrap().get_mut(&first_key).unwrap()[0] ^= 1;
+    assert!(consume(
+        store
+            .download(&key, &reference, &sha, bytes.len() as u64)
+            .await
+            .unwrap()
+    )
+    .await
+    .is_err());
+    fixture.objects.lock().unwrap().remove(&first_key);
+    assert!(consume(
+        store
+            .download(&key, &reference, &sha, bytes.len() as u64)
+            .await
+            .unwrap()
+    )
+    .await
+    .is_err());
+    store.delete(&key).await.unwrap();
+    store.delete(&key).await.unwrap();
+    assert!(fixture.objects.lock().unwrap().is_empty());
+    server.abort();
+}
+
+#[tokio::test]
+async fn partial_large_upload_is_unpublished_and_cleanup_owns_every_part() {
+    let (store, fixture, server) = fixture().await;
+    let bytes = vec![0x35; multipart::PART_BYTES + 4096];
+    let mut request = archive(&bytes);
+    request.sha256 = "0".repeat(64);
+    let key = checkpoint_object_key("cma/checkpoints/partial.cma".into(), bytes.len() as u64);
+    assert!(store.upload(&key, request).await.is_err());
+    assert!(!fixture.objects.lock().unwrap().contains_key(&key));
+    assert!(fixture
+        .objects
+        .lock()
+        .unwrap()
+        .contains_key(&multipart::part_key(&key, 0)));
+    fixture.ignore_delete.store(true, Ordering::SeqCst);
+    assert!(store.delete(&key).await.is_err());
+    fixture.ignore_delete.store(false, Ordering::SeqCst);
+    store.delete(&key).await.unwrap();
+    assert!(fixture.objects.lock().unwrap().is_empty());
+    let calls = fixture.calls.lock().unwrap();
+    for index in 0..2 {
+        assert!(calls.contains(&("DELETE".into(), multipart::part_key(&key, index))));
+    }
+    server.abort();
+}
+
+#[tokio::test]
+async fn multipart_manifest_cannot_redirect_reads_or_change_archive_identity() {
+    let (store, fixture, server) = fixture().await;
+    let size = multipart::PART_BYTES as u64 + 1;
+    let key = checkpoint_object_key("cma/checkpoints/malformed.cma".into(), size);
+    let sha = "0".repeat(64);
+    for manifest in [
+        serde_json::json!({"schema":"other","size_bytes":size,"sha256":sha,"parts":[sha,sha]}),
+        serde_json::json!({"schema":"cma-checkpoint-parts-v1","size_bytes":size + 1,"sha256":sha,"parts":[sha,sha]}),
+        serde_json::json!({"schema":"cma-checkpoint-parts-v1","size_bytes":size,"sha256":sha,"parts":[sha]}),
+        serde_json::json!({"schema":"cma-checkpoint-parts-v1","size_bytes":size,"sha256":sha,"parts":["https://foreign.example",sha]}),
+    ] {
+        fixture
+            .objects
+            .lock()
+            .unwrap()
+            .insert(key.clone(), serde_json::to_vec(&manifest).unwrap());
+        assert!(store.download(&key, "archive", &sha, size).await.is_err());
+    }
+    assert!(fixture
+        .calls
+        .lock()
+        .unwrap()
+        .iter()
+        .all(|(method, target)| method == "GET" && target == &key));
+    server.abort();
+}
+
+#[tokio::test]
 async fn failed_oversized_redirected_or_unusable_machine_tokens_are_redacted() {
     for mode in 1..=5 {
         let (store, fixture, server) = fixture().await;
