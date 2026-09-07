@@ -14,6 +14,29 @@ export function sandboxSummary(value: Wire.SandboxSummary): SandboxSummary {
     id: value.id,
     name: value.name,
     status: value.status,
+    lifecycle:
+      value.lifecycle === undefined
+        ? undefined
+        : {
+            pause: value.lifecycle.pause,
+            revive: value.lifecycle.revive,
+            checkpoint:
+              value.lifecycle.checkpoint === undefined
+                ? undefined
+                : {
+                    phase: value.lifecycle.checkpoint.phase,
+                    startedAt: value.lifecycle.checkpoint.started_at,
+                    epoch: value.lifecycle.checkpoint.epoch,
+                  },
+            operation:
+              value.lifecycle.operation === undefined
+                ? undefined
+                : {
+                    purpose: value.lifecycle.operation.purpose,
+                    phase: value.lifecycle.operation.phase,
+                    startedAt: value.lifecycle.operation.started_at,
+                  },
+          },
     profile: value.profile,
     lastActivityAt: value.last_activity_at,
     createdAt: value.created_at,

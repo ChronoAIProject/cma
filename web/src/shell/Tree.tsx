@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import type { KeyboardEvent, ReactNode } from 'react';
-import type { AgentStatus, SandboxStatus } from '../api/types';
+import type { AgentStatus, SandboxStatus, SandboxSummary } from '../api/types';
+import { sandboxLifecycleAction, sandboxLifecycleLabel } from '../sandbox/lifecycle';
 import type { AppRoute } from '../routing/routes';
 import { StateDot, type StateDotState } from '../ui/StateDot';
 import {
@@ -42,6 +43,8 @@ export type TreeAction =
 interface TreeProps {
   readonly viewerId: string;
   readonly items: readonly NavigationSandbox[];
+  readonly refreshError?: string;
+  readonly lifecycleBusy?: boolean;
   readonly route: AppRoute;
   readonly permissions: TreePermissions;
   readonly onNavigate: (route: AppRoute) => void;
@@ -144,21 +147,24 @@ function keyboardNavigation(event: KeyboardEvent<HTMLDivElement>) {
   }
 }
 
-function sandboxActions(status: SandboxStatus, permissions: TreePermissions): TreeRowAction[] {
+function sandboxActions(
+  sandbox: SandboxSummary,
+  permissions: TreePermissions,
+  stale: boolean,
+  busy: boolean,
+): TreeRowAction[] {
   const actions: TreeRowAction[] = [];
   if (permissions.createWorkspace)
     actions.push({ id: 'new_workspace', label: 'New workspace', icon: <IconPlusOutline16 /> });
   if (permissions.pauseSandbox) {
-    actions.push(
-      status === 'paused'
-        ? { id: 'revive_sandbox', label: 'Revive', icon: <IconPlayOutline16 /> }
-        : {
-            id: 'pause_sandbox',
-            label: 'Pause',
-            icon: <IconPauseOutline16 />,
-            disabled: status !== 'active',
-          },
-    );
+    const action = sandboxLifecycleAction(sandbox, stale);
+    actions.push({
+      id: action.kind,
+      label: action.label,
+      icon: action.kind === 'revive_sandbox' ? <IconPlayOutline16 /> : <IconPauseOutline16 />,
+      disabled: busy || !action.allowed,
+      reason: busy ? 'A Sandbox action is in progress.' : action.reason,
+    });
   }
   if (permissions.deleteSandbox)
     actions.push({
@@ -204,7 +210,16 @@ function agentActions(status: AgentStatus, permissions: TreePermissions): TreeRo
   return actions;
 }
 
-export function Tree({ viewerId, items, route, permissions, onNavigate, onAction }: TreeProps) {
+export function Tree({
+  viewerId,
+  items,
+  refreshError,
+  lifecycleBusy = false,
+  route,
+  permissions,
+  onNavigate,
+  onAction,
+}: TreeProps) {
   const [collapsed, setCollapsed] = useState(() => restored(viewerId));
   const toggle = (node: string) => {
     setCollapsed((current) => {
@@ -223,6 +238,11 @@ export function Tree({ viewerId, items, route, permissions, onNavigate, onAction
       aria-label="Sandboxes"
       onKeyDown={keyboardNavigation}
     >
+      {refreshError === undefined ? null : (
+        <p className="resource-tree__notice" role="alert">
+          {refreshError}
+        </p>
+      )}
       {items.map(({ sandbox, workspaces }) => {
         const sandboxNode = `sandbox:${sandbox.id}`;
         const sandboxExpanded = !collapsed.has(sandboxNode);
@@ -238,20 +258,40 @@ export function Tree({ viewerId, items, route, permissions, onNavigate, onAction
               selected={route.kind === 'sandbox' && route.sandboxId === sandbox.id}
               expanded={sandboxExpanded}
               reviving={sandbox.status === 'reviving'}
-              meta={stateMeta(
-                sandbox.status,
-                paused ? (
-                  <span
-                    className="tree-row__paused"
-                    role="img"
-                    aria-label="Sandbox paused"
-                    title="Sandbox paused"
-                  >
-                    <IconPauseOutline16 />
+              meta={
+                <>
+                  <span className="tree-row__state">
+                    <StateDot
+                      state={
+                        refreshError !== undefined
+                          ? 'warning'
+                          : sandbox.lifecycle?.checkpoint !== undefined ||
+                              sandbox.lifecycle?.operation !== undefined
+                            ? 'ongoing'
+                            : dotFor(sandbox.status)
+                      }
+                      size={8}
+                    />
+                    {sandboxLifecycleLabel(sandbox)}
                   </span>
-                ) : undefined,
+                  {paused ? (
+                    <span
+                      className="tree-row__paused"
+                      role="img"
+                      aria-label="Sandbox paused"
+                      title="Sandbox paused"
+                    >
+                      <IconPauseOutline16 />
+                    </span>
+                  ) : undefined}
+                </>
+              }
+              actions={sandboxActions(
+                sandbox,
+                permissions,
+                refreshError !== undefined,
+                lifecycleBusy,
               )}
-              actions={sandboxActions(sandbox.status, permissions)}
               onNavigate={onNavigate}
               onToggle={() => toggle(sandboxNode)}
               onAction={(kind) =>

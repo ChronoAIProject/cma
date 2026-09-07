@@ -18,6 +18,38 @@ import { profileFailure } from '../profiles/failure';
 const options = { idempotencyKey: 'command-819' };
 
 describe('public REST web binding', () => {
+  it.each(['capture', 'resume_writers'] as const)(
+    'preserves public lifecycle eligibility and actual %s metadata in lists and details',
+    async (phase) => {
+      const test = restTransport();
+      const client = createRestWebClient(test.sdk);
+      const lifecycle = {
+        pause: { allowed: false, reason: 'checkpoint_in_progress' },
+        revive: { allowed: false, reason: 'not_paused' },
+        checkpoint: { phase, started_at: NOW, epoch: 7 },
+        operation: { purpose: 'pause', phase: 'capture_and_publish_checkpoint', started_at: NOW },
+      };
+      const expected = {
+        pause: lifecycle.pause,
+        revive: lifecycle.revive,
+        checkpoint: { phase, startedAt: NOW, epoch: 7 },
+        operation: { purpose: 'pause', phase: 'capture_and_publish_checkpoint', startedAt: NOW },
+      };
+      test.reply({ items: [{ ...WIRE_SANDBOX_DETAIL, lifecycle }] });
+      expect(await client.listSandboxes()).toMatchObject({ items: [{ lifecycle: expected }] });
+      test.reply({ ...WIRE_SANDBOX_DETAIL, lifecycle });
+      expect(await client.readSandbox('sandbox-1')).toMatchObject({ lifecycle: expected });
+    },
+  );
+
+  it('keeps missing lifecycle data unknown for a mixed-version response', async () => {
+    const test = restTransport();
+    test.reply(WIRE_SANDBOX_DETAIL);
+    expect(
+      (await createRestWebClient(test.sdk).readSandbox('sandbox-1')).lifecycle,
+    ).toBeUndefined();
+  });
+
   it.each([undefined, 'digest-1'])(
     'reads configured capacity from the exact pinned revision with optional digest %s',
     async (digest) => {

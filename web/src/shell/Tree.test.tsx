@@ -2,6 +2,7 @@ import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import { navigationFixture } from '../test/hierarchy';
+import type { NavigationSandbox } from './navigation';
 import { Tree, activityLabel, type TreeAction, type TreePermissions } from './Tree';
 
 const FULL_ACCESS: TreePermissions = {
@@ -29,6 +30,9 @@ function renderTree(
     readonly viewerId?: string;
     readonly permissions?: TreePermissions;
     readonly paused?: boolean;
+    readonly items?: readonly NavigationSandbox[];
+    readonly refreshError?: string;
+    readonly lifecycleBusy?: boolean;
     readonly onAction?: (action: TreeAction) => void;
     readonly onNavigate?: ReturnType<typeof vi.fn>;
   } = {},
@@ -36,7 +40,9 @@ function renderTree(
   return render(
     <Tree
       viewerId={options.viewerId ?? 'viewer-one'}
-      items={navigationFixture(options.paused === true ? 'paused' : 'active')}
+      items={options.items ?? navigationFixture(options.paused === true ? 'paused' : 'active')}
+      refreshError={options.refreshError}
+      lifecycleBusy={options.lifecycleBusy}
       route={{ kind: 'home' }}
       permissions={options.permissions ?? FULL_ACCESS}
       onNavigate={options.onNavigate ?? vi.fn()}
@@ -46,6 +52,93 @@ function renderTree(
 }
 
 describe('Sandbox navigation tree', () => {
+  it.each(['capture', 'resume_writers'] as const)(
+    'shows actual %s state and disables Pause without restricting child creation',
+    async (phase) => {
+      const onAction = vi.fn();
+      const actor = userEvent.setup();
+      const items = navigationFixture().map((item) => ({
+        ...item,
+        sandbox: {
+          ...item.sandbox,
+          lifecycle: {
+            pause: { allowed: false, reason: 'checkpoint_in_progress' as const },
+            revive: { allowed: false, reason: 'not_paused' as const },
+            checkpoint: { phase, startedAt: '2026-09-08T00:00:00Z', epoch: 7 },
+          },
+        },
+      }));
+      renderTree({ items, onAction });
+      expect(
+        screen.getByText(phase === 'capture' ? 'Saving progress' : 'Finishing save'),
+      ).toBeInTheDocument();
+      await actor.click(screen.getByRole('button', { name: 'Options for Atlas' }));
+      const pause = screen.getByRole('menuitem', { name: /^Pause/ });
+      expect(pause).toHaveAttribute('aria-disabled', 'true');
+      expect(pause).toHaveTextContent('Progress is being saved.');
+      await actor.click(pause);
+      expect(onAction).not.toHaveBeenCalled();
+      expect(screen.getByRole('menuitem', { name: 'New workspace' })).toHaveAttribute(
+        'aria-disabled',
+        'false',
+      );
+      await actor.click(screen.getByRole('menuitem', { name: 'New workspace' }));
+      await actor.click(screen.getByRole('button', { name: 'Options for chrono-bot' }));
+      expect(screen.getByRole('menuitem', { name: 'New agent' })).toHaveAttribute(
+        'aria-disabled',
+        'false',
+      );
+    },
+  );
+
+  it.each(['active', 'paused'] as const)(
+    'keeps %s eligibility unavailable after a failed refresh',
+    async (status) => {
+      renderTree({
+        items: navigationFixture(status),
+        refreshError: 'Sandbox status could not be refreshed. Reconnecting.',
+      });
+      expect(screen.getByRole('alert')).toHaveTextContent('Reconnecting');
+      expect(screen.getByText('Agent one')).toBeInTheDocument();
+      await userEvent.setup().click(screen.getByRole('button', { name: 'Options for Atlas' }));
+      expect(
+        screen.getByRole('menuitem', { name: status === 'paused' ? /^Resume/ : /^Pause/ }),
+      ).toHaveAttribute('aria-disabled', 'true');
+    },
+  );
+
+  it('uses the reported Resume eligibility and blocks duplicate pending lifecycle actions', async () => {
+    const actor = userEvent.setup();
+    const view = renderTree({ paused: true });
+    await actor.click(screen.getByRole('button', { name: 'Options for Atlas' }));
+    expect(screen.getByRole('menuitem', { name: 'Resume' })).toHaveAttribute(
+      'aria-disabled',
+      'false',
+    );
+    view.unmount();
+    renderTree({ paused: true, lifecycleBusy: true });
+    await actor.click(screen.getByRole('button', { name: 'Options for Atlas' }));
+    expect(screen.getByRole('menuitem', { name: /^Resume/ })).toHaveAttribute(
+      'aria-disabled',
+      'true',
+    );
+  });
+
+  it('does not fall back to status when the server omits eligibility', async () => {
+    renderTree({
+      items: navigationFixture().map((item) => ({
+        ...item,
+        sandbox: { ...item.sandbox, lifecycle: undefined },
+      })),
+    });
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Options for Atlas' }));
+    expect(screen.getByRole('menuitem', { name: /^Pause/ })).toHaveAttribute(
+      'aria-disabled',
+      'true',
+    );
+    expect(screen.getByText('Action availability is not reported.')).toBeInTheDocument();
+  });
+
   it('renders Sandbox, Workspace, and Agent rows without a Worktree navigation node', () => {
     renderTree({ paused: true });
     expect(screen.getByText('Atlas')).toBeInTheDocument();

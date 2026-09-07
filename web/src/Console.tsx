@@ -258,6 +258,8 @@ export function Console({
                 key={user.id}
                 viewerId={user.id}
                 items={navigation.items}
+                refreshError={navigation.refreshError}
+                lifecycleBusy={actions.pending}
                 route={route}
                 permissions={permissions}
                 onNavigate={onNavigate}

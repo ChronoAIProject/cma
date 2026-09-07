@@ -45,10 +45,31 @@ export interface ResourcePage<T, Cursor = string> {
   readonly next?: Cursor;
 }
 
+export interface SandboxLifecycleEligibility {
+  readonly allowed: boolean;
+  readonly reason?: 'not_active' | 'not_paused' | 'checkpoint_in_progress' | 'work_in_progress';
+}
+
+export interface SandboxLifecycle {
+  readonly pause: SandboxLifecycleEligibility;
+  readonly revive: SandboxLifecycleEligibility;
+  readonly checkpoint?: {
+    readonly phase: 'capture' | 'resume_writers';
+    readonly startedAt: string;
+    readonly epoch: number;
+  };
+  readonly operation?: {
+    readonly purpose: 'pause' | 'revive' | 'image_rotation';
+    readonly phase: string;
+    readonly startedAt: string;
+  };
+}
+
 export interface SandboxSummary {
   readonly id: string;
   readonly name: string;
   readonly status: SandboxStatus;
+  readonly lifecycle?: SandboxLifecycle;
   readonly profile: ProfileReference;
   readonly lastActivityAt: string;
   readonly createdAt: string;

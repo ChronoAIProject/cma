@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { CmaWebClient } from '../api/client';
 import type { SandboxDetail, SandboxSummary, WorkspaceDetail } from '../api/types';
+import { sandboxRefreshDelay } from '../sandbox/lifecycle';
 
 export interface NavigationSandbox {
   readonly sandbox: SandboxDetail;
@@ -9,7 +10,11 @@ export interface NavigationSandbox {
 
 export type NavigationState =
   | { readonly status: 'loading' }
-  | { readonly status: 'ready'; readonly items: readonly NavigationSandbox[] }
+  | {
+      readonly status: 'ready';
+      readonly items: readonly NavigationSandbox[];
+      readonly refreshError?: string;
+    }
   | { readonly status: 'error'; readonly message: string };
 
 async function allSandboxes(client: CmaWebClient, signal: AbortSignal) {
@@ -54,20 +59,44 @@ export function useNavigation(client: CmaWebClient): NavigationState & { refresh
 
   useEffect(() => {
     const controller = new AbortController();
-    loadNavigation(client, controller.signal)
-      .then((items) => {
-        if (!controller.signal.aborted) setState({ status: 'ready', items });
-      })
-      .catch((error: unknown) => {
-        if (!controller.signal.aborted) setState({ status: 'error', message: messageOf(error) });
-      });
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let inFlight = false;
+    const poll = () => {
+      if (controller.signal.aborted || inFlight || document.hidden) return;
+      clearTimeout(timer);
+      inFlight = true;
+      void loadNavigation(client, controller.signal)
+        .then((items) => {
+          if (controller.signal.aborted) return;
+          setState({ status: 'ready', items });
+          timer = setTimeout(
+            poll,
+            Math.min(5000, ...items.map(({ sandbox }) => sandboxRefreshDelay(sandbox))),
+          );
+        })
+        .catch((error: unknown) => {
+          if (controller.signal.aborted) return;
+          setState((current) =>
+            current.status === 'ready'
+              ? { ...current, refreshError: 'Sandbox status could not be refreshed. Reconnecting.' }
+              : { status: 'error', message: messageOf(error) },
+          );
+          timer = setTimeout(poll, 5000);
+        })
+        .finally(() => {
+          inFlight = false;
+        });
+    };
+    document.addEventListener('visibilitychange', poll);
+    poll();
     return () => {
       controller.abort();
+      clearTimeout(timer);
+      document.removeEventListener('visibilitychange', poll);
     };
   }, [client, revision]);
 
   const refresh = useCallback(() => {
-    setState({ status: 'loading' });
     setRevision((value) => value + 1);
   }, []);
 

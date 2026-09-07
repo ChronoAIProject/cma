@@ -881,6 +881,23 @@ unreported remain unknown. Failed commands never destroy successful content.
 Delete removes an Agent and its Worktree and requires the irreversible-action
 safeguard; Stop is a distinct operation.
 
+Pause and Resume use the public Sandbox lifecycle eligibility in both the
+Sandbox page and its tree menu, never Active or Paused alone. Missing eligibility
+or a failed refresh leaves those controls unavailable with a written reason.
+The tree keeps its last successful hierarchy during refresh and read failure.
+Visible Sandbox and hierarchy reads refresh every five seconds while settled,
+and every 1.5 seconds while recorded lifecycle work is in progress; reads never
+overlap or admit work. Hidden pages defer refresh until visible again.
+
+An actual save reports **Saving progress** during capture and **Finishing save**
+while writers resume, replacing Done in the Sandbox page and tree status seat.
+The page's existing unframed status treatment includes the recorded start time;
+there is no guessed percentage. Pause remains unavailable until the public
+eligibility permits it. These fields govern no Workspace or Agent creation rule.
+Tree menu reasons sit beneath their labels using the existing 13/20 voice and
+secondary ink, wrap within the menu and remain readable when the action is disabled.
+Written tree states also use secondary ink so small status text remains readable.
+
 ## 17. Sandbox and Agent details
 
 The Sandbox page is an unframed stack of state, pinned profile and runtime facts,
@@ -1394,3 +1411,4 @@ Append-only. Never edit or delete an entry.
 | 2026-09-08 | Distinguished observed resource ceilings from explicitly labelled configured capacities resolved through the exact pinned Sandbox Profile revision. Added layout-aware conversation following that preserves manual reading position and removes completed preparation from the conversation surface. |
 | 2026-09-08 | Kept the Agent grid within the available center width for long titles and Markdown tables, and enforced the established 34px/44px square composer control against shared icon-button width rules. |
 | 2026-09-08 | Preserved an authorized transcript when initial event-history loading fails transiently. Reused the status band for incomplete activity and retry; retained drafts while holding commands and replay until all event pages are recovered, without masking authentication or permission denials. |
+| 2026-09-08 | Bound Sandbox page and tree Pause/Resume controls to public lifecycle eligibility. Reused status seats for actual saving phases and start time, added visible nonoverlapping refresh while Active, and preserved the hierarchy with readable unavailable reasons after a failed refresh. Workspace and Agent creation rules remain unchanged. |
