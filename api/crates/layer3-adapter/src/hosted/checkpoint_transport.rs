@@ -9,6 +9,7 @@ use super::checkpoint_store::{
     CheckpointArchiveDownload, CheckpointArchiveStore, CheckpointArchiveUpload,
     MAX_CHECKPOINT_ARCHIVE_BYTES,
 };
+use crate::wire::{CheckpointUploadResponse, CHECKPOINT_UPLOAD_RECEIPT_MEDIA_TYPE};
 use crate::{AdapterError, CheckpointReceipt, RestoreRequest};
 
 const ARCHIVE_CHANNEL_CAPACITY: usize = 4;
@@ -97,6 +98,10 @@ pub(super) async fn import(
     let response = http
         .put(url)
         .header(auth.0, auth.1)
+        .header(
+            reqwest::header::ACCEPT,
+            CHECKPOINT_UPLOAD_RECEIPT_MEDIA_TYPE,
+        )
         .header(reqwest::header::CONTENT_LENGTH, size_bytes)
         .body(body)
         .send()
@@ -114,10 +119,85 @@ pub(super) async fn import(
         }
     };
     outcome?;
-    if response.status() != reqwest::StatusCode::NO_CONTENT {
-        return Err(response_error("checkpoint upload", response).await);
+    match response.status() {
+        reqwest::StatusCode::NO_CONTENT => Ok(()),
+        reqwest::StatusCode::OK => tokio::time::timeout(
+            std::time::Duration::from_secs(60 * 60),
+            decode_upload_receipt(response, request, size_bytes),
+        )
+        .await
+        .map_err(|_| {
+            AdapterError::Unavailable("checkpoint upload acknowledgement timed out".into())
+        })?,
+        _ => Err(response_error("checkpoint upload", response).await),
     }
-    Ok(())
+}
+
+async fn decode_upload_receipt(
+    response: reqwest::Response,
+    request: &RestoreRequest,
+    size_bytes: u64,
+) -> crate::Result<()> {
+    if response
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        != Some(CHECKPOINT_UPLOAD_RECEIPT_MEDIA_TYPE)
+    {
+        return Err(AdapterError::Rejected(
+            "checkpoint upload receipt media type is invalid".into(),
+        ));
+    }
+    if response
+        .content_length()
+        .is_some_and(|size| size > ERROR_BODY_BYTES as u64)
+    {
+        return Err(AdapterError::Rejected(
+            "checkpoint upload receipt exceeds its size limit".into(),
+        ));
+    }
+    let mut bytes = Vec::new();
+    let mut stream = response.bytes_stream();
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|_| {
+            AdapterError::Unavailable("checkpoint upload receipt stream failed".into())
+        })?;
+        if bytes.len().saturating_add(chunk.len()) > ERROR_BODY_BYTES {
+            return Err(AdapterError::Rejected(
+                "checkpoint upload receipt exceeds its size limit".into(),
+            ));
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    let receipt: CheckpointUploadResponse = serde_json::from_slice(&bytes)
+        .map_err(|_| AdapterError::Rejected("checkpoint upload receipt is malformed".into()))?;
+    match receipt {
+        CheckpointUploadResponse::Committed {
+            object_reference,
+            sha256,
+            size_bytes: committed_size,
+        } if object_reference == request.object_reference
+            && sha256 == request.sha256
+            && committed_size == size_bytes =>
+        {
+            Ok(())
+        }
+        CheckpointUploadResponse::Committed { .. } => Err(AdapterError::Rejected(
+            "checkpoint upload receipt does not match the requested archive".into(),
+        )),
+        CheckpointUploadResponse::Failure {
+            code,
+            detail,
+            retryable,
+        } => {
+            let message = format!("checkpoint upload failed: {code}: {detail}");
+            Err(if retryable {
+                AdapterError::Unavailable(message)
+            } else {
+                AdapterError::Rejected(message)
+            })
+        }
+    }
 }
 
 fn validate_download(
