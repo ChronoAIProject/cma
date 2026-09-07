@@ -158,7 +158,7 @@ pub use rotate::{
     SandboxRotationAgentIdentity, SandboxRotationIdentity,
 };
 pub use runtime_generation::SandboxRuntimeProvisionReservation;
-pub use sandbox::{RuntimeBinding, Sandbox, SandboxLimits, TypedFailure};
+pub use sandbox::{RuntimeBinding, Sandbox, SandboxLifecycleBlocker, SandboxLimits, TypedFailure};
 pub use service::{
     CreateSandbox, SandboxOrigin, SandboxPolicy, SandboxPolicySource, SandboxService,
     SandboxServiceError,
@@ -204,6 +204,8 @@ mod hierarchy_tests;
 mod inactivity_tests;
 #[cfg(test)]
 mod launch_service_tests;
+#[cfg(test)]
+mod lifecycle_eligibility_tests;
 #[cfg(test)]
 mod lifecycle_execution_tests;
 #[cfg(test)]

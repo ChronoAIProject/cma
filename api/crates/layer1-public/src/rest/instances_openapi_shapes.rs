@@ -8,6 +8,13 @@ use layer2_core::sandbox::{
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
+#[path = "sandbox_lifecycle_view.rs"]
+mod lifecycle;
+pub use lifecycle::{
+    SandboxCheckpointView, SandboxLifecycleEligibilityView, SandboxLifecycleOperationView,
+    SandboxLifecycleView,
+};
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ProfileReferenceView {
@@ -68,6 +75,7 @@ pub struct SandboxView {
     pub status: SandboxStatus,
     pub profile: ProfileReferenceView,
     pub limits: SandboxLimitsView,
+    pub lifecycle: SandboxLifecycleView,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub runtime_version: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -94,6 +102,7 @@ impl From<&Sandbox> for SandboxView {
                 max_workspaces: value.limits.max_workspaces,
                 max_agents_per_workspace: value.limits.max_agents_per_workspace,
             },
+            lifecycle: SandboxLifecycleView::from(value),
             runtime_version: value
                 .runtime
                 .as_ref()

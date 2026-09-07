@@ -32,6 +32,15 @@ pub struct TypedFailure {
     pub detail: String,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SandboxLifecycleBlocker {
+    NotActive,
+    NotPaused,
+    CheckpointInProgress,
+    WorkInProgress,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Sandbox {
@@ -138,14 +147,7 @@ impl Sandbox {
         at: String,
         notice: Option<String>,
     ) -> Result<(), SandboxModelError> {
-        if self.status != SandboxStatus::Active
-            || self.lifecycle.checkpoint_capture.is_some()
-            || self.work.lease.is_some()
-            || !matches!(
-                self.work.step,
-                SandboxWorkStep::None | SandboxWorkStep::WaitForCredentialRotation
-            )
-        {
+        if self.pause_eligibility().is_err() {
             return Err(SandboxModelError::invalid_value("sandbox.pause"));
         }
         let mut next = self.clone();
@@ -162,10 +164,7 @@ impl Sandbox {
         cause: SandboxReviveCause,
         at: String,
     ) -> Result<(), SandboxModelError> {
-        if self.status != SandboxStatus::Paused
-            || self.work.lease.is_some()
-            || self.work.step != SandboxWorkStep::None
-        {
+        if self.revive_eligibility().is_err() {
             return Err(SandboxModelError::invalid_value("sandbox.revive"));
         }
         let mut next = self.clone();
@@ -175,6 +174,35 @@ impl Sandbox {
             .schedule(SandboxWorkStep::RunLifecycleOperation, at);
         *self = next;
         Ok(())
+    }
+
+    /// Eligibility to begin a new pause, independent of command replay.
+    pub fn pause_eligibility(&self) -> Result<(), SandboxLifecycleBlocker> {
+        if self.status != SandboxStatus::Active {
+            Err(SandboxLifecycleBlocker::NotActive)
+        } else if self.lifecycle.checkpoint_capture.is_some() {
+            Err(SandboxLifecycleBlocker::CheckpointInProgress)
+        } else if self.work.lease.is_some()
+            || !matches!(
+                self.work.step,
+                SandboxWorkStep::None | SandboxWorkStep::WaitForCredentialRotation
+            )
+        {
+            Err(SandboxLifecycleBlocker::WorkInProgress)
+        } else {
+            Ok(())
+        }
+    }
+
+    /// Eligibility to begin a new revival, independent of command replay.
+    pub fn revive_eligibility(&self) -> Result<(), SandboxLifecycleBlocker> {
+        if self.status != SandboxStatus::Paused {
+            Err(SandboxLifecycleBlocker::NotPaused)
+        } else if self.work.lease.is_some() || self.work.step != SandboxWorkStep::None {
+            Err(SandboxLifecycleBlocker::WorkInProgress)
+        } else {
+            Ok(())
+        }
     }
 
     pub fn begin_image_rotation(
