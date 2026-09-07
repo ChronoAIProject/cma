@@ -70,14 +70,16 @@ impl SandboxWorker {
                 .handle_lifecycle_failure(
                     sandbox,
                     WorkerFailure::terminal_security("lifecycle runtime binding is absent"),
-                    now,
+                    now + started.elapsed(),
                 )
                 .await;
         };
         let agents = self.lifecycle_agents(&sandbox).await?;
         for agent in agents.iter().filter(|agent| agent.status.is_live()) {
             if let Err(failure) = require_quiet_agent(agent) {
-                return self.handle_lifecycle_failure(sandbox, failure, now).await;
+                return self
+                    .handle_lifecycle_failure(sandbox, failure, now + started.elapsed())
+                    .await;
             }
         }
         let epoch = sandbox
@@ -85,7 +87,11 @@ impl SandboxWorker {
             .map_err(model_error)?;
         let token = match lifecycle_writer_token(&sandbox) {
             Ok(token) => token,
-            Err(failure) => return self.handle_lifecycle_failure(sandbox, failure, now).await,
+            Err(failure) => {
+                return self
+                    .handle_lifecycle_failure(sandbox, failure, now + started.elapsed())
+                    .await
+            }
         };
         let request = match checkpoint_hold_request(
             self.dependencies.adapter.as_ref(),
@@ -96,7 +102,11 @@ impl SandboxWorker {
             Ok(request) => request,
             Err(error) => {
                 return self
-                    .handle_lifecycle_failure(sandbox, adapter_failure(error), now)
+                    .handle_lifecycle_failure(
+                        sandbox,
+                        adapter_failure(error),
+                        now + started.elapsed(),
+                    )
                     .await
             }
         };
@@ -117,13 +127,17 @@ impl SandboxWorker {
                         WorkerFailure::terminal_security(
                             "runtime returned invalid held checkpoint evidence",
                         ),
-                        now,
+                        now + started.elapsed(),
                     )
                     .await
             }
             Err(error) => {
                 return self
-                    .fail_after_writer_resume(sandbox, checkpoint_hold_failure(error), now)
+                    .fail_after_writer_resume(
+                        sandbox,
+                        checkpoint_hold_failure(error),
+                        now + started.elapsed(),
+                    )
                     .await
             }
         };
@@ -133,7 +147,11 @@ impl SandboxWorker {
             .await
         {
             Ok(captures) => captures,
-            Err(failure) => return self.fail_after_writer_resume(sandbox, failure, now).await,
+            Err(failure) => {
+                return self
+                    .fail_after_writer_resume(sandbox, failure, now + started.elapsed())
+                    .await
+            }
         };
         let now = now + started.elapsed();
         let stamp = rfc3339_at(now);
@@ -299,7 +317,11 @@ impl SandboxWorker {
         failure: WorkerFailure,
         now: SystemTime,
     ) -> Result<(), SandboxStoreError> {
-        if self.resume_lifecycle_writers(&sandbox).await.is_err() {
+        // Retry delay starts after writer recovery, not before its potentially slow acknowledgement.
+        let started = tokio::time::Instant::now();
+        let resumed = self.resume_lifecycle_writers(&sandbox).await;
+        let now = now + started.elapsed();
+        if resumed.is_err() {
             return self
                 .handle_lifecycle_failure(
                     sandbox,
