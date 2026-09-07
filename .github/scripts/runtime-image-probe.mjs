@@ -10,7 +10,7 @@ import { pathToFileURL } from 'node:url';
 export const checks = [
   'installed-artifacts', 'non-root-read-only', 'credential-before-install-refused',
   'install-exact-replay', 'credential-after-install', 'daemon-writer-active',
-  'agent-home-helper-aliases', 'escaping-helper-refused',
+  'agent-home-helper-aliases', 'agent-shell-inherited-path', 'escaping-helper-refused',
   'checkpoint-writers-held', 'checkpoint-exact-replay', 'wrong-resume-token-refused',
   'mutation-while-held-refused', 'checkpoint-download-digest', 'writer-resumed',
   'retired-hold-refused', 'whole-home-restore',
@@ -63,6 +63,29 @@ export function installedCodexVersion(home, command = execFileSync) {
     assert.equal(homeSnapshot(home), before);
     return version;
   } finally { rmSync(scratch, { recursive: true, force: true }); }
+}
+
+export function assertAgentShellPath(agentHome, toolDirectory, command = execFileSync) {
+  const executable = process.execPath;
+  const inspect = 'console.log(JSON.stringify({home:process.env.HOME,path:process.env.PATH,tool:require("node:child_process").execFileSync("cma-shell-path-fixture",{encoding:"utf8"})}))';
+  const shellCommand = `${executable} -e '${inspect}'`;
+  for (const path of [`${toolDirectory}:${process.env.PATH}`, `${process.env.PATH}:${toolDirectory}`]) {
+    for (const mode of ['-c', '-lc']) {
+      const actual = JSON.parse(command('/bin/bash', [mode, shellCommand], {
+        encoding: 'utf8', timeout: 10000, stdio: ['ignore', 'pipe', 'pipe'],
+        env: { ...process.env, HOME: agentHome, CODEX_HOME: agentHome, PATH: path },
+      }));
+      assert.deepEqual(actual, { home: agentHome, path, tool: 'cma-shell-path-ok\n' });
+    }
+  }
+  const fallback = '/usr/local/bin:/usr/bin:/bin:/usr/local/games:/usr/games';
+  for (const setup of ['PATH=""', 'unset PATH']) {
+    const actual = command('/bin/bash', ['--noprofile', '--norc', '-c', `${setup}\n. /etc/profile\n/usr/bin/printf '%s' "$PATH"`], {
+      encoding: 'utf8', timeout: 10000, stdio: ['ignore', 'pipe', 'pipe'],
+      env: { ...process.env, HOME: agentHome, CODEX_HOME: agentHome },
+    });
+    assert.equal(actual, fallback);
+  }
 }
 
 export function assertCheckpointHoldReceipt(receipt, hold, onStage) {
@@ -201,6 +224,16 @@ export async function probe(onStage = () => {}) {
   assert.deepEqual(aliases.map((entry) => entry.name).sort(), ['apply_patch', 'applypatch', 'codex-execve-wrapper', 'codex-linux-sandbox']);
   for (const entry of aliases) assert.equal(readlinkSync(join(entry.parentPath, entry.name)), '/usr/local/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl/bin/codex');
   complete('agent-home-helper-aliases');
+  const toolDirectory = '/home/cma/ci-user-tools/bin with spaces';
+  mkdirSync(toolDirectory, { recursive: true });
+  writeFileSync(join(toolDirectory, 'cma-shell-path-fixture'), '#!/bin/sh\nprintf "cma-shell-path-ok\\n"\n', { mode: 0o700 });
+  assertAgentShellPath(agentHome, toolDirectory);
+  writeFileSync(join(agentHome, '.profile'), 'PATH="/home/cma/owner-profile-bin:$PATH"\nexport PATH\n');
+  assert.equal(execFileSync('/bin/bash', ['-lc', '/usr/bin/printf "%s" "$PATH"'], {
+    encoding: 'utf8', timeout: 10000, stdio: ['ignore', 'pipe', 'pipe'],
+    env: { ...process.env, HOME: agentHome, CODEX_HOME: agentHome },
+  }), `/home/cma/owner-profile-bin:${process.env.PATH}`);
+  complete('agent-shell-inherited-path');
   const rejectedHold = { t: 'checkpoint_for_teardown', checkpoint: { epoch: 1, exclusions: [] }, writer_resume_token: '0'.repeat(64) };
   assert.equal((await control(rejectedHold)).code, 'checkpoint_symlink_escape');
   const afterRefusal = counter();
