@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createHash } from 'node:crypto';
-import { chmodSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { chmodSync, existsSync, lstatSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { isAbsolute, join, relative, resolve } from 'node:path';
 import { privateFile, requiredCases, runObserver, validateAttestations, validateCampaign, validatePolicy, validateReceipt } from './staging-authority.mjs';
 
 const hash = (value) => createHash('sha256').update(value).digest('hex');
@@ -60,7 +61,10 @@ test('observer bytes and config are private, exact, unchanged and invoked withou
   const { request, receipt } = fixtures();
   writeFileSync(verifier, 'reviewed-verifier', { mode: 0o600 });
   writeFileSync(config, 'reviewed-config', { mode: 0o600 });
+  const workdirs = new Set();
   const invoke = (change) => runObserver(verifier, hash('reviewed-verifier'), config, hash('reviewed-config'), request, (_program, args, options) => {
+    assert.ok(!workdirs.has(options.cwd));
+    workdirs.add(options.cwd);
     assert.deepEqual(args, [verifier]);
     assert.deepEqual(options.env, { PATH: '/usr/local/bin:/usr/bin:/bin', CMA_ATTESTATION_CONFIG: config });
     assert.deepEqual(JSON.parse(options.input), request);
@@ -81,8 +85,58 @@ test('observer bytes and config are private, exact, unchanged and invoked withou
     assert.throws(() => privateFile(join(directory, 'alias.mjs')));
     assert.throws(() => privateFile(resolve('.github/scripts/staging-authority.mjs')));
     assert.throws(() => runObserver(verifier, undefined, config, undefined, request));
-  } finally { rmSync(directory, { recursive: true }); }
+  } finally {
+    rmSync(directory, { recursive: true });
+    for (const workdir of workdirs) assert.equal(existsSync(workdir), false);
+  }
 });
+
+for (const outcome of ['success', 'child failure', 'invalid JSON', 'invalid receipt']) {
+  test(`observer helper caches stay outside caller cwd and are cleaned after ${outcome}`, () => {
+    const directory = realpathSync(mkdtempSync(join(tmpdir(), 'cma-observer-cache-test-')));
+    const verifier = join(directory, 'observer.mjs'), config = join(directory, 'target.json');
+    const { request, receipt } = fixtures();
+    const cache = join('.kube', 'gke_gcloud_auth_plugin_cache');
+    const caller = process.cwd();
+    const callerCacheExists = existsSync(join(caller, cache));
+    const output = outcome === 'invalid JSON' ? 'invalid-json' : JSON.stringify(outcome === 'invalid receipt' ? {} : receipt);
+    const script = `
+      import { mkdirSync, writeFileSync } from 'node:fs';
+      mkdirSync('.kube');
+      writeFileSync(${JSON.stringify(cache)}, 'dummy-helper-cache', { mode: 0o600 });
+      ${outcome === 'child failure' ? 'process.exit(1);' : `process.stdout.write(${JSON.stringify(output)});`}
+    `;
+    writeFileSync(verifier, script, { mode: 0o600 });
+    writeFileSync(config, 'reviewed-config', { mode: 0o600 });
+    let workdir;
+    let cacheCreated = false;
+    const invoke = () => runObserver(verifier, hash(script), config, hash('reviewed-config'), request, (program, args, options) => {
+      workdir = options.cwd;
+      assert.ok(isAbsolute(workdir));
+      assert.equal(realpathSync(workdir), workdir);
+      assert.notEqual(workdir, caller);
+      const outside = relative(caller, workdir);
+      assert.ok(outside.startsWith('../') || isAbsolute(outside));
+      const stat = lstatSync(workdir);
+      assert.ok(stat.isDirectory() && !stat.isSymbolicLink());
+      assert.equal(stat.uid, process.getuid());
+      assert.equal(stat.mode & 0o777, 0o700);
+      try { return execFileSync(program, args, options); }
+      finally {
+        assert.equal(readFileSync(join(workdir, cache), 'utf8'), 'dummy-helper-cache');
+        cacheCreated = true;
+      }
+    });
+    try {
+      if (outcome === 'success') assert.deepEqual(invoke(), receipt);
+      else assert.throws(invoke);
+      assert.equal(cacheCreated, true);
+      assert.equal(existsSync(workdir), false);
+      assert.equal(process.cwd(), caller);
+      assert.equal(existsSync(join(caller, cache)), callerCacheExists);
+    } finally { rmSync(directory, { recursive: true }); }
+  });
+}
 
 test('full campaign evidence refuses discovery, skips, owner-only runs and any unsettled cleanup', () => {
   const results = { status: 'passed', cases: requiredCases.map((name) => ({ case: name, status: 'passed', durationMs: 1 })) };

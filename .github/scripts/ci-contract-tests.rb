@@ -39,6 +39,8 @@ guarded = mode == "release" ? [
   ["ci", "trigger-provider-smoke-contract", "Typecheck every harness entry point"],
   ["ci", "trigger-provider-smoke-contract", "Local browser guard mechanics"],
   ["ci", "backend", "Disposable real Mongo persistence contracts"],
+  ["nightly-staging", "smoke", "Initialize isolated evidence path"],
+  ["nightly-staging", "journeys", "Initialize isolated evidence path"],
   ["nightly-staging", "journeys", "Verify approval policy and independently observed deployment before fixture access"],
   ["nightly-staging", "journeys", "Require complete cleanup and independently bound campaign evidence"],
 ]
@@ -89,6 +91,17 @@ if mode == "release"
     raise "Gateway contract accepted non-readiness health"
   end
 else
+  %w[smoke journeys].each do |id|
+    reject.call("#{id}: runner context at job scope") do |value|
+      value["nightly-staging"]["jobs"][id]["env"]["CMA_E2E_OUTPUT_DIR"] = "${{ runner.temp }}/evidence"
+    end
+    reject.call("#{id}: evidence initialized after harness") do |value|
+      steps = value["nightly-staging"]["jobs"][id]["steps"]
+      initialize = steps.find { |row| row["name"] == "Initialize isolated evidence path" }
+      steps.delete(initialize)
+      steps.push(initialize)
+    end
+  end
   reject.call("unprotected mutation") { |value| value["nightly-staging"]["jobs"]["journeys"].delete("environment") }
   reject.call("mutable checkout") do |value|
     value["nightly-staging"]["jobs"]["journeys"]["steps"].find { |row| row["uses"].to_s.start_with?("actions/checkout@") }["with"]["ref"] = "develop"
