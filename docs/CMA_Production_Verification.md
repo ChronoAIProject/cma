@@ -16,12 +16,18 @@ acceptance of this campaign.
 | 3. Public Sandbox Profile | 4000 millicores, 8192 MiB, two requested services, 4/4 limits, working toolchain | Exact live configuration and all four actual Agent workload checks passed on runtime `137b489d`; independent receipt confirms unchanged tracked source |
 | 4. Public Trigger | Exact title/message, all-level reuse, Try It, visitor theme, no review, README placement | Exact revision published after first rollout; README-only PR #841 merged after all 12 protected checks; default README snippet read back exactly |
 | 5. Login without bootstrap | No Sandbox, Workspace, Agent, or Profile created by login alone | Existing-owner fresh-browser sign-in created no resources; successful unseen-CMA-identity callback contract passes default/home/Trigger returns; external fresh signup not tested |
-| 6. Complete external-click flow | Login then automatic provisioning; exact first message once; correct software, skills, scopes | Fresh `streaming-fixed` README entry, first response, live configuration and actual workload passed; heavy repeat restored the backend but failed automatic browser navigation; web correction is deployed, final first/paused-repeat acceptance pending |
+| 6. Complete external-click flow | Login then automatic provisioning; exact first message once; correct software, skills, scopes | Fresh `streaming-fixed` README entry, first response, live configuration and actual workload passed; heavy repeat restored the backend but failed automatic browser navigation; deployed web `1eb60be1` passes existing-ready-page recovery only; final fresh and genuinely paused README-repeat acceptance remain pending |
 | 7. Previous UI style | Original rotating 3D mark and established controls; desktop/mobile screenshots | Live home/provisioning motion and four-view chat checks passed; web `1eb60be1` retains the tested lifecycle input holds and corrects automatic revival to the existing blue running state |
 | 8. Autonomous YOLO | Pinned provider runs full-access mode with no approval requests | Actual provider configuration verified; latest first response and successful subsequent workload completed with zero approvals |
-| 9. Lifecycle | Active to paused to active; paused to terminated; history retained | Heavy Pause settled at 22:12 UTC and backend revival around 22:36 UTC with exact hierarchy/history retained; original Pause timeout and repeat browser failure remain failed; built-file identity, manual Resume and paused Delete remain pending |
-| 10. Cleanup | Only identified stale state removed; new published flow remains usable | Two old Sandboxes retired through the public API under explicit authorization; final environment pending |
-| 11. Conversation UI | Thinking, Send/Stop, CPU, RAM, context, token, network metrics | Four-view active metrics, Thinking, live follow/manual scroll/re-follow, completion, hierarchy and reload passed; actual Send/Stop acceptance awaits the restored-file check and active checkpoint completion |
+| 9. Lifecycle | Active to paused to active; paused to terminated; history retained | Heavy Pause settled at 22:12 UTC, backend revival around 22:36 UTC, and independent selected-artifact restoration passed at 22:52 UTC; original Pause timeout and repeat browser failure remain failed; later upload expiry and 22:57 UTC rollout during Pausing are not successful recovery; manual Resume and paused Delete remain pending |
+| 10. Cleanup | Only identified stale state removed; new published flow remains usable | Identified old Sandboxes and the verified heavy test baseline were retired through supported owner commands; the latest Delete began from Pausing, not Paused; final environment remains pending |
+| 11. Conversation UI | Thinking, Send/Stop, CPU, RAM, context, token, network metrics | Four-view active metrics, Thinking, live follow/manual scroll/re-follow, completion, hierarchy, reload and ready-page checkpoint input holds passed; actual Send/Stop acceptance remains pending on a fresh lifecycle test baseline |
+
+The latest observed production versions are API `553e180b`, web `1eb60be1`, and
+runtime `137b489d`. The heavy baseline's retirement was independently verified
+at 2026-09-07 23:13 UTC. API `619535ad` and all remaining final-flow acceptance
+are still pending; the historical deployed-component table below is not the
+current campaign's image inventory.
 
 Private campaign evidence is kept under `/tmp/cma-trureturing-loop.LvTezb` and
 must not be committed or uploaded wholesale. One existing NyxID owner account is
@@ -665,19 +671,114 @@ Readback is `observe-web-1eb-rollout-2247.json`. API and runtime were unchanged.
 
 The separate backend/data preflight passed and explicitly recorded periodic
 epoch-4 capture. The first selected-artifact after-probe failed at runtime-files;
-no artifact equality is accepted from it. Its original wrapper suppressed
-the subprocess detail, so bounded read-only diagnostics are ongoing. This does
-not establish data loss, and the failed browser journey remains failed regardless
-of any independent data continuation.
+no artifact equality is accepted from that attempt. Its original wrapper
+suppressed the subprocess detail, and the cause remains unclassified. A later
+independent read-only probe passed as recorded below, without repairs or replaying
+the workload. The original probe and browser failures remain failed.
 
 API source `d46abe08` removes the unnecessary archive import before restore
 bootstrap. Bootstrap only validates and records inherited installation identity;
 actual credentialed home Restore retains transfer and integrity checks. Four
 transport regressions and all 111 Layer 3 tests pass, with strict Clippy, format
-and secret checks. The new image includes the pending `553e180b` lifecycle timing
-fix and is building; neither API change is live yet. The final acceptance
-sequence now includes a genuinely paused README repeat after manual Resume
-coverage, rather than counting an already-active reopen as revival proof.
+and secret checks. Its duplicate-bootstrap-transfer correction is included in
+the pending combined API `619535ad`; no intermediate `d46abe08` rollout is
+required. The separate `553e180b` deployment and its timing error are recorded
+below. Final acceptance still requires a genuinely paused README repeat, not an
+already-active reopen.
+
+### Ready-Page Recovery And Independent Heavy Restoration
+
+Evidence in `ready-progress-1eb60be1-5Fje2G/` passed four fresh-browser views on
+the exact deployed web build: 1440 by 900 and 390 by 844, light and dark. Each
+opened existing Launch `lch_5df2e48f722c4c2bb4d306cd50d7df28` directly and
+automatically navigated to the exact existing Agent. Both turns and all 20
+messages retained the recorded transcript hash, and the rendered-message hash
+matched across all views. The screenshots were visually reviewed without
+overlap or viewport overflow. The real saving notice remained visible with Send
+held and the draft editable. All 229 observed same-origin requests were GET/200,
+with no mutations, replaced responses or browser errors. Browser cleanup was
+confirmed. This is ready-page recovery and deployed-asset evidence only, not
+production long-wait or paused-README-repeat acceptance.
+
+At 2026-09-07 22:52:42 UTC,
+`workload-streaming-fixed/heavy-home-after.json` independently passed against
+replacement pod `f51eab7a-6281-4b9f-ab73-82580706f7fd-0`, whose UID differed
+from the before proof. All nine selected artifacts, totaling 7,342,129 bytes,
+matched their original hashes and modes, including .NET outputs, the Lean
+build output and installed toolchain executables. The workload receipt, clean
+tracked source, Worktree metadata, original native conversation metadata, four
+resource identities and complete two-turn transcript matched the before proof.
+Runtime `137b489d` was unchanged. This accepts independent selected-built-file
+restoration, with runtime archive-integrity evidence; it is not an independent
+hash of every restored home entry and does not convert the failed browser
+journey into a pass.
+
+### Upload Expiry And Nonquiet API Rollout
+
+The next periodic epoch-4 archive, `cpa_bd562cae21cb4216b4b08d1b0a0a8440`,
+contained 6,265,665,757 bytes but did not publish. Its recorded 600-second
+staged-upload deadline expired at 2026-09-07 22:55:43.586 UTC. The prior epoch-3
+checkpoint remained published and the runtime remained intact. The scoped
+readbacks `store-lifecycle-1788821747087.json` and
+`store-lifecycle-1788821878707.json` preserve the failed upload and subsequent
+cleanup state; this is not successful periodic checkpoint acceptance.
+
+Automatic Pause began at 22:55:57 UTC. The deployment executor incorrectly
+initiated API `553e180b` rollout at **22:57 UTC**, relying on the earlier quiet
+observation rather than a fresh completed pre-deployment check. This violated
+the required quiet boundary. The abandoned Pause work lease still named the old
+worker, with expiry 23:26:58 UTC; no successful recovery of that Pause is claimed.
+`observe-api-553-rollout-2259.json` confirms the new API Ready while the Sandbox
+was still Pausing. Pod `cma-api-685d9c4f9c-kkjmv` runs digest
+`sha256:067e5f7e9ba039f749e29c1fbe60bb37b2510c1a26754fc56755f89dc9f88f81`.
+Web `1eb60be1` and runtime `137b489d` were unchanged. Successful image readiness
+does not excuse the deployment timing or establish interruption-safe recovery.
+
+### Authorized Heavy Baseline Retirement
+
+The verified heavy baseline was retired through one supported owner UI Delete
+at 2026-09-07 23:06:09.619 UTC, after exact identity, completed heavy-after
+proof, unchanged transcript, single Workspace/Worktree/Agent membership and
+no active or queued user-turn checks. Its origin state was **Pausing**, not
+Paused. `retire-verified-heavy-6PKnOO/result.json` observes Retired at
+23:07:03.855 UTC, the Agent Stopped, and the original two-turn transcript with
+SHA-256 `2d50df491bf47c2555f4e634ce61ac59f15f95581b0f5f3df382c8178f8f6edc`.
+This is authorized test cleanup, not paused-Delete acceptance. No duplicate
+Delete, additional workload or database repair was used.
+
+Independent read-only evidence in `retirement-independent-NzwBth/result.json`
+passed at 23:13:18 UTC: writer debt cleared, no lifecycle operation or runtime
+version, Agent Stopped with reason `sandbox_retired`, exact two-turn transcript
+retained through event sequence 255, and the exact replacement pod absent.
+It used public GETs and Kubernetes inspection without runtime execution or
+mutations. This completes the identified cleanup proof, not paused-Delete or
+successful Pause-recovery acceptance. A fresh all-quiet observation is still
+required immediately before the next API deployment.
+
+### Pending Corrected Acceptance
+
+API `619535ad7b898b79b7932f8f0c3802dce4a43ae4` combines the restore-bootstrap
+correction with a fixed 1,200-second budget for newly staged checkpoint uploads.
+Previously recorded deadlines are not extended. The 180-second per-request
+timeout, four concurrent 32 MiB parts, three bounded part retries, integrity
+checks and outer 1,800-second capture limits remain unchanged. Its image build,
+scan, registry verification, manifest pin and production rollout are pending;
+none of this source work counts as final production acceptance.
+
+The 23:06 UTC superseding sequence in private `final-flow-audit.md` requires:
+
+1. With independent retirement checks now passed, deploy verified API `619535ad`
+   only after a fresh, separately completed all-quiet observation. Keep runtime
+   `137b489d` and web `1eb60be1` unchanged.
+2. Create a separate `lifecycle-fresh` README baseline and prove actual Send/Stop,
+   UI Pause/Resume, and another UI Pause followed by Delete from genuinely Paused.
+3. Run the final fresh README journey and admission-bound configuration observer
+   as `final-fresh`, then explicitly Pause that baseline and run `final-repeat`.
+   The repeat must revive automatically, retain all identities and history, and
+   add no first prompt, approval workaround or manual continuation click.
+4. Leave the final environment, published profile pins, Trigger and default
+   README intact. Preserve all failed attempts and keep fresh-signup,
+   cross-owner and authenticated GitHub-page browser limits explicit.
 
 ## Historical Observation
 
