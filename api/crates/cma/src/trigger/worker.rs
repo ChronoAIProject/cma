@@ -8,6 +8,7 @@ mod agent;
 mod control;
 mod driver;
 mod effects;
+mod existing;
 mod sandbox;
 mod sandbox_progress;
 mod support;

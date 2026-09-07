@@ -77,20 +77,8 @@ impl Launch {
                 "resolution",
             ));
         }
-        self.confirmations.push(confirmation);
-        self.state = LaunchState::Ready;
-        self.first_message = FirstMessageDelivery::Completed;
-        self.started_at = Some(at.clone());
-        self.ready_at = Some(at.clone());
-        self.updated_at = at.clone();
-        for step in &mut self.steps {
-            step.status = LaunchStepStatus::Completed;
-            step.started_at.get_or_insert_with(|| at.clone());
-            step.completed_at.get_or_insert_with(|| at.clone());
-        }
-        self.work.schedule(LaunchWorkStep::Finish, at);
-        self.bump_revision()?;
-        self.validate()
+        // Reuse preserves the conversation, but still needs live parent resources.
+        self.start(confirmation)
     }
 
     pub fn refresh_review(

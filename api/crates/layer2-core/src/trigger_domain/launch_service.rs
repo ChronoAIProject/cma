@@ -335,7 +335,7 @@ impl LaunchService {
                 events.push(LaunchEventKind::ConfirmationRecorded);
                 events.push(LaunchEventKind::StateChanged {
                     from: LaunchState::Draft,
-                    to: LaunchState::Ready,
+                    to: LaunchState::Resolving,
                 });
             } else if request.start_if_ready && launch.review.can_start_now {
                 launch

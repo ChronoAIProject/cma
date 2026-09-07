@@ -54,11 +54,10 @@ impl LaunchWorker {
             return Ok(());
         };
         match agent.status {
-            AgentStatus::Starting => self.defer(launch, now).await,
-            AgentStatus::Ready
-            | AgentStatus::Working
-            | AgentStatus::WaitingApproval
-            | AgentStatus::Paused => self.record_agent_ready(launch, &agent, context, now).await,
+            AgentStatus::Starting | AgentStatus::Paused => self.defer(launch, now).await,
+            AgentStatus::Ready | AgentStatus::Working | AgentStatus::WaitingApproval => {
+                self.record_agent_ready(launch, &agent, context, now).await
+            }
             AgentStatus::Stopped | AgentStatus::Deleted if agent.ready_at.is_some() => {
                 self.record_agent_ready(launch, &agent, context, now).await
             }
@@ -161,6 +160,11 @@ impl LaunchWorker {
         now: SystemTime,
     ) -> Result<(), LaunchWorkerError> {
         let first_message = match expected_first_message(agent, context) {
+            _ if launch.first_message == layer2_core::sandbox::FirstMessageDelivery::Completed
+                && matches!(launch.resolution.agent, ResolvedResource::Reused(_)) =>
+            {
+                None
+            }
             Ok(record) => record,
             Err(_) if matches!(launch.resolution.agent, ResolvedResource::Reused(_)) => None,
             Err(failure) => return self.settle_resource_failure(launch, failure, now).await,
@@ -378,7 +382,7 @@ fn valid_ready_agent(agent: &Agent, launch: &Launch) -> bool {
         && agent.ready_at.is_some()
 }
 
-fn valid_creation_key(agent: &Agent) -> bool {
+pub(super) fn valid_creation_key(agent: &Agent) -> bool {
     let expected = match &agent.origin {
         AgentOrigin::Manual => Some(format!("manual:{}", agent.id)),
         AgentOrigin::WorkspaceProfile { index } => {

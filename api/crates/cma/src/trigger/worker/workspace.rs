@@ -234,7 +234,7 @@ fn valid_workspace(
             .workspace_profiles
             .get(usize::from(*index))
             .is_some_and(|reference| {
-                reference == &context.revision.content.target.workspace_profile
+                reference.id == profile.profile_id && reference.revision == profile.revision
             }),
         (WorkspaceOrigin::Trigger { launch_id }, true) => valid_origin_id(launch_id),
         (WorkspaceOrigin::Trigger { launch_id }, false) => launch_id == launch.id.as_str(),
