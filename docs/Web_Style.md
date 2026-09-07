@@ -645,6 +645,14 @@ immediately and replaced, not duplicated, when the durable message arrives.
 Ephemeral frames never advance the durable replay cursor. Reconnect reconciles
 history without losing an unsubmitted draft or replaying already committed text.
 
+If the authorized Agent, transcript, usage and Workspace reads succeed but an
+event-history page is temporarily unavailable, keep the known conversation
+visible. The existing status band names incomplete activity and automatic retry;
+it is not complete-history acceptance. Keep the draft editable, but hold Send,
+approval actions and live replay until a complete history read succeeds. Retry
+from the start so missing tool and approval pages are not skipped. Authentication
+or permission denials and malformed identities remain explicit failures.
+
 The composer uses its existing capsule, send/stop icon seat, focus treatment, and
 bounded growth. Stop interrupts the current turn; it does not delete the Agent.
 Approval decisions are explicit at the point of interruption. Only public API
@@ -1385,3 +1393,4 @@ Append-only. Never edit or delete an entry.
 | 2026-09-07 | Restored the pre-refactor Three.js mark, Thinking container, circular composer actions and compact public resource instrumentation on the current CMA hierarchy. Added state-coloured 3D provisioning marks and bounded external-click entry consent for no-review Triggers; preserved existing shared controls, durable history and append-only style history. |
 | 2026-09-08 | Distinguished observed resource ceilings from explicitly labelled configured capacities resolved through the exact pinned Sandbox Profile revision. Added layout-aware conversation following that preserves manual reading position and removes completed preparation from the conversation surface. |
 | 2026-09-08 | Kept the Agent grid within the available center width for long titles and Markdown tables, and enforced the established 34px/44px square composer control against shared icon-button width rules. |
+| 2026-09-08 | Preserved an authorized transcript when initial event-history loading fails transiently. Reused the status band for incomplete activity and retry; retained drafts while holding commands and replay until all event pages are recovered, without masking authentication or permission denials. |

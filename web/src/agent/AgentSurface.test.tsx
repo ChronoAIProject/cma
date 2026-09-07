@@ -1,11 +1,76 @@
-import { render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { expect, it, vi } from 'vitest';
-import { AGENT_DETAIL, AGENT_TRANSCRIPT, AGENT_USAGE } from '../test/agent';
+import { AGENT_DETAIL, AGENT_TRANSCRIPT, AGENT_USAGE, agentClient } from '../test/agent';
+import { ApiError } from '@chronoai/cma-sdk';
+import { CmaClientProvider } from '../api/context';
 import { workspaceFixture } from '../test/hierarchy';
 import { conversationFromTranscript, type ConversationState } from './conversation';
 import type { AgentController, AgentResourceState } from './controller';
+import { useAgentController } from './controller';
 import { AgentSurface } from './AgentSurface';
+
+it('preserves a draft and visible history while incomplete event activity retries without a reload', async () => {
+  vi.useFakeTimers();
+  let unavailable = true;
+  const readAgentEvents = vi.fn(async () => {
+    if (unavailable)
+      throw new ApiError(503, 'Authentication authority is temporarily unavailable.');
+    return { items: [] };
+  });
+  const client = agentClient({ readAgentEvents });
+  function RecoveringAgent() {
+    const controller = useAgentController(client, 'agt_1');
+    return (
+      <>
+        <button onClick={controller.reload}>Reload conversation</button>
+        <AgentSurface
+          agentId="agt_1"
+          controller={controller}
+          detailsOpen={false}
+          onDetailsOpenChange={vi.fn()}
+          onNavigate={vi.fn()}
+        />
+      </>
+    );
+  }
+  const view = render(
+    <CmaClientProvider client={client}>
+      <RecoveringAgent />
+    </CmaClientProvider>,
+  );
+  try {
+    await act(() => vi.advanceTimersByTimeAsync(0));
+    expect(screen.getByText('The repository is ready.')).toBeInTheDocument();
+    expect(
+      screen
+        .getByText('Conversation activity is unavailable. Reconnecting.')
+        .closest('[role="status"]'),
+    ).toBeInTheDocument();
+    const draft = screen.getByRole('textbox', { name: 'Message' });
+    expect(draft).toBeEnabled();
+    fireEvent.change(draft, { target: { value: 'Retain this unsubmitted draft' } });
+    expect(screen.getByRole('button', { name: 'Send message' })).toBeDisabled();
+    unavailable = false;
+    await act(() => vi.advanceTimersByTimeAsync(5000));
+    expect(
+      screen.queryByText('Conversation activity is unavailable. Reconnecting.'),
+    ).not.toBeInTheDocument();
+    expect(draft).toHaveValue('Retain this unsubmitted draft');
+    expect(screen.getByRole('button', { name: 'Send message' })).toBeEnabled();
+    expect(screen.getAllByText('The repository is ready.')).toHaveLength(1);
+    unavailable = true;
+    fireEvent.click(screen.getByRole('button', { name: 'Reload conversation' }));
+    await act(() => vi.advanceTimersByTimeAsync(0));
+    expect(screen.getByText('The repository is ready.')).toBeInTheDocument();
+    expect(
+      screen.getByText('Conversation activity is unavailable. Reconnecting.'),
+    ).toBeInTheDocument();
+  } finally {
+    view.unmount();
+    vi.useRealTimers();
+  }
+});
 
 function controller(
   state: AgentResourceState,

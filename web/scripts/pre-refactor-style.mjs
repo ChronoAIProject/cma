@@ -66,6 +66,8 @@ try {
       let launches = 0;
       let samples = 0;
       let finished = false;
+      let activityUnavailable = true;
+      const historyCursors = [];
       const errors = [];
       page.on('pageerror', (error) => errors.push(error.message));
       await page.route('**/*', async (route) => {
@@ -197,36 +199,51 @@ try {
               },
             ],
           });
-        if (path.endsWith('/agt_ready/events'))
-          return reply({
-            items: [
-              { seq: 2, appended_at: now, kind: { type: 'turn_started', turn_sequence: 2 } },
-              { seq: 3, appended_at: now, kind: { type: 'owner_message', content: first } },
-              {
-                seq: 4,
-                appended_at: now,
-                kind: {
-                  type: 'tool_call_started',
-                  call_id: 'read',
-                  title:
-                    '/home/cma/trureturing/.worktrees/formalize/docs/very-long-formalization-path/README.md',
-                  kind: 'read',
-                  status: 'running',
-                },
+        if (path.endsWith('/agt_ready/events')) {
+          const cursor = Number(url.searchParams.get('after') ?? 0);
+          historyCursors.push(cursor);
+          if (cursor === 4 && activityUnavailable)
+            return route.fulfill({
+              status: 503,
+              json: {
+                status: 503,
+                code: 'auth_temporarily_unavailable',
+                detail: 'Authentication authority is temporarily unavailable.',
               },
-              {
-                seq: 5,
-                appended_at: now,
-                kind: { type: 'tool_call_updated', call_id: 'read', status: 'completed' },
+            });
+          const events = [
+            { seq: 2, appended_at: now, kind: { type: 'turn_started', turn_sequence: 2 } },
+            { seq: 3, appended_at: now, kind: { type: 'owner_message', content: first } },
+            {
+              seq: 4,
+              appended_at: now,
+              kind: {
+                type: 'tool_call_started',
+                call_id: 'read',
+                title:
+                  '/home/cma/trureturing/.worktrees/formalize/docs/very-long-formalization-path/README.md',
+                kind: 'read',
+                status: 'running',
               },
-              {
-                seq: 6,
-                appended_at: now,
-                kind: { type: 'agent_message', content: 'The repository is ready.' },
-              },
-              { seq: 7, appended_at: now, kind: { type: 'turn_completed', turn_sequence: 2 } },
-            ],
-          });
+            },
+            {
+              seq: 5,
+              appended_at: now,
+              kind: { type: 'tool_call_updated', call_id: 'read', status: 'completed' },
+            },
+            {
+              seq: 6,
+              appended_at: now,
+              kind: { type: 'agent_message', content: 'The repository is ready.' },
+            },
+            { seq: 7, appended_at: now, kind: { type: 'turn_completed', turn_sequence: 2 } },
+          ];
+          return reply(
+            cursor === 0
+              ? { items: events.filter((event) => event.seq <= 4), next: 4 }
+              : { items: events.filter((event) => event.seq > cursor) },
+          );
+        }
         if (path.startsWith('/api/')) throw new Error(`Missing fixture ${path}`);
         return route.continue();
       });
@@ -308,6 +325,22 @@ try {
       finished = true;
       await expect(page).toHaveURL(/\/agents\/agt_ready$/, { timeout: 15000 });
       await expect(page.getByRole('textbox', { name: 'Message', exact: true })).toBeFocused();
+      await expect(page.getByText('The repository is ready.')).toBeVisible();
+      await expect(
+        page.getByText('Conversation activity is unavailable. Reconnecting.'),
+      ).toBeVisible();
+      const draft = page.getByRole('textbox', { name: 'Message', exact: true });
+      await draft.fill('Preserve this unsubmitted draft');
+      await expect(page.getByRole('button', { name: 'Send message', exact: true })).toBeDisabled();
+      const recoveryShot = await screenshot('recovering-activity');
+      activityUnavailable = false;
+      await expect(
+        page.getByText('Conversation activity is unavailable. Reconnecting.'),
+      ).toHaveCount(0, { timeout: 15000 });
+      await expect(draft).toHaveValue('Preserve this unsubmitted draft');
+      await expect(page.getByRole('button', { name: 'Send message', exact: true })).toBeEnabled();
+      assert.deepEqual(historyCursors.slice(0, 4), [0, 4, 0, 4]);
+      await draft.fill('');
       await page.getByRole('button', { name: /^Thinking/ }).click();
       await expect(page.locator('.thinking__body')).toBeVisible();
       const capacityLabel = theme === 'dark' ? ' configured' : '';
@@ -409,6 +442,8 @@ try {
         authShot,
         progressShot,
         agentShot,
+        recoveryShot,
+        transientHistoryRecoveryPreservesDraft: true,
         followShot,
         followsLiveOutputAndPreservesManualScroll: true,
         launches,
