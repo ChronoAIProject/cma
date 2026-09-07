@@ -3,7 +3,7 @@ use std::time::{Duration, SystemTime};
 use layer2_core::profiles::content_digest;
 use layer2_core::trigger_domain::{
     Launch, LaunchCommit, LaunchEffectState, LaunchEventKind, LaunchState, ResolvedTriggerProfiles,
-    TriggerRevision, MAX_LAUNCH_RETRY_DELAY_SECONDS,
+    TriggerRevision, TriggerTarget, MAX_LAUNCH_RETRY_DELAY_SECONDS,
 };
 use layer2_core::{rfc3339_at, AgentId, Authorization, Caller, Capability, SandboxId, WorkspaceId};
 
@@ -16,11 +16,10 @@ pub(super) struct FrozenLaunchContext {
 }
 
 impl FrozenLaunchContext {
-    fn validate(&self, launch: &Launch) -> Result<(), LaunchWorkerError> {
+    fn validate(&self, launch: &Launch, target: &TriggerTarget) -> Result<(), LaunchWorkerError> {
         self.revision
             .validate()
             .map_err(|error| corrupt(error.to_string()))?;
-        let target = &self.revision.content.target;
         let profiles = &self.profiles;
         let exact = self.revision.digest == launch.revision_digest
             && profiles.sandbox.profile_id == target.sandbox_profile.id
@@ -79,11 +78,15 @@ impl LaunchWorker {
                 return Ok(None);
             }
         };
-        let profiles = match self
-            .resources
-            .frozen_profiles(&revision.content.target)
-            .await
-        {
+        let target = match self.existing_conversation_target(&launch).await {
+            Ok(Some(target)) => target,
+            Ok(None) => revision.content.target.clone(),
+            Err(failure) => {
+                self.settle_resource_failure(launch, failure, now).await?;
+                return Ok(None);
+            }
+        };
+        let profiles = match self.resources.frozen_profiles(&target).await {
             Ok(profiles) => profiles,
             Err(failure) => {
                 self.settle_resource_failure(launch, failure, now).await?;
@@ -91,7 +94,7 @@ impl LaunchWorker {
             }
         };
         let context = FrozenLaunchContext { revision, profiles };
-        if let Err(error) = context.validate(&launch) {
+        if let Err(error) = context.validate(&launch, &target) {
             self.settle_resource_failure(
                 launch,
                 LaunchResourceError::terminal(

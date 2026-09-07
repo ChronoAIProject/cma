@@ -117,7 +117,7 @@ impl LaunchService {
         let target = if matches!(launch.resolution.agent, super::ResolvedResource::Reused(_)) {
             launch
                 .start_existing(confirmation)
-                .map(|()| LaunchState::Ready)
+                .map(|()| LaunchState::Resolving)
         } else {
             launch.start(confirmation).map(|()| LaunchState::Resolving)
         }

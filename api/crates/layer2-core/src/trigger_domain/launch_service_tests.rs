@@ -738,24 +738,22 @@ async fn repeat_choice_returns_bounded_context_and_records_both_valid_branches()
         .await
         .unwrap()
         .launch;
-    assert_eq!(resumed.state, LaunchState::Ready);
+    assert_eq!(resumed.state, LaunchState::Resolving);
     assert_eq!(resumed.first_message, FirstMessageDelivery::Completed);
     assert_eq!(resumed.confirmations.len(), 1);
     assert_eq!(
         resumed.confirmations[0].surface,
         LaunchConsentSurface::Landing
     );
-    assert!(resumed
-        .steps
-        .iter()
-        .all(|step| step.status == LaunchStepStatus::Completed));
+    assert_eq!(resumed.work.step, LaunchWorkStep::ResolveSandbox);
+    assert!(resumed.ready_at.is_none());
     assert!(resumed.review.needs.is_empty());
     assert_eq!(fixture.broker.calls(), 0);
     assert_eq!(
         fixture.stats().await,
         TriggerStats {
             launches_total: 2,
-            agents_ready_total: 1,
+            agents_ready_total: 0,
         }
     );
     let replay = fixture
@@ -769,7 +767,7 @@ async fn repeat_choice_returns_bounded_context_and_records_both_valid_branches()
         fixture.stats().await,
         TriggerStats {
             launches_total: 2,
-            agents_ready_total: 1,
+            agents_ready_total: 0,
         }
     );
 
@@ -994,7 +992,7 @@ async fn reuse_matches_parent_profile_ids_and_global_trigger_origin_across_revis
         .await
         .unwrap()
         .launch;
-    assert_eq!(resumed.state, LaunchState::Ready);
+    assert_eq!(resumed.state, LaunchState::Resolving);
     assert_eq!(
         resumed.resolution.sandbox.id().unwrap().as_str(),
         "sbx_previous_launch"
@@ -1040,14 +1038,14 @@ async fn existing_agent_still_requires_start_consent_and_owner_review() {
             )
             .await
             .unwrap();
-        assert_eq!(ready.state, LaunchState::Ready);
+        assert_eq!(ready.state, LaunchState::Resolving);
         assert_eq!(ready.confirmations[0].surface, LaunchConsentSurface::Review);
-        assert_eq!(ready.work.step, LaunchWorkStep::Finish);
+        assert_eq!(ready.work.step, LaunchWorkStep::ResolveSandbox);
         assert_eq!(
             fixture.stats().await,
             TriggerStats {
                 launches_total: 1,
-                agents_ready_total: 1,
+                agents_ready_total: 0,
             }
         );
     }
@@ -1135,7 +1133,7 @@ async fn admitted_drafts_start_from_their_frozen_revision_after_retirement() {
         )
         .await
         .unwrap();
-    assert_eq!(ready.state, LaunchState::Ready);
+    assert_eq!(ready.state, LaunchState::Resolving);
     assert_eq!(ready.revision_digest, draft.revision_digest);
 }
 

@@ -800,6 +800,33 @@
       }
     },
     {
+      "id": "launch-review-cancel-cancelled-refused",
+      "operation": "POST /api/v1/launches/{id}/cancel",
+      "scenario": "launch_review",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/launches/$launch_id/cancel",
+        "headers": {
+          "idempotency-key": "launch-review-cancel-cancelled-refused"
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/launch-not-startable",
+          "title": "launch not startable",
+          "status": 409,
+          "detail": "This Launch cannot be started or cancelled from its current state.",
+          "code": "launch_not_startable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
       "id": "launch-review-start-cancelled",
       "operation": "POST /api/v1/launches/{id}/start",
       "scenario": "launch_review",

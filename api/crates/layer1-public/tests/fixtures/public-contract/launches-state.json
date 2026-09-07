@@ -188,7 +188,7 @@
           "trigger_id": "trg_contract",
           "revision_digest": "0aec5af19965b5e56bf4a7a68c22db717b0a90bb8bade276d3b8fb9f5560456f",
           "public_id": "public_contract",
-          "state": "ready",
+          "state": "resolving",
           "steps": [
             {
               "key": "signing_in",
@@ -206,24 +206,18 @@
             },
             {
               "key": "sandbox",
-              "status": "completed",
-              "safe_detail": "",
-              "started_at": "2026-09-07T00:00:00Z",
-              "completed_at": "2026-09-07T00:00:00Z"
+              "status": "pending",
+              "safe_detail": ""
             },
             {
               "key": "workspace",
-              "status": "completed",
-              "safe_detail": "",
-              "started_at": "2026-09-07T00:00:00Z",
-              "completed_at": "2026-09-07T00:00:00Z"
+              "status": "pending",
+              "safe_detail": ""
             },
             {
               "key": "agent",
-              "status": "completed",
-              "safe_detail": "",
-              "started_at": "2026-09-07T00:00:00Z",
-              "completed_at": "2026-09-07T00:00:00Z"
+              "status": "pending",
+              "safe_detail": ""
             },
             {
               "key": "first_message",
@@ -234,10 +228,8 @@
             },
             {
               "key": "ready",
-              "status": "completed",
-              "safe_detail": "",
-              "started_at": "2026-09-07T00:00:00Z",
-              "completed_at": "2026-09-07T00:00:00Z"
+              "status": "pending",
+              "safe_detail": ""
             }
           ],
           "resolution": {
@@ -279,7 +271,6 @@
           "created_at": "2026-09-07T00:00:00Z",
           "updated_at": "2026-09-07T00:00:00Z",
           "started_at": "2026-09-07T00:00:00Z",
-          "ready_at": "2026-09-07T00:00:00Z",
           "revision": 2
         },
         "bodyKind": "json"
@@ -290,50 +281,14 @@
         "resume_steps_0_completed_at": "/steps/0/completed_at",
         "resume_steps_1_started_at": "/steps/1/started_at",
         "resume_steps_1_completed_at": "/steps/1/completed_at",
-        "resume_steps_2_started_at": "/steps/2/started_at",
-        "resume_steps_2_completed_at": "/steps/2/completed_at",
-        "resume_steps_3_started_at": "/steps/3/started_at",
-        "resume_steps_3_completed_at": "/steps/3/completed_at",
-        "resume_steps_4_started_at": "/steps/4/started_at",
-        "resume_steps_4_completed_at": "/steps/4/completed_at",
         "resume_steps_5_started_at": "/steps/5/started_at",
         "resume_steps_5_completed_at": "/steps/5/completed_at",
-        "resume_steps_6_started_at": "/steps/6/started_at",
-        "resume_steps_6_completed_at": "/steps/6/completed_at",
         "resume_requirements_checked_at": "/requirements/checked_at",
         "resume_confirmations_0_confirmed_at": "/confirmations/0/confirmed_at",
         "resume_created_at": "/created_at",
         "resume_updated_at": "/updated_at",
-        "resume_started_at": "/started_at",
-        "resume_ready_at": "/ready_at"
+        "resume_started_at": "/started_at"
       }
-    },
-    {
-      "id": "launch-state-cancel-ready-refused",
-      "operation": "POST /api/v1/launches/{id}/cancel",
-      "scenario": "launch_repeat",
-      "request": {
-        "method": "POST",
-        "path": "/api/v1/launches/$resume_launch_id/cancel",
-        "headers": {
-          "idempotency-key": "launch-state-cancel-ready-refused"
-        }
-      },
-      "response": {
-        "status": 409,
-        "headers": {
-          "content-type": "application/problem+json"
-        },
-        "body": {
-          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/launch-not-startable",
-          "title": "launch not startable",
-          "status": 409,
-          "detail": "This Launch cannot be started or cancelled from its current state.",
-          "code": "launch_not_startable"
-        },
-        "bodyKind": "json"
-      },
-      "captures": {}
     }
   ]
 }

@@ -86,6 +86,11 @@ the explicit `choice: "resume" | "new"`. The title may be null or absent.
 An eligible resume can short-circuit environment creation. Therefore the wizard
 must describe all three policies together; a Sandbox setting alone is not a
 promise to replace an Agent that the Agent policy explicitly resumes.
+Resumption still enters durable readiness checks: a paused Sandbox is revived,
+the Agent must become available, and only then is the Launch ready. Reopening
+an existing Trigger conversation preserves its original profile pins even if
+the publisher has since changed the Trigger target; it never resends the first
+message.
 
 ## Publishing Workflow
 
