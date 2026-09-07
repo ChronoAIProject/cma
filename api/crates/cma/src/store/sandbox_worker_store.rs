@@ -221,6 +221,7 @@ async fn purge_in_transaction(
         &store.checkpoints,
         &store.sandbox_events,
         &store.agents,
+        &store.agent_reuse_bindings,
         &store.worktrees,
         &store.workspaces,
     ] {

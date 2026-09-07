@@ -67,6 +67,7 @@ pub(crate) enum LaunchResourceEffect {
         authority: Capability,
         workspace_id: WorkspaceId,
         request: CreateAgent,
+        reuse_existing: bool,
     },
 }
 
@@ -340,9 +341,16 @@ impl LaunchResourceDriver for ServiceLaunchResourceDriver {
                 authority,
                 workspace_id,
                 request,
+                reuse_existing,
             } => self
                 .agents
-                .create_for_launch(&caller, authority, &workspace_id, request)
+                .create_or_reuse_for_launch(
+                    &caller,
+                    authority,
+                    &workspace_id,
+                    request,
+                    reuse_existing,
+                )
                 .await
                 .map(|agent| agent.id.to_string())
                 .map_err(agent_service_error),

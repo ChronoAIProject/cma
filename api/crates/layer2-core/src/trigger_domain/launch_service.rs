@@ -310,11 +310,24 @@ impl LaunchService {
                 events.push(LaunchEventKind::RepeatChoiceRecorded { choice });
             }
             append_resolution_events(&launch, &mut events);
+            // Starting a no-review Trigger explicitly accepts its frozen configuration.
+            // Connection requirements and publisher-required review remain blocking.
+            if request.start_if_ready
+                && !trigger.revision.content.consent.always_review
+                && !launch
+                    .requirements
+                    .services
+                    .iter()
+                    .any(super::ServiceRequirement::needs_connection)
+            {
+                launch.review = ReviewRequirements::build(&launch.requirements, None, false, false)
+                    .map_err(|error| LaunchServiceError::Corrupt(error.to_string()))?;
+            }
             if resolved.existing_agent && request.start_if_ready && launch.review.can_start_now {
                 launch
                     .start_existing(LaunchConfirmation {
                         surface: LaunchConsentSurface::Landing,
-                        trust_confirmed_digest: None,
+                        trust_confirmed_digest: launch.trust.confirmation_digest.clone(),
                         acknowledgements: Vec::new(),
                         confirmed_at: now,
                     })
@@ -328,7 +341,7 @@ impl LaunchService {
                 launch
                     .start(LaunchConfirmation {
                         surface: LaunchConsentSurface::Landing,
-                        trust_confirmed_digest: None,
+                        trust_confirmed_digest: launch.trust.confirmation_digest.clone(),
                         acknowledgements: Vec::new(),
                         confirmed_at: now,
                     })

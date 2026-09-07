@@ -164,7 +164,7 @@ impl AgentService {
                 "trigger origin requires launch admission".into(),
             ));
         }
-        self.create_with_profile(caller, workspace_id, request, false)
+        self.create_with_profile(caller, workspace_id, request, false, false)
             .await
     }
 
@@ -175,13 +175,25 @@ impl AgentService {
         workspace_id: &WorkspaceId,
         request: CreateAgent,
     ) -> Result<Agent, AgentServiceError> {
+        self.create_or_reuse_for_launch(caller, authority, workspace_id, request, false)
+            .await
+    }
+
+    pub async fn create_or_reuse_for_launch(
+        &self,
+        caller: &Caller,
+        authority: Capability,
+        workspace_id: &WorkspaceId,
+        request: CreateAgent,
+        reuse_existing: bool,
+    ) -> Result<Agent, AgentServiceError> {
         require_launch(caller, authority)?;
         if !matches!(&request.origin, AgentOrigin::Trigger { .. }) {
             return Err(AgentServiceError::InvalidRequest(
                 "launch admission requires trigger origin".into(),
             ));
         }
-        self.create_with_profile(caller, workspace_id, request, true)
+        self.create_with_profile(caller, workspace_id, request, true, reuse_existing)
             .await
     }
 
@@ -191,6 +203,7 @@ impl AgentService {
         workspace_id: &WorkspaceId,
         request: CreateAgent,
         frozen_profile: bool,
+        reuse_existing: bool,
     ) -> Result<Agent, AgentServiceError> {
         self.runtime_capabilities
             .require([RuntimeCapability::Conversation])
@@ -213,28 +226,35 @@ impl AgentService {
         let now = now_rfc3339();
         let agent_id = AgentId::generate();
         let creation_key = creation_key(&request.origin, &agent_id)?;
+        let creation_key = if reuse_existing {
+            creation_key.replacen("trigger:", "trigger-profile:", 1)
+        } else {
+            creation_key
+        };
         let first_message = request
             .first_message
             .map(|text| FirstMessageRecord::new(creation_key.clone(), text, now.clone()))
             .transpose()
             .map_err(|error| AgentServiceError::InvalidRequest(error.to_string()))?;
-        let result = self
-            .store
-            .admit_agent(AgentAdmission {
-                owner: caller.subject.clone(),
-                workspace_id: workspace.id,
-                agent_id,
-                worktree_id: WorktreeId::generate(),
-                profile: AgentProfileSnapshot::from(&revision),
-                capabilities: self.runtime_capabilities.clone(),
-                title: request.title,
-                first_message,
-                origin: request.origin,
-                creation_key,
-                event_at: now,
-            })
-            .await
-            .map_err(store_error)?;
+        let admission = AgentAdmission {
+            owner: caller.subject.clone(),
+            workspace_id: workspace.id,
+            agent_id,
+            worktree_id: WorktreeId::generate(),
+            profile: AgentProfileSnapshot::from(&revision),
+            capabilities: self.runtime_capabilities.clone(),
+            title: request.title,
+            first_message,
+            origin: request.origin,
+            creation_key,
+            event_at: now,
+        };
+        let result = if reuse_existing {
+            self.store.admit_agent_reusing_profile(admission).await
+        } else {
+            self.store.admit_agent(admission).await
+        }
+        .map_err(store_error)?;
         if let AgentAdmissionResult::Created(creation) = &result {
             self.record_profile_use(&creation.agent).await;
         }

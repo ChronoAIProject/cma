@@ -101,6 +101,8 @@ impl LaunchWorker {
                     authority,
                     workspace_id,
                     request,
+                    reuse_existing: context.revision.content.reuse.agent
+                        == layer2_core::trigger_domain::AgentReusePolicy::ResumeExisting,
                 },
                 now,
             )
@@ -113,11 +115,22 @@ impl LaunchWorker {
             Ok(id) => id,
             Err(failure) => return self.settle_resource_failure(launch, failure, now).await,
         };
+        let reused = match self.resources.agent(&agent_id).await {
+            Ok(Some(agent)) => {
+                !matches!(&agent.origin, AgentOrigin::Trigger { launch_id, .. } if launch_id == launch.id.as_str())
+            }
+            Ok(None) => {
+                return self
+                    .settle_resource_failure(launch, missing_resource("agent"), now)
+                    .await
+            }
+            Err(failure) => return self.settle_resource_failure(launch, failure, now).await,
+        };
         let expected = launch.revision;
         let fence = self.fence(&launch)?;
         let at = rfc3339_at(now);
         let events = launch
-            .record_worker_agent(&self.config.holder, fence, agent_id, false, at.clone())
+            .record_worker_agent(&self.config.holder, fence, agent_id, reused, at.clone())
             .map_err(domain_error)?;
         self.commit(expected, launch, at, events).await?;
         Ok(())
@@ -149,20 +162,31 @@ impl LaunchWorker {
     ) -> Result<(), LaunchWorkerError> {
         let first_message = match expected_first_message(agent, context) {
             Ok(record) => record,
+            Err(_) if matches!(launch.resolution.agent, ResolvedResource::Reused(_)) => None,
             Err(failure) => return self.settle_resource_failure(launch, failure, now).await,
         };
         let expected = launch.revision;
         let fence = self.fence(&launch)?;
         let at = rfc3339_at(now);
-        let events = launch
-            .record_worker_agent_ready(
+        let events = if first_message.is_none()
+            && matches!(launch.resolution.agent, ResolvedResource::Reused(_))
+        {
+            launch.record_worker_existing_conversation_ready(
+                &self.config.holder,
+                fence,
+                &agent.id,
+                at.clone(),
+            )
+        } else {
+            launch.record_worker_agent_ready(
                 &self.config.holder,
                 fence,
                 &agent.id,
                 first_message,
                 at.clone(),
             )
-            .map_err(domain_error)?;
+        }
+        .map_err(domain_error)?;
         self.commit(expected, launch, at, events).await?;
         Ok(())
     }
@@ -315,7 +339,7 @@ fn valid_agent(
                     launch_id == launch.id.as_str()
                 }
         }
-        AgentOrigin::Manual | AgentOrigin::WorkspaceProfile { .. } => false,
+        AgentOrigin::Manual | AgentOrigin::WorkspaceProfile { .. } => reused,
     };
     launch.resolution.agent.id() == Some(&agent.id)
         && launch.resolution.workspace.id() == Some(&agent.workspace_id)
@@ -326,7 +350,7 @@ fn valid_agent(
         && agent.profile.digest == profile.digest
         && agent.profile.content == profile.content
         && origin_valid
-        && expected_creation_key(&agent.origin).as_deref() == Some(agent.creation_key.as_str())
+        && valid_creation_key(agent)
         && agent.validate_conversation().is_ok()
         && (!matches!(
             agent.status,
@@ -338,25 +362,37 @@ fn valid_agent(
 }
 
 fn valid_ready_agent(agent: &Agent, launch: &Launch) -> bool {
-    let origin_valid = matches!(
-        &agent.origin,
-        AgentOrigin::Trigger { trigger_id, launch_id }
-            if trigger_id == launch.trigger_id.as_str() && valid_origin_id(launch_id)
-    );
+    let origin_valid = matches!(launch.resolution.agent, ResolvedResource::Reused(_))
+        || matches!(
+            &agent.origin,
+            AgentOrigin::Trigger { trigger_id, launch_id }
+                if trigger_id == launch.trigger_id.as_str() && valid_origin_id(launch_id)
+        );
     launch.resolution.agent.id() == Some(&agent.id)
         && launch.resolution.workspace.id() == Some(&agent.workspace_id)
         && launch.resolution.sandbox.id() == Some(&agent.sandbox_id)
         && agent.owner == launch.owner
         && origin_valid
-        && expected_creation_key(&agent.origin).as_deref() == Some(agent.creation_key.as_str())
+        && valid_creation_key(agent)
         && agent.validate_conversation().is_ok()
         && agent.ready_at.is_some()
 }
 
-fn expected_creation_key(origin: &AgentOrigin) -> Option<String> {
-    content_digest(origin)
-        .ok()
-        .map(|digest| format!("trigger:{digest}"))
+fn valid_creation_key(agent: &Agent) -> bool {
+    let expected = match &agent.origin {
+        AgentOrigin::Manual => Some(format!("manual:{}", agent.id)),
+        AgentOrigin::WorkspaceProfile { index } => {
+            Some(format!("workspace-profile:{}:{index}", agent.workspace_id))
+        }
+        AgentOrigin::Trigger { .. } => content_digest(&agent.origin).ok().map(|digest| {
+            if agent.creation_key.starts_with("trigger-profile:") {
+                format!("trigger-profile:{digest}")
+            } else {
+                format!("trigger:{digest}")
+            }
+        }),
+    };
+    expected.as_deref() == Some(agent.creation_key.as_str())
 }
 
 fn expected_first_message<'a>(

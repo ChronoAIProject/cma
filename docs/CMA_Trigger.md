@@ -72,7 +72,11 @@ profile, resolution checks that new Sandbox again and reuses the profile-created
 Workspace where the policy permits it. It does not blindly create a duplicate.
 
 Agent `resume_existing` selects the visitor's newest eligible live Agent from
-the same Trigger and can return ready without another Agent or first message.
+the same Trigger, or a matching pinned Agent in the selected Workspace. The
+Workspace Profile's automatic Agent and the Trigger share one admission slot
+when the Trigger requests reuse. An untouched Agent receives the first message
+once; an existing conversation is preserved. Durable reuse receipts retain the
+same Agent across retries and concurrent owner activity.
 `always_new` creates a new Agent. `ask` with an existing candidate returns
 `409 trigger_repeat_choice_required` carrying
 `existing: { agent_id, title, created_at, first_message_excerpt }`.
@@ -141,7 +145,7 @@ actual descriptor, including its exact SRI value.
 ### README Or Markdown
 
 ```markdown
-[![Open in CMA](https://cma.example/api/v1/triggers/public/pub_example/badge.svg?label=open_in_cma&theme=auto&placement=plc_readme)](https://cma.example/t/pub_example/plc_readme)
+[![Open in CMA](https://cma.example/api/v1/triggers/public/pub_example/badge.svg?label=open_in_cma&theme=auto&placement=plc_readme)](https://cma.example/api/v1/triggers/public/pub_example/open/plc_readme)
 ```
 
 A README renderer must allow linked images. GitHub camo fetches the image without
@@ -152,7 +156,7 @@ not an assumption that the image proxy forwarded a browser header.
 ### Static HTML
 
 ```html
-<a href="https://cma.example/t/pub_example/plc_readme"><img src="https://cma.example/api/v1/triggers/public/pub_example/badge.svg?label=open_in_cma&amp;theme=auto&amp;placement=plc_readme" alt="Open in CMA"></a>
+<a href="https://cma.example/api/v1/triggers/public/pub_example/open/plc_readme"><img src="https://cma.example/api/v1/triggers/public/pub_example/badge.svg?label=open_in_cma&amp;theme=auto&amp;placement=plc_readme" alt="Open in CMA"></a>
 ```
 
 No JavaScript is required. The image has an accessible label and links to the
@@ -161,7 +165,7 @@ same read-only landing as every other host.
 ### JavaScript
 
 ```html
-<script src="https://cma.example/embed/v1.js" integrity="sha384-hyi+n+8axKIAw/N4+9hJAAoaeKrVpTkh2N9SWJ6vo8nIrP+K29nRGqzJ2VseOkJn" crossorigin="anonymous"></script>
+<script src="https://cma.example/embed/v1.js" integrity="sha384-K56ODoEc3ZTiX/9Xfe3xk5PEm0Q+bQw5brGMyIfL3hGTeREM9Xf7zvR/7nn1XGuI" crossorigin="anonymous"></script>
 <cma-trigger trigger="pub_example" placement="plc_readme" label="open_in_cma" theme="auto" origin="https://cma.example"></cma-trigger>
 ```
 
@@ -196,7 +200,7 @@ using browser globals; server rendering and mounting never submit a Launch.
 ### Just The Link
 
 ```text
-https://cma.example/t/pub_example/plc_readme
+https://cma.example/api/v1/triggers/public/pub_example/open/plc_readme
 ```
 
 ## Visitor Admission And Consent
@@ -206,11 +210,17 @@ availability, server-composed reuse summaries, public software disclosures,
 a technical disclosure and a first-message excerpt. It does not expose
 publisher-private data or perform any provisioning.
 
-The landing `/t/{public_id}` or `/t/{public_id}/{placement}` supplies one
-explicit start action. A signed-out visitor can sign in or create an account;
-their bounded intent retains the target and command identity through that
-round trip. No GET, mount effect without retained consent, or OAuth callback
-itself authorizes work.
+The external button links to
+`/api/v1/triggers/public/{public_id}/open/{placement}`. This route only redirects
+to `/t/{public_id}/{placement}`. A browser-confirmed deliberate document click
+carries a ten-minute, host-only HttpOnly intent cookie; prefetches, scanners,
+and generic page loads do not. The landing consumes it through the public
+same-origin `POST /api/v1/triggers/public/{public_id}/entry-intent` endpoint.
+For a no-review Trigger that retained click is the explicit start action, so
+sign-in returns directly to automatic provisioning without another button.
+A signed-out visitor's bounded intent retains the target and command identity
+through sign-in. An OAuth callback alone never authorizes work. Direct landing
+visits and publisher-reviewed Triggers retain the explicit landing action.
 
 ```http
 POST /api/v1/triggers/public/pub_example/launches
@@ -228,6 +238,9 @@ credential. Optional `referrer_origin` is validated attribution, not access
 control. A valid placement identifies a declared host; unknown placement cannot
 grant additional authority.
 
+For a no-review Trigger, `start_if_ready: true` explicitly accepts the frozen
+configuration, including its exact command/environment trust digest. Connection
+requirements still must be satisfied; publisher-required review is not bypassed.
 If all requirements are satisfied, the same authenticated POST records consent
 and returns 202 with an admitted Launch. Otherwise it returns 201 with the
 durable draft and `review.needs`. Review can require service connections,

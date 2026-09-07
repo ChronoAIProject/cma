@@ -1,17 +1,17 @@
 {
-  "public_url": "https://cma.example/t/pub_example/plc_readme",
+  "public_url": "https://cma.example/api/v1/triggers/public/pub_example/open/plc_readme",
   "badge_url": "https://cma.example/api/v1/triggers/public/pub_example/badge.svg?label=open_in_cma&theme=auto&placement=plc_readme",
   "label_text": "Open in CMA",
-  "javascript_sri": "sha384-hyi+n+8axKIAw/N4+9hJAAoaeKrVpTkh2N9SWJ6vo8nIrP+K29nRGqzJ2VseOkJn",
+  "javascript_sri": "sha384-K56ODoEc3ZTiX/9Xfe3xk5PEm0Q+bQw5brGMyIfL3hGTeREM9Xf7zvR/7nn1XGuI",
   "content_security_policy": {
     "img_src": "img-src https://cma.example",
     "script_src": "script-src https://cma.example"
   },
   "snippets": {
-    "markdown": "[![Open in CMA](https://cma.example/api/v1/triggers/public/pub_example/badge.svg?label=open_in_cma&theme=auto&placement=plc_readme)](https://cma.example/t/pub_example/plc_readme)",
-    "html": "<a href=\"https://cma.example/t/pub_example/plc_readme\"><img src=\"https://cma.example/api/v1/triggers/public/pub_example/badge.svg?label=open_in_cma&amp;theme=auto&amp;placement=plc_readme\" alt=\"Open in CMA\"></a>",
-    "javascript": "<script src=\"https://cma.example/embed/v1.js\" integrity=\"sha384-hyi+n+8axKIAw/N4+9hJAAoaeKrVpTkh2N9SWJ6vo8nIrP+K29nRGqzJ2VseOkJn\" crossorigin=\"anonymous\"></script>\n<cma-trigger trigger=\"pub_example\" placement=\"plc_readme\" label=\"open_in_cma\" theme=\"auto\" origin=\"https://cma.example\"></cma-trigger>",
+    "markdown": "[![Open in CMA](https://cma.example/api/v1/triggers/public/pub_example/badge.svg?label=open_in_cma&theme=auto&placement=plc_readme)](https://cma.example/api/v1/triggers/public/pub_example/open/plc_readme)",
+    "html": "<a href=\"https://cma.example/api/v1/triggers/public/pub_example/open/plc_readme\"><img src=\"https://cma.example/api/v1/triggers/public/pub_example/badge.svg?label=open_in_cma&amp;theme=auto&amp;placement=plc_readme\" alt=\"Open in CMA\"></a>",
+    "javascript": "<script src=\"https://cma.example/embed/v1.js\" integrity=\"sha384-K56ODoEc3ZTiX/9Xfe3xk5PEm0Q+bQw5brGMyIfL3hGTeREM9Xf7zvR/7nn1XGuI\" crossorigin=\"anonymous\"></script>\n<cma-trigger trigger=\"pub_example\" placement=\"plc_readme\" label=\"open_in_cma\" theme=\"auto\" origin=\"https://cma.example\"></cma-trigger>",
     "react": "import { CmaTriggerButton } from '@chronoai/cma-sdk/react';\n\n<CmaTriggerButton triggerId=\"pub_example\" placementId=\"plc_readme\" label=\"open_in_cma\" theme=\"auto\" baseUrl=\"https://cma.example\" />",
-    "url": "https://cma.example/t/pub_example/plc_readme"
+    "url": "https://cma.example/api/v1/triggers/public/pub_example/open/plc_readme"
   }
 }

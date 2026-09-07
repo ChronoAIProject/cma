@@ -53,6 +53,8 @@ use super::trigger_openapi_shapes::*;
         super::triggers::revisions,
         super::triggers::statistics,
         super::triggers::preview,
+        super::trigger_entry::open,
+        super::trigger_entry::consume,
         super::trigger_placements::create,
         super::trigger_placements::list,
         super::trigger_placements::retire,
@@ -413,6 +415,8 @@ fn anonymous_path(path: &str) -> bool {
             | "/api/v1/agui/capabilities"
             | "/api/v1/triggers/public/{public_id}"
             | "/api/v1/triggers/public/{public_id}/badge.svg"
+            | "/api/v1/triggers/public/{public_id}/open/{placement_id}"
+            | "/api/v1/triggers/public/{public_id}/entry-intent"
     )
 }
 

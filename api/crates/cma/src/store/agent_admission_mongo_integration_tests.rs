@@ -33,6 +33,117 @@ use super::super::sandbox_mongo::{start_transaction, MongoSandboxStore};
 
 const NOW: &str = "2026-09-05T00:00:00Z";
 
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn trigger_profile_reuse_is_atomic_and_replays_the_same_agent_after_newer_creation() {
+    let (client, database, store, parent, mut workspace, mut automatic) =
+        fixture("trigger_profile_reuse").await;
+    workspace.profile.content.agent_profiles = vec![layer2_core::profiles::AgentProfileRef::new(
+        automatic.profile.id.clone(),
+        automatic.profile.revision,
+    )];
+    workspace.profile.digest =
+        layer2_core::profiles::content_digest(&workspace.profile.content).unwrap();
+    let revision = workspace.revision;
+    workspace.revision += 1;
+    store
+        .save_workspace(revision, workspace.clone())
+        .await
+        .unwrap();
+    automatic.origin = AgentOrigin::WorkspaceProfile { index: 0 };
+    automatic.creation_key = format!("workspace-profile:{}:0", workspace.id);
+    let mut trigger = automatic.clone();
+    trigger.agent_id = AgentId::generate();
+    trigger.worktree_id = WorktreeId::generate();
+    trigger.origin = AgentOrigin::Trigger {
+        trigger_id: "trg_profile_reuse".into(),
+        launch_id: "lch_profile_reuse".into(),
+    };
+    trigger.creation_key = format!(
+        "trigger-profile:{}",
+        layer2_core::profiles::content_digest(&trigger.origin).unwrap()
+    );
+    trigger.first_message = Some(
+        layer2_core::sandbox::FirstMessageRecord::new(
+            trigger.creation_key.clone(),
+            "Introduce the repository.",
+            NOW,
+        )
+        .unwrap(),
+    );
+    let mut tasks = tokio::task::JoinSet::new();
+    for index in 0..8 {
+        let store = store.clone();
+        let automatic = automatic.clone();
+        let trigger = trigger.clone();
+        tasks.spawn(async move {
+            if index % 2 == 0 {
+                store.admit_agent(automatic).await
+            } else {
+                store.admit_agent_reusing_profile(trigger).await
+            }
+        });
+    }
+    let mut ids = std::collections::BTreeSet::new();
+    while let Some(result) = tasks.join_next().await {
+        ids.insert(result.unwrap().unwrap().creation().agent.id.clone());
+    }
+    assert_eq!(ids.len(), 1);
+    assert_eq!(
+        store
+            .agents
+            .count_documents(doc! { "sandbox_id": parent.id.as_str() })
+            .await
+            .unwrap(),
+        1
+    );
+    assert_eq!(
+        store
+            .worktrees
+            .count_documents(doc! { "sandbox_id": parent.id.as_str() })
+            .await
+            .unwrap(),
+        1
+    );
+    let agent_id = ids.pop_first().unwrap();
+    let first = store.get_agent(&agent_id).await.unwrap().unwrap();
+    assert_eq!(
+        first.conversation.first_message.as_ref().unwrap().text,
+        "Introduce the repository."
+    );
+    let mut newer = trigger.clone();
+    newer.agent_id = AgentId::generate();
+    newer.worktree_id = WorktreeId::generate();
+    newer.origin = AgentOrigin::Manual;
+    newer.creation_key = "manual-newer-agent".into();
+    newer.first_message = None;
+    newer.event_at = "2026-09-05T00:01:00Z".into();
+    store.admit_agent(newer).await.unwrap();
+    let reopened = MongoSandboxStore::open(&client, &database).await.unwrap();
+    let replay = reopened
+        .admit_agent_reusing_profile(trigger.clone())
+        .await
+        .unwrap();
+    assert_eq!(replay.creation().agent.id, agent_id);
+    assert_eq!(
+        replay.creation().agent.conversation.first_message,
+        first.conversation.first_message
+    );
+    trigger.first_message = Some(
+        layer2_core::sandbox::FirstMessageRecord::new(
+            trigger.creation_key.clone(),
+            "Changed prompt",
+            NOW,
+        )
+        .unwrap(),
+    );
+    assert_eq!(
+        reopened.admit_agent_reusing_profile(trigger).await,
+        Err(SandboxStoreError::AgentCreationConflict)
+    );
+    client.database(&database).drop().await.unwrap();
+}
+
 #[path = "agent_admission_mongo_integration_tests/creation_revival.rs"]
 mod creation_revival;
 
@@ -330,7 +441,7 @@ async fn admission_reconciliation_rejects_an_above_high_water_orphan() {
     let (client, database, store, _, _, admission) = fixture("reconcile_orphan").await;
     let mut transaction = store.client.start_session().await.unwrap();
     start_transaction(&mut transaction).await.unwrap();
-    let receipt = match super::apply_admission(&store, &admission, &mut transaction).await {
+    let receipt = match super::apply_admission(&store, &admission, false, &mut transaction).await {
         Ok(AdmissionReceipt::Created(receipt)) => receipt,
         Ok(AdmissionReceipt::Existing(_)) => panic!("fresh admission unexpectedly replayed"),
         Err(_) => panic!("fresh admission transaction failed"),

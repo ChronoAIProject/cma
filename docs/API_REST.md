@@ -442,6 +442,7 @@ above applies even when an operation annotates only its principal responses.
 | `GET /api/v1/launches/{id}/requirements` | - | - | 200 RequirementsSnapshotView |
 | `POST /api/v1/launches/{id}/start` | StartLaunchRequest; key | - | 202 LaunchView |
 | `POST /api/v1/triggers/public/{public_id}/launches` | CreateLaunchRequest; key | - | 201 LaunchView; 202 LaunchView |
+| `POST /api/v1/triggers/public/{public_id}/entry-intent` | - | - | 200 TriggerEntryIntentView |
 
 ### Discovery
 
@@ -535,6 +536,7 @@ above applies even when an operation annotates only its principal responses.
 | `POST /api/v1/triggers` | CreateTriggerRequest; key | - | 201 TriggerView |
 | `GET /api/v1/triggers/public/{public_id}` | - | - | 200 TriggerPreviewView |
 | `GET /api/v1/triggers/public/{public_id}/badge.svg` | - | label, theme, placement | 200 SVG; 304 empty |
+| `GET /api/v1/triggers/public/{public_id}/open/{placement_id}` | - | - | 303 public Trigger page |
 | `GET /api/v1/triggers/{id}` | - | - | 200 TriggerView |
 | `PUT /api/v1/triggers/{id}` | UpdateTriggerRequest; key | - | 200 TriggerView |
 | `DELETE /api/v1/triggers/{id}` | -; key | - | 204 empty |
