@@ -90,5 +90,5 @@ it('hides creation controls for visitors while retaining their trigger-created h
   );
   expect(await screen.findByRole('tree', { name: 'Sandboxes' })).toHaveTextContent('Agent one');
   expect(screen.queryByRole('button', { name: 'New agent' })).not.toBeInTheDocument();
-  expect(screen.getByRole('heading', { name: 'Your agents' })).toBeInTheDocument();
+  expect(screen.getByRole('heading', { name: 'Welcome to CMA' })).toBeInTheDocument();
 });

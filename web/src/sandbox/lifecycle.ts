@@ -1,6 +1,23 @@
 import type { SandboxSummary } from '../api/types';
 import { statusLabel } from '../vocabulary/status';
 
+export function sandboxChildrenAvailable(sandbox: SandboxSummary): boolean {
+  return sandbox.status === 'active' && sandbox.lifecycle?.operation === undefined;
+}
+
+export function sandboxUnavailableNotice(sandbox: SandboxSummary): string | undefined {
+  if (sandboxChildrenAvailable(sandbox)) return undefined;
+  if (sandbox.status === 'paused')
+    return 'This Sandbox is paused. Resume it to access its Workspaces and Agents. Your work is preserved.';
+  if (sandbox.status === 'retired')
+    return 'This Sandbox has been deleted. Its runtime is gone; retained history remains read-only.';
+  if (sandbox.status === 'retiring')
+    return 'This Sandbox is being deleted. Its Workspaces and Agents are unavailable during cleanup.';
+  if (sandbox.status === 'failed')
+    return 'This Sandbox is unavailable. Review the recorded failure below.';
+  return 'Workspaces and Agents will be available when the Sandbox finishes preparation.';
+}
+
 export function sandboxLifecycleAction(sandbox: SandboxSummary, stale = false) {
   const resume = sandbox.status === 'paused' || sandbox.status === 'reviving';
   const eligibility = resume ? sandbox.lifecycle?.revive : sandbox.lifecycle?.pause;
@@ -34,6 +51,8 @@ export function sandboxLifecycleAction(sandbox: SandboxSummary, stale = false) {
 }
 
 export function sandboxLifecycleLabel(sandbox: SandboxSummary): string {
+  if (sandbox.status === 'retiring') return 'Deleting';
+  if (sandbox.status === 'retired') return 'Deleted';
   if (sandbox.lifecycle?.checkpoint !== undefined)
     return sandbox.lifecycle.checkpoint.phase === 'capture' ? 'Saving progress' : 'Finishing save';
   if (sandbox.lifecycle?.operation !== undefined) {

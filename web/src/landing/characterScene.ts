@@ -19,6 +19,7 @@ interface CharacterOptions {
   readonly onReady?: () => void;
   readonly onUnavailable?: () => void;
   readonly state?: 'brand' | 'running' | 'completed' | 'pending' | 'failed';
+  readonly autoRotate?: boolean;
 }
 
 export interface CharacterHandle {
@@ -421,7 +422,9 @@ export function mountCharacter(host: HTMLElement, options: CharacterOptions = {}
         rig.scale.setScalar(1);
       }
     }
-    rig.rotation.y = options.state === 'running' && !reduced ? time * Math.PI : spin;
+    const rotationSpeed =
+      options.state === 'running' ? Math.PI : options.autoRotate ? Math.PI / 4 : 0;
+    rig.rotation.y = reduced ? 0 : time * rotationSpeed + spin;
 
     shadowMaterial.opacity = 0.46 - rig.position.y * 1.4;
     const shadowScale = 1 - rig.position.y * 0.5;

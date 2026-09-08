@@ -14,7 +14,13 @@ import {
 import { ProvisioningProgress } from './ProvisioningProgress';
 import { sandboxProgress, workspaceProgress } from './progress';
 import { readSandboxHistory } from './eventHistory';
-import { sandboxLifecycleAction, sandboxLifecycleLabel, sandboxRefreshDelay } from './lifecycle';
+import {
+  sandboxChildrenAvailable,
+  sandboxUnavailableNotice,
+  sandboxLifecycleAction,
+  sandboxLifecycleLabel,
+  sandboxRefreshDelay,
+} from './lifecycle';
 import { eventLabel, statusLabel } from '../vocabulary/status';
 import './SandboxPage.css';
 
@@ -144,6 +150,8 @@ export function SandboxPage({
   const lifecycleAction = sandboxLifecycleAction(sandbox, pollError);
   const lifecycleLabel = sandboxLifecycleLabel(sandbox);
   const save = sandbox.lifecycle?.checkpoint;
+  const childrenAvailable = sandboxChildrenAvailable(sandbox);
+  const unavailableNotice = sandboxUnavailableNotice(sandbox);
   return (
     <section className="sandbox-page">
       <header className="sandbox-page__header">
@@ -157,7 +165,7 @@ export function SandboxPage({
           {permissions.createWorkspace ? (
             <Button
               icon={<IconPlusOutline16 />}
-              disabled={busy || !['active', 'paused', 'reviving'].includes(sandbox.status)}
+              disabled={busy || !childrenAvailable}
               onClick={() => onAction({ kind: 'new_workspace', sandboxId })}
             >
               New workspace
@@ -190,7 +198,13 @@ export function SandboxPage({
             <Button
               variant="danger"
               icon={<IconTrashOutline16 />}
-              disabled={busy || ['retiring', 'retired'].includes(sandbox.status)}
+              disabled={
+                busy ||
+                pollError ||
+                ['retiring', 'retired'].includes(sandbox.status) ||
+                save !== undefined ||
+                sandbox.lifecycle?.operation !== undefined
+              }
               onClick={() => onAction({ kind: 'delete_sandbox', sandboxId })}
             >
               Delete
@@ -198,6 +212,16 @@ export function SandboxPage({
           ) : null}
         </div>
       </header>
+      {unavailableNotice === undefined ? null : <p>{unavailableNotice}</p>}
+      {sandbox.lifecycle?.operation === undefined ? null : (
+        <p>
+          Current step: {sandbox.lifecycle.operation.phase.replaceAll('_', ' ')}. Started{' '}
+          <time dateTime={sandbox.lifecycle.operation.startedAt}>
+            {new Date(sandbox.lifecycle.operation.startedAt).toLocaleString()}
+          </time>
+          .
+        </p>
+      )}
       {permissions.pauseSandbox && lifecycleAction.reason !== undefined ? (
         <p id={lifecycleReasonId}>{lifecycleAction.reason}</p>
       ) : null}
@@ -242,71 +266,81 @@ export function SandboxPage({
           )}
         </dl>
       </section>
-      <section className="sandbox-page__band">
-        <h2>Workspaces</h2>
-        {workspaces.length === 0 ? (
-          <p>No workspaces</p>
-        ) : (
-          workspaces.map((workspace) => (
-            <section className="sandbox-page__workspace" key={workspace.id}>
-              <h3>{workspace.name}</h3>
-              <p>
-                <code>{workspace.path}</code>
-              </p>
-              <p>{statusLabel(workspace.status)}</p>
-              {['preparing', 'failed'].includes(workspace.status) ? (
-                <ProvisioningProgress
-                  title={`${workspace.name} preparation`}
-                  steps={workspaceProgress(workspace, events)}
-                  failure={workspace.failure}
-                />
-              ) : null}
-              {permissions.createAgent ? (
-                <Button
-                  icon={<IconPlusOutline16 />}
-                  disabled={
-                    busy ||
-                    !['active', 'paused', 'reviving'].includes(sandbox.status) ||
-                    workspace.status !== 'ready'
-                  }
-                  onClick={() => onAction({ kind: 'new_agent', workspaceId: workspace.id })}
-                >
-                  New agent
-                </Button>
-              ) : null}
-              <ul>
-                {workspace.agents.map((agent) => {
-                  const route = { kind: 'agent', agentId: agent.id } as const;
-                  return (
-                    <li key={agent.id}>
-                      <a
-                        href={routePath(route)}
-                        onClick={(event) => {
-                          if (
-                            event.button !== 0 ||
-                            event.metaKey ||
-                            event.ctrlKey ||
-                            event.shiftKey ||
-                            event.altKey
-                          )
-                            return;
-                          event.preventDefault();
-                          onNavigate(route);
-                        }}
-                      >
-                        {agent.title?.trim() || 'Untitled agent'}
-                      </a>
-                      <span>
-                        {sandbox.status === 'paused' ? 'Paused' : statusLabel(agent.status)}
-                      </span>
-                    </li>
-                  );
-                })}
-              </ul>
-            </section>
-          ))
-        )}
-      </section>
+      {childrenAvailable ? (
+        <section className="sandbox-page__band">
+          <h2>Workspaces</h2>
+          {workspaces.length === 0 ? (
+            <p>No workspaces</p>
+          ) : (
+            workspaces
+              .filter((workspace) => workspace.status !== 'removed')
+              .map((workspace) => (
+                <section className="sandbox-page__workspace" key={workspace.id}>
+                  <h3>{workspace.name}</h3>
+                  <p>
+                    <code>{workspace.path}</code>
+                  </p>
+                  <p>{statusLabel(workspace.status)}</p>
+                  {['preparing', 'failed'].includes(workspace.status) ? (
+                    <ProvisioningProgress
+                      title={`${workspace.name} preparation`}
+                      steps={workspaceProgress(workspace, events)}
+                      failure={workspace.failure}
+                    />
+                  ) : null}
+                  {permissions.createAgent ? (
+                    <Button
+                      icon={<IconPlusOutline16 />}
+                      disabled={
+                        busy ||
+                        !['active', 'paused', 'reviving'].includes(sandbox.status) ||
+                        workspace.status !== 'ready'
+                      }
+                      onClick={() => onAction({ kind: 'new_agent', workspaceId: workspace.id })}
+                    >
+                      New agent
+                    </Button>
+                  ) : null}
+                  <ul>
+                    {workspace.status === 'removing'
+                      ? null
+                      : workspace.agents
+                          .filter((agent) => agent.status !== 'deleted')
+                          .map((agent) => {
+                            const route = { kind: 'agent', agentId: agent.id } as const;
+                            return (
+                              <li key={agent.id}>
+                                <a
+                                  href={routePath(route)}
+                                  onClick={(event) => {
+                                    if (
+                                      event.button !== 0 ||
+                                      event.metaKey ||
+                                      event.ctrlKey ||
+                                      event.shiftKey ||
+                                      event.altKey
+                                    )
+                                      return;
+                                    event.preventDefault();
+                                    onNavigate(route);
+                                  }}
+                                >
+                                  {agent.title?.trim() || 'Untitled agent'}
+                                </a>
+                                <span>
+                                  {sandbox.status === 'paused'
+                                    ? 'Paused'
+                                    : statusLabel(agent.status)}
+                                </span>
+                              </li>
+                            );
+                          })}
+                  </ul>
+                </section>
+              ))
+          )}
+        </section>
+      ) : null}
       <section className="sandbox-page__band">
         <h2>Events</h2>
         {events.length === 0 ? (

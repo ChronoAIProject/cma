@@ -80,6 +80,6 @@ it('does not offer Sandbox creation without its distinct capability', async () =
       </CmaClientProvider>
     </AuthContextProvider>,
   );
-  await screen.findByRole('heading', { name: 'Create your first agent' });
+  await screen.findByRole('heading', { name: 'Welcome to CMA' });
   expect(screen.queryByRole('button', { name: 'New sandbox' })).not.toBeInTheDocument();
 });

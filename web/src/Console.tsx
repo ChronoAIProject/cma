@@ -88,6 +88,7 @@ export function Console({
       agent.reload();
     },
     onCreate,
+    user.id,
   );
   const canUse = user.capabilities.includes('use_own_sandboxes');
   const canCreate = !user.visitor && canUse && onCreate !== undefined;
@@ -203,14 +204,10 @@ export function Console({
     ) : (
       <section className="console__empty" aria-labelledby="empty-title">
         <div className="brand-home brand-home--compact">
-          <LandingCharacter />
+          <LandingCharacter autoRotate />
         </div>
         <h1 id="empty-title">
-          {route.kind === 'home'
-            ? user.visitor
-              ? 'Your agents'
-              : 'Create your first agent'
-            : route.kind.replaceAll('_', ' ')}
+          {route.kind === 'home' ? 'Welcome to CMA' : route.kind.replaceAll('_', ' ')}
         </h1>
         {route.kind === 'home' && canCreate ? (
           <div className="console__empty-actions">
@@ -259,6 +256,11 @@ export function Console({
           onToggleCollapsed={onToggle}
           canCreateAgent={canCreate}
           onNewAgent={() => onCreate?.({ kind: 'new_agent' })}
+          onHome={() => {
+            setDetailsOpen(false);
+            onSidebarNavigate();
+            onNavigate({ kind: 'home' });
+          }}
           navigation={
             navigation.status === 'ready' ? (
               <Tree
@@ -298,6 +300,7 @@ export function Console({
       )}
       center={
         <main className="console__surface">
+          {actions.notice}
           {actions.error === undefined ? null : (
             <p className="console__action-error" role="alert">
               {actions.error}

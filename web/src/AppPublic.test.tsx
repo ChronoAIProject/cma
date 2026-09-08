@@ -151,12 +151,7 @@ it.each(
         </StrictMode>,
       );
       await screen.findByRole('heading', {
-        name:
-          path === '/'
-            ? visitor
-              ? 'Your agents'
-              : 'Create your first agent'
-            : PUBLIC_PREVIEW.title,
+        name: path === '/' ? 'Welcome to CMA' : PUBLIC_PREVIEW.title,
       });
       await waitFor(() =>
         expect(requests.slice(before)).toContainEqual(

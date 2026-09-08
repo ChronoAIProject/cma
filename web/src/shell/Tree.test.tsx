@@ -99,7 +99,8 @@ describe('Sandbox navigation tree', () => {
         refreshError: 'Sandbox status could not be refreshed. Reconnecting.',
       });
       expect(screen.getByRole('alert')).toHaveTextContent('Reconnecting');
-      expect(screen.getByText('Agent one')).toBeInTheDocument();
+      if (status === 'active') expect(screen.getByText('Agent one')).toBeInTheDocument();
+      else expect(screen.queryByText('Agent one')).not.toBeInTheDocument();
       await userEvent.setup().click(screen.getByRole('button', { name: 'Options for Atlas' }));
       expect(
         screen.getByRole('menuitem', { name: status === 'paused' ? /^Resume/ : /^Pause/ }),
@@ -140,14 +141,68 @@ describe('Sandbox navigation tree', () => {
   });
 
   it('renders Sandbox, Workspace, and Agent rows without a Worktree navigation node', () => {
-    renderTree({ paused: true });
+    renderTree();
     expect(screen.getByText('Atlas')).toBeInTheDocument();
     expect(screen.getByText('chrono-bot')).toBeInTheDocument();
     const agent = screen.getByText('Agent one').closest('[role="treeitem"]');
-    expect(agent).toHaveAttribute('data-dimmed');
-    expect(within(agent as HTMLElement).getByText('Paused')).toBeInTheDocument();
-    expect(screen.getByRole('img', { name: 'Sandbox paused' })).toBeInTheDocument();
+    expect(agent).not.toHaveAttribute('data-dimmed');
+    expect(within(agent as HTMLElement).getByText('Done')).toBeInTheDocument();
     expect(screen.queryByText('agent/one')).not.toBeInTheDocument();
+  });
+
+  it.each(['paused', 'reviving', 'pausing', 'rotating', 'provisioning', 'retiring'] as const)(
+    'hides child navigation for a %s Sandbox but keeps its status page accessible',
+    async (status) => {
+      const onNavigate = vi.fn();
+      renderTree({ items: navigationFixture(status), onNavigate });
+      expect(screen.getAllByRole('treeitem')).toHaveLength(1);
+      expect(screen.queryByText('Agent one')).not.toBeInTheDocument();
+      expect(screen.queryByText('chrono-bot')).not.toBeInTheDocument();
+      expect(
+        screen.queryByRole('button', { name: /Expand Atlas|Collapse Atlas/ }),
+      ).not.toBeInTheDocument();
+      await userEvent.setup().click(screen.getByRole('link', { name: /Atlas/ }));
+      expect(onNavigate).toHaveBeenCalledWith({ kind: 'sandbox', sandboxId: 'sbx_1' });
+    },
+  );
+
+  it('does not bring children back while an Active Sandbox is still finishing revival', () => {
+    const items = navigationFixture().map((item) => ({
+      ...item,
+      sandbox: {
+        ...item.sandbox,
+        lifecycle: {
+          ...item.sandbox.lifecycle!,
+          operation: {
+            purpose: 'revive' as const,
+            phase: 'resume_agents',
+            startedAt: '2026-09-08T00:00:00Z',
+          },
+        },
+      },
+    }));
+    renderTree({ items });
+    expect(screen.getAllByRole('treeitem')).toHaveLength(1);
+  });
+
+  it('removes terminal Sandboxes, Workspaces and Agents from working navigation', () => {
+    const retired = renderTree({ items: navigationFixture('retired') });
+    expect(screen.queryByText('Atlas')).not.toBeInTheDocument();
+    expect(screen.getByText('No Sandboxes')).toBeInTheDocument();
+    retired.unmount();
+    const removed = renderTree({
+      items: navigationFixture().map((item) => ({
+        ...item,
+        workspaces: item.workspaces.map((workspace) => ({
+          ...workspace,
+          status: 'removed' as const,
+        })),
+      })),
+    });
+    expect(screen.queryByText('chrono-bot')).not.toBeInTheDocument();
+    removed.unmount();
+    renderTree({ items: navigationFixture('active', 'deleted') });
+    expect(screen.queryByText('Agent one')).not.toBeInTheDocument();
   });
 
   it('persists collapsed groups independently for each viewer', async () => {
