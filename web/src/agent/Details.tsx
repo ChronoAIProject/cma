@@ -13,6 +13,7 @@ interface AgentDetailsProps {
   readonly detail?: AgentDetail;
   readonly workspace?: WorkspaceDetail;
   readonly pending?: AgentCommand;
+  readonly historyLoading?: boolean;
   readonly actionError?: string;
   readonly open?: boolean;
   readonly onClose?: () => void;
@@ -71,6 +72,7 @@ export function AgentDetails({
   detail,
   workspace,
   pending,
+  historyLoading = false,
   actionError,
   open = false,
   onClose,
@@ -212,6 +214,11 @@ export function AgentDetails({
           )}
         </Band>
         <Band title="Agent controls">
+          {historyLoading ? (
+            <p className="agent-details__control-reason" role="status">
+              Loading conversation activity.
+            </p>
+          ) : null}
           {actionError === undefined ? null : (
             <p className="agent-details__failure" role="alert">
               {actionError}
@@ -221,7 +228,7 @@ export function AgentDetails({
             <InlineConfirm
               question="Stop this Agent?"
               confirmLabel="Stop"
-              busy={pending === 'stop'}
+              busy={historyLoading || pending === 'stop'}
               onCancel={() => setConfirmStop(false)}
               onConfirm={() => {
                 setConfirmStop(false);
@@ -232,7 +239,7 @@ export function AgentDetails({
             <div className="agent-details__actions">
               <Button
                 icon={<IconStopFill16 />}
-                disabled={!live || pending !== undefined}
+                disabled={historyLoading || !live || pending !== undefined}
                 onClick={() => setConfirmStop(true)}
               >
                 Stop
@@ -240,7 +247,7 @@ export function AgentDetails({
               <Button
                 variant="danger"
                 icon={<IconTrashOutline16 />}
-                disabled={!deletable || pending !== undefined}
+                disabled={historyLoading || !deletable || pending !== undefined}
                 onClick={() => setConfirmDelete(true)}
               >
                 Delete
@@ -258,7 +265,7 @@ export function AgentDetails({
         description={`Delete ${detail.title ?? detail.id} and its Worktree. This cannot be undone.`}
         acknowledgeLabel="I understand this Agent and Worktree will be deleted."
         confirmLabel="Delete Agent"
-        busy={pending === 'delete'}
+        busy={historyLoading || pending === 'delete'}
         failure={actionError}
         onCancel={() => setConfirmDelete(false)}
         onConfirm={() => void onDelete()}

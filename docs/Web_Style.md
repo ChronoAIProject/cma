@@ -653,6 +653,11 @@ approval actions and live replay until a complete history read succeeds. Retry
 from the start so missing tool and approval pages are not skipped. Authentication
 or permission denials and malformed identities remain explicit failures.
 
+After the first authorized event-history page, show the known transcript while
+remaining activity pages load. Use the same status band to name loading, retain
+the editable draft, and hold Send, approvals, lifecycle controls and live replay
+until history is complete. The snapshot's sequence does not skip activity pages.
+
 The composer uses its existing capsule, send/stop icon seat, focus treatment, and
 bounded growth. Stop interrupts the current turn; it does not delete the Agent.
 Approval decisions are explicit at the point of interruption. Only public API
@@ -1428,3 +1433,4 @@ Append-only. Never edit or delete an entry.
 | 2026-09-08 | Preserved an authorized transcript when initial event-history loading fails transiently. Reused the status band for incomplete activity and retry; retained drafts while holding commands and replay until all event pages are recovered, without masking authentication or permission denials. |
 | 2026-09-08 | Bound Sandbox page and tree Pause/Resume controls to public lifecycle eligibility. Reused status seats for actual saving phases and start time, added visible nonoverlapping refresh while Active, and preserved the hierarchy with readable unavailable reasons after a failed refresh. Workspace and Agent creation rules remain unchanged. |
 | 2026-09-08 | Added public Sandbox capture observation to the Agent composer. Preserved drafts and history while holding new messages and approval decisions during saving or unavailable lifecycle reads, kept ordinary paused-message revival, and distinguished pending admission from a durably active turn before offering Stop response. |
+| 2026-09-08 | Made long Agent history progressively readable after the first authorized activity page. Reused the status band and preserved editable drafts while holding commands and replay until all history pages load, without skipping tool or approval activity. |

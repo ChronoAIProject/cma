@@ -26,6 +26,7 @@ export interface ReadyAgent {
   readonly workspace: WorkspaceDetail;
   readonly conversation: ConversationState;
   readonly sandboxEvents?: readonly SandboxEvent[];
+  readonly historyLoading?: boolean;
   readonly historyUnavailable?: boolean;
 }
 
@@ -77,6 +78,7 @@ export async function loadAgent(
   agentId: string,
   signal: AbortSignal,
   allowIncompleteHistory = false,
+  onHistoryProgress?: (ready: ReadyAgent) => void,
 ): Promise<ReadyAgent & { readonly durableEvents: readonly AgentEvent[] }> {
   const [detail, transcript, usage] = await Promise.all([
     client.readAgent(agentId, { signal }),
@@ -96,6 +98,11 @@ export async function loadAgent(
   let cursor: number | undefined = 0;
   const seen = new Set<number>([0]);
   let historyUnavailable = false;
+  const snapshot = conversationFromTranscript(transcript);
+  const projectedConversation = () => {
+    const merged = mergeTranscriptSnapshot(conversation, snapshot, conversation.cursor, true);
+    return usage.throughSeq >= (merged.usage?.throughSeq ?? 0) ? withUsage(merged, usage) : merged;
+  };
   do {
     let page;
     try {
@@ -105,6 +112,7 @@ export async function loadAgent(
       historyUnavailable = true;
       break;
     }
+    signal.throwIfAborted();
     durableEvents.push(...page.items);
     conversation = page.items.reduce(foldAgentEvent, conversation);
     const nextCursor = page.next;
@@ -112,14 +120,27 @@ export async function loadAgent(
       throw new Error('Agent event pagination did not advance.');
     }
     cursor = nextCursor;
-    if (cursor !== undefined) seen.add(cursor);
+    if (cursor !== undefined) {
+      seen.add(cursor);
+      // One authorized event page permits a readable snapshot, not complete-history acceptance.
+      onHistoryProgress?.({
+        detail,
+        workspace,
+        conversation: projectedConversation(),
+        historyLoading: true,
+        historyUnavailable: false,
+      });
+    }
   } while (cursor !== undefined);
 
-  const snapshot = conversationFromTranscript(transcript);
-  conversation = mergeTranscriptSnapshot(conversation, snapshot, conversation.cursor, true);
-  if (usage.throughSeq >= (conversation.usage?.throughSeq ?? 0))
-    conversation = withUsage(conversation, usage);
-  return { detail, workspace, conversation, durableEvents, historyUnavailable };
+  return {
+    detail,
+    workspace,
+    conversation: projectedConversation(),
+    durableEvents,
+    historyLoading: false,
+    historyUnavailable,
+  };
 }
 
 function refreshConversation(
@@ -231,7 +252,9 @@ export function useAgentController(
         return;
       }
       setState({ status: 'loading' });
-      void loadAgent(client, agentId, controller.signal, true)
+      void loadAgent(client, agentId, controller.signal, true, (ready) => {
+        if (!controller.signal.aborted) setState({ status: 'ready', ...ready });
+      })
         .then((ready) => {
           if (controller.signal.aborted) return;
           liveCursor.current = ready.conversation.cursor;
@@ -249,6 +272,9 @@ export function useAgentController(
 
   const historyUnavailable =
     state.status === 'ready' && state.detail.id === agentId && state.historyUnavailable === true;
+  const historyLoading =
+    state.status === 'ready' && state.detail.id === agentId && state.historyLoading === true;
+  const historyIncomplete = historyLoading || historyUnavailable;
   useEffect(() => {
     if (!historyUnavailable || agentId === undefined) return;
     const request = new AbortController();
@@ -279,14 +305,14 @@ export function useAgentController(
     agentId !== undefined &&
     state.status === 'ready' &&
     state.detail.id === agentId &&
-    !historyUnavailable &&
+    !historyIncomplete &&
     pending !== 'send' &&
     pending !== 'approval';
 
   const provisioning =
     state.status === 'ready' &&
     state.detail.id === agentId &&
-    !historyUnavailable &&
+    !historyIncomplete &&
     (state.detail.status === 'starting' ||
       (state.detail.firstMessage !== undefined &&
         !['completed', 'failed', 'recovery_required'].includes(state.detail.firstMessage.state)));
@@ -381,7 +407,7 @@ export function useAgentController(
       if (
         agentId === undefined ||
         actionAbort.current !== undefined ||
-        historyUnavailable ||
+        historyIncomplete ||
         !inputAvailability.allowed
       )
         return;
@@ -433,7 +459,7 @@ export function useAgentController(
         }
       }
     },
-    [agentId, applyLive, client, historyUnavailable, inputAvailability.allowed],
+    [agentId, applyLive, client, historyIncomplete, inputAvailability.allowed],
   );
 
   const command = useCallback(
@@ -442,6 +468,7 @@ export function useAgentController(
       operation: (id: string, key: string, signal: AbortSignal) => Promise<void>,
     ) => {
       const mayPreemptSend = name === 'interrupt' && actionKind.current === 'send';
+      if (historyLoading) return;
       if (name === 'interrupt' && !activeTurn) return;
       if (agentId === undefined || (actionAbort.current !== undefined && !mayPreemptSend)) {
         return;
@@ -470,7 +497,7 @@ export function useAgentController(
         }
       }
     },
-    [activeTurn, agentId, keys, options, reload],
+    [activeTurn, agentId, historyLoading, keys, options, reload],
   );
 
   return {

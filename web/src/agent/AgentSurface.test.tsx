@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { expect, it, vi } from 'vitest';
 import { AGENT_DETAIL, AGENT_TRANSCRIPT, AGENT_USAGE, agentClient } from '../test/agent';
@@ -9,6 +9,50 @@ import { conversationFromTranscript, type ConversationState } from './conversati
 import type { AgentController, AgentResourceState } from './controller';
 import { useAgentController } from './controller';
 import { AgentSurface } from './AgentSurface';
+
+it('shows authorized history while later pages load and preserves the editable draft when hydration finishes', async () => {
+  let finish!: (page: { items: [] }) => void;
+  const laterPage = new Promise<{ items: [] }>((resolve) => {
+    finish = resolve;
+  });
+  const client = agentClient({
+    readAgentEvents: vi
+      .fn()
+      .mockResolvedValueOnce({ items: [], next: 2 })
+      .mockReturnValueOnce(laterPage),
+  });
+  function HydratingAgent() {
+    const controller = useAgentController(client, 'agt_1');
+    return (
+      <AgentSurface
+        agentId="agt_1"
+        controller={controller}
+        detailsOpen={false}
+        onDetailsOpenChange={vi.fn()}
+        onNavigate={vi.fn()}
+      />
+    );
+  }
+  render(
+    <CmaClientProvider client={client}>
+      <HydratingAgent />
+    </CmaClientProvider>,
+  );
+  expect(await screen.findByText('The repository is ready.')).toBeInTheDocument();
+  expect(
+    screen.getByText('Loading conversation activity.').closest('[role="status"]'),
+  ).toBeInTheDocument();
+  const draft = screen.getByRole('textbox', { name: 'Message' });
+  expect(draft).toBeEnabled();
+  fireEvent.change(draft, { target: { value: 'Keep this draft' } });
+  expect(screen.getByRole('button', { name: 'Send message' })).toBeDisabled();
+  await act(async () => finish({ items: [] }));
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Send message' })).toBeEnabled());
+  expect(screen.queryByText('Loading conversation activity.')).not.toBeInTheDocument();
+  expect(screen.getByRole('textbox', { name: 'Message' })).toBe(draft);
+  expect(draft).toHaveValue('Keep this draft');
+  expect(screen.getAllByText('The repository is ready.')).toHaveLength(1);
+});
 
 it('preserves a draft and visible history while incomplete event activity retries without a reload', async () => {
   vi.useFakeTimers();
@@ -91,6 +135,33 @@ function controller(
     ...overrides,
   };
 }
+
+it('holds approval and Stop response controls during history hydration', async () => {
+  const conversation: ConversationState = {
+    ...conversationFromTranscript(AGENT_TRANSCRIPT),
+    activeRunId: 'turn:2',
+    approvals: [{ id: 'approval_1', reason: 'cma:write', message: 'Apply the patch' }],
+  };
+  render(
+    <AgentSurface
+      agentId="agt_1"
+      controller={controller({
+        status: 'ready',
+        detail: { ...AGENT_DETAIL, status: 'working' },
+        workspace: workspaceFixture(),
+        conversation,
+        historyLoading: true,
+      })}
+      detailsOpen={false}
+      onDetailsOpenChange={vi.fn()}
+      onNavigate={vi.fn()}
+    />,
+  );
+  expect(await screen.findByText('Resources unavailable')).toBeInTheDocument();
+  expect(screen.getByRole('textbox', { name: 'Message' })).toBeEnabled();
+  expect(screen.getByRole('button', { name: 'Allow' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: 'Stop response' })).toBeDisabled();
+});
 
 it('holds approvals while saving and distinguishes pending admission from an actual active turn', async () => {
   const conversation: ConversationState = {

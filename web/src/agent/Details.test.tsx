@@ -4,6 +4,30 @@ import { expect, it, vi } from 'vitest';
 import { AGENT_DETAIL } from '../test/agent';
 import { AgentDetails } from './Details';
 
+it.each(['ready', 'stopped'] as const)(
+  'holds %s Agent lifecycle controls until history hydration finishes',
+  (status) => {
+    const draw = (historyLoading: boolean) => (
+      <AgentDetails
+        detail={{ ...AGENT_DETAIL, status }}
+        historyLoading={historyLoading}
+        onNavigate={vi.fn()}
+        onStop={vi.fn()}
+        onDelete={vi.fn()}
+      />
+    );
+    const { rerender } = render(draw(true));
+    expect(screen.getByRole('status')).toHaveTextContent('Loading conversation activity.');
+    expect(screen.getByRole('button', { name: 'Stop' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Delete' })).toBeDisabled();
+    rerender(draw(false));
+    expect(screen.queryByText('Loading conversation activity.')).not.toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: status === 'ready' ? 'Stop' : 'Delete' }),
+    ).toBeEnabled();
+  },
+);
+
 it('shows lineage, profile, Worktree, first-message delivery, and guarded controls', async () => {
   const onStop = vi.fn();
   const actor = userEvent.setup();

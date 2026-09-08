@@ -124,13 +124,14 @@ export function AgentSurface({
       : (conversation.livePausedNotice ?? undefined);
   const running = conversation.activeRunId !== undefined;
   const starting = controller.pending === 'send' && !running;
+  const historyIncomplete = state.historyLoading === true || state.historyUnavailable === true;
   const approvalBusy =
-    controller.pending === 'approval' ||
-    state.historyUnavailable === true ||
-    !controller.inputAvailability.allowed;
-  const issue = state.historyUnavailable
-    ? 'Conversation activity is unavailable. Reconnecting.'
-    : controller.actionError;
+    controller.pending === 'approval' || historyIncomplete || !controller.inputAvailability.allowed;
+  const issue = state.historyLoading
+    ? 'Loading conversation activity.'
+    : state.historyUnavailable
+      ? 'Conversation activity is unavailable. Reconnecting.'
+      : controller.actionError;
   const preparation = agentProgress({ ...detail, status }, state.sandboxEvents ?? []);
 
   return (
@@ -166,9 +167,9 @@ export function AgentSurface({
       </header>
 
       {issue === undefined ? null : (
-        <div className="agent-action-error" role={state.historyUnavailable ? 'status' : 'alert'}>
+        <div className="agent-action-error" role={historyIncomplete ? 'status' : 'alert'}>
           <span>{issue}</span>
-          {state.historyUnavailable ? null : (
+          {historyIncomplete ? null : (
             <Button
               size="sm"
               icon={<IconCloseOutline16 />}
@@ -202,8 +203,7 @@ export function AgentSurface({
         starting={starting}
         inputAvailability={controller.inputAvailability}
         busy={
-          state.historyUnavailable === true ||
-          (controller.pending !== undefined && controller.pending !== 'send')
+          historyIncomplete || (controller.pending !== undefined && controller.pending !== 'send')
         }
         onSend={controller.send}
         onStop={controller.interrupt}
