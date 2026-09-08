@@ -161,7 +161,7 @@ it.each(['paused', 'reviving'] as const)(
         onClose={vi.fn()}
       />,
     );
-    await screen.findByText(`Sandbox: ${status === 'paused' ? 'Paused' : 'In progress'}`);
+    await screen.findByText(`Sandbox: ${status === 'paused' ? 'Paused' : 'Resuming'}`);
     await user.click(screen.getByRole('checkbox', { name: 'I trust this profile' }));
     await user.click(screen.getByRole('button', { name: 'Create workspace' }));
     expect(createWorkspace).toHaveBeenCalledTimes(1);

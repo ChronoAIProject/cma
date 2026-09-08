@@ -83,7 +83,7 @@ it('refreshes Active saving phases and restores Pause only after authoritative e
   await act(async () => {});
   expect(screen.getByRole('button', { name: 'Pause' })).toBeEnabled();
   await act(() => vi.advanceTimersByTimeAsync(5000));
-  expect(screen.getByRole('status')).toHaveTextContent('Saving progress');
+  expect(screen.getByRole('status')).toHaveTextContent('Live');
   expect(screen.getByRole('button', { name: 'Pause' })).toBeDisabled();
   expect(screen.getByRole('button', { name: 'Pause' })).toHaveAccessibleDescription(
     /Progress is being saved/,
@@ -98,7 +98,7 @@ it('refreshes Active saving phases and restores Pause only after authoritative e
   expect(screen.getByRole('button', { name: 'New workspace' })).toBeEnabled();
   expect(screen.getByRole('button', { name: 'New agent' })).toBeEnabled();
   await act(() => vi.advanceTimersByTimeAsync(1500));
-  expect(screen.getByRole('status')).toHaveTextContent('Finishing save');
+  expect(screen.getByRole('status')).toHaveTextContent('Live');
   expect(screen.getByRole('button', { name: 'Pause' })).toBeDisabled();
   await act(() => vi.advanceTimersByTimeAsync(1500));
   expect(screen.getByRole('button', { name: 'Pause' })).toBeEnabled();

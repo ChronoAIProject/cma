@@ -88,7 +88,9 @@ it('hides creation controls for visitors while retaining their trigger-created h
       />
     </CmaClientProvider>,
   );
-  expect(await screen.findByRole('tree', { name: 'Sandboxes' })).toHaveTextContent('Agent one');
+  expect(await screen.findByRole('tree', { name: 'Live sandboxes' })).toHaveTextContent(
+    'Agent one',
+  );
   expect(screen.queryByRole('button', { name: 'New agent' })).not.toBeInTheDocument();
   expect(screen.getByRole('heading', { name: 'Welcome to CMA' })).toBeInTheDocument();
 });

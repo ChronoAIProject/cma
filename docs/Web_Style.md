@@ -923,6 +923,23 @@ carries a `reduce` block.
 State comes from public Sandbox and Agent records. Pair each state glyph with a
 visible word. An unavailable action names its reason where the user needs it.
 
+The sidebar has independently collapsible **Live** and **Paused** Sandbox groups,
+with owner-scoped persisted expansion and counts. Starting, resuming, pausing and
+deleting Sandboxes stay in the Live group until a settled Paused observation.
+Each group has a 32px disclosure header (44px on narrow screens), 8px internal
+spacing, existing 13px secondary text, and a tabular count aligned to the right.
+Separate groups by 16px. Each expanded group contains its own accessible tree.
+Workspace children and expansion controls exist only when the Workspace is Ready
+inside an available live Sandbox; preparing and deleting rows remain informational.
+
+Sandbox state labels are Live, Starting, Resuming, Pausing, Paused, Deleting and
+Deleted. A genuine failure is explicitly Needs attention, never a successful state.
+Internal image/credential replacement is Resuming. Background capture does not
+replace Live or Pausing. Agent labels are Starting, Ready, Working, Needs approval,
+Paused, Stopped, Deleted and Needs attention; Workspace labels are Starting, Ready,
+Deleting, Deleted and Needs attention. Done is only a completed operation step,
+never a resource state. Header and sidebar use the same resource vocabulary.
+
 | Resource/state | Working surface and permitted behavior |
 |---|---|
 | Sandbox provisioning | Recorded preparation and child progress; no invented percentage or success. |
@@ -976,8 +993,8 @@ least every minute and after explicit refresh. Inventory removal or a changed
 summary invalidates that reuse; cached ancestry never creates missing resources.
 
 An actual save reports **Saving progress** during capture and **Finishing save**
-while writers resume, replacing Done in the Sandbox page and tree status seat.
-The Advanced dialog includes the recorded start time;
+while writers resume within operation progress and Advanced, not the resource
+state seat. The Advanced dialog includes the recorded start time;
 there is no guessed percentage. Pause remains unavailable until the public
 eligibility permits it. These fields govern no Workspace or Agent creation rule.
 Tree menu reasons sit beneath their labels using the existing 13/20 voice and
@@ -1579,3 +1596,4 @@ Append-only. Never edit or delete an entry.
 | 2026-09-08 | Replaced signed-out glasses lettering with a cloud invitation on hover, focus or five-second idle timeout; added a scoped character bump and self-hosted bold Shrikhand title. Preserved the single-spin sign-in handover, reduced-motion accessibility, and all signed-in character behavior. |
 | 2026-09-08 | Added the global snapshot interval in minutes, defaulting to thirty; exposed the latest completed snapshot timestamp and owner-authenticated archive download in Advanced. Added a distinct Canceling pause phase which keeps children unavailable until writer release is confirmed. |
 | 2026-09-08 | Protected chat drafts from IME confirmation Enter using composition lifecycle and native keyboard signals, including Safari key code 229. Kept ordinary Enter submission and Shift+Enter newlines. |
+| 2026-09-08 | Added independently collapsible Live/Paused sidebar groups with counts and owner-scoped persistence. Replaced generic resource states with Sandbox and Agent vocabulary; background capture no longer replaces Live/Pausing. Removed Workspace expansion and inert label buttons until Ready. |

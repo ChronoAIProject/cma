@@ -23,11 +23,11 @@ Monitor disk usage and inspect exact targets before removing stale artifacts.
 | 8 | New Agent fields are understandable, profiles have anchored hover details, deleted choices are excluded | Pending implementation and production verification. |
 | 9 | No review/consent flash for no-review Triggers | Pending browser verification against the required Trigger, including fresh sign-in and resumed Launch. |
 | 10 | Profiles and Marketplace use CMA-styled Ornn-inspired cards/details | Pending source comparison, implementation and responsive production verification. |
-| 11 | Separate collapsible Live and Paused Sandbox groups | Pending implementation and production verification. |
+| 11 | Separate collapsible Live and Paused Sandbox groups | Implemented with counts, keyboard-accessible group controls and owner-scoped persistence; local tests pass. Production verification pending. |
 | 12 | Only the named Trureturing Trigger is used for Trigger testing | Active constraint. Older disposable-Trigger harnesses must not be reused unchanged. |
 | 13 | Persist Trigger/manual provenance and owner-defined quick messages | Pending schema, public API, configuration, UI and production verification. Required messages: Contribute to Github source; Introduce Truretruing. |
-| 14 | No unavailable Sandbox/Workspace expansion controls or children | Sandbox gating exists. Audit Workspace gates and live transition behavior. |
-| 15 | Standard Sandbox states; deleted hidden; deletion dialog explains removal | Pending resource-specific labels and complete production coverage. Snapshot activity must not replace Live/Pausing state. |
+| 14 | No unavailable Sandbox/Workspace expansion controls or children | Sandbox gating retained; preparing/deleting/failed Workspaces now also hide children and expansion controls. Local tests pass; production verification pending. |
+| 15 | Standard Sandbox states; deleted hidden; deletion dialog explains removal | Resource-specific labels implemented; snapshots no longer replace Live/Pausing. Explicit Needs attention remains for genuine failures. Production coverage pending. |
 | 16 | IME confirmation Enter never sends; ordinary Enter sends | Implemented; all 10 Composer tests pass, including composition lifecycle, native composing flag, keyCode 229, Shift+Enter and draft retention. Production verification pending. |
 | 17 | Agent header and sidebar show consistent resource state | Pending shared resource-specific presentation and live production comparison. |
 | 18 | Notifications animate on showing and dismissal | Pending shared notification audit, implementation and reduced-motion checks. |
@@ -51,3 +51,8 @@ image identity and measured results for each behavior, with unknowns left explic
 - 2026-09-08: Resumed with branch clean at `19c9d9f`. Host disk: 57 GiB free.
   Docker reports 21.55 GB images, 57.58 GB volumes and 7.76 GB build cache.
   No cleanup or restart needed at this point.
+- 2026-09-08: IME and navigation batch: 1,123/1,123 frontend tests pass;
+  TypeScript, ESLint, Prettier and Vite production build pass. The optional CSS
+  collision diagnostic still reports two existing cross-file landing selectors
+  (`.brand-home` and `.landing__character`); neither was changed by this batch.
+  No gate was disabled or allowlisted.

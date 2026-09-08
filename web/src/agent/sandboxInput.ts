@@ -141,7 +141,7 @@ function inputAvailability(observation: Observation | undefined): SandboxInputAv
   if (sandbox.lifecycle.checkpoint !== undefined)
     return {
       allowed: false,
-      notice: `${sandboxLifecycleLabel(sandbox)}. Messages will be available when saving finishes.`,
+      notice: `${sandbox.lifecycle.checkpoint.phase === 'capture' ? 'Saving progress' : 'Finishing save'}. Messages will be available when saving finishes.`,
       savingStartedAt,
     };
   if (sandbox.status === 'failed' || sandbox.status === 'retired')
