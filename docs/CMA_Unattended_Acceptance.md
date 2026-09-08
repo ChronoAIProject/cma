@@ -22,7 +22,7 @@ Monitor disk usage and inspect exact targets before removing stale artifacts.
 | 7 | All lifecycle screens show secret-free bounded live logs and sync time | Shared lifecycle progress exists. Audit all relevant screens and actual telemetry; verify bounded scrolling in production. |
 | 8 | New Agent fields are understandable, profiles have anchored hover details, deleted choices are excluded | Initial batch df6e58e3; production creation exposed mobile hover previews intercepting Create workspace. Corrected and deployed in fa3f6850: previews leave dialog header/footer reachable, selection dismisses pending/open preview. Real clicks and geometry pass at 1440x900, 390x900 and 390x600, both appearances; 1,131 frontend tests pass. |
 | 9 | No review/consent flash for no-review Triggers | Pending browser verification against the required Trigger, including fresh sign-in and resumed Launch. |
-| 10 | Profiles and Marketplace use CMA-styled Ornn-inspired cards/details | Pending source comparison, implementation and responsive production verification. |
+| 10 | Profiles and Marketplace use CMA-styled Ornn-inspired cards/details | Shared cards deployed in web 7c01741f and author names in API 7e7d458e. Production 18-case verification passes all three profile kinds in both directories at 1440/390/320px, light/dark, full-card detail navigation and Marketplace Use availability. Screenshots inspected. Evidence: profile-cards-64FpRT/result.json. |
 | 11 | Separate collapsible Live and Paused Sandbox groups | Deployed in web 40300b5e. Production desktop/mobile checks pass for both groups and persisted collapse on reload. Live transition cases additionally covered by local tests. |
 | 12 | Only the named Trureturing Trigger is used for Trigger testing | Active constraint. Older disposable-Trigger harnesses must not be reused unchanged. |
 | 13 | Persist Trigger/manual provenance and owner-defined quick messages | Pending schema, public API, configuration, UI and production verification. Required messages: Contribute to Github source; Introduce Truretruing. |
@@ -126,8 +126,10 @@ image identity and measured results for each behavior, with unknowns left explic
 
 ## Next Verification Work
 
-- Verify the first-periodic-snapshot delay after the API rollout. Both status
-  synchronization and the normal-stop notification passed actual production transitions.
+- The first-periodic-snapshot delay passed the initial three-minute observation,
+  but pausing the untouched test Agent exposed missing provider persistence.
+  Deploy and verify the provider fix, including zero-turn pause and resume.
+  The full thirty-minute boundary has not been observed in production.
 - Verify deletion while the same Sandbox is snapshotting after #4 is corrected.
   Standalone live-child Workspace deletion now passes production acceptance.
 - Continue the complete register above, especially consistent nonblocking
@@ -203,3 +205,36 @@ image identity and measured results for each behavior, with unknowns left explic
   in both themes. Evidence: profile-cards-AIhuVT/result.json. Screenshot review
   found a pre-existing account UUID author label; directory-name correction is
   needed before calling the full discovery experience accepted.
+- 2026-09-08 16:38 UTC: Initial snapshot timing API 7b84e10d deployed at
+  sha256:133603555de7332cdc156a9bd35e87e9b536dca1de5e1787d0c3d2f9bc843162.
+  Evidence: lifecycle-api-rollout-kQcR2Z and lifecycle-api-postflight-Z6PPNf.
+  Initial postflight 3OfsJS saw a transient /auth/session 503; retry and later
+  authenticated reads passed. This is not evidence of an outage-free rollout.
+- Production timing observation initial-snapshot-delay-BuaUr1 recorded no early
+  periodic capture through 178,316 ms. The subsequent manual pause failed with
+  restore_failed before checkpoint publication. Runtime logs proved a sealed
+  home archive and writer release after abort; the unused Agent home had no
+  sessions directory. The exact temporary Sandbox was retired successfully.
+  Do not treat that timing run as manual-pause acceptance.
+- 2026-09-08 16:46 UTC: Profile cards web 7c01741f deployed at
+  sha256:20392b31d02955365def18447d4500c8b1874b5921d47d352936b36774f86994.
+  Evidence: unattended-web-rollout-bUOG2d. Author-name API 7e7d458e subsequently
+  deployed at sha256:1f2eb45a2a81e85379538e90bc90428eee8564c27fcff254427905217c382636.
+  Evidence: lifecycle-api-rollout-TU314f and lifecycle-api-postflight-kTKjTJ.
+  Both owner histories preserved, no helper/runtime Pods, zero container restarts.
+  The author-name change passed all 1,591 isolated Rust tests, Clippy, source
+  scanning, and six Mongo marketplace transaction tests. Its image scan and
+  remote digest verification passed. Missing public names display Author
+  unavailable; system-owned profiles display CMA. Ownership IDs are unchanged.
+- Production profile-cards-64FpRT passed 18 cases with zero mutations. Screenshots
+  show By Shining rather than the account UUID, wrapping card titles at 320/390px,
+  correct light/dark appearance and native full-card detail navigation.
+- Provider correction 14c05f26 persists new empty Codex conversations using the
+  provider's own metadata operation. An offline Linux/amd64 process restart/load
+  proof passed against the exact production archive with zero turns. Original
+  and patched bridge bytes are independently pinned. Runtime image build and
+  production pause/resume acceptance follow; #4 remains unsatisfied.
+- Disk checks remained at 54-55 GiB free. Only disposable local probe containers
+  and the exact failed timing-test Sandbox were removed; no owner history,
+  persistent local volume, worktree or Docker cache was deleted. No merge to
+  develop or main was performed.
