@@ -136,7 +136,10 @@ same fixed deployment policy used to validate Sandbox Profiles. It does not
 depend on catalogue or repository availability.
 
 `GET /api/v1/profile-authoring/services` returns an array of owner-visible
-`{ id, name, description? }` choices. An empty array is a successful empty
+`{ id, catalog_id?, name, description? }` choices. `id` is the selectable scope
+identifier; `catalog_id`, when reported, is the source's canonical service
+identity for opening its detail page and must not replace the profile's scope
+identifier. An empty array is a successful empty
 catalogue. Source failures return `503 profile_services_unavailable`, not an
 empty catalogue or credentials.
 Catalogue descriptions retain the complete source text up to 6144 UTF-8 bytes;

@@ -26,6 +26,9 @@ pub struct ProfileAuthoringBounds {
 pub struct ProfileAuthoringService {
     /// Service identity for a Sandbox profile's scope list.
     pub id: String,
+    /// Canonical service catalog identity, distinct from a selectable alias.
+    #[serde(default, deserialize_with = "present")]
+    pub catalog_id: Option<String>,
     /// Service display name.
     pub name: String,
     /// Optional public description.
