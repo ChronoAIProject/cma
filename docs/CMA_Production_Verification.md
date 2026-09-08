@@ -1972,3 +1972,85 @@ Detailed local evidence is retained in
 `/tmp/cma-delivery-8c8f70d7.1TkISv/trigger-fresh-8a2272e8-completed-readback/`.
 These directories contain private browser state and must not be uploaded or
 committed wholesale.
+
+## 2026-09-08 Follow-up Evidence
+
+The preceding sections are historical observations, not the current deployment
+inventory. Subsequent evidence below supersedes only the specific findings it
+demonstrates; it does not turn earlier failed attempts into passing runs.
+
+### Previously completed production checks
+
+- `production-final-repeat/result.json`, recorded at 05:48:40 UTC, proves a
+  README repeat starting from a physically paused Sandbox. The restored Agent,
+  Worktree, Workspace, native conversation identity, and complete transcript
+  were preserved. The runtime generation advanced from 12 to 15, the first
+  prompt remained present exactly once, and no approval command or additional
+  CMA click was required. The authenticated GitHub-rendered README was served
+  at its source origin by the browser harness; a signed-in GitHub page itself
+  was not exercised.
+- `september-ux-production-RcipZU/result.json`, recorded at 09:25:16 UTC,
+  verifies the simplified Sandbox overview, Advanced popup, hidden paused
+  children, original profile/service/skill names and destinations, and retained
+  conversation history at 1440px and 390px in light and dark modes. A previously
+  admitted Agent deletion reached `deleted` with its Worktree `removed`.
+- `restore-progress-production-u4ruo9/result.json`, recorded at 09:50:56 UTC,
+  verifies the deployed restore-progress bundle and both owner URLs at 1440px
+  and 390px. This was read-only observation of an already active Sandbox, not
+  a newly observed in-progress production restore.
+- `cloud-landing-6BpmC8/result.json` verifies the signed-out cloud invitation,
+  hover or five-second idle appearance, self-hosted bold Shrikhand title,
+  rendered Three.js canvas, and animated NyxID handover. Desktop, mobile,
+  reduced-motion, and WebGL fallback cases passed. Signed-in animation behavior
+  was not changed by this landing-only release.
+
+On 2026-09-08, GitHub's README source and rendered response still
+matched blob `bb7196be076502da99c6652f019e1d2d6550d74e` and the currently
+configured public Trigger `pub_d77caf24c76f4ce188e569a83c71b8a1`, placement
+`plc_08e81ca7da574d86a8addfb61d550ecd`. No README or Trigger configuration was
+changed during this read-only check.
+
+### Snapshot and cancellation implementation
+
+Source `acb1474190c40d7b7adfe423ef2eef81bd03ea0d` adds a live global checkpoint
+interval, defaulting to 1800 seconds, latest-only completed checkpoint
+publication and pruning, an owner-authorized streaming snapshot download,
+and early Trigger pause cancellation. A cancellation retains the Pausing
+status until its exact writer hold is acknowledged as released. Once teardown
+or a potentially agent-parking retry has begun, the durable Launch finishes
+the pause and revives instead of falsely publishing Active.
+
+Local verification completed before image rollout:
+
+- Backend: 1,583 tests passed; 172 opt-in tests remained ignored by the full run.
+  The two relevant opt-in Mongo retention and ambiguous-publication tests were
+  also run explicitly and passed. Clippy and documentation tests passed.
+- Frontend: 1,099 tests, type checking, lint, formatting, and production build
+  passed. The TypeScript SDK's 1,735 tests and type checking passed; the Rust
+  SDK's unit, integration, shared-contract, and documentation tests passed.
+- `snapshot-ui-local-UXlB1i/result.json` verifies Advanced snapshot timestamp
+  and link layout plus the 30-minute admin field at desktop and mobile sizes.
+  It uses read-only production records with the two new additive fields
+  supplied locally; it does not prove the production download endpoint.
+- `cloud-landing-5joJcE/result.json` repeats the four signed-out browser cases
+  against the newly built local web assets.
+
+### Still unproven
+
+Truly interruption-free, point-in-time snapshots remain unfinished. Existing
+capture holds writers through archiving and upload. Removing that hold without
+a demonstrated consistent capture mechanism would allow an inconsistent
+backup. The provider's previously observed native snapshot failure was
+`RegistryNotConfigured`; see `Sandbox_Provider.md`, section 7. Shared provider
+or storage configuration changes require separate authority and must not
+restart or migrate an owner's live Sandbox implicitly.
+
+Latest-only completed cloud publication does not, by itself, prove that runtime
+scratch archives or uploads abandoned before publication are bounded. Their
+cleanup and a new measured snapshot-time improvement remain outstanding.
+Cross-owner production testing also remains unverified because only one
+account is available.
+
+All evidence paths in this appendix are relative to
+`/tmp/cma-trureturing-loop.LvTezb/`. These local directories may contain private
+browser state. Do not upload or commit them wholesale.
