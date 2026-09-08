@@ -53,6 +53,7 @@ mod runtime_attachment_tests;
 mod sdk_conformance_tests;
 mod sign_in_tests;
 mod skill_material_tests;
+mod startup_publication_tests;
 
 struct Harness {
     store: Arc<InMemorySandboxStore>,

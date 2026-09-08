@@ -2,13 +2,27 @@ use std::time::SystemTime;
 
 use layer2_core::rfc3339_at;
 use layer2_core::sandbox::store::{AgentWorkMutation, SandboxStoreError, MAX_AGENT_CLEANUP_DEBT};
-use layer2_core::sandbox::{Agent, AgentCleanupDebt, AgentWorkStep, ResolvedAgentSkill};
+use layer2_core::sandbox::{Agent, AgentCleanupDebt, AgentWorkStep, ResolvedAgentSkill, Sandbox};
 
 use super::{claimed_fence, RequestEvidence};
 use crate::sandbox::agent_worker::AgentWorker;
 
 impl AgentWorker {
     pub(in crate::sandbox::agent_worker) async fn prepare_side_effect(
+        &self,
+        agent: Agent,
+        evidence: &RequestEvidence,
+        resolved_skills: Option<Vec<ResolvedAgentSkill>>,
+        sandbox: &Sandbox,
+        now: SystemTime,
+    ) -> Result<Agent, SandboxStoreError> {
+        self.retry_startup_publication(agent, sandbox, now, |current, at| {
+            self.prepare_side_effect_once(current, evidence, resolved_skills.clone(), at)
+        })
+        .await
+    }
+
+    async fn prepare_side_effect_once(
         &self,
         mut agent: Agent,
         evidence: &RequestEvidence,

@@ -27,6 +27,7 @@ impl AgentWorker {
         agent: Agent,
         now: SystemTime,
     ) -> Result<(), SandboxStoreError> {
+        let started = tokio::time::Instant::now();
         let context = match self.startup_context(&agent).await {
             Ok(context) => context,
             Err(failure) => return self.handle_failure(agent, failure, now).await,
@@ -46,24 +47,30 @@ impl AgentWorker {
             &request.request_sha256,
         );
         let agent = self
-            .prepare_side_effect(agent, &evidence, None, now)
+            .prepare_side_effect(
+                agent,
+                &evidence,
+                None,
+                &context.sandbox,
+                now + started.elapsed(),
+            )
             .await?;
         let authority_fence = claimed_fence(&agent, &self.config.holder)?;
-        match self
+        let result = self
             .dependencies
             .adapter
             .add_worktree(&context.runtime, authority_fence, &request)
-            .await
-        {
+            .await;
+        let now = now + started.elapsed();
+        match result {
             Ok(receipt) if valid_worktree_receipt(&context, &request, &receipt) => {
-                self.progress(
+                self.startup_progress(
                     agent,
                     AgentWorkStep::MaterializeHome,
                     now,
-                    Some(evidence),
-                    Vec::new(),
+                    evidence,
                     None,
-                    None,
+                    &context.sandbox,
                 )
                 .await
             }
@@ -90,6 +97,7 @@ impl AgentWorker {
         agent: Agent,
         now: SystemTime,
     ) -> Result<(), SandboxStoreError> {
+        let started = tokio::time::Instant::now();
         let context = match self.startup_context(&agent).await {
             Ok(context) => context,
             Err(failure) => return self.handle_failure(agent, failure, now).await,
@@ -150,24 +158,30 @@ impl AgentWorker {
             &request.request_sha256,
         );
         let agent = self
-            .prepare_side_effect(agent, &evidence, Some(material), now)
+            .prepare_side_effect(
+                agent,
+                &evidence,
+                Some(material),
+                &context.sandbox,
+                now + started.elapsed(),
+            )
             .await?;
         let authority_fence = claimed_fence(&agent, &self.config.holder)?;
-        match self
+        let result = self
             .dependencies
             .adapter
             .materialize_agent_home(&context.runtime, authority_fence, &request)
-            .await
-        {
+            .await;
+        let now = now + started.elapsed();
+        match result {
             Ok(()) => {
-                self.progress(
+                self.startup_progress(
                     agent,
                     AgentWorkStep::OpenConversation,
                     now,
-                    Some(evidence),
-                    Vec::new(),
+                    evidence,
                     None,
-                    None,
+                    &context.sandbox,
                 )
                 .await
             }
@@ -183,6 +197,7 @@ impl AgentWorker {
         agent: Agent,
         now: SystemTime,
     ) -> Result<(), SandboxStoreError> {
+        let started = tokio::time::Instant::now();
         let context = match self.startup_context(&agent).await {
             Ok(context) => context,
             Err(failure) => return self.handle_failure(agent, failure, now).await,
@@ -212,14 +227,25 @@ impl AgentWorker {
             &request.request_sha256,
         );
         let mut agent = self
-            .prepare_side_effect(agent, &evidence, None, now)
+            .prepare_side_effect(
+                agent,
+                &evidence,
+                None,
+                &context.sandbox,
+                now + started.elapsed(),
+            )
             .await?;
         let authority_fence = claimed_fence(&agent, &self.config.holder)?;
-        let opening_started = tokio::time::Instant::now();
         let opened = self
-            .open_starting(&mut agent, &context, authority_fence, &request, now)
+            .open_starting(
+                &mut agent,
+                &context,
+                authority_fence,
+                &request,
+                now + started.elapsed(),
+            )
             .await;
-        let now = now + opening_started.elapsed();
+        let now = now + started.elapsed();
         let (channel, updates) = match opened {
             Ok(opened) => opened,
             Err(failure) => return self.handle_failure(agent, failure, now).await,
@@ -239,17 +265,14 @@ impl AgentWorker {
             Ok(attachment) => attachment,
             Err(failure) => return self.handle_failure(agent, failure, now).await,
         };
-        agent.conversation.conversation_id = Some(conversation_id);
-        agent.conversation.runtime_generation = Some(generation);
         let result = self
-            .progress(
+            .startup_progress(
                 agent,
                 AgentWorkStep::PublishReady,
                 now,
-                Some(evidence),
-                Vec::new(),
-                None,
-                None,
+                evidence,
+                Some((conversation_id, generation)),
+                &context.sandbox,
             )
             .await;
         match result {
@@ -263,9 +286,10 @@ impl AgentWorker {
 
     pub(super) async fn publish_ready(
         &self,
-        mut agent: Agent,
+        agent: Agent,
         now: SystemTime,
     ) -> Result<(), SandboxStoreError> {
+        let started = tokio::time::Instant::now();
         let context = match self.startup_context(&agent).await {
             Ok(context) => context,
             Err(failure) => return self.handle_failure(agent, failure, now).await,
@@ -291,6 +315,27 @@ impl AgentWorker {
                     .await;
             }
         };
+        let result = self
+            .retry_startup_publication(
+                agent,
+                &context.sandbox,
+                now + started.elapsed(),
+                |current, at| self.publish_ready_once(current, &context, &target, at),
+            )
+            .await;
+        if result.is_err() {
+            self.dependencies.registry.rollback(&attachment);
+        }
+        result
+    }
+
+    async fn publish_ready_once(
+        &self,
+        mut agent: Agent,
+        context: &AgentContext,
+        target: &LiveAgentTarget,
+        now: SystemTime,
+    ) -> Result<(), SandboxStoreError> {
         let expected = agent.revision;
         let fence = claimed_fence(&agent, &self.config.holder)?;
         let stamp = rfc3339_at(now);
@@ -306,7 +351,7 @@ impl AgentWorker {
         agent
             .transition(AgentStatus::Ready, stamp.clone(), None)
             .map_err(|error| SandboxStoreError::Corrupt(error.to_string()))?;
-        let conversation_id = target.conversation_id;
+        let conversation_id = target.conversation_id.clone();
         let runtime_generation = target.runtime_generation;
         let logs = vec![
             AgentLogKind::ConversationOpened {
@@ -319,13 +364,12 @@ impl AgentWorker {
             },
         ];
         bump_log_sequence(&mut agent, logs.len())?;
-        let mut worktree = context.worktree;
+        let mut worktree = context.worktree.clone();
         let expected_worktree_revision = worktree.revision;
         worktree
             .transition(WorktreeStatus::Ready)
             .map_err(|error| SandboxStoreError::Corrupt(error.to_string()))?;
-        let result = self
-            .dependencies
+        self.dependencies
             .store
             .commit_agent_work(AgentWorkMutation {
                 expected_agent_revision: expected,
@@ -344,14 +388,7 @@ impl AgentWorker {
                 }),
                 agent_logs: logs,
             })
-            .await;
-        match result {
-            Ok(()) => Ok(()),
-            Err(error) => {
-                self.dependencies.registry.rollback(&attachment);
-                Err(error)
-            }
-        }
+            .await
     }
 
     pub(super) async fn reattach(

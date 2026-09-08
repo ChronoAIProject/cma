@@ -15,6 +15,7 @@ mod first_message;
 mod reconcile;
 mod startup;
 mod startup_open;
+mod startup_publication;
 mod startup_support;
 mod support;
 
@@ -83,6 +84,7 @@ impl AgentWorker {
     }
 
     pub async fn run_one(&self, id: &AgentId, now: SystemTime) -> Result<bool, SandboxStoreError> {
+        let started = tokio::time::Instant::now();
         let Some(agent) = self
             .dependencies
             .store
@@ -96,7 +98,7 @@ impl AgentWorker {
         else {
             return Ok(false);
         };
-        self.execute(agent, now).await?;
+        self.execute(agent, now + started.elapsed()).await?;
         Ok(true)
     }
 
