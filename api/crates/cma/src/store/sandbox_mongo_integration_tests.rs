@@ -1740,6 +1740,40 @@ async fn default_profiles_seed_idempotently_and_refuse_configuration_drift() {
         .await
         .unwrap();
 
+    for collection in [
+        &store.agent_profiles,
+        &store.workspace_profiles,
+        &store.sandbox_profiles,
+    ] {
+        collection
+            .update_many(
+                doc! {},
+                doc! {"$set": {"uses_count": 7_i64, "record.uses_count": 7_i64}},
+            )
+            .await
+            .unwrap();
+    }
+    store
+        .seed_default_profiles(&spec, bounds, &[])
+        .await
+        .unwrap();
+    for collection in [
+        &store.agent_profiles,
+        &store.workspace_profiles,
+        &store.sandbox_profiles,
+    ] {
+        assert_eq!(
+            collection
+                .find_one(doc! {})
+                .await
+                .unwrap()
+                .unwrap()
+                .get_i64("uses_count")
+                .unwrap(),
+            7
+        );
+    }
+
     let mut changed = spec;
     changed.agent_model = "model-b".into();
     assert!(matches!(

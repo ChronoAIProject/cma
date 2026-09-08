@@ -214,6 +214,7 @@ impl MongoProfileStore {
             expected.agent.id.as_str(),
             &expected.agent,
             agent_profiles::read_profile,
+            |profile| &mut profile.uses_count,
         )
         .await?;
         verify_revision(
@@ -228,6 +229,7 @@ impl MongoProfileStore {
             expected.workspace.id.as_str(),
             &expected.workspace,
             workspace_profiles::read_profile,
+            |profile| &mut profile.uses_count,
         )
         .await?;
         verify_revision(
@@ -242,6 +244,7 @@ impl MongoProfileStore {
             expected.sandbox.id.as_str(),
             &expected.sandbox,
             sandbox_profiles::read_profile,
+            |profile| &mut profile.uses_count,
         )
         .await?;
         verify_revision(
@@ -297,6 +300,7 @@ async fn verify_profile<T: PartialEq>(
     id: &str,
     expected: &T,
     decode: fn(&Document) -> Result<T, ProfileStoreError>,
+    usage: fn(&mut T) -> &mut u64,
 ) -> Result<(), StoreError> {
     let document = required_document(collection, id).await?;
     let actual = decode(&document).map_err(profile_store_error)?;
@@ -304,13 +308,23 @@ async fn verify_profile<T: PartialEq>(
         .get_i64("last_revision")
         .is_ok_and(|revision| revision == i64::from(DEFAULT_PROFILE_REVISION))
         && document.get("latest_published_at") == Some(&Bson::String(SEEDED_AT.into()));
-    if &actual == expected && publication_matches {
+    if default_profile_matches(actual, expected, usage) && publication_matches {
         Ok(())
     } else {
         Err(StoreError::Malformed(format!(
             "deployment default {id} disagrees with this process configuration"
         )))
     }
+}
+
+fn default_profile_matches<T: PartialEq>(
+    mut actual: T,
+    expected: &T,
+    usage: fn(&mut T) -> &mut u64,
+) -> bool {
+    // Usage is derived activity, not deployment configuration. Never write it back.
+    *usage(&mut actual) = 0;
+    &actual == expected
 }
 
 async fn verify_revision<T: PartialEq>(
@@ -384,6 +398,55 @@ mod tests {
                 DEFAULT_PROFILE_REVISION
             )]
         );
+    }
+
+    #[tokio::test]
+    async fn used_default_profiles_remain_valid_without_accepting_configuration_drift() {
+        let spec = DefaultProfileSpec {
+            cpu_millis: 1_000,
+            memory_mib: 1_024,
+            agent_model: "model-a".into(),
+            agent_effort: ThinkingEffort::High,
+        };
+        let expected = spec.records(bounds(), &[]).await.unwrap();
+        for count in [1, 10, i64::MAX as u64] {
+            let mut agent = expected.agent.clone();
+            agent.uses_count = count;
+            assert!(default_profile_matches(
+                agent.clone(),
+                &expected.agent,
+                |p| &mut p.uses_count
+            ));
+            assert_eq!(agent.uses_count, count);
+            agent.draft.model = Some("different-model".into());
+            assert!(!default_profile_matches(agent, &expected.agent, |p| &mut p.uses_count));
+
+            let mut workspace = expected.workspace.clone();
+            workspace.uses_count = count;
+            assert!(default_profile_matches(
+                workspace.clone(),
+                &expected.workspace,
+                |p| &mut p.uses_count
+            ));
+            workspace.draft_version += 1;
+            assert!(!default_profile_matches(
+                workspace,
+                &expected.workspace,
+                |p| &mut p.uses_count
+            ));
+
+            let mut sandbox = expected.sandbox.clone();
+            sandbox.uses_count = count;
+            assert!(default_profile_matches(
+                sandbox.clone(),
+                &expected.sandbox,
+                |p| &mut p.uses_count
+            ));
+            sandbox.draft.cpu_millis += 100;
+            assert!(!default_profile_matches(sandbox, &expected.sandbox, |p| {
+                &mut p.uses_count
+            }));
+        }
     }
 
     #[tokio::test]
