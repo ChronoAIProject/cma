@@ -18,6 +18,7 @@ use self::support::{
 
 mod execution;
 mod profile;
+mod removal;
 mod support;
 pub(crate) use profile::DurableProfileWorkspaceProvisioner;
 
@@ -255,6 +256,19 @@ impl WorkspaceWorker {
     }
 
     async fn remove(&self, workspace: Workspace, now: SystemTime) -> Result<(), SandboxStoreError> {
+        match self.remove_child_agents(&workspace, now).await {
+            Ok(true) => {}
+            Ok(false) => {
+                return self
+                    .advance(
+                        workspace,
+                        WorkspaceWorkStep::Remove,
+                        now + Duration::from_secs(1),
+                    )
+                    .await
+            }
+            Err(failure) => return self.handle_failure(workspace, failure, now).await,
+        }
         let parent = self
             .dependencies
             .store

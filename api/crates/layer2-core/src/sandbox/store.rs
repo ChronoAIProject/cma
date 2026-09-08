@@ -215,7 +215,7 @@ pub trait WorkspaceAdmissionStore: Send + Sync {
         admission: WorkspaceAdmission,
     ) -> Result<WorkspaceAdmissionResult, SandboxStoreError>;
 
-    /// Lock and rewrite the workspace row while checking that no agent is live.
+    /// Fence new child admission and durably schedule removal, including child cleanup.
     async fn begin_workspace_removal(
         &self,
         id: &WorkspaceId,
@@ -406,7 +406,12 @@ impl<T> WorkspaceServiceStore for T where
 }
 
 pub trait WorkspaceLifecycleStore:
-    SandboxStore + WorkspaceStore + WorkspaceWorkerStore + SandboxTransactionStore
+    SandboxStore
+    + WorkspaceStore
+    + WorkspaceWorkerStore
+    + SandboxTransactionStore
+    + AgentStore
+    + AgentControlStore
 {
 }
 
@@ -469,7 +474,12 @@ impl<T> AgentServiceStore for T where
 }
 
 impl<T> WorkspaceLifecycleStore for T where
-    T: SandboxStore + WorkspaceStore + WorkspaceWorkerStore + SandboxTransactionStore
+    T: SandboxStore
+        + WorkspaceStore
+        + WorkspaceWorkerStore
+        + SandboxTransactionStore
+        + AgentStore
+        + AgentControlStore
 {
 }
 

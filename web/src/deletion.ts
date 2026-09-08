@@ -139,20 +139,23 @@ export async function observeDeletion(
     const live = workspace.agents.some(
       (agent) => !['stopped', 'failed', 'deleted'].includes(agent.status),
     );
+    const agentsRemoved = complete || workspace.agents.every((agent) => agent.status === 'deleted');
     return {
       name: workspace.name,
       complete,
-      events: [],
-      blocked: live
-        ? 'Stop the Agents in this Workspace before deleting it.'
-        : sandbox.status === 'paused'
+      events:
+        accepted || complete ? await readSandboxHistory(client, sandbox.id, signal, previous) : [],
+      blocked:
+        sandbox.status === 'paused'
           ? 'Resume the Sandbox before deleting this Workspace.'
           : sandbox.lifecycle?.checkpoint !== undefined
             ? 'Wait for the Sandbox to finish saving.'
             : undefined,
       failure: workspace.status === 'failed' ? workspace.failure : undefined,
       steps: [
-        step('Remove Workspace files and Worktrees', complete, workspace.status === 'removing'),
+        step('Stop Agents', complete || !live, accepted || workspace.status === 'removing'),
+        step('Remove Agents and Worktrees', agentsRemoved, !live),
+        step('Remove Workspace files', complete, agentsRemoved && workspace.status === 'removing'),
         step('Deletion confirmed', complete, complete),
       ],
     };

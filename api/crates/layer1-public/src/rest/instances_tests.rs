@@ -1076,7 +1076,7 @@ async fn foreign_and_missing_hierarchy_responses_are_byte_identical() {
 }
 
 #[tokio::test]
-async fn workspace_mutations_project_every_named_hierarchy_conflict() {
+async fn workspace_mutations_project_conflicts_and_admit_live_child_removal() {
     let fixture = fixture(10);
     let active = stored_sandbox("sbx_active", "owner", SandboxStatus::Active, 1);
     let unready = stored_sandbox("sbx_unready", "owner", SandboxStatus::Provisioning, 1);
@@ -1215,7 +1215,7 @@ async fn workspace_mutations_project_every_named_hierarchy_conflict() {
         Some(&agent),
     )
     .await;
-    let (status, problem) = json_response(
+    let (status, removing) = json_response(
         &fixture.router,
         authenticated(
             Method::DELETE,
@@ -1225,8 +1225,20 @@ async fn workspace_mutations_project_every_named_hierarchy_conflict() {
         ),
     )
     .await;
-    assert_eq!(status, StatusCode::CONFLICT);
-    assert_eq!(problem["code"], "workspace_has_live_agents");
+    assert_eq!(status, StatusCode::ACCEPTED);
+    assert_eq!(removing["id"], "wks_live");
+    assert_eq!(removing["status"], "removing");
+    let replay = json_response(
+        &fixture.router,
+        authenticated(
+            Method::DELETE,
+            "/api/v1/workspaces/wks_live",
+            None,
+            Some("live-agents"),
+        ),
+    )
+    .await;
+    assert_eq!(replay, (status, removing));
 }
 
 #[tokio::test]

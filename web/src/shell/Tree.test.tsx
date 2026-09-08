@@ -52,6 +52,20 @@ function renderTree(
 }
 
 describe('Sandbox navigation tree', () => {
+  it('allows removing a Workspace with live Agents through the deletion dialog', async () => {
+    const onAction = vi.fn();
+    renderTree({ onAction });
+    const actor = userEvent.setup();
+    await actor.click(screen.getByRole('button', { name: 'Options for chrono-bot' }));
+    const remove = screen.getByRole('menuitem', { name: 'Remove' });
+    expect(remove).toHaveAttribute('aria-disabled', 'false');
+    await actor.click(remove);
+    expect(onAction).toHaveBeenCalledExactlyOnceWith({
+      kind: 'remove_workspace',
+      workspaceId: 'wsp_1',
+    });
+  });
+
   it('groups live and paused Sandboxes separately and remembers each group per owner', async () => {
     const actor = userEvent.setup();
     const items = [

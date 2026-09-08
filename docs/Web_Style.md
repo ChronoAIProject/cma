@@ -998,8 +998,11 @@ Uncertain writes offer same-key reconciliation; a failed status read never means
 successful deletion. Sandbox retirement, Workspace removal and Agent deletion
 with a removed Worktree are the terminal confirmations. Terminal resources leave
 the working sidebar; retained history stays readable through its canonical URLs.
-Deleting is written as Deleting, not Done. Workspace and Agent deletion controls
-state the prerequisite to stop live Agents, and conflicting actions remain disabled.
+Deleting is written as Deleting, not Done. Workspace deletion accepts live child
+Agents and durably stops them, removes their Agents and Worktrees, and then removes
+the Workspace files. Its progress dialog reports those three stages followed by
+Deletion confirmed, using refreshed public records and Sandbox event history.
+Agent-only deletion still states its stop prerequisite. Conflicting actions remain disabled.
 
 Pause and Resume use the public Sandbox lifecycle eligibility in both the
 Sandbox page and its tree menu, never Active or Paused alone. Missing eligibility
@@ -1621,3 +1624,4 @@ Append-only. Never edit or delete an entry.
 | 2026-09-08 | Added independently collapsible Live/Paused sidebar groups with counts and owner-scoped persistence. Replaced generic resource states with Sandbox and Agent vocabulary; background capture no longer replaces Live/Pausing. Removed Workspace expansion and inert label buttons until Ready. |
 | 2026-09-08 | Clarified New Agent location, profile, title and first-message fields. Added anchored, bounded profile hover details using pinned public settings and original-name links, and removed deleting/deleted resources from location choices. |
 | 2026-09-08 | Confined profile hover previews vertically between the creation dialog header and footer, including short mobile viewports. Selecting a profile dismisses its open or pending preview so creation and close controls remain reachable. |
+| 2026-09-08 | Enabled Workspace deletion with live Agents. Documented durable child stop and removal before Workspace files, refreshed cleanup stages, and public Sandbox event history in the persistent deletion dialog. |

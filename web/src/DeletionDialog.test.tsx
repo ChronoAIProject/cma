@@ -170,15 +170,43 @@ it('requires both Agent deletion and Worktree removal, not just a stopped Agent'
   }
 });
 
-it('names the stop prerequisite before Workspace deletion and rejects corrupt browser recovery data', async () => {
+it('allows Workspace deletion with live Agents and shows the durable cascade steps', async () => {
   const observation = await observeDeletion(
     agentClient(),
     { kind: 'remove_workspace', workspaceId: 'wsp_1' },
     new AbortController().signal,
     false,
   );
-  expect(observation.blocked).toContain('Stop the Agents');
+  expect(observation.blocked).toBeUndefined();
+  expect(observation.steps).toEqual([
+    { label: 'Stop Agents', status: 'Waiting' },
+    { label: 'Remove Agents and Worktrees', status: 'Waiting' },
+    { label: 'Remove Workspace files', status: 'Waiting' },
+    { label: 'Deletion confirmed', status: 'Waiting' },
+  ]);
   localStorage.setItem(deletionStorageKey('owner'), '{broken');
   expect(restoreDeletion('owner')).toBeUndefined();
   expect(restoreDeletion('another-owner')).toBeUndefined();
+});
+
+it('reports child cleanup stages from refreshed Workspace records', async () => {
+  for (const [agentStatus, workspaceStatus, statuses] of [
+    ['ready', 'removing', ['In progress', 'Waiting', 'Waiting', 'Waiting']],
+    ['stopped', 'removing', ['Done', 'In progress', 'Waiting', 'Waiting']],
+    ['deleted', 'removing', ['Done', 'Done', 'In progress', 'Waiting']],
+    ['deleted', 'removed', ['Done', 'Done', 'Done', 'Done']],
+  ] as const) {
+    const fixture = workspaceFixture(agentStatus);
+    const client = agentClient({
+      readWorkspace: async () => ({ ...fixture, status: workspaceStatus }),
+    });
+    const observation = await observeDeletion(
+      client,
+      { kind: 'remove_workspace', workspaceId: 'wsp_1' },
+      new AbortController().signal,
+      true,
+    );
+    expect(observation.steps.map((item) => item.status)).toEqual(statuses);
+    expect(observation.complete).toBe(workspaceStatus === 'removed');
+  }
 });
