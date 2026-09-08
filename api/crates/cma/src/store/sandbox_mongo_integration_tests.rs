@@ -612,6 +612,7 @@ fn advance_claimed_agent(claimed: &Agent) -> Agent {
     next
 }
 
+mod agent_log_read_tests;
 mod agent_title_tests;
 mod agent_transaction_tests;
 mod agent_worker_tests;

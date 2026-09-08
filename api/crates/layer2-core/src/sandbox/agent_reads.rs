@@ -260,29 +260,22 @@ impl AgentReadService {
         if through_seq == 0 {
             return Err(corrupt("agent log has no creation record"));
         }
-        let mut entries = Vec::new();
-        let mut after = 0;
-        while after < through_seq {
-            let remaining = through_seq - after;
-            let limit = remaining.min(u64::from(MAX_PAGE_SIZE)) as u16;
-            let batch = self
-                .store
-                .agent_log(&agent.id, after, limit)
-                .await
-                .map_err(log_store_error)?;
-            if batch.len() != usize::from(limit) {
-                return Err(corrupt("agent log ended before its high-water mark"));
+        let entries = self
+            .store
+            .agent_log_prefix(&agent.id, through_seq)
+            .await
+            .map_err(log_store_error)?;
+        if u64::try_from(entries.len()).ok() != Some(through_seq) {
+            return Err(corrupt("agent log ended before its high-water mark"));
+        }
+        for (offset, entry) in entries.iter().enumerate() {
+            let expected = u64::try_from(offset)
+                .ok()
+                .and_then(|offset| offset.checked_add(1))
+                .ok_or_else(|| corrupt("agent log sequence overflowed"))?;
+            if entry.agent_id != agent.id || entry.seq != expected || entry.seq > through_seq {
+                return Err(corrupt("agent log identity or sequence is invalid"));
             }
-            for entry in &batch {
-                let expected = after
-                    .checked_add(1)
-                    .ok_or_else(|| corrupt("agent log sequence overflowed"))?;
-                if entry.agent_id != agent.id || entry.seq != expected || entry.seq > through_seq {
-                    return Err(corrupt("agent log identity or sequence is invalid"));
-                }
-                after = entry.seq;
-            }
-            entries.extend(batch);
         }
         self.reject_uncommitted_tail(agent, through_seq).await?;
         Ok(entries)

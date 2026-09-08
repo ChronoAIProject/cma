@@ -326,6 +326,26 @@ pub trait AgentLogStore: Send + Sync {
         after: u64,
         limit: u16,
     ) -> Result<Vec<AgentLogEntry>, SandboxStoreError>;
+
+    /// Read the exact prefix needed for a captured Agent projection.
+    async fn agent_log_prefix(
+        &self,
+        agent_id: &AgentId,
+        through_seq: u64,
+    ) -> Result<Vec<AgentLogEntry>, SandboxStoreError> {
+        let mut entries = Vec::new();
+        let mut after = 0;
+        while after < through_seq {
+            let limit = (through_seq - after).min(u64::from(MAX_PAGE_SIZE)) as u16;
+            let page = self.agent_log(agent_id, after, limit).await?;
+            if page.len() != usize::from(limit) {
+                return Err(SandboxStoreError::SequenceConflict);
+            }
+            after += u64::from(limit);
+            entries.extend(page);
+        }
+        Ok(entries)
+    }
 }
 
 #[derive(Debug, Clone)]
