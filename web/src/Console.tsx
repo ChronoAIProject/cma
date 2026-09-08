@@ -72,6 +72,12 @@ export function Console({
     setRevision((value) => value + 1);
   }, [refreshNavigation]);
   const agent = useAgentController(client, route.kind === 'agent' ? route.agentId : undefined, {
+    summary:
+      route.kind === 'agent' && navigation.status === 'ready'
+        ? navigation.items
+            .flatMap(({ workspaces }) => workspaces.flatMap((workspace) => workspace.agents))
+            .find(({ id }) => id === route.agentId)
+        : undefined,
     onHierarchyChange: refresh,
     onDeleted: () => onNavigate({ kind: 'home' }),
   });

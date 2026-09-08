@@ -6,6 +6,7 @@ import type {
   AgentDetail,
   AgentEvent,
   AgentLiveEvent,
+  AgentSummary,
   AgentUsage,
   SandboxEvent,
   WorkspaceDetail,
@@ -52,6 +53,7 @@ export interface AgentController {
 }
 
 interface AgentControllerOptions {
+  readonly summary?: AgentSummary;
   readonly onHierarchyChange?: () => void;
   readonly onDeleted?: () => void;
 }
@@ -172,6 +174,37 @@ export function useAgentController(
   useEffect(() => {
     hierarchyChanged.current = options.onHierarchyChange;
   }, [options.onHierarchyChange]);
+
+  const summary = options.summary;
+  const detail = state.status === 'ready' ? state.detail : undefined;
+  useEffect(() => {
+    if (summary === undefined || detail === undefined || summary.id !== agentId) return;
+    let cancelled = false;
+    // Titles arrive after the first turn; reuse the tree's metadata without reloading history.
+    queueMicrotask(() => {
+      if (cancelled) return;
+      setState((current) => {
+        if (
+          current.status !== 'ready' ||
+          current.detail.id !== summary.id ||
+          current.detail.sandbox.id !== summary.sandboxId ||
+          current.detail.workspace.id !== summary.workspaceId ||
+          current.detail.worktree.id !== summary.worktreeId ||
+          !summary.title?.trim() ||
+          current.detail.title === summary.title ||
+          !(Date.parse(summary.updatedAt) >= Date.parse(current.detail.updatedAt))
+        )
+          return current;
+        return {
+          ...current,
+          detail: { ...current.detail, title: summary.title, updatedAt: summary.updatedAt },
+        };
+      });
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [agentId, detail, summary]);
 
   const applyLive = useCallback(
     (event: AgentLiveEvent) => {
