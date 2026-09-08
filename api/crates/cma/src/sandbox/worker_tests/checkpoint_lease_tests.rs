@@ -3,7 +3,7 @@ use layer2_core::sandbox::store::{
     SandboxLifecycleAgentScope, SandboxLifecycleExecutionStore, SandboxLifecycleMutation,
     SandboxMutationGuard, SandboxReconciliationStore,
 };
-use layer2_core::sandbox::SandboxCheckpointCapturePhase;
+use layer2_core::sandbox::{SandboxCheckpointCapturePhase, SANDBOX_CHECKPOINT_INTERVAL_SECONDS};
 use layer3_adapter::hosted::{HostedAgentOpenSettings, HostedBackend};
 use layer3_adapter::provider::ProviderSandboxRequest;
 use layer3_adapter::wire::{AgentOpenReceipt, FencedReceipt, FencedRequest, ResponseFrame};
@@ -115,7 +115,13 @@ async fn fixture() -> (
         "test".into(),
         "renewing".into(),
     );
-    (harness, active, now + Duration::from_secs(1), gate, worker)
+    (
+        harness,
+        active,
+        now + Duration::from_secs(SANDBOX_CHECKPOINT_INTERVAL_SECONDS + 1),
+        gate,
+        worker,
+    )
 }
 
 fn token(sandbox: &Sandbox) -> String {
@@ -303,6 +309,7 @@ async fn later_batch_claims_and_checkpoint_timestamps_use_fresh_time() {
     let (harness, active, now, gate, worker) = fixture().await;
     let created = harness.create().await;
     let second = harness.drive_active(&created.id, now).await;
+    let now = now + Duration::from_secs(SANDBOX_CHECKPOINT_INTERVAL_SECONDS);
     assert_eq!(worker.run_once(now).await.unwrap(), 2);
     let task = tokio::spawn({
         let worker = worker.clone();

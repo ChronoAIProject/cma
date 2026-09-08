@@ -286,7 +286,7 @@ impl SandboxCheckpointHistory {
     }
 }
 
-/// Periodic captures require both checkpoint age and confirmed writer-release cooldown.
+/// Periodic captures age from the last snapshot, or initial runtime binding.
 pub fn sandbox_checkpoint_due(sandbox: &Sandbox, now: &str) -> bool {
     sandbox_checkpoint_due_with_interval(sandbox, now, SANDBOX_CHECKPOINT_INTERVAL_SECONDS)
 }
@@ -306,16 +306,20 @@ pub fn sandbox_checkpoint_due_with_interval(
     {
         return false;
     }
-    sandbox
-        .lifecycle
-        .checkpoints
-        .latest
-        .as_ref()
-        .is_none_or(|checkpoint| {
-            checkpoint.validate().is_ok()
-                && seconds_from_rfc3339(&checkpoint.sealed_at)
-                    .is_some_and(|sealed| now_seconds >= sealed.saturating_add(interval_seconds))
-        })
+    let baseline = match sandbox.lifecycle.checkpoints.latest.as_ref() {
+        Some(checkpoint) if checkpoint.validate().is_ok() => &checkpoint.sealed_at,
+        Some(_) => return false,
+        None => {
+            &sandbox
+                .runtime
+                .as_ref()
+                .expect("runtime checked above")
+                .bound_at
+        }
+    };
+    seconds_from_rfc3339(baseline)
+        .and_then(|baseline| baseline.checked_add(interval_seconds))
+        .is_some_and(|due| now_seconds >= due)
 }
 
 fn valid_sha256(value: &str) -> bool {
