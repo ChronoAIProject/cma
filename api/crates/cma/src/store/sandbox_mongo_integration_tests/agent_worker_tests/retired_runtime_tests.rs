@@ -44,7 +44,7 @@ async fn retired_runtime_close_is_parent_fenced_and_rejects_unsafe_parent_eviden
             )
             .unwrap(),
         );
-        parent.lifecycle.runtime_generation_high_water = 4;
+        parent.lifecycle.runtime_generation_high_water = 3;
         let parent_revision = parent.revision;
         parent.status = SandboxStatus::Paused;
         parent.begin_retirement(NOW.into()).unwrap();

@@ -9,7 +9,7 @@ use layer2_core::sandbox::store::{
     SandboxMaintenanceOutcome, SandboxMaintenanceStore, SandboxReconciliationStore,
     SandboxRuntimeLossRequest, SandboxStore, SandboxStoreError,
 };
-use layer2_core::sandbox::{AgentService, Sandbox, SandboxPolicySource};
+use layer2_core::sandbox::{AgentService, Sandbox, SandboxPolicySource, SandboxStatus};
 use layer2_core::{rfc3339_at, SandboxId};
 use layer3_adapter::{RuntimeAdoptionRequest, RuntimeObservation, SandboxAdapter};
 use tokio::sync::watch;
@@ -79,9 +79,19 @@ impl SandboxReconciler {
                 current
                     .validate()
                     .map_err(|error| corrupt(&error.to_string()))?;
-                // The durable high-water mark cannot regress or bind an older
-                // generation. Equal/newer observations may still be provisioning.
-                if observation.generation >= current.lifecycle.runtime_generation_high_water
+                // A settled pause/retirement cannot bind an equal generation;
+                // any later revive reserves a newer one before provider I/O.
+                let settled_unbound = current.runtime.is_none()
+                    && matches!(
+                        current.status,
+                        SandboxStatus::Paused | SandboxStatus::Retiring | SandboxStatus::Retired
+                    )
+                    && current.lifecycle.runtime_provision.is_none()
+                    && current.lifecycle.operation.is_none()
+                    && current.lifecycle.checkpoint_capture.is_none();
+                if observation.generation > current.lifecycle.runtime_generation_high_water
+                    || (observation.generation == current.lifecycle.runtime_generation_high_water
+                        && !settled_unbound)
                     || current.runtime.as_ref().is_some_and(|binding| {
                         binding.runtime_id == observation.handle.0
                             || binding.provision_generation.is_none()

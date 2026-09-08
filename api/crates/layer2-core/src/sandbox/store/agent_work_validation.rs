@@ -59,7 +59,14 @@ pub fn retiring_sandbox_process_is_absent(agent: &Agent, sandbox: &Sandbox) -> b
             .conversation
             .runtime_generation
             .is_some_and(|generation| {
-                generation > 0 && generation <= sandbox.lifecycle.runtime_generation_high_water
+                // Runtime-loss parking advances the Agent fence without allocating a runtime.
+                generation > 0
+                    && sandbox.lifecycle.runtime_generation_high_water > 0
+                    && sandbox
+                        .lifecycle
+                        .runtime_generation_high_water
+                        .checked_add(1)
+                        .is_some_and(|ceiling| generation <= ceiling)
             })
         && sandbox.validate().is_ok()
         && sandbox
