@@ -20,15 +20,15 @@ Monitor disk usage and inspect exact targets before removing stale artifacts.
 | 5 | Storage physically retains only the latest snapshot | Completed publication prunes the previous generation. Runtime scratch archives and orphan uploads still require implementation/audit. |
 | 6 | Terminated Sandbox snapshots are deleted | Pending complete storage audit, including runtime scratch and orphan objects. |
 | 7 | All lifecycle screens show secret-free bounded live logs and sync time | Shared lifecycle progress exists. Audit all relevant screens and actual telemetry; verify bounded scrolling in production. |
-| 8 | New Agent fields are understandable, profiles have anchored hover details, deleted choices are excluded | Pending implementation and production verification. |
+| 8 | New Agent fields are understandable, profiles have anchored hover details, deleted choices are excluded | Implemented explanatory fields, pinned-profile hover details and deleted-choice filtering with selected-location revalidation. All 1,127 frontend tests pass; production verification pending. |
 | 9 | No review/consent flash for no-review Triggers | Pending browser verification against the required Trigger, including fresh sign-in and resumed Launch. |
 | 10 | Profiles and Marketplace use CMA-styled Ornn-inspired cards/details | Pending source comparison, implementation and responsive production verification. |
-| 11 | Separate collapsible Live and Paused Sandbox groups | Implemented with counts, keyboard-accessible group controls and owner-scoped persistence; local tests pass. Production verification pending. |
+| 11 | Separate collapsible Live and Paused Sandbox groups | Deployed in web 40300b5e. Production desktop/mobile checks pass for both groups and persisted collapse on reload. Live transition cases additionally covered by local tests. |
 | 12 | Only the named Trureturing Trigger is used for Trigger testing | Active constraint. Older disposable-Trigger harnesses must not be reused unchanged. |
 | 13 | Persist Trigger/manual provenance and owner-defined quick messages | Pending schema, public API, configuration, UI and production verification. Required messages: Contribute to Github source; Introduce Truretruing. |
 | 14 | No unavailable Sandbox/Workspace expansion controls or children | Sandbox gating retained; preparing/deleting/failed Workspaces now also hide children and expansion controls. Local tests pass; production verification pending. |
 | 15 | Standard Sandbox states; deleted hidden; deletion dialog explains removal | Resource-specific labels implemented; snapshots no longer replace Live/Pausing. Explicit Needs attention remains for genuine failures. Production coverage pending. |
-| 16 | IME confirmation Enter never sends; ordinary Enter sends | Implemented; all 10 Composer tests pass, including composition lifecycle, native composing flag, keyCode 229, Shift+Enter and draft retention. Production verification pending. |
+| 16 | IME confirmation Enter never sends; ordinary Enter sends | Deployed in web 40300b5e. Production desktop/mobile synthetic composition, keyCode 229, Shift+Enter and ordinary Enter checks pass; draft retained. Ordinary-send requests intercepted before reaching the Agent. Native OS IME selection still requires a real keyboard check, not claimed by browser-generated events. |
 | 17 | Agent header and sidebar show consistent resource state | Pending shared resource-specific presentation and live production comparison. |
 | 18 | Notifications animate on showing and dismissal | Pending shared notification audit, implementation and reduced-motion checks. |
 | 19 | Real native terminal and chat share one conversation, all CLI features, matching theme and reliable sizing | Pending pinned-engine feasibility and implementation. An independent second conversation or imitation terminal is not acceptance. |
@@ -56,3 +56,16 @@ image identity and measured results for each behavior, with unknowns left explic
   collision diagnostic still reports two existing cross-file landing selectors
   (`.brand-home` and `.landing__character`); neither was changed by this batch.
   No gate was disabled or allowlisted.
+- 2026-09-08 14:20 UTC: Web 40300b5e deployed from this branch at
+  `sha256:314b0768b9bb8a95f9d07904898d2112903c858fe8d29a24433ddbb74b4855ad`.
+  Linux/amd64 build, fixed HIGH/CRITICAL vulnerability scan and remote digest
+  validation pass. Rollout verified healthy with zero restarts; API and runtime
+  configuration unchanged. Evidence: scratch `unattended-web-rollout-3LEuPM`.
+- 2026-09-08: Production browser checks pass at 1440x900 and 390x900 for
+  paused-child hiding, independent group persistence, composition Enter,
+  keyCode 229, Shift+Enter, ordinary Enter request and draft preservation.
+  No mutating browser request forwarded to production. Evidence:
+  scratch `unattended-ui-batch1-RTtyD6/result.json` and screenshots; local
+  counterpart `unattended-ui-batch1-qBa03d`. Initial browser runs exposed a
+  harness readiness race with mobile navigation, corrected by awaiting the
+  mounted Sandbox heading independently of drawer visibility.

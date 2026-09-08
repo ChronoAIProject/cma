@@ -533,6 +533,25 @@ bounds and converts to wire units at the boundary. Creation may select the
 exact pinned deployment-default profile, never an unrecorded resource default.
 Paired fields stack below 30rem.
 
+New Agent creation names **Sandbox environment** and **Project workspace**, with
+short 13px secondary explanations of the environment and the project folder.
+The profile step explains model, skills and independence; optional title and
+first-message fields explain their effect. Deleted and deleting resources are
+absent from location choices, not disabled historical choices. Selected locations
+refresh from public records so deletion cannot leave Continue enabled.
+
+Hovering a profile row for 200ms or focusing its controls opens a nonmodal details
+preview. It is anchored to the row, not pointer movement, and uses the existing
+public profile settings renderer and original-name links. The preview is 360px
+wide and 440px high, constrained to 12px viewport margins, with an 8px radius,
+16px padding, menu fill and level-3 shadow. The body alone scrolls. It uses the
+shared menu placement calculation, right of the row on desktop and below on
+narrow screens, clamped inside the viewport. It stays open while hovered or
+focused, closes after 150ms outside, and Escape dismisses only the preview.
+Loading and read failure occupy the same stable box; hovering never selects or
+creates anything. Fade-in uses the existing fast duration, with reduced-motion
+equivalence. Profile links remain independently clickable.
+
 ### 12.3 The dropdown
 
 One control for choosing a value and for choosing an action. Both are a card at radius 12 on the menu
@@ -1597,3 +1616,4 @@ Append-only. Never edit or delete an entry.
 | 2026-09-08 | Added the global snapshot interval in minutes, defaulting to thirty; exposed the latest completed snapshot timestamp and owner-authenticated archive download in Advanced. Added a distinct Canceling pause phase which keeps children unavailable until writer release is confirmed. |
 | 2026-09-08 | Protected chat drafts from IME confirmation Enter using composition lifecycle and native keyboard signals, including Safari key code 229. Kept ordinary Enter submission and Shift+Enter newlines. |
 | 2026-09-08 | Added independently collapsible Live/Paused sidebar groups with counts and owner-scoped persistence. Replaced generic resource states with Sandbox and Agent vocabulary; background capture no longer replaces Live/Pausing. Removed Workspace expansion and inert label buttons until Ready. |
+| 2026-09-08 | Clarified New Agent location, profile, title and first-message fields. Added anchored, bounded profile hover details using pinned public settings and original-name links, and removed deleting/deleted resources from location choices. |

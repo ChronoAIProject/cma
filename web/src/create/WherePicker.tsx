@@ -8,6 +8,7 @@ import { statusLabel } from '../vocabulary/status';
 import { ProvisioningProgress } from '../sandbox/ProvisioningProgress';
 import { sandboxProgress, workspaceProgress } from '../sandbox/progress';
 import { readSandboxHistory } from '../sandbox/eventHistory';
+import { sandboxLifecycleLabel, sandboxRefreshDelay } from '../sandbox/lifecycle';
 
 export interface LocationChoice {
   readonly sandboxId?: string;
@@ -63,8 +64,10 @@ export function WherePicker({
     const request = new AbortController();
     let timer: ReturnType<typeof setTimeout> | undefined;
     let history: readonly SandboxEvent[] = [];
+    let initial = true;
     const refresh = async () => {
-      onReady(false);
+      if (initial) onReady(false);
+      initial = false;
       try {
         if (value.sandboxId === undefined) {
           if (value.workspaceId !== undefined) {
@@ -87,14 +90,18 @@ export function WherePicker({
         setSelectedWorkspace(workspaceDetail);
         setEvents(history);
         setError(undefined);
-        onReady(acceptsCreation(detail.status) && (!workspace || selected?.status === 'ready'));
-        if (
-          ['provisioning', 'installing', 'reviving'].includes(detail.status) ||
+        onReady(
+          acceptsCreation(detail.status) && (!workspace || workspaceDetail?.status === 'ready'),
+        );
+        timer = setTimeout(
+          () => void refresh(),
           detail.workspaces.some((item) => item.status === 'preparing')
-        )
-          timer = setTimeout(() => void refresh(), 1500);
+            ? 1500
+            : sandboxRefreshDelay(detail),
+        );
       } catch {
         if (!request.signal.aborted) {
+          onReady(false);
           setError('This location could not be loaded.');
           timer = setTimeout(() => void refresh(), 5000);
         }
@@ -109,25 +116,30 @@ export function WherePicker({
   const all =
     sandbox !== undefined && !sandboxes.some((item) => item.id === sandbox.id)
       ? [...sandboxes, sandbox]
-      : sandboxes;
+      : sandboxes.map((item) => (item.id === sandbox?.id ? sandbox : item));
   const current = sandbox?.id === value.sandboxId ? sandbox : undefined;
   return (
     <div className="create-form">
       <div className="create-form__field">
-        <label id="create-sandbox-label">Sandbox</label>
+        <label id="create-sandbox-label">Sandbox environment</label>
+        <p className="profile-field__help">
+          The cloud environment where your agent runs, with its software and connected services.
+        </p>
         <Picker
           label="Sandbox"
           value={value.sandboxId ?? ''}
           disabled={disabled}
           options={[
             { value: '', label: 'Choose a sandbox' },
-            ...all.map((item) => ({
-              value: item.id,
-              label: item.name,
-              unavailable: ['failed', 'retiring', 'retired'].includes(item.status)
-                ? statusLabel(item.status)
-                : undefined,
-            })),
+            ...all
+              .filter((item) => !['retiring', 'retired'].includes(item.status))
+              .map((item) => ({
+                value: item.id,
+                label: item.name,
+                unavailable: ['failed', 'retiring', 'retired'].includes(item.status)
+                  ? statusLabel(item.status)
+                  : undefined,
+              })),
           ]}
           onChange={(sandboxId) => {
             onReady(false);
@@ -136,7 +148,7 @@ export function WherePicker({
         />
       </div>
       {current === undefined || current.status === 'active' ? null : (
-        <p role="status">Sandbox: {statusLabel(current.status)}</p>
+        <p role="status">Sandbox: {sandboxLifecycleLabel(current)}</p>
       )}
       {current !== undefined &&
       ['provisioning', 'installing', 'failed'].includes(current.status) ? (
@@ -148,18 +160,28 @@ export function WherePicker({
       ) : null}
       {workspace ? (
         <div className="create-form__field">
-          <label>Workspace</label>
+          <label>Project workspace</label>
+          <p className="profile-field__help">
+            The project or folder your agent will work in. Each agent gets its own working copy.
+          </p>
           <Picker
             label="Workspace"
             value={value.workspaceId ?? ''}
-            disabled={disabled || current === undefined}
+            disabled={
+              disabled ||
+              current === undefined ||
+              ['retiring', 'retired', 'failed'].includes(current.status)
+            }
             options={[
               { value: '', label: 'Choose a workspace' },
-              ...(current?.workspaces ?? []).map((item) => ({
-                value: item.id,
-                label: item.name,
-                unavailable: item.status === 'ready' ? undefined : statusLabel(item.status),
-              })),
+              ...(current?.workspaces ?? [])
+                .map((item) => (item.id === selectedWorkspace?.id ? selectedWorkspace : item))
+                .filter((item) => !['removing', 'removed'].includes(item.status))
+                .map((item) => ({
+                  value: item.id,
+                  label: item.name,
+                  unavailable: item.status === 'ready' ? undefined : statusLabel(item.status),
+                })),
             ]}
             onChange={(workspaceId) => {
               onReady(false);
