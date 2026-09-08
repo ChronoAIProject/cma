@@ -18,8 +18,8 @@ Monitor disk usage and inspect exact targets before removing stale artifacts.
 | 3 | Live Sandbox creates Workspace with multiple Agent Profiles | Production UI and public API pass: Workspace and two distinct correctly pinned Agent/Worktree pairs Ready in 15,009 ms, with no first prompts sent. Same creation evidence as #1. |
 | 4 | Snapshots never interrupt creation, deletion or Agent interaction | Not satisfied: deployed whole-home capture holds writers. Requires a consistent point-in-time copy without a capture-duration writer lock, then concurrent production checks. |
 | 5 | Storage physically retains only the latest snapshot | Completed publication prunes the previous generation. Runtime audit found two sealed local archives of 1,804,395,715 and 1,804,436,309 bytes. Runtime scratch and orphan cleanup remain unsatisfied; do not equate metadata pruning with physical retention acceptance. |
-| 6 | Terminated Sandbox snapshots are deleted | Not satisfied at deletion confirmation: worker/retirement.rs invokes archive purge only at final record purge after retention grace. Immediate snapshot-only cleanup must preserve retained conversation history. Complete storage and orphan audit still pending. |
-| 7 | All lifecycle screens show secret-free bounded live logs and sync time | Live activity implemented in web 224bd525: translated public events, latest 100 entries, fixed-height scroll region, sync time, reconnect and access-loss handling. Sandbox, Agent, Launch, creation and deletion views are wired. Production settled desktop/mobile geometry and live pause/resume observations pass. Complete deletion and named Trigger transition verification remain pending; do not mark full acceptance yet. |
+| 6 | Terminated Sandbox snapshots are deleted | Sources 0aca3dae and 8a6cac05 purge snapshots before new deletion confirmation and reconcile archives of validated, already Deleted Sandboxes without shortening history retention. All 15 archive Mongo integration tests pass. Pre-deployment storage audit finds 691 objects / 29 archives / 20.407 GiB belonging to 18 Deleted Sandboxes; production cleanup verification remains pending. |
+| 7 | All lifecycle screens show secret-free bounded live logs and sync time | Live activity deployed, with latest 100 allowlisted entries, bounded scroll, sync time and reconnect/access-loss handling. Production Sandbox/Agent pause/resume and all three deletion dialogs pass. Named README Launch/Sandbox restore displays pass at desktop/mobile, followed by restored chat. Some lifecycle rows remain generic completed-stage entries; every transition and creation surface is not yet comprehensively proved. |
 | 8 | New Agent fields are understandable, profiles have anchored hover details, deleted choices are excluded | Initial batch df6e58e3; production creation exposed mobile hover previews intercepting Create workspace. Corrected and deployed in fa3f6850: previews leave dialog header/footer reachable, selection dismisses pending/open preview. Real clicks and geometry pass at 1440x900, 390x900 and 390x600, both appearances; 1,131 frontend tests pass. |
 | 9 | No review/consent flash for no-review Triggers | Pending browser verification against the required Trigger, including fresh sign-in and resumed Launch. |
 | 10 | Profiles and Marketplace use CMA-styled Ornn-inspired cards/details | Shared cards deployed in web 7c01741f and author names in API 7e7d458e. Production 18-case verification passes all three profile kinds in both directories at 1440/390/320px, light/dark, full-card detail navigation and Marketplace Use availability. Screenshots inspected. Evidence: profile-cards-64FpRT/result.json. |
@@ -313,3 +313,44 @@ image identity and measured results for each behavior, with unknowns left explic
   273 seconds before publication. This is not nonblocking-snapshot acceptance.
   Host disk remained at 48-49 GiB free. No Docker restart, cache pruning or
   worktree removal was necessary; owner resources were not force-paused.
+- Web db43770a rollout i7dQav completed healthy. Production read-only evidence
+  live-activity-readonly-ijVJ01 covers six Sandbox/Agent viewport cases and both
+  appearances. All 1,158 frontend tests, type/lint/format, image scan and digest
+  checks passed. API/runtime were unchanged.
+- Deletion attempts BglalQ and UYVolr confirmed Agent and Workspace removal but
+  stopped before Sandbox UI deletion. UYVolr captured HTTP rate-limit refusal in
+  place of navigation. Both disposable Sandboxes were retired in finally cleanup.
+  The concurrently running README verifier xTCdJv also received HTTP 429. These
+  are not successful end-to-end results; no owner pause or repeated click followed.
+- The admitted named README Launch lch_d95d499a7c0248ed83887153c05a4fbd continued
+  after the verifier closed. Read-only continuation admitted-readme-observation-9ojyo6
+  observed Home restore, queued delivery, Active and Ready. Both complete history
+  hashes and reused Agent identity were preserved, with no first-prompt replay.
+  Desktop/mobile Launch and Sandbox logs were bounded and timestamped. Ready was
+  observed at 18:32:12 UTC, following admission at approximately 18:24:21 UTC.
+  Three subsequent minutes (183,205 ms) had no early capture despite overdue
+  snapshot epoch 33. No full thirty-minute boundary or fresh sign-in was tested.
+- Web 7e400e66 removes deleted subtree reads from initial navigation, refresh and
+  minute boundaries. All 1,159 frontend tests, TypeScript, lint, format, audit,
+  source scan, Linux/amd64 build and image scan pass. Production digest
+  16d0b7a63d2d3ce6dd3ec9df79d4d07ad0034cf803783c6bf53dd3c5fa327095;
+  rollout unattended-web-rollout-G6jxUR healthy, API/runtime unchanged.
+  Browser evidence navigation-retired-reads-oB5bKY (local) and rWERyC (production)
+  covers 1440/390/320px, both themes, reload and a minute of observation. All 29
+  Deleted Sandboxes generated zero detail requests, with no HTTP 429 or mutations.
+- Production live-deletion-flow-9BRTqz passed Agent, Workspace and Sandbox deletion
+  through actual sidebar controls, visible bounded activity, completion dialogs,
+  hard refresh and removal. Agent Worktree was Removed. Owner histories were
+  preserved and the exact disposable Sandbox was retired. This does not prove
+  concurrent deletion during a writer-fenced snapshot.
+- Read-only storage audit checkpoint-storage-audit-2qwui9 found 746 current logical
+  objects, all mapped to known CMA Sandboxes. The Active owner's one archive used
+  55 objects; 18 Deleted Sandboxes retained 691 objects in 29 archives, totaling
+  20.407 GiB. Backend-version history and runtime-local archive retention remain
+  separate, unproved checks. The audit performed no storage mutations.
+- Snapshot retirement sources 0aca3dae/8a6cac05 pass 1,593 isolated Rust tests,
+  Clippy, formatting and tracked-change secret scans. The 175 environment-gated
+  tests were skipped by nextest; all 15 archive Mongo integration tests were run
+  separately against an ephemeral, failpoint-enabled local replica set and pass.
+  Temporary test containers were removed with no persistent volumes. Production
+  rollout and physical snapshot cleanup evidence follow separately.
