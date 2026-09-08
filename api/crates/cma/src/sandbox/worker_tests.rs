@@ -51,6 +51,7 @@ mod lifecycle_queue_tests;
 mod lifecycle_recovery_tests;
 mod pause_cancellation_tests;
 mod reconciliation_tests;
+mod retirement_checkpoint_tests;
 mod runtime_attachment_tests;
 
 const PROFILE_TIME: &str = "2026-09-05T00:00:00Z";
@@ -355,6 +356,7 @@ impl LiveAgentStopper for AgentStopRecorder {
 
 struct CheckpointPurgeRecorder {
     actions: ActionLog,
+    failures: Arc<AtomicUsize>,
 }
 
 #[async_trait::async_trait]
@@ -365,6 +367,17 @@ impl CheckpointObjectPurger for CheckpointPurgeRecorder {
         _operation_id: &str,
     ) -> Result<(), SandboxDependencyError> {
         self.actions.push("purge-checkpoints");
+        if self
+            .failures
+            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |value| {
+                value.checked_sub(1)
+            })
+            .is_ok()
+        {
+            return Err(SandboxDependencyError::Transient(
+                "checkpoint cleanup pending".into(),
+            ));
+        }
         Ok(())
     }
 }
@@ -378,6 +391,7 @@ struct Harness {
     adapter: Arc<dyn SandboxAdapter>,
     registry: Arc<LiveAgentRegistry>,
     actions: ActionLog,
+    checkpoint_failures: Arc<AtomicUsize>,
     reference: SandboxProfileRef,
     policy: SandboxPolicy,
 }
@@ -410,6 +424,7 @@ impl Harness {
         let (adapter, backend) = CodexAdapter::in_memory(CodexSandboxSpec::default());
         let adapter: Arc<dyn SandboxAdapter> = Arc::new(adapter);
         let registry = Arc::new(LiveAgentRegistry::default());
+        let checkpoint_failures = Arc::new(AtomicUsize::new(0));
         let dependencies = SandboxWorkerDependencies {
             store: store.clone(),
             adapter: Arc::clone(&adapter),
@@ -422,6 +437,7 @@ impl Harness {
             }),
             checkpoints: Arc::new(CheckpointPurgeRecorder {
                 actions: actions.clone(),
+                failures: checkpoint_failures.clone(),
             }),
             registry: registry.clone(),
             updates: DurableAgentUpdateRecorder::new(store.clone()),
@@ -441,6 +457,7 @@ impl Harness {
             adapter,
             registry,
             actions,
+            checkpoint_failures,
             reference,
             policy,
         }
@@ -536,6 +553,7 @@ impl Harness {
             }),
             checkpoints: Arc::new(CheckpointPurgeRecorder {
                 actions: self.actions.clone(),
+                failures: self.checkpoint_failures.clone(),
             }),
             registry: self.registry.clone(),
             updates: DurableAgentUpdateRecorder::new(self.store.clone()),
@@ -566,6 +584,7 @@ impl Harness {
             }),
             checkpoints: Arc::new(CheckpointPurgeRecorder {
                 actions: self.actions.clone(),
+                failures: self.checkpoint_failures.clone(),
             }),
             registry: self.registry.clone(),
             updates: DurableAgentUpdateRecorder::new(self.store.clone()),
@@ -1188,7 +1207,7 @@ async fn expiry_margin_controls_delivery_and_the_earlier_rotation_deadline() {
 }
 
 #[tokio::test]
-async fn delete_revokes_tears_down_retires_then_purges_after_grace() {
+async fn delete_cleans_snapshots_before_retirement_and_preserves_history_until_grace() {
     let grace = Duration::from_secs(60);
     let harness = Harness::new(Vec::new(), 0, grace).await;
     let created = harness.create().await;
@@ -1209,7 +1228,12 @@ async fn delete_revokes_tears_down_retires_then_purges_after_grace() {
     assert_eq!(retired.purge_after, Some(rfc3339_at(now + grace)));
     assert_eq!(
         harness.actions.snapshot(),
-        ["mint:1", "stop-agents", "revoke:provider-key-1"]
+        [
+            "mint:1",
+            "stop-agents",
+            "revoke:provider-key-1",
+            "purge-checkpoints"
+        ]
     );
     assert!(!harness.worker.run_one(&created.id, now).await.unwrap());
     assert!(!harness
@@ -1234,6 +1258,7 @@ async fn delete_revokes_tears_down_retires_then_purges_after_grace() {
             "mint:1",
             "stop-agents",
             "revoke:provider-key-1",
+            "purge-checkpoints",
             "purge-checkpoints",
         ]
     );
@@ -1322,6 +1347,7 @@ async fn failed_retirement_revocation_is_durable_debt_and_retried() {
             "mint:1",
             "stop-agents",
             "revoke:provider-key-1",
+            "purge-checkpoints",
             "revoke:provider-key-1",
         ]
     );
@@ -1412,10 +1438,15 @@ async fn custody_that_appears_after_the_grace_check_blocks_purge_until_revoked()
     let deferred = harness.stored(&active.id).await;
     assert_eq!(deferred.work.step, SandboxWorkStep::RetryRetiredRevocations);
     assert_eq!(deferred.credential.revoke_debt.len(), 1);
-    assert!(!harness
-        .actions
-        .snapshot()
-        .contains(&"purge-checkpoints".into()));
+    assert_eq!(
+        harness
+            .actions
+            .snapshot()
+            .iter()
+            .filter(|action| action.as_str() == "purge-checkpoints")
+            .count(),
+        1
+    );
 
     harness.run(&active.id, purge_at).await;
     harness.run(&active.id, purge_at).await;

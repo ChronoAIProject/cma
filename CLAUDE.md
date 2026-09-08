@@ -326,6 +326,9 @@ older completed objects are pruned; legacy two-generation records are accepted u
 their next successful publication. Periodic capture defaults to thirty minutes and
 uses the live global admin checkpoint interval; manual and automatic pause still
 require a fresh consistent checkpoint before teardown.
+Deleting a Sandbox removes its snapshot archives after runtime teardown and before
+reporting Deleted. Conversation and lifecycle history retain their separate grace
+period; archive cleanup failures remain durable, retryable deletion work.
 Periodic capture waits that same interval from the later of the latest snapshot
 and current runtime binding. Initial provisioning and revival must not immediately
 capture just because the previous snapshot is missing or overdue.

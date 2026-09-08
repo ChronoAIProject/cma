@@ -231,6 +231,7 @@ pub(super) async fn restarted_worker(harness: &Harness, now: SystemTime) -> Arc<
             }),
             checkpoints: Arc::new(CheckpointPurgeRecorder {
                 actions: harness.actions.clone(),
+                failures: harness.checkpoint_failures.clone(),
             }),
             registry: registry.clone(),
             updates: DurableAgentUpdateRecorder::new(harness.store.clone()),
