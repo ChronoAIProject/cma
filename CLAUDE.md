@@ -329,6 +329,8 @@ require a fresh consistent checkpoint before teardown.
 Deleting a Sandbox removes its snapshot archives after runtime teardown and before
 reporting Deleted. Conversation and lifecycle history retain their separate grace
 period; archive cleanup failures remain durable, retryable deletion work.
+The archive cleanup sweep also reconciles snapshots retained by earlier releases
+against validated Deleted Sandbox records without deleting their history.
 Periodic capture waits that same interval from the later of the latest snapshot
 and current runtime binding. Initial provisioning and revival must not immediately
 capture just because the previous snapshot is missing or overdue.
