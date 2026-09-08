@@ -18,8 +18,8 @@ Monitor disk usage and inspect exact targets before removing stale artifacts.
 | 3 | Live Sandbox creates Workspace with multiple Agent Profiles | Production UI and public API pass: Workspace and two distinct correctly pinned Agent/Worktree pairs Ready in 15,009 ms, with no first prompts sent. Same creation evidence as #1. |
 | 4 | Snapshots never interrupt creation, deletion or Agent interaction | Not satisfied: deployed whole-home capture holds writers. Requires a consistent point-in-time copy without a capture-duration writer lock, then concurrent production checks. |
 | 5 | Storage physically retains only the latest snapshot | Completed publication prunes the previous generation. Runtime audit found two sealed local archives of 1,804,395,715 and 1,804,436,309 bytes. Runtime scratch and orphan cleanup remain unsatisfied; do not equate metadata pruning with physical retention acceptance. |
-| 6 | Terminated Sandbox snapshots are deleted | Pending complete storage audit, including runtime scratch and orphan objects. |
-| 7 | All lifecycle screens show secret-free bounded live logs and sync time | Shared lifecycle progress exists. Audit all relevant screens and actual telemetry; verify bounded scrolling in production. |
+| 6 | Terminated Sandbox snapshots are deleted | Not satisfied at deletion confirmation: worker/retirement.rs invokes archive purge only at final record purge after retention grace. Immediate snapshot-only cleanup must preserve retained conversation history. Complete storage and orphan audit still pending. |
+| 7 | All lifecycle screens show secret-free bounded live logs and sync time | Not satisfied: LifecycleProgress shows current phase and a static ordered stage list; it is not a bounded live event feed. Public Sandbox event history exists and should supply safe translated records across Launch, Sandbox, Agent and deletion surfaces. |
 | 8 | New Agent fields are understandable, profiles have anchored hover details, deleted choices are excluded | Initial batch df6e58e3; production creation exposed mobile hover previews intercepting Create workspace. Corrected and deployed in fa3f6850: previews leave dialog header/footer reachable, selection dismisses pending/open preview. Real clicks and geometry pass at 1440x900, 390x900 and 390x600, both appearances; 1,131 frontend tests pass. |
 | 9 | No review/consent flash for no-review Triggers | Pending browser verification against the required Trigger, including fresh sign-in and resumed Launch. |
 | 10 | Profiles and Marketplace use CMA-styled Ornn-inspired cards/details | Shared cards deployed in web 7c01741f and author names in API 7e7d458e. Production 18-case verification passes all three profile kinds in both directories at 1440/390/320px, light/dark, full-card detail navigation and Marketplace Use availability. Screenshots inspected. Evidence: profile-cards-64FpRT/result.json. |
@@ -126,10 +126,9 @@ image identity and measured results for each behavior, with unknowns left explic
 
 ## Next Verification Work
 
-- The first-periodic-snapshot delay passed the initial three-minute observation,
-  but pausing the untouched test Agent exposed missing provider persistence.
-  Deploy and verify the provider fix, including zero-turn pause and resume.
-  The full thirty-minute boundary has not been observed in production.
+- Untouched-Agent pause/resume and the initial three-minute snapshot delay now
+  pass production verification. The full thirty-minute boundary has not been
+  observed in production. Repeat the named README Trigger on the new runtime.
 - Verify deletion while the same Sandbox is snapshotting after #4 is corrected.
   Standalone live-child Workspace deletion now passes production acceptance.
 - Continue the complete register above, especially consistent nonblocking
@@ -238,3 +237,29 @@ image identity and measured results for each behavior, with unknowns left explic
   and the exact failed timing-test Sandbox were removed; no owner history,
   persistent local volume, worktree or Docker cache was deleted. No merge to
   develop or main was performed.
+- Runtime 14c05f26 deployed at
+  sha256:dc2742368ac98d3497e3841cc46997b7d2f2051453c5dcb6c9e184a11eeaa1d0
+  in a fully checked runtime-absent window. API/web image identities are unchanged;
+  the runtime ConfigMap pin and declarative pod-template annotation reload the API
+  environment. Evidence: persistence-runtime-rollout-NHgQUo and
+  persistence-runtime-postflight-QlOyUS. Both owner Agent histories preserved,
+  zero helper/runtime Pods and zero container restarts at postflight.
+- The runtime build repeats the offline zero-turn restart/load proof. Its
+  Linux/amd64 image scan, exact executable hashes, runtime contract campaign,
+  remote digest verification and ten image-evidence regressions pass. Local
+  kubeconform was unavailable; Kubernetes schema validation with client dry-run
+  accepted both changed manifests without applying them.
+- Production initial-snapshot-delay-xfAfzR passed: no initial periodic capture
+  during the three-minute observation, manual pause in 23,550 ms, revive in
+  26,095 ms, and the same underlying conversation digest in a distinct replacement
+  runtime. Agent, Workspace and Worktree IDs and the zero-turn transcript were
+  preserved. No model call or first prompt was sent. Both owner history hashes
+  remained unchanged, and the exact test Sandbox was retired successfully.
+  These timings concern a small default Sandbox, not the large Trureturing home.
+- Initial retry mJyE8x reached Ready but its read-only verifier traversed a
+  concurrently removed plugin scratch directory. The harness now reads only
+  sessions; the same restriction was added to the offline test. The retry's
+  exact test Sandbox was cleaned up. This harness failure is not pause acceptance
+  and does not replace the successful xfAfzR evidence.
+- Disk remained at 49 GiB free after the runtime image and local cache were built.
+  No Docker restart, worktree deletion or cache pruning was necessary.
