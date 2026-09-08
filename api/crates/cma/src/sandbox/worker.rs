@@ -181,7 +181,7 @@ impl SandboxWorker {
         else {
             return Ok(false);
         };
-        self.execute(sandbox, now).await?;
+        Box::pin(self.execute(sandbox, now)).await?;
         Ok(true)
     }
 
@@ -191,7 +191,7 @@ impl SandboxWorker {
         sandbox: Sandbox,
         now: SystemTime,
     ) -> Result<(), SandboxStoreError> {
-        self.execute(sandbox, now).await
+        Box::pin(self.execute(sandbox, now)).await
     }
 
     async fn execute(&self, sandbox: Sandbox, now: SystemTime) -> Result<(), SandboxStoreError> {

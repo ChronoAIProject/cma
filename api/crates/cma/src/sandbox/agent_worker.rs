@@ -98,7 +98,7 @@ impl AgentWorker {
         else {
             return Ok(false);
         };
-        self.execute(agent, now + started.elapsed()).await?;
+        Box::pin(self.execute(agent, now + started.elapsed())).await?;
         Ok(true)
     }
 
