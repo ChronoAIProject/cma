@@ -3,6 +3,63 @@ import userEvent from '@testing-library/user-event';
 import { expect, it, vi } from 'vitest';
 import { Composer } from './Composer';
 
+function editableComposer() {
+  const onSend = vi.fn();
+  render(
+    <Composer
+      status="ready"
+      running={false}
+      busy={false}
+      inputAvailability={{ allowed: true }}
+      onSend={onSend}
+      onStop={vi.fn()}
+    />,
+  );
+  const field = screen.getByRole('textbox', { name: 'Message' });
+  fireEvent.change(field, { target: { value: '  draft in composition  ' } });
+  return { field, onSend };
+}
+
+it('preserves the draft when Enter confirms composition, including missing native composition flags', async () => {
+  const { field, onSend } = editableComposer();
+  fireEvent.compositionStart(field);
+  expect(fireEvent.keyDown(field, { key: 'Enter', isComposing: false })).toBe(true);
+  fireEvent.submit(screen.getByRole('form', { name: 'Message Agent' }));
+  expect(onSend).not.toHaveBeenCalled();
+  expect(field).toHaveValue('  draft in composition  ');
+  fireEvent.compositionEnd(field);
+  expect(onSend).not.toHaveBeenCalled();
+  await act(async () => {
+    fireEvent.keyDown(field, { key: 'Enter' });
+  });
+  expect(onSend).toHaveBeenCalledExactlyOnceWith('draft in composition', expect.any(Function));
+});
+
+it.each([{ isComposing: true }, { isComposing: false, keyCode: 229 }])(
+  'does not consume IME Enter with native flags %j',
+  (flags) => {
+    const { field, onSend } = editableComposer();
+    fireEvent.compositionStart(field);
+    fireEvent.compositionEnd(field);
+    expect(fireEvent.keyDown(field, { key: 'Enter', ...flags })).toBe(true);
+    expect(onSend).not.toHaveBeenCalled();
+    expect(field).toHaveValue('  draft in composition  ');
+  },
+);
+
+it('retains Shift+Enter newlines and sends only on ordinary Enter', async () => {
+  const { field, onSend } = editableComposer();
+  const actor = userEvent.setup();
+  await actor.type(field, '{Shift>}{Enter}{/Shift}second line');
+  expect(field).toHaveValue('  draft in composition  \nsecond line');
+  expect(onSend).not.toHaveBeenCalled();
+  await actor.keyboard('{Enter}');
+  expect(onSend).toHaveBeenCalledExactlyOnceWith(
+    'draft in composition  \nsecond line',
+    expect.any(Function),
+  );
+});
+
 it('retains an editable draft and reports saving while holding both Enter and Send', async () => {
   const onSend = vi.fn();
   const actor = userEvent.setup();
