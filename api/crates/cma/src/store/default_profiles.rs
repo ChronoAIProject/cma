@@ -19,7 +19,7 @@ use super::profile_documents::revision_document;
 use super::sandbox_mongo::MongoProfileStore;
 use super::{agent_profiles, sandbox_profiles, workspace_profiles};
 
-const SYSTEM_OWNER: &str = "system";
+pub(super) const SYSTEM_OWNER: &str = "system";
 const SEEDED_AT: &str = "2026-09-05T00:00:00Z";
 const DEFAULT_MAX_WORKSPACES: u8 = 4;
 const DEFAULT_MAX_AGENTS_PER_WORKSPACE: u8 = 4;
