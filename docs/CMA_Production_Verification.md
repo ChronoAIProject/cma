@@ -17,19 +17,21 @@ acceptance of this campaign.
 | 4. Public Trigger | Exact title/message, all-level reuse, Try It, visitor theme, no review, README placement | Exact revision published after first rollout; README-only PR #841 merged after all 12 protected checks; default README snippet read back exactly |
 | 5. Login without bootstrap | No Sandbox, Workspace, Agent, or Profile created by login alone | Existing-owner fresh-browser sign-in created no resources; successful unseen-CMA-identity callback contract passes default/home/Trigger returns; external fresh signup not tested |
 | 6. Complete external-click flow | Login then automatic provisioning; exact first message once; correct software, skills, scopes | Latest `lifecycle-fresh` README entry on API `619535ad` and web `1eb60be1` passed automatic provisioning and exact first prompt once; prior configuration/workload and restored-file proofs remain tied to their original source; final fresh configuration and genuinely paused README-repeat acceptance remain pending |
-| 7. Previous UI style | Original rotating 3D mark and established controls; desktop/mobile screenshots | Prior live home/provisioning motion and four-view chat checks passed; latest first-run mobile resize capture is a transition artifact, not a settled layout pass; settled mobile reload is readable; final explicit hierarchy/layout verification is prepared but not run |
+| 7. Previous UI style | Original rotating 3D mark and established controls; desktop/mobile screenshots | Prior live home/provisioning motion and four-view chat checks passed; latest first-run mobile resize capture remains a transition artifact, not settled acceptance; web `4ddcd1b9` fixes delayed title freshness and is building, not deployed; final title/hierarchy/layout verification is prepared but not run |
 | 8. Autonomous YOLO | Pinned provider runs full-access mode with no approval requests | Actual provider configuration verified; latest first response and successful subsequent workload completed with zero approvals |
-| 9. Lifecycle | Active to paused to active; paused to terminated; history retained | Latest single UI Pause passed at 00:11 UTC with exact hierarchy/history retained; first Resume verifier stopped before any command on an omitted paused-runtime field; corrected proof-bound manual Resume is active, not yet accepted; paused Delete remains pending; earlier heavy-cycle failures and nonquiet rollout remain recorded |
-| 10. Cleanup | Only identified stale state removed; new published flow remains usable | Identified old Sandboxes and the verified heavy test baseline were retired through supported owner commands; the latest Delete began from Pausing, not Paused; final environment remains pending |
+| 9. Lifecycle | Active to paused to active; paused to terminated; history retained | Latest manual Resume passed at 00:24 UTC with the exact runtime/hierarchy/history, and second Pause passed at 00:27 UTC; one genuinely paused Delete was admitted at 00:28 UTC but is stuck retiring because its runtime is absent; backend correction and successful Delete remain pending; previous failures remain recorded |
+| 10. Cleanup | Only identified stale state removed; new published flow remains usable | Identified old Sandboxes and the verified heavy test baseline were retired through supported owner commands; the latest fresh-baseline Delete began from genuinely Paused but has not completed; final environment remains pending |
 | 11. Conversation UI | Thinking, Send/Stop, CPU, RAM, context, token, network metrics | Prior four-view metrics, Thinking, scrolling and lifecycle input holds passed; latest fresh-baseline UI test sent one message, observed its exact tool command, interrupted once, verified the public interrupted outcome, restored Send and preserved reloaded history |
 
 The latest observed production versions are API `619535ad`, web `1eb60be1`, and
 runtime `137b489d`, independently verified at 2026-09-07 23:42 UTC after a fresh
 all-owner quiet-state guard. The separate `lifecycle-fresh` Trigger journey,
-Send/Stop and UI Pause have passed. Manual Resume is in progress as of
-2026-09-08 00:18 UTC; paused Delete and final fresh/paused-repeat acceptance
-remain pending. The historical deployed-component table below is not the current
-campaign's image inventory.
+Send/Stop, manual Resume and both UI Pauses have passed. As of 2026-09-08
+00:36 UTC, the one genuinely paused Delete is stuck retiring, a narrow backend
+correction is in progress, and web title fix `4ddcd1b9` is building but not
+deployed. Final fresh/paused-repeat acceptance waits for the corrections and
+the original Delete to settle. The historical deployed-component table below
+is not the current campaign's image inventory.
 
 Private campaign evidence is kept under `/tmp/cma-trureturing-loop.LvTezb` and
 must not be committed or uploaded wholesale. One existing NyxID owner account is
@@ -869,19 +871,75 @@ completed Paused revision, pre-Pause image, no pending lifecycle/checkpoint, and
 the entire unchanged transcript. Eleven offline guard groups pass. The revived
 live runtime image must still be checked after Resume.
 
-The sole active mutating verifier is now the guarded manual Resume recorded in
-`lifecycle-lifecycle-fresh-manual-verified-resume/`, using the preceding
-`lifecycle-fresh-manual` Pause proof. As of 00:18 UTC it has not supplied a passing
-result. Follow that already-started verifier; do not issue another Resume,
-Launch, message or deployment because this documentation lists pending work.
+The guarded manual Resume in
+`lifecycle-lifecycle-fresh-manual-verified-resume/result.json` passed at
+00:24:47.869 UTC. It used the exact preceding `lifecycle-fresh-manual` Pause
+proof and one UI revive command, advancing Paused revision 24 through Reviving
+revision 30 to Active revision 45 at 00:24:46.002. The four identities and
+complete two-turn history were retained. `sandbox-after.json` confirms the live
+runtime binding is again the exact `137b489d` image digest. This successful
+supported Resume does not relabel the first verifier's zero-command failure.
+
+### Paused Delete Blocker
+
+The second UI Pause in `lifecycle-lifecycle-fresh-delete-pause/result.json`
+passed at 00:27:33.552 UTC, retaining the exact hierarchy and complete two-turn
+history. The Sandbox advanced from Active revision 45 through Pausing revision
+47 to genuinely Paused revision 51 at 00:27:31.693. That exact completed Pause
+supplied `CMA_PAUSE_PROOF_LABEL=lifecycle-fresh-delete` to the Delete verifier.
+
+One UI Delete was admitted at 00:28:18 UTC. The sole active mutating verifier
+continues observing that original operation in
+`lifecycle-lifecycle-fresh-delete-delete/`; no successful result is accepted.
+The Sandbox is stuck Retiring at `stop_agents`: the paused runtime is already
+absent, but Agent cleanup retries the runtime-dependent close-process path.
+There is no active Agent work. Unlike the earlier omitted-field verifier error,
+this is a product defect in deleting a genuinely paused Sandbox.
+
+A narrow parent-fenced core/worker correction is being implemented. No database
+or runtime repair, duplicate Delete, new message or fresh Launch is used. A
+separate exact paused-retirement API recovery preflight is prepared but has not
+run; the ordinary all-owner deployment guard remains blocked. It must not be
+weakened or represented as an all-quiet pass to admit the recovery rollout.
+Final fresh acceptance waits until the verified correction is deployed and the
+original Delete settles with its history and cleanup checks.
+
+### Generated Title Correction
+
+The stale first-run heading was reproduced locally: the sidebar's existing
+hierarchy refresh saw the generated title after the first completed turn, while
+Agent detail polling had already stopped and its header/tab remained Untitled.
+Source `4ddcd1b9` passes the existing navigation metadata to the Agent controller
+and updates only title metadata. Exact Agent, Sandbox, Workspace and Worktree
+identities, a nonempty title and a nonolder observation are required. There is no
+additional polling, conversation reload, new route or style change.
+
+Eleven focused regressions pass, including the previously failing delayed-title
+Console test. The same focused composer DOM node, unsent draft, rendered messages
+and history are retained, with no extra Agent/transcript reads or message sends.
+Unrelated, blank, malformed-time and older metadata are refused; previously
+learned titles survive absent/older snapshots and do not leak across Agent
+navigation. All 1,005 frontend tests in 89 files, typechecking, lint, formatting
+and scoped secret scans passed. The exact web image is building, not deployed.
+
+Future first/repeat verifiers now require API/header/tab/tree title equality
+before any reload, then verify the collapsed-mobile header/tab before and after
+reload. Title observation performs only exact-Agent GETs and never uses reload
+to make the assertion pass. The final hierarchy verifier checks the same title
+when selected, expanded and reloaded, and requires passing pre-reload title
+evidence from both final journeys. Twenty offline title, evidence, request-policy,
+ancestry and settled-geometry groups pass with syntax and secret scans. These
+scratch changes leave all earlier evidence untouched and have not run against
+production.
 
 ### Pending Corrected Acceptance
 
 The remaining superseding sequence in private `final-flow-audit.md` requires:
 
-1. Finish the existing manual Resume and verify the revived runtime image. Then
-   perform another UI Pause followed by Delete from genuinely Paused on
-   `lifecycle-fresh`, using that exact completed Pause proof.
+1. Verify, build and deploy the narrow paused-Delete backend correction through
+   the separate exact recovery preflight; observe the original Delete to
+   completion without repeating it. Deploy the tested web title correction
+   before admitting `final-fresh`. Ordinary deployment guards remain intact.
 2. Run the final fresh README journey and admission-bound configuration observer
    as `final-fresh`, waiting for the observer's `owner_verified` marker before
    admission. Explicitly Pause that baseline and run `final-repeat` with
@@ -890,7 +948,7 @@ The remaining superseding sequence in private `final-flow-audit.md` requires:
    add no first prompt, approval workaround or manual continuation click.
 3. After final-repeat passes, run the prepared read-only explicit hierarchy and
    settled desktop/mobile light/dark checks without new messages or lifecycle
-   commands. Fifteen offline evidence, request-policy, ancestry and geometry
+   commands. Twenty offline title, evidence, request-policy, ancestry and geometry
    tests pass; that preparation is not production acceptance.
 4. Leave the final environment, published profile pins, Trigger and default
    README intact. Preserve all failed attempts and keep fresh-signup,
@@ -898,9 +956,9 @@ The remaining superseding sequence in private `final-flow-audit.md` requires:
 
 All future Resume, paused Delete and final-repeat verifiers must set
 `CMA_PAUSE_PROOF_LABEL` to the exact preceding completed Pause label. Use
-`lifecycle-fresh-delete` for the planned paused Delete and `final-fresh-readme`
+`lifecycle-fresh-delete` for the already-admitted paused Delete and `final-fresh-readme`
 for final-repeat; labels are evidence bindings, not permission to repeat a
-command. The active manual Resume uses `lifecycle-fresh-manual`.
+command. The completed manual Resume used `lifecycle-fresh-manual`.
 
 ## Historical Observation
 
