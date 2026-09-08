@@ -46,7 +46,9 @@ export function LifecycleProgress({
   if (operation === undefined) return null;
   const phases: readonly string[] =
     operation.purpose === 'pause'
-      ? pausePhases
+      ? operation.phase === 'resume_writers'
+        ? ['resume_writers']
+        : pausePhases
       : operation.purpose === 'revive'
         ? restorePhases
         : [...pausePhases.slice(0, -1), ...restorePhases];

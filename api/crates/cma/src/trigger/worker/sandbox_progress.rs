@@ -34,6 +34,9 @@ impl LaunchWorker {
         match sandbox.status {
             SandboxStatus::Active => self.record_sandbox_ready(launch, context, now).await,
             SandboxStatus::Paused => self.revive_waiting_sandbox(launch, id, reused, now).await,
+            SandboxStatus::Pausing if sandbox.can_cancel_pause() => {
+                self.revive_waiting_sandbox(launch, id, reused, now).await
+            }
             SandboxStatus::Reviving => {
                 self.block(
                     launch,

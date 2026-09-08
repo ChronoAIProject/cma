@@ -637,6 +637,8 @@ impl LaunchResourceDriver for FakeDriver {
                     if sandbox.status == SandboxStatus::Paused {
                         sandbox.status = SandboxStatus::Reviving;
                         sandbox.updated_at = stamp(1);
+                    } else if sandbox.status == SandboxStatus::Pausing {
+                        sandbox.request_pause_cancellation(stamp(1)).unwrap();
                     }
                 });
                 self.record_result(EffectCall {

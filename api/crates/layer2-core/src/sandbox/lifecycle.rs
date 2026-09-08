@@ -22,6 +22,7 @@ pub enum SandboxPausePhase {
     PauseAgents,
     TeardownRuntime,
     PublishPaused,
+    ResumeWriters,
 }
 
 impl SandboxPausePhase {
@@ -34,7 +35,7 @@ impl SandboxPausePhase {
             Self::CaptureAndPublishCheckpoint => Some(Self::PauseAgents),
             Self::PauseAgents => Some(Self::TeardownRuntime),
             Self::TeardownRuntime => Some(Self::PublishPaused),
-            Self::PublishPaused => None,
+            Self::PublishPaused | Self::ResumeWriters => None,
         }
     }
 }

@@ -11,8 +11,8 @@ use utoipa::ToSchema;
 #[path = "sandbox_lifecycle_view.rs"]
 mod lifecycle;
 pub use lifecycle::{
-    SandboxCheckpointView, SandboxLifecycleEligibilityView, SandboxLifecycleOperationView,
-    SandboxLifecycleView,
+    SandboxCheckpointView, SandboxCompletedSnapshotView, SandboxLifecycleEligibilityView,
+    SandboxLifecycleOperationView, SandboxLifecycleView,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]

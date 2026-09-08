@@ -381,6 +381,23 @@ fn validate_final_publication_agents(
     sandbox: &Sandbox,
     agents: &[(Agent, u64)],
 ) -> Result<(), SandboxStoreError> {
+    if matches!(
+        sandbox.lifecycle.operation,
+        Some(SandboxLifecycleOperation::Pause {
+            phase: SandboxPausePhase::ResumeWriters,
+            ..
+        })
+    ) {
+        if agents
+            .iter()
+            .any(|(agent, _)| sandbox.restores_agent(agent) && agent.status == AgentStatus::Paused)
+        {
+            return Err(invalid(
+                "pause cancellation cannot expose parked agents as active",
+            ));
+        }
+        return Ok(());
+    }
     let publishing_active = matches!(
         sandbox.lifecycle.operation,
         Some(SandboxLifecycleOperation::Revive {

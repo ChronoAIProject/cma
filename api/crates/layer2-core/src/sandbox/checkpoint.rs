@@ -11,7 +11,8 @@ use crate::seconds_from_rfc3339;
 
 use super::{Sandbox, SandboxModelError, SandboxStatus};
 
-pub const SANDBOX_CHECKPOINT_INTERVAL_SECONDS: u64 = 5 * 60;
+pub const SANDBOX_CHECKPOINT_INTERVAL_SECONDS: u64 =
+    crate::platform::DEFAULT_CHECKPOINT_INTERVAL_SECONDS;
 pub const MAX_SANDBOX_CONVERSATION_SNAPSHOT_BYTES: u64 = 256 * 1024 * 1024;
 
 /// One conversation identity and digest sealed into the whole-home manifest.
@@ -222,7 +223,7 @@ impl SandboxCheckpointRef {
     }
 }
 
-/// The only two complete recovery generations eligible for ordinary pruning.
+/// Latest recovery point, accepting a legacy previous generation until publication.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SandboxCheckpointHistory {
@@ -233,9 +234,7 @@ pub struct SandboxCheckpointHistory {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SandboxCheckpointPublication {
     Replayed,
-    Published {
-        evicted: Option<SandboxCheckpointRef>,
-    },
+    Published { evicted: Vec<SandboxCheckpointRef> },
 }
 
 impl SandboxCheckpointHistory {
@@ -259,7 +258,7 @@ impl SandboxCheckpointHistory {
         Ok(())
     }
 
-    /// Publish monotonically, retaining the old latest and returning the evicted ref.
+    /// Publish monotonically, evicting old generations only with a complete replacement.
     pub fn publish(
         &mut self,
         checkpoint: SandboxCheckpointRef,
@@ -276,8 +275,12 @@ impl SandboxCheckpointHistory {
         {
             return Err(invalid_checkpoint());
         }
-        let evicted = self.previous.take();
-        self.previous = self.latest.replace(checkpoint);
+        let evicted = self
+            .previous
+            .take()
+            .into_iter()
+            .chain(self.latest.replace(checkpoint))
+            .collect();
         self.validate()?;
         Ok(SandboxCheckpointPublication::Published { evicted })
     }
@@ -285,10 +288,19 @@ impl SandboxCheckpointHistory {
 
 /// Periodic captures require both checkpoint age and confirmed writer-release cooldown.
 pub fn sandbox_checkpoint_due(sandbox: &Sandbox, now: &str) -> bool {
+    sandbox_checkpoint_due_with_interval(sandbox, now, SANDBOX_CHECKPOINT_INTERVAL_SECONDS)
+}
+
+pub fn sandbox_checkpoint_due_with_interval(
+    sandbox: &Sandbox,
+    now: &str,
+    interval_seconds: u64,
+) -> bool {
     let Some(now_seconds) = seconds_from_rfc3339(now) else {
         return false;
     };
-    if sandbox.status != SandboxStatus::Active
+    if !(60..=86_400).contains(&interval_seconds)
+        || sandbox.status != SandboxStatus::Active
         || sandbox.runtime.is_none()
         || !sandbox.checkpoint_capture_cooldown_elapsed(now)
     {
@@ -301,9 +313,8 @@ pub fn sandbox_checkpoint_due(sandbox: &Sandbox, now: &str) -> bool {
         .as_ref()
         .is_none_or(|checkpoint| {
             checkpoint.validate().is_ok()
-                && seconds_from_rfc3339(&checkpoint.sealed_at).is_some_and(|sealed| {
-                    now_seconds >= sealed.saturating_add(SANDBOX_CHECKPOINT_INTERVAL_SECONDS)
-                })
+                && seconds_from_rfc3339(&checkpoint.sealed_at)
+                    .is_some_and(|sealed| now_seconds >= sealed.saturating_add(interval_seconds))
         })
 }
 

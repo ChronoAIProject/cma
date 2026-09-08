@@ -89,6 +89,10 @@ fn sandbox_only_events(
                 Some(SandboxLifecycleOperation::Revive { .. }) => {
                     events.push(SandboxEventKind::Revived)
                 }
+                Some(SandboxLifecycleOperation::Pause {
+                    phase: crate::sandbox::SandboxPausePhase::ResumeWriters,
+                    ..
+                }) => {}
                 Some(SandboxLifecycleOperation::ImageRotation {
                     target_runtime_version,
                     ..

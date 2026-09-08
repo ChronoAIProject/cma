@@ -99,9 +99,10 @@ pub use agent_work::{
     ResolvedAgentSkill,
 };
 pub use checkpoint::{
-    sandbox_checkpoint_due, SandboxCheckpointConversation, SandboxCheckpointConversationRef,
-    SandboxCheckpointHistory, SandboxCheckpointPublication, SandboxCheckpointRef,
-    MAX_SANDBOX_CONVERSATION_SNAPSHOT_BYTES, SANDBOX_CHECKPOINT_INTERVAL_SECONDS,
+    sandbox_checkpoint_due, sandbox_checkpoint_due_with_interval, SandboxCheckpointConversation,
+    SandboxCheckpointConversationRef, SandboxCheckpointHistory, SandboxCheckpointPublication,
+    SandboxCheckpointRef, MAX_SANDBOX_CONVERSATION_SNAPSHOT_BYTES,
+    SANDBOX_CHECKPOINT_INTERVAL_SECONDS,
 };
 pub use checkpoint_capture::{SandboxCheckpointCapture, SandboxCheckpointCapturePhase};
 pub use conversation::{
@@ -131,8 +132,9 @@ pub use first_message_service::{AgentWorkAuthority, FirstMessageDispatchOutcome}
 pub use hierarchy::{
     AgentHierarchySummary, HierarchyCounts, HierarchyReadError, HierarchyReadService,
     HierarchyReadStore, OwnerSandboxQuery, SandboxHierarchyRecord, SandboxHierarchySummary,
-    SandboxHierarchyView, SandboxInventoryRecord, WorkspaceHierarchyRecord,
-    WorkspaceHierarchySummary, WorkspaceHierarchyView, WorktreeHierarchySummary,
+    SandboxHierarchyView, SandboxInventoryRecord, SandboxSnapshotDownload,
+    WorkspaceHierarchyRecord, WorkspaceHierarchySummary, WorkspaceHierarchyView,
+    WorktreeHierarchySummary,
 };
 pub use inactivity::{
     inactivity_pause_notice, is_inactivity_pause_candidate, SandboxAgentActivity,

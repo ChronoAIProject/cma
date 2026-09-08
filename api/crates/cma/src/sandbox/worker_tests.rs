@@ -49,6 +49,7 @@ mod lifecycle_failure_clock_tests;
 mod lifecycle_queue_conflict_tests;
 mod lifecycle_queue_tests;
 mod lifecycle_recovery_tests;
+mod pause_cancellation_tests;
 mod reconciliation_tests;
 mod runtime_attachment_tests;
 
@@ -394,6 +395,7 @@ impl Harness {
             max_sandboxes_per_owner: 3,
             max_sandboxes_per_visitor: 1,
             inactivity_pause_after_seconds: 15 * 60,
+            checkpoint_interval_seconds: layer2_core::DEFAULT_CHECKPOINT_INTERVAL_SECONDS,
             retention_grace: retention,
             baseline_services: vec![ServiceId::new("baseline-model")],
         };

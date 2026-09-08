@@ -77,12 +77,14 @@ impl SandboxLifecycleComposition {
             config.runtime_version.clone(),
         )
         .with_profile_agents(Arc::clone(&dependencies.agents));
-        let checkpoints = SandboxScheduler::for_checkpoints(SandboxCheckpointMaintenance::new(
-            dependencies.store.clone(),
-            Arc::clone(&dependencies.adapter),
-            config.deployment_id.clone(),
-            format!("{}:checkpoint", config.holder),
-        ));
+        let checkpoints =
+            SandboxScheduler::for_checkpoints(SandboxCheckpointMaintenance::with_policy_source(
+                dependencies.store.clone(),
+                Arc::clone(&dependencies.adapter),
+                config.deployment_id.clone(),
+                format!("{}:checkpoint", config.holder),
+                Arc::clone(&dependencies.policy),
+            ));
         let updates = DurableAgentUpdateRecorder::new(Arc::clone(&dependencies.store));
         let registry = Arc::clone(&dependencies.registry);
         let titles = AgentTitleScheduler::new(AgentTitleWorker::new(

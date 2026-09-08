@@ -277,7 +277,7 @@ async fn apply_publication(
     .await?;
     // Archive reclamation shares this transaction so metadata and object
     // authority cannot disagree after a retry or ambiguous commit.
-    if let Some(evicted) = evicted_archive(
+    for evicted in evicted_archives(
         &current.lifecycle.checkpoints,
         &mutation.sandbox.lifecycle.checkpoints,
     ) {
@@ -296,19 +296,24 @@ async fn apply_publication(
     })
 }
 
-fn evicted_archive<'a>(
+fn evicted_archives<'a>(
     current: &'a SandboxCheckpointHistory,
     retained: &SandboxCheckpointHistory,
-) -> Option<&'a SandboxCheckpointRef> {
+) -> Vec<&'a SandboxCheckpointRef> {
     // Other unreferenced manifests may still be awaiting publication. Only the
     // completed generation displaced by this validated transition is deletable.
-    current.previous.as_ref().filter(|evicted| {
-        retained
-            .latest
-            .iter()
-            .chain(retained.previous.iter())
-            .all(|checkpoint| checkpoint.object_reference != evicted.object_reference)
-    })
+    current
+        .previous
+        .iter()
+        .chain(current.latest.iter())
+        .filter(|evicted| {
+            retained
+                .latest
+                .iter()
+                .chain(retained.previous.iter())
+                .all(|checkpoint| checkpoint.object_reference != evicted.object_reference)
+        })
+        .collect()
 }
 
 async fn prune_checkpoint_metadata(
@@ -410,13 +415,25 @@ mod tests {
             latest: Some(third),
             previous: Some(second),
         };
-        assert_eq!(evicted_archive(&current, &retained), Some(&first));
+        assert_eq!(evicted_archives(&current, &retained), vec![&first]);
 
         let shared = SandboxCheckpointHistory {
             latest: retained.latest,
             previous: Some(first.clone()),
         };
-        assert_eq!(evicted_archive(&current, &shared), None);
+        assert_eq!(
+            evicted_archives(&current, &shared),
+            vec![current.latest.as_ref().unwrap()]
+        );
+
+        let latest_only = SandboxCheckpointHistory {
+            latest: shared.latest,
+            previous: None,
+        };
+        assert_eq!(
+            evicted_archives(&current, &latest_only),
+            vec![&first, current.latest.as_ref().unwrap()]
+        );
     }
 
     fn checkpoint(epoch: u64, object_reference: &str, digest_digit: &str) -> SandboxCheckpointRef {

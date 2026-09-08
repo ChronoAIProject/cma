@@ -202,7 +202,7 @@ fn image() -> String {
 
 mod creation_revival;
 
-async fn restarted_worker(harness: &Harness, now: SystemTime) -> Arc<SandboxWorker> {
+pub(super) async fn restarted_worker(harness: &Harness, now: SystemTime) -> Arc<SandboxWorker> {
     let adapter: Arc<dyn SandboxAdapter> = Arc::new(CodexAdapter::with_backend(
         harness.backend.clone(),
         CodexSandboxSpec::default(),

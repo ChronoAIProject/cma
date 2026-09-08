@@ -49,6 +49,12 @@ pub struct WorkspaceHierarchyRecord {
 
 #[async_trait]
 pub trait HierarchyReadStore: Send + Sync {
+    async fn read_snapshot_archive(
+        &self,
+        sandbox_id: &SandboxId,
+        checkpoint: &super::SandboxCheckpointRef,
+    ) -> Result<SandboxSnapshotDownload, SandboxStoreError>;
+
     async fn list_owner_sandbox_inventory(
         &self,
         owner: &SubjectId,
@@ -168,7 +174,33 @@ pub struct HierarchyReadService {
     store: Arc<dyn HierarchyReadStore>,
 }
 
+pub struct SandboxSnapshotDownload {
+    pub size_bytes: u64,
+    pub chunks: tokio::sync::mpsc::Receiver<Result<Vec<u8>, SandboxStoreError>>,
+}
+
 impl HierarchyReadService {
+    pub async fn snapshot(
+        &self,
+        caller: &Caller,
+        id: &SandboxId,
+        epoch: u64,
+    ) -> Result<SandboxSnapshotDownload, HierarchyReadError> {
+        let view = self.sandbox(caller, id).await?;
+        let checkpoint = view
+            .sandbox
+            .lifecycle
+            .checkpoints
+            .latest
+            .as_ref()
+            .filter(|checkpoint| checkpoint.epoch == epoch)
+            .ok_or(HierarchyReadError::NotFound)?;
+        self.store
+            .read_snapshot_archive(id, checkpoint)
+            .await
+            .map_err(store_error)
+    }
+
     pub fn new<S>(store: Arc<S>) -> Arc<Self>
     where
         S: HierarchyReadStore + 'static,

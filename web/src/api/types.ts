@@ -64,6 +64,11 @@ export interface SandboxLifecycle {
     readonly startedAt: string;
     readonly epoch: number;
   };
+  readonly latestSnapshot?: {
+    readonly epoch: number;
+    readonly savedAt: string;
+    readonly downloadUrl: string;
+  };
   readonly operation?: {
     readonly purpose: 'pause' | 'revive' | 'image_rotation';
     readonly phase: string;

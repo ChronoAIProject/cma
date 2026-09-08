@@ -44,6 +44,33 @@ const savingSandbox = (phase: 'capture' | 'resume_writers'): SandboxDetail => ({
   },
 });
 
+it('keeps the latest completed snapshot timestamp and real download link in Advanced during a save', async () => {
+  const sandbox = savingSandbox('capture');
+  lifecyclePage(async () => ({
+    ...sandbox,
+    lifecycle: {
+      ...sandbox.lifecycle!,
+      latestSnapshot: {
+        epoch: 6,
+        savedAt: '2026-09-07T23:30:00Z',
+        downloadUrl: '/api/v1/sandboxes/sbx_1/snapshots/6/download',
+      },
+    },
+  }));
+  await act(async () => {});
+  expect(screen.queryByText('Latest snapshot')).not.toBeInTheDocument();
+  await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Advanced' })));
+  const label = screen.getByText('Latest snapshot');
+  expect(label.parentElement?.querySelector('time')).toHaveAttribute(
+    'dateTime',
+    '2026-09-07T23:30:00Z',
+  );
+  expect(screen.getByRole('link', { name: 'Download snapshot' })).toHaveAttribute(
+    'href',
+    '/api/v1/sandboxes/sbx_1/snapshots/6/download',
+  );
+});
+
 it('refreshes Active saving phases and restores Pause only after authoritative eligibility clears', async () => {
   vi.useFakeTimers();
   const readSandbox = vi

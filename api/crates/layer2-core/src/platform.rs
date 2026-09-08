@@ -11,6 +11,21 @@ pub const DEFAULT_AGENT_PROFILE_ID: &str = "agp_default";
 pub const DEFAULT_PROFILE_REVISION: u32 = 1;
 pub const MIN_PAUSE_AFTER_SECONDS: u64 = 60;
 pub const MAX_PAUSE_AFTER_SECONDS: u64 = 86_400;
+pub const DEFAULT_CHECKPOINT_INTERVAL_SECONDS: u64 = 30 * 60;
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CheckpointSettings {
+    pub interval_seconds: u64,
+}
+
+impl Default for CheckpointSettings {
+    fn default() -> Self {
+        Self {
+            interval_seconds: DEFAULT_CHECKPOINT_INTERVAL_SECONDS,
+        }
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -111,6 +126,8 @@ impl Default for MarketplaceSettings {
 pub struct PlatformSettings {
     pub defaults: PlatformDefaults,
     pub inactivity: InactivitySettings,
+    #[serde(default)]
+    pub checkpoints: CheckpointSettings,
     pub retention: RetentionSettings,
     pub limits: PlatformLimits,
     pub triggers: TriggerSettings,
@@ -119,6 +136,11 @@ pub struct PlatformSettings {
 
 impl PlatformSettings {
     pub fn validate(&self) -> Result<(), CoreError> {
+        if !(60..=86_400).contains(&self.checkpoints.interval_seconds) {
+            return Err(CoreError::InvalidRequest(
+                "checkpoints.interval_seconds must be between 60 and 86400".into(),
+            ));
+        }
         if !(MIN_PAUSE_AFTER_SECONDS..=MAX_PAUSE_AFTER_SECONDS)
             .contains(&self.inactivity.pause_after_seconds)
         {
@@ -169,6 +191,7 @@ mod tests {
                     "agent_profile": {"id": "agp_default", "revision": 1}
                 },
                 "inactivity": {"pause_after_seconds": 900},
+                "checkpoints": {"interval_seconds": 1800},
                 "retention": {"checkpoint_grace_days": 7, "agent_log_days": 90},
                 "limits": {
                     "max_sandboxes_per_user": 3,
@@ -193,6 +216,26 @@ mod tests {
             settings.inactivity.pause_after_seconds = seconds;
             let error = settings.validate().unwrap_err().to_string();
             assert!(error.contains("inactivity.pause_after_seconds"));
+        }
+    }
+
+    #[test]
+    fn checkpoint_interval_defaults_legacy_settings_and_validates_bounds() {
+        let mut legacy = serde_json::to_value(PlatformSettings::default()).unwrap();
+        legacy.as_object_mut().unwrap().remove("checkpoints");
+        let mut settings: PlatformSettings = serde_json::from_value(legacy).unwrap();
+        assert_eq!(settings.checkpoints.interval_seconds, 1800);
+        for seconds in [60, 1800, 86_400] {
+            settings.checkpoints.interval_seconds = seconds;
+            settings.validate().unwrap();
+        }
+        for seconds in [0, 59, 86_401, u64::MAX] {
+            settings.checkpoints.interval_seconds = seconds;
+            assert!(settings
+                .validate()
+                .unwrap_err()
+                .to_string()
+                .contains("checkpoints.interval_seconds"));
         }
     }
 
@@ -230,6 +273,7 @@ mod tests {
             &[][..],
             &["defaults"][..],
             &["inactivity"][..],
+            &["checkpoints"][..],
             &["retention"][..],
             &["limits"][..],
             &["triggers"][..],

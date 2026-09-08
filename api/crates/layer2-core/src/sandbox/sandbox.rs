@@ -176,6 +176,55 @@ impl Sandbox {
         Ok(())
     }
 
+    /// Teardown is irreversible once admitted. A restarted capture authority
+    /// may already have parked agents, so it must finish pausing and revive.
+    pub fn can_cancel_pause(&self) -> bool {
+        self.status == SandboxStatus::Pausing
+            && self.runtime.is_some()
+            && matches!(
+                self.lifecycle.operation.as_ref(),
+                Some(super::SandboxLifecycleOperation::Pause { phase: super::SandboxPausePhase::CaptureAndPublishCheckpoint | super::SandboxPausePhase::PauseAgents, authority, .. })
+                    if authority.writer_resume_generation == 0
+            )
+    }
+
+    /// Fence the old pause worker before releasing its exact writer hold.
+    pub fn request_pause_cancellation(&mut self, at: String) -> Result<(), SandboxModelError> {
+        self.validate()?;
+        if !self.can_cancel_pause() || crate::seconds_from_rfc3339(&at).is_none() {
+            return Err(SandboxModelError::invalid_value(
+                "sandbox.pause_cancellation",
+            ));
+        }
+        let mut next = self.clone();
+        match next.lifecycle.operation.as_mut() {
+            Some(super::SandboxLifecycleOperation::Pause { phase, .. })
+                if matches!(
+                    *phase,
+                    super::SandboxPausePhase::CaptureAndPublishCheckpoint
+                        | super::SandboxPausePhase::PauseAgents
+                ) =>
+            {
+                *phase = super::SandboxPausePhase::ResumeWriters;
+            }
+            _ => {
+                return Err(SandboxModelError::invalid_value(
+                    "sandbox.pause_cancellation",
+                ))
+            }
+        }
+        next.work
+            .schedule(SandboxWorkStep::RunLifecycleOperation, at.clone());
+        next.revision = next
+            .revision
+            .checked_add(1)
+            .ok_or_else(|| SandboxModelError::invalid_value("sandbox.revision"))?;
+        next.updated_at = at;
+        next.validate()?;
+        *self = next;
+        Ok(())
+    }
+
     /// Eligibility to begin a new pause, independent of command replay.
     pub fn pause_eligibility(&self) -> Result<(), SandboxLifecycleBlocker> {
         if self.status != SandboxStatus::Active {

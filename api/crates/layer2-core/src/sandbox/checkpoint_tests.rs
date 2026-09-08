@@ -136,7 +136,7 @@ fn restore_projection_contains_only_the_verified_home_object() {
 }
 
 #[test]
-fn history_retains_exactly_latest_and_immediately_previous() {
+fn history_retains_only_latest_after_successful_publication() {
     let first = checkpoint(1, "2026-09-05T00:05:00Z");
     let second = checkpoint(2, "2026-09-05T00:10:00Z");
     let third = checkpoint(3, "2026-09-05T00:15:00Z");
@@ -144,11 +144,13 @@ fn history_retains_exactly_latest_and_immediately_previous() {
 
     assert_eq!(
         history.publish(first.clone()).unwrap(),
-        SandboxCheckpointPublication::Published { evicted: None }
+        SandboxCheckpointPublication::Published { evicted: vec![] }
     );
     assert_eq!(
         history.publish(second.clone()).unwrap(),
-        SandboxCheckpointPublication::Published { evicted: None }
+        SandboxCheckpointPublication::Published {
+            evicted: vec![first.clone()]
+        }
     );
     assert_eq!(
         history.publish(second.clone()).unwrap(),
@@ -157,11 +159,11 @@ fn history_retains_exactly_latest_and_immediately_previous() {
     assert_eq!(
         history.publish(third.clone()).unwrap(),
         SandboxCheckpointPublication::Published {
-            evicted: Some(first.clone())
+            evicted: vec![second.clone()]
         }
     );
     assert_eq!(history.latest, Some(third));
-    assert_eq!(history.previous, Some(second));
+    assert_eq!(history.previous, None);
     history.validate().unwrap();
 
     let before = history.clone();
@@ -170,17 +172,65 @@ fn history_retains_exactly_latest_and_immediately_previous() {
 }
 
 #[test]
-fn checkpoint_cadence_is_immediate_then_at_least_five_minutes() {
+fn checkpoint_cadence_is_immediate_then_at_least_thirty_minutes() {
     let mut sandbox = sandbox();
     assert!(sandbox_checkpoint_due(&sandbox, "2026-09-05T00:00:00Z"));
 
     sandbox.lifecycle.checkpoints.latest = Some(checkpoint(1, "2026-09-05T00:05:00Z"));
-    assert!(!sandbox_checkpoint_due(&sandbox, "2026-09-05T00:09:59Z"));
-    assert!(sandbox_checkpoint_due(&sandbox, "2026-09-05T00:10:00Z"));
+    assert!(!sandbox_checkpoint_due(&sandbox, "2026-09-05T00:34:59Z"));
+    assert!(sandbox_checkpoint_due(&sandbox, "2026-09-05T00:35:00Z"));
     assert!(!sandbox_checkpoint_due(&sandbox, "not-a-time"));
 
     sandbox.status = SandboxStatus::Paused;
     assert!(!sandbox_checkpoint_due(&sandbox, "2026-09-05T00:15:00Z"));
+}
+
+#[test]
+fn checkpoint_interval_is_configurable_and_invalid_values_do_not_capture() {
+    let mut sandbox = sandbox();
+    sandbox.lifecycle.checkpoints.latest = Some(checkpoint(1, "2026-09-05T00:00:00Z"));
+    assert!(!sandbox_checkpoint_due_with_interval(
+        &sandbox,
+        "2026-09-05T00:09:59Z",
+        600
+    ));
+    assert!(sandbox_checkpoint_due_with_interval(
+        &sandbox,
+        "2026-09-05T00:10:00Z",
+        600
+    ));
+    for invalid in [0, 59, 86_401, u64::MAX] {
+        assert!(!sandbox_checkpoint_due_with_interval(
+            &sandbox,
+            "2026-09-06T00:00:00Z",
+            invalid
+        ));
+    }
+}
+
+#[test]
+fn legacy_history_keeps_both_generations_until_a_valid_replacement_is_published() {
+    let first = checkpoint(1, "2026-09-05T00:00:00Z");
+    let second = checkpoint(2, "2026-09-05T00:30:00Z");
+    let mut history = SandboxCheckpointHistory {
+        latest: Some(second.clone()),
+        previous: Some(first.clone()),
+    };
+    history.validate().unwrap();
+    let before = history.clone();
+    let mut invalid = checkpoint(3, "2026-09-05T01:00:00Z");
+    invalid.manifest_sha256.clear();
+    assert!(history.publish(invalid).is_err());
+    assert_eq!(history, before);
+    assert_eq!(
+        history
+            .publish(checkpoint(3, "2026-09-05T01:00:00Z"))
+            .unwrap(),
+        SandboxCheckpointPublication::Published {
+            evicted: vec![first, second]
+        }
+    );
+    assert!(history.previous.is_none());
 }
 
 #[test]

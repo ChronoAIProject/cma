@@ -229,10 +229,7 @@ fn late_lifecycle_retry_requires_fresh_capture_for_pause_and_image_rotation() {
                     .checkpoint_epoch(),
                 Some(2)
             );
-            assert_eq!(
-                value.lifecycle.checkpoints.previous.as_ref().unwrap().epoch,
-                1
-            );
+            assert!(value.lifecycle.checkpoints.previous.is_none());
         }
     }
 }

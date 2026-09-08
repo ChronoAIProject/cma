@@ -609,7 +609,7 @@ async fn archive_larger_than_bson_document_limit_uses_external_objects() {
 
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
-async fn publication_keeps_two_archives_and_prunes_all_parts_of_the_evicted_one() {
+async fn publication_keeps_latest_archive_and_prunes_all_parts_of_evicted_generations() {
     let (client, _, database) = test_store("retention").await;
     let store = MongoSandboxStore::open(&client, &database).await.unwrap();
     let mut current = active_sandbox("sbx_checkpoint_retention");
@@ -623,18 +623,32 @@ async fn publication_keeps_two_archives_and_prunes_all_parts_of_the_evicted_one(
     let shared_key = object_key(&store, &current, &first.object_reference).await;
 
     let third = stored_checkpoint(&store, &current, 3, b"third generation").await;
+    let third_key = object_key(&store, &current, &third.object_reference).await;
     publish(&store, &mut current, third.clone()).await;
-    assert_archive_present(&store, &current, &first.object_reference).await;
+    assert_archive_present(&store, &current, &third.object_reference).await;
 
     let fourth = stored_checkpoint(&store, &current, 4, b"fourth generation").await;
     publish(&store, &mut current, fourth.clone()).await;
+    let mut download = layer2_core::sandbox::HierarchyReadStore::read_snapshot_archive(
+        &store,
+        &current.id,
+        &fourth,
+    )
+    .await
+    .unwrap();
+    assert_eq!(download.size_bytes, b"fourth generation".len() as u64);
+    let mut downloaded = Vec::new();
+    while let Some(chunk) = download.chunks.recv().await {
+        downloaded.extend(chunk.unwrap());
+    }
+    assert_eq!(downloaded, b"fourth generation");
     store
         .checkpoint_objects
         .cleanup_due(std::time::SystemTime::now())
         .await
         .unwrap();
     assert_archive_absent(&store, &current, &first.object_reference, &shared_key).await;
-    assert_archive_present(&store, &current, &third.object_reference).await;
+    assert_archive_absent(&store, &current, &third.object_reference, &third_key).await;
     assert_archive_present(&store, &current, &fourth.object_reference).await;
     assert_eq!(
         store
@@ -643,7 +657,7 @@ async fn publication_keeps_two_archives_and_prunes_all_parts_of_the_evicted_one(
             .count_documents(doc! { "sandbox_id": current.id.as_str() })
             .await
             .unwrap(),
-        2
+        1
     );
     client.database(&database).drop().await.unwrap();
 }
@@ -666,9 +680,10 @@ async fn ambiguous_publication_reconciles_without_losing_the_new_archive() {
 
     let first = stored_checkpoint(&store, &current, 1, b"first generation").await;
     publish(&store, &mut current, first.clone()).await;
+    let first_key = object_key(&store, &current, &first.object_reference).await;
     let second = stored_checkpoint(&store, &current, 2, b"second generation").await;
     publish(&store, &mut current, second.clone()).await;
-    let first_key = object_key(&store, &current, &first.object_reference).await;
+    let second_key = object_key(&store, &current, &second.object_reference).await;
     let third = stored_checkpoint(&store, &current, 3, b"just published generation").await;
 
     configure_commit_ambiguity(&admin, &app_name).await;
@@ -682,10 +697,10 @@ async fn ambiguous_publication_reconciles_without_losing_the_new_archive() {
         .await
         .unwrap();
     assert_archive_absent(&store, &current, &first.object_reference, &first_key).await;
-    assert_archive_present(&store, &current, &second.object_reference).await;
+    assert_archive_absent(&store, &current, &second.object_reference, &second_key).await;
     assert_archive_present(&store, &current, &third.object_reference).await;
     assert_eq!(current.lifecycle.checkpoints.latest, Some(third));
-    assert_eq!(current.lifecycle.checkpoints.previous, Some(second));
+    assert!(current.lifecycle.checkpoints.previous.is_none());
     client.database(&database).drop().await.unwrap();
 }
 
