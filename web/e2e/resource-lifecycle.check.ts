@@ -62,6 +62,10 @@ for (const width of [1440, 390]) {
     await expect.poll(async () => (await pixels()).signature).not.toBe(first.signature);
     await character.click();
     await page.screenshot({ path: info.outputPath(`home-${width}.png`), fullPage: true });
+    await page.evaluate(() => document.body.setAttribute('data-ds-dark-theme', ''));
+    await page.evaluate(() => document.fonts.ready);
+    await expect.poll(async () => (await pixels()).colored).toBeGreaterThan(1000);
+    await page.screenshot({ path: info.outputPath(`home-${width}-dark.png`), fullPage: true });
     await page.emulateMedia({ reducedMotion: 'reduce' });
     await expect(character).toBeDisabled();
     const still = await canvas.screenshot();
