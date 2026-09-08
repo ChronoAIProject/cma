@@ -1,5 +1,9 @@
 import { useEffect, useState } from 'react';
 import type { SandboxDetail } from '../api/types';
+import type { CmaWebClient } from '../api/client';
+import { useCmaClient } from '../api/context';
+import { SandboxActivity } from './SandboxActivity';
+import { sandboxLifecycleLabel } from './lifecycle';
 import {
   lifecycleStageCopy,
   pausePhases,
@@ -22,11 +26,15 @@ export function LifecycleProgress({
   sandbox,
   observedAt,
   stale = false,
+  client: suppliedClient,
 }: {
   readonly sandbox: SandboxDetail;
   readonly observedAt?: string;
   readonly stale?: boolean;
+  readonly client?: CmaWebClient;
 }) {
+  const contextClient = useCmaClient();
+  const client = suppliedClient ?? contextClient;
   const operation = sandbox.lifecycle?.operation;
   const hasOperation = operation !== undefined;
   const [now, setNow] = useState(Date.now);
@@ -43,7 +51,26 @@ export function LifecycleProgress({
       document.removeEventListener('visibilitychange', tick);
     };
   }, [hasOperation]);
-  if (operation === undefined) return null;
+  if (operation === undefined) {
+    const capture = sandbox.lifecycle?.checkpoint;
+    if (sandbox.status === 'active' && capture === undefined) return null;
+    return (
+      <section className="lifecycle-progress" aria-label="Sandbox progress">
+        <p className="lifecycle-progress__stage">
+          {capture === undefined
+            ? sandboxLifecycleLabel(sandbox)
+            : capture.phase === 'capture'
+              ? 'Saving progress'
+              : 'Finishing save'}
+        </p>
+        <SandboxActivity
+          client={client}
+          sandboxId={sandbox.id}
+          settled={['paused', 'retired', 'failed'].includes(sandbox.status)}
+        />
+      </section>
+    );
+  }
   const phases: readonly string[] =
     operation.purpose === 'pause'
       ? operation.phase === 'resume_writers'
@@ -76,6 +103,7 @@ export function LifecycleProgress({
       </div>
       {stale ? <p role="status">{copy.disconnected}</p> : null}
       <p>{copy.background}</p>
+      <SandboxActivity client={client} sandboxId={sandbox.id} />
       <details>
         <summary>{copy.activity}</summary>
         {elapsed === undefined ? null : (

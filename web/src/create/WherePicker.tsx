@@ -8,6 +8,7 @@ import { statusLabel } from '../vocabulary/status';
 import { ProvisioningProgress } from '../sandbox/ProvisioningProgress';
 import { sandboxProgress, workspaceProgress } from '../sandbox/progress';
 import { readSandboxHistory } from '../sandbox/eventHistory';
+import { LifecycleProgress } from '../sandbox/LifecycleProgress';
 import { sandboxLifecycleLabel, sandboxRefreshDelay } from '../sandbox/lifecycle';
 
 export interface LocationChoice {
@@ -150,6 +151,7 @@ export function WherePicker({
       {current === undefined || current.status === 'active' ? null : (
         <p role="status">Sandbox: {sandboxLifecycleLabel(current)}</p>
       )}
+      {current === undefined ? null : <LifecycleProgress client={client} sandbox={current} />}
       {current !== undefined &&
       ['provisioning', 'installing', 'failed'].includes(current.status) ? (
         <ProvisioningProgress

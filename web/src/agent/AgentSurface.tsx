@@ -14,6 +14,7 @@ import { ProvisioningProgress } from '../sandbox/ProvisioningProgress';
 import { agentProgress } from '../sandbox/progress';
 import { Resources } from './Resources';
 import { BrandLoading } from '../landing/LandingCharacter';
+import { LifecycleProgress } from '../sandbox/LifecycleProgress';
 
 interface AgentSurfaceProps {
   readonly agentId: string;
@@ -194,7 +195,11 @@ export function AgentSurface({
           conversation={conversation}
           approvalBusy={approvalBusy}
           onApproval={(id, decision) => void controller.approve(id, decision)}
-        />
+        >
+          {controller.progressObservation === undefined ? null : (
+            <LifecycleProgress {...controller.progressObservation} />
+          )}
+        </MessageStream>
       </div>
       <Composer
         status={status}

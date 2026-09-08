@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { ApiError } from '@chronoai/cma-sdk';
 import type { CmaWebClient } from '../api/client';
 import type { SandboxDetail } from '../api/types';
 import { sandboxLifecycleLabel, sandboxRefreshDelay } from '../sandbox/lifecycle';
@@ -16,6 +17,11 @@ export type SandboxResourceAvailability =
 interface SandboxAvailability {
   readonly inputAvailability: SandboxInputAvailability;
   readonly resourceAvailability: SandboxResourceAvailability;
+  readonly progressObservation?: {
+    readonly sandbox: SandboxDetail;
+    readonly stale: boolean;
+    readonly observedAt?: string;
+  };
 }
 
 interface Observation {
@@ -23,6 +29,7 @@ interface Observation {
   readonly sandboxId: string;
   readonly sandbox?: SandboxDetail;
   readonly stale: boolean;
+  readonly observedAt?: string;
 }
 
 export function useSandboxInput(
@@ -49,6 +56,10 @@ export function useSandboxInput(
             ? current.sandbox
             : undefined,
         stale: true,
+        observedAt:
+          current?.agentId === agentId && current.sandboxId === sandboxId
+            ? current.observedAt
+            : undefined,
       }));
     };
     const poll = () => {
@@ -66,15 +77,23 @@ export function useSandboxInput(
             timer = setTimeout(poll, 0);
             return;
           }
-          setObservation({ agentId, sandboxId, sandbox, stale: false });
+          setObservation({
+            agentId,
+            sandboxId,
+            sandbox,
+            stale: false,
+            observedAt: new Date().toISOString(),
+          });
           clearTimeout(expiry);
           expiry = setTimeout(markStale, 10000);
           pollInterval = sandboxRefreshDelay(sandbox);
           timer = setTimeout(poll, pollInterval);
         })
-        .catch(() => {
+        .catch((error: unknown) => {
           if (controller.signal.aborted) return;
-          markStale();
+          if (error instanceof ApiError && [401, 403, 404].includes(error.status))
+            setObservation({ agentId, sandboxId, stale: true });
+          else markStale();
           timer = setTimeout(poll, requestEpoch === visibilityEpoch ? pollInterval : 0);
         })
         .finally(() => {
@@ -104,6 +123,10 @@ export function useSandboxInput(
   return {
     inputAvailability: inputAvailability(current),
     resourceAvailability: resourceAvailability(current),
+    progressObservation:
+      current?.sandbox === undefined
+        ? undefined
+        : { sandbox: current.sandbox, stale: current.stale, observedAt: current.observedAt },
   };
 }
 

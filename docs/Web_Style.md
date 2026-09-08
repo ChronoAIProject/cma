@@ -865,6 +865,24 @@ visible-only every 1.5 seconds, and recover after transient failure. Authorizati
 or visibility denial clears the last observation. Raw runtime logs, credentials,
 commands and paths never enter the activity summary.
 
+Lifecycle screens also show **Live activity** outside Advanced: a keyboard-focusable
+scroll region, 180px high and at most 30vh, with a 1px level-2 border, 6px radius,
+12px padding, 8px row gap and existing 13/20 secondary text. Timestamp and message
+use a two-column grid that wraps text; the region cannot widen or lengthen the
+page. Only the latest 100 translated lifecycle entries are retained. New entries
+follow the bottom only while the reader has not scrolled away. The adjacent
+**Last synced** timestamp changes only after a successful event read catches up;
+loading and reconnecting are explicit. No empty poll invents a log entry.
+Read-only event polling is bounded, nonoverlapping and visible-only. Access denial
+clears cached entries; transient failures retain them. Only allowlisted event and
+step names are translated, never arbitrary payloads, failure details, paths,
+commands or credentials. Launch, Sandbox and Agent pages share this treatment;
+deletion dialogs use the same bounded rendering for recorded cleanup events.
+In Agent conversations this progress follows the last message, inside the existing
+reading column, so normal conversation following leaves current progress visible
+beside the composer. The log itself is not a live region; the current-stage
+summary remains the single polite progress announcement.
+
 ---
 
 ## 14. Retired terminal plane
@@ -1047,8 +1065,9 @@ failures preserve the main status and actions and offer retry.
 An Advanced icon-and-text command opens the shared wide Modal. Runtime version,
 IDs, profile revisions, limits, paths, recorded preparation, operation phases,
 technical timestamps and Events appear only there, except for the ordinary
-operation progress and its recorded start time. Events load only while that dialog is
-open and never hold the ordinary page hostage. The dialog scrolls its body,
+operation progress, its recorded start time and translated Live activity. Raw
+technical Events load only while that dialog is open and never hold the ordinary
+page hostage. The dialog scrolls its body,
 traps focus, closes with Escape and returns focus to Advanced.
 
 Advanced also shows the latest completed snapshot's recorded timestamp and an
@@ -1648,3 +1667,4 @@ Append-only. Never edit or delete an entry.
 | 2026-09-09 | Removed the false Agent run failed notice for normal owner/operator stops and Sandbox retirement while preserving actual provider errors and the recorded Stopped state. |
 | 2026-09-09 | Unified Profiles and Marketplace cards using Ornn's title, badges, description and aligned metadata order with CMA tokens. All three profile kinds retain native full-card links, original names, revision/visibility/retirement facts, usage and timestamps, with responsive tracks and no additional per-card reads. |
 | 2026-09-09 | Resolved Marketplace authors through the retained public identity directory for list and detail views. Missing names are explicitly unavailable; account IDs remain ownership authority and are never used as display-name fallbacks. |
+| 2026-09-09 | Added bounded, timestamped Live activity to lifecycle and deletion surfaces, with allowlisted plain-language entries, visible-only incremental reads, reconnect and access-loss handling, and manual-scroll preservation. |

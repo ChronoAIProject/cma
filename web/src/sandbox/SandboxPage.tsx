@@ -197,7 +197,12 @@ export function SandboxPage({
         <p id={lifecycleReasonId}>{lifecycleAction.reason}</p>
       ) : null}
       {pollError ? <p role="alert">Progress could not be refreshed. Reconnecting.</p> : null}
-      <LifecycleProgress sandbox={sandbox} observedAt={state.observedAt} stale={pollError} />
+      <LifecycleProgress
+        client={client}
+        sandbox={sandbox}
+        observedAt={state.observedAt}
+        stale={pollError}
+      />
       {sandbox.status === 'failed' ? (
         <p role="alert">
           Your sandbox needs attention.{' '}
