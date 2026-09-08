@@ -78,3 +78,22 @@ it('uses the resource snapshot when status timestamps are equal', () => {
     currentAgentStatus({ ...AGENT_DETAIL, status: 'stopped' }, empty, workspaceFixture().agents[0]),
   ).toBe('stopped');
 });
+
+it.each(['owner', 'operator', 'sandbox_retired', 'agent_deleted'])(
+  'does not label expected %s termination as a run failure',
+  (code) => {
+    const stopped = foldLiveEvent(
+      { ...empty, activeRunId: 'run' },
+      {
+        type: 'RUN_ERROR',
+        threadId: 'agt_1',
+        runId: 'run',
+        code,
+        message: 'The Agent stopped.',
+      },
+      'agt_1',
+    );
+    expect(stopped.activeRunId).toBeUndefined();
+    expect(stopped.recovery).toEqual([]);
+  },
+);
