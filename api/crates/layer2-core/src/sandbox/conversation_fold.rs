@@ -250,16 +250,21 @@ fn fold_semantic_update(
             kind: wire_name(&call.kind),
             status: wire_name(&call.status),
         },
-        SessionUpdate::ToolCallUpdate(update) => AgentLogKind::ToolCallUpdated {
-            call_id: update.tool_call_id.0.to_string(),
-            status: update
-                .fields
-                .status
-                .as_ref()
-                .map(wire_name)
-                .unwrap_or_else(|| "updated".into()),
-            title: update.fields.title.map(|value| bounded(value, 4 * 1024)),
-        },
+        // Output-only updates carry no durable tool fields; do not invent a status change.
+        SessionUpdate::ToolCallUpdate(update)
+            if update.fields.status.is_some() || update.fields.title.is_some() =>
+        {
+            AgentLogKind::ToolCallUpdated {
+                call_id: update.tool_call_id.0.to_string(),
+                status: update
+                    .fields
+                    .status
+                    .as_ref()
+                    .map(wire_name)
+                    .unwrap_or_else(|| "updated".into()),
+                title: update.fields.title.map(|value| bounded(value, 4 * 1024)),
+            }
+        }
         SessionUpdate::UsageUpdate(usage) => AgentLogKind::Usage {
             input_tokens: 0,
             output_tokens: 0,
