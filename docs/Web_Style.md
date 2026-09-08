@@ -1315,15 +1315,24 @@ of the adjacent written status. Compact characters omit the contact shadow.
 Only a running character schedules frames; reduced motion makes every state
 still. Loading surfaces use the same running character, never another spinner.
 
-The Agent composer restores the baseline 22px-radius capsule, full-width
-16/24 textarea growing to fourteen lines, and a separate lower action row.
+The Agent composer restores the baseline 22px-radius capsule, 12px internal
+gap, full-width 16/24 textarea growing to fourteen lines, and a separate lower row.
 The 34px circular Send control becomes a neutral circular Stop control in the
-same seat, increasing to 44px on narrow screens. The established Thinking row
+same seat. On narrow screens its visible circle remains 34px inside a transparent
+44px hit area contained by the existing 44px grid seat. The established Thinking row
 and 120px capped disclosure return, grouping live reasoning and durable tools
 by turn. Tool output is disclosed only when actually supplied; live reasoning
 is never fabricated on reload. The neutral sweep stops when the turn ends.
 Message role labels return outside the owner's bubble at 12/18 with an 8px
-gap; turns keep the baseline 16px rhythm. Required small text uses caption ink.
+gap; turns keep the baseline 16px rhythm. Thinking adds no extra bottom margin.
+Required small text uses caption ink. This is an explicit accessibility
+accommodation to the baseline: Thinking body and tool details use secondary
+ink instead of the old tertiary ink, metric text retains caption, and the
+composer placeholder uses caption instead of the old dimmed ink. Thinking's
+layer-2 ground needs secondary ink: light caption there measures only 4.29:1,
+while secondary measures 5.92:1. The old tertiary and dimmed inks do not meet
+the required small-text contrast in both themes; they are not restored or
+described as exact colour parity.
 
 Conversation opening and live output follow the latest content while the reader
 remains at the end, including content-height changes after layout. Scrolling
@@ -1334,7 +1343,7 @@ The Agent's single grid column is shrinkable to the available center width;
 long titles and tables never widen the conversation, composer or instruments.
 
 Below the composer, restore the baseline two-column tokens/context row and
-three-column RAM/CPU/network row with 12px figures, 8px column gaps and 2px
+three-column RAM/CPU/network row with 12px figures, 12px column gaps and 2px
 neutral tracks capped at 240px. Resource observations use the public Agent
 resources read, sampled every five seconds while visible. CPU rate derives
 only from two monotonic samples of the same Sandbox uptime; restart, failure
@@ -1440,3 +1449,5 @@ Append-only. Never edit or delete an entry.
 | 2026-09-08 | Added public Sandbox capture observation to the Agent composer. Preserved drafts and history while holding new messages and approval decisions during saving or unavailable lifecycle reads, kept ordinary paused-message revival, and distinguished pending admission from a durably active turn before offering Stop response. |
 | 2026-09-08 | Made long Agent history progressively readable after the first authorized activity page. Reused the status band and preserved editable drafts while holding commands and replay until all history pages load, without skipping tool or approval activity. |
 | 2026-09-08 | Bounded sidebar refresh fan-out by reusing unchanged retired Sandbox subtrees between minute rechecks. Kept authorized inventory and mutable descendants fresh, invalidated removed or changed resources, and cleared cached hierarchy on authentication or visibility denial. |
+| 2026-09-08 | Corrected conversation geometry against the actual pre-refactor baseline: restored the composer's 12px internal gap, both metrics rows' 12px gaps, Thinking's original spacing, and 34px mobile Send/Stop circles within transparent 44px hit areas. Explicitly retained readable caption ink for Thinking and metrics and applied it to the placeholder rather than restoring low-contrast tertiary/dimmed text. |
+| 2026-09-08 | Browser contrast measurement found caption ink on Thinking's preserved light layer-2 ground is only 4.29:1. Used existing secondary ink for the body and tool details, preserving the original ground and geometry while bringing that text to 5.92:1; retained caption on the composer's lighter input ground and base-ground metrics. |
