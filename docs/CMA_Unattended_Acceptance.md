@@ -25,7 +25,7 @@ Monitor disk usage and inspect exact targets before removing stale artifacts.
 | 10 | Profiles and Marketplace use CMA-styled Ornn-inspired cards/details | Shared cards deployed in web 7c01741f and author names in API 7e7d458e. Production 18-case verification passes all three profile kinds in both directories at 1440/390/320px, light/dark, full-card detail navigation and Marketplace Use availability. Screenshots inspected. Evidence: profile-cards-64FpRT/result.json. |
 | 11 | Separate collapsible Live and Paused Sandbox groups | Deployed in web 40300b5e. Production desktop/mobile checks pass for both groups and persisted collapse on reload. Live transition cases additionally covered by local tests. |
 | 12 | Only the named Trureturing Trigger is used for Trigger testing | Active constraint. Older disposable-Trigger harnesses must not be reused unchanged. |
-| 13 | Persist Trigger/manual provenance and owner-defined quick messages | Pending schema, public API, configuration, UI and production verification. Required messages: Contribute to Github source; Introduce Truretruing. |
+| 13 | Persist Trigger/manual provenance and owner-defined quick messages | API/SDK source 20e580fb and web 623cba22 implement published quick messages and original creation attribution. Local browser checks pass at 1440/390/320px, both themes, including eight long messages, descriptions, draft-preserving intercepted clicks and authoring. Production deployment, named Trigger publication and actual delivery remain pending. |
 | 14 | No unavailable Sandbox/Workspace expansion controls or children | Sandbox gating retained; preparing/deleting/failed Workspaces now also hide children and expansion controls. Local tests pass; production verification pending. |
 | 15 | Standard Sandbox states; deleted hidden; deletion dialog explains removal | Resource-specific labels implemented; snapshots no longer replace Live/Pausing. Explicit Needs attention remains for genuine failures. Production coverage pending. |
 | 16 | IME confirmation Enter never sends; ordinary Enter sends | Deployed in web 40300b5e. Production desktop/mobile synthetic composition, keyCode 229, Shift+Enter and ordinary Enter checks pass; draft retained. Ordinary-send requests intercepted before reaching the Agent. Native OS IME selection still requires a real keyboard check, not claimed by browser-generated events. |
@@ -391,3 +391,21 @@ image identity and measured results for each behavior, with unknowns left explic
   responses and renews its machine token before expiry. The successful rerun
   needed zero retries; no root cause for the earlier upstream 500 is claimed.
   Host disk remains at 45 GiB free; Docker was not restarted or pruned.
+- Trigger message sources 20e580fb/623cba22 pass 1,597 isolated backend tests,
+  1,173 frontend tests, 1,744 TypeScript SDK tests, Rust SDK tests and shared
+  118-operation public-contract replay. The 175 environment-gated backend tests
+  were not part of the isolated run. Type checks, formatting, lint, Clippy,
+  documentation checks, dependency policy and tracked-change secret scans pass.
+- Local read-only browser evidence trigger-quick-messages-jsqnNX and
+  quick-message-authoring-HbCjlK covers 1440/390/320px, both themes, named source,
+  exact guarded shortcut requests, draft retention, eight-message mobile bounds,
+  descriptions and authoring fields. Zero commands reached production, and both
+  owner histories and the saved Trigger draft remained unchanged. Screenshot
+  review caught bounded-row and overlapping-tooltip defects, corrected before
+  the final build. Theme checks wait for existing control transitions to settle.
+- API/web Linux/amd64 builds, fixed HIGH/CRITICAL image scans and remote digest
+  verification pass. The vulnerability database refresh initially blocked in
+  docker-credential-desktop. Using an empty temporary Docker credential directory
+  for the public database download completed it in 18 seconds without changing
+  saved credentials, restarting Docker or weakening scan policy. Host disk has
+  42 GiB free. Runtime 14c05f26 stays unchanged; deployment acceptance follows.
