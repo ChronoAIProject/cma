@@ -1,7 +1,159 @@
 use super::*;
+use layer2_core::sandbox::store::WorkspaceAdmissionStore;
 use layer2_core::sandbox::{SandboxCheckpointConversation, SandboxCheckpointRef};
 use layer3_adapter::{CheckpointReceipt, ConversationSnapshot, WriterState};
 use sha2::{Digest, Sha256};
+
+async fn completed_retirement(harness: &Harness, remove_runtime: bool) {
+    let mut parent = harness
+        .store
+        .get_sandbox(&harness.workspace.sandbox_id)
+        .await
+        .unwrap()
+        .unwrap();
+    let expected = parent.revision;
+    let stamp = rfc3339_at(harness.now + Duration::from_secs(10));
+    if remove_runtime {
+        harness.adapter.teardown(&harness.runtime).await.unwrap();
+    }
+    parent.begin_retirement(stamp.clone()).unwrap();
+    harness
+        .store
+        .save_sandbox(expected, parent.clone())
+        .await
+        .unwrap();
+    let expected = parent.revision;
+    parent.runtime = None;
+    parent.credential.delivered = false;
+    parent.credential.current = None;
+    parent
+        .transition(SandboxStatus::Retired, stamp.clone(), None)
+        .unwrap();
+    parent
+        .work
+        .schedule(layer2_core::sandbox::SandboxWorkStep::WaitForPurge, stamp);
+    assert_eq!(parent.validate(), Ok(()));
+    harness.store.save_sandbox(expected, parent).await.unwrap();
+}
+
+#[tokio::test]
+async fn retired_sandbox_agent_delete_removes_records_without_recreating_runtime_or_fabricating_receipts(
+) {
+    for remove_runtime in [true, false] {
+        let harness = Harness::new(Arc::new(EmptyAgentSkillResolver)).await;
+        let admitted = harness.admit("retired-delete", Vec::new()).await;
+        let ready = harness.drive_ready(&admitted.id).await;
+        harness
+            .store
+            .schedule_agent_stop(layer2_core::sandbox::store::AgentStopRequest {
+                target: AgentControlTarget::from(&ready),
+                reason: AgentStopReason::Owner,
+                requested_at: rfc3339_at(harness.now + Duration::from_secs(5)),
+            })
+            .await
+            .unwrap();
+        for _ in 0..3 {
+            harness
+                .run(&ready.id, harness.now + Duration::from_secs(5))
+                .await;
+        }
+        let stopped = harness.stored(&ready.id).await;
+        assert_eq!(stopped.status, AgentStatus::Stopped);
+        completed_retirement(&harness, remove_runtime).await;
+        let before = harness.backend.requests().await.len();
+        harness
+            .store
+            .schedule_agent_delete(AgentDeleteRequest {
+                target: AgentControlTarget::from(&stopped),
+                requested_at: rfc3339_at(harness.now + Duration::from_secs(11)),
+            })
+            .await
+            .unwrap();
+        for _ in 0..4 {
+            harness
+                .worker
+                .run_one(&ready.id, harness.now + Duration::from_secs(11))
+                .await
+                .unwrap();
+        }
+        let deleted = harness.stored(&ready.id).await;
+        assert_eq!(
+            deleted.status,
+            if remove_runtime {
+                AgentStatus::Deleted
+            } else {
+                AgentStatus::Stopped
+            }
+        );
+        assert_eq!(deleted.work.receipts, stopped.work.receipts);
+        assert_eq!(
+            deleted.conversation.conversation_id,
+            stopped.conversation.conversation_id
+        );
+        assert_eq!(harness.backend.requests().await.len(), before);
+        let worktree = harness
+            .store
+            .get_worktree(&ready.worktree_id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            worktree.status,
+            if remove_runtime {
+                WorktreeStatus::Removed
+            } else {
+                WorktreeStatus::Ready
+            }
+        );
+    }
+}
+
+#[tokio::test]
+async fn retired_sandbox_workspace_removal_requires_provider_absence_and_finishes_pending_work() {
+    use crate::sandbox::workspace_worker::{
+        WorkspaceWorker, WorkspaceWorkerConfig, WorkspaceWorkerDependencies,
+    };
+    for remove_runtime in [true, false] {
+        let harness = Harness::new(Arc::new(EmptyAgentSkillResolver)).await;
+        completed_retirement(&harness, remove_runtime).await;
+        harness
+            .store
+            .begin_workspace_removal(
+                &harness.workspace.id,
+                &harness.workspace.owner,
+                rfc3339_at(harness.now + Duration::from_secs(11)),
+            )
+            .await
+            .unwrap();
+        let before = harness.backend.requests().await.len();
+        let worker = WorkspaceWorker::new(
+            WorkspaceWorkerDependencies {
+                store: harness.store.clone(),
+                adapter: harness.adapter.clone(),
+            },
+            WorkspaceWorkerConfig::new("retired-cleanup", DEPLOYMENT_ID),
+        );
+        worker
+            .run_one(&harness.workspace.id, harness.now + Duration::from_secs(11))
+            .await
+            .unwrap();
+        let workspace = harness
+            .store
+            .get_workspace(&harness.workspace.id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            workspace.status,
+            if remove_runtime {
+                WorkspaceStatus::Removed
+            } else {
+                WorkspaceStatus::Removing
+            }
+        );
+        assert_eq!(harness.backend.requests().await.len(), before);
+    }
+}
 
 async fn retire_paused_parent(harness: &Harness, ready: &Agent, remove_runtime: bool) {
     let stamp = rfc3339_at(harness.now + Duration::from_secs(5));

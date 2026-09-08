@@ -35,8 +35,32 @@ pub fn validate_agent_work_mutation_with_sandbox(
         current_worktree,
         actual_last_seq,
         mutation,
-        retiring_sandbox_process_is_absent(current, sandbox),
+        retiring_sandbox_process_is_absent(current, sandbox)
+            || retired_sandbox_cleanup_is_absent(current, sandbox),
     )
+}
+
+/// Completed retirement has removed the entire runtime, not just an Agent process.
+pub fn retired_sandbox_cleanup_is_absent(agent: &Agent, sandbox: &Sandbox) -> bool {
+    matches!(agent.status, AgentStatus::Stopped | AgentStatus::Failed)
+        && matches!(
+            agent.work.step,
+            AgentWorkStep::EnsureProcessClosed
+                | AgentWorkStep::RemoveHome
+                | AgentWorkStep::RemoveWorktree
+        )
+        && agent.work.cleanup_debt.is_empty()
+        && agent.conversation.active_turn.is_none()
+        && agent.conversation.queued_messages.is_empty()
+        && agent.sandbox_id == sandbox.id
+        && agent.owner == sandbox.owner
+        && sandbox.status == SandboxStatus::Retired
+        && sandbox.retired_at.is_some()
+        && sandbox.runtime.is_none()
+        && sandbox.lifecycle.runtime_provision.is_none()
+        && sandbox.lifecycle.operation.is_none()
+        && sandbox.lifecycle.checkpoint_capture.is_none()
+        && sandbox.validate().is_ok()
 }
 
 /// A retired-runtime close is not a runtime request receipt or a completed turn.

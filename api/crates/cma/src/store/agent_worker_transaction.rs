@@ -178,9 +178,16 @@ async fn apply_publication(
         |_| Ok(()),
     )
     .await?;
-    if current.status == AgentStatus::Paused
+    if (current.status == AgentStatus::Paused
         && current.work.step == AgentWorkStep::CloseProcess
         && mutation.agent.work.step == AgentWorkStep::PublishStopped
+        || matches!(current.status, AgentStatus::Stopped | AgentStatus::Failed)
+            && matches!(
+                current.work.step,
+                AgentWorkStep::EnsureProcessClosed
+                    | AgentWorkStep::RemoveHome
+                    | AgentWorkStep::RemoveWorktree
+            ))
         && mutation.agent.work.receipts == current.work.receipts
     {
         let sandbox = store
