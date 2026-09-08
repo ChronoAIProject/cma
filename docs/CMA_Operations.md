@@ -82,6 +82,22 @@ build layer; final images contain neither compiler nor cache. Cached artifacts
 are not acceptance evidence. Build, identity, runtime and vulnerability gates
 apply to the resulting immutable image on every delivery.
 
+### Lifecycle Scheduling
+
+Sandbox lifecycle scheduling permits at most four concurrent sweeps, with
+one new sweep offered per second while capacity remains. Durable per-Sandbox
+claims and revision fences, not the scheduler's task list, grant authority.
+A slow restore therefore does not monopolize all lifecycle work, and a new
+pause-cancellation fence can be claimed while its superseded capture unwinds.
+Four simultaneous long operations can still consume all slots; this is a
+bounded concurrency improvement, not an unbounded latency guarantee.
+
+Workspace, periodic checkpoint maintenance, and checkpoint-object cleanup
+sweeps remain serial. Shutdown stops admitting sweeps, permits a 25-second
+drain, and cancels remaining child tasks without clearing their durable leases.
+The API requests 256 MiB and is limited to 1 GiB to accommodate the existing
+bounded multipart buffers across concurrent lifecycle transfers.
+
 ## NyxID Prerequisites
 
 CMA uses two independent origins. `CHRONO_NYXID_BASE_URL` is the API/OAuth

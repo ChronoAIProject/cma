@@ -73,10 +73,11 @@ spec:
           resources:
             requests:
               cpu: 100m
-              memory: 128Mi
+              memory: 256Mi
             limits:
               cpu: 1000m
-              memory: 512Mi
+              # Four lifecycle sweeps can each hold bounded multipart buffers.
+              memory: 1Gi
           # Startup validates MongoDB schema/indexes and composes provider
           # authorities before binding. The existing 30-minute budget is
           # finite; readiness separately checks the composed dependencies.
