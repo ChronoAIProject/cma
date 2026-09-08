@@ -128,7 +128,8 @@ image identity and measured results for each behavior, with unknowns left explic
 
 - Untouched-Agent pause/resume and the initial three-minute snapshot delay now
   pass production verification. The full thirty-minute boundary has not been
-  observed in production. Repeat the named README Trigger on the new runtime.
+  observed in production. The named README Trigger repeat on the new runtime
+  passed in current-readme-repeat-DsHXDD; restore performance remains open.
 - Verify deletion while the same Sandbox is snapshotting after #4 is corrected.
   Standalone live-child Workspace deletion now passes production acceptance.
 - Continue the complete register above, especially consistent nonblocking
@@ -263,3 +264,17 @@ image identity and measured results for each behavior, with unknowns left explic
   and does not replace the successful xfAfzR evidence.
 - Disk remained at 49 GiB free after the runtime image and local cache were built.
   No Docker restart, worktree deletion or cache pruning was necessary.
+- README Trigger repeat current-readme-repeat-DsHXDD passed on runtime 14c05f26,
+  Launch lch_df34aa7e0b1f4b8481da775a8548b092. Duration 505,850 ms; the existing
+  hierarchy and both complete turn-array hashes were preserved, and the first
+  prompt was not replayed. Launch/Sandbox progress, unavailable children, restored
+  chat and enabled composer were observed at desktop/mobile sizes. Source was
+  GitHub's authenticated rendered README delivered at its source origin, not a
+  signed-in GitHub browser page. Fresh sign-in/no-review remains unproved.
+- A subsequent read at 17:36 UTC observed checkpoint epoch 32, started at
+  17:34:14 UTC, shortly after revival completed at 17:32 UTC. Latest completed
+  snapshot was epoch 31 at 16:14:23 UTC. Source inspection confirms restored
+  snapshots bypassed runtime-age scheduling, causing an immediate overdue
+  capture. A correction now takes the later snapshot/binding baseline, with
+  restart, configurable-interval and exact-boundary regression cases. Deployment
+  and production timing verification remain pending; #4 remains unsatisfied.

@@ -286,7 +286,7 @@ impl SandboxCheckpointHistory {
     }
 }
 
-/// Periodic captures age from the last snapshot, or initial runtime binding.
+/// Periodic captures age from the later of the last snapshot and runtime binding.
 pub fn sandbox_checkpoint_due(sandbox: &Sandbox, now: &str) -> bool {
     sandbox_checkpoint_due_with_interval(sandbox, now, SANDBOX_CHECKPOINT_INTERVAL_SECONDS)
 }
@@ -306,19 +306,25 @@ pub fn sandbox_checkpoint_due_with_interval(
     {
         return false;
     }
-    let baseline = match sandbox.lifecycle.checkpoints.latest.as_ref() {
-        Some(checkpoint) if checkpoint.validate().is_ok() => &checkpoint.sealed_at,
-        Some(_) => return false,
-        None => {
-            &sandbox
-                .runtime
-                .as_ref()
-                .expect("runtime checked above")
-                .bound_at
-        }
+    let Some(bound_at) = sandbox
+        .runtime
+        .as_ref()
+        .and_then(|runtime| seconds_from_rfc3339(&runtime.bound_at))
+    else {
+        return false;
     };
-    seconds_from_rfc3339(baseline)
-        .and_then(|baseline| baseline.checked_add(interval_seconds))
+    let baseline = match sandbox.lifecycle.checkpoints.latest.as_ref() {
+        Some(checkpoint) if checkpoint.validate().is_ok() => {
+            let Some(sealed_at) = seconds_from_rfc3339(&checkpoint.sealed_at) else {
+                return false;
+            };
+            bound_at.max(sealed_at)
+        }
+        Some(_) => return false,
+        None => bound_at,
+    };
+    baseline
+        .checked_add(interval_seconds)
         .is_some_and(|due| now_seconds >= due)
 }
 

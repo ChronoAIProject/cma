@@ -326,8 +326,9 @@ older completed objects are pruned; legacy two-generation records are accepted u
 their next successful publication. Periodic capture defaults to thirty minutes and
 uses the live global admin checkpoint interval; manual and automatic pause still
 require a fresh consistent checkpoint before teardown.
-The first periodic capture waits that same interval from the initial runtime
-binding; a missing previous snapshot is not an immediate-capture signal.
+Periodic capture waits that same interval from the later of the latest snapshot
+and current runtime binding. Initial provisioning and revival must not immediately
+capture just because the previous snapshot is missing or overdue.
 
 Rotation and restore are never silent. The record names the runtime version,
 checkpoint timestamp and progress. The UI preserves history and explains why

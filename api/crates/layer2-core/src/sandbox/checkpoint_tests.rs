@@ -213,6 +213,38 @@ fn initial_checkpoint_uses_persisted_runtime_age_and_the_current_interval() {
 }
 
 #[test]
+fn revival_waits_the_current_interval_even_when_restored_snapshot_is_overdue() {
+    let mut sandbox = sandbox();
+    sandbox.lifecycle.checkpoints.latest = Some(checkpoint(1, "2026-09-05T00:00:00Z"));
+    sandbox.runtime.as_mut().unwrap().bound_at = "2026-09-05T02:00:00Z".into();
+    sandbox.updated_at = "2026-09-05T02:09:59Z".into();
+    sandbox.last_activity_at = sandbox.updated_at.clone();
+    let recovered: Sandbox =
+        serde_json::from_slice(&serde_json::to_vec(&sandbox).unwrap()).unwrap();
+    assert!(!sandbox_checkpoint_due(&recovered, "2026-09-05T02:00:00Z"));
+    assert!(!sandbox_checkpoint_due(&recovered, "2026-09-05T02:29:59Z"));
+    assert!(sandbox_checkpoint_due(&recovered, "2026-09-05T02:30:00Z"));
+    assert!(!sandbox_checkpoint_due_with_interval(
+        &recovered,
+        "2026-09-05T02:09:59Z",
+        600
+    ));
+    assert!(sandbox_checkpoint_due_with_interval(
+        &recovered,
+        "2026-09-05T02:10:00Z",
+        600
+    ));
+
+    sandbox.lifecycle.checkpoints.latest = Some(checkpoint(2, "2026-09-05T02:05:00Z"));
+    assert!(!sandbox_checkpoint_due(&sandbox, "2026-09-05T02:34:59Z"));
+    assert!(sandbox_checkpoint_due(&sandbox, "2026-09-05T02:35:00Z"));
+    for invalid in ["not-a-time", "2026-09-06T00:00:00Z"] {
+        sandbox.runtime.as_mut().unwrap().bound_at = invalid.into();
+        assert!(!sandbox_checkpoint_due(&sandbox, "2026-09-05T02:35:00Z"));
+    }
+}
+
+#[test]
 fn checkpoint_interval_is_configurable_and_invalid_values_do_not_capture() {
     let mut sandbox = sandbox();
     sandbox.lifecycle.checkpoints.latest = Some(checkpoint(1, "2026-09-05T00:00:00Z"));
