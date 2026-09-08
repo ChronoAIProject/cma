@@ -15,6 +15,7 @@ async fn retired_delete_cleanup_is_parent_fenced_and_rejects_unsafe_parent_evide
         claimed.ready_at = Some(NOW.into());
         claimed.stopped_at = Some(NOW.into());
         claimed.stop_reason = Some(AgentStopReason::Owner);
+        claimed.conversation.active_turn = Some(9);
         claimed.work.step = AgentWorkStep::EnsureProcessClosed;
         replace_agent_fixture(&store, &claimed).await;
         worktree.transition(WorktreeStatus::Ready).unwrap();

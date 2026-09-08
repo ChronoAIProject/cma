@@ -39,7 +39,7 @@ async fn completed_retirement(harness: &Harness, remove_runtime: bool) {
 #[tokio::test]
 async fn retired_sandbox_agent_delete_removes_records_without_recreating_runtime_or_fabricating_receipts(
 ) {
-    for remove_runtime in [true, false] {
+    for (remove_runtime, retained_turn) in [(true, false), (true, true), (false, true)] {
         let harness = Harness::new(Arc::new(EmptyAgentSkillResolver)).await;
         let admitted = harness.admit("retired-delete", Vec::new()).await;
         let ready = harness.drive_ready(&admitted.id).await;
@@ -57,8 +57,18 @@ async fn retired_sandbox_agent_delete_removes_records_without_recreating_runtime
                 .run(&ready.id, harness.now + Duration::from_secs(5))
                 .await;
         }
-        let stopped = harness.stored(&ready.id).await;
+        let mut stopped = harness.stored(&ready.id).await;
         assert_eq!(stopped.status, AgentStatus::Stopped);
+        if retained_turn {
+            let revision = stopped.revision;
+            stopped.conversation.active_turn = Some(9);
+            stopped.revision += 1;
+            harness
+                .store
+                .save_agent(revision, stopped.clone())
+                .await
+                .unwrap();
+        }
         completed_retirement(&harness, remove_runtime).await;
         let before = harness.backend.requests().await.len();
         harness
@@ -86,6 +96,10 @@ async fn retired_sandbox_agent_delete_removes_records_without_recreating_runtime
             }
         );
         assert_eq!(deleted.work.receipts, stopped.work.receipts);
+        assert_eq!(
+            deleted.conversation.active_turn,
+            stopped.conversation.active_turn
+        );
         assert_eq!(
             deleted.conversation.conversation_id,
             stopped.conversation.conversation_id

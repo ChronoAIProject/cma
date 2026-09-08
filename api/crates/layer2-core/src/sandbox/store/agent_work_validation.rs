@@ -41,6 +41,7 @@ pub fn validate_agent_work_mutation_with_sandbox(
 }
 
 /// Completed retirement has removed the entire runtime, not just an Agent process.
+/// A stopped Agent may retain its interrupted turn as history; it cannot execute again.
 pub fn retired_sandbox_cleanup_is_absent(agent: &Agent, sandbox: &Sandbox) -> bool {
     matches!(agent.status, AgentStatus::Stopped | AgentStatus::Failed)
         && matches!(
@@ -50,7 +51,6 @@ pub fn retired_sandbox_cleanup_is_absent(agent: &Agent, sandbox: &Sandbox) -> bo
                 | AgentWorkStep::RemoveWorktree
         )
         && agent.work.cleanup_debt.is_empty()
-        && agent.conversation.active_turn.is_none()
         && agent.conversation.queued_messages.is_empty()
         && agent.sandbox_id == sandbox.id
         && agent.owner == sandbox.owner
