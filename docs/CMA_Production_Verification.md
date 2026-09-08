@@ -16,26 +16,28 @@ acceptance of this campaign.
 | 3. Public Sandbox Profile | 4000 millicores, 8192 MiB, two requested services, 4/4 limits, working toolchain | Exact live configuration and all four actual Agent workload checks passed on runtime `137b489d`; independent receipt confirms unchanged tracked source |
 | 4. Public Trigger | Exact title/message, all-level reuse, Try It, visitor theme, no review, README placement | Exact revision published after first rollout; README-only PR #841 merged after all 12 protected checks; default README snippet read back exactly |
 | 5. Login without bootstrap | No Sandbox, Workspace, Agent, or Profile created by login alone | Existing-owner fresh-browser sign-in created no resources; successful unseen-CMA-identity callback contract passes default/home/Trigger returns; external fresh signup not tested |
-| 6. Complete external-click flow | Login then automatic provisioning; exact first message once; correct software, skills, scopes | Latest `lifecycle-fresh` README entry on API `619535ad` and web `1eb60be1` passed automatic provisioning and exact first prompt once; prior configuration/workload and restored-file proofs remain tied to their original source; final fresh configuration and genuinely paused README-repeat acceptance remain pending |
-| 7. Previous UI style | Original rotating 3D mark and established controls; desktop/mobile screenshots | Prior live home/provisioning motion and four-view chat checks passed; latest first-run mobile resize capture remains a transition artifact, not settled acceptance; web `4ddcd1b9` fixes delayed title freshness and is pushed, not deployed; final title/hierarchy/layout verification is prepared but not run |
+| 6. Complete external-click flow | Login then automatic provisioning; exact first message once; correct software, skills, scopes | Latest completed `lifecycle-fresh` entry on API `619535ad`/web `1eb60be1` passed provisioning and exact first prompt once; new lifecycle-postfix Launch was admitted at 01:40:47 UTC on both fixes and is pending. Prior configuration/workload/restored-file proofs remain source-bound; final fresh configuration and genuinely paused README repeat remain pending |
+| 7. Previous UI style | Original rotating 3D mark and established controls; desktop/mobile screenshots | Prior live home/provisioning motion and four-view chat checks passed; latest first-run mobile resize capture remains a transition artifact, not settled acceptance; web `4ddcd1b9` title correction is now live; final title/hierarchy/layout verification is prepared but not passed |
 | 8. Autonomous YOLO | Pinned provider runs full-access mode with no approval requests | Actual provider configuration verified; latest first response and successful subsequent workload completed with zero approvals |
-| 9. Lifecycle | Active to paused to active; paused to terminated; history retained | Manual Resume passed at 00:24 UTC and second UI Pause reported Paused at 00:27 UTC; retained provider resource and replacement pod invalidate physical-teardown acceptance. The one paused Delete admitted at 00:28 UTC timed out at 00:58 UTC; original-operation continuation and fresh post-fix Pause teardown proof remain pending |
-| 10. Cleanup | Only identified stale state removed; new published flow remains usable | Identified old Sandboxes and the verified heavy test baseline were retired through supported owner commands; the latest fresh-baseline Delete began from genuinely Paused but has not completed; final environment remains pending |
+| 9. Lifecycle | Active to paused to active; paused to terminated; history retained | Manual Resume passed at 00:24 UTC; earlier UI Paused states did not prove physical teardown. The original paused Delete browser timeout remains failed; read-only continuation reached Retired revision 334 with stopped Agent, retained history and CR/pod absence at 01:37 UTC. Fresh post-fix Pause/Delete physical acceptance is still pending |
+| 10. Cleanup | Only identified stale state removed; new published flow remains usable | Identified old Sandboxes, heavy baseline and original lifecycle-fresh baseline have retired through their admitted owner commands; original retirement recovery issued no new command and verified CR/pod absence. Fresh disposable lifecycle-postfix and retained final environment verification remain pending |
 | 11. Conversation UI | Thinking, Send/Stop, CPU, RAM, context, token, network metrics | Prior four-view metrics, Thinking, scrolling and lifecycle input holds passed; latest fresh-baseline UI test sent one message, observed its exact tool command, interrupted once, verified the public interrupted outcome, restored Send and preserved reloaded history |
 
-The latest observed production versions are API `619535ad`, web `1eb60be1`, and
-runtime `137b489d`, independently verified at 2026-09-07 23:42 UTC after a fresh
-all-owner quiet-state guard. The separate `lifecycle-fresh` Trigger journey,
-Send/Stop and manual Resume have passed; both UI Pauses reported Paused, but
-physical teardown is not accepted. As of 2026-09-08 01:00 UTC, the original
-paused Delete verifier has timed out while its durable operation remains stuck
-retiring. API correction `6eca81a3` is building in session `97050`; web title fix
-`4ddcd1b9` is pushed but not deployed. The normal all-owner rollout guard is
-blocked. A separately named stopped-orphan recovery preflight is being prepared,
-not run or deployed. Final fresh/configuration/paused-repeat checks are held for
-guarded recovery and original-operation retirement continuation; final lifecycle
-acceptance additionally requires fresh post-fix physical teardown. The historical
-deployed-component table below is not the current campaign's image inventory.
+As of 2026-09-08 01:43 UTC, API `6eca81a3` and web `4ddcd1b9` are live; runtime
+`137b489d` is unchanged. The API deployed through the separately named exact
+stopped-orphan recovery preflight, not an all-quiet claim. Original retirement
+continuation passed at 01:37 UTC with the Agent stopped, exact history retained
+and physical CR/pod absent; the timed-out original browser attempt remains failed.
+A fresh normal all-owner guard then passed before the completed web rollout;
+independent API/runtime/store/history recovery verification passed at 01:40 UTC.
+Earlier `lifecycle-fresh` provisioning/first prompt, Send/Stop and manual Resume
+passes remain tied to their original images. The single disposable
+`lifecycle-postfix` journey is now running, with fresh Pause/Delete physical proof
+next, followed by
+`final-fresh` configuration, Pause, README revival and final hierarchy/UI checks.
+None of those remaining checks is accepted yet, and no heavy workload replay is
+added. The historical deployed-component table below is not the current
+campaign's image inventory.
 
 Private campaign evidence is kept under `/tmp/cma-trureturing-loop.LvTezb` and
 must not be committed or uploaded wholesale. One existing NyxID owner account is
@@ -900,11 +902,12 @@ command list contains only that DELETE and the browser-error list is empty.
 There is no active verifier from that attempt and no repeat Delete is allowed.
 The durable operation remains the recovery target, not a new admission.
 
-Sandbox `sbx_b8afb86d51604388ba653dd7d2d1fc5b` is Retiring at `stop_agents`;
-Agent `agt_8048f1e694c84c14837e4fd05f83a760` is Paused at `close_process`, with
+At the blocked observations, Sandbox `sbx_b8afb86d51604388ba653dd7d2d1fc5b` was
+Retiring at `stop_agents`; Agent `agt_8048f1e694c84c14837e4fd05f83a760` was
+Paused at `close_process`, with
 stop reason `sandbox_retired`, no active/queued turn, and original conversation
-`01a07e44-0ac6-78b3-a0b4-b769a2e315c0`. The Sandbox runtime binding is absent,
-but the runtime itself is not absent. Sandbox generation high-water is 3;
+`01a07e44-0ac6-78b3-a0b4-b769a2e315c0`. The Sandbox runtime binding was absent,
+but the runtime itself was not absent. Sandbox generation high-water was 3;
 runtime-loss parking advanced the Agent conversation fence to 4.
 
 The retained BatchSandbox handle `56eda9aa-b1b8-4692-b97d-4e2f5187365a` has UID
@@ -962,11 +965,10 @@ not run and no recovery rollout is accepted. It must not weaken the normal guard
 or mislabel a recovery deployment as all-quiet. No record repair, manual pod
 deletion, duplicate lifecycle command or new Launch is used.
 
-After guarded deployment, a separate read-only continuation must verify the
-original admitted Delete reaches Retired with the Agent stopped, history retained
-and exact provider resource/pod absent. This can establish durable recovery, not
-turn the original timed-out browser attempt into a pass. Lifecycle acceptance
-also requires a fresh post-fix Pause with independent physical-teardown proof.
+At the 01:00 UTC update, guarded deployment and a separate read-only continuation
+were still required to verify the original admitted retirement. Their subsequent
+completion is recorded below. It establishes durable recovery, not a passing
+original browser attempt or fresh post-fix Pause/Delete acceptance.
 
 ### Generated Title Correction
 
@@ -988,7 +990,8 @@ and scoped secret scans passed. Source
 `4ddcd1b9b10ce7b33132ee085d1de493d089559a` completed image build, scan and registry
 push/readback at 00:36:56 UTC, with digest
 `403552285bea68cb5fd1ea6c33a3ad99deaa5370dc697560044f39d1195d2b9a`.
-It is not deployed at the 01:00 UTC update; live web remains `1eb60be1`.
+It was not deployed at the 01:00 UTC update. The later live rollout is recorded
+below; final browser title acceptance still requires its own passing evidence.
 
 Future first/repeat verifiers now require API/header/tab/tree title equality
 before any reload, then verify the collapsed-mobile header/tab before and after
@@ -1000,22 +1003,108 @@ ancestry and settled-geometry groups pass with syntax and secret scans. These
 scratch changes leave all earlier evidence untouched and have not run against
 production.
 
+### Recovery Deployment And Original Retirement
+
+API `6eca81a3` completed build `97050` at approximately 01:25 UTC after a
+26-minute release compilation. The first vulnerability scan was interrupted at
+01:28:40 because the local Docker Desktop credential helper did not return while
+the scanner downloaded its public database. No report or scan pass was produced;
+`api-6eca81a3-scan-interruption.json` preserves that outcome. A rerun using an
+isolated empty Docker configuration passed at 01:29 UTC with no High/Critical
+findings. Registry push and exact digest readback passed at 01:29:47.650 UTC:
+`46af74403c38318184c8c28f2afcd818878582af7a0ac486b23021145fae187a`.
+Manifest commit `80cc7f85` pins that image.
+
+Two initial direct deployment attempts refused expired recovery proofs before
+any production write; the rollout-before artifact was absent at both refusals.
+They are not successful deployments. The separately reviewed scratch dispatcher
+requires a previously completed independent passing preflight, then completes a
+new synchronous read-only preflight with exit 0 before invoking deployment. It
+requires more than five seconds of dispatch margin, while the existing deployment
+consumer rechecks expiry and its three-second margin before every patch. It does
+not weaken the normal guard or run deployment unconditionally after polling.
+
+Fresh receipt `paused-retirement-recovery-rollout-0vf3hI/result.json` passed at
+01:35:37.068 UTC with `deployBefore` 01:35:43.000. The API deployment request was
+recorded at 01:35:38.321 and the rollout became Ready. This is a guarded recovery
+deployment for the exact stopped orphan, not an all-owner quiet-state deployment.
+Earlier failed process/preflight observations and stale-proof refusals remain
+preserved. No manual database repair, provider deletion or duplicate owner command
+was used to force recovery.
+
+`paused-delete-continuation-QTp5I9/result.json` passed at 01:37:01.179 UTC. The
+same originally admitted operation reached Retired revision 334 at 01:37:00.142,
+with the exact Agent stopped and all four hierarchy IDs retained. The entire
+two-turn transcript hash remains
+`a7f14bdfed13317a664854f8e0a4f7744eae79c7b350fcd4b7f13d1857b69783`.
+The exact provider CR and runtime pod were absent. Continuation issued zero new
+commands and rechecked the original failure and command evidence unchanged.
+This is successful recovery of the original retirement; the original thirty-minute
+browser timeout is still failed and fresh post-fix Delete acceptance is pending.
+
+The normal all-owner guard `all-owner-rollout-guard-z23CyR/result.json` passed at
+01:37:33.423 UTC with no reasons. The web deployment request was recorded at
+01:37:45.030; rollout session `67178` completed. Web `4ddcd1b9` is live at digest
+`403552285bea68cb5fd1ea6c33a3ad99deaa5370dc697560044f39d1195d2b9a`, pinned by
+manifest commit `4edcb796`. Both corrections are live; runtime `137b489d` remains
+the same image.
+
+Independent `rollout-6eca-independent-rpueuR/result.json` passed at
+01:40:03.376 UTC: exact API digest and Ready pod, Retired revision 334, stopped
+Agent with no active/queued turn or executable work, no writer/lifecycle/capture/
+provision debt, retained checkpoint/native conversation/transcript, and original
+CR/pod absent. The earlier observer `rollout-6eca-independent-EBnVqG/` used an
+incorrect pod-label selector and was stopped before owner/store reads; its
+failure and samples are preserved. Corrected inspection used the Deployment's
+actual selector in a separate output directory. All independent production
+inspection processes finished before the next single admission.
+
+Root session `44753` is the sole active mutating verifier, following the already
+started `lifecycle-postfix` first journey. Its saved `admission.json` records
+Launch `lch_e3a9edc04f4c4414baf55156b3e582ff`, created/started at 01:40:47 UTC.
+There is no passing result yet. Follow that existing Launch; do not rerun
+admission, deploy again or issue another lifecycle command on resume.
+
+### Fresh Physical Lifecycle Guard
+
+Future Pause/Delete verifiers now require the exact deployed API image and capture
+the store-bound runtime handle, generation, CR UID and pod UID before Pause.
+Passing requires two consistent private-store observations without writer debt,
+lifecycle operation, checkpoint capture, provision reservation or executable work,
+plus complete CR/pod inventories proving no original or replacement runtime. The
+exact hierarchy, native conversation and full transcript must remain intact.
+
+Normal Pause preserves the Agent generation. Runtime-loss parking during Pause
+may advance it exactly once only with a matching durable
+`RuntimeGenerationRetired` event in the complete post-capture log range. Delete
+and its immediate paused preflight must retain the completed Pause's actual
+generation and accept no further retirement event. Resume reopens at the new
+runtime's provision generation. Active's scheduled credential-rotation wait,
+Paused's no-work state, and Retired's future purge wait are checked explicitly;
+pending Agent stop requests or work are not accepted as settled.
+
+The scratch guard passes 29 offline tests, syntax checks and scoped secret scans.
+Delete refuses a legacy Pause without physical proof before dispatching anything.
+This preparation changes no old evidence and has not yet established fresh
+production lifecycle acceptance. The exact future sequence is also recorded in
+private `lifecycle-physical-teardown-usage.md`.
+
 ### Pending Corrected Acceptance
 
 The remaining superseding sequence in private `final-flow-audit.md` requires:
 
-1. Finish API `6eca81a3` build, scan, push and digest verification. Deploy through
-   the separately named exact stopped-orphan recovery preflight only after its
-   independently observed pass. Observe the original admitted Delete through
-   the read-only continuation without repeating it, verifying history, stopped
-   Agent and physical resource/pod absence. Preserve its browser timeout as
-   failed. Deploy the pushed web title correction before admitting `final-fresh`.
-   Ordinary deployment guards remain intact; neither correction is live yet.
+1. Finish the already-admitted `lifecycle-postfix` first journey under root session
+   `44753`; no second Launch. After it
+   passes and all observation processes finish, Pause and Delete using label
+   `lifecycle-postfix-delete`, `CMA_API_REVISION=6eca81a3` and the exact same
+   `CMA_PAUSE_PROOF_LABEL` for Delete. Require the new physical proofs; do not
+   conflate this fresh test with original-operation continuation. No heavy
+   workload replay or extra manual Resume is added.
 2. Run the final fresh README journey and admission-bound configuration observer
    as `final-fresh`, waiting for the observer's `owner_verified` marker before
    admission. Explicitly Pause that fresh post-fix baseline and independently
    verify physical provider-resource/pod teardown, not only the Paused API state.
-   This fresh Pause is required in addition to original-Delete continuation.
+   This retained environment is separate from disposable `lifecycle-postfix`.
    Then run `final-repeat` with
    `CMA_REQUIRE_PAUSED_REPEAT=1` and the exact completed Pause proof.
    The repeat must revive automatically, retain all identities and history, and
@@ -1030,9 +1119,10 @@ The remaining superseding sequence in private `final-flow-audit.md` requires:
 
 All future Resume, paused Delete and final-repeat verifiers must set
 `CMA_PAUSE_PROOF_LABEL` to the exact preceding completed Pause label. Use
-`lifecycle-fresh-delete` for the already-admitted paused Delete and `final-fresh-readme`
-for final-repeat; labels are evidence bindings, not permission to repeat a
-command. The completed manual Resume used `lifecycle-fresh-manual`.
+`lifecycle-postfix-delete` for the pending fresh Delete and `final-fresh-readme`
+for final-repeat; labels are evidence bindings, not permission to repeat a command.
+The recovered original Delete used `lifecycle-fresh-delete`; the completed manual
+Resume used `lifecycle-fresh-manual`. Leave `final-fresh` intact after final-repeat.
 
 ## Historical Observation
 
