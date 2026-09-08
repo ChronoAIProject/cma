@@ -672,6 +672,11 @@ bounded growth. Stop interrupts the current turn; it does not delete the Agent.
 Approval decisions are explicit at the point of interruption. Only public API
 operations appear as commands.
 
+Enter confirms an active input-method composition without submitting or clearing
+the draft. Track composition lifecycle as well as native composition flags and
+the IME key code used by Safari. Ordinary Enter sends after composition ends;
+Shift+Enter inserts a newline. Composition completion alone never sends.
+
 ### Preparation, pause, and recovery
 
 Preparation has stable step rows from Sandbox events and current instance facts:
@@ -1573,3 +1578,4 @@ Append-only. Never edit or delete an entry.
 | 2026-09-08 | Exposed shared plain-language Sandbox operation progress on the Trigger journey and Sandbox page, with recorded-stage activity, elapsed time, last successful check and explicit missing file-level telemetry. Kept technical events in Advanced and prohibited timer-driven completion or estimates. |
 | 2026-09-08 | Replaced signed-out glasses lettering with a cloud invitation on hover, focus or five-second idle timeout; added a scoped character bump and self-hosted bold Shrikhand title. Preserved the single-spin sign-in handover, reduced-motion accessibility, and all signed-in character behavior. |
 | 2026-09-08 | Added the global snapshot interval in minutes, defaulting to thirty; exposed the latest completed snapshot timestamp and owner-authenticated archive download in Advanced. Added a distinct Canceling pause phase which keeps children unavailable until writer release is confirmed. |
+| 2026-09-08 | Protected chat drafts from IME confirmation Enter using composition lifecycle and native keyboard signals, including Safari key code 229. Kept ordinary Enter submission and Shift+Enter newlines. |

@@ -47,6 +47,7 @@ export function Composer({
   const [content, setContent] = useState('');
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const sending = useRef(false);
+  const composing = useRef(false);
   const noticeId = useId();
   const inputBlocked = !inputAvailability.allowed;
   const notice = inputAvailability.notice ?? pausedNotice;
@@ -78,7 +79,16 @@ export function Composer({
 
   const submit = () => {
     const message = content.trim();
-    if (message === '' || !usable || busy || running || starting || inputBlocked || sending.current)
+    if (
+      message === '' ||
+      composing.current ||
+      !usable ||
+      busy ||
+      running ||
+      starting ||
+      inputBlocked ||
+      sending.current
+    )
       return;
     const draft = content;
     sending.current = true;
@@ -130,8 +140,24 @@ export function Composer({
             onChange={(event) => {
               setContent(event.target.value);
             }}
+            onCompositionStart={() => {
+              composing.current = true;
+            }}
+            onCompositionEnd={() => {
+              composing.current = false;
+            }}
+            onBlur={() => {
+              composing.current = false;
+            }}
             onKeyDown={(event) => {
-              if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
+              // Safari can end composition before the confirming Enter and reports keyCode 229.
+              if (
+                composing.current ||
+                event.nativeEvent.isComposing ||
+                event.nativeEvent.keyCode === 229
+              )
+                return;
+              if (event.key === 'Enter' && !event.shiftKey) {
                 event.preventDefault();
                 submit();
               }
