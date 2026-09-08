@@ -43,7 +43,10 @@ mod agent_work_evidence_validation;
 mod agent_work_transition_validation;
 mod agent_work_validation;
 pub use agent_work_evidence_validation::{MAX_AGENT_CLEANUP_DEBT, MAX_AGENT_WORK_RECEIPTS};
-pub use agent_work_validation::validate_agent_work_mutation;
+pub use agent_work_validation::{
+    retiring_sandbox_process_is_absent, validate_agent_work_mutation,
+    validate_agent_work_mutation_with_sandbox,
+};
 mod sandbox_admission;
 pub use sandbox_admission::{
     allocated_sandbox_name, valid_admission_fingerprint, SandboxAdmission, SandboxAdmissionName,

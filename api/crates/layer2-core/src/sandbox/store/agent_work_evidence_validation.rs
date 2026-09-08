@@ -91,6 +91,7 @@ pub(super) fn validate_advance_history(
     current: &Agent,
     next: &Agent,
     mutation: &AgentWorkMutation,
+    retired_process_absent: bool,
 ) -> Result<(), SandboxStoreError> {
     let receipts = &next.work.receipts;
     if !receipts.starts_with(&current.work.receipts)
@@ -99,7 +100,7 @@ pub(super) fn validate_advance_history(
         return Err(SandboxStoreError::Conflict);
     }
     let appended = receipts.get(current.work.receipts.len());
-    if receipt_required(current) != appended.is_some() {
+    if (receipt_required(current) && !retired_process_absent) != appended.is_some() {
         return Err(SandboxStoreError::Conflict);
     }
     let mut expected_debt = current.work.cleanup_debt.clone();
