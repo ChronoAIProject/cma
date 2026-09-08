@@ -23,7 +23,7 @@ acceptance of this campaign.
 | 10. Cleanup | Only identified stale state removed; new published flow remains usable | Identified old Sandboxes, heavy baseline and original lifecycle-fresh baseline have retired through their admitted owner commands; original retirement recovery issued no new command and verified CR/pod absence. Fresh disposable lifecycle-postfix and retained final environment verification remain pending |
 | 11. Conversation UI | Thinking, Send/Stop, CPU, RAM, context, token, network metrics | Prior four-view metrics, Thinking, scrolling and lifecycle input holds passed; latest fresh-baseline UI test sent one message, observed its exact tool command, interrupted once, verified the public interrupted outcome, restored Send and preserved reloaded history |
 
-As of 2026-09-08 01:43 UTC, API `6eca81a3` and web `4ddcd1b9` are live; runtime
+As of 2026-09-08 02:03 UTC, API `6eca81a3` and web `4ddcd1b9` are live; runtime
 `137b489d` is unchanged. The API deployed through the separately named exact
 stopped-orphan recovery preflight, not an all-quiet claim. Original retirement
 continuation passed at 01:37 UTC with the Agent stopped, exact history retained
@@ -38,6 +38,17 @@ next, followed by
 None of those remaining checks is accepted yet, and no heavy workload replay is
 added. The historical deployed-component table below is not the current
 campaign's image inventory.
+
+The current first journey exposed a startup race: attaching the Trigger's first
+prompt changed the Agent revision while AddWorktree ran, so its completed work
+could not publish until the 18-minute lease expired. The same admitted operation
+recovered automatically at 02:00:10; its native conversation opened at 02:00:18
+and its first prompt is running. No records were repaired or Launch repeated.
+The publication fix and regression tests are in progress; this recovery is not
+a smooth-start acceptance. Fresh final verification remains held until the fix
+is deployed after a quiet boundary. Actual `dev` base `33a85901` has unchanged
+toolchain declarations but changed executable source, so earlier workload
+evidence does not establish this new source's build or resource behavior.
 
 Private campaign evidence is kept under `/tmp/cma-trureturing-loop.LvTezb` and
 must not be committed or uploaded wholesale. One existing NyxID owner account is
