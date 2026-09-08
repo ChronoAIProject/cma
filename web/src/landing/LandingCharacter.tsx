@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import markMarkup from '../assets/brand/cma-mark.svg?raw';
 import './LandingCharacter.css';
 
@@ -26,6 +26,13 @@ export function LandingCharacter({
   readonly onActivate?: () => void;
 }) {
   const hostRef = useRef<HTMLButtonElement & HTMLSpanElement>(null);
+  const [invited, setInvited] = useState(false);
+
+  useEffect(() => {
+    if (onActivate === undefined || invited) return;
+    const timer = window.setTimeout(() => setInvited(true), 5_000);
+    return () => window.clearTimeout(timer);
+  }, [onActivate, invited]);
 
   useEffect(() => {
     const host = hostRef.current;
@@ -92,6 +99,10 @@ export function LandingCharacter({
       ref={hostRef}
       className={`landing__character${compact ? ' landing__character--compact' : ''}`}
       data-state={state}
+      data-invitation={onActivate !== undefined && invited ? '' : undefined}
+      data-activation={onActivate !== undefined ? '' : undefined}
+      onPointerEnter={onActivate === undefined ? undefined : () => setInvited(true)}
+      onFocus={onActivate === undefined ? undefined : () => setInvited(true)}
       type={state === 'brand' ? 'button' : undefined}
       aria-label={
         state === 'brand'
@@ -124,8 +135,7 @@ export function LandingCharacter({
       />
       {onActivate === undefined ? null : (
         <span className="landing__character-invitation" aria-hidden="true">
-          <span>Get</span>
-          <span>Started</span>
+          <span>Click to start...</span>
         </span>
       )}
     </Tag>

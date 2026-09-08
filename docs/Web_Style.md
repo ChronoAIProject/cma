@@ -1387,12 +1387,23 @@ authentication surfaces. The stable square is bounded to the available width,
 220px minimum when space permits and 520px maximum; compact Home uses 280px.
 The signed-in wordmark is 48px, weight 700, with zero tracking. Only the signed-out
 landing names the product ChronoAI Managed Agent, at 40px/1.2 with wrapping and
-zero tracking, and has no separate Sign in button. After its first lens sweep,
-Get appears on the left lens and Started on the right as texture-mapped lettering.
+zero tracking, and has no separate Sign in button. Its title alone uses self-hosted
+OFL Shrikhand with the interface stack as fallback; the regular face is deliberately
+synthesized at weight 700 for the requested bold treatment. The glasses have no text.
+A cloud-shaped, 184px by 64px prompt says Click to start... above the character,
+with its top 96px above the reserved square. The signed-out lockup reserves
+120px top padding so the cloud never covers the character or clips the viewport.
+It uses layer-1 fill, primary ink,
+16px/24px semibold text, a quiet shadow and a 12px speech tail. Overlapping
+rounded lobes form the cloud without an image or new palette. Hover or keyboard
+focus reveals it; five seconds without either reveals it automatically, including
+touch and WebGL fallback. Its 0.45-second entrance rises 12px from 0.85 scale
+with a small 1.04 overshoot. Hover/focus also triggers a 0.65-second character
+bump of 0.08 scene units and 6% scale, gated to signed-out activation only.
 The logo is a keyboard-operable Get Started button; activation makes one complete
 0.95-second turn, followed by the existing 0.2-second opacity handover into sign-in.
-Repeated activation cannot start duplicate sign-ins. Reduced motion shows the
-words immediately and skips both turn and fade; unavailable WebGL retains a
+Repeated activation cannot start duplicate sign-ins. Reduced motion keeps the
+prompt static when revealed and skips bump, turn and fade; unavailable WebGL retains a
 labelled, clickable static fallback. Failed sign-in restores an explicit retry.
 This activation behavior never applies to signed-in Home or step characters.
 
@@ -1552,3 +1563,4 @@ Append-only. Never edit or delete an entry.
 | 2026-09-08 | Simplified the owner Sandbox page around status, contents and agent access; moved technical facts and event reads into Advanced. Standardized original-name profile, NyxID service and Ornn skill links with owner-scoped resolution and canonical destinations. |
 | 2026-09-08 | Made the signed-out logo the Get Started control after one lens sweep, with a complete turn and opacity handover into sign-in; renamed its heading ChronoAI Managed Agent and removed the standalone sign-in button. Preserved all signed-in character behavior and accessible reduced-motion and static fallbacks. |
 | 2026-09-08 | Exposed shared plain-language Sandbox operation progress on the Trigger journey and Sandbox page, with recorded-stage activity, elapsed time, last successful check and explicit missing file-level telemetry. Kept technical events in Advanced and prohibited timer-driven completion or estimates. |
+| 2026-09-08 | Replaced signed-out glasses lettering with a cloud invitation on hover, focus or five-second idle timeout; added a scoped character bump and self-hosted bold Shrikhand title. Preserved the single-spin sign-in handover, reduced-motion accessibility, and all signed-in character behavior. |
