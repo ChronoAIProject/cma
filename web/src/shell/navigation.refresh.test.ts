@@ -66,34 +66,34 @@ function hierarchyClient(read: () => readonly NavigationSandbox[]): CmaWebClient
   });
 }
 
-it('keeps 11 Sandbox / 10 Workspace revival polling to three reads per tick, with bounded terminal rechecks', async () => {
+it('keeps revival polling to three reads per tick without loading deleted subtrees, including initial load and minute boundaries', async () => {
   vi.useFakeTimers();
   const inventory = hierarchy();
   const client = hierarchyClient(() => inventory);
   const { result } = renderHook(() => useNavigation(client));
   await act(async () => {});
-  expect(result.current).toMatchObject({ status: 'ready', items: inventory });
+  expect(result.current).toMatchObject({ status: 'ready', items: inventory.slice(0, 1) });
   expect(client.listSandboxes).toHaveBeenCalledTimes(1);
-  expect(client.readSandbox).toHaveBeenCalledTimes(11);
-  expect(client.readWorkspace).toHaveBeenCalledTimes(10);
+  expect(client.readSandbox).toHaveBeenCalledTimes(1);
+  expect(client.readWorkspace).toHaveBeenCalledTimes(1);
   await act(() => vi.advanceTimersByTimeAsync(45000));
   expect(client.listSandboxes).toHaveBeenCalledTimes(31);
-  expect(client.readSandbox).toHaveBeenCalledTimes(41);
-  expect(client.readWorkspace).toHaveBeenCalledTimes(40);
+  expect(client.readSandbox).toHaveBeenCalledTimes(31);
+  expect(client.readWorkspace).toHaveBeenCalledTimes(31);
   for (const item of inventory.slice(1)) {
     expect(
       vi.mocked(client.readSandbox).mock.calls.filter(([id]) => id === item.sandbox.id),
-    ).toHaveLength(1);
+    ).toHaveLength(0);
   }
   await act(() => vi.advanceTimersByTimeAsync(15000));
   for (const item of inventory.slice(1)) {
     expect(
       vi.mocked(client.readSandbox).mock.calls.filter(([id]) => id === item.sandbox.id),
-    ).toHaveLength(2);
+    ).toHaveLength(0);
   }
   expect(client.listSandboxes).toHaveBeenCalledTimes(41);
-  expect(client.readSandbox).toHaveBeenCalledTimes(61);
-  expect(client.readWorkspace).toHaveBeenCalledTimes(59);
+  expect(client.readSandbox).toHaveBeenCalledTimes(41);
+  expect(client.readWorkspace).toHaveBeenCalledTimes(41);
 });
 
 it('rereads mutable descendants when summary counts stay unchanged and discovers new Workspaces and Agents', async () => {
@@ -116,10 +116,7 @@ it('rereads mutable descendants when summary counts stay unchanged and discovers
   await act(() => vi.advanceTimersByTimeAsync(1500));
   expect(result.current).toMatchObject({
     status: 'ready',
-    items: [
-      { workspaces: [{ agents: [{ title: 'Fresh title', status: 'working' }] }] },
-      ...inventory.slice(1),
-    ],
+    items: [{ workspaces: [{ agents: [{ title: 'Fresh title', status: 'working' }] }] }],
   });
   const added = {
     ...changed,
@@ -142,11 +139,11 @@ it('rereads mutable descendants when summary counts stay unchanged and discovers
     workspaces: [changed, added],
   };
   await act(() => vi.advanceTimersByTimeAsync(1500));
-  expect(result.current).toMatchObject({ status: 'ready', items: inventory });
+  expect(result.current).toMatchObject({ status: 'ready', items: inventory.slice(0, 1) });
   expect(client.readWorkspace).toHaveBeenCalledWith('wsp_new', expect.any(Object));
 });
 
-it('refreshes lifecycle eligibility at the settled and saving cadences while retaining retired cache', async () => {
+it('refreshes lifecycle eligibility at the settled and saving cadences without reading deleted resources', async () => {
   vi.useFakeTimers();
   const inventory = hierarchy();
   inventory[0] = {
@@ -175,10 +172,7 @@ it('refreshes lifecycle eligibility at the settled and saving cadences while ret
   await act(() => vi.advanceTimersByTimeAsync(5000));
   expect(result.current).toMatchObject({
     status: 'ready',
-    items: [
-      { sandbox: { lifecycle: { checkpoint: { phase: 'capture' } } } },
-      ...inventory.slice(1),
-    ],
+    items: [{ sandbox: { lifecycle: { checkpoint: { phase: 'capture' } } } }],
   });
   inventory[0] = {
     ...inventory[0]!,
@@ -187,25 +181,39 @@ it('refreshes lifecycle eligibility at the settled and saving cadences while ret
   await act(() => vi.advanceTimersByTimeAsync(1500));
   expect(result.current).toMatchObject({
     status: 'ready',
-    items: [{ sandbox: { lifecycle: { pause: { allowed: true } } } }, ...inventory.slice(1)],
+    items: [{ sandbox: { lifecycle: { pause: { allowed: true } } } }],
   });
-  expect(client.readSandbox).toHaveBeenCalledTimes(13);
+  expect(client.readSandbox).toHaveBeenCalledTimes(3);
 });
 
-it('drops no-longer-visible retired resources and never resurrects them from cache', async () => {
+it('drops a newly deleted Sandbox and its descendants without another detail read', async () => {
   vi.useFakeTimers();
   let inventory = hierarchy();
   const client = hierarchyClient(() => inventory);
   const { result } = renderHook(() => useNavigation(client));
   await act(async () => {});
-  inventory = inventory.slice(0, 1);
+  inventory = inventory.map((item) => ({
+    ...item,
+    sandbox: { ...item.sandbox, status: 'retired' },
+  }));
   await act(() => vi.advanceTimersByTimeAsync(1500));
-  expect(result.current).toMatchObject({ status: 'ready', items: inventory });
-  expect(client.readSandbox).toHaveBeenCalledTimes(12);
+  expect(result.current).toMatchObject({ status: 'ready', items: [] });
+  expect(client.readSandbox).toHaveBeenCalledTimes(1);
+});
+
+it('does not load descendants if deletion completes between the list and detail reads', async () => {
+  const inventory = hierarchy();
+  const client = hierarchyClient(() => inventory);
+  vi.mocked(client.readSandbox).mockResolvedValueOnce({
+    ...inventory[0]!.sandbox,
+    status: 'retired',
+  });
+  await expect(loadNavigation(client, new AbortController().signal)).resolves.toEqual([]);
+  expect(client.readWorkspace).not.toHaveBeenCalled();
 });
 
 it.each(['status', 'updatedAt', 'workspaceCount', 'name', 'profile', 'lifecycle'] as const)(
-  'invalidates retired reuse when authorized summary %s changes',
+  'keeps deleted resources out of navigation when summary %s changes, but reads nonterminal resources',
   async (field) => {
     const original = hierarchy();
     const inventory = structuredClone(original);
@@ -223,10 +231,10 @@ it.each(['status', 'updatedAt', 'workspaceCount', 'name', 'profile', 'lifecycle'
     };
     inventory[1] = { ...changed, sandbox: { ...changed.sandbox, [field]: changes[field] } };
     const client = hierarchyClient(() => inventory);
-    const result = await loadNavigation(client, new AbortController().signal, original);
-    expect(result[1]).toEqual(inventory[1]);
-    expect(client.readSandbox).toHaveBeenCalledTimes(2);
-    expect(client.readWorkspace).toHaveBeenCalledTimes(2);
+    const result = await loadNavigation(client, new AbortController().signal);
+    expect(result).toEqual(field === 'status' ? inventory.slice(0, 2) : inventory.slice(0, 1));
+    expect(client.readSandbox).toHaveBeenCalledTimes(field === 'status' ? 2 : 1);
+    expect(client.readWorkspace).toHaveBeenCalledTimes(field === 'status' ? 2 : 1);
   },
 );
 
@@ -243,9 +251,9 @@ it.each([401, 403, 404])(
     expect(result.current).toMatchObject({ status: 'error', message: 'Denied' });
     expect(result.current).not.toHaveProperty('items');
     await act(() => vi.advanceTimersByTimeAsync(5000));
-    expect(result.current).toMatchObject({ status: 'ready', items: inventory });
-    expect(client.readSandbox).toHaveBeenCalledTimes(22);
-    expect(client.readWorkspace).toHaveBeenCalledTimes(20);
+    expect(result.current).toMatchObject({ status: 'ready', items: inventory.slice(0, 1) });
+    expect(client.readSandbox).toHaveBeenCalledTimes(2);
+    expect(client.readWorkspace).toHaveBeenCalledTimes(2);
   },
 );
 
@@ -264,7 +272,7 @@ it.each(['readSandbox', 'readWorkspace'] as const)(
   },
 );
 
-it('forces revalidation on explicit refresh and never transfers the cache to a replacement client', async () => {
+it('revalidates the visible hierarchy on explicit refresh and with a replacement client', async () => {
   vi.useFakeTimers();
   const inventory = hierarchy();
   const client = hierarchyClient(() => inventory);
@@ -276,11 +284,11 @@ it('forces revalidation on explicit refresh and never transfers the cache to a r
   await act(() => vi.advanceTimersByTimeAsync(1500));
   act(() => result.current.refresh());
   await act(async () => {});
-  expect(client.readSandbox).toHaveBeenCalledTimes(23);
+  expect(client.readSandbox).toHaveBeenCalledTimes(3);
   rerender({ client: replacement });
   await act(async () => {});
-  expect(replacement.readSandbox).toHaveBeenCalledTimes(11);
-  expect(replacement.readWorkspace).toHaveBeenCalledTimes(10);
+  expect(replacement.readSandbox).toHaveBeenCalledTimes(1);
+  expect(replacement.readWorkspace).toHaveBeenCalledTimes(1);
 });
 
 it.each(['sandbox', 'workspace'] as const)(

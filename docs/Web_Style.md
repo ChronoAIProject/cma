@@ -1039,9 +1039,9 @@ Visible Sandbox and hierarchy reads refresh every five seconds while settled,
 and every 1.5 seconds while recorded lifecycle work is in progress; reads never
 overlap or admit work. Hidden pages defer refresh until visible again.
 Every poll refreshes the authorized inventory and mutable Sandbox subtrees.
-Unchanged retired subtrees reuse their known details, with a full recheck at
-least every minute and after explicit refresh. Inventory removal or a changed
-summary invalidates that reuse; cached ancestry never creates missing resources.
+Deleted Sandboxes are omitted before fetching their details or descendants,
+including on initial load and explicit refresh. Their retained conversation
+history remains available through direct Agent reads, independently of navigation.
 
 An actual save reports **Saving progress** during capture and **Finishing save**
 while writers resume within operation progress and Advanced, not the resource
@@ -1668,3 +1668,4 @@ Append-only. Never edit or delete an entry.
 | 2026-09-09 | Unified Profiles and Marketplace cards using Ornn's title, badges, description and aligned metadata order with CMA tokens. All three profile kinds retain native full-card links, original names, revision/visibility/retirement facts, usage and timestamps, with responsive tracks and no additional per-card reads. |
 | 2026-09-09 | Resolved Marketplace authors through the retained public identity directory for list and detail views. Missing names are explicitly unavailable; account IDs remain ownership authority and are never used as display-name fallbacks. |
 | 2026-09-09 | Added bounded, timestamped Live activity to lifecycle and deletion surfaces, with allowlisted plain-language entries, visible-only incremental reads, reconnect and access-loss handling, and manual-scroll preservation. |
+| 2026-09-09 | Removed deleted Sandbox detail and descendant reads from sidebar loading and refresh. Kept authorized inventory, mutable state, access-denial handling and direct conversation history independent of the hidden deleted hierarchy. |
