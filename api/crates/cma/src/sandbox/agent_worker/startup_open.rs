@@ -3,7 +3,7 @@ use std::time::{Duration, SystemTime};
 
 use layer2_core::profiles::ModelAccess;
 use layer2_core::sandbox::store::AgentWorkMutation;
-use layer2_core::sandbox::{Agent, AgentLogKind};
+use layer2_core::sandbox::{Agent, AgentLogKind, Sandbox};
 use layer3_adapter::{AgentOpenRequest, ConversationChannel, ConversationUpdate};
 use tokio::sync::mpsc;
 
@@ -36,13 +36,14 @@ impl AgentWorker {
             request,
             updates,
         );
-        self.await_startup_open(agent, receiver, opening, budget, now)
+        self.await_startup_open(agent, &context.sandbox, receiver, opening, budget, now)
             .await
     }
 
     pub(in crate::sandbox) async fn await_startup_open<F>(
         &self,
         agent: &mut Agent,
+        sandbox: &Sandbox,
         mut receiver: mpsc::Receiver<ConversationUpdate>,
         opening: F,
         budget: Duration,
@@ -87,7 +88,7 @@ impl AgentWorker {
                     }
                     match update {
                         ConversationUpdate::SignInRequired { url, code, message } => {
-                            self.record_startup_notice(agent, AgentLogKind::SignInRequired { url, code, message }, now + started.elapsed()).await?;
+                            self.record_startup_notice(agent, sandbox, AgentLogKind::SignInRequired { url, code, message }, now + started.elapsed()).await?;
                         }
                         other => buffered.push(other),
                     }
@@ -103,21 +104,38 @@ impl AgentWorker {
     async fn record_startup_notice(
         &self,
         current: &mut Agent,
+        sandbox: &Sandbox,
         notice: AgentLogKind,
         now: SystemTime,
     ) -> Result<(), WorkerFailure> {
+        *current = self
+            .retry_startup_publication(current.clone(), sandbox, now, |agent, at| {
+                self.record_startup_notice_once(agent, notice.clone(), at)
+            })
+            .await
+            .map_err(publication_failure)?;
+        Ok(())
+    }
+
+    async fn record_startup_notice_once(
+        &self,
+        mut agent: Agent,
+        notice: AgentLogKind,
+        now: SystemTime,
+    ) -> Result<Agent, layer2_core::sandbox::store::SandboxStoreError> {
         let stamp = layer2_core::rfc3339_at(now);
-        let mut agent = current.clone();
-        let fence = claimed_fence(&agent, &self.config.holder).map_err(publication_failure)?;
-        agent.revision = agent.revision.checked_add(1).ok_or_else(|| {
-            WorkerFailure::terminal("agent_revision_overflow", "agent revision cannot advance")
-        })?;
+        let expected = agent.revision;
+        let fence = claimed_fence(&agent, &self.config.holder)?;
+        agent.revision = agent
+            .revision
+            .checked_add(1)
+            .ok_or(layer2_core::sandbox::store::SandboxStoreError::Conflict)?;
         agent.updated_at = stamp.clone();
-        bump_log_sequence(&mut agent, 1).map_err(publication_failure)?;
+        bump_log_sequence(&mut agent, 1)?;
         self.dependencies
             .store
             .commit_agent_work(AgentWorkMutation {
-                expected_agent_revision: current.revision,
+                expected_agent_revision: expected,
                 holder: self.config.holder.clone(),
                 fence,
                 agent: agent.clone(),
@@ -126,10 +144,8 @@ impl AgentWorker {
                 sandbox_event: None,
                 agent_logs: vec![notice],
             })
-            .await
-            .map_err(publication_failure)?;
-        *current = agent;
-        Ok(())
+            .await?;
+        Ok(agent)
     }
 }
 
