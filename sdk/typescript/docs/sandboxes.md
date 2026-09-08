@@ -1,5 +1,7 @@
 # Sandboxes
 
+<!-- nav: 4 Sandboxes -->
+
 `lifecycle.latest_snapshot` reports the latest completed snapshot's `epoch`,
 `saved_at`, and owner-authenticated `download_url`. Fetch the relative URL against
 the same CMA origin with the owner's credentials to download the whole-home
@@ -9,8 +11,6 @@ A Trigger can cancel a pause before agent parking and teardown are admitted.
 The `pause` operation reports `resume_writers` until the exact hold is released.
 If teardown may already have started, the Launch waits for pause completion and
 revives automatically. Navigation away does not cancel an admitted Launch.
-
-<!-- nav: 4 Sandboxes -->
 
 A Sandbox pins an immutable Sandbox Profile when provisioned. Workspaces and
 Agents belong to that Sandbox; profile edits do not change existing instances.
