@@ -18,7 +18,7 @@ Monitor disk usage and inspect exact targets before removing stale artifacts.
 | 3 | Live Sandbox creates Workspace with multiple Agent Profiles | Production UI and public API pass: Workspace and two distinct correctly pinned Agent/Worktree pairs Ready in 15,009 ms, with no first prompts sent. Same creation evidence as #1. |
 | 4 | Snapshots never interrupt creation, deletion or Agent interaction | Not satisfied: deployed whole-home capture holds writers. Requires a consistent point-in-time copy without a capture-duration writer lock, then concurrent production checks. |
 | 5 | Storage physically retains only the latest snapshot | Completed publication prunes the previous generation. Runtime audit found two sealed local archives of 1,804,395,715 and 1,804,436,309 bytes. Runtime scratch and orphan cleanup remain unsatisfied; do not equate metadata pruning with physical retention acceptance. |
-| 6 | Terminated Sandbox snapshots are deleted | Sources 0aca3dae and 8a6cac05 purge snapshots before new deletion confirmation and reconcile archives of validated, already Deleted Sandboxes without shortening history retention. All 15 archive Mongo integration tests pass. Pre-deployment storage audit finds 691 objects / 29 archives / 20.407 GiB belonging to 18 Deleted Sandboxes; production cleanup verification remains pending. |
+| 6 | Terminated Sandbox snapshots are deleted | API 8a6cac05 deployed. Fresh production pause/resume and deletion test zosocG confirms zero snapshot objects and HTTP 404 for the previously readable file while the conversation record remains. Automatic cleanup of the 18-Sandbox, 20.407-GiB legacy backlog is advancing; final zero-object verification is pending. Provider version-history and unclassified orphan audits remain separate. |
 | 7 | All lifecycle screens show secret-free bounded live logs and sync time | Live activity deployed, with latest 100 allowlisted entries, bounded scroll, sync time and reconnect/access-loss handling. Production Sandbox/Agent pause/resume and all three deletion dialogs pass. Named README Launch/Sandbox restore displays pass at desktop/mobile, followed by restored chat. Some lifecycle rows remain generic completed-stage entries; every transition and creation surface is not yet comprehensively proved. |
 | 8 | New Agent fields are understandable, profiles have anchored hover details, deleted choices are excluded | Initial batch df6e58e3; production creation exposed mobile hover previews intercepting Create workspace. Corrected and deployed in fa3f6850: previews leave dialog header/footer reachable, selection dismisses pending/open preview. Real clicks and geometry pass at 1440x900, 390x900 and 390x600, both appearances; 1,131 frontend tests pass. |
 | 9 | No review/consent flash for no-review Triggers | Pending browser verification against the required Trigger, including fresh sign-in and resumed Launch. |
@@ -354,3 +354,29 @@ image identity and measured results for each behavior, with unknowns left explic
   separately against an ephemeral, failpoint-enabled local replica set and pass.
   Temporary test containers were removed with no persistent volumes. Production
   rollout and physical snapshot cleanup evidence follow separately.
+- API 8a6cac05 deployed at
+  sha256:f77c06036019b2788b51026a17fa2f3a3cacc2a6edda06be36dd9643a506511d.
+  Linux/amd64 build, fixed HIGH/CRITICAL image scan, remote digest verification
+  and server-side manifest dry-run pass. Rollout lifecycle-api-rollout-MUzTDL
+  followed a fresh zero-runtime inventory. Postflight lifecycle-api-postflight-XF1ykz
+  confirms both complete owner history hashes, unchanged web/runtime pins, no
+  helper/runtime Pods and zero restarts. Previous preflight refusals correctly
+  waited while the normal owner pause was still tearing down its runtime.
+- The owner automatically saved epoch 34 at 18:51:04 UTC after pause admission
+  at 18:46:31 UTC, again approximately 273 seconds to publication. No owner pause,
+  forced teardown or runtime rotation was issued. #4 remains unsatisfied.
+- Production live-deletion-flow-zosocG passed real desktop/mobile Sandbox/Agent
+  pause and resume progress, Agent/Workspace/Sandbox deletion, bounded activity,
+  completion dialogs and hard refresh. Its snapshot was listed and readable
+  before deletion, absent from storage afterwards, and its exact key returned
+  HTTP 404. The deleted Agent record remained readable. All disposable runtime
+  resources were retired; both owner histories remained unchanged. Screenshots
+  and snapshot-after-delete.json were inspected.
+- Background cleanup observer retired-snapshot-backlog-imedu7 is watching only
+  the previously audited 18 Deleted Sandbox prefixes. The initial 691 objects
+  are decreasing after deployment; it performs no deletions itself. A successful
+  terminal result must additionally preserve the owner's exact epoch-34 object
+  list, both complete history hashes, and all 18 retained Sandbox records.
+- Disk stayed at 45-48 GiB free during this batch. No Docker restart, worktree
+  deletion or Docker cache pruning was necessary; only exact disposable local
+  Mongo test containers and production test Sandboxes were removed.
