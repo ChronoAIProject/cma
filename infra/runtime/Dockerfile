@@ -28,7 +28,8 @@ ARG CODEX_NATIVE_SHA256_AMD64=cb0a15567e9a60a5820d54b0f6ae86d504dc3805c1eab21a47
 ARG CODEX_NATIVE_SHA256_ARM64=e23d0be344d2496986c985cd3db61e6f649b1ddd900e6afc1b5aaabbffcbb4e2
 ARG CODEX_LAUNCHER_SHA256=134063e133f0b4244fa3b251acf973d4fe4b4aeeacbdc135211bf480f59f1477
 ARG CODEX_ACP_VERSION=1.4.0
-ARG CODEX_ACP_SHA256=ba74f54f7c89ba61858e544eb3afefbb0c1b90f2b23a136664828816a8430dbf
+ARG CODEX_ACP_UPSTREAM_SHA256=ba74f54f7c89ba61858e544eb3afefbb0c1b90f2b23a136664828816a8430dbf
+ARG CODEX_ACP_SHA256=c3cb7e54fb6a48f3091b97bed9f5243eaf7c3f3293fbd1b021e0faf41067cd2c
 
 # Node is downloaded from upstream and verified against digests recorded here.
 # Both Codex packages are JavaScript launchers for pinned native/runtime code.
@@ -116,7 +117,7 @@ RUN set -eux; \
     test "$(node -p "require('/usr/local/lib/node_modules/@agentclientprotocol/codex-acp/package.json').version")" = "${CODEX_ACP_VERSION}"; \
     test "$(codex --version)" = "codex-cli ${CODEX_VERSION}"; \
     echo "${CODEX_LAUNCHER_SHA256}  /usr/local/lib/node_modules/@openai/codex/bin/codex.js" | sha256sum -c -; \
-    echo "${CODEX_ACP_SHA256}  /usr/local/lib/node_modules/@agentclientprotocol/codex-acp/dist/index.js" | sha256sum -c -; \
+    echo "${CODEX_ACP_UPSTREAM_SHA256}  /usr/local/lib/node_modules/@agentclientprotocol/codex-acp/dist/index.js" | sha256sum -c -; \
     case "${TARGETARCH}" in \
       amd64) native="/usr/local/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl/bin/codex"; want="${CODEX_NATIVE_SHA256_AMD64}" ;; \
       arm64) native="/usr/local/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-arm64/vendor/aarch64-unknown-linux-musl/bin/codex"; want="${CODEX_NATIVE_SHA256_ARM64}" ;; \
@@ -179,6 +180,13 @@ RUN set -eux; \
     rm -rf /tmp/baseline-skills /tmp/nyxid-source.tar.gz /tmp/ornn-source.tar.gz
 
 COPY --from=build /out/layer4-runtime /usr/local/bin/layer4-runtime
+
+# Persist untouched provider conversations before publishing an Agent as Ready.
+# This exact-source patch and restart proof use no credential or model request.
+RUN --mount=type=bind,source=api/crates/layer3-adapter/src/codex,target=/tmp/cma-codex-source,readonly \
+    node /tmp/cma-codex-source/persist_conversations.cjs \
+    && echo "${CODEX_ACP_SHA256}  /usr/local/lib/node_modules/@agentclientprotocol/codex-acp/dist/index.js" | sha256sum -c - \
+    && node --test /tmp/cma-codex-source/persist_conversations.test.cjs
 
 # Refresh the final filesystem after expensive dependency layers are cached.
 # CI and release builds vary this value so cached OS packages cannot hide a
