@@ -17,21 +17,25 @@ acceptance of this campaign.
 | 4. Public Trigger | Exact title/message, all-level reuse, Try It, visitor theme, no review, README placement | Exact revision published after first rollout; README-only PR #841 merged after all 12 protected checks; default README snippet read back exactly |
 | 5. Login without bootstrap | No Sandbox, Workspace, Agent, or Profile created by login alone | Existing-owner fresh-browser sign-in created no resources; successful unseen-CMA-identity callback contract passes default/home/Trigger returns; external fresh signup not tested |
 | 6. Complete external-click flow | Login then automatic provisioning; exact first message once; correct software, skills, scopes | Latest `lifecycle-fresh` README entry on API `619535ad` and web `1eb60be1` passed automatic provisioning and exact first prompt once; prior configuration/workload and restored-file proofs remain tied to their original source; final fresh configuration and genuinely paused README-repeat acceptance remain pending |
-| 7. Previous UI style | Original rotating 3D mark and established controls; desktop/mobile screenshots | Prior live home/provisioning motion and four-view chat checks passed; latest first-run mobile resize capture remains a transition artifact, not settled acceptance; web `4ddcd1b9` fixes delayed title freshness and is building, not deployed; final title/hierarchy/layout verification is prepared but not run |
+| 7. Previous UI style | Original rotating 3D mark and established controls; desktop/mobile screenshots | Prior live home/provisioning motion and four-view chat checks passed; latest first-run mobile resize capture remains a transition artifact, not settled acceptance; web `4ddcd1b9` fixes delayed title freshness and is pushed, not deployed; final title/hierarchy/layout verification is prepared but not run |
 | 8. Autonomous YOLO | Pinned provider runs full-access mode with no approval requests | Actual provider configuration verified; latest first response and successful subsequent workload completed with zero approvals |
-| 9. Lifecycle | Active to paused to active; paused to terminated; history retained | Latest manual Resume passed at 00:24 UTC with the exact runtime/hierarchy/history, and second Pause passed at 00:27 UTC; one genuinely paused Delete was admitted at 00:28 UTC but is stuck retiring because its runtime is absent; backend correction and successful Delete remain pending; previous failures remain recorded |
+| 9. Lifecycle | Active to paused to active; paused to terminated; history retained | Manual Resume passed at 00:24 UTC and second UI Pause reported Paused at 00:27 UTC; retained provider resource and replacement pod invalidate physical-teardown acceptance. The one paused Delete admitted at 00:28 UTC timed out at 00:58 UTC; original-operation continuation and fresh post-fix Pause teardown proof remain pending |
 | 10. Cleanup | Only identified stale state removed; new published flow remains usable | Identified old Sandboxes and the verified heavy test baseline were retired through supported owner commands; the latest fresh-baseline Delete began from genuinely Paused but has not completed; final environment remains pending |
 | 11. Conversation UI | Thinking, Send/Stop, CPU, RAM, context, token, network metrics | Prior four-view metrics, Thinking, scrolling and lifecycle input holds passed; latest fresh-baseline UI test sent one message, observed its exact tool command, interrupted once, verified the public interrupted outcome, restored Send and preserved reloaded history |
 
 The latest observed production versions are API `619535ad`, web `1eb60be1`, and
 runtime `137b489d`, independently verified at 2026-09-07 23:42 UTC after a fresh
 all-owner quiet-state guard. The separate `lifecycle-fresh` Trigger journey,
-Send/Stop, manual Resume and both UI Pauses have passed. As of 2026-09-08
-00:36 UTC, the one genuinely paused Delete is stuck retiring, a narrow backend
-correction is in progress, and web title fix `4ddcd1b9` is building but not
-deployed. Final fresh/paused-repeat acceptance waits for the corrections and
-the original Delete to settle. The historical deployed-component table below
-is not the current campaign's image inventory.
+Send/Stop and manual Resume have passed; both UI Pauses reported Paused, but
+physical teardown is not accepted. As of 2026-09-08 01:00 UTC, the original
+paused Delete verifier has timed out while its durable operation remains stuck
+retiring. API correction `6eca81a3` is building in session `97050`; web title fix
+`4ddcd1b9` is pushed but not deployed. The normal all-owner rollout guard is
+blocked. A separately named stopped-orphan recovery preflight is being prepared,
+not run or deployed. Final fresh/configuration/paused-repeat checks are held for
+guarded recovery and original-operation retirement continuation; final lifecycle
+acceptance additionally requires fresh post-fix physical teardown. The historical
+deployed-component table below is not the current campaign's image inventory.
 
 Private campaign evidence is kept under `/tmp/cma-trureturing-loop.LvTezb` and
 must not be committed or uploaded wholesale. One existing NyxID owner account is
@@ -888,21 +892,81 @@ history. The Sandbox advanced from Active revision 45 through Pausing revision
 47 to genuinely Paused revision 51 at 00:27:31.693. That exact completed Pause
 supplied `CMA_PAUSE_PROOF_LABEL=lifecycle-fresh-delete` to the Delete verifier.
 
-One UI Delete was admitted at 00:28:18 UTC. The sole active mutating verifier
-continues observing that original operation in
-`lifecycle-lifecycle-fresh-delete-delete/`; no successful result is accepted.
-The Sandbox is stuck Retiring at `stop_agents`: the paused runtime is already
-absent, but Agent cleanup retries the runtime-dependent close-process path.
-There is no active Agent work. Unlike the earlier omitted-field verifier error,
-this is a product defect in deleting a genuinely paused Sandbox.
+Exactly one UI Delete was admitted at 00:28:18 UTC, from Paused revision 51 to
+Retiring revision 54. Verifier `21627` timed out around 00:58:18 UTC with
+`Lifecycle did not settle`; its original
+`lifecycle-lifecycle-fresh-delete-delete/failure.json` remains failed. The saved
+command list contains only that DELETE and the browser-error list is empty.
+There is no active verifier from that attempt and no repeat Delete is allowed.
+The durable operation remains the recovery target, not a new admission.
 
-A narrow parent-fenced core/worker correction is being implemented. No database
-or runtime repair, duplicate Delete, new message or fresh Launch is used. A
-separate exact paused-retirement API recovery preflight is prepared but has not
-run; the ordinary all-owner deployment guard remains blocked. It must not be
-weakened or represented as an all-quiet pass to admit the recovery rollout.
-Final fresh acceptance waits until the verified correction is deployed and the
-original Delete settles with its history and cleanup checks.
+Sandbox `sbx_b8afb86d51604388ba653dd7d2d1fc5b` is Retiring at `stop_agents`;
+Agent `agt_8048f1e694c84c14837e4fd05f83a760` is Paused at `close_process`, with
+stop reason `sandbox_retired`, no active/queued turn, and original conversation
+`01a07e44-0ac6-78b3-a0b4-b769a2e315c0`. The Sandbox runtime binding is absent,
+but the runtime itself is not absent. Sandbox generation high-water is 3;
+runtime-loss parking advanced the Agent conversation fence to 4.
+
+The retained BatchSandbox handle `56eda9aa-b1b8-4692-b97d-4e2f5187365a` has UID
+`5847cd9c-d114-4867-9093-3bdebd248e2c`, creation time 00:17:33 UTC, Kubernetes
+metadata generation 1, phase `Succeed`, and policy `Retain`. Its replacement pod
+`56eda9aa-b1b8-4692-b97d-4e2f5187365a-0`, UID
+`068bdf4b-b74f-4bd2-aca8-dfa33562c65a`, was created at 00:28:43 UTC and remained
+Running/Ready, with PodsReady observed at 00:29:53 UTC. Its labels bind it to
+`chrono-bot-prod`, this exact Sandbox and runtime generation 3; Kubernetes
+metadata generation and CMA runtime generation are different fields. Provider
+GET and LIST both reported the same handle Running at 00:47:25 UTC. A successful
+UI Pause result therefore does not prove physical provider teardown.
+
+The exact read-only process observation in
+`stopped-orphan-inspection-2KT6sP/result.json` passed at 00:56:18 UTC: zero Agent
+homes and zero active provider processes. The observed processes were `dash`,
+`layer4-runtime`, `execd`, and the inspection's `node` process; none carried an
+Agent home. This proves the bounded stopped-orphan observation only, not rollout
+authorization or cleanup. The earlier 00:53:17 process-inspection assertion
+failure in `stopped-orphan-inspection-7gMCMe/` remains preserved.
+
+### Paused Retirement Corrections At 01:00 UTC
+
+The combined API source includes four committed corrections:
+
+- `105dfc11` permits runtime-free Agent retirement only with exact parent,
+  ownership, stopped-work and retained-checkpoint proof, transactional parent
+  serialization, and fresh provider inventory proving no matching runtime.
+  It preserves history and does not invent a runtime-close receipt or turn.
+- `0dff0be8` retains Pause runtime authority and its failure when teardown fails;
+  an empty provider inventory after an error is no longer accepted as success.
+- `48c33777` retries Kubernetes cleanup conflicts at most three times while
+  preserving exact UID, positive metadata generation, labels, owner references,
+  specification, and UID/resourceVersion DELETE preconditions.
+- `6eca81a3` accepts the actual Agent-4/Sandbox-3 parked fence only within a
+  checked positive high-water-plus-one bound. Equal-generation orphan reclamation
+  requires an unbound Paused/Retiring/Retired parent without a provision
+  reservation, lifecycle operation or checkpoint capture; bound runtimes,
+  initial publication and newer allocations remain protected.
+
+Local integrated verification passed 581 core tests, 508 CMA tests with 169
+ignored, 15 reconciliation cases, five lifecycle-failure cases, 119 adapter
+tests, strict Clippy, formatting and diff checks. The exact 3/4 generation
+shape and refusal/rollback cases passed against a fresh disposable local Mongo
+replica set, which was removed. The broad CMA run used
+`RUST_MIN_STACK=33554432` after an existing large `creation_revival` test overflowed
+the default stack; the larger-stack pass does not erase that limitation.
+
+API source `6eca81a35c06ee486aa1fed8cd15f3a3d557ca81` began image build `97050`
+at 00:58:55 UTC; build, scan, push, digest pin and deployment remain pending at
+this update. The ordinary guard in `all-owner-rollout-guard-TrKbTi/result.json`
+correctly returned blocked at 00:50:05 UTC. A separately named stopped-orphan
+recovery preflight is being prepared using the exact process proof above; it has
+not run and no recovery rollout is accepted. It must not weaken the normal guard
+or mislabel a recovery deployment as all-quiet. No record repair, manual pod
+deletion, duplicate lifecycle command or new Launch is used.
+
+After guarded deployment, a separate read-only continuation must verify the
+original admitted Delete reaches Retired with the Agent stopped, history retained
+and exact provider resource/pod absent. This can establish durable recovery, not
+turn the original timed-out browser attempt into a pass. Lifecycle acceptance
+also requires a fresh post-fix Pause with independent physical-teardown proof.
 
 ### Generated Title Correction
 
@@ -920,7 +984,11 @@ and history are retained, with no extra Agent/transcript reads or message sends.
 Unrelated, blank, malformed-time and older metadata are refused; previously
 learned titles survive absent/older snapshots and do not leak across Agent
 navigation. All 1,005 frontend tests in 89 files, typechecking, lint, formatting
-and scoped secret scans passed. The exact web image is building, not deployed.
+and scoped secret scans passed. Source
+`4ddcd1b9b10ce7b33132ee085d1de493d089559a` completed image build, scan and registry
+push/readback at 00:36:56 UTC, with digest
+`403552285bea68cb5fd1ea6c33a3ad99deaa5370dc697560044f39d1195d2b9a`.
+It is not deployed at the 01:00 UTC update; live web remains `1eb60be1`.
 
 Future first/repeat verifiers now require API/header/tab/tree title equality
 before any reload, then verify the collapsed-mobile header/tab before and after
@@ -936,13 +1004,19 @@ production.
 
 The remaining superseding sequence in private `final-flow-audit.md` requires:
 
-1. Verify, build and deploy the narrow paused-Delete backend correction through
-   the separate exact recovery preflight; observe the original Delete to
-   completion without repeating it. Deploy the tested web title correction
-   before admitting `final-fresh`. Ordinary deployment guards remain intact.
+1. Finish API `6eca81a3` build, scan, push and digest verification. Deploy through
+   the separately named exact stopped-orphan recovery preflight only after its
+   independently observed pass. Observe the original admitted Delete through
+   the read-only continuation without repeating it, verifying history, stopped
+   Agent and physical resource/pod absence. Preserve its browser timeout as
+   failed. Deploy the pushed web title correction before admitting `final-fresh`.
+   Ordinary deployment guards remain intact; neither correction is live yet.
 2. Run the final fresh README journey and admission-bound configuration observer
    as `final-fresh`, waiting for the observer's `owner_verified` marker before
-   admission. Explicitly Pause that baseline and run `final-repeat` with
+   admission. Explicitly Pause that fresh post-fix baseline and independently
+   verify physical provider-resource/pod teardown, not only the Paused API state.
+   This fresh Pause is required in addition to original-Delete continuation.
+   Then run `final-repeat` with
    `CMA_REQUIRE_PAUSED_REPEAT=1` and the exact completed Pause proof.
    The repeat must revive automatically, retain all identities and history, and
    add no first prompt, approval workaround or manual continuation click.
