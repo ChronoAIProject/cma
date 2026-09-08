@@ -29,11 +29,11 @@ Monitor disk usage and inspect exact targets before removing stale artifacts.
 | 14 | No unavailable Sandbox/Workspace expansion controls or children | Sandbox gating retained; preparing/deleting/failed Workspaces now also hide children and expansion controls. Local tests pass; production verification pending. |
 | 15 | Standard Sandbox states; deleted hidden; deletion dialog explains removal | Resource-specific labels implemented; snapshots no longer replace Live/Pausing. Explicit Needs attention remains for genuine failures. Production coverage pending. |
 | 16 | IME confirmation Enter never sends; ordinary Enter sends | Deployed in web 40300b5e. Production desktop/mobile synthetic composition, keyCode 229, Shift+Enter and ordinary Enter checks pass; draft retained. Ordinary-send requests intercepted before reaching the Agent. Native OS IME selection still requires a real keyboard check, not claimed by browser-generated events. |
-| 17 | Agent header and sidebar show consistent resource state | Pending shared resource-specific presentation and live production comparison. |
+| 17 | Agent header and sidebar show consistent resource state | Implemented in web 566c9979: one selected-Agent status projection uses timestamped detail, navigation and live observations; stale history cannot override newer state. Local tests include stream/navigation transitions. Production transition verification pending. |
 | 18 | Notifications animate on showing and dismissal | Pending shared notification audit, implementation and reduced-motion checks. |
 | 19 | Real native terminal and chat share one conversation, all CLI features, matching theme and reliable sizing | Pending pinned-engine feasibility and implementation. An independent second conversation or imitation terminal is not acceptance. |
 | 20 | gh through NyxID GitHub OAuth; identity per user; three-service Connect/Verify flow | Pending runtime/proxy implementation and connection-flow verification. Do not hardcode author identity in shared profiles. |
-| 21 | Agent, Workspace and Sandbox deletion completes correctly | Not satisfied: production DELETE Workspace with a live Agent returns 409 workspace_has_live_agents. Empty Workspace deletion passed in 2,291 ms. Sandbox deletion admitted during capture completed only after writer-release recovery, taking minutes. Full cascade and same-Sandbox snapshot concurrency remain required. |
+| 21 | Agent, Workspace and Sandbox deletion completes correctly | Durable live-child Workspace cascade deployed in 565f6286. Production zero/one/two-child deletion passed in 1,933 / 14,971 / 16,887 ms; desktop/mobile dialogs, reload recovery, page closure, Deleted Agents and removed Worktrees verified. Test Sandbox retirement completed. Same-Sandbox snapshot concurrency remains blocked by #4; do not call the full requirement complete. |
 
 ## Baseline
 
@@ -126,17 +126,45 @@ image identity and measured results for each behavior, with unknowns left explic
 
 ## Next Verification Work
 
-- Complete header/sidebar status synchronization, including newer durable
-  Agent status versus periodically refreshed hierarchy. Shared vocabulary alone
-  does not prove data freshness agreement. Current controller imports newer
-  titles from navigation, not newer status; durable AG-UI status frames include
-  `timestamp`, while ephemeral frames may omit it.
-- Fix durable Workspace deletion with child Agents. Both memory admission
-  (layer2-core sandbox/store/memory/workspace_lifecycle.rs) and Mongo admission
-  (cma store/workspace_removal.rs) currently reject live children. The Workspace
-  worker removes the directory only after that refusal has been cleared. A
-  complete fix needs recorded child stop/deletion and recovery, not frontend-only
-  loops that stop when the browser closes or simply removing the admission guard.
+- Verify the deployed selected-Agent status projection during actual production
+  message and stop transitions, including desktop/mobile and refreshed history.
+- Verify deletion while the same Sandbox is snapshotting after #4 is corrected.
+  Standalone live-child Workspace deletion now passes production acceptance.
 - Continue the complete register above, especially consistent nonblocking
   snapshots, storage cleanup, Trigger quick messages/provenance, GitHub proxy
   authority and the genuine synchronized terminal. These remain unsatisfied.
+
+## Latest Deployment Evidence
+
+- 2026-09-08 15:45 UTC: API and web 565f6286 deployed directly from the feature
+  branch. API digest `sha256:fef1e63af7bb2c67cc76fd13f2fee9dd4460da4263aa6719fc1d3d409fe72a35`;
+  web digest `sha256:11736782a8785b9ffaca2cd634968e40c7f7c66a446e8490bc096eff71a58d31`.
+  Runtime configuration unchanged. Both rollout health checks passed with zero
+  restarts; both owner histories were rehashed and preserved. Evidence:
+  lifecycle-api-rollout-jIAtig, lifecycle-api-postflight-0CZ3B7,
+  unattended-web-rollout-wsCprt.
+- Source verification: 1,589 isolated Rust tests, 1,133 frontend tests, Clippy,
+  formatting, TypeScript, ESLint, dependency policy/audit, source secret scans,
+  Linux/amd64 builds, fixed HIGH/CRITICAL scans and remote digest checks pass.
+  Mongo 8.0.19 replica-set transaction test passes. The initially attempted 8.0.13
+  image download stalled and was stopped; the cached pinned 8.0.19 image was used.
+  A shared-process logging assertion failed under plain cargo test but passed
+  with the repository's process-isolated nextest runner; no test was bypassed.
+- Production evidence workspace-profile-counts-S6C9hG/result.json: creation with
+  zero/one/two Agent Profiles passed again in 5,075 / 16,109 / 15,669 ms.
+  Workspace deletion with one/two live children passed via real desktop/mobile
+  clicks. Reload and page closure required no repeat writes. All affected Agents
+  became Deleted and their Worktrees Removed before success was shown. Temporary
+  Sandbox and all four test profiles were retired; no Trigger was created.
+- README repeat current-readme-repeat-P0tw8P passed, Launch
+  lch_09015d714df7455692491772cb31077d. Existing hierarchy and both complete
+  history hashes were preserved; first prompt was not replayed. Revival took
+  507,807 ms, so the slow restore requirement remains open. Source was GitHub's
+  rendered README delivered at its source origin, not a signed-in GitHub browser
+  page. Fresh sign-in/no-review and the full three-service connection journey
+  are not proved by this repeat.
+- Status synchronization source 566c9979 passed 1,138 frontend tests, TypeScript,
+  ESLint, format and source secret scanning. Its web image build and vulnerability
+  scan pass; production transition verification is tracked separately above.
+- Disk remained between 53 and 57 GiB free. No Docker restart, cache pruning,
+  owner pause or runtime rotation was issued during this batch.
