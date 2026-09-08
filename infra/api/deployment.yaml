@@ -52,7 +52,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: api
-          image: us-central1-docker.pkg.dev/aelf-shared-k8s-prod/aelf-prod-registry/cma-api@sha256:a1738687e45cdf828eac2fc968d642976bc843017694d060f6e7b265cc571c3c
+          image: us-central1-docker.pkg.dev/aelf-shared-k8s-prod/aelf-prod-registry/cma-api@sha256:50eb27f82db82442410cc162b6f53cdc1c5724b2ec44d95375d75a8fb858ed96
           imagePullPolicy: IfNotPresent
           ports:
             - name: http
