@@ -137,7 +137,7 @@ it.each(['active', 'paused'] as const)(
   },
 );
 
-it.each(['active', 'paused', 'reviving'] as const)(
+it.each(['active'] as const)(
   'allows normal child creation from a %s parent without an explicit revive action',
   async (status) => {
     const onAction = vi.fn();
@@ -165,7 +165,7 @@ it.each(['active', 'paused', 'reviving'] as const)(
   },
 );
 
-it.each(['provisioning', 'pausing', 'retiring'] as const)(
+it.each(['paused', 'reviving', 'provisioning', 'pausing', 'retiring'] as const)(
   'keeps child creation disabled for a %s parent',
   async (status) => {
     render(
@@ -180,7 +180,13 @@ it.each(['provisioning', 'pausing', 'retiring'] as const)(
       />,
     );
     expect(await screen.findByRole('button', { name: 'New workspace' })).toBeDisabled();
-    expect(screen.getByRole('button', { name: 'New agent' })).toBeDisabled();
+    expect(screen.queryByRole('button', { name: 'New agent' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Agent one' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Workspaces' })).not.toBeInTheDocument();
+    if (status === 'paused') {
+      expect(screen.getByRole('button', { name: 'Resume' })).toBeEnabled();
+      expect(screen.getByText(/Your work is preserved/)).toBeInTheDocument();
+    }
   },
 );
 

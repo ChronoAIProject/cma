@@ -418,9 +418,14 @@ The grid transitions its tracks, except while dragging, where the transition wou
 ## 10. The sidebar
 
 The brand row, browser tree, and account foot retain the established shell
-dimensions. The mark and wordmark are the New agent shortcut when creation is
-available. Collapsing keeps the mark and the existing panel control; the browser
-region alone scrolls.
+dimensions. The mark and wordmark link to Home and close Agent details. A separate
+New agent icon button follows the build badge, never sharing the brand hit area.
+The badge sits beside CMA using existing layer-2 ground, secondary ink and border,
+11px code type, 2px/4px padding and 4px radius; it truncates within 11ch and exposes
+the complete build identity on hover. The standalone tool is 32px wide and 36px
+high; mobile header controls retain at least 44px height. Collapsing keeps the
+mark, separate creation tool and panel control. The browser region alone scrolls
+and fills all available space between header and account, with no competing spacer.
 
 The tree is Sandbox -> Workspace -> Agent. Worktrees are facts of the Agent,
 not another navigable tree level. A Sandbox row shows name, status and pause
@@ -430,9 +435,10 @@ radius, with consistent status/icon slots. Expansion state is scoped to the
 signed-in viewer and survives route changes.
 
 Expansion and navigation are separate keyboard-operable commands, with named
-`aria-expanded` state. A collapsed group retains its count. A paused Sandbox
-dims its Agent rows and names Paused; revive has an explicit moving state that
-becomes a still glyph under reduced motion. Loading and failed child reads never
+`aria-expanded` state. A collapsed group retains its count. Paused or reviving
+Sandboxes hide their descendants and expansion controls until fully Active with
+no pending lifecycle operation; revive has an explicit moving state that becomes
+a still glyph under reduced motion. Loading and failed child reads never
 masquerade as empty groups.
 
 Menus expose only public operations: Sandbox New workspace/Pause/Delete,
@@ -449,7 +455,10 @@ their canonical routes and work with refresh and browser history.
 There is no Chat/Agent switch, session group, pricing control, or terminal plane
 choice. Selecting an Agent opens its conversation; selecting a Sandbox opens
 its facts and Workspace list. Home keeps the tree with nothing selected and
-the creation empty state appropriate to the caller's capability.
+details closed. It shows Welcome to CMA beside the existing unframed 3D brand
+stage and creation action appropriate to the caller's capability. The home mark
+rotates once every eight seconds, retains its interactive spin, and stops under
+reduced motion or when hidden. Its geometry remains reserved while Three.js loads.
 
 ---
 
@@ -899,7 +908,7 @@ visible word. An unavailable action names its reason where the user needs it.
 |---|---|
 | Sandbox provisioning | Recorded preparation and child progress; no invented percentage or success. |
 | Sandbox active | Workspaces and Agents; New workspace within limits, Pause, confirmed Delete. |
-| Sandbox paused | History, pause notice and reported checkpoint time remain visible; admitted message or creation revives it. |
+| Sandbox paused | Only the Sandbox row is available in navigation; selecting it opens status, preserved-work information and the public Resume action. |
 | Sandbox pausing, reviving or rotating | Durable history and recorded progress; no conflicting command or input that could be lost. |
 | Agent starting | Recorded preparation; retain an unsent draft until readiness. |
 | Agent ready or working | Conversation and composer; Interrupt only during active work; Stop. |
@@ -911,6 +920,26 @@ A transient read or transport error is not a resource failure. Unknown and
 unreported remain unknown. Failed commands never destroy successful content.
 Delete removes an Agent and its Worktree and requires the irreversible-action
 safeguard; Stop is a distinct operation.
+
+Paused, preparing, reviving, rotating and deleting Sandboxes expose no child
+Workspace or Agent navigation, including the Workspace band on the Sandbox page.
+Children return only after the Sandbox is active and its lifecycle operation has
+finished. An ordinary checkpoint save on an active Sandbox retains its readable
+children. Resume availability still comes from the public lifecycle record.
+The Sandbox page names the current state, recorded operation phase and start time,
+and explains why its children are unavailable. No guessed readiness percentage.
+
+Deletion uses the existing risk confirmation, followed in the same overlay seat
+by the shared Modal and recorded progress treatment. Request acceptance is not
+completion. The dialog stays until dismissed, reports confirmation separately
+from cleanup, survives refresh with owner-scoped resource IDs and the same command
+key, and follows accepted cleanup with read-only polling. Closing it does not cancel server work.
+Uncertain writes offer same-key reconciliation; a failed status read never means
+successful deletion. Sandbox retirement, Workspace removal and Agent deletion
+with a removed Worktree are the terminal confirmations. Terminal resources leave
+the working sidebar; retained history stays readable through its canonical URLs.
+Deleting is written as Deleting, not Done. Workspace and Agent deletion controls
+state the prerequisite to stop live Agents, and conflicting actions remain disabled.
 
 Pause and Resume use the public Sandbox lifecycle eligibility in both the
 Sandbox page and its tree menu, never Active or Paused alone. Missing eligibility
@@ -1463,3 +1492,5 @@ Append-only. Never edit or delete an entry.
 | 2026-09-08 | Corrected conversation geometry against the actual pre-refactor baseline: restored the composer's 12px internal gap, both metrics rows' 12px gaps, Thinking's original spacing, and 34px mobile Send/Stop circles within transparent 44px hit areas. Explicitly retained readable caption ink for Thinking and metrics and applied it to the placeholder rather than restoring low-contrast tertiary/dimmed text. |
 | 2026-09-08 | Browser contrast measurement found caption ink on Thinking's preserved light layer-2 ground is only 4.29:1. Used existing secondary ink for the body and tool details, preserving the original ground and geometry while bringing that text to 5.92:1; retained caption on the composer's lighter input ground and base-ground metrics. |
 | 2026-09-08 | Shared the Agent's fresh Sandbox lifecycle observation with live resource measurements. Stopped runtime-resource polling before active-runtime confirmation and while paused, retained usage and editable drafts, showed explicit paused metrics instead of a misleading unsupported error, and reset sampling on activation or runtime-version changes. |
+| 2026-09-08 | Made inactive Sandbox hierarchy unavailable until activation, with state and Resume in its detail panel. Added persistent deletion progress and same-request recovery, explicit deletion states, terminal sidebar removal, and written deletion prerequisites while preserving retained history URLs. |
+| 2026-09-08 | Made the sidebar brand a Home link, separated the New agent tool, moved the build identity into a compact adjacent badge, and gave the resource tree all remaining column height. Home clears details and shows Welcome to CMA with the existing 3D mark rotating continuously while honoring reduced motion and visibility. |

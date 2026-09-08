@@ -14,6 +14,7 @@ interface SidebarProps {
   readonly navigation?: ReactNode;
   readonly canCreateAgent?: boolean;
   readonly onNewAgent?: () => void;
+  readonly onHome?: () => void;
 }
 
 export function Sidebar({
@@ -23,32 +24,52 @@ export function Sidebar({
   navigation,
   canCreateAgent = false,
   onNewAgent,
+  onHome,
 }: SidebarProps) {
   return (
     <aside className={`sidebar${collapsed ? ' sidebar--collapsed' : ''}`}>
       <div className="sidebar__head">
+        <a
+          className="sidebar__brand"
+          href="/"
+          aria-label="CMA home"
+          onClick={(event) => {
+            if (
+              onHome === undefined ||
+              event.button !== 0 ||
+              event.metaKey ||
+              event.ctrlKey ||
+              event.shiftKey ||
+              event.altKey
+            )
+              return;
+            event.preventDefault();
+            onHome();
+          }}
+        >
+          <span className="sidebar__mark" aria-hidden="true" dangerouslySetInnerHTML={markHtml} />
+          {collapsed ? null : <span className="sidebar__name">CMA</span>}
+        </a>
+        {collapsed ? null : (
+          <span
+            className="sidebar__build"
+            aria-label={`Build ${BUILD}`}
+            title={`Build revision: ${BUILD}`}
+          >
+            {BUILD.replace(/^trureturing-/, '')}
+          </span>
+        )}
         {canCreateAgent ? (
           <button
             type="button"
-            className="sidebar__brand"
+            className="sidebar__new"
             aria-label="New agent"
             title="New agent"
             onClick={onNewAgent}
           >
-            <span className="sidebar__mark" aria-hidden="true" dangerouslySetInnerHTML={markHtml} />
-            {collapsed ? null : (
-              <>
-                <span className="sidebar__name">CMA</span>
-                <IconNewChatOutline16 className="sidebar__new" />
-              </>
-            )}
+            <IconNewChatOutline16 />
           </button>
-        ) : (
-          <a className="sidebar__brand" href="/" aria-label="CMA home">
-            <span className="sidebar__mark" aria-hidden="true" dangerouslySetInnerHTML={markHtml} />
-            {collapsed ? null : <span className="sidebar__name">CMA</span>}
-          </a>
-        )}
+        ) : null}
         <button
           type="button"
           className="sidebar__toggle"
@@ -59,13 +80,7 @@ export function Sidebar({
           <IconPanelLeftOutline16 />
         </button>
       </div>
-      {collapsed ? null : navigation}
-      <div className="sidebar__space" />
-      {collapsed ? null : (
-        <span className="sidebar__build" title="Build revision">
-          {BUILD}
-        </span>
-      )}
+      <div className="sidebar__navigation">{collapsed ? null : navigation}</div>
       <div className="sidebar__account">{account}</div>
     </aside>
   );

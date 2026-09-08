@@ -17,9 +17,11 @@ export function BrandLoading({ label = 'Loading' }: { readonly label?: string })
 export function LandingCharacter({
   state = 'brand',
   compact = false,
+  autoRotate = false,
 }: {
   readonly state?: CharacterState;
   readonly compact?: boolean;
+  readonly autoRotate?: boolean;
 }) {
   const hostRef = useRef<HTMLButtonElement & HTMLSpanElement>(null);
 
@@ -50,6 +52,7 @@ export function LandingCharacter({
         try {
           const character = mountCharacter(host, {
             state,
+            autoRotate,
             onReady: () => {
               if (!cancelled) {
                 host.setAttribute('data-ready', '');
@@ -77,7 +80,7 @@ export function LandingCharacter({
       dispose?.();
       showFallback();
     };
-  }, [state]);
+  }, [state, autoRotate]);
 
   const Tag = state === 'brand' ? 'button' : 'span';
 

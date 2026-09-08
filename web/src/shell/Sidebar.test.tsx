@@ -40,8 +40,9 @@ it.each([true, false])(
   },
 );
 
-it('uses the owner brand row as the New agent shortcut', async () => {
+it('keeps home navigation, build badge and New agent as independent controls', async () => {
   const onNewAgent = vi.fn();
+  const onHome = vi.fn();
   const actor = userEvent.setup();
   const { rerender } = render(
     <Sidebar
@@ -50,10 +51,18 @@ it('uses the owner brand row as the New agent shortcut', async () => {
       account={<span>Account</span>}
       canCreateAgent
       onNewAgent={onNewAgent}
+      onHome={onHome}
     />,
   );
+  const home = screen.getByRole('link', { name: 'CMA home' });
+  expect(home).not.toContainElement(screen.getByRole('button', { name: 'New agent' }));
+  expect(home).not.toContainElement(screen.getByLabelText(/^Build /));
+  await actor.click(home);
+  expect(onHome).toHaveBeenCalledOnce();
+  expect(onNewAgent).not.toHaveBeenCalled();
   await actor.click(screen.getByRole('button', { name: 'New agent' }));
   expect(onNewAgent).toHaveBeenCalledOnce();
+  expect(onHome).toHaveBeenCalledOnce();
 
   rerender(
     <Sidebar collapsed={false} onToggleCollapsed={vi.fn()} account={<span>Account</span>} />,

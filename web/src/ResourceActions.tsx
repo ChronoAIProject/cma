@@ -2,7 +2,9 @@ import { useRef, useState } from 'react';
 import type { CmaWebClient } from './api/client';
 import { CommandKeys } from './api/client';
 import type { TreeAction } from './shell/Tree';
-import { RiskConfirmation } from './ui/RiskConfirmation';
+import { DeletionDialog } from './DeletionDialog';
+import { Button } from './ui/Button';
+import { restoreDeletion, type DeleteAction, type DeletionRequest } from './deletion';
 
 export type CreateAction =
   | Extract<TreeAction, { kind: 'new_agent' | 'new_workspace' }>
@@ -14,8 +16,14 @@ export function useResourceActions(
   client: CmaWebClient,
   onChanged: () => void,
   onCreate?: (action: CreateAction) => void,
+  viewerId = 'current',
 ) {
-  const [confirmation, setConfirmation] = useState<LifecycleAction>();
+  const [deletion, setDeletion] = useState<
+    { request: DeletionRequest; restored: boolean } | undefined
+  >(() => {
+    const request = restoreDeletion(viewerId);
+    return request === undefined ? undefined : { request, restored: true };
+  });
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string>();
   const keys = useRef(new CommandKeys());
@@ -49,7 +57,6 @@ export function useResourceActions(
           break;
       }
       keys.current.settle(scope);
-      setConfirmation(undefined);
       onChanged();
     } catch (failure: unknown) {
       setError(failure instanceof Error ? failure.message : 'The operation did not complete.');
@@ -62,36 +69,47 @@ export function useResourceActions(
     if (action.kind === 'new_agent' || action.kind === 'new_workspace') {
       onCreate?.(action);
     } else if (['delete_sandbox', 'remove_workspace', 'delete_agent'].includes(action.kind)) {
+      if (pending || deletion !== undefined) return;
       setError(undefined);
-      setConfirmation(action);
+      const retained = restoreDeletion(viewerId);
+      setDeletion(
+        retained === undefined
+          ? {
+              request: {
+                action: action as DeleteAction,
+                key: keys.current.for(JSON.stringify(action)),
+                accepted: false,
+              },
+              restored: false,
+            }
+          : { request: retained, restored: true },
+      );
     } else {
       void execute(action);
     }
   };
-  const target =
-    confirmation?.kind === 'delete_sandbox'
-      ? 'Sandbox'
-      : confirmation?.kind === 'remove_workspace'
-        ? 'Workspace'
-        : 'Agent';
+  const retained = restoreDeletion(viewerId);
   return {
     select,
-    pending,
+    pending: pending || deletion !== undefined,
     error,
-    overlay: (
-      <RiskConfirmation
-        open={confirmation !== undefined}
-        title={`Delete ${target}`}
-        description={`Delete this ${target} and its contained resources. This cannot be undone.`}
-        acknowledgeLabel={`I understand this ${target} and its contained resources will be deleted.`}
-        confirmLabel={`Delete ${target}`}
-        busy={pending}
-        failure={error}
-        onCancel={() => setConfirmation(undefined)}
-        onConfirm={() => {
-          if (confirmation !== undefined) void execute(confirmation);
-        }}
-      />
-    ),
+    notice:
+      deletion === undefined && retained !== undefined ? (
+        <Button onClick={() => setDeletion({ request: retained, restored: true })}>
+          View deletion status
+        </Button>
+      ) : null,
+    overlay:
+      deletion === undefined ? null : (
+        <DeletionDialog
+          key={deletion.request.key}
+          client={client}
+          viewerId={viewerId}
+          initial={deletion.request}
+          restored={deletion.restored}
+          onChanged={onChanged}
+          onClose={() => setDeletion(undefined)}
+        />
+      ),
   };
 }
