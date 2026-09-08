@@ -49,11 +49,13 @@ impl ProfileAuthoringSource for Source {
         let mut entries = vec![
             AuthoringServiceEntry {
                 id: ServiceId::new("research"),
+                catalog_id: None,
                 name: "Research".into(),
                 description: Some("Research service".into()),
             },
             AuthoringServiceEntry {
                 id: ServiceId::new("analytics"),
+                catalog_id: None,
                 name: "Analytics".into(),
                 description: None,
             },

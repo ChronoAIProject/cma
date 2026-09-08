@@ -27,6 +27,10 @@ impl From<ProfileCapacityBounds> for ProfileCapacityBoundsView {
 #[derive(Debug, Serialize, ToSchema)]
 pub(in super::super) struct AuthoringServiceView {
     id: String,
+    /// Canonical catalog identity, distinct from a selectable service alias.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
+    catalog_id: Option<String>,
     name: String,
     /// Complete source description, at most 6144 UTF-8 bytes.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -38,6 +42,7 @@ impl From<AuthoringServiceEntry> for AuthoringServiceView {
     fn from(value: AuthoringServiceEntry) -> Self {
         Self {
             id: value.id.to_string(),
+            catalog_id: value.catalog_id,
             name: value.name,
             description: value.description,
         }
