@@ -1,7 +1,9 @@
 use std::time::SystemTime;
 
 use layer2_core::rfc3339_at;
-use layer2_core::sandbox::store::{AgentWorkMutation, SandboxStoreError, VersionedWorktree};
+use layer2_core::sandbox::store::{
+    retiring_sandbox_process_is_absent, AgentWorkMutation, SandboxStoreError, VersionedWorktree,
+};
 use layer2_core::sandbox::{
     Agent, AgentLogKind, AgentStatus, AgentWorkStep, SandboxEventKind, WorktreeStatus,
 };
@@ -43,6 +45,48 @@ impl AgentWorker {
     ) -> Result<(), SandboxStoreError> {
         if !agent.status.is_live() || agent.requested_stop_reason.is_none() {
             return self.invalid_cleanup(agent, now).await;
+        }
+        let sandbox = self
+            .dependencies
+            .store
+            .get_sandbox(&agent.sandbox_id)
+            .await?
+            .ok_or(SandboxStoreError::NotFound)?;
+        if retiring_sandbox_process_is_absent(&agent, &sandbox) {
+            match self.dependencies.adapter.runtime_inventory().await {
+                Ok(inventory)
+                    if inventory
+                        .iter()
+                        .all(|runtime| runtime.sandbox_id != sandbox.id.as_str()) => {}
+                Ok(_) => {
+                    return self
+                        .handle_failure(
+                            agent,
+                            WorkerFailure::retryable(
+                                "agent_retiring_runtime_present",
+                                "the provider still observes a runtime for the retiring sandbox",
+                            ),
+                            now,
+                        )
+                        .await;
+                }
+                Err(error) => {
+                    return self
+                        .handle_failure(agent, cleanup_failure(error), now)
+                        .await
+                }
+            }
+            return self
+                .progress(
+                    agent,
+                    AgentWorkStep::PublishStopped,
+                    now,
+                    None,
+                    Vec::new(),
+                    None,
+                    None,
+                )
+                .await;
         }
         let context = match self.cleanup_context(&agent).await {
             Ok(context) => context,

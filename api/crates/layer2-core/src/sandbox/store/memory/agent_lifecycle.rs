@@ -1,9 +1,9 @@
 use super::*;
 use crate::sandbox::store::{
-    apply_agent_connection_recovery, apply_agent_sign_in, validate_agent_work_mutation,
-    AgentConnectionRecoveryApplication, AgentConnectionRecoveryCandidate,
-    AgentConnectionRecoveryOutcome, AgentConnectionRecoveryRequest, AgentWorkMutation,
-    AgentWorkerStore,
+    apply_agent_connection_recovery, apply_agent_sign_in,
+    validate_agent_work_mutation_with_sandbox, AgentConnectionRecoveryApplication,
+    AgentConnectionRecoveryCandidate, AgentConnectionRecoveryOutcome,
+    AgentConnectionRecoveryRequest, AgentWorkMutation, AgentWorkerStore,
 };
 
 #[async_trait]
@@ -163,7 +163,17 @@ fn validate_mutation(state: &State, mutation: &AgentWorkMutation) -> Result<(), 
         .get(&mutation.agent.id)
         .and_then(|entries| entries.last())
         .map_or(0, |entry| entry.seq);
-    validate_agent_work_mutation(current, current_worktree, actual_last_seq, mutation)
+    let sandbox = state
+        .sandboxes
+        .get(&current.sandbox_id)
+        .ok_or(SandboxStoreError::NotFound)?;
+    validate_agent_work_mutation_with_sandbox(
+        current,
+        current_worktree,
+        actual_last_seq,
+        mutation,
+        sandbox,
+    )
 }
 
 fn append_agent_log(

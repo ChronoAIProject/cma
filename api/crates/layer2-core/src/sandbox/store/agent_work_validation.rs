@@ -1,4 +1,7 @@
-use crate::sandbox::{Agent, AgentWorkStep, Worktree, WorktreeStatus};
+use crate::sandbox::{
+    Agent, AgentStatus, AgentStopReason, AgentWorkStep, Sandbox, SandboxStatus, SandboxWorkStep,
+    Worktree, WorktreeStatus,
+};
 use crate::seconds_from_rfc3339;
 
 use super::agent_work_evidence_validation::{
@@ -16,11 +19,81 @@ pub fn validate_agent_work_mutation(
     actual_last_seq: u64,
     mutation: &AgentWorkMutation,
 ) -> Result<(), SandboxStoreError> {
+    validate_mutation(current, current_worktree, actual_last_seq, mutation, false)
+}
+
+/// Validate cleanup whose process was already removed by the parent's durable teardown.
+pub fn validate_agent_work_mutation_with_sandbox(
+    current: &Agent,
+    current_worktree: &Worktree,
+    actual_last_seq: u64,
+    mutation: &AgentWorkMutation,
+    sandbox: &Sandbox,
+) -> Result<(), SandboxStoreError> {
+    validate_mutation(
+        current,
+        current_worktree,
+        actual_last_seq,
+        mutation,
+        retiring_sandbox_process_is_absent(current, sandbox),
+    )
+}
+
+/// A retired-runtime close is not a runtime request receipt or a completed turn.
+pub fn retiring_sandbox_process_is_absent(agent: &Agent, sandbox: &Sandbox) -> bool {
+    agent.status == AgentStatus::Paused
+        && agent.requested_stop_reason == Some(AgentStopReason::SandboxRetired)
+        && agent.work.step == AgentWorkStep::CloseProcess
+        && agent.work.cleanup_debt.is_empty()
+        && agent.conversation.active_turn.is_none()
+        && agent.conversation.queued_messages.is_empty()
+        && agent.sandbox_id == sandbox.id
+        && agent.owner == sandbox.owner
+        && sandbox.status == SandboxStatus::Retiring
+        && sandbox.work.step == SandboxWorkStep::StopAgents
+        && sandbox.runtime.is_none()
+        && sandbox.lifecycle.runtime_provision.is_none()
+        && sandbox.lifecycle.operation.is_none()
+        && sandbox.lifecycle.checkpoint_capture.is_none()
+        && agent
+            .conversation
+            .runtime_generation
+            .is_some_and(|generation| {
+                generation > 0 && generation <= sandbox.lifecycle.runtime_generation_high_water
+            })
+        && sandbox.validate().is_ok()
+        && sandbox
+            .lifecycle
+            .checkpoints
+            .latest
+            .as_ref()
+            .is_some_and(|checkpoint| {
+                checkpoint.conversations.iter().any(|conversation| {
+                    conversation.agent_id == agent.id
+                        && Some(&conversation.conversation_id)
+                            == agent.conversation.conversation_id.as_ref()
+                })
+            })
+}
+
+fn validate_mutation(
+    current: &Agent,
+    current_worktree: &Worktree,
+    actual_last_seq: u64,
+    mutation: &AgentWorkMutation,
+    retired_process_absent: bool,
+) -> Result<(), SandboxStoreError> {
     validate_common(current, current_worktree, actual_last_seq, mutation)?;
     validate_position(current, current_worktree)?;
     validate_histories(current, &mutation.agent, &mutation.appended_at)?;
     let kind = classify_publication(current, &mutation.agent)?;
-    validate_work_delta(current, &mutation.agent, mutation, kind)?;
+    validate_work_delta(
+        current,
+        &mutation.agent,
+        mutation,
+        kind,
+        retired_process_absent,
+    )?;
     validate_agent_delta(current, &mutation.agent, mutation, kind)?;
     validate_worktree_delta(current_worktree, mutation, kind, current.work.step)?;
     validate_evidence(current, current_worktree, mutation, kind)
@@ -104,6 +177,7 @@ fn validate_work_delta(
     next: &Agent,
     mutation: &AgentWorkMutation,
     kind: PublicationKind,
+    retired_process_absent: bool,
 ) -> Result<(), SandboxStoreError> {
     if next.work.next_fence != current.work.next_fence {
         return Err(SandboxStoreError::Conflict);
@@ -179,7 +253,7 @@ fn validate_work_delta(
                     Err(SandboxStoreError::Conflict)
                 }
             } else {
-                validate_advance_history(current, next, mutation)
+                validate_advance_history(current, next, mutation, retired_process_absent)
             }
         }
     }

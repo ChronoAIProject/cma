@@ -48,6 +48,7 @@ use super::live_agents::{
 const DEPLOYMENT_ID: &str = "lifecycle-test";
 
 mod lifecycle_connection_tests;
+mod retired_runtime_tests;
 mod runtime_attachment_tests;
 mod sdk_conformance_tests;
 mod sign_in_tests;
