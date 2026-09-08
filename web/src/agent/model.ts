@@ -62,6 +62,7 @@ export interface ConversationState {
   readonly usage?: AgentUsage;
   readonly activeRunId?: string;
   readonly agentStatus?: AgentStatus;
+  readonly agentStatusAt?: string;
   readonly livePausedNotice?: string | null;
   readonly cursor: number;
 }

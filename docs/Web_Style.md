@@ -1009,6 +1009,12 @@ Sandbox page and its tree menu, never Active or Paused alone. Missing eligibilit
 or a failed refresh leaves those controls unavailable with a written reason.
 The tree keeps its last successful hierarchy during refresh and transient read
 failure. Authentication, permission or visibility denial clears cached hierarchy.
+The selected Agent header, details and sidebar share one status projection. Newer
+timestamped Agent status events may supersede a resource read; older history and
+unversioned deltas cannot override a fresher resource observation. Newer matching
+navigation records update status without reloading the transcript or losing drafts.
+Message-submission progress stays beside the composer; it does not replace the
+recorded Agent state in the header.
 Visible Sandbox and hierarchy reads refresh every five seconds while settled,
 and every 1.5 seconds while recorded lifecycle work is in progress; reads never
 overlap or admit work. Hidden pages defer refresh until visible again.
@@ -1625,3 +1631,4 @@ Append-only. Never edit or delete an entry.
 | 2026-09-08 | Clarified New Agent location, profile, title and first-message fields. Added anchored, bounded profile hover details using pinned public settings and original-name links, and removed deleting/deleted resources from location choices. |
 | 2026-09-08 | Confined profile hover previews vertically between the creation dialog header and footer, including short mobile viewports. Selecting a profile dismisses its open or pending preview so creation and close controls remain reachable. |
 | 2026-09-08 | Enabled Workspace deletion with live Agents. Documented durable child stop and removal before Workspace files, refreshed cleanup stages, and public Sandbox event history in the persistent deletion dialog. |
+| 2026-09-08 | Unified the selected Agent status across header, details and sidebar using timestamped resource and live observations. Older replay frames cannot overwrite a fresher state; navigation updates retain conversation history and drafts. |

@@ -10,6 +10,7 @@ import { canOpenOperations } from './operator/capabilities';
 import { AgentSurface } from './agent/AgentSurface';
 import { AgentDetails } from './agent/Details';
 import { useAgentController } from './agent/controller';
+import { sameAgent } from './agent/status';
 import type { User } from './auth/types';
 import { ProfileMenu } from './profile/ProfileMenu';
 import type { AppRoute } from './routing/routes';
@@ -266,7 +267,20 @@ export function Console({
               <Tree
                 key={user.id}
                 viewerId={user.id}
-                items={navigation.items}
+                items={navigation.items.map((item) => ({
+                  ...item,
+                  workspaces: item.workspaces.map((workspace) => ({
+                    ...workspace,
+                    agents: workspace.agents.map((summary) =>
+                      route.kind === 'agent' &&
+                      agent.state.status === 'ready' &&
+                      agent.state.detail.id === route.agentId &&
+                      sameAgent(agent.state.detail, summary)
+                        ? { ...summary, status: agent.state.detail.status }
+                        : summary,
+                    ),
+                  })),
+                }))}
                 refreshError={navigation.refreshError}
                 lifecycleBusy={actions.pending}
                 route={route}

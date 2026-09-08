@@ -116,7 +116,7 @@ export function AgentSurface({
   }
 
   const { detail, conversation } = state;
-  const status = conversation.agentStatus ?? detail.status;
+  const status = detail.status;
   const title = detail.title?.trim() || 'Untitled agent';
   const pausedNotice =
     conversation.livePausedNotice === undefined
@@ -150,8 +150,8 @@ export function AgentSurface({
               {title}
             </h1>
             <span className="agent-header__status">
-              <StateDot state={starting ? 'ongoing' : statusDot(status)} size={9} />
-              {starting ? 'Starting' : statusLabel(status)}
+              <StateDot state={statusDot(status)} size={9} />
+              {statusLabel(status)}
             </span>
           </div>
           <Button

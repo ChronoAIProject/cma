@@ -12,6 +12,7 @@ import type {
   WorkspaceDetail,
 } from '../api/types';
 import { readSandboxHistory } from '../sandbox/eventHistory';
+import { currentAgentStatus, sameAgent } from './status';
 import { mergeTranscriptSnapshot } from './chronology';
 import {
   useSandboxInput,
@@ -206,24 +207,30 @@ export function useAgentController(
   useEffect(() => {
     if (summary === undefined || detail === undefined || summary.id !== agentId) return;
     let cancelled = false;
-    // Titles arrive after the first turn; reuse the tree's metadata without reloading history.
+    // Reuse fresh tree metadata without reloading or replacing conversation history.
     queueMicrotask(() => {
       if (cancelled) return;
       setState((current) => {
         if (
           current.status !== 'ready' ||
-          current.detail.id !== summary.id ||
-          current.detail.sandbox.id !== summary.sandboxId ||
-          current.detail.workspace.id !== summary.workspaceId ||
-          current.detail.worktree.id !== summary.worktreeId ||
-          !summary.title?.trim() ||
-          current.detail.title === summary.title ||
+          !sameAgent(current.detail, summary) ||
           !(Date.parse(summary.updatedAt) >= Date.parse(current.detail.updatedAt))
         )
           return current;
+        const status =
+          Date.parse(summary.updatedAt) > Date.parse(current.detail.updatedAt)
+            ? summary.status
+            : current.detail.status;
+        const title = summary.title?.trim() ? summary.title : current.detail.title;
+        if (current.detail.status === status && current.detail.title === title) return current;
         return {
           ...current,
-          detail: { ...current.detail, title: summary.title, updatedAt: summary.updatedAt },
+          detail: {
+            ...current.detail,
+            status,
+            title,
+            updatedAt: summary.updatedAt,
+          },
         };
       });
     });
@@ -505,8 +512,20 @@ export function useAgentController(
     [activeTurn, agentId, historyLoading, keys, options, reload],
   );
 
+  const displayedStatus =
+    state.status === 'ready'
+      ? currentAgentStatus(state.detail, state.conversation, summary)
+      : undefined;
   return {
-    state,
+    state:
+      state.status === 'ready' &&
+      displayedStatus !== undefined &&
+      displayedStatus !== state.detail.status
+        ? {
+            ...state,
+            detail: { ...state.detail, status: displayedStatus },
+          }
+        : state,
     inputAvailability,
     resourceAvailability,
     pending,
