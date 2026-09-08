@@ -118,7 +118,7 @@ fn retired_runtime_close_requires_exact_quiet_retirement_and_checkpoint_provenan
             5 => sandbox.owner = SubjectId::new("another-owner"),
             6 => agent.status = AgentStatus::Ready,
             7 => agent.requested_stop_reason = Some(AgentStopReason::Owner),
-            8 => agent.conversation.runtime_generation = Some(2),
+            8 => agent.conversation.runtime_generation = Some(3),
             9 => agent.conversation.conversation_id = Some("another-conversation".into()),
             10 => sandbox.work.step = SandboxWorkStep::TeardownRuntime,
             11 => agent
@@ -176,4 +176,29 @@ fn retired_runtime_close_requires_exact_quiet_retirement_and_checkpoint_provenan
             "variant {variant}"
         );
     }
+}
+
+#[test]
+fn retired_runtime_close_accepts_the_parked_fence_after_generation_three() {
+    let (mut agent, worktree, mut sandbox) = fixture();
+    sandbox.lifecycle.runtime_generation_high_water = 3;
+    agent.conversation.runtime_generation = Some(4);
+    let mutation = completed_advance(&agent, AgentWorkStep::PublishStopped);
+    assert_eq!(
+        validate_agent_work_mutation_with_sandbox(
+            &agent,
+            &worktree,
+            agent.conversation.last_seq,
+            &mutation,
+            &sandbox,
+        ),
+        Ok(())
+    );
+    agent.conversation.runtime_generation = Some(5);
+    assert!(!retiring_sandbox_process_is_absent(&agent, &sandbox));
+    agent.conversation.runtime_generation = Some(1);
+    sandbox.lifecycle.runtime_generation_high_water = 0;
+    assert!(!retiring_sandbox_process_is_absent(&agent, &sandbox));
+    sandbox.lifecycle.runtime_generation_high_water = u64::MAX;
+    assert!(!retiring_sandbox_process_is_absent(&agent, &sandbox));
 }
