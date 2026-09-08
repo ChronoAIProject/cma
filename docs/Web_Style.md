@@ -1090,7 +1090,7 @@ disabled until allowed. Failure stays beside its controls and preserves history.
 
 ## 18. Profiles and Marketplace
 
-Profiles home at `/profiles` has Sandbox, Workspace and Agent tabs. Rows show
+Profiles home at `/profiles` has Sandbox, Workspace and Agent tabs. Cards show
 name, latest published revision, visibility and update time, with New profile
 for the active kind. Editors use
 `/profiles/{agent-profiles|workspace-profiles|sandbox-profiles}/{id}`.
@@ -1138,9 +1138,16 @@ descriptions. Ordinary labels use plain language; wire tokens remain technical
 data and user-authored content.
 
 Marketplace search, kind tabs and pagination preserve the query. Repeated
-profile items may be cards: 8px radius, 16px padding/gap, 280px minimum tracks
-constrained to available width. Show name, description, author, revision and
-uses. The unframed detail discloses all pinned commands, environment values,
+profile items use the same cards in both directories: 8px radius, 16px
+padding/grid gap, 280px minimum tracks constrained to available width. Following
+Ornn's skill-card order, show a kind glyph and label, full wrapping name, a
+separate visibility/revision/retirement row, a three-line description, then an
+aligned author/usage/date footer. Internal vertical gaps and footer padding use
+12px; the description reserves 60px. Own profiles omit unavailable author data.
+The heading is a native link with an expanded full-card hit target and visible
+keyboard focus; modified clicks retain normal browser navigation. Hover changes
+the border only. No content or metadata read is added per card. The unframed
+detail discloses all pinned commands, environment values,
 services, limits and nested profile revisions. Code wraps and is never executed.
 
 Use selects the published profile for creation; foreign commands or environment
@@ -1635,3 +1642,4 @@ Append-only. Never edit or delete an entry.
 | 2026-09-08 | Enabled Workspace deletion with live Agents. Documented durable child stop and removal before Workspace files, refreshed cleanup stages, and public Sandbox event history in the persistent deletion dialog. |
 | 2026-09-08 | Unified the selected Agent status across header, details and sidebar using timestamped resource and live observations. Older replay frames cannot overwrite a fresher state; navigation updates retain conversation history and drafts. |
 | 2026-09-09 | Removed the false Agent run failed notice for normal owner/operator stops and Sandbox retirement while preserving actual provider errors and the recorded Stopped state. |
+| 2026-09-09 | Unified Profiles and Marketplace cards using Ornn's title, badges, description and aligned metadata order with CMA tokens. All three profile kinds retain native full-card links, original names, revision/visibility/retirement facts, usage and timestamps, with responsive tracks and no additional per-card reads. |
