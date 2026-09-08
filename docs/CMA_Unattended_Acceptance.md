@@ -19,7 +19,7 @@ Monitor disk usage and inspect exact targets before removing stale artifacts.
 | 4 | Snapshots never interrupt creation, deletion or Agent interaction | Not satisfied: deployed whole-home capture holds writers. Requires a consistent point-in-time copy without a capture-duration writer lock, then concurrent production checks. |
 | 5 | Storage physically retains only the latest snapshot | Completed publication prunes the previous generation. Runtime audit found two sealed local archives of 1,804,395,715 and 1,804,436,309 bytes. Runtime scratch and orphan cleanup remain unsatisfied; do not equate metadata pruning with physical retention acceptance. |
 | 6 | Terminated Sandbox snapshots are deleted | Not satisfied at deletion confirmation: worker/retirement.rs invokes archive purge only at final record purge after retention grace. Immediate snapshot-only cleanup must preserve retained conversation history. Complete storage and orphan audit still pending. |
-| 7 | All lifecycle screens show secret-free bounded live logs and sync time | Not satisfied: LifecycleProgress shows current phase and a static ordered stage list; it is not a bounded live event feed. Public Sandbox event history exists and should supply safe translated records across Launch, Sandbox, Agent and deletion surfaces. |
+| 7 | All lifecycle screens show secret-free bounded live logs and sync time | Live activity implemented in web 224bd525: translated public events, latest 100 entries, fixed-height scroll region, sync time, reconnect and access-loss handling. Sandbox, Agent, Launch, creation and deletion views are wired. Production settled desktop/mobile geometry and live pause/resume observations pass. Complete deletion and named Trigger transition verification remain pending; do not mark full acceptance yet. |
 | 8 | New Agent fields are understandable, profiles have anchored hover details, deleted choices are excluded | Initial batch df6e58e3; production creation exposed mobile hover previews intercepting Create workspace. Corrected and deployed in fa3f6850: previews leave dialog header/footer reachable, selection dismisses pending/open preview. Real clicks and geometry pass at 1440x900, 390x900 and 390x600, both appearances; 1,131 frontend tests pass. |
 | 9 | No review/consent flash for no-review Triggers | Pending browser verification against the required Trigger, including fresh sign-in and resumed Launch. |
 | 10 | Profiles and Marketplace use CMA-styled Ornn-inspired cards/details | Shared cards deployed in web 7c01741f and author names in API 7e7d458e. Production 18-case verification passes all three profile kinds in both directories at 1440/390/320px, light/dark, full-card detail navigation and Marketplace Use availability. Screenshots inspected. Evidence: profile-cards-64FpRT/result.json. |
@@ -278,3 +278,38 @@ image identity and measured results for each behavior, with unknowns left explic
   capture. A correction now takes the later snapshot/binding baseline, with
   restart, configurable-interval and exact-boundary regression cases. Deployment
   and production timing verification remain pending; #4 remains unsatisfied.
+- Web 224bd525 deployed at
+  sha256:59c27ce6e4502d6f7181b30d6dbd7e440b20288c28c2b0394ae84ceb281411a6.
+  Evidence: unattended-web-rollout-thCsyT; rollout healthy, API/runtime unchanged.
+  All 1,157 frontend tests, TypeScript, ESLint, formatting, dependency audit,
+  source scanning, Linux/amd64 build, fixed HIGH/CRITICAL image scan and remote
+  digest verification pass. Local browser evidence live-activity-readonly-uWh3Jm
+  and production live-activity-readonly-zTI7kV cover both Sandbox and Agent pages
+  at 1440/390/320px, both themes, bounded scrolling, latest-entry following and
+  timestamp visibility. Screenshots were inspected; no commands were forwarded.
+- The first local browser check found Agent progress above the conversation could
+  be scrolled out by chat following. Progress now follows the last message, and
+  the browser proof requires viewport intersection as well as DOM visibility.
+  Resize observation keeps the log pinned across font/theme changes, unless the
+  reader manually scrolls away.
+- Production live-deletion-flow-x3Pqhr and live-deletion-flow-YfxcZ5 both observed
+  live pause and resume logs on desktop/mobile Sandbox and Agent pages. Neither
+  is complete deletion acceptance: the first stopped at a navigation-readiness
+  race before deletion, the second inspected an empty pre-acceptance event view
+  too early. Both exact disposable Sandboxes were retired in finally cleanup.
+  A further regression now loads Agent events when deletion is already complete
+  even if the request response remains unconfirmed; source db43770a.
+- API e1c3260c deployed at
+  sha256:6e1be506cc2150ad7b6cbed3431b196302705d4203d7ec5a6be8d95735aa5a40.
+  Evidence: lifecycle-api-rollout-yPbL2E and lifecycle-api-postflight-f8NauX.
+  The owner Sandbox had automatically paused with snapshot epoch 33; zero runtime
+  Pods and settled records were checked before dispatch. Runtime/web identities
+  were unchanged, both complete owner histories were preserved, and postflight
+  reported zero helper Pods and zero container restarts. All 1,592 isolated Rust
+  tests, Clippy, formatting, doc-test gate, dependency policy, image scan and
+  remote digest checks pass. The 173 environment-gated tests were not run by that
+  nextest invocation. Full production snapshot timing remains unobserved.
+- Snapshot epoch 32 completed at 17:38:47 UTC after starting at 17:34:14 UTC:
+  273 seconds before publication. This is not nonblocking-snapshot acceptance.
+  Host disk remained at 48-49 GiB free. No Docker restart, cache pruning or
+  worktree removal was necessary; owner resources were not force-paused.
