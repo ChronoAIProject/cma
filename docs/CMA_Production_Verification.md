@@ -2135,3 +2135,86 @@ does not include that fix.
 The large owner's 7-minute-42-second restore and 4-minute-31-second download
 remain performance findings, not claimed optimizations. The interruption-free
 snapshot and scratch/orphan-cleanup gaps above remain open.
+
+## 2026-09-08 Concurrent Lifecycle Rollout
+
+API source `5717d00b19b0b5eafc3d45484abc5ce37ecfa632` completed its Linux
+release build and configured vulnerability scan. The uploaded amd64 image,
+source labels, and remote digest were verified before deployment:
+`sha256:2c63baeb3232f46f0367582c05415199fb5511891015a3f73446f8e696e3a655`.
+The web and runtime images in the preceding inventory are unchanged.
+
+`lifecycle-api-rollout-AlCo6b` repeated the all-owner, runtime-absent preflight
+and applied the resource-version-guarded API image and memory-resource patch.
+`lifecycle-api-postflight-xHg7zX` verified the deployed digest, 256Mi request,
+1Gi limit, unchanged runtime configuration, 1800-second checkpoint interval,
+zero restarts, and both preserved owner conversation hashes. The temporary
+builder was scaled to zero and its pod removed before this rollout.
+
+### Trigger and deletion acceptance
+
+`trigger-pause-race-1YnDcN` passed nine production cases on a uniquely
+configured disposable Sandbox:
+
+- Fresh provisioning and the first prompt completed after the browser closed.
+- Active reuse preserved the Agent and did not replay the first prompt.
+- Early pause cancellation exposed `resume_writers` and preserved the same
+  runtime, Agent, and complete conversation.
+- A paused repeat finished in 94,240 milliseconds after its browser was
+  explicitly closed while the Sandbox was Reviving. Runtime generation
+  advanced; the Agent and conversation were preserved.
+- A replacement snapshot advanced the epoch, cleared the previous record,
+  and made the previous download return 404.
+- A Trigger click was observed during `teardown_runtime`; the durable Launch
+  finished teardown and restored the same Agent and conversation.
+- Agent, Workspace, and Sandbox sidebar deletion showed progress/completion
+  dialogs and remained absent after hard refresh. They took 7,413, 5,963,
+  and 9,786 milliseconds respectively while the owner's different Sandbox
+  remained in `runtime_provisioning`.
+
+The focused `trigger-pause-race-ZM1Wx7` run repeated deletion during the
+owner's actual `home_restore` transfer. Agent and Workspace deletion passed
+in 9,104 and 4,523 milliseconds. Sandbox confirmation remained disabled beyond
+the harness's 30-second wait, before any delete request was submitted. A
+checkpoint-sealed event was recorded on that disposable Sandbox at 13:23:22
+UTC. The original attempt remains failed, rather than being relabeled.
+
+`restore-sandbox-delete-2CLJqv` continued with that exact Sandbox after a
+public preflight confirmed its own checkpoint/lifecycle work had finished and
+its children were removed. Sidebar deletion then completed in 10,436
+milliseconds, with both progress and completion dialogs, runtime absence, and
+hard-refresh absence verified. The owner's different Sandbox remained in
+`home_restore` both before and after this deletion. This directly covers the
+long-transfer scheduling bottleneck found in the preceding deployment.
+
+Both disposable Sandboxes are Retired with no runtime. Their Triggers were
+retired, and `lifecycle-profile-cleanup-jFKCqV` additionally verified that both
+test Sandbox Profiles were made private and retired. No owner Sandbox was
+manually paused, stopped, migrated, or deleted.
+
+### Owner journey and remaining gaps
+
+`current-readme-repeat-foFklC` admitted
+`lch_9ab2f06231634860aba0dcd4f9b3110f` through the current README Trigger.
+The owner's paused Sandbox revived in 508,520 milliseconds, approximately
+8 minutes 29 seconds. Both Agents, Worktrees, and full transcripts were
+preserved, and the selected Agent returned with input enabled without replaying
+the first prompt. The authenticated GitHub-rendered README/source-origin
+harness limitation still applies; a signed-in GitHub page was not tested.
+
+Live restore stages were observed on Launch and Sandbox pages. Some initial
+mobile captures were taken during the grid resize transition and were clipped.
+The separate read-only `owner-ui-settled-iprhJc` check verified six direct-load
+and resize layouts at 1440px and 390px after waiting for measured grid widths:
+the mobile sidebar was 56px, the center was 334px, and the message input stayed
+inside the viewport. These layout checks are not a new exhaustive audit of
+all asynchronously loaded profile/service metadata.
+
+Interruption-free snapshots remain incomplete. A periodic capture began on
+the revived owner Sandbox at 13:29:50 UTC, and epoch 26 was sealed at 13:34:48;
+writes were blocked during capture. The due calculation uses the last sealed
+checkpoint's age, so an old checkpoint can cause saving soon after revival.
+There is still no measured large-Sandbox restore acceleration, no demonstrated
+atomic point-in-time capture, and no complete runtime-scratch/unpublished-upload
+cleanup proof. Shared provider/storage configuration changes still require
+explicit authority. This rollout is not 100% acceptance of those requirements.
