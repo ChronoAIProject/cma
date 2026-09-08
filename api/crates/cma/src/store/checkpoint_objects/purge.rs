@@ -1,4 +1,5 @@
 use futures_util::TryStreamExt;
+use layer2_core::sandbox::SandboxStatus;
 use mongodb::bson::{doc, DateTime, Document};
 
 use super::model::{read_manifest, ArchiveState, ManifestDoc};
@@ -11,33 +12,7 @@ pub(super) async fn purge_sandbox(
     store: &MongoCheckpointObjectStore,
     sandbox_id: &str,
 ) -> AdapterResult<()> {
-    store
-        .gates
-        .update_one(
-            doc! { "_id": sandbox_id, "document_schema_version": DOCUMENT_SCHEMA_VERSION },
-            doc! {
-                "$set": { "retired": true }, "$inc": { "serial": 1_i64 },
-            },
-        )
-        .upsert(true)
-        .await
-        .map_err(|_| unavailable("checkpoint sandbox retirement gate failed"))?;
-    store
-        .manifests
-        .update_many(
-            doc! { "sandbox_id": sandbox_id, "state": "published" },
-            doc! { "$set": { "state": "deleting", "cleanup_after": DateTime::now() } },
-        )
-        .await
-        .map_err(|_| unavailable("checkpoint sandbox archive retirement failed"))?;
-    store
-        .manifests
-        .update_many(
-            doc! { "sandbox_id": sandbox_id, "state": "uploading" },
-            doc! { "$set": { "state": "deleting" } },
-        )
-        .await
-        .map_err(|_| unavailable("checkpoint sandbox upload retirement failed"))?;
+    retire_archives(store, sandbox_id, DateTime::now()).await?;
     let documents = scan(store, doc! { "sandbox_id": sandbox_id }).await?;
     for document in documents {
         let manifest = read_manifest(document)?;
@@ -57,6 +32,88 @@ pub(super) async fn purge_sandbox(
     } else {
         Ok(())
     }
+}
+
+pub(super) async fn retire_deleted_sandboxes(
+    store: &MongoCheckpointObjectStore,
+    now: DateTime,
+) -> AdapterResult<usize> {
+    let candidates: Vec<Document> = store.manifests.aggregate([
+        doc! { "$match": { "state": { "$in": ["published", "uploading"] } } },
+        doc! { "$group": { "_id": "$sandbox_id" } },
+        doc! { "$lookup": { "from": super::super::sandbox_mongo::SANDBOXES, "localField": "_id", "foreignField": "_id", "as": "sandbox" } },
+        doc! { "$match": { "sandbox.status": "retired" } },
+        doc! { "$sort": { "_id": 1 } },
+        doc! { "$limit": PAGE_SIZE },
+        doc! { "$project": { "_id": 1 } },
+    ]).await.map_err(|_| unavailable("deleted sandbox archive scan failed"))?
+        .try_collect().await.map_err(|_| unavailable("deleted sandbox archive scan failed"))?;
+    let mut retired = 0;
+    for candidate in candidates {
+        let id = candidate
+            .get_str("_id")
+            .map_err(|_| unavailable("deleted sandbox archive identity is corrupt"))?;
+        let Some(document) = store
+            .sandboxes
+            .find_one(doc! { "_id": id })
+            .await
+            .map_err(|_| unavailable("deleted sandbox archive authority is unavailable"))?
+        else {
+            continue;
+        };
+        let sandbox = super::super::sandboxes::read_sandbox(&document)
+            .map_err(|_| unavailable("deleted sandbox archive authority is corrupt"))?;
+        // Retirement is irreversible. Never infer it from an orphaned archive or
+        // a missing runtime, and do not shorten retained conversation history.
+        if sandbox.id.as_str() != id
+            || sandbox.status != SandboxStatus::Retired
+            || sandbox.runtime.is_some()
+            || sandbox.lifecycle.runtime_provision.is_some()
+            || sandbox.lifecycle.operation.is_some()
+            || sandbox.lifecycle.checkpoint_capture.is_some()
+        {
+            continue;
+        }
+        retire_archives(store, id, now).await?;
+        retired += 1;
+    }
+    Ok(retired)
+}
+
+async fn retire_archives(
+    store: &MongoCheckpointObjectStore,
+    sandbox_id: &str,
+    now: DateTime,
+) -> AdapterResult<()> {
+    super::model::validate_sandbox_id(sandbox_id)?;
+    store
+        .gates
+        .update_one(
+            doc! { "_id": sandbox_id, "document_schema_version": DOCUMENT_SCHEMA_VERSION },
+            doc! {
+                "$set": { "retired": true }, "$inc": { "serial": 1_i64 },
+            },
+        )
+        .upsert(true)
+        .await
+        .map_err(|_| unavailable("checkpoint sandbox retirement gate failed"))?;
+    store
+        .manifests
+        .update_many(
+            doc! { "sandbox_id": sandbox_id, "state": "published" },
+            doc! { "$set": { "state": "deleting", "cleanup_after": now } },
+        )
+        .await
+        .map_err(|_| unavailable("checkpoint sandbox archive retirement failed"))?;
+    store
+        .manifests
+        .update_many(
+            doc! { "sandbox_id": sandbox_id, "state": "uploading" },
+            doc! { "$set": { "state": "deleting" } },
+        )
+        .await
+        .map_err(|_| unavailable("checkpoint sandbox upload retirement failed"))?;
+    Ok(())
 }
 
 pub(super) async fn cleanup_due(

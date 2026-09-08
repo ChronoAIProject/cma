@@ -790,6 +790,115 @@ fn active_sandbox(id: &str) -> Sandbox {
     value
 }
 
+fn retired_sandbox(id: &str) -> Sandbox {
+    let mut value = sandbox(id);
+    value.status = layer2_core::sandbox::SandboxStatus::Retired;
+    value.runtime = None;
+    value.credential.current = None;
+    value.credential.delivered = false;
+    value.retired_at = Some("2026-09-05T00:00:00Z".into());
+    value.purge_after = Some("2026-10-05T00:00:00Z".into());
+    value.work =
+        SandboxWorkState::new(SandboxWorkStep::WaitForPurge, "2026-10-05T00:00:00Z".into());
+    value
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn cleanup_reclaims_legacy_deleted_snapshots_without_purging_retained_records() {
+    let (client, _, database) = test_store("backfill").await;
+    let store = MongoSandboxStore::open(&client, &database).await.unwrap();
+    let retired = retired_sandbox("sbx_legacy_deleted");
+    let active = active_sandbox("sbx_keep_live");
+    store.create_sandbox(retired.clone()).await.unwrap();
+    store.create_sandbox(active.clone()).await.unwrap();
+    let first = stored_checkpoint(&store, &retired, 1, b"old snapshot").await;
+    let second = stored_checkpoint(&store, &retired, 2, b"latest deleted snapshot").await;
+    let live = stored_checkpoint(&store, &active, 1, b"live snapshot").await;
+    let old_key = object_key(&store, &retired, &first.object_reference).await;
+    let latest_key = object_key(&store, &retired, &second.object_reference).await;
+    round_trip(
+        &store.checkpoint_objects,
+        "sbx_missing_parent",
+        b"unclassified archive",
+    )
+    .await;
+    let now = std::time::SystemTime::now();
+    assert_eq!(store.checkpoint_objects.cleanup_due(now).await.unwrap(), 3);
+    assert_archive_absent(&store, &retired, &first.object_reference, &old_key).await;
+    assert_archive_absent(&store, &retired, &second.object_reference, &latest_key).await;
+    assert_archive_present(&store, &active, &live.object_reference).await;
+    assert_eq!(
+        store.get_sandbox(&retired.id).await.unwrap(),
+        Some(retired.clone())
+    );
+    assert_eq!(store.get_sandbox(&active.id).await.unwrap(), Some(active));
+    assert!(store
+        .checkpoint_objects
+        .gates
+        .find_one(doc! { "_id": retired.id.as_str(), "retired": true })
+        .await
+        .unwrap()
+        .is_some());
+    assert!(store
+        .checkpoint_objects
+        .gates
+        .find_one(doc! { "_id": "sbx_missing_parent", "retired": true })
+        .await
+        .unwrap()
+        .is_none());
+    assert_eq!(
+        round_trip(
+            &store.checkpoint_objects,
+            "sbx_missing_parent",
+            b"unclassified archive"
+        )
+        .await,
+        b"unclassified archive"
+    );
+    assert!(store
+        .checkpoint_objects
+        .for_sandbox(retired.id.as_str())
+        .unwrap()
+        .upload(upload(b"late publication".to_vec()))
+        .await
+        .is_err());
+    assert_eq!(store.checkpoint_objects.cleanup_due(now).await.unwrap(), 0);
+    client.database(&database).drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn legacy_snapshot_cleanup_refuses_inconsistent_retired_authority() {
+    let (client, _, database) = test_store("retired_corrupt").await;
+    let store = MongoSandboxStore::open(&client, &database).await.unwrap();
+    let retired = retired_sandbox("sbx_invalid_retired");
+    store.create_sandbox(retired.clone()).await.unwrap();
+    let checkpoint = stored_checkpoint(&store, &retired, 1, b"preserve on corrupt authority").await;
+    store
+        .sandboxes
+        .update_one(
+            doc! { "_id": retired.id.as_str() },
+            doc! { "$set": { "name": "mismatched name" } },
+        )
+        .await
+        .unwrap();
+    assert!(store
+        .checkpoint_objects
+        .cleanup_due(std::time::SystemTime::now())
+        .await
+        .is_err());
+    assert_archive_present(&store, &retired, &checkpoint.object_reference).await;
+    assert!(store
+        .checkpoint_objects
+        .gates
+        .find_one(doc! { "_id": retired.id.as_str(), "retired": true })
+        .await
+        .unwrap()
+        .is_none());
+    client.database(&database).drop().await.unwrap();
+}
+
 async fn stored_checkpoint(
     store: &MongoSandboxStore,
     sandbox: &Sandbox,
