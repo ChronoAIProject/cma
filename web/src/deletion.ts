@@ -169,7 +169,7 @@ export async function observeDeletion(
     throw new Error('Deletion status referred to another Agent or Worktree.');
   const complete = agent.status === 'deleted' && agent.worktree.status === 'removed';
   const agentEvents = [...previousAgentEvents];
-  if (accepted) {
+  if (accepted || complete) {
     let cursor = agentEvents.at(-1)?.seq ?? 0;
     for (;;) {
       const page = await client.readAgentEvents(agent.id, { cursor, signal });
