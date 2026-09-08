@@ -18,7 +18,7 @@ Monitor disk usage and inspect exact targets before removing stale artifacts.
 | 3 | Live Sandbox creates Workspace with multiple Agent Profiles | Production UI and public API pass: Workspace and two distinct correctly pinned Agent/Worktree pairs Ready in 15,009 ms, with no first prompts sent. Same creation evidence as #1. |
 | 4 | Snapshots never interrupt creation, deletion or Agent interaction | Not satisfied: deployed whole-home capture holds writers. Requires a consistent point-in-time copy without a capture-duration writer lock, then concurrent production checks. |
 | 5 | Storage physically retains only the latest snapshot | Completed publication prunes the previous generation. Runtime audit found two sealed local archives of 1,804,395,715 and 1,804,436,309 bytes. Runtime scratch and orphan cleanup remain unsatisfied; do not equate metadata pruning with physical retention acceptance. |
-| 6 | Terminated Sandbox snapshots are deleted | API 8a6cac05 deployed. Fresh production pause/resume and deletion test zosocG confirms zero snapshot objects and HTTP 404 for the previously readable file while the conversation record remains. Automatic cleanup of the 18-Sandbox, 20.407-GiB legacy backlog is advancing; final zero-object verification is pending. Provider version-history and unclassified orphan audits remain separate. |
+| 6 | Terminated Sandbox snapshots are deleted | API 8a6cac05 deployed. Fresh production pause/resume and deletion test zosocG confirms zero snapshot objects and HTTP 404 for the previously readable file while the conversation record remains. Read-only observer pEIoAc verifies all 691 legacy objects across 18 Deleted Sandboxes removed (20.407 GiB), with exact owner snapshot keys, both histories and retained Sandbox records preserved. Provider version-history and unclassified orphan audits remain separate. |
 | 7 | All lifecycle screens show secret-free bounded live logs and sync time | Live activity deployed, with latest 100 allowlisted entries, bounded scroll, sync time and reconnect/access-loss handling. Production Sandbox/Agent pause/resume and all three deletion dialogs pass. Named README Launch/Sandbox restore displays pass at desktop/mobile, followed by restored chat. Some lifecycle rows remain generic completed-stage entries; every transition and creation surface is not yet comprehensively proved. |
 | 8 | New Agent fields are understandable, profiles have anchored hover details, deleted choices are excluded | Initial batch df6e58e3; production creation exposed mobile hover previews intercepting Create workspace. Corrected and deployed in fa3f6850: previews leave dialog header/footer reachable, selection dismisses pending/open preview. Real clicks and geometry pass at 1440x900, 390x900 and 390x600, both appearances; 1,131 frontend tests pass. |
 | 9 | No review/consent flash for no-review Triggers | Pending browser verification against the required Trigger, including fresh sign-in and resumed Launch. |
@@ -380,3 +380,14 @@ image identity and measured results for each behavior, with unknowns left explic
 - Disk stayed at 45-48 GiB free during this batch. No Docker restart, worktree
   deletion or Docker cache pruning was necessary; only exact disposable local
   Mongo test containers and production test Sandboxes were removed.
+- 2026-09-08 19:10 UTC: Legacy cleanup observer retired-snapshot-backlog-pEIoAc
+  passed with zero remaining objects across all 18 audited Deleted Sandboxes.
+  The application removed 691 objects, totaling 21,911,491,522 bytes; the verifier
+  performed no deletions. Exact epoch-34 owner snapshot keys and metadata, both
+  complete conversation hashes, and all retained Deleted Sandbox records match
+  the pre-cleanup evidence. Provider version-history was not audited.
+- The earlier observer imedu7 stopped on storage-list HTTP 500 while the cleanup
+  was still advancing. The read-only helper now has bounded retry for transient
+  responses and renews its machine token before expiry. The successful rerun
+  needed zero retries; no root cause for the earlier upstream 500 is claimed.
+  Host disk remains at 45 GiB free; Docker was not restarted or pruned.
