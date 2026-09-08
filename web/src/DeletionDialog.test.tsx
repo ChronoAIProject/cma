@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, expect, it, vi } from 'vitest';
 import { ApiError } from '@chronoai/cma-sdk';
@@ -21,6 +21,42 @@ const initial: DeletionRequest = {
 afterEach(() => {
   vi.useRealTimers();
   localStorage.clear();
+});
+
+it('loads completed Agent deletion activity even before request acceptance is confirmed', async () => {
+  const deleteAgent = vi.fn();
+  const readAgentEvents = vi.fn(async () => ({
+    items: [{ seq: 1, appendedAt: '2026-09-09T00:00:00Z', kind: { type: 'deleted' } }],
+  }));
+  const client = agentClient({
+    readAgent: async () => ({
+      ...AGENT_DETAIL,
+      status: 'deleted',
+      worktree: { ...AGENT_DETAIL.worktree, status: 'removed' },
+    }),
+    readAgentEvents,
+    deleteAgent,
+  });
+  render(
+    <DeletionDialog
+      viewerId="owner"
+      client={client}
+      initial={{
+        action: { kind: 'delete_agent', agentId: AGENT_DETAIL.id },
+        key: 'uncertain-agent-delete',
+        accepted: false,
+      }}
+      restored
+      onChanged={vi.fn()}
+      onClose={vi.fn()}
+    />,
+  );
+  expect(await screen.findByRole('dialog', { name: 'Agent deleted' })).toBeInTheDocument();
+  expect(readAgentEvents).toHaveBeenCalledTimes(1);
+  expect(
+    within(screen.getByRole('region', { name: 'Recorded activity' })).getByRole('listitem'),
+  ).toHaveTextContent('Agent deleted');
+  expect(deleteAgent).not.toHaveBeenCalled();
 });
 
 it('keeps the dialog open after acceptance, reports recorded steps, and waits for retirement', async () => {
