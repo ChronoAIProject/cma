@@ -463,6 +463,8 @@ function foldLive(
     return { ...next, approvals, reasoning, activeRunId: undefined };
   }
   if (event.type === 'RUN_ERROR') {
+    if (['owner', 'operator', 'sandbox_retired', 'agent_deleted'].includes(text(event.code) ?? ''))
+      return { ...next, activeRunId: undefined };
     return recover(
       { ...next, activeRunId: undefined },
       {

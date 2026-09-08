@@ -1015,6 +1015,8 @@ unversioned deltas cannot override a fresher resource observation. Newer matchin
 navigation records update status without reloading the transcript or losing drafts.
 Message-submission progress stays beside the composer; it does not replace the
 recorded Agent state in the header.
+Normal owner or operator stops and resource deletion use the recorded terminal
+state, not an Agent run failed notification. Genuine provider failures remain visible.
 Visible Sandbox and hierarchy reads refresh every five seconds while settled,
 and every 1.5 seconds while recorded lifecycle work is in progress; reads never
 overlap or admit work. Hidden pages defer refresh until visible again.
@@ -1632,3 +1634,4 @@ Append-only. Never edit or delete an entry.
 | 2026-09-08 | Confined profile hover previews vertically between the creation dialog header and footer, including short mobile viewports. Selecting a profile dismisses its open or pending preview so creation and close controls remain reachable. |
 | 2026-09-08 | Enabled Workspace deletion with live Agents. Documented durable child stop and removal before Workspace files, refreshed cleanup stages, and public Sandbox event history in the persistent deletion dialog. |
 | 2026-09-08 | Unified the selected Agent status across header, details and sidebar using timestamped resource and live observations. Older replay frames cannot overwrite a fresher state; navigation updates retain conversation history and drafts. |
+| 2026-09-09 | Removed the false Agent run failed notice for normal owner/operator stops and Sandbox retirement while preserving actual provider errors and the recorded Stopped state. |
