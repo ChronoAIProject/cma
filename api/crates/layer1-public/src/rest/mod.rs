@@ -13,6 +13,7 @@ use layer2_core::StoreError;
 pub mod admin;
 mod agent_openapi_shapes;
 mod agent_operate;
+mod agent_source;
 mod agents;
 #[cfg(test)]
 pub(crate) mod agents_tests;
@@ -67,6 +68,7 @@ mod triggers;
 mod workspaces;
 mod worktrees;
 
+pub use agent_source::agent_source_router;
 pub use agents::{agent_router, AgentRoutesState};
 pub use embed::{
     EmbedContentSecurityPolicy, EmbedDescriptor, EmbedSnippets, EMBED_V1_JAVASCRIPT_SRI,

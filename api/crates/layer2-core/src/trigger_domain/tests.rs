@@ -193,6 +193,7 @@ pub(super) fn content(target: TriggerTarget) -> TriggerContent {
             agent: AgentReusePolicy::Ask,
         },
         first_message: "Check theorem example.".into(),
+        quick_messages: Vec::new(),
         consent: TriggerConsent {
             always_review: true,
         },

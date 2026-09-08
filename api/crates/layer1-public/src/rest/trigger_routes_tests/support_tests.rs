@@ -335,6 +335,7 @@ impl LaunchQuota for TestQuota {
 }
 
 pub struct TestApp {
+    pub source_service: Arc<TriggerService>,
     pub router: Router,
     pub contexts: Arc<StubContext>,
     pub broker: Arc<StubBroker>,
@@ -397,7 +398,7 @@ impl TestApp {
         let quota = Arc::new(TestQuota::default());
         let launch_quota: Arc<dyn LaunchQuota> = quota.clone();
         let router = trigger_router(TriggerRoutesState::new(
-            trigger_service,
+            trigger_service.clone(),
             launch_service,
             connections,
             operation_store,
@@ -411,6 +412,7 @@ impl TestApp {
             crate::agui::LaunchCompanionState::new(launches.clone()),
         ));
         Self {
+            source_service: trigger_service,
             router,
             contexts,
             broker,

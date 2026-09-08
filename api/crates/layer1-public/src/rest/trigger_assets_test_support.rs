@@ -133,6 +133,7 @@ fn content() -> TriggerContent {
             agent: AgentReusePolicy::Ask,
         },
         first_message: OWNER_SECRET.into(),
+        quick_messages: Vec::new(),
         consent: TriggerConsent {
             always_review: true,
         },

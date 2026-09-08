@@ -219,6 +219,7 @@ impl ControlPlaneComposition {
             .map_err(|error| format!("service connection broker is not usable: {error}"))?,
         );
         let trigger = TriggerComposition::new(TriggerCompositionDependencies {
+            agent_reads: projections.reads(),
             credentials: auth.clone(),
             stores: Arc::clone(&stores),
             directory: users,

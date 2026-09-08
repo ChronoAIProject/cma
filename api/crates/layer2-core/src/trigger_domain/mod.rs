@@ -1,5 +1,6 @@
 //! Versioned CMA Triggers that open an Agent for the visiting user.
 
+mod agent_source;
 mod connections;
 mod content;
 mod launch;
@@ -33,13 +34,15 @@ use serde::{Deserialize, Serialize};
 use crate::ids::SubjectId;
 
 pub use crate::ids::{PlacementId, PublicTriggerId, TriggerId};
+pub use agent_source::AgentTriggerSource;
 pub use connections::{
     BrokerHandoff, BrokerHandoffState, ServiceConnectionBroker, ServiceConnectionError,
     ServiceConnectionHandoff,
 };
 pub use content::{
     AgentReusePolicy, ButtonLabel, Presentation, ReusePolicy, SandboxReusePolicy, Theme,
-    TriggerConsent, TriggerContent, TriggerTarget, WorkspaceReusePolicy, MAX_FIRST_MESSAGE_BYTES,
+    TriggerConsent, TriggerContent, TriggerQuickMessage, TriggerTarget, WorkspaceReusePolicy,
+    MAX_FIRST_MESSAGE_BYTES, MAX_QUICK_MESSAGES,
 };
 pub use launch::{
     Launch, LaunchAuthorityClass, LaunchBlockedReason, LaunchConfirmation, LaunchConsentSurface,
