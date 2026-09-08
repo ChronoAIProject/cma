@@ -715,6 +715,17 @@ figure. Context-summary boundaries use neutral metadata, not failure colour.
 Resources are a public point read scoped to the Agent's Sandbox. Memory, CPU,
 and network occupy a stable three-column row on the reading axis. CPU uses a
 human unit in the ordinary surface; technical details may show the wire unit.
+The Agent's existing Sandbox lifecycle observation also gates live resources:
+only a fresh Active observation with a reported runtime version starts polling.
+Do not add another Sandbox poll or infer this from message eligibility. A paused
+Sandbox may accept messages while no runtime exists to report live resources.
+Before observation, show checking; when paused, retain Tokens and Context and
+show RAM, CPU and Network as paused with the quiet status "Sandbox paused. Live
+resources resume when it is active." Missing or stale lifecycle data holds live
+reads with an explicit unavailable status. Inactive runtime states are not an
+unsupported-resources error and never become zero readings. Cancel in-flight
+reads and discard the old sampling identity when the runtime becomes unavailable;
+fresh activation or a changed runtime version starts a new CPU sample pair.
 Tracks use reported ceilings first, independently for each resource. When a
 ceiling is absent, the exact pinned Sandbox Profile revision may supply a
 configured capacity. Its id and revision must match, and its digest must match
@@ -1451,3 +1462,4 @@ Append-only. Never edit or delete an entry.
 | 2026-09-08 | Bounded sidebar refresh fan-out by reusing unchanged retired Sandbox subtrees between minute rechecks. Kept authorized inventory and mutable descendants fresh, invalidated removed or changed resources, and cleared cached hierarchy on authentication or visibility denial. |
 | 2026-09-08 | Corrected conversation geometry against the actual pre-refactor baseline: restored the composer's 12px internal gap, both metrics rows' 12px gaps, Thinking's original spacing, and 34px mobile Send/Stop circles within transparent 44px hit areas. Explicitly retained readable caption ink for Thinking and metrics and applied it to the placeholder rather than restoring low-contrast tertiary/dimmed text. |
 | 2026-09-08 | Browser contrast measurement found caption ink on Thinking's preserved light layer-2 ground is only 4.29:1. Used existing secondary ink for the body and tool details, preserving the original ground and geometry while bringing that text to 5.92:1; retained caption on the composer's lighter input ground and base-ground metrics. |
+| 2026-09-08 | Shared the Agent's fresh Sandbox lifecycle observation with live resource measurements. Stopped runtime-resource polling before active-runtime confirmation and while paused, retained usage and editable drafts, showed explicit paused metrics instead of a misleading unsupported error, and reset sampling on activation or runtime-version changes. |

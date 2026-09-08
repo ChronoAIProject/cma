@@ -13,7 +13,11 @@ import type {
 } from '../api/types';
 import { readSandboxHistory } from '../sandbox/eventHistory';
 import { mergeTranscriptSnapshot } from './chronology';
-import { useSandboxInput, type SandboxInputAvailability } from './sandboxInput';
+import {
+  useSandboxInput,
+  type SandboxInputAvailability,
+  type SandboxResourceAvailability,
+} from './sandboxInput';
 import {
   conversationFromTranscript,
   foldAgentEvent,
@@ -42,6 +46,7 @@ export type ApprovalDecision = 'allow' | 'deny' | 'abort';
 export interface AgentController {
   readonly state: AgentResourceState;
   readonly inputAvailability: SandboxInputAvailability;
+  readonly resourceAvailability: SandboxResourceAvailability;
   readonly pending?: AgentCommand;
   readonly actionError?: string;
   readonly reload: () => void;
@@ -174,7 +179,7 @@ export function useAgentController(
   const [state, setState] = useState<AgentResourceState>(
     agentId === undefined ? { status: 'idle' } : { status: 'loading' },
   );
-  const inputAvailability = useSandboxInput(
+  const { inputAvailability, resourceAvailability } = useSandboxInput(
     client,
     agentId,
     state.status === 'ready' && state.detail.id === agentId ? state.detail.sandbox.id : undefined,
@@ -503,6 +508,7 @@ export function useAgentController(
   return {
     state,
     inputAvailability,
+    resourceAvailability,
     pending,
     actionError: actionError ?? replayError,
     reload,

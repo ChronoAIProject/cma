@@ -1,7 +1,8 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { ApiError, type AgentResources } from '@chronoai/cma-sdk';
 import { useCmaClient } from '../api/context';
 import type { AgentUsage, ConfiguredSandboxCapacity, ProfileReference } from '../api/types';
+import type { SandboxResourceAvailability } from './sandboxInput';
 import './Resources.css';
 
 export function cpuMillis(
@@ -88,11 +89,13 @@ export function Resources({
   agentId,
   sandboxId,
   sandboxProfile,
+  availability,
   usage,
 }: {
   readonly agentId: string;
   readonly sandboxId: string;
   readonly sandboxProfile?: ProfileReference;
+  readonly availability: SandboxResourceAvailability;
   readonly usage?: AgentUsage;
 }) {
   const client = useCmaClient();
@@ -127,13 +130,19 @@ export function Resources({
     capacityState.profile.digest === profileDigest
       ? capacityState.capacity
       : undefined;
+  const runtimeVersion = availability.state === 'live' ? availability.runtimeVersion : undefined;
+  const sampleIdentity = useMemo(
+    () => ({ agentId, sandboxId, runtimeVersion }),
+    [agentId, sandboxId, runtimeVersion],
+  );
   const [state, setState] = useState<{
-    readonly agentId: string;
+    readonly sampleIdentity: typeof sampleIdentity;
     readonly reading?: AgentResources;
     readonly cpu?: number;
     readonly error?: string;
-  }>({ agentId });
+  }>({ sampleIdentity });
   useEffect(() => {
+    if (runtimeVersion === undefined) return;
     const request = new AbortController();
     let previous: AgentResources | undefined;
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -147,13 +156,13 @@ export function Resources({
         if (reading.agent_id !== agentId || reading.sandbox_id !== sandboxId)
           throw new Error('Resource identity mismatch');
         if (!request.signal.aborted)
-          setState({ agentId, reading, cpu: cpuMillis(previous, reading) });
+          setState({ sampleIdentity, reading, cpu: cpuMillis(previous, reading) });
         previous = reading;
       } catch (cause) {
         previous = undefined;
         if (!request.signal.aborted)
           setState((current) =>
-            current.agentId === agentId
+            current.sampleIdentity === sampleIdentity
               ? {
                   ...current,
                   error:
@@ -165,7 +174,7 @@ export function Resources({
                           : 'Resources unavailable'
                       : 'Last reading; reconnecting',
                 }
-              : { agentId, error: 'Resources unavailable' },
+              : { sampleIdentity, error: 'Resources unavailable' },
           );
       } finally {
         pending = false;
@@ -182,9 +191,18 @@ export function Resources({
       clearTimeout(timer);
       document.removeEventListener('visibilitychange', onVisibility);
     };
-  }, [agentId, client, sandboxId]);
-  const current = state.agentId === agentId ? state : undefined;
+  }, [agentId, client, sandboxId, runtimeVersion, sampleIdentity]);
+  const current =
+    runtimeVersion !== undefined && state.sampleIdentity === sampleIdentity ? state : undefined;
   const reading = current?.reading;
+  const inactive = availability.state !== 'live';
+  const missing =
+    availability.state === 'paused'
+      ? 'paused'
+      : availability.state === 'checking'
+        ? 'waiting'
+        : 'unavailable';
+  const notice = inactive ? availability.notice : current?.error;
   const memoryObserved = (reading?.memory_bytes_limit ?? 0) > 0;
   const cpuObserved = (reading?.cpu_millis_limit ?? 0) > 0;
   return (
@@ -213,7 +231,11 @@ export function Resources({
           configured={!memoryObserved && capacity !== undefined}
           format={formatBytes}
           missing={
-            reading === undefined && current?.error === undefined ? 'waiting' : 'not reported'
+            inactive
+              ? missing
+              : reading === undefined && current?.error === undefined
+                ? 'waiting'
+                : 'not reported'
           }
         />
         <BoundedReading
@@ -223,30 +245,34 @@ export function Resources({
           configured={!cpuObserved && capacity !== undefined}
           format={cores}
           missing={
-            reading === undefined
-              ? current?.error === undefined
-                ? 'waiting'
-                : 'not reported'
-              : reading.cpu_usage_usec === null
-                ? 'not reported'
-                : 'measuring'
+            inactive
+              ? missing
+              : reading === undefined
+                ? current?.error === undefined
+                  ? 'waiting'
+                  : 'not reported'
+                : reading.cpu_usage_usec === null
+                  ? 'not reported'
+                  : 'measuring'
           }
         />
         <div className="resources__row">
           <span className="resources__figure">
             Network ·{' '}
-            {reading?.received_bytes === undefined || reading.received_bytes === null
-              ? 'not reported'
-              : `↓ ${formatBytes(reading.received_bytes)}`}
+            {inactive
+              ? missing
+              : reading?.received_bytes === undefined || reading.received_bytes === null
+                ? 'not reported'
+                : `↓ ${formatBytes(reading.received_bytes)}`}
             {reading?.sent_bytes === undefined || reading.sent_bytes === null
               ? ''
               : ` · ↑ ${formatBytes(reading.sent_bytes)}`}
           </span>
         </div>
       </div>
-      {current?.error === undefined ? null : (
+      {notice === undefined ? null : (
         <p className="resources__status" role="status">
-          {current.error}
+          {notice}
         </p>
       )}
     </section>

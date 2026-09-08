@@ -123,6 +123,7 @@ function controller(
 ): AgentController {
   return {
     inputAvailability: { allowed: true },
+    resourceAvailability: { state: 'live', runtimeVersion: 'runtime-one' },
     state:
       state.status === 'ready' && conversation !== undefined ? { ...state, conversation } : state,
     reload: vi.fn(),

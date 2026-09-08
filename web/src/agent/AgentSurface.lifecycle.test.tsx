@@ -1,5 +1,6 @@
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
+import { ApiError } from '@chronoai/cma-sdk';
 import { CmaClientProvider } from '../api/context';
 import type { SandboxDetail } from '../api/types';
 import { agentClient } from '../test/agent';
@@ -8,6 +9,88 @@ import { AgentSurface } from './AgentSurface';
 import { useAgentController } from './controller';
 
 afterEach(() => vi.useRealTimers());
+
+it('waits for the shared live Sandbox observation and never polls resources for a paused runtime', async () => {
+  vi.useFakeTimers();
+  let sandbox: SandboxDetail = { ...sandboxFixture('paused'), runtimeVersion: undefined };
+  let acceptInitial: (value: SandboxDetail) => void = () => {};
+  const readSandbox = vi
+    .fn()
+    .mockImplementationOnce(
+      () =>
+        new Promise<SandboxDetail>((resolve) => {
+          acceptInitial = resolve;
+        }),
+    )
+    .mockImplementation(async () => sandbox);
+  const readAgentResources = vi.fn(async () => {
+    if (sandbox.status !== 'active') throw new ApiError(422, 'No runtime');
+    return {
+      agent_id: 'agt_1',
+      sandbox_id: 'sbx_1',
+      uptime_ms: 10000,
+      cpu_usage_usec: 1000000,
+      cpu_millis_limit: 4000,
+      memory_bytes_used: 1024 ** 3,
+      memory_bytes_limit: 8 * 1024 ** 3,
+      memory_bytes_peak: null,
+      stall_permille: null,
+      ceiling_hits: null,
+      allocation_failures: null,
+      kills: null,
+      received_bytes: 2048,
+      sent_bytes: 1024,
+    };
+  });
+  const runAgent = vi.fn();
+  const client = agentClient({ readSandbox, readAgentResources, runAgent });
+  function ObservedAgent() {
+    const controller = useAgentController(client, 'agt_1');
+    return (
+      <AgentSurface
+        agentId="agt_1"
+        controller={controller}
+        detailsOpen={false}
+        onDetailsOpenChange={vi.fn()}
+        onNavigate={vi.fn()}
+      />
+    );
+  }
+  render(
+    <CmaClientProvider client={client}>
+      <ObservedAgent />
+    </CmaClientProvider>,
+  );
+  await act(() => vi.advanceTimersByTimeAsync(0));
+  expect(readSandbox).toHaveBeenCalledOnce();
+  expect(readAgentResources).not.toHaveBeenCalled();
+  await act(async () => acceptInitial(sandbox));
+  await act(() => vi.advanceTimersByTimeAsync(10000));
+  expect(readSandbox).toHaveBeenCalledTimes(3);
+  expect(readAgentResources).not.toHaveBeenCalled();
+  expect(
+    screen.getByText('Sandbox paused. Live resources resume when it is active.'),
+  ).toBeInTheDocument();
+  expect(screen.getByText('RAM · paused')).toBeInTheDocument();
+  expect(screen.getByText('CPU · paused')).toBeInTheDocument();
+  expect(screen.getByText('Network · paused')).toBeInTheDocument();
+  expect(screen.getByText('Tokens · 120 input · 60 output')).toBeInTheDocument();
+  expect(screen.getByRole('progressbar', { name: 'Context' })).toBeInTheDocument();
+  const draft = screen.getByRole('textbox', { name: 'Message' });
+  fireEvent.change(draft, { target: { value: 'Preserve this draft' } });
+  expect(screen.getByRole('button', { name: 'Send message' })).toBeEnabled();
+  sandbox = sandboxFixture('active');
+  await act(() => vi.advanceTimersByTimeAsync(5000));
+  expect(readAgentResources).toHaveBeenCalledOnce();
+  expect(screen.getByText('RAM · 1 GiB / 8 GiB')).toBeInTheDocument();
+  expect(screen.getByText('CPU · measuring')).toBeInTheDocument();
+  expect(
+    screen.queryByText('Sandbox paused. Live resources resume when it is active.'),
+  ).not.toBeInTheDocument();
+  expect(draft).toHaveValue('Preserve this draft');
+  expect(screen.getAllByText('The repository is ready.')).toHaveLength(1);
+  expect(runAgent).not.toHaveBeenCalled();
+});
 
 it('holds Send and Enter during operator lifecycle changes while retaining editable drafts and history', async () => {
   vi.useFakeTimers();
