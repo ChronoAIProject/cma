@@ -15,15 +15,100 @@ acceptance of this campaign.
 | 2. Public Workspace Profile | Exact metadata, repository `dev`, no setup, one Agent Profile | Created and published at revision 1; exact configuration verified |
 | 3. Public Sandbox Profile | 4000 millicores, 8192 MiB, two requested services, 4/4 limits, working toolchain | Final admission-bound configuration passed on runtime `137b489d`, including the actual Agent login shell, exact installers, skills and scopes, at base `5a1706ce`. The four actual Agent workload checks and independent unchanged-source receipt remain bound to original heavy-workload base `edc52b0f`, not newer `dev` revisions |
 | 4. Public Trigger | Exact title/message, all-level reuse, Try It, visitor theme, no review, README placement | Exact revision published after first rollout; README-only PR #841 merged after all 12 protected checks; default README snippet read back exactly |
-| 5. Login without bootstrap | No Sandbox, Workspace, Agent, or Profile created by login alone | Existing-owner fresh-browser sign-in created no resources; successful unseen-CMA-identity callback contract passes default/home/Trigger returns; external fresh signup not tested |
-| 6. Complete external-click flow | Login then automatic provisioning; exact first message once; correct software, skills, scopes | Current-image paused README repeat passed at 05:48:40: one Launch, all-level reuse, automatic revival, no extra CMA clicks or approvals, original full transcript/native conversation preserved, and first prompt still exactly once. Fresh admission/configuration/first response passed before the original reload failure; separate read-only recovery v5 now passes all four desktop/mobile open/reload views. The original and v1-v4 failures remain failed, not a pristine fresh-run pass |
-| 7. Previous UI style | Original rotating 3D mark and established controls; desktop/mobile screenshots | Final-fresh fixed-step provisioning passed all four 1440/390 light/dark views. Web `d488efc7` preserves the live sidebar logo across refreshes; v5 proves this in all four open/reload views with settled geometry and full history. Final hierarchy/navigation passed all four light/dark views, including exact workspace expansion, agent selection, automatic mobile drawer close, title and reload preservation; screenshots inspected |
+| 5. Login without bootstrap | No Sandbox, Workspace, Agent, or Profile created by login alone | Fresh-browser sign-in on web `733c0b47` passed with all seven inventories unchanged. Backend unseen-identity callback coverage and six additional App return/remount cases cover default/home/bare/placed Trigger returns without valid click intent; external fresh signup not tested. The later metrics-only change does not change authentication |
+| 6. Complete external-click flow | Login then automatic provisioning; exact first message once; correct software, skills, scopes | API `e1ff6efa` / web `d488efc7` paused README repeat passed at 05:48:40: one Launch, all-level reuse, automatic revival, no extra CMA clicks or approvals, original full transcript/native conversation preserved, and first prompt still exactly once. Fresh admission/configuration/first response passed before the original reload failure. Corrected recovery and final web `64c2721f` read-only open/reload checks pass all four views. Historical failures remain failed, not a pristine fresh-run pass |
+| 7. Previous UI style | Original rotating 3D mark and established controls; desktop/mobile screenshots | Original fixed-step provisioning passed all four 1440/390 light/dark views. Final web `64c2721f` passes hierarchy expansion, selection, mobile drawer closure, title/reload preservation, live logo-node preservation and restored conversation geometry in all four views. Thinking and small-text contrast accommodations are documented explicitly; screenshots inspected |
 | 8. Autonomous YOLO | Pinned provider runs full-access mode with no approval requests | Final admission confirms `never` and `danger-full-access`; the exact first turn completed with no approval workaround before the separate mobile reload failure. Prior completed workload journeys also had zero approvals |
-| 9. Lifecycle | Active to paused to active; paused to terminated; history retained | Post-logo Resume passed to runtime generation 12. Current-image manual Pause passed to revision 161 with physical provider/pod absence, cleared writer debt and unchanged history; the subsequent README click automatically restored generation 15 with the same native conversation. Earlier physical Delete passes remain tied to API `6eca81a3`; the original older Delete timeout remains failed |
-| 10. Cleanup | Only identified stale state removed; new published flow remains usable | Identified old Sandboxes and disposable baselines remain retired; the final environment, Trigger and published profile pins are retained. No record repair, repeated original admission or first-prompt replay occurred. Exact temporary builder Deployment/owned-pod cleanup passed with API/web and runtime identities unchanged; only the two application Deployments and actual sandbox runtime pod remain |
-| 11. Conversation UI | Thinking, Send/Stop, CPU, RAM, context, token, network metrics | Prior four-view metrics, Thinking, scrolling and lifecycle input holds passed; latest fresh-baseline UI test sent one message, observed its exact tool command, interrupted once, verified the public interrupted outcome, restored Send and preserved reloaded history |
+| 9. Lifecycle | Active to paused to active; paused to terminated; history retained | API `e1ff6efa` manual Pause and explicit/README-driven Resume passed with physical teardown, restoration, cleared writer debt and original native/history preservation. Earlier physical Delete passes remain tied to API `6eca81a3`; a current `e1ff6efa` GET-only follow-up verifies the same retired hierarchy/full history and absent runtime. The original older Delete timeout remains failed |
+| 10. Cleanup | Only identified stale state removed; new published flow remains usable | Identified stale/disposable state and the temporary builder were removed; final environment, Trigger, profiles and history remain retained. No record repair or first-prompt replay occurred. After the final environment naturally paused, namespace inventory contains only healthy `cma-api` and `cma-web` Deployments and pods |
+| 11. Conversation UI | Thinking, Send/Stop, CPU, RAM, context, token, network metrics | Prior production Send/Stop, live metrics, scrolling and input-hold checks remain preserved. Final web `64c2721f` additionally passes actual expanded Thinking, geometry, retained usage and editable paused input in all four views, with zero inappropriate live-resource polls. 155 Agent tests cover polling restart, cancellation and CPU resets without repeating production commands |
 
 ### Latest Production Results
+
+At 2026-09-08 06:47:18 UTC, the requested existing-owner Trigger acceptance
+flow is complete across the recorded admission, correction, recovery, repeat and
+final UI checks. No concrete implementation gap remains in the requested loop.
+This is composed production evidence, not a relabelled pristine fresh run or a
+guarantee for every untested account, browser or future upstream revision.
+
+| Role | Source Revision | Deployed SHA-256 |
+| --- | --- | --- |
+| API | `e1ff6efa2463bc53a91cb04582a5011c1fb4ba1a` | `50eb27f82db82442410cc162b6f53cdc1c5724b2ec44d95375d75a8fb858ed96` |
+| Web | `64c2721fb73be6245754225599e98283770d3824` | `cd14c10fbfa0ee3bb7aec237f81a09ea857b2666e7abf7619754d28f5722a992` |
+| Runtime | `137b489de42ee227f86a67b9acdaf6f5b8ede085` | `3c47370e24aa95915aa6c74567a981358ab333e44ba766ca4389e9827b32b5b8` |
+
+The exact web image is pinned by manifest commit `15b3cc9a`, pushed as
+`chronoai-shining`. Both final web images were built locally for Linux amd64,
+passed fixed High/Critical vulnerability scanning and remote digest readback,
+and passed all 18 manifest validations with no skipped resources and no lint
+errors. No temporary Kubernetes builder was recreated.
+
+- `published-requirements-audit-zXEac3` passed at 06:06:43: current exact public
+  profile metadata/content/digests, Trigger content/presentation, placement and
+  exactly one matching default README snippet. The publication-DTO comparison
+  failure in `published-requirements-audit-VOkCS7` remains preserved separately.
+- `retired-history-e1ff-readonly-WkAp1a` passed at 06:16:48. The previously
+  deleted Sandbox remains Retired revision 36 with its Stopped Agent and complete
+  unchanged one-turn history through sequence 207. Two physical inventories
+  exclude replacement runtimes. Nine CMA GETs were HTTP 200; no Delete, runtime
+  exec, database request or other mutation was repeated.
+- `login-alone-GOfamc` passed at 06:24:40 on web `733c0b47`: one real browser
+  OAuth callback using the existing NyxID CLI identity, zero Trigger visits or
+  resource commands, all seven resource/profile inventories unchanged through
+  the ten-second follow-up. Commit `3bba3b41` adds six unseen-subject App
+  return/remount cases with zero default resources/profiles or Launches; the
+  39-test sign-in/Trigger suite, typecheck and scoped lint pass.
+- Style commit `733c0b47` restores the original 12px composer/metrics gaps,
+  Thinking spacing and 34px mobile Send/Stop circles inside 44px hit areas.
+  The 29 focused checks and four local browser views passed, including actual
+  hit tests and logo pixel/motion checks. Thinking secondary ink and caption
+  placeholder/metrics ink are explicit accessibility accommodations, not exact
+  old colour parity.
+- `post-style-readonly-8d3r2L` remains failed. It preserved conversation,
+  hierarchy, title and geometry but exposed six HTTP 422 live-resource polls
+  against the genuinely Paused Sandbox, with a misleading unsupported message.
+  Fix `64c2721f` shares the existing fresh Sandbox observation with Resources,
+  stops those polls while inactive, preserves usage/input and resets CPU
+  sampling on activation. All 155 Agent tests pass, including a regression that
+  failed before the fix, with full typecheck, scoped lint, formatting and secret
+  scanning. No API, runtime, SDK or route source changed.
+- Static-web rollout `static-web-only-rollout-L79sgg` changed only the web
+  image. Independent `web-64c2721f-ready-1788849842826.json` passed at 06:44:02:
+  web generation 34 is Ready on `cma-web-7fb4dd758-9ws6f`, UID
+  `34f77d73-8f3c-4554-ae03-57c49b435ddb`; API generation 62, its exact pod
+  identity, runtime configuration and route contracts remain unchanged.
+- `post-paused-metrics-readonly-sdGgMI` passed at 06:47:18 on the exact final
+  images. All four 1440/390 light/dark views pass open/reload, complete history,
+  exact hierarchy expansion/selection, mobile drawer closure, title agreement,
+  live logo-node preservation, settled geometry, 34px/44px button measurements,
+  12px gaps, retained usage and editable empty input. Existing Thinking tool
+  content was expanded without starting work; measured body contrast is 5.92:1
+  in light and 8.33:1 in dark. All 639 reads were HTTP 200, with zero live
+  Resources request attempts, denied requests, browser errors or resource
+  commands. API/web identities and runtime configuration match before/after.
+  The browser closed at 06:47:18.463, leaving the original environment Paused
+  at revision 207 with full transcript unchanged and input usable.
+
+The final verifier preserves all 13 files of the newly failed paused-style run,
+its three original verifier sources and the previously bound historical
+failures. The separate Gateway status-timestamp readiness assertion failure and
+pre-network verifier import failure also remain recorded, not relabelled passes.
+The corrected helper has 19 focused guard/dependency tests. Final namespace
+readback contains only `cma-api` and `cma-web` pods, both Ready with zero restarts;
+local disk retains approximately 15 GiB free.
+
+No new README Launch, original first prompt, heavy workload, Pause, Resume or
+Delete was replayed for these final visual checks. Fresh external signup and
+cross-owner browser isolation remain untested under the requested single-owner
+scope. The actual clicked README was authenticated GitHub-rendered HTML at its
+source origin, not a signed-in GitHub web-page session. Named controls and the
+original character are verified; this does not claim component-by-component
+pixel equality of every screen or live provider reasoning prose that was not
+emitted. Workload execution remains bound to its recorded upstream source.
+The measured whole-home Pause and README restore durations below remain real
+operational limits; automatic recovery is not an instant operation.
+
+### Pre-Style Verification
 
 At 2026-09-08 05:56:14 UTC, the current-image paused README repeat, final
 hierarchy/navigation and settled editable-composer checks are passing.
