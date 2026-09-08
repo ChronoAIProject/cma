@@ -51,10 +51,17 @@ export function ProfilePreview({
   }, [open]);
   useLayoutEffect(() => {
     if (!open) return;
+    const dialog = row.current?.closest<HTMLElement>('[role="dialog"]');
     const place = () => {
       const anchor = row.current?.getBoundingClientRect();
       const element = panel.current;
       if (anchor === undefined || element === null) return;
+      // A hover preview must leave the dialog's close and submit controls reachable.
+      const header = dialog?.querySelector('.modal__header')?.getBoundingClientRect();
+      const footer = dialog?.querySelector('.modal__footer')?.getBoundingClientRect();
+      const top = Math.max(12, header?.bottom ?? 12);
+      const bottom = Math.min(innerHeight - 12, footer?.top ?? innerHeight - 12);
+      element.style.maxHeight = `${Math.max(0, bottom - top)}px`;
       const position = placeMenu(
         anchor,
         { width: element.offsetWidth, height: element.offsetHeight },
@@ -63,10 +70,12 @@ export function ProfilePreview({
         'start',
       );
       element.style.left = `${position.left}px`;
-      element.style.top = `${position.top}px`;
+      element.style.top = `${Math.max(top, Math.min(position.top, bottom - element.offsetHeight))}px`;
       element.style.visibility = 'visible';
     };
     place();
+    const resize = new ResizeObserver(place);
+    if (dialog) resize.observe(dialog);
     window.addEventListener('resize', place);
     const onScroll = (event: Event) => {
       if (event.target instanceof Node && panel.current?.contains(event.target)) return;
@@ -74,6 +83,7 @@ export function ProfilePreview({
     };
     window.addEventListener('scroll', onScroll, true);
     return () => {
+      resize.disconnect();
       window.removeEventListener('resize', place);
       window.removeEventListener('scroll', onScroll, true);
     };
@@ -84,6 +94,12 @@ export function ProfilePreview({
       onMouseEnter={() => schedule(true)}
       onMouseLeave={() => schedule(false)}
       onFocusCapture={() => schedule(true)}
+      onClickCapture={(event) => {
+        if (event.target instanceof Node && row.current?.contains(event.target)) {
+          clearTimeout(timer.current);
+          setOpen(false);
+        }
+      }}
       onBlurCapture={(event) => {
         if (
           !(event.relatedTarget instanceof Node) ||

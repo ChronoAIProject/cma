@@ -546,7 +546,10 @@ public profile settings renderer and original-name links. The preview is 360px
 wide and 440px high, constrained to 12px viewport margins, with an 8px radius,
 16px padding, menu fill and level-3 shadow. The body alone scrolls. It uses the
 shared menu placement calculation, right of the row on desktop and below on
-narrow screens, clamped inside the viewport. It stays open while hovered or
+narrow screens, clamped inside the viewport and vertically between the owning
+dialog's header and footer. On short screens its body becomes shorter and scrolls;
+the close and submission controls must never sit behind the preview. Selecting a
+profile dismisses its open or pending preview. It stays open while hovered or
 focused, closes after 150ms outside, and Escape dismisses only the preview.
 Loading and read failure occupy the same stable box; hovering never selects or
 creates anything. Fade-in uses the existing fast duration, with reduced-motion
@@ -1617,3 +1620,4 @@ Append-only. Never edit or delete an entry.
 | 2026-09-08 | Protected chat drafts from IME confirmation Enter using composition lifecycle and native keyboard signals, including Safari key code 229. Kept ordinary Enter submission and Shift+Enter newlines. |
 | 2026-09-08 | Added independently collapsible Live/Paused sidebar groups with counts and owner-scoped persistence. Replaced generic resource states with Sandbox and Agent vocabulary; background capture no longer replaces Live/Pausing. Removed Workspace expansion and inert label buttons until Ready. |
 | 2026-09-08 | Clarified New Agent location, profile, title and first-message fields. Added anchored, bounded profile hover details using pinned public settings and original-name links, and removed deleting/deleted resources from location choices. |
+| 2026-09-08 | Confined profile hover previews vertically between the creation dialog header and footer, including short mobile viewports. Selecting a profile dismisses its open or pending preview so creation and close controls remain reachable. |

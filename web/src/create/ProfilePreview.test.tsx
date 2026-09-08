@@ -13,6 +13,70 @@ const choice = {
   source: 'own' as const,
 };
 
+it.each([0, 250])(
+  'dismisses a pending or open preview when selecting the profile after %d ms',
+  async (delay) => {
+    vi.useFakeTimers();
+    const select = vi.fn();
+    render(
+      <ul>
+        <ProfilePreview client={creationClient()} kind="agent" choice={choice}>
+          <button onClick={select}>Select profile</button>
+        </ProfilePreview>
+      </ul>,
+    );
+    const button = screen.getByRole('button');
+    fireEvent.focus(button);
+    await act(() => vi.advanceTimersByTimeAsync(delay));
+    fireEvent.click(button);
+    await act(() => vi.advanceTimersByTimeAsync(300));
+    expect(select).toHaveBeenCalledOnce();
+    expect(screen.queryByRole('region')).not.toBeInTheDocument();
+  },
+);
+
+it.each([
+  { headerBottom: 90, footerTop: 800, height: 440 },
+  { headerBottom: 120, footerTop: 360, height: 240 },
+])('keeps the preview between dialog controls %j', async ({ headerBottom, footerTop, height }) => {
+  vi.useFakeTimers();
+  const geometry = vi
+    .spyOn(HTMLElement.prototype, 'getBoundingClientRect')
+    .mockImplementation(function (this: HTMLElement) {
+      if (this.classList.contains('modal__header'))
+        return new DOMRect(24, 24, 342, headerBottom - 24);
+      if (this.classList.contains('modal__footer')) return new DOMRect(24, footerTop, 342, 40);
+      return new DOMRect(49, footerTop - 150, 292, 44);
+    });
+  const measured = vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockReturnValue(height);
+  try {
+    render(
+      <div role="dialog" aria-label="New workspace">
+        <div className="modal__header">New workspace</div>
+        <ul>
+          <ProfilePreview client={creationClient()} kind="agent" choice={choice}>
+            <button>Select profile</button>
+          </ProfilePreview>
+        </ul>
+        <div className="modal__footer">
+          <button>Create workspace</button>
+        </div>
+      </div>,
+    );
+    fireEvent.mouseEnter(screen.getByRole('listitem'));
+    await act(() => vi.advanceTimersByTimeAsync(200));
+    const preview = screen.getByRole('region');
+    expect(Number.parseFloat(preview.style.top)).toBeGreaterThanOrEqual(headerBottom);
+    expect(Number.parseFloat(preview.style.top) + height).toBeLessThanOrEqual(footerTop);
+    expect(preview.style.maxHeight).toBe(
+      `${Math.min(footerTop, innerHeight - 12) - headerBottom}px`,
+    );
+  } finally {
+    geometry.mockRestore();
+    measured.mockRestore();
+  }
+});
+
 it('opens pinned details at a stable position, keeps them while hovered and closes on Escape', async () => {
   vi.useFakeTimers();
   const readProfile = vi.fn(creationClient().readProfile);
