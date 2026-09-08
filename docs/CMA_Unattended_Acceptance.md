@@ -29,7 +29,7 @@ Monitor disk usage and inspect exact targets before removing stale artifacts.
 | 14 | No unavailable Sandbox/Workspace expansion controls or children | Sandbox gating retained; preparing/deleting/failed Workspaces now also hide children and expansion controls. Local tests pass; production verification pending. |
 | 15 | Standard Sandbox states; deleted hidden; deletion dialog explains removal | Resource-specific labels implemented; snapshots no longer replace Live/Pausing. Explicit Needs attention remains for genuine failures. Production coverage pending. |
 | 16 | IME confirmation Enter never sends; ordinary Enter sends | Deployed in web 40300b5e. Production desktop/mobile synthetic composition, keyCode 229, Shift+Enter and ordinary Enter checks pass; draft retained. Ordinary-send requests intercepted before reaching the Agent. Native OS IME selection still requires a real keyboard check, not claimed by browser-generated events. |
-| 17 | Agent header and sidebar show consistent resource state | Implemented in web 566c9979: one selected-Agent status projection uses timestamped detail, navigation and live observations; stale history cannot override newer state. Local tests include stream/navigation transitions. Production transition verification pending. |
+| 17 | Agent header and sidebar show consistent resource state | Production desktop/mobile Ready -> Working -> Ready -> Stopped transitions passed with zero MutationObserver mismatches, including reload. Evidence: agent-status-sync-oU399d/result.json. A separate misleading normal-stop error notice is being corrected in web 57f793aa. |
 | 18 | Notifications animate on showing and dismissal | Pending shared notification audit, implementation and reduced-motion checks. |
 | 19 | Real native terminal and chat share one conversation, all CLI features, matching theme and reliable sizing | Pending pinned-engine feasibility and implementation. An independent second conversation or imitation terminal is not acceptance. |
 | 20 | gh through NyxID GitHub OAuth; identity per user; three-service Connect/Verify flow | Pending runtime/proxy implementation and connection-flow verification. Do not hardcode author identity in shared profiles. |
@@ -126,8 +126,8 @@ image identity and measured results for each behavior, with unknowns left explic
 
 ## Next Verification Work
 
-- Verify the deployed selected-Agent status projection during actual production
-  message and stop transitions, including desktop/mobile and refreshed history.
+- Verify the normal-stop notification refinement after the web-only rollout.
+  Selected-Agent status synchronization already passed actual production transitions.
 - Verify deletion while the same Sandbox is snapshotting after #4 is corrected.
   Standalone live-child Workspace deletion now passes production acceptance.
 - Continue the complete register above, especially consistent nonblocking
@@ -168,3 +168,18 @@ image identity and measured results for each behavior, with unknowns left explic
   scan pass; production transition verification is tracked separately above.
 - Disk remained between 53 and 57 GiB free. No Docker restart, cache pruning,
   owner pause or runtime rotation was issued during this batch.
+- 2026-09-08 16:10 UTC: Status synchronization passed actual production
+  Ready -> Working -> Ready -> Stopped transitions at 1440x900 and 390x900.
+  Both MutationObservers recorded zero header/sidebar mismatches and reload
+  retained Stopped. Evidence: agent-status-sync-oU399d/result.json. The harmless
+  prompt ran only in a temporary default Agent; its Sandbox was retired and both
+  owner histories were preserved. No Trigger was created.
+- Normal-stop refinement 57f793aa passed 1,142 frontend tests, TypeScript,
+  ESLint, formatting, tracked-source secret scanning, Linux/amd64 build, fixed
+  HIGH/CRITICAL image scanning and remote digest verification. The manifest pins
+  web digest fcd64fe955e26eb953fa4098d86b25de1f54e1be244070efbca04a9db97a10a4.
+  A broad working-directory scan reported two private-key markers in generated
+  pem dependency .rmeta files; the tracked-source scan passed without exceptions.
+  Read-only baseline normal-stop-notice-hpzdfU confirms the retained stopped
+  Agent reload is already clean; a live Stop transition is needed to verify the
+  refinement, because that is where the previous misleading notice appeared.
