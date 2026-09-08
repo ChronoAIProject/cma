@@ -123,11 +123,12 @@ test(
         mcpServers: [],
       });
       assert.equal(typeof session.sessionId, "string");
-      const files = readdirSync(directory, { recursive: true }).filter((path) =>
-        /^sessions\/.*\.jsonl$/.test(path),
+      const sessions = join(directory, "sessions");
+      const files = readdirSync(sessions, { recursive: true }).filter((path) =>
+        /\.jsonl$/.test(path),
       );
       assert.equal(files.length, 1);
-      const entries = readFileSync(join(directory, files[0]), "utf8")
+      const entries = readFileSync(join(sessions, files[0]), "utf8")
         .trim()
         .split("\n")
         .map((line) => JSON.parse(line));
@@ -144,7 +145,7 @@ test(
         mcpServers: [],
       });
       assert(loaded);
-      const resumed = readFileSync(join(directory, files[0]), "utf8")
+      const resumed = readFileSync(join(sessions, files[0]), "utf8")
         .trim()
         .split("\n")
         .map((line) => JSON.parse(line));
