@@ -21,6 +21,7 @@ export interface DeletionObservation {
   readonly steps: readonly ProvisioningStep[];
   readonly events: readonly SandboxEvent[];
   readonly agentEvents?: readonly AgentEvent[];
+  readonly observedAt: string;
 }
 
 export function deletionTarget(action: DeleteAction): string {
@@ -114,6 +115,7 @@ export async function observeDeletion(
         : undefined;
     return {
       name: sandbox.name,
+      observedAt: new Date().toISOString(),
       complete,
       events,
       failure,
@@ -140,11 +142,13 @@ export async function observeDeletion(
       (agent) => !['stopped', 'failed', 'deleted'].includes(agent.status),
     );
     const agentsRemoved = complete || workspace.agents.every((agent) => agent.status === 'deleted');
+    const events =
+      accepted || complete ? await readSandboxHistory(client, sandbox.id, signal, previous) : [];
     return {
       name: workspace.name,
+      observedAt: new Date().toISOString(),
       complete,
-      events:
-        accepted || complete ? await readSandboxHistory(client, sandbox.id, signal, previous) : [],
+      events,
       blocked:
         sandbox.status === 'paused'
           ? 'Resume the Sandbox before deleting this Workspace.'
@@ -198,6 +202,7 @@ export async function observeDeletion(
     );
   return {
     name: agent.title?.trim() || 'Untitled agent',
+    observedAt: new Date().toISOString(),
     complete,
     events: [],
     agentEvents,

@@ -156,7 +156,10 @@ it('polls incremental Sandbox events, preserves progress on read failure, and sl
   await act(async () => {
     await vi.advanceTimersByTimeAsync(0);
   });
-  expect(readSandboxEvents).not.toHaveBeenCalled();
+  expect(readSandboxEvents.mock.calls.map((call) => call[1].cursor)).toEqual([0, 1]);
+  expect(
+    within(screen.getByRole('region', { name: 'Live activity' })).getByText('Sandbox created'),
+  ).toBeInTheDocument();
   await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Advanced' })));
   expect(
     within(screen.getByRole('region', { name: 'Sandbox preparation' })).getByText(

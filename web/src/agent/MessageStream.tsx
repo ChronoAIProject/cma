@@ -1,4 +1,5 @@
 import { useLayoutEffect, useRef } from 'react';
+import type { ReactNode } from 'react';
 import type { ApprovalDecision } from './controller';
 import type { ConversationState } from './conversation';
 import { StreamEntry, type Entry } from './StreamEntry';
@@ -9,12 +10,14 @@ interface MessageStreamProps {
   readonly conversation: ConversationState;
   readonly approvalBusy?: boolean;
   readonly onApproval: (id: string, decision: ApprovalDecision) => void;
+  readonly children?: ReactNode;
 }
 
 export function MessageStream({
   conversation,
   approvalBusy = false,
   onApproval,
+  children,
 }: MessageStreamProps) {
   const endRef = useRef<HTMLDivElement>(null);
   const pinned = useRef(true);
@@ -133,6 +136,7 @@ export function MessageStream({
       ) ? (
         <BrandLoading label="Working" />
       ) : null}
+      {children}
       <div ref={endRef} />
     </div>
   );

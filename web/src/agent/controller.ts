@@ -48,6 +48,7 @@ export interface AgentController {
   readonly state: AgentResourceState;
   readonly inputAvailability: SandboxInputAvailability;
   readonly resourceAvailability: SandboxResourceAvailability;
+  readonly progressObservation?: ReturnType<typeof useSandboxInput>['progressObservation'];
   readonly pending?: AgentCommand;
   readonly actionError?: string;
   readonly reload: () => void;
@@ -180,7 +181,7 @@ export function useAgentController(
   const [state, setState] = useState<AgentResourceState>(
     agentId === undefined ? { status: 'idle' } : { status: 'loading' },
   );
-  const { inputAvailability, resourceAvailability } = useSandboxInput(
+  const { inputAvailability, resourceAvailability, progressObservation } = useSandboxInput(
     client,
     agentId,
     state.status === 'ready' && state.detail.id === agentId ? state.detail.sandbox.id : undefined,
@@ -528,6 +529,7 @@ export function useAgentController(
         : state,
     inputAvailability,
     resourceAvailability,
+    progressObservation,
     pending,
     actionError: actionError ?? replayError,
     reload,

@@ -59,15 +59,16 @@ it('uses the recorded start across remounts and clears preparation after activat
   expect(vi.getTimerCount()).toBe(0);
 });
 
-it('does not leak unknown phases or infer completed stages from an unknown phase', () => {
+it('does not leak unknown phases or infer completed stages from an unknown phase', async () => {
   render(<LifecycleProgress sandbox={restoring('unrecognized_wire_phase')} stale />);
   expect(screen.getByText('Preparing your sandbox')).toBeInTheDocument();
   expect(screen.queryByText('unrecognized_wire_phase')).not.toBeInTheDocument();
   expect(screen.queryByText('Done')).not.toBeInTheDocument();
   expect(screen.getByRole('status')).toHaveTextContent('Status updates interrupted');
+  await act(async () => {});
 });
 
-it('shows cancellation without falsely completing the normal pause stages', () => {
+it('shows cancellation without falsely completing the normal pause stages', async () => {
   const sandbox = restoring();
   render(
     <LifecycleProgress
@@ -84,6 +85,7 @@ it('shows cancellation without falsely completing the normal pause stages', () =
   expect(screen.getAllByText('Canceling pause')).toHaveLength(2);
   expect(screen.queryByText('Done')).not.toBeInTheDocument();
   expect(screen.getAllByText('In progress')).toHaveLength(1);
+  await act(async () => {});
 });
 
 it('formats elapsed time without negative, invalid or wrapped-hour values', () => {

@@ -13,6 +13,8 @@ import { RiskConfirmation } from './ui/RiskConfirmation';
 import { Modal } from './ui/Modal';
 import { Button } from './ui/Button';
 import { ProvisioningProgress } from './sandbox/ProvisioningProgress';
+import { LiveActivity } from './sandbox/LiveActivity';
+import { activityEntries } from './sandbox/activity';
 
 export function DeletionDialog({
   client,
@@ -88,6 +90,11 @@ export function DeletionDialog({
         })
         .catch((error: unknown) => {
           if (controller.signal.aborted) return;
+          if (error instanceof ApiError && [401, 403, 404].includes(error.status)) {
+            events = [];
+            agentEvents = [];
+            setObservation(undefined);
+          }
           // A missing resource can mean access loss, not proven deletion.
           setReadError(
             error instanceof ApiError && [401, 403, 404].includes(error.status)
@@ -200,6 +207,15 @@ export function DeletionDialog({
       {observation === undefined ? null : (
         <ProvisioningProgress title="Deletion progress" steps={observation.steps} />
       )}
+      <LiveActivity
+        entries={activityEntries(
+          observation?.agentEvents ?? observation?.events ?? [],
+          request.action.kind === 'delete_agent' ? 'agent' : 'sandbox',
+        )}
+        syncedAt={observation?.observedAt}
+        stale={readError !== undefined}
+        loading={observation === undefined && readError === undefined}
+      />
       {observation?.failure === undefined ? null : (
         <p role="alert">
           Cleanup reported: {observation.failure.detail}. Deletion is not complete.
