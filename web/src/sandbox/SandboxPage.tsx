@@ -1,4 +1,5 @@
 import { useEffect, useId, useRef, useState } from 'react';
+import { ApiError } from '@chronoai/cma-sdk';
 import type { CmaWebClient } from '../api/client';
 import type { SandboxDetail } from '../api/types';
 import type { AppRoute } from '../routing/routes';
@@ -21,12 +22,13 @@ import {
 } from './lifecycle';
 import { SandboxOverview } from './SandboxOverview';
 import { SandboxAdvanced } from './SandboxAdvanced';
+import { LifecycleProgress } from './LifecycleProgress';
 import './SandboxPage.css';
 
 type State =
   | { status: 'loading' }
   | { status: 'error'; message: string }
-  | { status: 'ready'; sandbox: SandboxDetail };
+  | { status: 'ready'; sandbox: SandboxDetail; observedAt: string };
 
 export function SandboxPage({
   client,
@@ -66,7 +68,7 @@ export function SandboxPage({
           if (abort.signal.aborted) return;
           if (sandbox.id !== sandboxId)
             throw new Error('Sandbox projection referred to another resource.');
-          setState({ status: 'ready', sandbox });
+          setState({ status: 'ready', sandbox, observedAt: new Date().toISOString() });
           setPollError(false);
           timer = setTimeout(
             poll,
@@ -80,8 +82,9 @@ export function SandboxPage({
         .catch((error: unknown) => {
           if (abort.signal.aborted) return;
           setPollError(true);
+          const denied = error instanceof ApiError && [401, 403, 404].includes(error.status);
           setState((current) =>
-            current.status === 'ready' && current.sandbox.id === sandboxId
+            !denied && current.status === 'ready' && current.sandbox.id === sandboxId
               ? current
               : {
                   status: 'error',
@@ -194,6 +197,7 @@ export function SandboxPage({
         <p id={lifecycleReasonId}>{lifecycleAction.reason}</p>
       ) : null}
       {pollError ? <p role="alert">Progress could not be refreshed. Reconnecting.</p> : null}
+      <LifecycleProgress sandbox={sandbox} observedAt={state.observedAt} stale={pollError} />
       {sandbox.status === 'failed' ? (
         <p role="alert">
           Your sandbox needs attention.{' '}

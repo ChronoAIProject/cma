@@ -13,6 +13,7 @@ import { ReviewCard } from './ReviewCard';
 import { ConnectAssistant } from './ConnectAssistant';
 import { useRecordedProgress } from './useRecordedProgress';
 import { createIntent } from './intent';
+import { LaunchSandboxProgress } from '../sandbox/LaunchSandboxProgress';
 
 export function Progress({
   client,
@@ -38,6 +39,8 @@ export function Progress({
   const blocked = record?.blocked_reason;
   const agentId =
     record?.resolution.agent.state === 'pending' ? undefined : record?.resolution.agent.id;
+  const sandboxId =
+    record?.resolution.sandbox.state === 'pending' ? undefined : record?.resolution.sandbox.id;
   useEffect(() => {
     if ((record?.state === 'ready' || record?.state === 'completed') && agentId !== undefined)
       onNavigate({ kind: 'agent', agentId }, { replace: true });
@@ -151,6 +154,11 @@ export function Progress({
                   <span>{label}</span>
                 </div>
                 {detail === undefined ? null : <p>{detail}</p>}
+                {key === 'sandbox' &&
+                record.state === 'sandbox_pending' &&
+                sandboxId !== undefined ? (
+                  <LaunchSandboxProgress key={sandboxId} sandboxId={sandboxId} />
+                ) : null}
               </div>
             </li>
           );
