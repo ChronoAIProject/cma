@@ -22,7 +22,58 @@ async fn active() -> (Harness, Sandbox, SystemTime) {
     let created = harness.create().await;
     let now = start_time(&created);
     let active = harness.drive_active(&created.id, now).await;
-    (harness, active, now + Duration::from_secs(1))
+    (
+        harness,
+        active,
+        now + Duration::from_secs(SANDBOX_CHECKPOINT_INTERVAL_SECONDS + 1),
+    )
+}
+
+#[tokio::test]
+async fn first_periodic_capture_waits_for_the_live_interval_across_worker_restart() {
+    let harness = Harness::new(Vec::new(), 0, Duration::from_secs(60)).await;
+    let created = harness.create().await;
+    let now = start_time(&created);
+    let active = harness.drive_active(&created.id, now).await;
+    let source = Arc::new(MutablePolicy(Mutex::new(harness.policy.clone())));
+    for elapsed in [1, 120, 599, 600] {
+        let worker = SandboxCheckpointMaintenance::with_policy_source(
+            harness.store.clone(),
+            harness.adapter.clone(),
+            "test".into(),
+            "first-capture-restarted".into(),
+            source.clone(),
+        );
+        assert_eq!(
+            worker
+                .run_once(now + Duration::from_secs(elapsed))
+                .await
+                .unwrap(),
+            0
+        );
+        assert_eq!(harness.stored(&active.id).await, active);
+    }
+    source.0.lock().unwrap().checkpoint_interval_seconds = 600;
+    let worker = SandboxCheckpointMaintenance::with_policy_source(
+        harness.store.clone(),
+        harness.adapter.clone(),
+        "test".into(),
+        "first-capture-new-policy".into(),
+        source,
+    );
+    assert_eq!(
+        worker
+            .run_once(now + Duration::from_secs(600))
+            .await
+            .unwrap(),
+        1
+    );
+    assert!(harness
+        .stored(&active.id)
+        .await
+        .lifecycle
+        .checkpoint_capture
+        .is_some());
 }
 
 fn token(sandbox: &Sandbox) -> String {
