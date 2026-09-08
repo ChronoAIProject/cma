@@ -2,7 +2,8 @@ use std::time::SystemTime;
 
 use layer2_core::rfc3339_at;
 use layer2_core::sandbox::store::{
-    retiring_sandbox_process_is_absent, AgentWorkMutation, SandboxStoreError, VersionedWorktree,
+    retired_sandbox_cleanup_is_absent, retiring_sandbox_process_is_absent, AgentWorkMutation,
+    SandboxStoreError, VersionedWorktree,
 };
 use layer2_core::sandbox::{
     Agent, AgentLogKind, AgentStatus, AgentWorkStep, SandboxEventKind, WorktreeStatus,
@@ -10,7 +11,9 @@ use layer2_core::sandbox::{
 use layer3_adapter::{AgentCloseRequest, AgentHomeRemoveRequest, AgentSlot, WorktreeRef};
 
 use super::startup_support::has_startup_evidence;
-use super::support::{bump_log_sequence, claimed_fence, request_evidence, WorkerFailure};
+use super::support::{
+    bump_log_sequence, claimed_fence, request_evidence, validate_lineage, WorkerFailure,
+};
 use super::AgentWorker;
 
 impl AgentWorker {
@@ -216,6 +219,9 @@ impl AgentWorker {
         agent: Agent,
         now: SystemTime,
     ) -> Result<(), SandboxStoreError> {
+        if self.complete_retired_cleanup(&agent, now).await? {
+            return Ok(());
+        }
         if !matches!(agent.status, AgentStatus::Stopped | AgentStatus::Failed) {
             return self.invalid_cleanup(agent, now).await;
         }
@@ -295,6 +301,9 @@ impl AgentWorker {
         agent: Agent,
         now: SystemTime,
     ) -> Result<(), SandboxStoreError> {
+        if self.complete_retired_cleanup(&agent, now).await? {
+            return Ok(());
+        }
         let context = match self.cleanup_context(&agent).await {
             Ok(context) => context,
             Err(failure) => return self.handle_failure(agent, failure, now).await,
@@ -354,6 +363,9 @@ impl AgentWorker {
         agent: Agent,
         now: SystemTime,
     ) -> Result<(), SandboxStoreError> {
+        if self.complete_retired_cleanup(&agent, now).await? {
+            return Ok(());
+        }
         let context = match self.cleanup_context(&agent).await {
             Ok(context) => context,
             Err(failure) => return self.handle_failure(agent, failure, now).await,
@@ -415,6 +427,93 @@ impl AgentWorker {
             tracing::debug!(agent_id = %agent_id, %error, "worktree removal publication failed");
             error
         })
+    }
+
+    async fn complete_retired_cleanup(
+        &self,
+        agent: &Agent,
+        now: SystemTime,
+    ) -> Result<bool, SandboxStoreError> {
+        let sandbox = self
+            .dependencies
+            .store
+            .get_sandbox(&agent.sandbox_id)
+            .await?
+            .ok_or(SandboxStoreError::NotFound)?;
+        if !retired_sandbox_cleanup_is_absent(agent, &sandbox) {
+            return Ok(false);
+        }
+        let workspace = self
+            .dependencies
+            .store
+            .get_workspace(&agent.workspace_id)
+            .await?
+            .ok_or(SandboxStoreError::NotFound)?;
+        let mut worktree = self
+            .dependencies
+            .store
+            .get_worktree(&agent.worktree_id)
+            .await?
+            .ok_or(SandboxStoreError::NotFound)?;
+        if let Err(failure) = validate_lineage(agent, &sandbox, &workspace, &worktree) {
+            self.handle_failure(agent.clone(), failure, now).await?;
+            return Ok(true);
+        }
+        match self.dependencies.adapter.runtime_inventory().await {
+            Ok(inventory)
+                if inventory
+                    .iter()
+                    .all(|runtime| runtime.sandbox_id != sandbox.id.as_str()) => {}
+            Ok(_) => {
+                self.handle_failure(
+                    agent.clone(),
+                    WorkerFailure::retryable(
+                        "retired_runtime_present",
+                        "runtime cleanup is not yet confirmed by the provider",
+                    ),
+                    now,
+                )
+                .await?;
+                return Ok(true);
+            }
+            Err(error) => {
+                self.handle_failure(agent.clone(), cleanup_failure(error), now)
+                    .await?;
+                return Ok(true);
+            }
+        }
+        let next = match agent.work.step {
+            AgentWorkStep::EnsureProcessClosed => AgentWorkStep::RemoveHome,
+            AgentWorkStep::RemoveHome => AgentWorkStep::RemoveWorktree,
+            AgentWorkStep::RemoveWorktree => AgentWorkStep::PublishDeleted,
+            _ => return Err(SandboxStoreError::Conflict),
+        };
+        let expected_revision = worktree.revision;
+        let versioned = match agent.work.step {
+            AgentWorkStep::EnsureProcessClosed | AgentWorkStep::RemoveWorktree => {
+                worktree
+                    .transition(if agent.work.step == AgentWorkStep::EnsureProcessClosed {
+                        WorktreeStatus::Removing
+                    } else {
+                        WorktreeStatus::Removed
+                    })
+                    .map_err(|_| SandboxStoreError::Conflict)?;
+                Some(VersionedWorktree {
+                    expected_revision,
+                    worktree: worktree.clone(),
+                })
+            }
+            _ => None,
+        };
+        let event = (agent.work.step == AgentWorkStep::RemoveWorktree).then_some({
+            SandboxEventKind::WorktreeRemoved {
+                workspace_id: worktree.workspace_id,
+                worktree_id: worktree.id,
+            }
+        });
+        self.progress(agent.clone(), next, now, None, Vec::new(), versioned, event)
+            .await?;
+        Ok(true)
     }
 
     pub(super) async fn publish_deleted(

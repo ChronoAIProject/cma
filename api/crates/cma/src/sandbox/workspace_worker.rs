@@ -255,6 +255,42 @@ impl WorkspaceWorker {
     }
 
     async fn remove(&self, workspace: Workspace, now: SystemTime) -> Result<(), SandboxStoreError> {
+        let parent = self
+            .dependencies
+            .store
+            .get_sandbox(&workspace.sandbox_id)
+            .await?
+            .ok_or(SandboxStoreError::NotFound)?;
+        // Retirement already removed the entire home. Never revive it merely to delete a directory.
+        if parent.owner == workspace.owner
+            && parent.status == SandboxStatus::Retired
+            && parent.retired_at.is_some()
+            && parent.runtime.is_none()
+            && parent.lifecycle.checkpoint_capture.is_none()
+            && parent.lifecycle.operation.is_none()
+            && parent.lifecycle.runtime_provision.is_none()
+            && parent.validate().is_ok()
+        {
+            match self.dependencies.adapter.runtime_inventory().await {
+                Ok(inventory)
+                    if inventory
+                        .iter()
+                        .all(|runtime| runtime.sandbox_id != parent.id.as_str()) =>
+                {
+                    return self.mark_removed(workspace, now).await
+                }
+                Ok(_) => {
+                    return self
+                        .handle_failure(
+                            workspace,
+                            WorkerFailure::retryable("retired sandbox runtime is still present"),
+                            now,
+                        )
+                        .await
+                }
+                Err(error) => return self.handle_failure(workspace, failure(error), now).await,
+            }
+        }
         let (_, runtime) = match self.runtime(&workspace).await {
             Ok(value) => value,
             Err(failure) => return self.handle_failure(workspace, failure, now).await,

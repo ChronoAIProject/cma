@@ -404,7 +404,7 @@ fn record_receipt(
     Ok(())
 }
 
-fn validate_lineage(
+pub(super) fn validate_lineage(
     agent: &Agent,
     sandbox: &Sandbox,
     workspace: &Workspace,

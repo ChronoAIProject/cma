@@ -1,12 +1,49 @@
 use super::*;
 use crate::sandbox::store::{
-    retiring_sandbox_process_is_absent, validate_agent_work_mutation_with_sandbox,
+    retired_sandbox_cleanup_is_absent, retiring_sandbox_process_is_absent,
+    validate_agent_work_mutation_with_sandbox,
 };
 use crate::sandbox::{
     Sandbox, SandboxCheckpointConversation, SandboxCheckpointRef, SandboxStatus, SandboxWorkStep,
 };
 use layer3_adapter::{CheckpointReceipt, ConversationSnapshot, WriterState};
 use sha2::{Digest, Sha256};
+
+#[test]
+fn retired_sandbox_delete_proof_is_scoped_to_terminal_owner_and_cleanup_steps() {
+    let (mut agent, _, mut sandbox) = fixture();
+    agent.status = AgentStatus::Stopped;
+    agent.requested_stop_reason = None;
+    agent.work.step = AgentWorkStep::RemoveHome;
+    sandbox
+        .transition(SandboxStatus::Retired, AT.into(), None)
+        .unwrap();
+    sandbox
+        .work
+        .schedule(SandboxWorkStep::WaitForPurge, AT.into());
+    assert!(retired_sandbox_cleanup_is_absent(&agent, &sandbox));
+    for variant in 0..8 {
+        let mut agent = agent.clone();
+        let mut sandbox = sandbox.clone();
+        match variant {
+            0 => agent.owner = SubjectId::new("other-owner"),
+            1 => sandbox.id = SandboxId("other-sandbox".into()),
+            2 => agent.status = AgentStatus::Ready,
+            3 => agent.work.step = AgentWorkStep::OpenConversation,
+            4 => sandbox.status = SandboxStatus::Paused,
+            5 => sandbox.retired_at = None,
+            6 => sandbox.runtime = crate::sandbox::lifecycle_test_support::sandbox().runtime,
+            _ => agent
+                .work
+                .cleanup_debt
+                .push(debt(&agent, AgentWorkStep::MaterializeHome)),
+        }
+        assert!(
+            !retired_sandbox_cleanup_is_absent(&agent, &sandbox),
+            "variant {variant}"
+        );
+    }
+}
 
 fn fixture() -> (Agent, Worktree, Sandbox) {
     let (mut agent, worktree) = claimed(
