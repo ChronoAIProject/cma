@@ -4,6 +4,9 @@ import { BUILD } from './build';
 import type { ReactNode } from 'react';
 import './Sidebar.css';
 
+// Stable identity keeps hierarchy refreshes from replacing and reanimating the SVG.
+const markHtml = { __html: markMarkup };
+
 interface SidebarProps {
   readonly collapsed: boolean;
   readonly onToggleCollapsed: () => void;
@@ -32,11 +35,7 @@ export function Sidebar({
             title="New agent"
             onClick={onNewAgent}
           >
-            <span
-              className="sidebar__mark"
-              aria-hidden="true"
-              dangerouslySetInnerHTML={{ __html: markMarkup }}
-            />
+            <span className="sidebar__mark" aria-hidden="true" dangerouslySetInnerHTML={markHtml} />
             {collapsed ? null : (
               <>
                 <span className="sidebar__name">CMA</span>
@@ -46,11 +45,7 @@ export function Sidebar({
           </button>
         ) : (
           <a className="sidebar__brand" href="/" aria-label="CMA home">
-            <span
-              className="sidebar__mark"
-              aria-hidden="true"
-              dangerouslySetInnerHTML={{ __html: markMarkup }}
-            />
+            <span className="sidebar__mark" aria-hidden="true" dangerouslySetInnerHTML={markHtml} />
             {collapsed ? null : <span className="sidebar__name">CMA</span>}
           </a>
         )}
