@@ -2,7 +2,8 @@ import { useEffect, useRef, useState } from 'react';
 import type { ProfileKind } from '../routing/routes';
 import { ChoiceGroup } from '../profiles/ChoiceGroup';
 import { Button } from '../ui/Button';
-import { IconCheckOutline16 } from '../ui/icons';
+import { IconCheckOutline16, IconPlusOutline16 } from '../ui/icons';
+import { ReferenceLink } from '../profiles/ReferenceLink';
 import type { CreationClient, CreationProfile, ProfileChoice, ProfileSource } from './client';
 
 export function ProfilePicker({
@@ -127,8 +128,14 @@ export function ProfilePicker({
       <ul className="create-profile-picker__list">
         {choices.map((choice) => (
           <li key={`${choice.id}:${String(choice.revision)}`}>
+            <span>
+              <ReferenceLink kind={kind} id={choice.id} name={choice.name} />{' '}
+              <span>Version {choice.revision}</span>
+            </span>
             <Button
               variant="outline"
+              aria-label={`Select ${choice.name} Version ${choice.revision}`}
+              title={`Select ${choice.name}`}
               disabled={disabled || loading}
               aria-pressed={
                 value?.revision.profileId === choice.id &&
@@ -138,12 +145,12 @@ export function ProfilePicker({
                 value?.revision.profileId === choice.id &&
                 value.revision.revision === choice.revision ? (
                   <IconCheckOutline16 />
-                ) : undefined
+                ) : (
+                  <IconPlusOutline16 />
+                )
               }
               onClick={() => void choose(choice)}
-            >
-              {choice.name} <span>Version {choice.revision}</span>
-            </Button>
+            />
           </li>
         ))}
       </ul>
@@ -155,7 +162,9 @@ export function ProfilePicker({
       )}
       {value === undefined ? null : (
         <div className="create-profile-picker__selection">
-          <strong>{value.name}</strong>
+          <strong>
+            <ReferenceLink kind={kind} id={value.revision.profileId} name={value.name} />
+          </strong>
           <span>Version {value.revision.revision}</span>
           {value.kind === 'agent' ? (
             <p>

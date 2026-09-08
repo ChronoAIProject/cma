@@ -1,4 +1,4 @@
-import { act, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
 import type { SandboxDetail } from '../api/types';
 import type { TreePermissions } from '../shell/Tree';
@@ -61,10 +61,13 @@ it('refreshes Active saving phases and restores Pause only after authoritative e
   expect(screen.getByRole('button', { name: 'Pause' })).toHaveAccessibleDescription(
     /Progress is being saved/,
   );
+  expect(screen.queryByText(/Saving started/)).not.toBeInTheDocument();
+  await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Advanced' })));
   expect(screen.getByText(/Saving started/).querySelector('time')).toHaveAttribute(
     'dateTime',
     '2026-09-08T00:00:00Z',
   );
+  await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Close' })));
   expect(screen.getByRole('button', { name: 'New workspace' })).toBeEnabled();
   expect(screen.getByRole('button', { name: 'New agent' })).toBeEnabled();
   await act(() => vi.advanceTimersByTimeAsync(1500));
@@ -153,7 +156,7 @@ it.each(['active'] as const)(
       />,
     );
     const workspace = await screen.findByRole('button', { name: 'New workspace' });
-    const agent = screen.getByRole('button', { name: 'New agent' });
+    const agent = await screen.findByRole('button', { name: 'New agent' });
     expect(workspace).toBeEnabled();
     expect(agent).toBeEnabled();
     workspace.click();
@@ -216,6 +219,9 @@ it('pages the complete Sandbox event timeline before displaying it', async () =>
       onNavigate={vi.fn()}
     />,
   );
+  const advanced = await screen.findByRole('button', { name: 'Advanced' });
+  expect(readSandboxEvents).not.toHaveBeenCalled();
+  fireEvent.click(advanced);
   expect(await screen.findByText('Workspace created')).toBeInTheDocument();
   expect(screen.getByText('Sandbox created')).toBeInTheDocument();
   expect(readSandboxEvents.mock.calls.map((call) => call[1].cursor)).toEqual([0, 1, 2]);
@@ -238,6 +244,8 @@ it('fails closed for a nonadvancing Sandbox event page', async () => {
       onNavigate={vi.fn()}
     />,
   );
+  fireEvent.click(await screen.findByRole('button', { name: 'Advanced' }));
   expect(await screen.findByRole('alert')).toHaveTextContent('Sandbox events did not advance.');
+  expect(screen.getByRole('heading', { name: 'Atlas' })).toBeInTheDocument();
   expect(readSandboxEvents).toHaveBeenCalledTimes(2);
 });

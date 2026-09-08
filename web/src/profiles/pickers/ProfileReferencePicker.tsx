@@ -7,6 +7,7 @@ import type { ProfilesClient } from '../client';
 import type { MarketplaceClient } from '../marketplace/client';
 import { ChoiceGroup } from '../ChoiceGroup';
 import { moveItem, OrderedActions } from './OrderedActions';
+import { ReferenceLink } from '../ReferenceLink';
 
 interface Choice extends ProfileReference {
   readonly name: string;
@@ -129,7 +130,8 @@ export function ProfileReferencePicker({
         {value.map((entry, index) => (
           <li key={`${entry.id}:${String(entry.revision)}:${String(index)}`}>
             <span>
-              {names.get(entry.id) ?? entry.id} · Revision {entry.revision}
+              <ReferenceLink kind={kind} id={entry.id} name={names.get(entry.id)} /> · Revision{' '}
+              {entry.revision}
             </span>
             <OrderedActions
               label={`${kind} profile ${String(index + 1)}`}
@@ -177,7 +179,8 @@ export function ProfileReferencePicker({
         {entries.map((entry) => (
           <li key={entry.id}>
             <span>
-              {entry.name} · Revision {entry.revision}
+              <ReferenceLink kind={kind} id={entry.id} name={entry.name} /> · Revision{' '}
+              {entry.revision}
             </span>
             <Button
               type="button"

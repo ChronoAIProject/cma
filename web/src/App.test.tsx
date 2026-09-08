@@ -21,6 +21,8 @@ describe('the retained application shell', () => {
         <App />
       </AuthContextProvider>,
     );
-    expect(await screen.findByRole('button', { name: 'Sign in' })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: 'Get Started' })).toBeEnabled();
+    expect(screen.getByRole('heading', { name: 'ChronoAI Managed Agent' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Sign in' })).not.toBeInTheDocument();
   });
 });

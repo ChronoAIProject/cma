@@ -1,8 +1,8 @@
 import { Console } from './Console';
 import { useAuth } from './auth/context';
-import { BrandLoading, LandingCharacter } from './landing/LandingCharacter';
+import { BrandLoading } from './landing/LandingCharacter';
+import { SignInLanding } from './landing/SignInLanding';
 import { useAppRouter } from './routing/routes';
-import { Button } from './ui/Button';
 import './styles/tokens.css';
 import './styles/design-platform.css';
 import './styles/effects-typography.css';
@@ -14,6 +14,7 @@ import './AppError.css';
 import { lazy, Suspense, useState } from 'react';
 import { useCmaClient, useCreationClient, usePublicClient } from './api/context';
 import type { CreationRequest } from './create/CreationFlow';
+import { ReferenceProvider } from './profiles/ReferenceLink';
 
 const CreationFlow = lazy(() =>
   import('./create/CreationFlow').then((module) => ({ default: module.CreationFlow })),
@@ -40,9 +41,14 @@ export function App() {
     state.status !== 'error'
   ) {
     return (
-      <Suspense fallback={<BrandLoading />}>
-        <PublicJourney client={publicClient} route={router.route} onNavigate={router.navigate} />
-      </Suspense>
+      <ReferenceProvider
+        key={state.status === 'authenticated' ? state.user.id : 'anonymous'}
+        onNavigate={router.navigate}
+      >
+        <Suspense fallback={<BrandLoading />}>
+          <PublicJourney client={publicClient} route={router.route} onNavigate={router.navigate} />
+        </Suspense>
+      </ReferenceProvider>
     );
   }
 
@@ -58,20 +64,10 @@ export function App() {
     );
   }
   if (state.status === 'anonymous') {
-    return (
-      <main className="auth-gate">
-        <div className="brand-home">
-          <LandingCharacter />
-          <h1>CMA</h1>
-          <Button variant="primary" onClick={() => void signIn(window.location.pathname)}>
-            Sign in
-          </Button>
-        </div>
-      </main>
-    );
+    return <SignInLanding onSignIn={() => signIn(window.location.pathname)} />;
   }
   return (
-    <>
+    <ReferenceProvider key={state.user.id} onNavigate={router.navigate}>
       <Console
         key={state.user.id}
         user={state.user}
@@ -116,6 +112,6 @@ export function App() {
           />
         </Suspense>
       )}
-    </>
+    </ReferenceProvider>
   );
 }

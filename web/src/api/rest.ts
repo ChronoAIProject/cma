@@ -1,5 +1,6 @@
 import { ProtocolError, type Cma } from '@chronoai/cma-sdk';
-import type { CmaWebClient } from './client';
+import type { CmaWebClient, ReadOptions } from './client';
+import type { ProfileReference } from './types';
 import { agentDetail, sandboxDetail, sandboxSummary, workspaceDetail } from './rest/hierarchy';
 
 /** The write succeeded; a failed detail read must not release its command key. */
@@ -31,6 +32,20 @@ async function createdDetail<Value>(
 
 /** One public SDK transport, with explicit wire-to-view conversion at the boundary. */
 export function createRestWebClient(sdk: Cma): CmaWebClient {
+  const pinnedSandboxProfile = async (reference: ProfileReference, options?: ReadOptions) => {
+    const profile = await sdk.sandboxProfiles.readRevision(
+      reference.id,
+      reference.revision,
+      options,
+    );
+    if (
+      profile.profile_id !== reference.id ||
+      profile.revision !== reference.revision ||
+      (reference.digest !== undefined && profile.digest !== reference.digest)
+    )
+      throw new ProtocolError('Sandbox Profile identity mismatch');
+    return profile.content;
+  };
   return {
     listSandboxes: async (options) => {
       const page = await sdk.sandboxes.list(options);
@@ -41,19 +56,9 @@ export function createRestWebClient(sdk: Cma): CmaWebClient {
     readAgent: async (id, options) => agentDetail(await sdk.agents.read(id, options)),
     readAgentResources: (id, options) => sdk.agents.resources(id, options),
     readSandboxProfileCapacity: async (reference, options) => {
-      const profile = await sdk.sandboxProfiles.readRevision(
-        reference.id,
-        reference.revision,
-        options,
-      );
-      if (
-        profile.profile_id !== reference.id ||
-        profile.revision !== reference.revision ||
-        (reference.digest !== undefined && profile.digest !== reference.digest)
-      )
-        throw new ProtocolError('Sandbox Profile identity mismatch');
-      const cpuMillis = profile.content.cpu_millis;
-      const memoryBytes = profile.content.memory_mib * 1024 ** 2;
+      const content = await pinnedSandboxProfile(reference, options);
+      const cpuMillis = content.cpu_millis;
+      const memoryBytes = content.memory_mib * 1024 ** 2;
       if (
         !Number.isSafeInteger(cpuMillis) ||
         cpuMillis <= 0 ||
@@ -62,6 +67,14 @@ export function createRestWebClient(sdk: Cma): CmaWebClient {
       )
         throw new ProtocolError('Invalid configured Sandbox capacity');
       return { cpuMillis, memoryBytes };
+    },
+    readSandboxProfileSettings: async (reference, options) => {
+      const content = await pinnedSandboxProfile(reference, options);
+      return {
+        agentProvider: content.agent_provider,
+        modelAccess: content.model_access,
+        nyxidServices: content.nyxid_services,
+      };
     },
     readAgentEvents: async (id, options) => {
       const page = await sdk.agents.events(id, { after: options?.cursor, signal: options?.signal });

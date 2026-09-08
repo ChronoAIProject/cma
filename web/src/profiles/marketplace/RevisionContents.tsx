@@ -2,6 +2,7 @@ import type { ReactNode } from 'react';
 import type { ProfileReference } from '../../api/types';
 import type { ProfileKind } from '../../routing/routes';
 import type { ResolvedProfileName, ResolvedProfileRevision } from './client';
+import { ReferenceLink } from '../ReferenceLink';
 
 function Fact({ label, children }: { readonly label: string; readonly children: ReactNode }) {
   return (
@@ -41,12 +42,18 @@ function References({
     <ol>
       {references.map((reference, index) => (
         <li key={`${reference.id}:${String(index)}`}>
-          {names.find(
-            (entry) =>
-              entry.kind === kind &&
-              entry.id === reference.id &&
-              entry.revision === reference.revision,
-          )?.name ?? reference.id}{' '}
+          <ReferenceLink
+            kind={kind}
+            id={reference.id}
+            name={
+              names.find(
+                (entry) =>
+                  entry.kind === kind &&
+                  entry.id === reference.id &&
+                  entry.revision === reference.revision,
+              )?.name
+            }
+          />{' '}
           · Revision {reference.revision}
         </li>
       ))}
@@ -85,7 +92,8 @@ export function RevisionContents({
             <ul>
               {content.skills.map((skill, index) => (
                 <li key={index}>
-                  Ornn: {skill.id} · {skill.version ?? 'Latest available version'}
+                  <ReferenceLink kind="skill" id={skill.id} version={skill.version} /> ·{' '}
+                  {skill.version ?? 'Latest available version'}
                 </li>
               ))}
             </ul>
@@ -138,7 +146,9 @@ export function RevisionContents({
         ) : (
           <ul>
             {content.nyxidServices.map((service, index) => (
-              <li key={index}>{service}</li>
+              <li key={index}>
+                <ReferenceLink kind="service" id={service} />
+              </li>
             ))}
           </ul>
         )}

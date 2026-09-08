@@ -926,8 +926,9 @@ Workspace or Agent navigation, including the Workspace band on the Sandbox page.
 Children return only after the Sandbox is active and its lifecycle operation has
 finished. An ordinary checkpoint save on an active Sandbox retains its readable
 children. Resume availability still comes from the public lifecycle record.
-The Sandbox page names the current state, recorded operation phase and start time,
-and explains why its children are unavailable. No guessed readiness percentage.
+The Sandbox page names the current state and explains why its children are
+unavailable. Recorded operation phases and start times belong in Advanced.
+No guessed readiness percentage.
 
 Deletion uses the existing risk confirmation, followed in the same overlay seat
 by the shared Modal and recorded progress treatment. Request acceptance is not
@@ -956,7 +957,7 @@ summary invalidates that reuse; cached ancestry never creates missing resources.
 
 An actual save reports **Saving progress** during capture and **Finishing save**
 while writers resume, replacing Done in the Sandbox page and tree status seat.
-The page's existing unframed status treatment includes the recorded start time;
+The Advanced dialog includes the recorded start time;
 there is no guessed percentage. Pause remains unavailable until the public
 eligibility permits it. These fields govern no Workspace or Agent creation rule.
 Tree menu reasons sit beneath their labels using the existing 13/20 voice and
@@ -965,11 +966,36 @@ Written tree states also use secondary ink so small status text remains readable
 
 ## 17. Sandbox and Agent details
 
-The Sandbox page is an unframed stack of state, pinned profile and runtime facts,
-resource/count limits, Workspaces and recorded lifecycle/preparation history.
-Workspace rows show source, path and state; selecting an Agent opens its
-conversation. A successful create followed by a failed detail read recovers the
-created resource, not another creation.
+The Sandbox page serves the ordinary owner: current state and permitted actions,
+named profile, agent provider, own versus ChronoAI-managed model access, effective
+NyxID service scope, then Workspaces and each Agent's model, Guarded or Autonomous
+permission, profile and skills. Profile settings come from the exact pinned
+revision. Effective reach comes from public Agent lineage, never from requested
+profile scope; unconfirmed access is explicitly unconfirmed. Optional metadata
+failures preserve the main status and actions and offer retry.
+
+An Advanced icon-and-text command opens the shared wide Modal. Runtime version,
+IDs, profile revisions, limits, paths, recorded preparation, operation phases,
+timestamps and Events appear only there. Events load only while that dialog is
+open and never hold the ordinary page hostage. The dialog scrolls its body,
+traps focus, closes with Escape and returns focus to Advanced.
+
+Workspaces and Agents use unframed bands with existing 24/16/12/8px rhythm,
+definition lists and wrapping linked lists. Each Agent is separated by the
+existing level-2 border, without floating or nested cards. Paused or reviving
+parents still hide their children until ready. A successful create followed by
+a failed detail read recovers the created resource, not another creation.
+
+All profile, service and skill references use their original catalog names and
+are links. Profiles open their canonical own-profile or public Marketplace page;
+NyxID services open `https://nyx.chrono-ai.fun/services/<catalog-id>`, using the
+canonical catalog identity rather than a service scope alias. Ornn skills open
+`https://ornn.chrono-ai.fun/skills/<id>` with the pinned version query when present.
+External links use a new tab with opener isolation; local navigation preserves
+the shell. Picker selection and reference navigation are separate controls.
+Names are resolved through public reads, deduplicated within the signed-in
+owner's mounted scope, and never replaced with UUIDs on failure. Missing names
+are explicitly unavailable, not invented; raw IDs remain only in technical views.
 
 The Agent drawer uses §9's dimensions and ordered full-width bands: Sandbox,
 Workspace, Worktree, Agent profile, first-message delivery, Agent controls.
@@ -1343,17 +1369,29 @@ The original Three.js character geometry, materials, studio lights, pointer
 look, press-to-spin and visibility disposal return to the unframed Home and
 authentication surfaces. The stable square is bounded to the available width,
 220px minimum when space permits and 520px maximum; compact Home uses 280px.
-The wordmark is 48px, weight 700, with zero tracking. Sign-in never waits for
-WebGL; unavailable rendering retains the original still mark.
+The signed-in wordmark is 48px, weight 700, with zero tracking. Only the signed-out
+landing names the product ChronoAI Managed Agent, at 40px/1.2 with wrapping and
+zero tracking, and has no separate Sign in button. After its first lens sweep,
+Get appears on the left lens and Started on the right as texture-mapped lettering.
+The logo is a keyboard-operable Get Started button; activation makes one complete
+0.95-second turn, followed by the existing 0.2-second opacity handover into sign-in.
+Repeated activation cannot start duplicate sign-ins. Reduced motion shows the
+words immediately and skips both turn and fade; unavailable WebGL retains a
+labelled, clickable static fallback. Failed sign-in restores an explicit retry.
+This activation behavior never applies to signed-in Home or step characters.
 
 Every provisioning step uses that same character in a fixed 44px square.
-Completed steps are green and still, running steps blue and continuously
-turning, and pending steps yellow and still. Failures are red and still.
+Completed steps are green and make one small jump every two seconds: a 0.6-second
+sine arc with 0.08 scene-unit lift followed by rest. Running steps stay blue and
+continuously turning; pending steps are yellow and turn once per second.
+Failures are red and still. Motion stays inside the reserved square and never
+moves a row or its text; it does not advance the recorded step state.
 These semantic character aliases resolve to existing moss 500, ink 800,
 amber 300 and red 600 in both themes; the colour is a redundant reinforcement
 of the adjacent written status. Compact characters omit the contact shadow.
-Only a running character schedules frames; reduced motion makes every state
-still. Loading surfaces use the same running character, never another spinner.
+Running, pending and completed characters schedule frames only while visible;
+reduced motion makes every state still. Loading surfaces use the same running
+character, never another spinner. WebGL fallback remains still and state-coloured.
 
 The Agent composer restores the baseline 22px-radius capsule, 12px internal
 gap, full-width 16/24 textarea growing to fourteen lines, and a separate lower row.
@@ -1494,3 +1532,6 @@ Append-only. Never edit or delete an entry.
 | 2026-09-08 | Shared the Agent's fresh Sandbox lifecycle observation with live resource measurements. Stopped runtime-resource polling before active-runtime confirmation and while paused, retained usage and editable drafts, showed explicit paused metrics instead of a misleading unsupported error, and reset sampling on activation or runtime-version changes. |
 | 2026-09-08 | Made inactive Sandbox hierarchy unavailable until activation, with state and Resume in its detail panel. Added persistent deletion progress and same-request recovery, explicit deletion states, terminal sidebar removal, and written deletion prerequisites while preserving retained history URLs. |
 | 2026-09-08 | Made the sidebar brand a Home link, separated the New agent tool, moved the build identity into a compact adjacent badge, and gave the resource tree all remaining column height. Home clears details and shows Welcome to CMA with the existing 3D mark rotating continuously while honoring reduced motion and visibility. |
+| 2026-09-08 | Applied shared step-character motion across the product: yellow pending turns once per second, green completed jumps once every two seconds, with stable geometry, visibility pausing, still fallback and reduced-motion equivalence. |
+| 2026-09-08 | Simplified the owner Sandbox page around status, contents and agent access; moved technical facts and event reads into Advanced. Standardized original-name profile, NyxID service and Ornn skill links with owner-scoped resolution and canonical destinations. |
+| 2026-09-08 | Made the signed-out logo the Get Started control after one lens sweep, with a complete turn and opacity handover into sign-in; renamed its heading ChronoAI Managed Agent and removed the standalone sign-in button. Preserved all signed-in character behavior and accessible reduced-motion and static fallbacks. |

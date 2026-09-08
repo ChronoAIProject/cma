@@ -2,6 +2,190 @@ import { test, expect } from '@playwright/test';
 import { LocalStartup, localTime } from './agent-startup-fixtures';
 
 for (const width of [1440, 390]) {
+  test(`LOCAL signed-out lens invitation and isolated sign-in handover at ${width}px`, async ({
+    page,
+    baseURL,
+  }, info) => {
+    await page.setViewportSize({ width, height: 900 });
+    const boundary = new LocalStartup();
+    await boundary.route(page, baseURL!);
+    await page.route('**/auth/session', (route) =>
+      route.fulfill({
+        contentType: 'application/json',
+        body: JSON.stringify({ authenticated: false }),
+      }),
+    );
+    let signIns = 0;
+    await page.route('**/auth/login?*', (route) => {
+      signIns++;
+      return route.fulfill({ contentType: 'text/html', body: '<h1>Identity sign-in</h1>' });
+    });
+    await page.goto('/');
+    await expect(page.getByRole('heading', { name: 'ChronoAI Managed Agent' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Sign in', exact: true })).toHaveCount(0);
+    const logo = page.getByRole('button', { name: 'Get Started', exact: true });
+    await expect(logo).toHaveAttribute('data-ready', '');
+    await expect(logo).toHaveAttribute('data-invitation', '', { timeout: 15000 });
+    const canvas = logo.locator('canvas');
+    const nonblank = await canvas.evaluate(
+      (element) =>
+        new Promise<number>((resolve) =>
+          requestAnimationFrame(() => {
+            const source = element as HTMLCanvasElement,
+              copy = document.createElement('canvas');
+            copy.width = source.width;
+            copy.height = source.height;
+            const context = copy.getContext('2d')!;
+            context.drawImage(source, 0, 0);
+            const data = context.getImageData(0, 0, copy.width, copy.height).data;
+            resolve(data.filter((_, index) => index % 4 === 3 && data[index]! > 0).length);
+          }),
+        ),
+    );
+    expect(nonblank).toBeGreaterThan(1000);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
+      true,
+    );
+    await page.screenshot({ path: info.outputPath(`sign-in-${width}.png`), fullPage: true });
+    await page.evaluate(() => document.body.setAttribute('data-ds-dark-theme', ''));
+    await page.screenshot({ path: info.outputPath(`sign-in-${width}-dark.png`), fullPage: true });
+    const start = Date.now();
+    await logo.dblclick();
+    await expect(page.getByRole('heading', { name: 'Identity sign-in' })).toBeVisible();
+    expect(Date.now() - start).toBeGreaterThan(900);
+    expect(signIns).toBe(1);
+    expect(boundary.writes).toEqual([]);
+    expect(boundary.errors).toEqual([]);
+    await page.emulateMedia({ reducedMotion: 'reduce' });
+    await page.goto('/');
+    await expect(logo).toBeEnabled();
+    await expect(logo).toHaveAttribute('data-invitation', '');
+    await page.screenshot({
+      path: info.outputPath(`sign-in-${width}-reduced.png`),
+      fullPage: true,
+    });
+    await logo.press('Enter');
+    await expect(page.getByRole('heading', { name: 'Identity sign-in' })).toBeVisible();
+    expect(signIns).toBe(2);
+    await page.addInitScript(() => {
+      Object.defineProperty(window, 'WebGL2RenderingContext', { value: undefined });
+    });
+    await page.goto('/');
+    await expect(logo).toBeEnabled();
+    await expect(logo.locator('.landing__character-invitation')).toBeVisible();
+    await expect(logo.locator('canvas')).toHaveCount(0);
+    await logo.press('Enter');
+    await expect(page.getByRole('heading', { name: 'Identity sign-in' })).toBeVisible();
+    expect(signIns).toBe(3);
+  });
+
+  test(`LOCAL named sandbox overview, Advanced and step motion at ${width}px`, async ({
+    page,
+    baseURL,
+  }, info) => {
+    await page.setViewportSize({ width, height: 900 });
+    const boundary = new LocalStartup();
+    boundary.agent = {
+      ...boundary.agent,
+      profile: {
+        ...boundary.agent.profile,
+        skills: [{ source: 'ornn', id: 'skill-internal', version: '1.2' }],
+      },
+    };
+    await boundary.route(page, baseURL!);
+    await page.goto(`/sandboxes/${boundary.sandbox.id}`);
+    const main = page.locator('.sandbox-page');
+    await expect(main.getByText('ChronoAI-managed LLM', { exact: true })).toBeVisible();
+    await expect(main.getByText('Guarded', { exact: true })).toBeVisible();
+    await expect(main.getByText('gpt-proof', { exact: true })).toBeVisible();
+    await expect(main.getByRole('link', { name: 'GitHub' })).toHaveAttribute(
+      'href',
+      'https://nyx.chrono-ai.fun/services/catalog-github',
+    );
+    await expect(main.getByRole('link', { name: 'TypeScript' })).toHaveAttribute(
+      'href',
+      'https://ornn.chrono-ai.fun/skills/skill-internal?version=1.2',
+    );
+    await expect(main.getByText('Workspace limit', { exact: true })).toHaveCount(0);
+    await expect(main.getByText('Events', { exact: true })).toHaveCount(0);
+    await page.evaluate(() => document.fonts.ready);
+    await expect
+      .poll(() => main.evaluate((element) => Math.round(element.getBoundingClientRect().width)))
+      .toBe(width === 390 ? 334 : 1160);
+    await page.screenshot({
+      path: info.outputPath(`sandbox-overview-${width}.png`),
+      fullPage: true,
+    });
+    boundary.sandbox = { ...boundary.sandbox, status: 'installing' };
+    await page.reload();
+    const advanced = page.getByRole('button', { name: 'Advanced', exact: true });
+    await advanced.click();
+    const dialog = page.getByRole('dialog', { name: 'Advanced sandbox details' });
+    await expect(dialog.getByText('Workspace limit', { exact: true })).toBeVisible();
+    for (const state of ['pending', 'completed']) {
+      const logo = dialog.locator(`.landing__character[data-state="${state}"]`).first();
+      await expect(logo).toHaveAttribute('data-ready', '');
+      const pixels = () =>
+        logo.locator('canvas').evaluate(
+          (element) =>
+            new Promise<{ colored: number; signature: string }>((resolve) =>
+              requestAnimationFrame(() => {
+                const source = element as HTMLCanvasElement;
+                const copy = document.createElement('canvas');
+                copy.width = source.width;
+                copy.height = source.height;
+                const context = copy.getContext('2d')!;
+                context.drawImage(source, 0, 0);
+                const data = context.getImageData(0, 0, copy.width, copy.height).data;
+                let colored = 0;
+                for (let index = 3; index < data.length; index += 4)
+                  if (data[index]! > 0) colored++;
+                resolve({ colored, signature: copy.toDataURL() });
+              }),
+            ),
+        );
+      const first = await pixels();
+      expect(first.colored).toBeGreaterThan(100);
+      await expect
+        .poll(async () => (await pixels()).signature, { timeout: 5000 })
+        .not.toBe(first.signature);
+    }
+    const geometry = await dialog.evaluate((element) => {
+      const box = element.getBoundingClientRect();
+      return (
+        box.left >= 0 &&
+        box.right <= innerWidth &&
+        box.top >= 0 &&
+        box.bottom <= innerHeight &&
+        element.scrollWidth <= element.clientWidth
+      );
+    });
+    expect(geometry).toBe(true);
+    await page.screenshot({
+      path: info.outputPath(`sandbox-advanced-${width}.png`),
+      fullPage: true,
+    });
+    await page.evaluate(() => document.body.setAttribute('data-ds-dark-theme', ''));
+    await page.screenshot({
+      path: info.outputPath(`sandbox-advanced-${width}-dark.png`),
+      fullPage: true,
+    });
+    await page.emulateMedia({ reducedMotion: 'reduce' });
+    for (const state of ['pending', 'completed']) {
+      const canvas = dialog.locator(`.landing__character[data-state="${state}"] canvas`).first();
+      const still = await canvas.screenshot();
+      expect(await canvas.screenshot()).toEqual(still);
+    }
+    await page.keyboard.press('Escape');
+    await expect(dialog).toHaveCount(0);
+    await expect(advanced).toBeFocused();
+    expect(boundary.writes).toEqual([]);
+    expect(boundary.unexpected).toEqual([]);
+    expect(boundary.errors).toEqual([]);
+  });
+}
+
+for (const width of [1440, 390]) {
   test(`LOCAL home logo, standalone tools and full-height navigation at ${width}px`, async ({
     page,
     baseURL,
@@ -113,7 +297,14 @@ for (const width of [1440, 390]) {
     };
     await page.reload();
     await expect(page.getByRole('status').filter({ hasText: 'Resuming' })).toBeVisible();
-    await expect(page.getByText(/Current step: home restore/)).toBeVisible();
+    await expect(page.getByText(/Current step: home restore/)).toHaveCount(0);
+    await page.getByRole('button', { name: 'Advanced', exact: true }).click();
+    await expect(
+      page
+        .getByRole('dialog', { name: 'Advanced sandbox details' })
+        .getByText(/Current step: home restore/),
+    ).toBeVisible();
+    await page.getByRole('button', { name: 'Close', exact: true }).click();
     await expect(page.getByRole('button', { name: 'Resume', exact: true })).toBeDisabled();
     await expect(page.locator('.sandbox-page a[href^="/agents/"]')).toHaveCount(0);
     await page.screenshot({ path: info.outputPath(`reviving-${width}.png`), fullPage: true });

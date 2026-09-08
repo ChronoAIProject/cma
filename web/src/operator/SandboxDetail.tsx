@@ -7,6 +7,7 @@ import { usePlateFocus } from '../ui/plate';
 import type { OperatorClient } from './client';
 import { operatorFailure, type OperatorFailure } from './failure';
 import { FailureNotice, Timestamp, stateWord } from './records';
+import { ReferenceLink } from '../profiles/ReferenceLink';
 
 export function SandboxDetail({
   client,
@@ -109,7 +110,7 @@ export function SandboxDetail({
                 <dd>{detail.sandbox.runtime?.runtime_version ?? 'not bound'}</dd>
                 <dt>Profile</dt>
                 <dd>
-                  <code>{detail.sandbox.profile.id}</code> revision{' '}
+                  <ReferenceLink kind="sandbox" id={detail.sandbox.profile.id} /> revision{' '}
                   {detail.sandbox.profile.revision}
                 </dd>
                 <dt>Created</dt>

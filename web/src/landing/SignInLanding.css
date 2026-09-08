@@ -1,0 +1,28 @@
+.sign-in-landing {
+  transition: opacity var(--ds-transition-duration) var(--ds-ease-in-out);
+}
+.sign-in-landing--entering {
+  opacity: 0;
+  pointer-events: none;
+}
+.sign-in-landing .brand-home h1 {
+  font-size: 40px;
+  line-height: 1.2;
+  overflow-wrap: break-word;
+}
+.landing__character-invitation {
+  position: absolute;
+  display: flex;
+  justify-content: space-between;
+  inset: 38% 25% auto;
+  font-size: 16px;
+  font-weight: 600;
+}
+.landing__character[data-ready] .landing__character-invitation {
+  visibility: hidden;
+}
+@media (prefers-reduced-motion: reduce) {
+  .sign-in-landing {
+    transition: none;
+  }
+}

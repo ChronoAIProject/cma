@@ -132,9 +132,9 @@ it('retries skill search and paging while retaining an exact selected release ac
   expect(await screen.findByRole('button', { name: 'Add Tools' })).toBeEnabled();
   fireEvent.change(screen.getByLabelText('Search Ornn skills'), { target: { value: 'empty' } });
   await screen.findByText('No matching skills');
-  await user.click(screen.getByRole('button', { name: 'Version for research' }));
+  await user.click(screen.getByRole('button', { name: 'Version for Research' }));
   await user.click(screen.getByRole('menuitemradio', { name: '1.1' }));
-  expect(screen.queryByRole('textbox', { name: 'Version for research' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('textbox', { name: 'Version for Research' })).not.toBeInTheDocument();
   await user.click(screen.getByRole('button', { name: 'Save draft' }));
   await screen.findByRole('heading', { name: 'Pinned research' });
   expect(test.records.get(PROFILE_IDS.agent)?.draft).toMatchObject({
@@ -218,7 +218,9 @@ it('aborts a stale skill search and never replaces the current catalogue with it
   await user.click(await screen.findByRole('button', { name: 'Add Current research' }));
   await act(async () => stale.complete(Response.json({ items: [RESEARCH_SKILL] })));
   expect(screen.queryByRole('button', { name: 'Add Research' })).not.toBeInTheDocument();
-  expect(screen.getByRole('button', { name: 'Version for current' })).toHaveTextContent('2.0');
+  expect(screen.getByRole('button', { name: 'Version for Current research' })).toHaveTextContent(
+    '2.0',
+  );
   expect(test.writes()).toEqual([]);
 });
 

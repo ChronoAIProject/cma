@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { expect, it, vi } from 'vitest';
 import { AGENT_DETAIL } from '../test/agent';
 import { AgentDetails } from './Details';
+import { NamedReferences } from '../test/references';
 
 it.each(['ready', 'stopped'] as const)(
   'holds %s Agent lifecycle controls until history hydration finishes',
@@ -32,7 +33,9 @@ it('shows lineage, profile, Worktree, first-message delivery, and guarded contro
   const onStop = vi.fn();
   const actor = userEvent.setup();
   render(
-    <AgentDetails detail={AGENT_DETAIL} onNavigate={vi.fn()} onStop={onStop} onDelete={vi.fn()} />,
+    <NamedReferences>
+      <AgentDetails detail={AGENT_DETAIL} onNavigate={vi.fn()} onStop={onStop} onDelete={vi.fn()} />
+    </NamedReferences>,
   );
   for (const band of [
     'Sandbox',
@@ -44,8 +47,14 @@ it('shows lineage, profile, Worktree, first-message delivery, and guarded contro
     expect(screen.getByRole('heading', { name: band })).toBeInTheDocument();
   }
   expect(screen.getByText('agent/one')).toBeInTheDocument();
-  expect(screen.getByText('github')).toBeInTheDocument();
-  expect(screen.getByText('ornn:typescript')).toBeInTheDocument();
+  expect(await screen.findByRole('link', { name: 'GitHub' })).toHaveAttribute(
+    'href',
+    'https://nyx.chrono-ai.fun/services/catalog-github',
+  );
+  expect(await screen.findByRole('link', { name: 'TypeScript' })).toHaveAttribute(
+    'href',
+    'https://ornn.chrono-ai.fun/skills/typescript',
+  );
   expect(screen.getAllByText('Completed')).toHaveLength(2);
   expect(screen.getByRole('button', { name: 'Delete' })).toBeDisabled();
   await actor.click(screen.getByRole('button', { name: 'Stop' }));

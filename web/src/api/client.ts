@@ -14,6 +14,7 @@ import type {
   SandboxDetail,
   SandboxEvent,
   SandboxSummary,
+  SandboxProfileSettings,
   WorkspaceDetail,
 } from './types';
 import type { AgentResources } from '@chronoai/cma-sdk';
@@ -52,6 +53,10 @@ export interface CmaWebClient {
     reference: ProfileReference,
     options?: ReadOptions,
   ): Promise<ConfiguredSandboxCapacity>;
+  readSandboxProfileSettings(
+    reference: ProfileReference,
+    options?: ReadOptions,
+  ): Promise<SandboxProfileSettings>;
   readSandboxEvents(id: string, options?: PageOptions<number>): Promise<readonly SandboxEvent[]>;
   replayAgent(threadId: string, options: AgentStreamOptions): Promise<void>;
   runAgent(request: AgentRunRequest, options: AgentStreamOptions): Promise<void>;
@@ -97,6 +102,7 @@ export const unavailableClient: CmaWebClient = {
   readAgentUsage: unavailable,
   readAgentResources: unavailable,
   readSandboxProfileCapacity: unavailable,
+  readSandboxProfileSettings: unavailable,
   readSandboxEvents: unavailable,
   replayAgent: unavailable,
   runAgent: unavailable,
