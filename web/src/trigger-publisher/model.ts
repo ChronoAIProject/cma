@@ -57,6 +57,21 @@ export function validateStep(
       errors.first_message = 'Keep the first message within 32,768 bytes.';
     if (bytes(content.presentation.signup_hint ?? '') > 200)
       errors['presentation.signup_hint'] = 'Keep the sign-up hint within 200 bytes.';
+    const messages = content.quick_messages ?? [];
+    if (messages.length > 8) errors.quick_messages = 'Keep at most eight quick messages.';
+    const names = new Set<string>();
+    for (const message of messages) {
+      const name = message.name.trim().toLowerCase();
+      if (name === '' || bytes(message.name) > 120 || /\p{Cc}/u.test(message.name))
+        errors.quick_messages =
+          'Each quick message needs a name within 120 bytes, without control characters.';
+      else if (names.has(name)) errors.quick_messages = 'Give each quick message a different name.';
+      else if (message.description.trim() === '' || bytes(message.description) > 2_000)
+        errors.quick_messages = 'Each quick message needs a description within 2,000 bytes.';
+      else if (message.text.trim() === '' || bytes(message.text) > 32_768)
+        errors.quick_messages = 'Each quick message needs message text within 32,768 bytes.';
+      names.add(name);
+    }
   }
   return errors;
 }

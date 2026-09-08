@@ -5,6 +5,7 @@ import type { PublisherProfileChoice, TriggerPublisherClient } from './client';
 import { DraftBadge } from './BadgePreview';
 import { LABELS, resultSentence, reuseExplanation, type SelectedProfiles } from './model';
 import { ProfilePicker } from './ProfilePicker';
+import { QuickMessageFields } from './QuickMessageFields';
 
 export function TargetStep({
   client,
@@ -154,6 +155,12 @@ export function PresentationStep({
           </div>
         );
       })}
+      <QuickMessageFields
+        value={value.quick_messages ?? []}
+        disabled={disabled}
+        error={errors.quick_messages}
+        onChange={(quick_messages) => onChange({ ...value, quick_messages })}
+      />
       <fieldset className="trigger-badge-options" disabled={disabled}>
         <legend>Button label</legend>
         {(Object.keys(LABELS) as (keyof typeof LABELS)[]).map((label) => (

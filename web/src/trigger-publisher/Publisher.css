@@ -423,3 +423,20 @@
     flex-wrap: wrap;
   }
 }
+.trigger-quick-messages {
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+}
+
+.trigger-quick-message {
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  border-top: 1px solid var(--dsw-alias-border-l2);
+}
+
+.trigger-quick-message legend {
+  padding: 8px 0;
+  font-size: 14px;
+}

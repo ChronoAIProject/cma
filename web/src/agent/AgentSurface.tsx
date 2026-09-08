@@ -15,6 +15,7 @@ import { agentProgress } from '../sandbox/progress';
 import { Resources } from './Resources';
 import { BrandLoading } from '../landing/LandingCharacter';
 import { LifecycleProgress } from '../sandbox/LifecycleProgress';
+import { AgentSourceLabel, useAgentSource } from './source';
 
 interface AgentSurfaceProps {
   readonly agentId: string;
@@ -70,6 +71,7 @@ export function AgentSurface({
       : controller.state;
   const documentTitle =
     state.status === 'ready' ? `${state.detail.title ?? 'Untitled agent'} · CMA` : undefined;
+  const source = useAgentSource(agentId, state.status === 'ready');
 
   useEffect(() => {
     if (state.status !== 'ready') headingRef.current?.focus();
@@ -165,6 +167,7 @@ export function AgentSurface({
             onClick={() => onDetailsOpenChange(!detailsOpen)}
           />
         </div>
+        <AgentSourceLabel source={source} />
       </header>
 
       {issue === undefined ? null : (
@@ -202,6 +205,8 @@ export function AgentSurface({
         </MessageStream>
       </div>
       <Composer
+        key={`composer:${agentId}`}
+        quickMessages={source.status === 'ready' ? source.value.trigger?.quick_messages : undefined}
         status={status}
         pausedNotice={pausedNotice}
         running={running}
