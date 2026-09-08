@@ -48,8 +48,8 @@ it.each([
   ['pause', 'publish_paused', 'Pausing'],
   ['revive', 'home_restore', 'Resuming'],
   ['revive', 'publish_active', 'Resuming'],
-  ['image_rotation', 'home_restore', 'Updating sandbox'],
-  ['image_rotation', 'publish_active', 'Updating sandbox'],
+  ['image_rotation', 'home_restore', 'Resuming'],
+  ['image_rotation', 'publish_active', 'Resuming'],
 ] as const)(
   'holds input for %s/%s even while the status still says Active',
   async (purpose, phase, label) => {

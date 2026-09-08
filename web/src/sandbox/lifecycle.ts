@@ -53,8 +53,6 @@ export function sandboxLifecycleAction(sandbox: SandboxSummary, stale = false) {
 export function sandboxLifecycleLabel(sandbox: SandboxSummary): string {
   if (sandbox.status === 'retiring') return 'Deleting';
   if (sandbox.status === 'retired') return 'Deleted';
-  if (sandbox.lifecycle?.checkpoint !== undefined)
-    return sandbox.lifecycle.checkpoint.phase === 'capture' ? 'Saving progress' : 'Finishing save';
   if (sandbox.lifecycle?.operation !== undefined) {
     switch (sandbox.lifecycle.operation.purpose) {
       case 'pause':
@@ -62,7 +60,7 @@ export function sandboxLifecycleLabel(sandbox: SandboxSummary): string {
       case 'revive':
         return 'Resuming';
       case 'image_rotation':
-        return 'Updating sandbox';
+        return 'Resuming';
     }
   }
   return statusLabel(sandbox.status);

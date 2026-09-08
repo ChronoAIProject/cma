@@ -22,23 +22,26 @@ describe('public Sandbox lifecycle presentation', () => {
     });
   });
 
-  it.each([
-    ['capture', 'Saving progress'],
-    ['resume_writers', 'Finishing save'],
-  ] as const)('uses the actual %s phase without claiming completion', (phase, label) => {
-    const sandbox = sandboxFixture();
-    const saving = {
-      ...sandbox,
-      lifecycle: {
-        pause: { allowed: false, reason: 'checkpoint_in_progress' as const },
-        revive: { allowed: false, reason: 'not_paused' as const },
-        checkpoint: { phase, startedAt: '2026-09-08T00:00:00Z', epoch: 7 },
-      },
-    };
-    expect(sandboxLifecycleLabel(saving)).toBe(label);
-    expect(sandboxRefreshDelay(saving)).toBe(1500);
-    expect(sandboxLifecycleAction(saving)).toMatchObject({ kind: 'pause_sandbox', allowed: false });
-  });
+  it.each(['capture', 'resume_writers'] as const)(
+    'keeps Live during %s without changing action eligibility',
+    (phase) => {
+      const sandbox = sandboxFixture();
+      const saving = {
+        ...sandbox,
+        lifecycle: {
+          pause: { allowed: false, reason: 'checkpoint_in_progress' as const },
+          revive: { allowed: false, reason: 'not_paused' as const },
+          checkpoint: { phase, startedAt: '2026-09-08T00:00:00Z', epoch: 7 },
+        },
+      };
+      expect(sandboxLifecycleLabel(saving)).toBe('Live');
+      expect(sandboxRefreshDelay(saving)).toBe(1500);
+      expect(sandboxLifecycleAction(saving)).toMatchObject({
+        kind: 'pause_sandbox',
+        allowed: false,
+      });
+    },
+  );
 
   it('uses eligibility while preserving the separate Resume command', () => {
     expect(sandboxLifecycleAction(sandboxFixture('paused'))).toMatchObject({
@@ -74,5 +77,19 @@ describe('public Sandbox lifecycle presentation', () => {
       reason: expect.stringContaining('work is in progress'),
     });
     expect(sandboxRefreshDelay(resuming)).toBe(1500);
+  });
+
+  it('keeps Pausing while its checkpoint is captured', () => {
+    const sandbox = sandboxFixture('pausing');
+    expect(
+      sandboxLifecycleLabel({
+        ...sandbox,
+        lifecycle: {
+          ...sandbox.lifecycle!,
+          checkpoint: { phase: 'capture', startedAt: '2026-09-08T00:00:00Z', epoch: 7 },
+          operation: { purpose: 'pause', phase: 'checkpoint', startedAt: '2026-09-08T00:00:00Z' },
+        },
+      }),
+    ).toBe('Pausing');
   });
 });

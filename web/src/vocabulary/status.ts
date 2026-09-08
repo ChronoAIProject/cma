@@ -1,35 +1,37 @@
 import type { AgentStatus, SandboxStatus, WorkspaceStatus, WorktreeStatus } from '../api/types';
 
-export type HumanStatus =
-  'Waiting' | 'In progress' | 'Done' | 'Needs you' | 'Paused' | "Didn't work";
-
 const words = {
-  provisioning: 'In progress',
-  installing: 'In progress',
-  active: 'Done',
-  pausing: 'In progress',
+  provisioning: 'Starting',
+  installing: 'Starting',
+  active: 'Live',
+  pausing: 'Pausing',
   paused: 'Paused',
-  reviving: 'In progress',
-  credential_rotating: 'In progress',
-  rotating: 'In progress',
-  failed: "Didn't work",
-  retiring: 'In progress',
-  retired: 'Done',
-  preparing: 'In progress',
-  ready: 'Done',
-  removing: 'In progress',
-  removed: 'Done',
-  creating: 'In progress',
-  starting: 'In progress',
-  working: 'In progress',
-  waiting_approval: 'Needs you',
-  stopped: 'Done',
-  deleted: 'Done',
-} satisfies Record<AgentStatus | SandboxStatus | WorkspaceStatus | WorktreeStatus, HumanStatus>;
+  reviving: 'Resuming',
+  credential_rotating: 'Resuming',
+  rotating: 'Resuming',
+  failed: 'Needs attention',
+  retiring: 'Deleting',
+  retired: 'Deleted',
+  preparing: 'Starting',
+  ready: 'Ready',
+  removing: 'Deleting',
+  removed: 'Deleted',
+  creating: 'Starting',
+  starting: 'Starting',
+  working: 'Working',
+  waiting_approval: 'Needs approval',
+  stopped: 'Stopped',
+  deleted: 'Deleted',
+} as const satisfies Record<AgentStatus | SandboxStatus | WorkspaceStatus | WorktreeStatus, string>;
+
+export type ResourceStatusLabel = (typeof words)[keyof typeof words];
+
+export type StepStatusLabel =
+  'Waiting' | 'In progress' | 'Done' | 'Needs you' | 'Paused' | "Didn't work";
 
 export function statusLabel(
   status: AgentStatus | SandboxStatus | WorkspaceStatus | WorktreeStatus,
-): HumanStatus {
+): ResourceStatusLabel {
   return words[status];
 }
 

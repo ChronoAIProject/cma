@@ -52,8 +52,82 @@ function renderTree(
 }
 
 describe('Sandbox navigation tree', () => {
+  it('groups live and paused Sandboxes separately and remembers each group per owner', async () => {
+    const actor = userEvent.setup();
+    const items = [
+      ...navigationFixture(),
+      ...navigationFixture('paused').map((item) => ({
+        ...item,
+        sandbox: { ...item.sandbox, id: 'sbx_paused', name: 'Sleeping project' },
+        workspaces: [],
+      })),
+    ];
+    const view = renderTree({ items });
+    expect(screen.getByRole('tree', { name: 'Live sandboxes' })).toHaveTextContent('Atlas');
+    expect(screen.getByRole('tree', { name: 'Paused sandboxes' })).toHaveTextContent(
+      'Sleeping project',
+    );
+    await actor.click(screen.getByRole('button', { name: 'Collapse Live sandboxes' }));
+    expect(screen.queryByText('Atlas')).not.toBeInTheDocument();
+    expect(screen.getByText('Sleeping project')).toBeInTheDocument();
+    view.unmount();
+    const restored = renderTree({ items });
+    expect(screen.getByRole('button', { name: 'Expand Live sandboxes' })).toHaveAttribute(
+      'aria-expanded',
+      'false',
+    );
+    expect(screen.getByText('Sleeping project')).toBeInTheDocument();
+    restored.unmount();
+    renderTree({ items, viewerId: 'another-owner' });
+    expect(screen.getByText('Atlas')).toBeInTheDocument();
+  });
+
+  it.each(['preparing', 'removing', 'failed'] as const)(
+    'does not offer Workspace expansion while %s',
+    (status) => {
+      renderTree({
+        items: navigationFixture().map((item) => ({
+          ...item,
+          workspaces: item.workspaces.map((workspace) => ({ ...workspace, status })),
+        })),
+      });
+      expect(screen.getByText('chrono-bot')).toBeInTheDocument();
+      expect(screen.queryByText('Agent one')).not.toBeInTheDocument();
+      expect(
+        screen.queryByRole('button', { name: /Expand chrono-bot|Collapse chrono-bot/ }),
+      ).not.toBeInTheDocument();
+      expect(screen.getByText('chrono-bot').closest('[role="treeitem"]')).not.toHaveAttribute(
+        'aria-expanded',
+      );
+    },
+  );
+
+  it('moves a resuming Paused record into Live without making children accessible', () => {
+    const items = navigationFixture('paused').map((item) => ({
+      ...item,
+      sandbox: {
+        ...item.sandbox,
+        lifecycle: {
+          ...item.sandbox.lifecycle!,
+          operation: {
+            purpose: 'revive' as const,
+            phase: 'provision',
+            startedAt: '2026-09-08T00:00:00Z',
+          },
+        },
+      },
+    }));
+    renderTree({ items });
+    expect(screen.getByRole('tree', { name: 'Live sandboxes' })).toHaveTextContent('Atlas');
+    expect(screen.getByRole('tree', { name: 'Paused sandboxes' })).not.toHaveTextContent('Atlas');
+    expect(screen.getByRole('link', { name: /Atlas/ })).toHaveTextContent('Resuming');
+    expect(
+      screen.queryByRole('button', { name: /Expand Atlas|Collapse Atlas/ }),
+    ).not.toBeInTheDocument();
+  });
+
   it.each(['capture', 'resume_writers'] as const)(
-    'shows actual %s state and disables Pause without restricting child creation',
+    'keeps Live during %s and disables Pause without restricting child creation',
     async (phase) => {
       const onAction = vi.fn();
       const actor = userEvent.setup();
@@ -69,9 +143,7 @@ describe('Sandbox navigation tree', () => {
         },
       }));
       renderTree({ items, onAction });
-      expect(
-        screen.getByText(phase === 'capture' ? 'Saving progress' : 'Finishing save'),
-      ).toBeInTheDocument();
+      expect(screen.getByRole('link', { name: /Atlas/ })).toHaveTextContent('Live');
       await actor.click(screen.getByRole('button', { name: 'Options for Atlas' }));
       const pause = screen.getByRole('menuitem', { name: /^Pause/ });
       expect(pause).toHaveAttribute('aria-disabled', 'true');
@@ -146,7 +218,7 @@ describe('Sandbox navigation tree', () => {
     expect(screen.getByText('chrono-bot')).toBeInTheDocument();
     const agent = screen.getByText('Agent one').closest('[role="treeitem"]');
     expect(agent).not.toHaveAttribute('data-dimmed');
-    expect(within(agent as HTMLElement).getByText('Done')).toBeInTheDocument();
+    expect(within(agent as HTMLElement).getByText('Ready')).toBeInTheDocument();
     expect(screen.queryByText('agent/one')).not.toBeInTheDocument();
   });
 

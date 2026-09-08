@@ -102,7 +102,9 @@ export function TreeRow({
           {expanded === true ? <IconChevronDownOutline14 /> : <IconChevronRightOutline14 />}
         </button>
       )}
-      {route === undefined ? (
+      {route === undefined && onToggle === undefined ? (
+        <span className="tree-row__label">{labelContent}</span>
+      ) : route === undefined ? (
         <button type="button" className="tree-row__label" tabIndex={-1} onClick={onToggle}>
           {labelContent}
         </button>
