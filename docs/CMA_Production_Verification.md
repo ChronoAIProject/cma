@@ -16,18 +16,20 @@ acceptance of this campaign.
 | 3. Public Sandbox Profile | 4000 millicores, 8192 MiB, two requested services, 4/4 limits, working toolchain | Exact live configuration and all four actual Agent workload checks passed on runtime `137b489d`; independent receipt confirms unchanged tracked source |
 | 4. Public Trigger | Exact title/message, all-level reuse, Try It, visitor theme, no review, README placement | Exact revision published after first rollout; README-only PR #841 merged after all 12 protected checks; default README snippet read back exactly |
 | 5. Login without bootstrap | No Sandbox, Workspace, Agent, or Profile created by login alone | Existing-owner fresh-browser sign-in created no resources; successful unseen-CMA-identity callback contract passes default/home/Trigger returns; external fresh signup not tested |
-| 6. Complete external-click flow | Login then automatic provisioning; exact first message once; correct software, skills, scopes | Fresh `streaming-fixed` README entry, first response, live configuration and actual workload passed; heavy repeat restored the backend but failed automatic browser navigation; deployed web `1eb60be1` passes existing-ready-page recovery only; final fresh and genuinely paused README-repeat acceptance remain pending |
-| 7. Previous UI style | Original rotating 3D mark and established controls; desktop/mobile screenshots | Live home/provisioning motion and four-view chat checks passed; web `1eb60be1` retains the tested lifecycle input holds and corrects automatic revival to the existing blue running state |
+| 6. Complete external-click flow | Login then automatic provisioning; exact first message once; correct software, skills, scopes | Latest `lifecycle-fresh` README entry on API `619535ad` and web `1eb60be1` passed automatic provisioning and exact first prompt once; prior configuration/workload and restored-file proofs remain tied to their original source; final fresh configuration and genuinely paused README-repeat acceptance remain pending |
+| 7. Previous UI style | Original rotating 3D mark and established controls; desktop/mobile screenshots | Prior live home/provisioning motion and four-view chat checks passed; latest first-run mobile resize capture is a transition artifact, not a settled layout pass; settled mobile reload is readable; final explicit hierarchy/layout verification is prepared but not run |
 | 8. Autonomous YOLO | Pinned provider runs full-access mode with no approval requests | Actual provider configuration verified; latest first response and successful subsequent workload completed with zero approvals |
-| 9. Lifecycle | Active to paused to active; paused to terminated; history retained | Heavy Pause settled at 22:12 UTC, backend revival around 22:36 UTC, and independent selected-artifact restoration passed at 22:52 UTC; original Pause timeout and repeat browser failure remain failed; later upload expiry and 22:57 UTC rollout during Pausing are not successful recovery; manual Resume and paused Delete remain pending |
+| 9. Lifecycle | Active to paused to active; paused to terminated; history retained | Latest single UI Pause passed at 00:11 UTC with exact hierarchy/history retained; first Resume verifier stopped before any command on an omitted paused-runtime field; corrected proof-bound manual Resume is active, not yet accepted; paused Delete remains pending; earlier heavy-cycle failures and nonquiet rollout remain recorded |
 | 10. Cleanup | Only identified stale state removed; new published flow remains usable | Identified old Sandboxes and the verified heavy test baseline were retired through supported owner commands; the latest Delete began from Pausing, not Paused; final environment remains pending |
-| 11. Conversation UI | Thinking, Send/Stop, CPU, RAM, context, token, network metrics | Four-view active metrics, Thinking, live follow/manual scroll/re-follow, completion, hierarchy, reload and ready-page checkpoint input holds passed; actual Send/Stop acceptance remains pending on a fresh lifecycle test baseline |
+| 11. Conversation UI | Thinking, Send/Stop, CPU, RAM, context, token, network metrics | Prior four-view metrics, Thinking, scrolling and lifecycle input holds passed; latest fresh-baseline UI test sent one message, observed its exact tool command, interrupted once, verified the public interrupted outcome, restored Send and preserved reloaded history |
 
 The latest observed production versions are API `619535ad`, web `1eb60be1`, and
 runtime `137b489d`, independently verified at 2026-09-07 23:42 UTC after a fresh
-all-owner quiet-state guard. The separate `lifecycle-fresh` Trigger journey has
-started, but all remaining final-flow acceptance is still pending. The historical
-deployed-component table below is not the current campaign's image inventory.
+all-owner quiet-state guard. The separate `lifecycle-fresh` Trigger journey,
+Send/Stop and UI Pause have passed. Manual Resume is in progress as of
+2026-09-08 00:18 UTC; paused Delete and final fresh/paused-repeat acceptance
+remain pending. The historical deployed-component table below is not the current
+campaign's image inventory.
 
 Private campaign evidence is kept under `/tmp/cma-trureturing-loop.LvTezb` and
 must not be committed or uploaded wholesale. One existing NyxID owner account is
@@ -793,27 +795,112 @@ digest above, its container image identity matched, and the owner session return
 the guarded deployment only; it does not relabel the earlier 22:57 UTC rollout
 error, expired upload or failed browser journey.
 
+### Latest First Journey And Send/Stop
+
+`production-lifecycle-fresh/result.json` passed at 2026-09-07 23:58:12 UTC on
+the latest API, web and runtime above. Launch
+`lch_18206b47cf8546f3ac0cf064591e4e5b`, admitted at 23:42:57 UTC, created Sandbox
+`sbx_b8afb86d51604388ba653dd7d2d1fc5b`, Workspace
+`wks_268b7288a84246e990dde584460a46cf`, Worktree
+`wkt_0dcac4d41387460f9de1727a4c68dad3`, and Agent
+`agt_8048f1e694c84c14837e4fd05f83a760`. One README anchor click and one
+existing-owner OAuth exchange automatically reached the Agent, with no further
+CMA click or approval. The exact published first prompt occurred once in one
+completed turn; its eleven-message transcript SHA-256 is
+`a6f0954fca752840e85b7290244e9a84605b02e8be78ef35a2b564d253a24af6`.
+The response completed at 23:58:06, and all 494 recorded direct reads returned
+200. Saved records independently agree on the four identities, all three
+profile pins and the Agent's distinct Worktree.
+
+The browser method remains GitHub-API-rendered README HTML at the source origin,
+not authenticated GitHub web-page access or fresh signup. Local review of
+`03-agent-desktop.png` found readable content but a stale Untitled agent heading
+despite the saved generated title. `04-agent-mobile.png` was captured during the
+immediate resize transition and clips most conversation/composer content; it is
+not a settled mobile layout pass. `05-return-mobile.png` is settled and readable,
+with the generated title. Original evidence remains unchanged. Future captures
+wait for loaded fonts, completed finite transitions and three identical valid
+geometry samples before accepting screenshots; eight offline tests cover this
+guard. Explicit Home-to-Sandbox-to-Workspace-to-Agent selection on the final
+environment is separately prepared, not yet production-run.
+
+`send-stop-b0PDOD/result.json` passed at 23:59:13 UTC. Exactly one owner message
+was submitted, its exact tool command was observed, and one real Stop produced
+the public interrupted outcome. Send was restored and reload retained the full
+history. The original first-turn hash above is unchanged; the resulting two-turn
+hash is `a7f14bdfed13317a664854f8e0a4f7744eae79c7b350fcd4b7f13d1857b69783`.
+No production response was replaced and no message was replayed.
+
+### New Repository Base
+
+The latest Worktree records `dev` commit
+`f050cf57515d639767ff8a9e74ecbfeb9480a8a6`, 65 commits ahead of the heavy-workload
+base `edc52b0f71fc5b3a55b446965ce50870e98898e7`. The read-only compatibility
+report `trureturing-base-compatibility-f050cf57.md` used complete Git-tree
+comparisons after the compare endpoint reached its 300-file cap. Toolchain pins,
+Lake configuration/manifest, .NET dependency/build properties, tooling project
+files, package locks and shell build scripts are unchanged. This is not a
+documentation-only advance: workflow sequencing, Trureturing CLI Worktree and
+Scribe behavior, ten added Lean modules and another compiled proof changed.
+
+The comparison finds no manifest-level requirement to change CMA's software
+profile or runtime. It does not prove the changed tooling commands, new source
+builds or resource consumption. The actual heavyweight workload and independent
+selected-artifact restore pass remain attached to the old base; they are not
+transferred to the latest source. Final admission-bound configuration evidence
+must record its actual new Worktree base independently.
+
+### Manual Pause And Resume Preflight
+
+`lifecycle-lifecycle-fresh-manual-pause/result.json` passed at
+2026-09-08 00:11:05 UTC after one supported UI Pause. The exact Sandbox advanced
+from Active revision 15 through Pausing revision 17 to Paused revision 24 at
+00:11:03.993 UTC. All four identities and the complete two-turn history were
+retained. This is the latest manual Pause pass, separate from historical heavy
+Pause timeouts and their later observations.
+
+The first Resume verifier failed before dispatch, with **zero commands** in
+`lifecycle-lifecycle-fresh-manual-resume/failure.json`. Its preflight incorrectly
+required a live `runtime_version` on the paused REST resource, which has no live
+runtime binding. The failed evidence remains failed and preserved; no product
+record or runtime was repaired. The scratch-only correction accepts an omitted
+paused binding only alongside the exact completed Pause proof: same identities,
+completed Paused revision, pre-Pause image, no pending lifecycle/checkpoint, and
+the entire unchanged transcript. Eleven offline guard groups pass. The revived
+live runtime image must still be checked after Resume.
+
+The sole active mutating verifier is now the guarded manual Resume recorded in
+`lifecycle-lifecycle-fresh-manual-verified-resume/`, using the preceding
+`lifecycle-fresh-manual` Pause proof. As of 00:18 UTC it has not supplied a passing
+result. Follow that already-started verifier; do not issue another Resume,
+Launch, message or deployment because this documentation lists pending work.
+
 ### Pending Corrected Acceptance
 
-The sole mutating verifier has started the fresh `lifecycle-fresh` README
-journey, with private evidence in `production-lifecycle-fresh/`. Its durable
-admission records Launch `lch_18206b47cf8546f3ac0cf064591e4e5b` started at
-23:42:57 UTC. There is no completed acceptance result from that run yet. No
-parallel lifecycle or message command, repeated admission or redeployment is
-authorized by this documentation update.
+The remaining superseding sequence in private `final-flow-audit.md` requires:
 
-With the deployment prerequisite complete, the remaining 23:06 UTC superseding
-sequence in private `final-flow-audit.md` requires:
-
-1. Complete the separate `lifecycle-fresh` README baseline and prove actual Send/Stop,
-   UI Pause/Resume, and another UI Pause followed by Delete from genuinely Paused.
+1. Finish the existing manual Resume and verify the revived runtime image. Then
+   perform another UI Pause followed by Delete from genuinely Paused on
+   `lifecycle-fresh`, using that exact completed Pause proof.
 2. Run the final fresh README journey and admission-bound configuration observer
-   as `final-fresh`, then explicitly Pause that baseline and run `final-repeat`.
+   as `final-fresh`, waiting for the observer's `owner_verified` marker before
+   admission. Explicitly Pause that baseline and run `final-repeat` with
+   `CMA_REQUIRE_PAUSED_REPEAT=1` and the exact completed Pause proof.
    The repeat must revive automatically, retain all identities and history, and
    add no first prompt, approval workaround or manual continuation click.
-3. Leave the final environment, published profile pins, Trigger and default
+3. After final-repeat passes, run the prepared read-only explicit hierarchy and
+   settled desktop/mobile light/dark checks without new messages or lifecycle
+   commands. Fifteen offline evidence, request-policy, ancestry and geometry
+   tests pass; that preparation is not production acceptance.
+4. Leave the final environment, published profile pins, Trigger and default
    README intact. Preserve all failed attempts and keep fresh-signup,
    cross-owner and authenticated GitHub-page browser limits explicit.
+
+All future Resume, paused Delete and final-repeat verifiers must set
+`CMA_PAUSE_PROOF_LABEL` to the exact preceding completed Pause label. Use
+`lifecycle-fresh-delete` for the planned paused Delete and `final-fresh-readme`
+for final-repeat; labels are evidence bindings, not permission to repeat a
+command. The active manual Resume uses `lifecycle-fresh-manual`.
 
 ## Historical Observation
 
