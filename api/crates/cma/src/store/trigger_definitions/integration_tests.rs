@@ -182,6 +182,7 @@ fn content(target: TriggerTarget, title: &str) -> TriggerContent {
             agent: AgentReusePolicy::Ask,
         },
         first_message: "Check this proof".into(),
+        quick_messages: Vec::new(),
         consent: TriggerConsent {
             always_review: true,
         },

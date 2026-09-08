@@ -51,6 +51,12 @@ impl Agents<'_> {
         identity(&value.id, id)?;
         Ok(value)
     }
+    /// Read creation provenance and current published Trigger shortcuts.
+    pub async fn source(&self, id: &str) -> Result<AgentSource> {
+        let value: AgentSource = self.client.get(&["agents", id, "source"], &[]).await?;
+        identity(&value.agent_id, id)?;
+        Ok(value)
+    }
     /// Read the named unsupported-terminal refusal; this release has no terminal plane.
     pub async fn terminal(&self, id: &str) -> Result<()> {
         self.client

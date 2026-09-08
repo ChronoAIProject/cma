@@ -27,6 +27,7 @@ export const resourceDispatch: Record<string, Dispatch> = {
   'GET /api/v1/worktrees/{id}': ({ client, param }) => client.worktrees.read(param('id')),
   'GET /api/v1/agents': ({ client, options }) => client.agents.list(options),
   'GET /api/v1/agents/{id}': ({ client, param }) => client.agents.read(param('id')),
+  'GET /api/v1/agents/{id}/source': ({ client, param }) => client.agents.source(param('id')),
   'POST /api/v1/workspaces/{id}/agents': ({ client, param, body, command }) =>
     client.agents.create(param('id'), body, command),
   'DELETE /api/v1/agents/{id}': ({ client, param, command }) =>

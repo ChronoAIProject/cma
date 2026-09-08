@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "openapi_operations": 117,
+  "openapi_operations": 118,
   "operations": {
     "GET /api/v1/profile-authoring/bounds": {
       "classification": "openapi",
@@ -267,6 +267,17 @@
         "forbidden",
         "instance_service_unavailable",
         "not_authenticated"
+      ]
+    },
+    "GET /api/v1/agents/{id}/source": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/agent_source.rs# Owner-scoped provenance and published shortcut projection, independent of conversation reads.",
+      "required_problems": [
+        "agent_not_found",
+        "forbidden",
+        "instance_service_unavailable",
+        "not_authenticated",
+        "trigger_service_unavailable"
       ]
     },
     "GET /api/v1/agents/{id}/terminal": {

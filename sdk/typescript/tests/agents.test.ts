@@ -12,6 +12,27 @@ import {
 } from './resource-fixtures.js';
 
 describe('Agent resource commands', () => {
+  it('reads Trigger provenance and shortcuts without admitting any command and checks Agent identity', async () => {
+    const test = transport();
+    const source = {
+      agent_id: agent.id,
+      origin: { type: 'trigger', trigger_id: 'trg_example', launch_id: 'lch_example' },
+      trigger: {
+        public_id: 'pub_example',
+        title: 'Example',
+        revision: 2,
+        quick_messages: [
+          { name: 'Introduce', description: 'Project introduction', text: 'Explain this project' },
+        ],
+      },
+    };
+    test.answer(source);
+    expect(await test.client.agents.source(agent.id)).toEqual(source);
+    expect(test.calls.at(-1)?.url).toContain(`/agents/${agent.id}/source`);
+    expect(test.calls.at(-1)?.init.method).toBe('GET');
+    test.answer({ ...source, agent_id: 'agt_foreign' });
+    await expect(test.client.agents.source(agent.id)).rejects.toBeInstanceOf(ProtocolError);
+  });
   it('lists, reads and creates an Agent with pinned profile and optional first message', async () => {
     const test = transport();
     test.answer({ items: [agentSummary], next: 'next&' });

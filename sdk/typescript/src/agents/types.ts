@@ -5,6 +5,7 @@ import {
   workspaceStatus,
   worktreeStatus,
 } from '../instances/types.js';
+import { triggerQuickMessage } from '../trigger-authoring/types.js';
 import {
   permissionLevel,
   profileReference,
@@ -111,6 +112,24 @@ export const agent = object({
   deleted_at: optional(text),
 });
 export type Agent = Output<typeof agent>;
+
+export const agentSource = object({
+  agent_id: text,
+  origin: tagged({
+    manual: variant('manual', {}),
+    workspace_profile: variant('workspace_profile', {}),
+    trigger: variant('trigger', { trigger_id: text, launch_id: text }),
+  }),
+  trigger: optional(
+    object({
+      public_id: text,
+      title: text,
+      revision: positiveInteger,
+      quick_messages: array(triggerQuickMessage),
+    }),
+  ),
+});
+export type AgentSource = Output<typeof agentSource>;
 
 export const createAgentRequest = object({
   agent_profile: profileReference,

@@ -116,6 +116,7 @@ fn content() -> TriggerContent {
             agent: AgentReusePolicy::AlwaysNew,
         },
         first_message: String::new(),
+        quick_messages: Vec::new(),
         consent: TriggerConsent {
             always_review: false,
         },

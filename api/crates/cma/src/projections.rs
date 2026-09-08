@@ -57,6 +57,10 @@ impl AgentProjectionServices {
         Arc::clone(&self.operations)
     }
 
+    pub(crate) fn reads(&self) -> Arc<AgentReadService> {
+        Arc::clone(&self.reads)
+    }
+
     pub(crate) fn router(&self, operation_records: Arc<dyn OperationStore>) -> Router {
         let agent_routes = AgentRoutesState::new(
             Arc::clone(&self.agents),

@@ -10,7 +10,10 @@ use layer1_public::{
     },
 };
 use layer2_core::{
-    sandbox::{AgentService, SandboxCredentialPrerequisite, SandboxService, WorkspaceService},
+    sandbox::{
+        AgentReadService, AgentService, SandboxCredentialPrerequisite, SandboxService,
+        WorkspaceService,
+    },
     trigger_domain::{
         LaunchService, ServiceConnectionBroker, ServiceConnectionService, TriggerService,
     },
@@ -36,6 +39,7 @@ pub(crate) struct TriggerCompositionDependencies {
     pub sandboxes: Arc<SandboxService>,
     pub workspaces: Arc<WorkspaceService>,
     pub agents: Arc<AgentService>,
+    pub agent_reads: Arc<AgentReadService>,
     pub operations: Arc<dyn OperationStore>,
     pub rate_limiters: Arc<RateLimiters>,
     pub public_origin: String,
@@ -74,7 +78,7 @@ impl TriggerComposition {
             Arc::clone(&dependencies.settings),
         ));
         let route_state = TriggerRoutesState::new(
-            triggers,
+            triggers.clone(),
             launches,
             connections,
             dependencies.operations,
@@ -84,6 +88,10 @@ impl TriggerComposition {
             .map_err(|error| format!("Trigger public origin is not usable: {error}"))?;
         let companion = LaunchCompanionState::new(definitions.clone());
         let routes = trigger_router(route_state)
+            .merge(layer1_public::rest::agent_source_router(
+                dependencies.agent_reads,
+                triggers,
+            ))
             .merge(trigger_assets_router(assets))
             .merge(launch_companion_router(companion));
 

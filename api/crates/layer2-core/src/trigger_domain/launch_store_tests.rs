@@ -38,6 +38,7 @@ fn content() -> TriggerContent {
             agent: AgentReusePolicy::AlwaysNew,
         },
         first_message: "Please review it.".into(),
+        quick_messages: Vec::new(),
         consent: TriggerConsent {
             always_review: false,
         },

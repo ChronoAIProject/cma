@@ -186,7 +186,37 @@ pub struct TriggerContentBody {
     pub reuse: TriggerReuseBody,
     #[serde(default)]
     pub first_message: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub quick_messages: Vec<TriggerQuickMessageBody>,
     pub consent: TriggerConsentBody,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TriggerQuickMessageBody {
+    pub name: String,
+    pub description: String,
+    pub text: String,
+}
+
+impl From<TriggerQuickMessageBody> for domain::TriggerQuickMessage {
+    fn from(value: TriggerQuickMessageBody) -> Self {
+        Self {
+            name: value.name,
+            description: value.description,
+            text: value.text,
+        }
+    }
+}
+
+impl From<domain::TriggerQuickMessage> for TriggerQuickMessageBody {
+    fn from(value: domain::TriggerQuickMessage) -> Self {
+        Self {
+            name: value.name,
+            description: value.description,
+            text: value.text,
+        }
+    }
 }
 
 impl From<TriggerContentBody> for domain::TriggerContent {
@@ -219,6 +249,7 @@ impl From<TriggerContentBody> for domain::TriggerContent {
                 agent: value.reuse.agent.into(),
             },
             first_message: value.first_message,
+            quick_messages: value.quick_messages.into_iter().map(Into::into).collect(),
             consent: domain::TriggerConsent {
                 always_review: value.consent.always_review,
             },
@@ -256,6 +287,7 @@ impl From<domain::TriggerContent> for TriggerContentBody {
                 agent: value.reuse.agent.into(),
             },
             first_message: value.first_message,
+            quick_messages: value.quick_messages.into_iter().map(Into::into).collect(),
             consent: TriggerConsentBody {
                 always_review: value.consent.always_review,
             },

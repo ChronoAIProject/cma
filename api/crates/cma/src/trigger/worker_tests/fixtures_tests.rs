@@ -877,6 +877,7 @@ pub(super) fn frozen_inputs(
             agent: AgentReusePolicy::AlwaysNew,
         },
         first_message: first_message.into(),
+        quick_messages: Vec::new(),
         consent: TriggerConsent {
             always_review: false,
         },

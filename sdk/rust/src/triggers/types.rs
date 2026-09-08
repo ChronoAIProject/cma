@@ -75,8 +75,22 @@ pub struct TriggerContent {
     pub reuse: Reuse,
     /// Text delivered once the visitor's own Agent is ready.
     pub first_message: String,
+    /// Explicit visitor message shortcuts from the published revision.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub quick_messages: Vec<TriggerQuickMessage>,
     /// Review policy.
     pub consent: Consent,
+}
+
+/// A publisher-defined message sent only after an explicit visitor click.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TriggerQuickMessage {
+    /// Button label.
+    pub name: String,
+    /// Hover and focus preview.
+    pub description: String,
+    /// Exact message text.
+    pub text: String,
 }
 
 /// Registered external embed placement.

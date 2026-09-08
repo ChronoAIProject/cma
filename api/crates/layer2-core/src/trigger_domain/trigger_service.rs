@@ -78,8 +78,8 @@ impl From<TriggerStoreError> for TriggerServiceError {
 }
 
 pub struct TriggerService {
-    definitions: Arc<dyn TriggerStore>,
-    launches: Arc<dyn LaunchStore>,
+    pub(super) definitions: Arc<dyn TriggerStore>,
+    pub(super) launches: Arc<dyn LaunchStore>,
     directory: Arc<UserDirectory>,
 }
 
@@ -315,7 +315,7 @@ fn directory_error(error: StoreError) -> TriggerServiceError {
     }
 }
 
-fn launch_store_error(error: LaunchStoreError) -> TriggerServiceError {
+pub(super) fn launch_store_error(error: LaunchStoreError) -> TriggerServiceError {
     match error {
         LaunchStoreError::Unavailable(detail) => TriggerServiceError::Unavailable(detail),
         LaunchStoreError::Corrupt(detail) => TriggerServiceError::Corrupt(detail),

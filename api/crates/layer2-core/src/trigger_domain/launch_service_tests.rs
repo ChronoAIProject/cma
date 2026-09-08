@@ -1671,6 +1671,7 @@ async fn fixture_with_workspace_configuration(
             target,
             reuse,
             first_message: "a".repeat(160),
+            quick_messages: Vec::new(),
             consent: TriggerConsent { always_review },
         },
         NOW.into(),

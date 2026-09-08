@@ -289,6 +289,16 @@ through_seq, turns }`; usage has its own `through_seq` and cumulative input,
 output and context readings. Resource readings are Sandbox-scoped observations
 projected alongside Agent identity, not per-Agent billing.
 
+`GET /api/v1/agents/{id}/source` returns owner-scoped creation provenance:
+`manual`, `workspace_profile`, or `trigger`. Trigger-created Agents also include
+the published Trigger title, public id, revision and quick messages when the
+source remains resolvable. Quick messages follow the latest published revision;
+draft edits stay private and retired Triggers return no shortcut actions.
+Reading source never sends a message or replays the first prompt. Each optional
+Trigger content `quick_messages` entry has a required unique name (120 UTF-8
+bytes), description (2,000 bytes) and text (32,768 bytes), with at most eight
+entries. Missing or empty arrays preserve legacy content digests.
+
 `GET /api/v1/agents/{id}/events` is a **JSON page**, not SSE. It accepts `after`
 and `limit` (1-200, default 200), returns `items` and optional `next`, and omits
 internal dispatch keys and runtime approval locators. Read all pages, require
@@ -403,6 +413,7 @@ above applies even when an operation annotates only its principal responses.
 | `GET /api/v1/agents/{id}` | - | - | 200 AgentView |
 | `DELETE /api/v1/agents/{id}` | -; key | - | 202 empty |
 | `GET /api/v1/agents/{id}/events` | - | after, limit | 200 AgentEventPageView |
+| `GET /api/v1/agents/{id}/source` | - | - | 200 AgentSourceView |
 | `POST /api/v1/agents/{id}/stop` | StopAgentRequest; key | - | 202 empty |
 | `GET /api/v1/agents/{id}/terminal` | - | - | 404 ProblemDocument; 501 ProblemDocument |
 | `GET /api/v1/agents/{id}/transcript` | - | - | 200 AgentTranscriptView |
