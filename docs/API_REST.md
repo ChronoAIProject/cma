@@ -510,6 +510,7 @@ above applies even when an operation annotates only its principal responses.
 | `GET /api/v1/sandboxes` | - | status, cursor, limit | 200 OwnerSandboxPageView |
 | `POST /api/v1/sandboxes` | CreateSandboxRequest; key | - | 201 SandboxView |
 | `GET /api/v1/sandboxes/{id}` | - | - | 200 OwnerSandboxDetailView |
+| `GET /api/v1/sandboxes/{id}/snapshots/{epoch}/download` | - | - | 200 application/octet-stream attachment; owner-authenticated latest completed snapshot |
 | `DELETE /api/v1/sandboxes/{id}` | -; key | - | 202 SandboxView |
 | `GET /api/v1/sandboxes/{id}/events` | - | after, limit | 200 array<SandboxEventView> |
 | `POST /api/v1/sandboxes/{id}/pause` | -; key | - | 202 SandboxView |

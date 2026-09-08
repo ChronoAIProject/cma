@@ -369,6 +369,44 @@ impl Sandbox {
         )
     }
 
+    /// Publish the unchanged live runtime only after exact-token writer resumption.
+    pub fn complete_pause_cancellation(
+        &mut self,
+        credential_rotation_at: String,
+        holder: &str,
+        fence: u64,
+        at: String,
+    ) -> Result<(), SandboxModelError> {
+        self.apply_claimed_with_step(
+            holder,
+            fence,
+            SandboxWorkStep::WaitForCredentialRotation,
+            credential_rotation_at,
+            at.clone(),
+            |next| {
+                if next.runtime.is_none()
+                    || !matches!(
+                        next.lifecycle.operation,
+                        Some(SandboxLifecycleOperation::Pause {
+                            phase: SandboxPausePhase::ResumeWriters,
+                            ..
+                        })
+                    )
+                {
+                    return Err(invalid_execution());
+                }
+                next.lifecycle.cancel_operation();
+                next.lifecycle.paused_notice = None;
+                if crate::seconds_from_rfc3339(&at)
+                    > crate::seconds_from_rfc3339(&next.last_activity_at)
+                {
+                    next.last_activity_at = at.clone();
+                }
+                next.transition(SandboxStatus::Active, at, None)
+            },
+        )
+    }
+
     pub fn publish_lifecycle_active(
         &mut self,
         credential_rotation_at: String,

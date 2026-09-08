@@ -18,6 +18,66 @@ const LATER: &str = "2026-09-05T00:31:00Z";
 const LEASE_END: &str = "2026-09-05T00:45:00Z";
 
 #[tokio::test]
+async fn pause_cancellation_fences_inflight_checkpoint_publication_and_preserves_retirement_debt() {
+    let (store, claimed, agents) = pause_fixture().await;
+    let mutation = checkpoint_mutation(&claimed, &agents, checkpoint_for(&agents, 1));
+    let token = claimed
+        .lifecycle
+        .operation
+        .as_ref()
+        .unwrap()
+        .authority()
+        .writer_resume_token
+        .clone();
+    store
+        .schedule_sandbox_lifecycle(SandboxLifecycleCommand::revive(
+            claimed.id.clone(),
+            claimed.owner.clone(),
+            LATER.into(),
+            crate::sandbox::SandboxReviveCause::TriggerLaunch,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(
+        store.publish_sandbox_checkpoint(mutation).await,
+        Err(SandboxStoreError::Conflict)
+    );
+    let mut canceling = store.get_sandbox(&claimed.id).await.unwrap().unwrap();
+    assert!(matches!(
+        canceling.lifecycle.operation,
+        Some(SandboxLifecycleOperation::Pause {
+            phase: SandboxPausePhase::ResumeWriters,
+            ..
+        })
+    ));
+    assert!(canceling.lifecycle.checkpoints.latest.is_none());
+    canceling.begin_retirement(LATER.into()).unwrap();
+    assert_eq!(
+        canceling
+            .lifecycle
+            .checkpoint_capture
+            .as_ref()
+            .unwrap()
+            .authority
+            .writer_resume_token,
+        token
+    );
+}
+
+#[tokio::test]
+async fn retried_pause_authority_requires_complete_pause_and_revive() {
+    let (_, mut claimed, _) = pause_fixture().await;
+    let lease = claimed.work.lease.as_ref().unwrap().clone();
+    claimed
+        .retry_lifecycle_after_writer_resume(LATER.into(), &lease.holder, lease.fence, NOW.into())
+        .unwrap();
+    let before = claimed.clone();
+    assert!(!claimed.can_cancel_pause());
+    assert!(claimed.request_pause_cancellation(LATER.into()).is_err());
+    assert_eq!(claimed, before);
+}
+
+#[tokio::test]
 async fn checkpoint_publication_is_complete_guarded_and_gap_free() {
     let (store, claimed, agents) = pause_fixture().await;
     let checkpoint = checkpoint_for(&agents, 1);
@@ -105,7 +165,7 @@ async fn lifecycle_checkpoint_accepts_an_exact_empty_live_agent_set() {
 }
 
 #[tokio::test]
-async fn checkpoint_metadata_retains_only_the_latest_two_complete_generations() {
+async fn checkpoint_metadata_retains_only_the_latest_complete_generation() {
     let store = InMemorySandboxStore::default();
     let mut value = sandbox();
     value.revision = 1;
@@ -146,14 +206,14 @@ async fn checkpoint_metadata_retains_only_the_latest_two_complete_generations() 
     }
 
     let state = store.lock();
-    assert_eq!(state.checkpoints.len(), 2);
+    assert_eq!(state.checkpoints.len(), 1);
     assert_eq!(
         state
             .checkpoints
             .values()
             .map(|checkpoint| checkpoint.epoch)
             .collect::<std::collections::BTreeSet<_>>(),
-        [2, 3].into_iter().collect()
+        [3].into_iter().collect()
     );
 }
 

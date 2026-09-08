@@ -243,6 +243,93 @@ async fn reused_paused_sandbox_reblocks_until_revive_becomes_active() {
 }
 
 #[tokio::test]
+async fn trigger_cancels_early_pause_and_waits_for_writer_release() {
+    use layer2_core::sandbox::{SandboxLifecycleOperation, SandboxPausePhase};
+    let sandbox_id = SandboxId("sbx_cancel_pause".into());
+    let harness = Harness::new(
+        LaunchAuthorityClass::Visitor,
+        reused_resolution(sandbox_id.clone(), None, None),
+        Vec::new(),
+        false,
+    );
+    let mut sandbox = sandbox_resource(
+        &harness.inputs.profiles,
+        harness.launch().owner,
+        sandbox_id.clone(),
+        SandboxStatus::Active,
+        SandboxOrigin::Manual,
+    );
+    sandbox.begin_pause(stamp(0), None).unwrap();
+    harness.driver.put_sandbox(sandbox);
+    harness.run(1).await;
+    let canceling = harness.driver.sandbox_value(&sandbox_id);
+    assert_eq!(canceling.status, SandboxStatus::Pausing);
+    assert!(matches!(
+        canceling.lifecycle.operation,
+        Some(SandboxLifecycleOperation::Pause {
+            phase: SandboxPausePhase::ResumeWriters,
+            ..
+        })
+    ));
+    harness.run(2).await;
+    assert_eq!(harness.launch().state, LaunchState::SandboxPending);
+    assert_eq!(harness.driver.calls().len(), 1);
+    assert_eq!(
+        harness.driver.calls()[0].kind,
+        LaunchEffectKind::ReviveSandbox
+    );
+    harness.driver.mutate_sandbox(&sandbox_id, |sandbox| {
+        sandbox.status = SandboxStatus::Active;
+        sandbox.lifecycle.operation = None;
+    });
+    harness.run(3).await;
+    assert_eq!(harness.launch().state, LaunchState::WorkspacePending);
+}
+
+#[tokio::test]
+async fn trigger_waits_for_admitted_teardown_then_revives() {
+    use layer2_core::sandbox::{SandboxLifecycleOperation, SandboxPausePhase};
+    let sandbox_id = SandboxId("sbx_teardown_pause".into());
+    let harness = Harness::new(
+        LaunchAuthorityClass::Visitor,
+        reused_resolution(sandbox_id.clone(), None, None),
+        Vec::new(),
+        false,
+    );
+    let mut sandbox = sandbox_resource(
+        &harness.inputs.profiles,
+        harness.launch().owner,
+        sandbox_id.clone(),
+        SandboxStatus::Active,
+        SandboxOrigin::Manual,
+    );
+    sandbox.begin_pause(stamp(0), None).unwrap();
+    if let Some(SandboxLifecycleOperation::Pause { phase, .. }) =
+        sandbox.lifecycle.operation.as_mut()
+    {
+        *phase = SandboxPausePhase::TeardownRuntime;
+    }
+    harness.driver.put_sandbox(sandbox);
+    harness.run(1).await;
+    assert!(harness.driver.calls().is_empty());
+    assert_eq!(harness.launch().state, LaunchState::SandboxPending);
+    harness.driver.mutate_sandbox(&sandbox_id, |sandbox| {
+        sandbox.status = SandboxStatus::Paused;
+        sandbox.runtime = None;
+    });
+    harness.run(2).await;
+    assert_eq!(
+        harness.driver.sandbox_value(&sandbox_id).status,
+        SandboxStatus::Reviving
+    );
+    assert_eq!(harness.driver.calls().len(), 1);
+    assert_eq!(
+        harness.driver.calls()[0].kind,
+        LaunchEffectKind::ReviveSandbox
+    );
+}
+
+#[tokio::test]
 async fn sandbox_paused_after_resolution_settles_revive_before_polling_again() {
     let sandbox_id = SandboxId("sbx_paused_race".into());
     let harness = Harness::new(

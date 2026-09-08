@@ -55,6 +55,7 @@ pub struct SandboxPolicy {
     pub max_sandboxes_per_owner: u16,
     pub max_sandboxes_per_visitor: u16,
     pub inactivity_pause_after_seconds: u64,
+    pub checkpoint_interval_seconds: u64,
     pub retention_grace: Duration,
     pub baseline_services: Vec<ServiceId>,
 }
@@ -81,6 +82,7 @@ impl Default for SandboxPolicy {
             max_sandboxes_per_owner: DEFAULT_OWNER_SANDBOX_LIMIT,
             max_sandboxes_per_visitor: DEFAULT_VISITOR_SANDBOX_LIMIT,
             inactivity_pause_after_seconds: DEFAULT_INACTIVITY_PAUSE_AFTER_SECONDS,
+            checkpoint_interval_seconds: crate::platform::DEFAULT_CHECKPOINT_INTERVAL_SECONDS,
             retention_grace: DEFAULT_RETENTION_GRACE,
             baseline_services: Vec::new(),
         }

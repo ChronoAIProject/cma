@@ -447,7 +447,7 @@ async fn insert_hierarchy(
     }
 }
 
-fn checkpoint(epoch: u64) -> SandboxCheckpointRef {
+pub(super) fn checkpoint(epoch: u64) -> SandboxCheckpointRef {
     let object_reference = format!("checkpoints/sandbox-{epoch}.tar.zst");
     let sha256 = format!("{epoch:064x}");
     let sealed_at = "2026-09-05T00:29:00Z".to_owned();

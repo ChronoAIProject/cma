@@ -67,6 +67,25 @@ it('does not leak unknown phases or infer completed stages from an unknown phase
   expect(screen.getByRole('status')).toHaveTextContent('Status updates interrupted');
 });
 
+it('shows cancellation without falsely completing the normal pause stages', () => {
+  const sandbox = restoring();
+  render(
+    <LifecycleProgress
+      sandbox={{
+        ...sandbox,
+        status: 'pausing',
+        lifecycle: {
+          ...sandbox.lifecycle!,
+          operation: { purpose: 'pause', phase: 'resume_writers', startedAt: start },
+        },
+      }}
+    />,
+  );
+  expect(screen.getAllByText('Canceling pause')).toHaveLength(2);
+  expect(screen.queryByText('Done')).not.toBeInTheDocument();
+  expect(screen.getAllByText('In progress')).toHaveLength(1);
+});
+
 it('formats elapsed time without negative, invalid or wrapped-hour values', () => {
   expect(elapsedDuration('invalid', Date.now())).toBeUndefined();
   expect(elapsedDuration(start, Date.parse(start) - 5000)).toBe('0m 0s');

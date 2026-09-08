@@ -8,8 +8,8 @@ use layer2_core::sandbox::store::{
     SandboxReconciliationStore, SandboxStoreError,
 };
 use layer2_core::sandbox::{
-    sandbox_checkpoint_due, Agent, Sandbox, SandboxCheckpointCapturePhase, SandboxEventKind,
-    SandboxStatus, SandboxWorkStep, Workspace,
+    sandbox_checkpoint_due_with_interval, Agent, Sandbox, SandboxCheckpointCapturePhase,
+    SandboxEventKind, SandboxPolicySource, SandboxStatus, SandboxWorkStep, Workspace,
 };
 use layer3_adapter::{writer_resume_tokens_match, CheckpointWriterResumeRequest, SandboxAdapter};
 
@@ -38,20 +38,39 @@ pub(crate) struct SandboxCheckpointMaintenance {
     adapter: Arc<dyn SandboxAdapter>,
     deployment_id: String,
     holder: String,
+    policy: Arc<dyn SandboxPolicySource>,
 }
 
 impl SandboxCheckpointMaintenance {
+    #[cfg(test)]
     pub(crate) fn new(
         store: Arc<dyn SandboxCheckpointMaintenanceStore>,
         adapter: Arc<dyn SandboxAdapter>,
         deployment_id: String,
         holder: String,
     ) -> Arc<Self> {
+        Self::with_policy_source(
+            store,
+            adapter,
+            deployment_id,
+            holder,
+            Arc::new(layer2_core::sandbox::SandboxPolicy::default()),
+        )
+    }
+
+    pub(crate) fn with_policy_source(
+        store: Arc<dyn SandboxCheckpointMaintenanceStore>,
+        adapter: Arc<dyn SandboxAdapter>,
+        deployment_id: String,
+        holder: String,
+        policy: Arc<dyn SandboxPolicySource>,
+    ) -> Arc<Self> {
         Arc::new(Self {
             store,
             adapter,
             deployment_id,
             holder,
+            policy,
         })
     }
 
@@ -91,7 +110,16 @@ impl SandboxCheckpointMaintenance {
         let now = clock.now();
         let stamp = rfc3339_at(now);
         let Some(capture) = sandbox.lifecycle.checkpoint_capture.as_ref() else {
-            if !sandbox_checkpoint_due(&sandbox, &stamp) {
+            let policy = self
+                .policy
+                .current_sandbox_policy()
+                .await
+                .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?;
+            if !sandbox_checkpoint_due_with_interval(
+                &sandbox,
+                &stamp,
+                policy.checkpoint_interval_seconds,
+            ) {
                 return Ok(false);
             }
             let agents = self.agents(&sandbox).await?;

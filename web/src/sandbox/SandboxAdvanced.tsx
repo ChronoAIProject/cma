@@ -50,6 +50,13 @@ export function SandboxAdvanced({
     return () => abort.abort();
   }, [client, sandbox, retry]);
   const save = sandbox.lifecycle?.checkpoint;
+  const latest = sandbox.lifecycle?.latestSnapshot;
+  const downloadUrl =
+    latest !== undefined &&
+    latest.downloadUrl ===
+      `/api/v1/sandboxes/${encodeURIComponent(sandbox.id)}/snapshots/${latest.epoch}/download`
+      ? latest.downloadUrl
+      : undefined;
   const operation = sandbox.lifecycle?.operation;
   return (
     <Modal open title="Advanced sandbox details" onClose={onClose} placement="modal--wide">
@@ -82,6 +89,26 @@ export function SandboxAdvanced({
               <code>{sandbox.runtimeVersion ?? 'Not reported'}</code>
             </dd>
           </div>
+          <div>
+            <dt>Latest snapshot</dt>
+            <dd>
+              {latest === undefined ? (
+                'No completed snapshot reported'
+              ) : (
+                <time dateTime={latest.savedAt}>{new Date(latest.savedAt).toLocaleString()}</time>
+              )}
+            </dd>
+          </div>
+          {downloadUrl === undefined ? null : (
+            <div>
+              <dt>Snapshot file</dt>
+              <dd>
+                <a href={downloadUrl} target="_blank" rel="noopener noreferrer">
+                  Download snapshot
+                </a>
+              </dd>
+            </div>
+          )}
         </dl>
         {operation === undefined ? null : (
           <p>

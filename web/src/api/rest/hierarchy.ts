@@ -20,6 +20,14 @@ export function sandboxSummary(value: Wire.SandboxSummary): SandboxSummary {
         : {
             pause: value.lifecycle.pause,
             revive: value.lifecycle.revive,
+            latestSnapshot:
+              value.lifecycle.latest_snapshot === undefined
+                ? undefined
+                : {
+                    epoch: value.lifecycle.latest_snapshot.epoch,
+                    savedAt: value.lifecycle.latest_snapshot.saved_at,
+                    downloadUrl: value.lifecycle.latest_snapshot.download_url,
+                  },
             checkpoint:
               value.lifecycle.checkpoint === undefined
                 ? undefined

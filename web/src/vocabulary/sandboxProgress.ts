@@ -16,6 +16,10 @@ export const pausePhases = [
 ] as const;
 
 export const lifecycleStageCopy: Readonly<Record<string, { label: string; detail: string }>> = {
+  resume_writers: {
+    label: 'Canceling pause',
+    detail: 'Keeping your sandbox open and resuming access to your work.',
+  },
   checkpoint_verification: {
     label: 'Checking your saved sandbox',
     detail: 'Checking that your saved work is available to restore.',

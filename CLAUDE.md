@@ -321,7 +321,11 @@ Runtime image drift causes recorded rotation. A writer fence first holds the
 whole Sandbox home, including Workspaces, Worktrees, Agent homes and transcripts,
 for a consistent checkpoint. Restore installs that snapshot into a replacement
 runtime; the controller resumes the Agents and records the resulting version.
-The two retained checkpoints provide bounded recovery history.
+Only the latest completed checkpoint is retained. A replacement must commit before
+older completed objects are pruned; legacy two-generation records are accepted until
+their next successful publication. Periodic capture defaults to thirty minutes and
+uses the live global admin checkpoint interval; manual and automatic pause still
+require a fresh consistent checkpoint before teardown.
 
 Rotation and restore are never silent. The record names the runtime version,
 checkpoint timestamp and progress. The UI preserves history and explains why

@@ -48,6 +48,23 @@ const fixture = () => {
 };
 
 describe('public operator administration', () => {
+  it('round-trips snapshot intervals and validates patches before sending', async () => {
+    const t = fixture();
+    const current = { ...settings, checkpoints: { interval_seconds: 1800, future: 'preserved' } };
+    t.answer({ revision: 1, settings: current });
+    expect((await t.admin.readSettings()).settings).toEqual(current);
+    await t.admin.patchSettings({ expected_revision: 1, checkpoints: { interval_seconds: 600 } });
+    expect(JSON.parse(String(t.calls[1]!.init.body))).toEqual({
+      expected_revision: 1,
+      checkpoints: { interval_seconds: 600 },
+    });
+    for (const interval_seconds of [0, 59, 86401, 1.5]) {
+      expect(() =>
+        t.admin.patchSettings({ expected_revision: 1, checkpoints: { interval_seconds } }),
+      ).toThrow(ValidationError);
+    }
+    expect(t.calls).toHaveLength(2);
+  });
   it('encodes Sandbox filters and accepts required nullable paging fields', async () => {
     const t = fixture();
     t.answer({ items: [summary], next: 'page/2' });

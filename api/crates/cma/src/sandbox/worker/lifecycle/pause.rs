@@ -14,6 +14,52 @@ use super::checkpoint::require_quiet_agent;
 use super::support::{lifecycle_lease, model_error};
 
 impl SandboxWorker {
+    pub(super) async fn cancel_pause(
+        &self,
+        sandbox: Sandbox,
+        now: SystemTime,
+    ) -> Result<(), SandboxStoreError> {
+        let started = tokio::time::Instant::now();
+        if !self.lifecycle_state_matches(&sandbox).await? {
+            return Err(SandboxStoreError::Conflict);
+        }
+        if self.resume_lifecycle_writers(&sandbox).await.is_err() {
+            return self
+                .handle_lifecycle_failure(
+                    sandbox,
+                    WorkerFailure::retryable("pause cancellation is waiting for writer resumption"),
+                    now,
+                )
+                .await;
+        }
+        let rotation_at =
+            super::super::support::credential_rotation_at(&sandbox).ok_or_else(|| {
+                SandboxStoreError::Corrupt("active credential expiry is absent".into())
+            })?;
+        let stamp = rfc3339_at(now + started.elapsed());
+        let lease = lifecycle_lease(&sandbox, &self.config.holder)?;
+        let mut next = sandbox.clone();
+        next.complete_pause_cancellation(
+            rfc3339_at(rotation_at),
+            &lease.holder,
+            lease.fence,
+            stamp.clone(),
+        )
+        .map_err(model_error)?;
+        self.commit_lifecycle_phase(
+            &sandbox,
+            next,
+            Vec::new(),
+            SandboxLifecycleAgentScope::Touched,
+            stamp,
+            vec![SandboxEventKind::StatusChanged {
+                from: SandboxStatus::Pausing,
+                to: SandboxStatus::Active,
+            }],
+        )
+        .await
+    }
+
     pub(super) async fn pause_lifecycle_agents(
         &self,
         sandbox: Sandbox,

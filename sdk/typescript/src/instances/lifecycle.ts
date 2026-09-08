@@ -14,6 +14,7 @@ const pausePhase = enumeration(
   'pause_agents',
   'teardown_runtime',
   'publish_paused',
+  'resume_writers',
 );
 const revivePhases = [
   'checkpoint_verification',
@@ -62,6 +63,7 @@ export const sandboxLifecycle = object({
   pause: eligibility,
   revive: eligibility,
   checkpoint: optional(checkpoint),
+  latest_snapshot: optional(object({ epoch: positiveInteger, saved_at: text, download_url: text })),
   operation: optional(operation),
 });
 export type SandboxLifecycle = Output<typeof sandboxLifecycle>;

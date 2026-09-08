@@ -43,6 +43,12 @@ without failing it. `triggers.enabled` separately controls new public admission.
 These commands do not invent an idempotency key or
 automatically retry an uncertain result.
 
+`checkpoints.interval_seconds` controls periodic snapshots globally (60 through
+86400 seconds, default 1800). The running worker rereads this setting without a
+restart. Manual and inactivity pauses still require a fresh completed snapshot.
+Only the latest completed snapshot is retained; replacement commits before old
+archives are removed. The section is optional only for older API deployments.
+
 `unsupported.mcp()`, `.a2a()` and `.agentCard()` preserve typed interface refusals
 as `ApiError`; they are probes, not implementations of those protocols. Agent
 terminal requests are likewise refused by `agents.terminal(id)`.

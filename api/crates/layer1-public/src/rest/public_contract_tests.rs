@@ -16,6 +16,7 @@ mod experience_cases;
 mod fault_cases;
 mod inventory;
 mod replay;
+mod snapshot_cases;
 mod state_cases;
 mod symbols;
 mod trigger_cases;
@@ -105,6 +106,9 @@ fn paths() -> Vec<PathBuf> {
 }
 
 async fn scenario(name: &str) -> Scenario {
+    if let Some(scenario) = snapshot_cases::scenario(name).await {
+        return scenario;
+    }
     if let Some(scenario) = credential_cases::scenario(name).await {
         return scenario;
     }

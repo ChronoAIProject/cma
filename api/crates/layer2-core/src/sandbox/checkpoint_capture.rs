@@ -84,7 +84,10 @@ impl Sandbox {
             Some(
                 operation @ Operation::Pause {
                     phase:
-                        Pause::CaptureAndPublishCheckpoint | Pause::PauseAgents | Pause::TeardownRuntime,
+                        Pause::CaptureAndPublishCheckpoint
+                        | Pause::PauseAgents
+                        | Pause::TeardownRuntime
+                        | Pause::ResumeWriters,
                     ..
                 },
             )

@@ -131,6 +131,12 @@ fn advance_phase(
             SandboxPausePhase::PublishPaused => {
                 expected.publish_lifecycle_paused(holder, fence, at.into())
             }
+            SandboxPausePhase::ResumeWriters => expected.complete_pause_cancellation(
+                submitted.work.ready_at.clone(),
+                holder,
+                fence,
+                at.into(),
+            ),
         },
         SandboxLifecycleOperation::Revive { phase, .. } => {
             advance_revive_phase(expected, submitted, phase, holder, fence, at)

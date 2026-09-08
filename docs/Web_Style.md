@@ -996,6 +996,11 @@ operation progress and its recorded start time. Events load only while that dial
 open and never hold the ordinary page hostage. The dialog scrolls its body,
 traps focus, closes with Escape and returns focus to Advanced.
 
+Advanced also shows the latest completed snapshot's recorded timestamp and an
+owner-authenticated download link. The link resolves the actual whole-home archive,
+not a multipart manifest or runtime-local path. Before the first completed save,
+show the absence explicitly. Ongoing capture never changes the last completed time.
+
 Workspaces and Agents use unframed bands with existing 24/16/12/8px rhythm,
 definition lists and wrapping linked lists. Each Agent is separated by the
 existing level-2 border, without floating or nested cards. Paused or reviving
@@ -1134,12 +1139,15 @@ states. A failed refresh retains the last successful rows.
 ### Platform settings
 
 Settings is an unframed form no wider than 920px, using full-width sections
-separated by hairlines. Sections cover Defaults, Inactivity, Retention, Limits,
+separated by hairlines. Sections cover Defaults, Inactivity, Snapshots, Retention, Limits,
 Triggers, and Marketplace. The three defaults use exact published-profile
 revision pickers with kind-specific summaries. A mutable latest revision is never
 silently substituted for a pinned choice.
 
-Time and count settings use bounded numeric inputs with explicit units. Binary
+Time and count settings use bounded numeric inputs with explicit units. Snapshot
+frequency is presented in minutes (1 to 1440, default 30), stored in
+whole seconds, and hidden only when connected to an older API without the setting.
+Fractional minutes preserve values set through the public API. Binary
 enablement uses checkboxes or switches; closed policies use native selects.
 Trigger enablement and paused admission are distinct settings. Keep unfamiliar
 or newer server fields in the document during an edit; never erase them by
@@ -1564,3 +1572,4 @@ Append-only. Never edit or delete an entry.
 | 2026-09-08 | Made the signed-out logo the Get Started control after one lens sweep, with a complete turn and opacity handover into sign-in; renamed its heading ChronoAI Managed Agent and removed the standalone sign-in button. Preserved all signed-in character behavior and accessible reduced-motion and static fallbacks. |
 | 2026-09-08 | Exposed shared plain-language Sandbox operation progress on the Trigger journey and Sandbox page, with recorded-stage activity, elapsed time, last successful check and explicit missing file-level telemetry. Kept technical events in Advanced and prohibited timer-driven completion or estimates. |
 | 2026-09-08 | Replaced signed-out glasses lettering with a cloud invitation on hover, focus or five-second idle timeout; added a scoped character bump and self-hosted bold Shrikhand title. Preserved the single-spin sign-in handover, reduced-motion accessibility, and all signed-in character behavior. |
+| 2026-09-08 | Added the global snapshot interval in minutes, defaulting to thirty; exposed the latest completed snapshot timestamp and owner-authenticated archive download in Advanced. Added a distinct Canceling pause phase which keeps children unavailable until writer release is confirmed. |

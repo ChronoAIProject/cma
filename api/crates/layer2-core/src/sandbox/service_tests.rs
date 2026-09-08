@@ -506,6 +506,7 @@ fn policy(owner: u16, visitor: u16) -> SandboxPolicy {
     SandboxPolicy {
         max_sandboxes_per_owner: owner,
         max_sandboxes_per_visitor: visitor,
+        checkpoint_interval_seconds: crate::DEFAULT_CHECKPOINT_INTERVAL_SECONDS,
         inactivity_pause_after_seconds: DEFAULT_INACTIVITY_PAUSE_AFTER_SECONDS,
         retention_grace: std::time::Duration::from_secs(7 * 24 * 60 * 60),
         baseline_services: vec![
@@ -1426,6 +1427,7 @@ async fn create_reads_current_policy_for_each_admission() {
     let source = Arc::new(MutablePolicy(Mutex::new(SandboxPolicy {
         max_sandboxes_per_owner: 1,
         max_sandboxes_per_visitor: 1,
+        checkpoint_interval_seconds: crate::DEFAULT_CHECKPOINT_INTERVAL_SECONDS,
         inactivity_pause_after_seconds: DEFAULT_INACTIVITY_PAUSE_AFTER_SECONDS,
         retention_grace: DEFAULT_RETENTION_GRACE,
         baseline_services: vec![ServiceId::new("baseline-one")],
@@ -1458,6 +1460,7 @@ async fn create_reads_current_policy_for_each_admission() {
     *source.0.lock().expect("policy lock") = SandboxPolicy {
         max_sandboxes_per_owner: 2,
         max_sandboxes_per_visitor: 1,
+        checkpoint_interval_seconds: crate::DEFAULT_CHECKPOINT_INTERVAL_SECONDS,
         inactivity_pause_after_seconds: DEFAULT_INACTIVITY_PAUSE_AFTER_SECONDS,
         retention_grace: DEFAULT_RETENTION_GRACE,
         baseline_services: vec![ServiceId::new("baseline-two")],

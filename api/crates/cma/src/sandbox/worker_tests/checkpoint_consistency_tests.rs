@@ -389,16 +389,7 @@ async fn retry_late_hold(parked: bool, resumed_before_restart: bool) {
     assert_eq!(checkpoint.epoch, 2);
     assert_eq!(checkpoint.conversations.len(), 1);
     assert_eq!(checkpoint.conversations[0].agent_id, agent.id);
-    assert_eq!(
-        captured
-            .lifecycle
-            .checkpoints
-            .previous
-            .as_ref()
-            .unwrap()
-            .epoch,
-        1
-    );
+    assert!(captured.lifecycle.checkpoints.previous.is_none());
     harness.run(&current.id, retry_at).await;
     let parked_agent = harness.store.get_agent(&agent.id).await.unwrap().unwrap();
     assert_eq!(parked_agent.status, AgentStatus::Paused);

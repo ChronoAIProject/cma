@@ -641,7 +641,7 @@
     {
       "id": "sandbox-revive-not-paused",
       "operation": "POST /api/v1/sandboxes/{id}/revive",
-      "scenario": "instances_lifecycle",
+      "scenario": "instances_not_paused",
       "request": {
         "method": "POST",
         "path": "/api/v1/sandboxes/sbx_route/revive",

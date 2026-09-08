@@ -38,6 +38,35 @@ fn token(sandbox: &Sandbox) -> String {
 }
 
 #[tokio::test]
+async fn checkpoint_interval_changes_apply_without_worker_restart() {
+    let (harness, active, now) = active().await;
+    let source = Arc::new(MutablePolicy(Mutex::new(harness.policy.clone())));
+    let worker = SandboxCheckpointMaintenance::with_policy_source(
+        harness.store.clone(),
+        harness.adapter.clone(),
+        "test".into(),
+        "live-policy".into(),
+        source.clone(),
+    );
+    for _ in 0..3 {
+        assert_eq!(worker.run_once(now).await.unwrap(), 1);
+    }
+    let completed = harness.stored(&active.id).await;
+    assert!(completed.lifecycle.checkpoints.latest.is_some());
+    assert!(completed.lifecycle.checkpoint_capture.is_none());
+    let later = now + Duration::from_secs(600);
+    assert_eq!(worker.run_once(later).await.unwrap(), 0);
+    source.0.lock().unwrap().checkpoint_interval_seconds = 600;
+    assert_eq!(worker.run_once(later).await.unwrap(), 1);
+    assert!(harness
+        .stored(&active.id)
+        .await
+        .lifecycle
+        .checkpoint_capture
+        .is_some());
+}
+
+#[tokio::test]
 async fn periodic_capture_waits_two_quiet_minutes_across_worker_restart() {
     let (harness, active, now) = active().await;
     let mut agent = lifecycle_queue_tests::ready_agent(&active, now);
