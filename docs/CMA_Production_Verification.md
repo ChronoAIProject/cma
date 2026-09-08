@@ -13,17 +13,17 @@ acceptance of this campaign.
 | --- | --- | --- |
 | 1. Public Agent Profile | Exact text, model, effort, Autonomous, four latest public skill pins | Created and published at revision 1; exact configuration and archive checksums verified |
 | 2. Public Workspace Profile | Exact metadata, repository `dev`, no setup, one Agent Profile | Created and published at revision 1; exact configuration verified |
-| 3. Public Sandbox Profile | 4000 millicores, 8192 MiB, two requested services, 4/4 limits, working toolchain | Exact live configuration and all four actual Agent workload checks passed on runtime `137b489d`; independent receipt confirms unchanged tracked source |
+| 3. Public Sandbox Profile | 4000 millicores, 8192 MiB, two requested services, 4/4 limits, working toolchain | Exact live configuration and all four actual Agent workload checks passed on runtime `137b489d` at original heavy-workload base `edc52b0f`; independent receipt confirms unchanged tracked source. This does not establish workload behavior at newer `dev` revisions |
 | 4. Public Trigger | Exact title/message, all-level reuse, Try It, visitor theme, no review, README placement | Exact revision published after first rollout; README-only PR #841 merged after all 12 protected checks; default README snippet read back exactly |
 | 5. Login without bootstrap | No Sandbox, Workspace, Agent, or Profile created by login alone | Existing-owner fresh-browser sign-in created no resources; successful unseen-CMA-identity callback contract passes default/home/Trigger returns; external fresh signup not tested |
-| 6. Complete external-click flow | Login then automatic provisioning; exact first message once; correct software, skills, scopes | Latest completed `lifecycle-fresh` entry on API `619535ad`/web `1eb60be1` passed provisioning and exact first prompt once; new lifecycle-postfix Launch was admitted at 01:40:47 UTC on both fixes and is pending. Prior configuration/workload/restored-file proofs remain source-bound; final fresh configuration and genuinely paused README repeat remain pending |
-| 7. Previous UI style | Original rotating 3D mark and established controls; desktop/mobile screenshots | Prior live home/provisioning motion and four-view chat checks passed; latest first-run mobile resize capture remains a transition artifact, not settled acceptance; web `4ddcd1b9` title correction is now live; final title/hierarchy/layout verification is prepared but not passed |
+| 6. Complete external-click flow | Login then automatic provisioning; exact first message once; correct software, skills, scopes | `lifecycle-postfix` first journey passed at 02:09:30 UTC on API `6eca81a3`/web `4ddcd1b9`, with one first prompt after automatic recovery from an 18-minute startup-publication delay; not a smooth-start pass. Fix `a52e72ba` is tested and building, not deployed. Prior configuration/workload/restored-file proofs remain source-bound; final fresh configuration and genuinely paused README repeat remain held |
+| 7. Previous UI style | Original rotating 3D mark and established controls; desktop/mobile screenshots | Recovered `lifecycle-postfix` title matches before reload and its settled mobile capture is readable; the earlier `lifecycle-fresh` resize artifact remains unaccepted. Prior motion/four-view proofs remain historical; final hierarchy/four-view layout and corrected fixed-step provisioning checks remain pending |
 | 8. Autonomous YOLO | Pinned provider runs full-access mode with no approval requests | Actual provider configuration verified; latest first response and successful subsequent workload completed with zero approvals |
-| 9. Lifecycle | Active to paused to active; paused to terminated; history retained | Manual Resume passed at 00:24 UTC; earlier UI Paused states did not prove physical teardown. The original paused Delete browser timeout remains failed; read-only continuation reached Retired revision 334 with stopped Agent, retained history and CR/pod absence at 01:37 UTC. Fresh post-fix Pause/Delete physical acceptance is still pending |
-| 10. Cleanup | Only identified stale state removed; new published flow remains usable | Identified old Sandboxes, heavy baseline and original lifecycle-fresh baseline have retired through their admitted owner commands; original retirement recovery issued no new command and verified CR/pod absence. Fresh disposable lifecycle-postfix and retained final environment verification remain pending |
+| 9. Lifecycle | Active to paused to active; paused to terminated; history retained | Manual Resume passed at 00:24 UTC. Fresh `lifecycle-postfix-delete` Pause and paused Delete passed on API `6eca81a3`: Paused revision 25, then Retired revision 36 at 02:20:02 UTC, with physical CR/pod absence, no writer debt, unchanged native identity/generation 1 and full history. The original older paused Delete timeout remains failed despite its separate recovery; final paused README revival remains pending |
+| 10. Cleanup | Only identified stale state removed; new published flow remains usable | Identified old Sandboxes, heavy baseline, original lifecycle-fresh and disposable lifecycle-postfix baseline have retired through their admitted owner commands; physical absence is verified for the latest disposable baseline. No active mutating verifier remains as of 02:22 UTC; the final retained environment is not yet created or accepted |
 | 11. Conversation UI | Thinking, Send/Stop, CPU, RAM, context, token, network metrics | Prior four-view metrics, Thinking, scrolling and lifecycle input holds passed; latest fresh-baseline UI test sent one message, observed its exact tool command, interrupted once, verified the public interrupted outcome, restored Send and preserved reloaded history |
 
-As of 2026-09-08 02:03 UTC, API `6eca81a3` and web `4ddcd1b9` are live; runtime
+As of 2026-09-08 02:22 UTC, API `6eca81a3` and web `4ddcd1b9` are live; runtime
 `137b489d` is unchanged. The API deployed through the separately named exact
 stopped-orphan recovery preflight, not an all-quiet claim. Original retirement
 continuation passed at 01:37 UTC with the Agent stopped, exact history retained
@@ -32,21 +32,23 @@ A fresh normal all-owner guard then passed before the completed web rollout;
 independent API/runtime/store/history recovery verification passed at 01:40 UTC.
 Earlier `lifecycle-fresh` provisioning/first prompt, Send/Stop and manual Resume
 passes remain tied to their original images. The single disposable
-`lifecycle-postfix` journey is now running, with fresh Pause/Delete physical proof
-next, followed by
-`final-fresh` configuration, Pause, README revival and final hierarchy/UI checks.
-None of those remaining checks is accepted yet, and no heavy workload replay is
-added. The historical deployed-component table below is not the current
-campaign's image inventory.
+`lifecycle-postfix` journey completed after startup recovery, and its fresh
+Pause/Delete sequence now has passing physical evidence. All three verifier
+processes have exited. Startup fix `a52e72ba` is pushed and locally verified;
+its API image build, started at 02:17 UTC, is pending. No deployment of that fix
+is claimed. Final fresh configuration, Pause, README revival and hierarchy/UI
+checks remain held until the verified image is deployed at a fresh quiet
+boundary. No heavy workload replay is added. The historical deployed-component
+table below is not the current campaign's image inventory.
 
-The current first journey exposed a startup race: attaching the Trigger's first
+The recovered first journey exposed a startup race: attaching the Trigger's first
 prompt changed the Agent revision while AddWorktree ran, so its completed work
 could not publish until the 18-minute lease expired. The same admitted operation
 recovered automatically at 02:00:10; its native conversation opened at 02:00:18
-and its first prompt is running. No records were repaired or Launch repeated.
-The publication fix and regression tests are in progress; this recovery is not
-a smooth-start acceptance. Fresh final verification remains held until the fix
-is deployed after a quiet boundary. Actual `dev` base `33a85901` has unchanged
+and the first journey passed at 02:09:30 with its exact first prompt once.
+No records were repaired or Launch repeated. The publication fix and regression
+tests are complete locally, but this recovery is not a smooth-start acceptance
+and the fix is not yet live. Actual `dev` base `33a85901` has unchanged
 toolchain declarations but changed executable source, so earlier workload
 evidence does not establish this new source's build or resource behavior.
 
@@ -1096,21 +1098,105 @@ pending Agent stop requests or work are not accepted as settled.
 
 The scratch guard passes 29 offline tests, syntax checks and scoped secret scans.
 Delete refuses a legacy Pause without physical proof before dispatching anything.
-This preparation changes no old evidence and has not yet established fresh
-production lifecycle acceptance. The exact future sequence is also recorded in
-private `lifecycle-physical-teardown-usage.md`.
+This preparation changed no old evidence; the first fresh production results
+are recorded below. The exact proof-binding procedure is also recorded in private
+`lifecycle-physical-teardown-usage.md`.
+
+### Recovered First Journey And Fresh Physical Lifecycle
+
+`production-lifecycle-postfix/result.json` passed at
+2026-09-08 02:09:30.324 UTC and verifier `44753` exited. The original Launch
+`lch_e3a9edc04f4c4414baf55156b3e582ff` retained Sandbox
+`sbx_24469556bd9744609cd07e7ef47f5841`, Workspace
+`wks_7c0d57ba241849f8b689e5c786824bf5`, Worktree
+`wkt_74fba9a17872411bbaba7dc66a67b22a`, and Agent
+`agt_15c6521da781473fab05692cd22aa0dd`. One existing-owner OAuth exchange,
+zero extra CMA clicks, zero approval commands and the exact first prompt once
+are recorded. The title matched before reload; the settled 390 by 844 mobile
+layout has no horizontal overflow or sidebar overlay, and local visual review
+found `04-agent-mobile.png` readable. This does not erase the 18-minute startup
+delay or establish final four-view hierarchy/provisioning acceptance.
+
+Fresh UI Pause under label `lifecycle-postfix-delete` used one POST and advanced
+Active revision 16 through Pausing revision 18 to Paused revision 25, observed
+at 02:18:31.473 UTC. The browser result passed at 02:18:33.343; its separate
+`physical-teardown.json` passed at 02:18:47.533 after two stable observations.
+Verifier `25390` exited. The store snapshot
+`store-lifecycle-1788833913194.json` records the published epoch-1 archive of
+1,687,229,843 bytes, sealed at 02:14:45 UTC. This is the fresh pre-heavy-workload
+home, not another heavy-workload replay.
+
+Delete consumed that exact completed Pause proof, with the same label and
+`CMA_PAUSE_PROOF_LABEL=lifecycle-postfix-delete`. Its saved commands contain one
+DELETE, not a repeated request. `lifecycle-lifecycle-postfix-delete-delete/`
+observes Paused revision 25 at 02:19:13.649, Retiring revision 28 at
+02:19:30.669, and Retired revision 36 at 02:20:02.325. The browser result passed
+at 02:20:02.753; physical postconditions passed at 02:20:17.036. Verifier `85477`
+exited. The command list has no timestamp, so the first Retiring observation
+is not represented as the exact Delete admission time.
+
+Both physical proofs bind runtime handle `bd378519-abbb-4fc1-a5e3-a939f5dc760d`
+and its original CR/pod UIDs, and prove no original or replacement runtime in
+the complete inventories. Writer, capture, provision and lifecycle debt are
+absent. Pause retained a Paused Agent; Delete retained it Stopped without pending
+work or stop intent. The Sandbox's only remaining work is its future purge wait.
+Native conversation `01a07ebe-a584-71c3-8b43-9e597333738c`, generation 1, all four
+identities and the full transcript were preserved. History SHA-256 is unchanged:
+`6edcfcdb228c43d2e9a2f2e74b3a3ff3465c0be7d1ac148ad313268baccbbc7a`.
+The complete checked log ranges are 203 to 204 for Pause and 204 to 207 for
+Delete, with no runtime-generation retirement event.
+
+This accepts the fresh physical Pause and genuinely paused Delete on API
+`6eca81a3`; it does not relabel the older
+`lifecycle-lifecycle-fresh-delete-delete/failure.json` timeout or its separate
+read-only recovery. No mutating production verifier remains as of this update.
+
+### Startup Publication Fix At 02:22 UTC
+
+Commit `a52e72ba76f9867cd5ce16e45022dbaafd201012` is pushed and independently
+reviewed. It retries only definite startup publication conflicts, preserving
+the actual completed effect evidence and native conversation identity without
+rerunning runtime effects. Exact work/lease/evidence changes or observed parent
+Pause, retirement or runtime replacement reject rebasing. First-prompt and title
+metadata are retained, Ready and sign-in notices share the bounded retry, and
+the publication clock includes claim, effect and retry elapsed time. Existing
+strict store validation is unchanged; the retry parent read is a freshness
+check, not atomic parent fencing.
+
+The worker suite passed 49 tests with 15 integration/manual cases ignored,
+including all nine new regressions. Strict all-target/all-feature Clippy,
+formatting and scoped secret scanning passed. The final full CMA serial suite
+passed 517 tests with zero failures and 169 ignored using the previously
+documented `RUST_MIN_STACK=33554432` and `CARGO_INCREMENTAL=0`.
+Keep the earlier test outcomes explicit: the default-stack run aborted in the
+existing large creation-revival test; the documented-stack parallel run had
+516 passes and one checkpoint tracing-log capture failure, with 169 ignored.
+That exact tracing test passed in isolation before the full serial pass. Neither
+failed run is rewritten as passing, and ignored cases are not executed evidence.
+These test outputs are retained in tool-session history; no local test log files
+were created.
+
+The API image build for `a52e72ba` began at 02:17 UTC under root session `70420`;
+`api-a52e72ba-build-request.json` records the exact immutable source and image
+build arguments. Build, image scan, registry publication, manifest pin and
+production deployment remain pending as of 02:22 UTC. Live API `6eca81a3`, web
+`4ddcd1b9` and runtime `137b489d` are unchanged.
+
+The executor's GitHub API readback confirmed repository visibility `internal`
+and default branch `develop`; no visibility setting was changed. README browser
+coverage remains GitHub-rendered HTML delivered at the declared source origin
+with a real anchor click, not authenticated GitHub web-page access. Fresh signup
+and cross-owner browser isolation remain untested with the single owner account.
 
 ### Pending Corrected Acceptance
 
 The remaining superseding sequence in private `final-flow-audit.md` requires:
 
-1. Finish the already-admitted `lifecycle-postfix` first journey under root session
-   `44753`; no second Launch. After it
-   passes and all observation processes finish, Pause and Delete using label
-   `lifecycle-postfix-delete`, `CMA_API_REVISION=6eca81a3` and the exact same
-   `CMA_PAUSE_PROOF_LABEL` for Delete. Require the new physical proofs; do not
-   conflate this fresh test with original-operation continuation. No heavy
-   workload replay or extra manual Resume is added.
+1. Finish API `a52e72ba` image build, scan and registry digest verification, then
+   pin and deploy it only after a fresh completed all-owner quiet guard in a
+   separate dispatch step. The disposable first/Pause/Delete sequence is complete;
+   do not repeat its commands. Verify the deployed API before final admission.
+   No heavy workload replay or extra manual Resume is added.
 2. Run the final fresh README journey and admission-bound configuration observer
    as `final-fresh`, waiting for the observer's `owner_verified` marker before
    admission. Explicitly Pause that fresh post-fix baseline and independently
@@ -1129,9 +1215,10 @@ The remaining superseding sequence in private `final-flow-audit.md` requires:
    cross-owner and authenticated GitHub-page browser limits explicit.
 
 All future Resume, paused Delete and final-repeat verifiers must set
-`CMA_PAUSE_PROOF_LABEL` to the exact preceding completed Pause label. Use
-`lifecycle-postfix-delete` for the pending fresh Delete and `final-fresh-readme`
-for final-repeat; labels are evidence bindings, not permission to repeat a command.
+`CMA_PAUSE_PROOF_LABEL` to the exact preceding completed Pause label.
+`lifecycle-postfix-delete` is the completed fresh Delete proof; use
+`final-fresh-readme` for final-repeat. Labels are evidence bindings, not permission
+to repeat a command.
 The recovered original Delete used `lifecycle-fresh-delete`; the completed manual
 Resume used `lifecycle-fresh-manual`. Leave `final-fresh` intact after final-repeat.
 
