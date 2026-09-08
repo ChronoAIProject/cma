@@ -241,6 +241,7 @@ export function Console({
             onClose={() => setDetailsOpen(false)}
             detail={ready?.detail}
             workspace={ready?.workspace}
+            historyLoading={ready?.historyLoading}
             pending={agent.pending}
             actionError={agent.actionError}
             onNavigate={onNavigate}
