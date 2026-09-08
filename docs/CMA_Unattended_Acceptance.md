@@ -20,7 +20,7 @@ Monitor disk usage and inspect exact targets before removing stale artifacts.
 | 5 | Storage physically retains only the latest snapshot | Completed publication prunes the previous generation. Runtime scratch archives and orphan uploads still require implementation/audit. |
 | 6 | Terminated Sandbox snapshots are deleted | Pending complete storage audit, including runtime scratch and orphan objects. |
 | 7 | All lifecycle screens show secret-free bounded live logs and sync time | Shared lifecycle progress exists. Audit all relevant screens and actual telemetry; verify bounded scrolling in production. |
-| 8 | New Agent fields are understandable, profiles have anchored hover details, deleted choices are excluded | Implemented explanatory fields, pinned-profile hover details and deleted-choice filtering with selected-location revalidation. All 1,127 frontend tests pass; production verification pending. |
+| 8 | New Agent fields are understandable, profiles have anchored hover details, deleted choices are excluded | Deployed in web df6e58e3. Desktop/mobile production checks pass for field explanations, deleted-choice exclusion, anchored bounded scrollable pinned-profile preview, and Escape preserving the creation dialog. All 1,127 frontend tests pass. |
 | 9 | No review/consent flash for no-review Triggers | Pending browser verification against the required Trigger, including fresh sign-in and resumed Launch. |
 | 10 | Profiles and Marketplace use CMA-styled Ornn-inspired cards/details | Pending source comparison, implementation and responsive production verification. |
 | 11 | Separate collapsible Live and Paused Sandbox groups | Deployed in web 40300b5e. Production desktop/mobile checks pass for both groups and persisted collapse on reload. Live transition cases additionally covered by local tests. |
@@ -69,3 +69,35 @@ image identity and measured results for each behavior, with unknowns left explic
   counterpart `unattended-ui-batch1-qBa03d`. Initial browser runs exposed a
   harness readiness race with mobile navigation, corrected by awaiting the
   mounted Sandbox heading independently of drawer visibility.
+- 2026-09-08 14:35 UTC: Web df6e58e3 deployed from this branch at
+  `sha256:a23411a1864a1f793fcb89e9434422f27f90304ebcad2e6bbadfdc864061ef90`.
+  Linux/amd64 build, vulnerability scan, remote digest validation, TypeScript,
+  ESLint, Prettier, and 1,127 frontend tests pass. Rolling update verified healthy
+  with zero restarts; API/runtime configuration unchanged. Rollout evidence:
+  scratch `unattended-web-rollout-CypoVk`. Production creation-dialog evidence:
+  `unattended-creation-ui-JwLw9p/result.json`; local counterpart
+  `unattended-creation-ui-ha7Piw`. Both include 1440x900 and 390x900 screenshots,
+  light/dark preview checks, and zero forwarded mutations.
+- Post-rollout readback: owner Sandbox still Paused, latest snapshot epoch 27;
+  owner Agent histories remain four turns and one turn respectively. SHA-256
+  digests of the complete turn arrays:
+  `285650b191391e7b01b2127bc94698b0a00c3239cb57596cea60757e12869c71` and
+  `1e9e314f75d3045ce6b26e8d9be46b3f7ba580143c23c509afb5b553b11be303`.
+  Only cma-api and cma-web pods remain in chrono-bot, both healthy.
+  Disk monitoring ranged from 54 to 57 GiB free; no Docker restart or artifact
+  deletion was needed. No branch was merged to develop or main.
+
+## Next Verification Work
+
+- Complete header/sidebar status synchronization, including newer durable
+  Agent status versus periodically refreshed hierarchy. Shared vocabulary alone
+  does not prove data freshness agreement. Current controller imports newer
+  titles from navigation, not newer status; durable AG-UI status frames include
+  `timestamp`, while ephemeral frames may omit it.
+- Workspace profile validation accepts zero through eight distinct Agent Profile
+  references. `agent_profile_provisioning.rs` reconciles each pinned profile only
+  after Workspace Ready plus a resolved commit. Verify zero/one/multiple creation
+  on a live Sandbox; do not assume validation alone proves provisioning.
+- Continue the complete register above, especially consistent nonblocking
+  snapshots, storage cleanup, Trigger quick messages/provenance, GitHub proxy
+  authority and the genuine synchronized terminal. These remain unsatisfied.
