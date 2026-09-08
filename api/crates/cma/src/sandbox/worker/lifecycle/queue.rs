@@ -14,6 +14,16 @@ use super::super::SandboxWorker;
 use super::support::{lifecycle_lease, model_error};
 
 impl SandboxWorker {
+    #[cfg(test)]
+    pub(in crate::sandbox) async fn complete_lifecycle_queue_for_test(
+        &self,
+        sandbox: Sandbox,
+        agents: Vec<Agent>,
+        now: SystemTime,
+    ) -> Result<(), SandboxStoreError> {
+        self.complete_lifecycle_queue(sandbox, agents, now).await
+    }
+
     pub(super) async fn deliver_lifecycle_queue(
         &self,
         sandbox: Sandbox,
@@ -138,17 +148,26 @@ impl SandboxWorker {
             .filter(|agent| sandbox.restores_agent(agent))
             .map(|current| prune_delivered_queue(current, &stamp))
             .collect::<Result<Vec<_>, _>>()?;
-        self.commit_lifecycle_phase(
-            &sandbox,
-            next,
-            mutations,
-            SandboxLifecycleAgentScope::RestoreParticipants,
-            stamp,
-            vec![SandboxEventKind::WorkStepCompleted {
-                step: SandboxWorkStep::RunLifecycleOperation,
-            }],
-        )
-        .await
+        let completion = self
+            .commit_lifecycle_phase(
+                &sandbox,
+                next,
+                mutations,
+                SandboxLifecycleAgentScope::RestoreParticipants,
+                stamp,
+                vec![SandboxEventKind::WorkStepCompleted {
+                    step: SandboxWorkStep::RunLifecycleOperation,
+                }],
+            )
+            .await;
+        match completion {
+            // Reopened agents can publish metadata after the queue snapshot. Retry only
+            // this internal commit, under the unchanged parent revision and claim.
+            Err(SandboxStoreError::Conflict) => {
+                Box::pin(self.retry_queue_phase(sandbox, now)).await
+            }
+            outcome => outcome,
+        }
     }
 
     async fn retry_queue_phase(

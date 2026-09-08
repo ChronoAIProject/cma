@@ -272,7 +272,7 @@ fn queue_agent_profile() -> AgentProfileSnapshot {
     }
 }
 
-async fn begin_queue_phase(harness: &Harness, id: &SandboxId, now: SystemTime) {
+pub(super) async fn begin_queue_phase(harness: &Harness, id: &SandboxId, now: SystemTime) {
     let current = harness.stored(id).await;
     let runtime = current.runtime.clone().unwrap();
     let stamp = rfc3339_at(now);
