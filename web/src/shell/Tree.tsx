@@ -223,18 +223,8 @@ function workspaceActions(
       label: 'Remove',
       icon: <IconTrashOutline16 />,
       danger: true,
-      disabled:
-        busy ||
-        workspace.status === 'removing' ||
-        workspace.agents.some((agent) => !['stopped', 'failed', 'deleted'].includes(agent.status)),
-      reason:
-        workspace.status === 'removing'
-          ? 'Deletion is already in progress.'
-          : workspace.agents.some(
-                (agent) => !['stopped', 'failed', 'deleted'].includes(agent.status),
-              )
-            ? 'Stop the Agents in this Workspace before deleting it.'
-            : undefined,
+      disabled: busy || workspace.status === 'removing',
+      reason: workspace.status === 'removing' ? 'Deletion is already in progress.' : undefined,
     });
   return actions;
 }

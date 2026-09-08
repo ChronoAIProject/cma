@@ -108,10 +108,10 @@
         "missing_idempotency_key",
         "not_authenticated",
         "store_failed",
-        "workspace_has_live_agents",
         "workspace_not_found"
       ],
       "unreachable_problems": {
+        "workspace_has_live_agents": "api/crates/layer2-core/src/sandbox/store/memory/workspace_lifecycle.rs# Workspace removal now fences new admission and schedules durable child cleanup, including live Agents. The legacy typed refusal is retained for compatibility but neither production nor in-memory admission emits it.",
         "invalid_json": "api/crates/layer1-public/src/rest/workspaces.rs# This bodyless command has no RequestBody or Json extractor and calls execute_empty_command; request bytes and Content-Type are not decoded or subject to an extractor body limit.",
         "json_content_type_required": "api/crates/layer1-public/src/rest/workspaces.rs# This bodyless command has no RequestBody or Json extractor and calls execute_empty_command; request bytes and Content-Type are not decoded or subject to an extractor body limit.",
         "request_too_large": "api/crates/layer1-public/src/rest/workspaces.rs# This bodyless command has no RequestBody or Json extractor and calls execute_empty_command; request bytes and Content-Type are not decoded or subject to an extractor body limit.",

@@ -1494,7 +1494,7 @@ async fn workspace_claims_survive_reopen_and_fence_out_an_expired_worker() {
 
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
-async fn workspace_removal_locks_the_row_and_rejects_only_live_agents() {
+async fn workspace_removal_locks_the_row_and_durably_admits_live_child_cleanup() {
     let (client, name) = database("workspace_removal").await;
     let store = MongoSandboxStore::open(&client, &name).await.unwrap();
     let parent = sandbox("sbx_workspace_removal");
@@ -1505,28 +1505,6 @@ async fn workspace_removal_locks_the_row_and_rejects_only_live_agents() {
     agent.workspace_id = candidate.id.clone();
     store.create_agent(agent.clone()).await.unwrap();
 
-    assert_eq!(
-        store
-            .begin_workspace_removal(&candidate.id, &candidate.owner, NOW.into())
-            .await,
-        Err(SandboxStoreError::WorkspaceHasLiveAgents)
-    );
-    assert_eq!(
-        store.get_workspace(&candidate.id).await.unwrap(),
-        Some(candidate.clone())
-    );
-    let raw = store
-        .workspaces
-        .find_one(doc! { "_id": candidate.id.as_str() })
-        .await
-        .unwrap()
-        .unwrap();
-    assert!(!raw.contains_key("removal_lock_fence"));
-
-    let expected = agent.revision;
-    agent.status = agent.status.transition(AgentStatus::Stopped).unwrap();
-    agent.revision += 1;
-    store.save_agent(expected, agent).await.unwrap();
     let removing = store
         .begin_workspace_removal(&candidate.id, &candidate.owner, NOW.into())
         .await
@@ -1534,6 +1512,14 @@ async fn workspace_removal_locks_the_row_and_rejects_only_live_agents() {
     assert_eq!(removing.status, WorkspaceStatus::Removing);
     assert_eq!(removing.work.step, WorkspaceWorkStep::Remove);
     assert_eq!(removing.revision, 2);
+    assert_eq!(store.get_agent(&agent.id).await.unwrap(), Some(agent));
+    let raw = store
+        .workspaces
+        .find_one(doc! { "_id": candidate.id.as_str() })
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(raw.get_i64("removal_lock_fence").unwrap(), 1);
     assert_eq!(
         store
             .begin_workspace_removal(&candidate.id, &candidate.owner, NOW.into())

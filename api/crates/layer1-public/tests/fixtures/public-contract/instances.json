@@ -297,27 +297,38 @@
       "captures": {}
     },
     {
-      "id": "workspace-live-agent-conflict",
+      "id": "workspace-live-agent-removal",
       "operation": "DELETE /api/v1/workspaces/{id}",
       "scenario": "instances_owner",
       "request": {
         "method": "DELETE",
         "path": "/api/v1/workspaces/wks_route",
         "headers": {
-          "idempotency-key": "workspace-live-agent-conflict"
+          "idempotency-key": "workspace-live-agent-removal"
         }
       },
       "response": {
-        "status": 409,
+        "status": 202,
         "headers": {
-          "content-type": "application/problem+json"
+          "content-type": "application/json"
         },
         "body": {
-          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource-conflict",
-          "title": "resource conflict",
-          "status": 409,
-          "detail": "The operation conflicts with current resource state.",
-          "code": "workspace_has_live_agents"
+          "id": "wks_route",
+          "sandbox_id": "sbx_route",
+          "name": "project",
+          "path": "/home/cma/project",
+          "source": {
+            "type": "empty"
+          },
+          "resolved_commit": "cccccccccccccccccccccccccccccccccccccccc",
+          "status": "removing",
+          "profile": {
+            "id": "wkp_route",
+            "revision": 2
+          },
+          "created_at": "2026-09-05T00:00:00Z",
+          "ready_at": "2026-09-05T00:00:00Z",
+          "revision": 2
         },
         "bodyKind": "json"
       },
