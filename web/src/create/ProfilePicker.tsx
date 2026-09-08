@@ -5,6 +5,7 @@ import { Button } from '../ui/Button';
 import { IconCheckOutline16, IconPlusOutline16 } from '../ui/icons';
 import { ReferenceLink } from '../profiles/ReferenceLink';
 import type { CreationClient, CreationProfile, ProfileChoice, ProfileSource } from './client';
+import { ProfilePreview } from './ProfilePreview';
 
 export function ProfilePicker({
   client,
@@ -127,7 +128,12 @@ export function ProfilePicker({
       )}
       <ul className="create-profile-picker__list">
         {choices.map((choice) => (
-          <li key={`${choice.id}:${String(choice.revision)}`}>
+          <ProfilePreview
+            key={`${source}:${choice.id}:${String(choice.revision)}`}
+            client={client}
+            kind={kind}
+            choice={choice}
+          >
             <span>
               <ReferenceLink kind={kind} id={choice.id} name={choice.name} />{' '}
               <span>Version {choice.revision}</span>
@@ -151,7 +157,7 @@ export function ProfilePicker({
               }
               onClick={() => void choose(choice)}
             />
-          </li>
+          </ProfilePreview>
         ))}
       </ul>
       {!loading && !error && choices.length === 0 ? <p>No published profiles</p> : null}
