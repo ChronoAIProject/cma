@@ -356,6 +356,7 @@
 .agent-composer__capsule {
   display: flex;
   flex-direction: column;
+  gap: 12px;
   min-width: 0;
   padding: 10px 0 0;
   background: var(--dsw-specific-input-major);
@@ -389,7 +390,7 @@
 }
 
 .agent-composer textarea::placeholder {
-  color: var(--dsw-alias-label-tertiary);
+  color: var(--dsw-alias-label-caption);
 }
 
 .agent-composer .agent-composer__submit {
@@ -487,7 +488,13 @@
   }
 
   .agent-composer .agent-composer__submit {
-    width: 44px;
-    height: 44px;
+    position: relative;
+    justify-self: center;
+  }
+
+  .agent-composer__submit::after {
+    position: absolute;
+    inset: -5px;
+    content: '';
   }
 }

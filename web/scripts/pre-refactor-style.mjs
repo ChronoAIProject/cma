@@ -120,6 +120,23 @@ try {
         if (path === '/api/v1/agui/launches/lch_example/events')
           return route.fulfill({ contentType: 'text/event-stream', body: ': keep-alive\n\n' });
         if (path === '/api/v1/sandboxes') return reply({ items: [] });
+        if (path === '/api/v1/sandboxes/sbx_one')
+          return reply({
+            ...agent.sandbox,
+            limits: { max_workspaces: 4, max_agents_per_workspace: 4 },
+            lifecycle: {
+              pause: { allowed: true },
+              revive: { allowed: false, reason: 'not_paused' },
+            },
+            workspace_count: 1,
+            worktree_count: 1,
+            agent_count: 1,
+            workspaces: [],
+            last_activity_at: now,
+            created_at: now,
+            updated_at: now,
+            revision: 1,
+          });
         if (path === '/api/v1/agents/agt_ready')
           return reply({
             ...agent,
@@ -357,6 +374,96 @@ try {
         'aria-valuenow',
         '14050',
       );
+      const conversationStyle = async () =>
+        page.evaluate(() => {
+          const find = (selector) => document.querySelector(selector);
+          const style = (selector) => getComputedStyle(find(selector));
+          const button = find('.agent-composer__submit');
+          const box = button.getBoundingClientRect();
+          const hit = getComputedStyle(button, '::after');
+          const caption = style('body').getPropertyValue('--dsw-alias-label-caption').trim();
+          const label = document.createElement('span');
+          label.style.color = caption;
+          document.body.append(label);
+          const captionColor = getComputedStyle(label).color;
+          label.style.color = style('body').getPropertyValue('--dsw-alias-label-secondary').trim();
+          const secondaryColor = getComputedStyle(label).color;
+          label.remove();
+          const contrast = (foreground, background) => {
+            const luminance = (color) => {
+              const channels = color
+                .match(/[\d.]+/g)
+                .slice(0, 3)
+                .map(Number);
+              return channels.reduce((sum, value, index) => {
+                const unit = value / 255;
+                const linear = unit <= 0.04045 ? unit / 12.92 : ((unit + 0.055) / 1.055) ** 2.4;
+                return sum + linear * [0.2126, 0.7152, 0.0722][index];
+              }, 0);
+            };
+            const values = [luminance(foreground), luminance(background)].sort((a, b) => a - b);
+            return (values[1] + 0.05) / (values[0] + 0.05);
+          };
+          const body = style('.thinking__body');
+          const placeholder = getComputedStyle(find('.agent-composer textarea'), '::placeholder');
+          const mobile = innerWidth < 480;
+          const points = [
+            [box.x - 4, box.y + box.height / 2],
+            [box.right + 4, box.y + box.height / 2],
+            [box.x + box.width / 2, box.y - 4],
+            [box.x + box.width / 2, box.bottom + 4],
+          ];
+          return {
+            buttonWidth: box.width,
+            buttonHeight: box.height,
+            buttonRadius: style('.agent-composer__submit').borderRadius,
+            mobileHitWidth: mobile
+              ? box.width - parseFloat(hit.left) - parseFloat(hit.right)
+              : null,
+            mobileHitHeight: mobile
+              ? box.height - parseFloat(hit.top) - parseFloat(hit.bottom)
+              : null,
+            mobileHitPoints: mobile
+              ? points.map(([x, y]) => button.contains(document.elementFromPoint(x, y)))
+              : [],
+            capsuleRadius: style('.agent-composer__capsule').borderRadius,
+            capsuleGap: style('.agent-composer__capsule').rowGap,
+            thinkingMargin: style('.thinking').marginBottom,
+            thinkingMaxHeight: body.maxHeight,
+            thinkingInkMatchesSecondary: body.color === secondaryColor,
+            thinkingContrast: contrast(body.color, body.backgroundColor),
+            placeholderInkMatchesCaption: placeholder.color === captionColor,
+            placeholderContrast: contrast(
+              placeholder.color,
+              style('.agent-composer__capsule').backgroundColor,
+            ),
+            usageGap: style('.agent-instruments__usage').columnGap,
+            resourceGap: style('.resources').columnGap,
+          };
+        });
+      const restoredStyle = await conversationStyle();
+      await writeFile(
+        join(output, `${tag}-computed-style.json`),
+        JSON.stringify(restoredStyle, null, 2),
+      );
+      assert.equal(restoredStyle.buttonWidth, 34);
+      assert.equal(restoredStyle.buttonHeight, 34);
+      assert.equal(restoredStyle.buttonRadius, '50%');
+      assert.equal(restoredStyle.capsuleRadius, '22px');
+      assert.equal(restoredStyle.capsuleGap, '12px');
+      assert.equal(restoredStyle.thinkingMargin, '0px');
+      assert.equal(restoredStyle.thinkingMaxHeight, '120px');
+      assert.equal(restoredStyle.thinkingInkMatchesSecondary, true);
+      assert.equal(restoredStyle.placeholderInkMatchesCaption, true);
+      assert(restoredStyle.thinkingContrast >= 4.5);
+      assert(restoredStyle.placeholderContrast >= 4.5);
+      assert.equal(restoredStyle.usageGap, '12px');
+      assert.equal(restoredStyle.resourceGap, '12px');
+      if (viewport.width < 480) {
+        assert.equal(restoredStyle.mobileHitWidth, 44);
+        assert.equal(restoredStyle.mobileHitHeight, 44);
+        assert(restoredStyle.mobileHitPoints.every(Boolean));
+      }
       const fits = await page.evaluate(() => ({
         width: document.documentElement.scrollWidth,
         viewport: innerWidth,
@@ -374,7 +481,7 @@ try {
       }));
       assert(fits.width <= fits.viewport);
       assert.equal(fits.send, '50%');
-      assert.equal(fits.sendWidth, viewport.width === 390 ? 44 : 34);
+      assert.equal(fits.sendWidth, 34);
       assert.equal(fits.sendHeight, fits.sendWidth);
       assert(fits.childWidths.every((width) => width <= fits.centerWidth + 1));
       assert.equal(fits.metrics, 3);
@@ -392,6 +499,12 @@ try {
           .locator('.agent-surface__conversation')
           .evaluate((element) => element.scrollHeight - element.scrollTop - element.clientHeight);
       emit({ type: 'RUN_STARTED' });
+      await expect(page.getByRole('button', { name: 'Stop response', exact: true })).toBeVisible();
+      const stopStyle = await conversationStyle();
+      assert.equal(stopStyle.buttonWidth, restoredStyle.buttonWidth);
+      assert.equal(stopStyle.buttonHeight, restoredStyle.buttonHeight);
+      assert.equal(stopStyle.buttonRadius, restoredStyle.buttonRadius);
+      assert.deepEqual(stopStyle.mobileHitPoints, restoredStyle.mobileHitPoints);
       emit({ type: 'TEXT_MESSAGE_START', messageId: 'follow-message', role: 'assistant' });
       emit({
         type: 'TEXT_MESSAGE_CONTENT',
@@ -444,6 +557,8 @@ try {
         agentShot,
         recoveryShot,
         transientHistoryRecoveryPreservesDraft: true,
+        restoredStyle,
+        stopStyle,
         followShot,
         followsLiveOutputAndPreservesManualScroll: true,
         launches,
