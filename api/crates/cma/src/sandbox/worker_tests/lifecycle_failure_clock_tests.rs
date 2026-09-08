@@ -12,6 +12,7 @@ enum FailurePoint {
     Hold,
     InvalidHold,
     Conversation,
+    Teardown,
 }
 
 struct DelayedFailure {
@@ -37,6 +38,14 @@ impl HostedBackend for DelayedFailure {
         self.backend.adopt(handle, request).await
     }
 
+    async fn inventory(&self) -> layer3_adapter::Result<Vec<RuntimeObservation>> {
+        if matches!(self.point, FailurePoint::Teardown) {
+            Ok(Vec::new())
+        } else {
+            self.backend.inventory().await
+        }
+    }
+
     async fn exchange(
         &self,
         handle: &RuntimeHandle,
@@ -52,7 +61,7 @@ impl HostedBackend for DelayedFailure {
             ));
         }
         let result = self.backend.exchange(handle, request).await;
-        if hold {
+        if hold && !matches!(self.point, FailurePoint::Teardown) {
             tokio::time::sleep(Duration::from_secs(600)).await;
             match self.point {
                 FailurePoint::Hold => {
@@ -67,7 +76,7 @@ impl HostedBackend for DelayedFailure {
                     receipt.checkpoint.epoch += 1;
                     return Ok(ResponseFrame::CheckpointForTeardown(receipt));
                 }
-                FailurePoint::Conversation => {}
+                FailurePoint::Conversation | FailurePoint::Teardown => {}
             }
         }
         if conversation {
@@ -76,7 +85,7 @@ impl HostedBackend for DelayedFailure {
                 "fixture conversation response lost".into(),
             ));
         }
-        if resume {
+        if resume && !matches!(self.point, FailurePoint::Teardown) {
             tokio::time::sleep(Duration::from_secs(90)).await;
         }
         result
@@ -96,6 +105,11 @@ impl HostedBackend for DelayedFailure {
     }
 
     async fn teardown(&self, handle: &RuntimeHandle) -> layer3_adapter::Result<()> {
+        if matches!(self.point, FailurePoint::Teardown) {
+            return Err(AdapterError::Unavailable(
+                "fixture teardown was not confirmed".into(),
+            ));
+        }
         self.backend.teardown(handle).await
     }
 }
@@ -118,6 +132,71 @@ async fn delayed_conversation_capture_failure_includes_all_elapsed_work_before_r
 #[tokio::test(start_paused = true)]
 async fn delayed_invalid_hold_records_terminal_failure_after_writer_resume_finishes() {
     failed_capture(FailurePoint::InvalidHold, false).await;
+}
+
+#[tokio::test]
+async fn teardown_failure_cannot_be_overruled_by_an_empty_provider_inventory() {
+    let harness = Harness::new(Vec::new(), 0, Duration::from_secs(60)).await;
+    let created = harness.create().await;
+    let start = start_time(&created);
+    let active = harness.drive_active(&created.id, start).await;
+    let now = start + Duration::from_secs(1);
+    harness
+        .store
+        .schedule_sandbox_lifecycle(SandboxLifecycleCommand::pause(
+            active.id.clone(),
+            active.owner.clone(),
+            rfc3339_at(now),
+            None,
+        ))
+        .await
+        .unwrap();
+    for _ in 0..2 {
+        assert!(harness.worker.run_one(&active.id, now).await.unwrap());
+    }
+    let before = harness.stored(&active.id).await;
+    assert!(matches!(
+        before.lifecycle.operation,
+        Some(layer2_core::sandbox::SandboxLifecycleOperation::Pause {
+            phase: layer2_core::sandbox::SandboxPausePhase::TeardownRuntime,
+            ..
+        })
+    ));
+    let adapter = Arc::new(CodexAdapter::new(
+        Arc::new(DelayedFailure {
+            backend: harness.backend.clone(),
+            point: FailurePoint::Teardown,
+            resume_fails: false,
+        }),
+        CodexSandboxSpec::default(),
+    ));
+    let worker = harness.worker_with_adapter("worker-a", adapter);
+    assert!(worker.run_one(&active.id, now).await.unwrap());
+    let after = harness.stored(&active.id).await;
+    assert_eq!(after.runtime, before.runtime);
+    assert_eq!(after.status, SandboxStatus::Pausing);
+    assert_eq!(after.work.attempts, before.work.attempts + 1);
+    let runtime = RuntimeHandle(active.runtime.as_ref().unwrap().runtime_id.clone());
+    assert!(
+        !harness
+            .backend
+            .snapshot(&runtime)
+            .await
+            .unwrap()
+            .writers_held
+    );
+    let events = harness
+        .store
+        .sandbox_events(&active.id, 0, 200)
+        .await
+        .unwrap();
+    assert!(matches!(
+        events.last().map(|event| &event.kind),
+        Some(SandboxEventKind::WorkStepFailed {
+            step: SandboxWorkStep::RunLifecycleOperation,
+            ..
+        })
+    ));
 }
 
 async fn failed_capture(point: FailurePoint, resume_fails: bool) {

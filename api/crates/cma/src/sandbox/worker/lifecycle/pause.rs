@@ -125,17 +125,9 @@ impl SandboxWorker {
                 .await;
         };
         if let Err(error) = self.dependencies.adapter.teardown(&handle).await {
-            let confirmed_absent = self
-                .dependencies
-                .adapter
-                .runtime_inventory()
-                .await
-                .is_ok_and(|inventory| inventory.iter().all(|observed| observed.handle != handle));
-            if !confirmed_absent {
-                return self
-                    .abort_lifecycle_hold(sandbox, adapter_failure(error), now)
-                    .await;
-            }
+            return self
+                .abort_lifecycle_hold(sandbox, adapter_failure(error), now)
+                .await;
         }
         let stamp = rfc3339_at(now);
         let lease = lifecycle_lease(&sandbox, &self.config.holder)?;
