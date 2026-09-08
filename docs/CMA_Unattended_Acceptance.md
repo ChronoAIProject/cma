@@ -29,7 +29,7 @@ Monitor disk usage and inspect exact targets before removing stale artifacts.
 | 14 | No unavailable Sandbox/Workspace expansion controls or children | Sandbox gating retained; preparing/deleting/failed Workspaces now also hide children and expansion controls. Local tests pass; production verification pending. |
 | 15 | Standard Sandbox states; deleted hidden; deletion dialog explains removal | Resource-specific labels implemented; snapshots no longer replace Live/Pausing. Explicit Needs attention remains for genuine failures. Production coverage pending. |
 | 16 | IME confirmation Enter never sends; ordinary Enter sends | Deployed in web 40300b5e. Production desktop/mobile synthetic composition, keyCode 229, Shift+Enter and ordinary Enter checks pass; draft retained. Ordinary-send requests intercepted before reaching the Agent. Native OS IME selection still requires a real keyboard check, not claimed by browser-generated events. |
-| 17 | Agent header and sidebar show consistent resource state | Production desktop/mobile Ready -> Working -> Ready -> Stopped transitions passed with zero MutationObserver mismatches, including reload. Evidence: agent-status-sync-oU399d/result.json. A separate misleading normal-stop error notice is being corrected in web 57f793aa. |
+| 17 | Agent header and sidebar show consistent resource state | Production desktop/mobile Ready -> Working -> Ready -> Stopped transitions passed with zero MutationObserver mismatches, including reload. Evidence: agent-status-sync-oU399d/result.json. Normal-stop notice correction in web 57f793aa also passed actual live transitions: agent-status-sync-uzRQlH/result.json. |
 | 18 | Notifications animate on showing and dismissal | Pending shared notification audit, implementation and reduced-motion checks. |
 | 19 | Real native terminal and chat share one conversation, all CLI features, matching theme and reliable sizing | Pending pinned-engine feasibility and implementation. An independent second conversation or imitation terminal is not acceptance. |
 | 20 | gh through NyxID GitHub OAuth; identity per user; three-service Connect/Verify flow | Pending runtime/proxy implementation and connection-flow verification. Do not hardcode author identity in shared profiles. |
@@ -126,8 +126,8 @@ image identity and measured results for each behavior, with unknowns left explic
 
 ## Next Verification Work
 
-- Verify the normal-stop notification refinement after the web-only rollout.
-  Selected-Agent status synchronization already passed actual production transitions.
+- Verify the first-periodic-snapshot delay after the API rollout. Both status
+  synchronization and the normal-stop notification passed actual production transitions.
 - Verify deletion while the same Sandbox is snapshotting after #4 is corrected.
   Standalone live-child Workspace deletion now passes production acceptance.
 - Continue the complete register above, especially consistent nonblocking
@@ -183,3 +183,23 @@ image identity and measured results for each behavior, with unknowns left explic
   Read-only baseline normal-stop-notice-hpzdfU confirms the retained stopped
   Agent reload is already clean; a live Stop transition is needed to verify the
   refinement, because that is where the previous misleading notice appeared.
+- Web 57f793aa rollout completed healthy, API/runtime unchanged. Evidence:
+  unattended-web-rollout-IOfDDv. Production live transition verification
+  agent-status-sync-uzRQlH passed at desktop/mobile with zero status mismatches
+  and zero false normal-stop error notices. Its exact test Sandbox was retired;
+  owner histories remained unchanged. Read-only reload check also passed in
+  normal-stop-notice-9ZEBab.
+- API source 7b84e10d changes initial periodic snapshot scheduling from immediate
+  to the configured interval after the persisted runtime binding time. Existing
+  snapshot cadence and manual/automatic pause capture remain unchanged.
+  All 1,591 isolated Rust tests, 181 focused checkpoint tests, Clippy, formatting,
+  doc-test gate and source scanning pass. Existing timing fixtures were advanced
+  to the newly required age; no test was skipped or weakened. Linux/amd64 build,
+  fixed HIGH/CRITICAL scan and remote digest verification pass. Production
+  behavior verification follows deployment; #4 is still unsatisfied.
+- Profile card source 7c01741f passed 1,146 frontend tests and local read-only
+  browser verification against real production profiles. All three kinds in
+  Profiles and Marketplace passed full-card navigation at 1440, 390 and 320px,
+  in both themes. Evidence: profile-cards-AIhuVT/result.json. Screenshot review
+  found a pre-existing account UUID author label; directory-name correction is
+  needed before calling the full discovery experience accepted.
