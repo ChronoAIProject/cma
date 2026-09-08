@@ -58,11 +58,10 @@ data:
   # In-cluster provider authority and the namespace granted by its scoped Role.
   CHRONO_SANDBOX_BASE_URL: "http://opensandbox-server.opensandbox-system.svc.cluster.local"
   CHRONO_SANDBOX_NAMESPACE: "chrono-bot"
-  # Record the existing contract-3 production pin; this does not rotate runtimes.
-  # Image/contract checks passed, but provider sandbox compatibility and complete
-  # production pause/restore verification remain open. Do not infer those from
-  # this pin or change it without the explicit runtime-rotation decision.
-  CHRONO_SANDBOX_IMAGE: "us-central1-docker.pkg.dev/aelf-shared-k8s-prod/aelf-prod-registry/cma-runtime@sha256:3c47370e24aa95915aa6c74567a981358ab333e44ba766ca4389e9827b32b5b8"
+  # Persist untouched Agent conversations before Ready. Update only in a verified
+  # runtime-absent window; this pin must never silently rotate an active Sandbox.
+  # Build/contract checks do not replace production pause/restore verification.
+  CHRONO_SANDBOX_IMAGE: "us-central1-docker.pkg.dev/aelf-shared-k8s-prod/aelf-prod-registry/cma-runtime@sha256:dc2742368ac98d3497e3841cc46997b7d2f2051453c5dcb6c9e184a11eeaa1d0"
   # Default resource profiles are seeded only when no corresponding default
   # exists. Durable operator settings and published profiles own later choices.
   CHRONO_SANDBOX_CPU: "1"
