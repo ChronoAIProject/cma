@@ -291,7 +291,6 @@ export function mountCharacter(host: HTMLElement, options: CharacterOptions = {}
     readonly material: THREE.MeshBasicMaterial;
     readonly base: number;
   }[] = [];
-  const invitationMaterials: THREE.MeshBasicMaterial[] = [];
 
   for (const side of [-1, 1]) {
     const lensGeometry = new THREE.ExtrudeGeometry(
@@ -310,33 +309,6 @@ export function mountCharacter(host: HTMLElement, options: CharacterOptions = {}
     const lens = new THREE.Mesh(lensGeometry, lensMaterial);
     lens.name = side < 0 ? 'lens-left' : 'lens-right';
     head.add(lens);
-
-    if (options.onActivate !== undefined) {
-      const canvas = document.createElement('canvas');
-      canvas.width = 512;
-      canvas.height = 256;
-      const context = canvas.getContext('2d');
-      if (context === null) throw new Error('Character invitation canvas unavailable');
-      context.fillStyle = '#ffffff';
-      context.font = '600 96px sans-serif';
-      context.textAlign = 'center';
-      context.textBaseline = 'middle';
-      context.fillText(side < 0 ? 'Get' : 'Started', 256, 128, 490);
-      const texture = new THREE.CanvasTexture(canvas);
-      texture.colorSpace = THREE.SRGBColorSpace;
-      const material = new THREE.MeshBasicMaterial({
-        map: texture,
-        transparent: true,
-        opacity: reduced ? 1 : 0,
-        depthWrite: false,
-      });
-      const geometry = new THREE.PlaneGeometry(LENS_SPAN - LENS_GAP, LENS_HEIGHT * 0.8, 16, 4);
-      wrap(geometry, (side * centreX) / face, EYE_Y, LENS_DEPTH + 0.014);
-      const text = new THREE.Mesh(geometry, material);
-      text.renderOrder = 3;
-      head.add(text);
-      invitationMaterials.push(material);
-    }
 
     const glintGeometry = new THREE.ExtrudeGeometry(roundedRect(0.026, LENS_HEIGHT * 0.78, 0.012), {
       depth: 0.002,
@@ -394,7 +366,7 @@ export function mountCharacter(host: HTMLElement, options: CharacterOptions = {}
   let swing = 0;
   let activating = false;
   let activated = false;
-  let invitationReady = reduced;
+  let bumpStart = -1;
 
   const visible = () =>
     !disposed && contextAvailable && intersecting && document.visibilityState === 'visible';
@@ -443,6 +415,14 @@ export function mountCharacter(host: HTMLElement, options: CharacterOptions = {}
     rig.position.y = reduced ? 0 : decorative ? Math.sin(time * 1.05) * 0.028 : step.lift;
     rig.rotation.z = reduced || !decorative ? 0 : Math.sin(time * 0.72) * 0.028 - pointer.x * 0.05;
 
+    if (!reduced && bumpStart >= 0 && spinStart < 0) {
+      const progress = clamp((animationTime - bumpStart) / 0.65, 0, 1);
+      const bump = Math.sin(progress * Math.PI);
+      rig.position.y += 0.08 * bump;
+      rig.scale.setScalar(1 + 0.06 * bump);
+      if (progress >= 1) bumpStart = -1;
+    }
+
     if (spinStart >= 0) {
       const progress = clamp((animationTime - spinStart) / 0.95, 0, 1);
       const eased =
@@ -469,16 +449,10 @@ export function mountCharacter(host: HTMLElement, options: CharacterOptions = {}
     const shadowScale = 1 - rig.position.y * 0.5;
     shadow.scale.set(0.76 * shadowScale, 0.11 * shadowScale, 1);
 
-    if (
-      !reduced &&
-      decorative &&
-      time > nextGlint &&
-      !(options.onActivate !== undefined && invitationReady)
-    ) {
+    if (!reduced && decorative && time > nextGlint) {
       const progress = (time - nextGlint) / 0.62;
       if (progress >= 1) {
         nextGlint = time + 4.5 + Math.random() * 2.5;
-        invitationReady = true;
       }
       for (const glint of glints) {
         glint.pivot.rotation.y = glint.base + (progress - 0.5) * 0.34;
@@ -490,12 +464,6 @@ export function mountCharacter(host: HTMLElement, options: CharacterOptions = {}
       }
     }
 
-    for (const material of invitationMaterials)
-      material.opacity = reduced || invitationReady ? 1 : 0;
-    host.toggleAttribute(
-      'data-invitation',
-      options.onActivate !== undefined && (reduced || invitationReady),
-    );
     renderer.render(scene, camera);
     if (!ready) {
       ready = true;
@@ -532,7 +500,6 @@ export function mountCharacter(host: HTMLElement, options: CharacterOptions = {}
     for (const glint of glints) {
       glint.material.color.copy(palette.glint);
     }
-    for (const material of invitationMaterials) material.color.copy(palette.body);
     requestRender();
   }
 
@@ -550,18 +517,25 @@ export function mountCharacter(host: HTMLElement, options: CharacterOptions = {}
   const onClick = () => {
     if (options.onActivate !== undefined) {
       if (activating || activated) return;
+      host.setAttribute('data-activating', '');
       if (reduced) {
         activated = true;
         options.onActivate();
         return;
       }
       activating = true;
+      bumpStart = -1;
       spinStart = animationTime;
       return;
     }
     if (!reduced && decorative && spinStart < 0) {
       spinStart = animationTime;
     }
+  };
+  const onInvite = () => {
+    if (options.onActivate === undefined || reduced || activating || activated) return;
+    bumpStart = animationTime;
+    requestRender();
   };
   const onVisibility = () => {
     lastFrame = null;
@@ -591,6 +565,8 @@ export function mountCharacter(host: HTMLElement, options: CharacterOptions = {}
   window.addEventListener('pointermove', onPointerMove, { passive: true });
   window.addEventListener('resize', resize);
   host.addEventListener('click', onClick);
+  host.addEventListener('pointerenter', onInvite);
+  host.addEventListener('focus', onInvite);
   document.addEventListener('visibilitychange', onVisibility);
   motion.addEventListener('change', onMotion);
   renderer.domElement.addEventListener('webglcontextlost', onContextLost);
@@ -625,6 +601,8 @@ export function mountCharacter(host: HTMLElement, options: CharacterOptions = {}
       window.removeEventListener('pointermove', onPointerMove);
       window.removeEventListener('resize', resize);
       host.removeEventListener('click', onClick);
+      host.removeEventListener('pointerenter', onInvite);
+      host.removeEventListener('focus', onInvite);
       document.removeEventListener('visibilitychange', onVisibility);
       motion.removeEventListener('change', onMotion);
       renderer.domElement.removeEventListener('webglcontextlost', onContextLost);
@@ -652,14 +630,13 @@ export function mountCharacter(host: HTMLElement, options: CharacterOptions = {}
       for (const material of materials) {
         material.dispose();
       }
-      for (const material of invitationMaterials) material.map?.dispose();
       shadowMap.dispose();
       scene.clear();
       renderer.dispose();
       renderer.forceContextLoss();
       renderer.domElement.remove();
       host.removeAttribute('data-motion');
-      host.removeAttribute('data-invitation');
+      host.removeAttribute('data-activating');
       if (host instanceof HTMLButtonElement) {
         host.disabled = true;
       }
