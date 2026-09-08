@@ -904,10 +904,15 @@ safeguard; Stop is a distinct operation.
 Pause and Resume use the public Sandbox lifecycle eligibility in both the
 Sandbox page and its tree menu, never Active or Paused alone. Missing eligibility
 or a failed refresh leaves those controls unavailable with a written reason.
-The tree keeps its last successful hierarchy during refresh and read failure.
+The tree keeps its last successful hierarchy during refresh and transient read
+failure. Authentication, permission or visibility denial clears cached hierarchy.
 Visible Sandbox and hierarchy reads refresh every five seconds while settled,
 and every 1.5 seconds while recorded lifecycle work is in progress; reads never
 overlap or admit work. Hidden pages defer refresh until visible again.
+Every poll refreshes the authorized inventory and mutable Sandbox subtrees.
+Unchanged retired subtrees reuse their known details, with a full recheck at
+least every minute and after explicit refresh. Inventory removal or a changed
+summary invalidates that reuse; cached ancestry never creates missing resources.
 
 An actual save reports **Saving progress** during capture and **Finishing save**
 while writers resume, replacing Done in the Sandbox page and tree status seat.
@@ -1434,3 +1439,4 @@ Append-only. Never edit or delete an entry.
 | 2026-09-08 | Bound Sandbox page and tree Pause/Resume controls to public lifecycle eligibility. Reused status seats for actual saving phases and start time, added visible nonoverlapping refresh while Active, and preserved the hierarchy with readable unavailable reasons after a failed refresh. Workspace and Agent creation rules remain unchanged. |
 | 2026-09-08 | Added public Sandbox capture observation to the Agent composer. Preserved drafts and history while holding new messages and approval decisions during saving or unavailable lifecycle reads, kept ordinary paused-message revival, and distinguished pending admission from a durably active turn before offering Stop response. |
 | 2026-09-08 | Made long Agent history progressively readable after the first authorized activity page. Reused the status band and preserved editable drafts while holding commands and replay until all history pages load, without skipping tool or approval activity. |
+| 2026-09-08 | Bounded sidebar refresh fan-out by reusing unchanged retired Sandbox subtrees between minute rechecks. Kept authorized inventory and mutable descendants fresh, invalidated removed or changed resources, and cleared cached hierarchy on authentication or visibility denial. |
