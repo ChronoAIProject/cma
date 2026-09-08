@@ -2054,3 +2054,84 @@ account is available.
 All evidence paths in this appendix are relative to
 `/tmp/cma-trureturing-loop.LvTezb/`. These local directories may contain private
 browser state. Do not upload or commit them wholesale.
+
+## 2026-09-08 Snapshot Rollout
+
+Both images built from `acb1474190c40d7b7adfe423ef2eef81bd03ea0d` passed the
+configured vulnerability scan, were uploaded, and had their remote amd64
+digest and source labels checked before the rollout:
+
+| Component | Production digest after this rollout |
+| --- | --- |
+| API | `sha256:eff5b8b280f7246b1439b8130745296250993cb1cd88d1e031168efdaf90093c` |
+| Web | `sha256:dc325c3c1a909f73c88b2b4307586b67d7f73d8ffd07b352f6f0f4e36b2ac4f0` |
+| Runtime, unchanged | `sha256:3c47370e24aa95915aa6c74567a981358ab333e44ba766ca4389e9827b32b5b8` |
+
+The API preflight in `lifecycle-api-rollout-EjDYiM` verified all-owner public
+inventory was paused or retired, no runtime or admitted lifecycle work
+remained, and retained transcripts were complete. The resource-version-guarded
+API patch and web patch (`cloud-web-rollout-HsG7h7`) completed successfully.
+Temporary build pods were scaled to zero before API deployment. Existing owner
+Agent transcripts were checked by Agent identity, not array position, and
+matched their preflight hashes after rollout.
+
+### Production acceptance
+
+- `snapshot-ui-production-1eqJFS` verifies Advanced's timestamp and canonical
+  download link, the 30-minute admin setting, hidden paused children, home-logo
+  navigation, standalone New Agent control, full-height sidebar, and animated
+  signed-in home logo at 1440px and 390px. An earlier attempt timed out navigating
+  to Operations; the complete retry passed without an application change.
+- The same run streamed the actual epoch-23 snapshot: 1,804,469,684 bytes in
+  271,234 milliseconds, with SHA-256
+  `e894b6bac8d267e3e64ab2a7019659a852ee44c67d6539e0fb8dcc781829004f`, matching
+  the completed checkpoint record. It was not written to a local file.
+  Signed-out access returned 401; an unavailable epoch returned 404.
+- `cloud-landing-tseyei` repeats all four signed-out landing cases on the new
+  web image, including reduced-motion and WebGL fallback behavior.
+- `trigger-pause-race-KVcdYK` proved fresh provisioning completed after the
+  launch browser was closed, the first prompt ran exactly once, active reuse
+  preserved the Agent, and early pause cancellation exposed `resume_writers`
+  before returning Active with the same runtime and conversation. The harness
+  then incorrectly required an absent runtime field to be JSON null.
+- `trigger-pause-race-An80BL` continued the same resources after fixing that
+  assertion. Paused reuse completed in 94,742 milliseconds with a new runtime
+  generation and the same Agent/transcript. A second save published epoch 2,
+  cleared `previous`, made the epoch-1 download return 404, and restored the
+  unchanged conversation. This proves latest-only publication and read access;
+  physical object pruning is additionally covered by the explicit Mongo tests.
+- `trigger-pause-race-m7pD09` continued cleanup after correcting the mobile
+  harness to await sidebar readiness. Agent and Workspace deletion both showed
+  progress and completion dialogs and remained absent after hard refresh.
+  Sandbox deletion showed progress but exceeded the test's 180-second limit
+  while a different Sandbox restored. A later public read confirmed it reached
+  Retired at revision 94. This is not a passing bounded-latency Sandbox deletion
+  test. The test Trigger was retired and its profile returned to private.
+- `current-readme-repeat-ra133I` clicked the current authenticated rendered
+  README link and admitted `lch_8c880917682c4ca29d63dca85330965e`. The actual
+  owner's paused Sandbox revived in 461,751 milliseconds; both existing Agents,
+  their Worktrees, and complete transcripts were preserved. The requested
+  Agent's input became enabled on desktop and mobile with no first-prompt replay.
+  Live restore stages were visible on Launch and Sandbox pages. The README
+  source-origin harness limitation remains as documented above.
+
+The owner Sandbox was left running after that supported Trigger action; it was
+not manually paused or restarted for a further deployment. The original
+`pub_b4a26689ed1a47f7889345d6212bc155` Trigger remains published with its original
+review and new-Agent behavior. The current README names the separately
+configured Trureturing Trigger; neither configuration was changed in this run.
+
+### Follow-up found during verification
+
+The production deletion delay revealed a shared scheduling bottleneck:
+`SandboxScheduler` waited for a complete serial `run_due` batch, so a long
+restore could prevent another Sandbox's due retirement from being claimed.
+The follow-up uses at most four independently fenced sweeps, preserves serial
+maintenance, and has bounded shutdown draining. All 531 applicable API tests
+and Clippy passed after this change. Its deployment and overlapping
+restore/deletion acceptance must be recorded separately; the earlier rollout
+does not include that fix.
+
+The large owner's 7-minute-42-second restore and 4-minute-31-second download
+remain performance findings, not claimed optimizations. The interruption-free
+snapshot and scratch/orphan-cleanup gaps above remain open.
