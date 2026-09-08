@@ -8,6 +8,7 @@ import { RiskConfirmation } from '../ui/RiskConfirmation';
 import { IconCloseOutline16, IconStopFill16, IconTrashOutline16 } from '../ui/icons';
 import type { AgentCommand } from './controller';
 import './Details.css';
+import { ReferenceLink } from '../profiles/ReferenceLink';
 
 interface AgentDetailsProps {
   readonly detail?: AgentDetail;
@@ -128,13 +129,30 @@ export function AgentDetails({
               </ResourceLink>
             </Fact>
             <Fact term="Status">{label(detail.sandbox.status)}</Fact>
-            <Fact term="Profile">{`${detail.sandbox.profile.id} @ ${String(detail.sandbox.profile.revision)}`}</Fact>
-            <Fact term="Reach">{detail.reach.length === 0 ? 'None' : detail.reach.join(', ')}</Fact>
+            <Fact term="Profile">
+              <ReferenceLink kind="sandbox" id={detail.sandbox.profile.id} />
+            </Fact>
+            <Fact term="NyxID services">
+              {detail.reach.length === 0 ? (
+                'None'
+              ) : (
+                <ul>
+                  {detail.reach.map((id) => (
+                    <li key={id}>
+                      <ReferenceLink kind="service" id={id} />
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </Fact>
           </dl>
         </Band>
         <Band title="Workspace">
           <dl>
             <Fact term="Name">{detail.workspace.name}</Fact>
+            <Fact term="Profile">
+              <ReferenceLink kind="workspace" id={detail.workspace.profile.id} />
+            </Fact>
             <Fact term="Path">
               <code>{detail.workspace.path}</code>
             </Fact>
@@ -172,25 +190,23 @@ export function AgentDetails({
         <Band title="Agent profile">
           <dl>
             <Fact term="Profile">
-              <ResourceLink
-                route={{ kind: 'profile', profileKind: 'agent', profileId: detail.profile.id }}
-                onNavigate={onNavigate}
-              >
-                {`${detail.profile.id} @ ${String(detail.profile.revision)}`}
-              </ResourceLink>
+              <ReferenceLink kind="agent" id={detail.profile.id} />
             </Fact>
             <Fact term="Model">{detail.profile.model ?? 'Provider default'}</Fact>
             <Fact term="Thinking">{label(detail.profile.thinkingEffort)}</Fact>
             <Fact term="Permission">{label(detail.profile.permissionLevel)}</Fact>
             <Fact term="Skills">
-              {detail.profile.skills.length === 0
-                ? 'None'
-                : detail.profile.skills
-                    .map(
-                      (skill) =>
-                        `${skill.source}:${skill.id}${skill.version === undefined ? '' : `@${skill.version}`}`,
-                    )
-                    .join(', ')}
+              {detail.profile.skills.length === 0 ? (
+                'None'
+              ) : (
+                <ul>
+                  {detail.profile.skills.map((skill) => (
+                    <li key={skill.id}>
+                      <ReferenceLink kind="skill" id={skill.id} version={skill.version} />
+                    </li>
+                  ))}
+                </ul>
+              )}
             </Fact>
           </dl>
         </Band>

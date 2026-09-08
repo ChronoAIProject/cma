@@ -58,7 +58,7 @@ it('authors linked research profiles through routed public SDK clients and forks
   await user.click(screen.getByRole('radio', { name: 'Autonomous' }));
   fireEvent.change(screen.getByLabelText('Search Ornn skills'), { target: { value: 'research' } });
   await user.click(await screen.findByRole('button', { name: 'Add Research' }));
-  await user.click(screen.getByRole('button', { name: 'Version for research' }));
+  await user.click(screen.getByRole('button', { name: 'Version for Research' }));
   await user.click(screen.getByRole('menuitemradio', { name: '1.1' }));
   fireEvent.change(screen.getByLabelText('System prompt'), {
     target: { value: 'Inspect trureturing, explain findings, and verify changes with tests.' },

@@ -14,6 +14,7 @@ import {
   useRecords,
 } from './records';
 import { operatorFailure, type OperatorFailure } from './failure';
+import { ReferenceLink } from '../profiles/ReferenceLink';
 
 const defaultIds = new Set(['sbp_default', 'wkp_default', 'agp_default']);
 
@@ -182,7 +183,8 @@ function ProfileRecords({
               <Timestamp value={row.updated_at} />
               <div>
                 <p>
-                  {row.name} {row.retired_at === null ? null : <span>Retired</span>}
+                  <ReferenceLink kind={row.kind} id={row.id} name={row.name} />{' '}
+                  {row.retired_at === null ? null : <span>Retired</span>}
                 </p>
                 <p className="operator-meta">
                   <span>{stateWord(row.kind)}</span>
@@ -191,7 +193,6 @@ function ProfileRecords({
                     Owner <code>{row.owner}</code>
                   </span>
                 </p>
-                <code>{row.id}</code>
               </div>
               <div>
                 <Button
@@ -216,7 +217,7 @@ function ProfileRecords({
         <RiskConfirmation
           open
           title={`Retire ${target.name}`}
-          description={`Retire ${target.kind} profile ${target.id}. New creation from this profile will be refused; existing resources and published history remain. The operator action is audited.`}
+          description={`Retire ${target.kind} profile ${target.name}. New creation from this profile will be refused; existing resources and published history remain. The operator action is audited.`}
           acknowledgeLabel="I understand this profile will no longer be available for new resources."
           confirmLabel={uncertain ? 'Check current state' : 'Retire profile'}
           busy={busy}

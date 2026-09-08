@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { stepMotion } from './characterMotion';
 
 const RADIUS = 0.355;
 const HEM_LOW = -0.262;
@@ -20,6 +21,7 @@ interface CharacterOptions {
   readonly onUnavailable?: () => void;
   readonly state?: 'brand' | 'running' | 'completed' | 'pending' | 'failed';
   readonly autoRotate?: boolean;
+  readonly onActivate?: () => void;
 }
 
 export interface CharacterHandle {
@@ -204,7 +206,7 @@ function readPalette(host: HTMLElement, state: CharacterOptions['state']): Chara
 export function mountCharacter(host: HTMLElement, options: CharacterOptions = {}): CharacterHandle {
   const motion = window.matchMedia('(prefers-reduced-motion: reduce)');
   const decorative = options.state === undefined || options.state === 'brand';
-  const moving = decorative || options.state === 'running';
+  const moving = decorative || options.state !== 'failed';
   let reduced = motion.matches;
   let disposed = false;
   let intersecting = true;
@@ -225,7 +227,8 @@ export function mountCharacter(host: HTMLElement, options: CharacterOptions = {}
   host.appendChild(renderer.domElement);
 
   function syncInteraction() {
-    const enabled = !reduced && contextAvailable && decorative;
+    const enabled =
+      (!reduced || options.onActivate !== undefined) && contextAvailable && decorative;
     host.toggleAttribute('data-motion', enabled);
     if (host instanceof HTMLButtonElement) {
       host.disabled = !enabled;
@@ -288,6 +291,7 @@ export function mountCharacter(host: HTMLElement, options: CharacterOptions = {}
     readonly material: THREE.MeshBasicMaterial;
     readonly base: number;
   }[] = [];
+  const invitationMaterials: THREE.MeshBasicMaterial[] = [];
 
   for (const side of [-1, 1]) {
     const lensGeometry = new THREE.ExtrudeGeometry(
@@ -306,6 +310,33 @@ export function mountCharacter(host: HTMLElement, options: CharacterOptions = {}
     const lens = new THREE.Mesh(lensGeometry, lensMaterial);
     lens.name = side < 0 ? 'lens-left' : 'lens-right';
     head.add(lens);
+
+    if (options.onActivate !== undefined) {
+      const canvas = document.createElement('canvas');
+      canvas.width = 512;
+      canvas.height = 256;
+      const context = canvas.getContext('2d');
+      if (context === null) throw new Error('Character invitation canvas unavailable');
+      context.fillStyle = '#ffffff';
+      context.font = '600 96px sans-serif';
+      context.textAlign = 'center';
+      context.textBaseline = 'middle';
+      context.fillText(side < 0 ? 'Get' : 'Started', 256, 128, 490);
+      const texture = new THREE.CanvasTexture(canvas);
+      texture.colorSpace = THREE.SRGBColorSpace;
+      const material = new THREE.MeshBasicMaterial({
+        map: texture,
+        transparent: true,
+        opacity: reduced ? 1 : 0,
+        depthWrite: false,
+      });
+      const geometry = new THREE.PlaneGeometry(LENS_SPAN - LENS_GAP, LENS_HEIGHT * 0.8, 16, 4);
+      wrap(geometry, (side * centreX) / face, EYE_Y, LENS_DEPTH + 0.014);
+      const text = new THREE.Mesh(geometry, material);
+      text.renderOrder = 3;
+      head.add(text);
+      invitationMaterials.push(material);
+    }
 
     const glintGeometry = new THREE.ExtrudeGeometry(roundedRect(0.026, LENS_HEIGHT * 0.78, 0.012), {
       depth: 0.002,
@@ -361,6 +392,9 @@ export function mountCharacter(host: HTMLElement, options: CharacterOptions = {}
   let spinStart = -1;
   let nextGlint = 2.4;
   let swing = 0;
+  let activating = false;
+  let activated = false;
+  let invitationReady = reduced;
 
   const visible = () =>
     !disposed && contextAvailable && intersecting && document.visibilityState === 'visible';
@@ -384,7 +418,8 @@ export function mountCharacter(host: HTMLElement, options: CharacterOptions = {}
     lastFrame = timestamp;
     const time = reduced || !moving ? 0 : animationTime;
 
-    body.update(time);
+    body.update(decorative || options.state === 'running' ? time : 0);
+    const step = stepMotion(options.state, time);
     if (reduced || !decorative) {
       pointer.x = 0;
       pointer.y = 0;
@@ -405,7 +440,7 @@ export function mountCharacter(host: HTMLElement, options: CharacterOptions = {}
     head.rotation.x = pointer.y * 0.24;
     body.mesh.rotation.y = -swing * 0.5;
     body.mesh.rotation.z = swing * 0.22;
-    rig.position.y = reduced || !decorative ? 0 : Math.sin(time * 1.05) * 0.028;
+    rig.position.y = reduced ? 0 : decorative ? Math.sin(time * 1.05) * 0.028 : step.lift;
     rig.rotation.z = reduced || !decorative ? 0 : Math.sin(time * 0.72) * 0.028 - pointer.x * 0.05;
 
     if (spinStart >= 0) {
@@ -420,20 +455,30 @@ export function mountCharacter(host: HTMLElement, options: CharacterOptions = {}
         spinStart = -1;
         spin = 0;
         rig.scale.setScalar(1);
+        if (activating && !activated) {
+          activated = true;
+          options.onActivate?.();
+        }
       }
     }
     const rotationSpeed =
       options.state === 'running' ? Math.PI : options.autoRotate ? Math.PI / 4 : 0;
-    rig.rotation.y = reduced ? 0 : time * rotationSpeed + spin;
+    rig.rotation.y = reduced ? 0 : time * rotationSpeed + spin + step.rotation;
 
     shadowMaterial.opacity = 0.46 - rig.position.y * 1.4;
     const shadowScale = 1 - rig.position.y * 0.5;
     shadow.scale.set(0.76 * shadowScale, 0.11 * shadowScale, 1);
 
-    if (!reduced && decorative && time > nextGlint) {
+    if (
+      !reduced &&
+      decorative &&
+      time > nextGlint &&
+      !(options.onActivate !== undefined && invitationReady)
+    ) {
       const progress = (time - nextGlint) / 0.62;
       if (progress >= 1) {
         nextGlint = time + 4.5 + Math.random() * 2.5;
+        invitationReady = true;
       }
       for (const glint of glints) {
         glint.pivot.rotation.y = glint.base + (progress - 0.5) * 0.34;
@@ -445,6 +490,12 @@ export function mountCharacter(host: HTMLElement, options: CharacterOptions = {}
       }
     }
 
+    for (const material of invitationMaterials)
+      material.opacity = reduced || invitationReady ? 1 : 0;
+    host.toggleAttribute(
+      'data-invitation',
+      options.onActivate !== undefined && (reduced || invitationReady),
+    );
     renderer.render(scene, camera);
     if (!ready) {
       ready = true;
@@ -481,6 +532,7 @@ export function mountCharacter(host: HTMLElement, options: CharacterOptions = {}
     for (const glint of glints) {
       glint.material.color.copy(palette.glint);
     }
+    for (const material of invitationMaterials) material.color.copy(palette.body);
     requestRender();
   }
 
@@ -496,6 +548,17 @@ export function mountCharacter(host: HTMLElement, options: CharacterOptions = {}
     target.y = clamp(((event.clientY - bounds.top) / bounds.height - 0.5) * 2, -1.6, 1.6);
   };
   const onClick = () => {
+    if (options.onActivate !== undefined) {
+      if (activating || activated) return;
+      if (reduced) {
+        activated = true;
+        options.onActivate();
+        return;
+      }
+      activating = true;
+      spinStart = animationTime;
+      return;
+    }
     if (!reduced && decorative && spinStart < 0) {
       spinStart = animationTime;
     }
@@ -506,6 +569,10 @@ export function mountCharacter(host: HTMLElement, options: CharacterOptions = {}
   };
   const onMotion = (event: MediaQueryListEvent) => {
     reduced = event.matches;
+    if (reduced && activating && !activated) {
+      activated = true;
+      options.onActivate?.();
+    }
     syncInteraction();
     lastFrame = null;
     requestRender();
@@ -585,12 +652,14 @@ export function mountCharacter(host: HTMLElement, options: CharacterOptions = {}
       for (const material of materials) {
         material.dispose();
       }
+      for (const material of invitationMaterials) material.map?.dispose();
       shadowMap.dispose();
       scene.clear();
       renderer.dispose();
       renderer.forceContextLoss();
       renderer.domElement.remove();
       host.removeAttribute('data-motion');
+      host.removeAttribute('data-invitation');
       if (host instanceof HTMLButtonElement) {
         host.disabled = true;
       }

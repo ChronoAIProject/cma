@@ -40,7 +40,7 @@ it('retains the selected pin when the catalogue fails and exposes its help to as
     />,
   );
   await screen.findByText('Skills could not be loaded.');
-  const version = screen.getByRole('button', { name: 'Version for research' });
+  const version = screen.getByRole('button', { name: 'Version for selected skill' });
   expect(version).toHaveTextContent('1.1');
   expect(version).toBeDisabled();
   expect(version).toHaveAccessibleDescription(
@@ -65,7 +65,7 @@ it('offers an existing unavailable pin as unavailable without silently replacing
     />,
   );
   await screen.findByRole('button', { name: 'Add Research' });
-  await user.click(screen.getByRole('button', { name: 'Version for research' }));
+  await user.click(screen.getByRole('button', { name: 'Version for Research' }));
   expect(screen.getByRole('menuitemradio', { name: /1.1/ })).toHaveAttribute(
     'aria-disabled',
     'true',

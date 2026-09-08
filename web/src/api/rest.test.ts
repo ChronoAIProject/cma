@@ -18,6 +18,25 @@ import { profileFailure } from '../profiles/failure';
 const options = { idempotencyKey: 'command-819' };
 
 describe('public REST web binding', () => {
+  it('projects only safe access settings from the exact pinned Sandbox profile', async () => {
+    const test = restTransport();
+    test.reply(wireRevision('sandbox'));
+    expect(
+      await createRestWebClient(test.sdk).readSandboxProfileSettings({
+        id: 'sandbox-1',
+        revision: 1,
+        digest: 'digest-1',
+      }),
+    ).toEqual({
+      agentProvider: 'codex',
+      modelAccess: 'own_credentials',
+      nyxidServices: ['storage'],
+    });
+    test.reply({ ...wireRevision('sandbox'), revision: 2 });
+    await expect(
+      createRestWebClient(test.sdk).readSandboxProfileSettings({ id: 'sandbox-1', revision: 1 }),
+    ).rejects.toBeInstanceOf(ProtocolError);
+  });
   it.each(['capture', 'resume_writers'] as const)(
     'preserves public lifecycle eligibility and actual %s metadata in lists and details',
     async (phase) => {

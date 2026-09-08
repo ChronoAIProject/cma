@@ -4,6 +4,7 @@ import { Button } from '../ui/Button';
 import { IconRefreshOutline16 } from '../ui/icons';
 import type { PublisherProfile, PublisherProfileChoice, TriggerPublisherClient } from './client';
 import { profileSummary } from './model';
+import { ReferenceLink } from '../profiles/ReferenceLink';
 
 export function ProfilePicker({
   client,
@@ -148,6 +149,11 @@ export function ProfilePicker({
           ))}
         </select>
       </div>
+      {value === undefined ? null : (
+        <p>
+          <ReferenceLink kind={kind} id={value.id} name={value.name} />
+        </p>
+      )}
       <p id={`${id}-summary`} className="trigger-caption">
         {value === undefined ? 'No revision selected' : profileSummary(value)}
       </p>

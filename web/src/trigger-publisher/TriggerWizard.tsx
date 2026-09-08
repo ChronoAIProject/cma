@@ -305,8 +305,12 @@ export function TriggerWizard({
               <div key={kind}>
                 <dt>{kind} profile</dt>
                 <dd>
-                  {profiles[kind]?.name ?? content.target[`${kind}_profile`].id}, revision{' '}
-                  {content.target[`${kind}_profile`].revision}
+                  <ReferenceLink
+                    kind={kind}
+                    id={content.target[`${kind}_profile`].id}
+                    name={profiles[kind]?.name}
+                  />
+                  , revision {content.target[`${kind}_profile`].revision}
                 </dd>
               </div>
             ))}
@@ -424,3 +428,4 @@ export function TriggerWizard({
     </section>
   );
 }
+import { ReferenceLink } from '../profiles/ReferenceLink';

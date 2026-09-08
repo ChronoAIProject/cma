@@ -29,7 +29,7 @@ it('opens an Agent from the tree and keeps the public conversation and Workspace
     </CmaClientProvider>,
   );
   expect(await screen.findByRole('heading', { name: 'Agent one' })).toBeInTheDocument();
-  expect(screen.getByRole('textbox', { name: 'Message' })).toHaveFocus();
+  await waitFor(() => expect(screen.getByRole('textbox', { name: 'Message' })).toHaveFocus());
   expect(screen.getByText('The repository is ready.')).toBeInTheDocument();
   await actor.click(screen.getByRole('button', { name: 'Show Agent details' }));
   expect(screen.getByText('https://example.test/chrono-bot.git')).toBeInTheDocument();

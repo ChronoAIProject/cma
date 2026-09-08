@@ -31,7 +31,13 @@ export function createProfileViewsClient(sdk: Cma): ProfileViewsClient {
           maxMemoryMib: bounds.max_memory_mib,
         };
       },
-      listServices: (options) => sdk.profileAuthoring.services(options),
+      listServices: async (options) =>
+        (await sdk.profileAuthoring.services(options)).map((entry) => ({
+          id: entry.id,
+          catalogId: entry.catalog_id,
+          name: entry.name,
+          description: entry.description,
+        })),
       searchSkills: (query, options) =>
         sdk.profileAuthoring.searchSkills({ q: query, cursor: options?.cursor }, options),
       resolveRepository: ({ url, reference }, options) =>

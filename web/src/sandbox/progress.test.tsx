@@ -1,4 +1,4 @@
-import { act, render, screen, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
 import type { SandboxEvent } from '../api/types';
 import { AGENT_DETAIL, agentClient } from '../test/agent';
@@ -156,6 +156,8 @@ it('polls incremental Sandbox events, preserves progress on read failure, and sl
   await act(async () => {
     await vi.advanceTimersByTimeAsync(0);
   });
+  expect(readSandboxEvents).not.toHaveBeenCalled();
+  await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Advanced' })));
   expect(
     within(screen.getByRole('region', { name: 'Sandbox preparation' })).getByText(
       'Starting the sandbox',

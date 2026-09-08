@@ -34,6 +34,12 @@ export interface ConfiguredSandboxCapacity {
   readonly memoryBytes: number;
 }
 
+export interface SandboxProfileSettings {
+  readonly agentProvider: 'codex';
+  readonly modelAccess: 'chronoai_managed' | 'own_credentials';
+  readonly nyxidServices: readonly string[];
+}
+
 export interface Failure {
   readonly class: string;
   readonly detail: string;

@@ -3,6 +3,7 @@ import { Button } from '../../ui/Button';
 import { Input } from '../../ui/Input';
 import { IconSearchOutline16 } from '../../ui/icons';
 import type { ServiceCatalogClient, ServiceCatalogEntry } from '../client';
+import { ReferenceLink } from '../ReferenceLink';
 
 export function ServicePicker({
   catalog,
@@ -57,7 +58,7 @@ export function ServicePicker({
           ...state.entries,
           ...value
             .filter((id) => !state.entries.some((entry) => entry.id === id))
-            .map((id) => ({ id, name: id })),
+            .map((id) => ({ id, name: 'Service unavailable', catalogId: undefined })),
         ]
           .filter((entry) => entry.name.toLocaleLowerCase().includes(query.toLocaleLowerCase()))
           .map((entry) => (
@@ -76,7 +77,12 @@ export function ServicePicker({
                   }
                 />
                 <span>
-                  {entry.name}
+                  <ReferenceLink
+                    kind="service"
+                    id={entry.id}
+                    name={entry.name}
+                    catalogId={entry.catalogId}
+                  />
                   {'description' in entry && entry.description !== undefined ? (
                     <small>{entry.description}</small>
                   ) : null}

@@ -4,30 +4,36 @@ import { expect, it, vi } from 'vitest';
 import { MARKETPLACE_SANDBOX, marketplaceClient } from '../../test/profiles';
 import { ProfileDetail } from './ProfileDetail';
 import { ApiError } from '@chronoai/cma-sdk';
+import { NamedReferences } from '../../test/references';
 
 it('shows every top-level and referenced revision setting before handing a pinned sandbox to creation', async () => {
   const actor = userEvent.setup();
   const onUse = vi.fn();
   render(
-    <ProfileDetail
-      client={marketplaceClient()}
-      kind="sandbox"
-      profileId={MARKETPLACE_SANDBOX.summary.id}
-      onNavigate={vi.fn()}
-      onUse={onUse}
-    />,
+    <NamedReferences>
+      <ProfileDetail
+        client={marketplaceClient()}
+        kind="sandbox"
+        profileId={MARKETPLACE_SANDBOX.summary.id}
+        onNavigate={vi.fn()}
+        onUse={onUse}
+      />
+    </NamedReferences>,
   );
   await screen.findByRole('heading', { name: 'Research sandbox' });
   for (const text of [
     '2 cores · 4 GiB',
     'ChronoAI managed',
-    'storage',
     'mkdir -p /home/cma/tools',
     'RUN_MODE',
     'mkdir -p reports',
     'Inspect the repository before making changes.',
   ])
     expect(screen.getByText(text)).toBeInTheDocument();
+  expect(await screen.findByRole('link', { name: 'Chrono Storage' })).toHaveAttribute(
+    'href',
+    'https://nyx.chrono-ai.fun/services/catalog-storage',
+  );
   expect(
     screen.getByRole('heading', { name: 'Research workspace · Revision 1' }),
   ).toBeInTheDocument();

@@ -18,10 +18,12 @@ export function LandingCharacter({
   state = 'brand',
   compact = false,
   autoRotate = false,
+  onActivate,
 }: {
   readonly state?: CharacterState;
   readonly compact?: boolean;
   readonly autoRotate?: boolean;
+  readonly onActivate?: () => void;
 }) {
   const hostRef = useRef<HTMLButtonElement & HTMLSpanElement>(null);
 
@@ -35,7 +37,7 @@ export function LandingCharacter({
     let dispose: (() => void) | undefined;
     const showFallback = () => {
       host.removeAttribute('data-ready');
-      if (host instanceof HTMLButtonElement) host.disabled = true;
+      if (host instanceof HTMLButtonElement) host.disabled = onActivate === undefined;
     };
 
     if (typeof window.WebGL2RenderingContext === 'undefined') {
@@ -53,6 +55,7 @@ export function LandingCharacter({
           const character = mountCharacter(host, {
             state,
             autoRotate,
+            onActivate,
             onReady: () => {
               if (!cancelled) {
                 host.setAttribute('data-ready', '');
@@ -80,7 +83,7 @@ export function LandingCharacter({
       dispose?.();
       showFallback();
     };
-  }, [state, autoRotate]);
+  }, [state, autoRotate, onActivate]);
 
   const Tag = state === 'brand' ? 'button' : 'span';
 
@@ -90,16 +93,41 @@ export function LandingCharacter({
       className={`landing__character${compact ? ' landing__character--compact' : ''}`}
       data-state={state}
       type={state === 'brand' ? 'button' : undefined}
-      aria-label={state === 'brand' ? 'Spin CMA character' : undefined}
+      aria-label={
+        state === 'brand'
+          ? onActivate === undefined
+            ? 'Spin CMA character'
+            : 'Get Started'
+          : undefined
+      }
       aria-hidden={state === 'brand' ? undefined : true}
-      title={state === 'brand' ? 'Spin CMA character' : undefined}
-      disabled={state === 'brand' ? true : undefined}
+      title={
+        state === 'brand'
+          ? onActivate === undefined
+            ? 'Spin CMA character'
+            : 'Get Started'
+          : undefined
+      }
+      disabled={state === 'brand' ? onActivate === undefined : undefined}
+      onClick={
+        onActivate === undefined
+          ? undefined
+          : () => {
+              if (!hostRef.current?.hasAttribute('data-ready')) onActivate();
+            }
+      }
     >
       <span
         className="landing__character-fallback"
         aria-hidden="true"
         dangerouslySetInnerHTML={{ __html: markMarkup }}
       />
+      {onActivate === undefined ? null : (
+        <span className="landing__character-invitation" aria-hidden="true">
+          <span>Get</span>
+          <span>Started</span>
+        </span>
+      )}
     </Tag>
   );
 }

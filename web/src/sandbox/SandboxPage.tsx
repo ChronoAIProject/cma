@@ -1,19 +1,17 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import type { CmaWebClient } from '../api/client';
-import type { SandboxDetail, SandboxEvent, WorkspaceDetail } from '../api/types';
+import type { SandboxDetail } from '../api/types';
 import type { AppRoute } from '../routing/routes';
-import { routePath } from '../routing/routes';
 import type { TreeAction, TreePermissions } from '../shell/Tree';
 import { Button } from '../ui/Button';
 import {
   IconPauseOutline16,
   IconPlayOutline16,
   IconPlusOutline16,
+  IconSettingsOutline16,
   IconTrashOutline16,
 } from '../ui/icons';
-import { ProvisioningProgress } from './ProvisioningProgress';
-import { sandboxProgress, workspaceProgress } from './progress';
-import { readSandboxHistory } from './eventHistory';
+import { ReferenceLink } from '../profiles/ReferenceLink';
 import {
   sandboxChildrenAvailable,
   sandboxUnavailableNotice,
@@ -21,33 +19,14 @@ import {
   sandboxLifecycleLabel,
   sandboxRefreshDelay,
 } from './lifecycle';
-import { eventLabel, statusLabel } from '../vocabulary/status';
+import { SandboxOverview } from './SandboxOverview';
+import { SandboxAdvanced } from './SandboxAdvanced';
 import './SandboxPage.css';
 
 type State =
   | { status: 'loading' }
   | { status: 'error'; message: string }
-  | {
-      status: 'ready';
-      sandbox: SandboxDetail;
-      workspaces: readonly WorkspaceDetail[];
-      events: readonly SandboxEvent[];
-    };
-
-async function load(
-  client: CmaWebClient,
-  id: string,
-  signal: AbortSignal,
-  previous: readonly SandboxEvent[] = [],
-): Promise<Extract<State, { status: 'ready' }>> {
-  const sandbox = await client.readSandbox(id, { signal });
-  if (sandbox.id !== id) throw new Error('Sandbox projection referred to another resource.');
-  const workspaces = await Promise.all(
-    sandbox.workspaces.map((workspace) => client.readWorkspace(workspace.id, { signal })),
-  );
-  const events = await readSandboxHistory(client, id, signal, previous);
-  return { status: 'ready', sandbox, workspaces, events };
-}
+  | { status: 'ready'; sandbox: SandboxDetail };
 
 export function SandboxPage({
   client,
@@ -69,31 +48,33 @@ export function SandboxPage({
   const [state, setState] = useState<State>({ status: 'loading' });
   const [retry, setRetry] = useState(0);
   const [pollError, setPollError] = useState(false);
+  const [advanced, setAdvanced] = useState(false);
   const lifecycleReasonId = useId();
   const heading = useRef<HTMLHeadingElement>(null);
   const documentTitle = state.status === 'ready' ? state.sandbox.name : 'Sandbox';
   useEffect(() => {
     const abort = new AbortController();
     let timer: ReturnType<typeof setTimeout> | undefined;
-    let previous: readonly SandboxEvent[] = [];
     let inFlight = false;
     const poll = () => {
       if (abort.signal.aborted || inFlight || document.hidden) return;
       clearTimeout(timer);
       inFlight = true;
-      void load(client, sandboxId, abort.signal, previous)
-        .then((next) => {
+      void client
+        .readSandbox(sandboxId, { signal: abort.signal })
+        .then((sandbox) => {
           if (abort.signal.aborted) return;
-          previous = next.events;
-          setState(next);
+          if (sandbox.id !== sandboxId)
+            throw new Error('Sandbox projection referred to another resource.');
+          setState({ status: 'ready', sandbox });
           setPollError(false);
           timer = setTimeout(
             poll,
-            next.workspaces.some(
+            sandbox.workspaces.some(
               (workspace) => workspace.status === 'preparing' || workspace.status === 'removing',
             )
               ? 1500
-              : sandboxRefreshDelay(next.sandbox),
+              : sandboxRefreshDelay(sandbox),
           );
         })
         .catch((error: unknown) => {
@@ -146,12 +127,10 @@ export function SandboxPage({
         <Button onClick={() => setRetry((value) => value + 1)}>Try again</Button>
       </section>
     );
-  const { sandbox, workspaces, events } = state;
+  const { sandbox } = state;
   const lifecycleAction = sandboxLifecycleAction(sandbox, pollError);
-  const lifecycleLabel = sandboxLifecycleLabel(sandbox);
-  const save = sandbox.lifecycle?.checkpoint;
   const childrenAvailable = sandboxChildrenAvailable(sandbox);
-  const unavailableNotice = sandboxUnavailableNotice(sandbox);
+  const notice = sandboxUnavailableNotice(sandbox);
   return (
     <section className="sandbox-page">
       <header className="sandbox-page__header">
@@ -159,7 +138,7 @@ export function SandboxPage({
           <h1 ref={heading} tabIndex={-1}>
             {sandbox.name}
           </h1>
-          <p role="status">{lifecycleLabel}</p>
+          <p role="status">{sandboxLifecycleLabel(sandbox)}</p>
         </div>
         <div className="sandbox-page__actions">
           {permissions.createWorkspace ? (
@@ -184,12 +163,7 @@ export function SandboxPage({
               aria-describedby={
                 lifecycleAction.reason === undefined ? undefined : lifecycleReasonId
               }
-              onClick={() =>
-                onAction({
-                  kind: lifecycleAction.kind,
-                  sandboxId,
-                })
-              }
+              onClick={() => onAction({ kind: lifecycleAction.kind, sandboxId })}
             >
               {lifecycleAction.label}
             </Button>
@@ -202,7 +176,7 @@ export function SandboxPage({
                 busy ||
                 pollError ||
                 ['retiring', 'retired'].includes(sandbox.status) ||
-                save !== undefined ||
+                sandbox.lifecycle?.checkpoint !== undefined ||
                 sandbox.lifecycle?.operation !== undefined
               }
               onClick={() => onAction({ kind: 'delete_sandbox', sandboxId })}
@@ -210,154 +184,36 @@ export function SandboxPage({
               Delete
             </Button>
           ) : null}
+          <Button icon={<IconSettingsOutline16 />} onClick={() => setAdvanced(true)}>
+            Advanced
+          </Button>
         </div>
       </header>
-      {unavailableNotice === undefined ? null : <p>{unavailableNotice}</p>}
-      {sandbox.lifecycle?.operation === undefined ? null : (
-        <p>
-          Current step: {sandbox.lifecycle.operation.phase.replaceAll('_', ' ')}. Started{' '}
-          <time dateTime={sandbox.lifecycle.operation.startedAt}>
-            {new Date(sandbox.lifecycle.operation.startedAt).toLocaleString()}
-          </time>
-          .
-        </p>
-      )}
+      {notice === undefined ? null : <p>{notice}</p>}
       {permissions.pauseSandbox && lifecycleAction.reason !== undefined ? (
         <p id={lifecycleReasonId}>{lifecycleAction.reason}</p>
       ) : null}
-      {save === undefined ? null : (
-        <p>
-          Saving started{' '}
-          <time dateTime={save.startedAt}>{new Date(save.startedAt).toLocaleString()}</time>.
-        </p>
-      )}
       {pollError ? <p role="alert">Progress could not be refreshed. Reconnecting.</p> : null}
-      {['provisioning', 'installing', 'failed'].includes(sandbox.status) ? (
-        <ProvisioningProgress
-          title="Sandbox preparation"
-          steps={sandboxProgress(sandbox, events)}
-          failure={sandbox.failure}
-        />
+      {sandbox.status === 'failed' ? (
+        <p role="alert">
+          Your sandbox needs attention.{' '}
+          {sandbox.failure?.remediation ?? 'Open Advanced for the reported failure.'}
+        </p>
       ) : null}
-      <section className="sandbox-page__band">
-        <h2>Profile</h2>
-        <dl>
-          <div>
-            <dt>Profile</dt>
-            <dd>
-              {sandbox.profile.id} @ {sandbox.profile.revision}
-            </dd>
-          </div>
-          <div>
-            <dt>Workspace limit</dt>
-            <dd>{sandbox.limits.maxWorkspaces}</dd>
-          </div>
-          <div>
-            <dt>Agents per workspace</dt>
-            <dd>{sandbox.limits.maxAgentsPerWorkspace}</dd>
-          </div>
-          {sandbox.runtimeVersion === undefined ? null : (
-            <div>
-              <dt>Runtime version</dt>
-              <dd>
-                <code>{sandbox.runtimeVersion}</code>
-              </dd>
-            </div>
-          )}
-        </dl>
-      </section>
-      {childrenAvailable ? (
-        <section className="sandbox-page__band">
-          <h2>Workspaces</h2>
-          {workspaces.length === 0 ? (
-            <p>No workspaces</p>
-          ) : (
-            workspaces
-              .filter((workspace) => workspace.status !== 'removed')
-              .map((workspace) => (
-                <section className="sandbox-page__workspace" key={workspace.id}>
-                  <h3>{workspace.name}</h3>
-                  <p>
-                    <code>{workspace.path}</code>
-                  </p>
-                  <p>{statusLabel(workspace.status)}</p>
-                  {['preparing', 'failed'].includes(workspace.status) ? (
-                    <ProvisioningProgress
-                      title={`${workspace.name} preparation`}
-                      steps={workspaceProgress(workspace, events)}
-                      failure={workspace.failure}
-                    />
-                  ) : null}
-                  {permissions.createAgent ? (
-                    <Button
-                      icon={<IconPlusOutline16 />}
-                      disabled={
-                        busy ||
-                        !['active', 'paused', 'reviving'].includes(sandbox.status) ||
-                        workspace.status !== 'ready'
-                      }
-                      onClick={() => onAction({ kind: 'new_agent', workspaceId: workspace.id })}
-                    >
-                      New agent
-                    </Button>
-                  ) : null}
-                  <ul>
-                    {workspace.status === 'removing'
-                      ? null
-                      : workspace.agents
-                          .filter((agent) => agent.status !== 'deleted')
-                          .map((agent) => {
-                            const route = { kind: 'agent', agentId: agent.id } as const;
-                            return (
-                              <li key={agent.id}>
-                                <a
-                                  href={routePath(route)}
-                                  onClick={(event) => {
-                                    if (
-                                      event.button !== 0 ||
-                                      event.metaKey ||
-                                      event.ctrlKey ||
-                                      event.shiftKey ||
-                                      event.altKey
-                                    )
-                                      return;
-                                    event.preventDefault();
-                                    onNavigate(route);
-                                  }}
-                                >
-                                  {agent.title?.trim() || 'Untitled agent'}
-                                </a>
-                                <span>
-                                  {sandbox.status === 'paused'
-                                    ? 'Paused'
-                                    : statusLabel(agent.status)}
-                                </span>
-                              </li>
-                            );
-                          })}
-                  </ul>
-                </section>
-              ))
-          )}
-        </section>
+      <p>
+        Profile: <ReferenceLink kind="sandbox" id={sandbox.profile.id} />
+      </p>
+      <SandboxOverview
+        client={client}
+        sandbox={sandbox}
+        permissions={permissions}
+        busy={busy}
+        onAction={onAction}
+        onNavigate={onNavigate}
+      />
+      {advanced ? (
+        <SandboxAdvanced client={client} sandbox={sandbox} onClose={() => setAdvanced(false)} />
       ) : null}
-      <section className="sandbox-page__band">
-        <h2>Events</h2>
-        {events.length === 0 ? (
-          <p>No events</p>
-        ) : (
-          <ol className="sandbox-page__events">
-            {events.map((event) => (
-              <li key={event.seq}>
-                <span>{eventLabel(event.kind.type)}</span>
-                <time dateTime={event.appendedAt}>
-                  {new Date(event.appendedAt).toLocaleString()}
-                </time>
-              </li>
-            ))}
-          </ol>
-        )}
-      </section>
     </section>
   );
 }
