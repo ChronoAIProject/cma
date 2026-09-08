@@ -13,33 +13,217 @@ acceptance of this campaign.
 | --- | --- | --- |
 | 1. Public Agent Profile | Exact text, model, effort, Autonomous, four latest public skill pins | Created and published at revision 1; exact configuration and archive checksums verified |
 | 2. Public Workspace Profile | Exact metadata, repository `dev`, no setup, one Agent Profile | Created and published at revision 1; exact configuration verified |
-| 3. Public Sandbox Profile | 4000 millicores, 8192 MiB, two requested services, 4/4 limits, working toolchain | Exact live configuration and all four actual Agent workload checks passed on runtime `137b489d` at original heavy-workload base `edc52b0f`; independent receipt confirms unchanged tracked source. This does not establish workload behavior at newer `dev` revisions |
+| 3. Public Sandbox Profile | 4000 millicores, 8192 MiB, two requested services, 4/4 limits, working toolchain | Final admission-bound configuration passed on runtime `137b489d`, including the actual Agent login shell, exact installers, skills and scopes, at base `5a1706ce`. The four actual Agent workload checks and independent unchanged-source receipt remain bound to original heavy-workload base `edc52b0f`, not newer `dev` revisions |
 | 4. Public Trigger | Exact title/message, all-level reuse, Try It, visitor theme, no review, README placement | Exact revision published after first rollout; README-only PR #841 merged after all 12 protected checks; default README snippet read back exactly |
 | 5. Login without bootstrap | No Sandbox, Workspace, Agent, or Profile created by login alone | Existing-owner fresh-browser sign-in created no resources; successful unseen-CMA-identity callback contract passes default/home/Trigger returns; external fresh signup not tested |
-| 6. Complete external-click flow | Login then automatic provisioning; exact first message once; correct software, skills, scopes | `lifecycle-postfix` first journey passed at 02:09:30 UTC on API `6eca81a3`/web `4ddcd1b9`, with one first prompt after automatic recovery from an 18-minute startup-publication delay; not a smooth-start pass. Fix `a52e72ba` is tested and building, not deployed. Prior configuration/workload/restored-file proofs remain source-bound; final fresh configuration and genuinely paused README repeat remain held |
-| 7. Previous UI style | Original rotating 3D mark and established controls; desktop/mobile screenshots | Recovered `lifecycle-postfix` title matches before reload and its settled mobile capture is readable; the earlier `lifecycle-fresh` resize artifact remains unaccepted. Prior motion/four-view proofs remain historical; final hierarchy/four-view layout and corrected fixed-step provisioning checks remain pending |
-| 8. Autonomous YOLO | Pinned provider runs full-access mode with no approval requests | Actual provider configuration verified; latest first response and successful subsequent workload completed with zero approvals |
-| 9. Lifecycle | Active to paused to active; paused to terminated; history retained | Manual Resume passed at 00:24 UTC. Fresh `lifecycle-postfix-delete` Pause and paused Delete passed on API `6eca81a3`: Paused revision 25, then Retired revision 36 at 02:20:02 UTC, with physical CR/pod absence, no writer debt, unchanged native identity/generation 1 and full history. The original older paused Delete timeout remains failed despite its separate recovery; final paused README revival remains pending |
-| 10. Cleanup | Only identified stale state removed; new published flow remains usable | Identified old Sandboxes, heavy baseline, original lifecycle-fresh and disposable lifecycle-postfix baseline have retired through their admitted owner commands; physical absence is verified for the latest disposable baseline. No active mutating verifier remains as of 02:22 UTC; the final retained environment is not yet created or accepted |
+| 6. Complete external-click flow | Login then automatic provisioning; exact first message once; correct software, skills, scopes | Current-image paused README repeat passed at 05:48:40: one Launch, all-level reuse, automatic revival, no extra CMA clicks or approvals, original full transcript/native conversation preserved, and first prompt still exactly once. Fresh admission/configuration/first response passed before the original reload failure; separate read-only recovery v5 now passes all four desktop/mobile open/reload views. The original and v1-v4 failures remain failed, not a pristine fresh-run pass |
+| 7. Previous UI style | Original rotating 3D mark and established controls; desktop/mobile screenshots | Final-fresh fixed-step provisioning passed all four 1440/390 light/dark views. Web `d488efc7` preserves the live sidebar logo across refreshes; v5 proves this in all four open/reload views with settled geometry and full history. Final hierarchy/navigation passed all four light/dark views, including exact workspace expansion, agent selection, automatic mobile drawer close, title and reload preservation; screenshots inspected |
+| 8. Autonomous YOLO | Pinned provider runs full-access mode with no approval requests | Final admission confirms `never` and `danger-full-access`; the exact first turn completed with no approval workaround before the separate mobile reload failure. Prior completed workload journeys also had zero approvals |
+| 9. Lifecycle | Active to paused to active; paused to terminated; history retained | Post-logo Resume passed to runtime generation 12. Current-image manual Pause passed to revision 161 with physical provider/pod absence, cleared writer debt and unchanged history; the subsequent README click automatically restored generation 15 with the same native conversation. Earlier physical Delete passes remain tied to API `6eca81a3`; the original older Delete timeout remains failed |
+| 10. Cleanup | Only identified stale state removed; new published flow remains usable | Identified old Sandboxes and disposable baselines remain retired; the final environment, Trigger and published profile pins are retained. No record repair, repeated original admission or first-prompt replay occurred. Exact temporary builder Deployment/owned-pod cleanup passed with API/web and runtime identities unchanged; only the two application Deployments and actual sandbox runtime pod remain |
 | 11. Conversation UI | Thinking, Send/Stop, CPU, RAM, context, token, network metrics | Prior four-view metrics, Thinking, scrolling and lifecycle input holds passed; latest fresh-baseline UI test sent one message, observed its exact tool command, interrupted once, verified the public interrupted outcome, restored Send and preserved reloaded history |
 
-As of 2026-09-08 02:22 UTC, API `6eca81a3` and web `4ddcd1b9` are live; runtime
-`137b489d` is unchanged. The API deployed through the separately named exact
-stopped-orphan recovery preflight, not an all-quiet claim. Original retirement
-continuation passed at 01:37 UTC with the Agent stopped, exact history retained
-and physical CR/pod absent; the timed-out original browser attempt remains failed.
-A fresh normal all-owner guard then passed before the completed web rollout;
-independent API/runtime/store/history recovery verification passed at 01:40 UTC.
-Earlier `lifecycle-fresh` provisioning/first prompt, Send/Stop and manual Resume
-passes remain tied to their original images. The single disposable
-`lifecycle-postfix` journey completed after startup recovery, and its fresh
-Pause/Delete sequence now has passing physical evidence. All three verifier
-processes have exited. Startup fix `a52e72ba` is pushed and locally verified;
-its API image build, started at 02:17 UTC, is pending. No deployment of that fix
-is claimed. Final fresh configuration, Pause, README revival and hierarchy/UI
-checks remain held until the verified image is deployed at a fresh quiet
-boundary. No heavy workload replay is added. The historical deployed-component
-table below is not the current campaign's image inventory.
+### Latest Production Results
+
+At 2026-09-08 05:56:14 UTC, the current-image paused README repeat, final
+hierarchy/navigation and settled editable-composer checks are passing.
+API `e1ff6efa`, web `d488efc7` and runtime `137b489d` were independently checked
+before entry, immediately before the README click, and after restoration.
+The exact deployed API/web pod identities and runtime configuration remain
+unchanged. The temporary campaign builder has been removed without changing
+those resources. No further deployment or merge was needed for these checks.
+
+- `post-logo-fix-autopause-revival-aFGBQm` passed at 05:26:49.451 after one UI
+  Resume from genuinely Paused generation 8/checkpoint 8. All 70 harness GETs
+  were HTTP 200; runtime generation 12 retained the original native conversation
+  and full transcript, with the browser closed afterward.
+- `production-final-fresh-recovered-v4` remains failed: all four view captures
+  passed, but the final verifier attempted to read the desktop-only build label
+  after switching to the collapsed mobile sidebar. Its exact TimeoutError and
+  all 17 evidence files are retained. This was a verifier locator error, not
+  proof of a failed production deployment.
+- `production-final-fresh-recovered-v5` passed at 05:34:14.890 with zero resource
+  commands. Both desktop build-label checks passed; all four desktop/mobile
+  open/reload views had full history, matching titles, settled geometry and
+  preserved live logo nodes across real hierarchy refreshes. Composer visibility
+  took 1.7-2.4 seconds and complete history hydration 9.3-11.2 seconds in these
+  observations. No original Launch or first prompt was replayed.
+- `lifecycle-final-fresh-readme-pause` passed with exactly one owner UI Pause.
+  Pausing was observed at 05:34:45.121 and Paused revision 161 at 05:41:56.229.
+  The approximately 1.6 GB whole-home checkpoint was saved before teardown.
+  Two independent physical/store observations verified the old provider resource
+  and pod absent, cleared writer debt, unchanged hierarchy and full/native
+  conversation preservation. Immediate viewport-switch lifecycle screenshots
+  are not substituted for the separate settled final UI checks.
+- `production-final-repeat` passed at 05:48:40.341. A real anchor click in the
+  authenticated GitHub-rendered default README admitted exactly one new Launch,
+  `lch_04b72ca492d344bfbaece42c9f28d6aa`, at 05:42:57. All three resolution levels
+  reused the original environment, with no extra CMA clicks, OAuth exchange,
+  approvals, new message or manual Resume. Physical absence was freshly proved
+  before entry and immediately before click. Runtime generation 15 has new
+  provider/pod UIDs, while Sandbox, Workspace, Worktree, Agent, native
+  conversation and the entire transcript remain unchanged. The first prompt
+  still appears exactly once, and mobile reload/title checks pass.
+- `final-hierarchy-VSbSBs` passed all four 1440/390 light/dark views and closed
+  its browser at 05:50:51.384. Exact Sandbox and Workspace expansion, Agent
+  selection, mobile drawer closure, title consistency, full transcript and
+  reload preservation all passed. All 653 recorded GET responses were HTTP 200,
+  with zero denied requests, browser errors, resource commands or replaced
+  production responses. The screenshots were inspected, including the normal
+  checkpoint input hold shown on mobile without losing conversation history.
+- `campaign-builder-cleanup-xDcmvW` passed at 05:54:21.934. One foreground
+  deletion with exact UID/resourceVersion preconditions removed only
+  `cma-hotfix-builder0` and its owned ReplicaSets/pod. API/web Deployment and pod
+  identities, image pins and retained runtime identity were unchanged. No
+  database, storage or user-sandbox cleanup command was issued. Subsequent
+  inventory contains only `cma-api` and `cma-web` Deployments and their pods,
+  plus the real generation-15 sandbox pod. Ephemeral builder tools can be
+  rebuilt; production homes and data were not deleted. Local disk retains
+  approximately 15 GiB free.
+- `final-input-readonly-9vSZP6` proved editable input at 05:54:22, but its
+  screenshots still caught conversation hydration in progress. It is retained
+  as input-editability evidence, not settled-history screenshot acceptance.
+  The strengthened separate `final-input-readonly-3XHMJ5` passed at
+  05:56:14.703: both desktop and mobile have fully hydrated history, settled
+  geometry, visible metrics and an editable empty composer. All 72 reads were
+  HTTP 200, the full original transcript is unchanged, zero messages were typed
+  or sent, and the browser closed. The final environment is left usable.
+
+Final-repeat independently rehashed all 61 original/v1-v4 failed-evidence files,
+all unchanged. The final v5 consumers passed 80 focused offline tests. These
+passing continuations do not relabel the original fresh run or its four failed
+read-only recovery attempts. Fresh signup, cross-owner browser isolation and
+authenticated GitHub web-page access remain untested: the exact authenticated
+GitHub-rendered README HTML was delivered to the browser at its source origin.
+The completed heavyweight repository workload remains bound to `edc52b0f`, not
+the retained final-fresh admission's newer `5a1706ce` source.
+
+These observations establish the existing-owner flow, not zero latency or a
+guarantee for every account/browser. The physical Pause took approximately
+seven minutes, and README-triggered restore took approximately five minutes
+before Ready for this 1.6 GB home. Normal whole-home checkpoints can temporarily
+hold input; the UI explains the hold and the final check proves it clears.
+
+### Earlier Checkpoint
+
+At the earlier saved-evidence update, 2026-09-08 05:19:12 UTC, API `e1ff6efa`, web
+`d488efc7` and runtime `137b489d` are live and the API/web images are exact Ready.
+Manifest `36abcbf6` pins the logo correction. Its separate static-web-image-only
+rollout records unchanged API Deployment/pod identity, config and routes;
+independent readiness is saved in `web-d488efc7-ready-1788844752392.json`.
+That scope does not claim an all-owner quiet state. The previous
+API/web `a5199c4d` rollouts used separate fresh
+`all-owner-paused-ready-observation-rollout-preflight` receipts, whose embedded
+normal strict audits remain blocked on the exact final Launch's harmless
+Ready/Finish observation pair. This is the explicitly scoped paused-observer
+boundary, not a normal all-quiet result or an atomic writer lease. The earlier
+normal `a52e72ba` rollout and stopped-orphan `6eca81a3` recovery remain recorded
+under their original boundaries.
+
+Root verifier `66425` exited 1 around 03:10 UTC after its one admitted
+`final-fresh` Launch completed the first-response, exact-once prompt, configuration
+and pre-reload title assertions. Mobile reload timed out; the complete browser
+run is failed, not pending or accepted. Admission-bound configuration and all
+four live provisioning views remain passing partial evidence. A read-only
+continuation is prepared in a separate output directory, but has not passed.
+After the final Sandbox automatically paused, the first Resume helper attempt
+failed before any command because its fixture expected a digest on the smaller
+dedicated profile reference. The scratch check now matches the actual API shape
+while retaining digest assertions on full nested projections. The corrected
+root verifier `94379` admitted one UI Resume at 04:02:02.328, then failed on
+HTTP 429 at 04:06:59.109. Its GET-only continuation also failed at 04:22:06.115
+after 60 reads with no HTTP 429 or resource commands. That old operation later
+recovered naturally to Active revision 62, then automatically paused to revision
+77 at 04:50:27 with checkpoint epoch 5 and the original native conversation.
+The API queue-publication fix `e1ff6efa` is now deployed, with exact Ready pod
+evidence at 04:51:56. Its new guarded Resume passed at 04:57:57, but subsequent
+read-only recovery is not accepted: v1 and v2 failed verifier checks; v3 passed
+all four view captures before detecting automatic Pausing. The post-logo
+Resume guard is prepared but has not executed; read-only v4, final manual
+physical Pause, guarded paused README revival and
+settled hierarchy/UI checks must follow that same retained environment. Earlier
+first-prompt, Send/Stop, manual Resume and fresh physical Pause/Delete passes
+remain tied to their original images and evidence. No heavy workload replay is
+added. The historical deployed-component table below is not the current
+campaign's image inventory.
+
+### Queue Fix Deployment And Post-Fix Resume
+
+API build `5206` completed successfully after a 24-minute-48-second release
+compile. Its vulnerability scan passed and remote digest readback verified
+`50eb27f82db82442410cc162b6f53cdc1c5724b2ec44d95375d75a8fb858ed96`.
+Manifest commit `00f5ba45` is pushed as `chronoai-shining`; all 18 manifests
+validate with no errors or skipped resources, and manifest lint passes.
+
+Fresh `paused-ready-observation-rollout-1KJ1lc/result.json` passed before the
+conditional API-only rollout at 04:51:10.879. It retains the normal strict
+audit's exact Ready/Finish observer exceptions; it is not an atomic writer lease
+or an all-quiet claim. Web and runtime pins did not change. Independent exact
+readiness evidence `api-e1ff6efa-ready-1788843116092.json` passed at 04:51:56.091:
+API generation 62, pod `cma-api-5b649d987f-7594d`, UID
+`66f2cb06-6169-4be3-8b37-4c2c0e2be61c`, with web generation 31 unchanged.
+
+`post-queue-fix-autopause-revival-OZAIIM` passed at 04:57:57.392 after one new
+explicit owner UI Resume
+from the newly sealed Paused revision 77, following the old operation's natural
+completion. It observed Reviving revision 78 at 04:52:31.946. This is a new
+post-fix lifecycle test, not replay of the earlier accepted command or first
+prompt. Its initial/dispatch/final preflights bind the exact API/web Ready
+images, live runtime ConfigMap and environment sources without overrides,
+original full transcript/native identity, and the newer checkpoint/generation.
+Its browser closes after command acceptance; restoration uses only a ten-second
+Sandbox GET poll with Retry-After handling. Saved evidence independently confirms
+one POST accepted with HTTP 202 at 04:52:31.582, 69 harness GETs all HTTP 200,
+41 browser reads without HTTP 429, runtime generation 8, unchanged original
+native conversation and complete transcript, closed browser and zero runtime
+execs. All 33 source-evidence files rehash unchanged. The 174 combined guard
+tests pass; this result does not claim manual Pause or first-flow acceptance.
+
+The final README repeat now additionally consumes the exact manual physical
+Pause proof, verifies fresh physical absence before entry and before the badge
+click, and requires a replacement runtime generation with the original native
+conversation and full transcript after reuse. It checks live API/web/runtime
+pins initially, before click and finally. Its current exact selection requires
+`final-fresh-recovered-v4` with API `e1ff6efa`, web `d488efc7` and runtime
+`137b489d`. All 70 focused tests pass. These offline checks are preparation,
+not a production repeat result.
+
+### Recovery And Logo
+
+The saved read-only attempts remain distinct failures, each with zero resource
+commands and no denied requests or page errors. `production-final-fresh-recovered`
+failed at `1440-open` on an ambiguous loading-text locator; its 8 harness and
+30 browser reads were all HTTP 200. The v2 attempt failed a global finite-animation
+check that included the decorative sidebar logo; its 8 harness and 89 browser
+reads were all HTTP 200. Corrections to these verifier checks do not relabel
+either saved failure.
+
+The v3 attempt saved all four desktop/mobile open/reload JSON and PNG captures,
+with matching titles, full conversation hydration and settled geometry. Its
+final inspection at `390-reload` found Sandbox `pausing`, not `active`; the
+overall attempt failed and has no passing result. All 28 harness and 283 browser
+reads were HTTP 200. Its passing view captures are partial evidence only.
+
+Web `d488efc7` preserves sidebar logo nodes during refresh. Manifest `36abcbf6`
+is pushed. `static-web-only-rollout-VUHIIW/result.json` records the web-only
+request at 05:18:23.106 with no Sandbox commands or runtime rollout. Separate
+`web-d488efc7-ready-1788844752392.json` passed at 05:19:12.391: web generation 32,
+pod `cma-web-689894cb45-6ljgh`, UID `b9e9d052-8ad1-4e89-8160-725dfc26f052`,
+digest `ce109d29ed6b2b3a6945533a189b8369138eacec721cc431de5c6902f3b40414`.
+API generation 62 and its pod identity remain unchanged; runtime stays
+`137b489d`. Rollout request and exact readiness are separate receipts.
+
+The latest executor report is automatic Pause at generation 8/checkpoint 8,
+with teardown ongoing, not accepted physical absence. A separately explicit
+post-logo Resume guard is prepared with 207 combined tests passing; it requires
+the exact live image tuple, saved `OZAIIM` pass and original native/history
+binding, then a fresh settled Paused checkpoint before one new UI Resume.
+It has not executed or passed production verification at this update. After
+that operation, read-only v4, manual physical Pause `final-fresh-readme`, the
+one fresh paused README admission and final settled hierarchy/views remain
+pending. Final-repeat requires hashes preserving all v1/v2 failures and all
+17 v3 files, including its four partial JSON/PNG pairs; no earlier attempt is
+promoted to an end-to-end pass.
 
 The recovered first journey exposed a startup race: attaching the Trigger's first
 prompt changed the Agent revision while AddWorktree ran, so its completed work
@@ -47,10 +231,10 @@ could not publish until the 18-minute lease expired. The same admitted operation
 recovered automatically at 02:00:10; its native conversation opened at 02:00:18
 and the first journey passed at 02:09:30 with its exact first prompt once.
 No records were repaired or Launch repeated. The publication fix and regression
-tests are complete locally, but this recovery is not a smooth-start acceptance
-and the fix is not yet live. Actual `dev` base `33a85901` has unchanged
-toolchain declarations but changed executable source, so earlier workload
-evidence does not establish this new source's build or resource behavior.
+tests are complete and the fix is now live, but that earlier recovery is not a
+smooth-start acceptance. Final-fresh records actual `dev` base `5a1706ce`;
+the earlier compatibility observation at `33a85901` and heavy-workload proofs
+cannot establish this newer source's build or resource behavior.
 
 Private campaign evidence is kept under `/tmp/cma-trureturing-loop.LvTezb` and
 must not be committed or uploaded wholesale. One existing NyxID owner account is
@@ -1188,19 +1372,309 @@ coverage remains GitHub-rendered HTML delivered at the declared source origin
 with a real anchor click, not authenticated GitHub web-page access. Fresh signup
 and cross-owner browser isolation remain untested with the single owner account.
 
+### Startup Fix Deployment And Final Fresh Admission
+
+API `a52e72ba` completed build and vulnerability scanning with zero High/Critical
+findings. `api-a52e72ba-push.json` records passing registry publication and exact
+readback at 02:45:54.457 UTC for digest
+`7907d9d9b817ca7956abe56c8ac6de9dfff22dbdd850bad9a2fd82d6629e686b`.
+Manifest commit `45421923` pins that API image. The normal all-owner receipt
+`all-owner-rollout-guard-rwaXfc/result.json` passed at 02:47:34.810 with no
+reasons; its consistent read covered 10 Sandboxes, one owner, nine Workspaces,
+13 Agents and 14 Launches. The receipt is a point-in-time check, not an atomic
+writer lease or unconditional deployment authorization. Separate dispatch in
+`rollout-a52e72ba-137b489d-4ddcd1b9-api-before.json` is recorded at
+02:47:36.414. Root's independent exact-image/Ready assertion in tool session
+`76745` passed at 02:48:23.166. Web `4ddcd1b9` and runtime `137b489d` were not
+changed. These completed results supersede the 02:22 pending build/rollout state.
+
+The one final-fresh Launch `lch_704c97d9d4af42ad9c0c359f7962c30d` was admitted
+at 02:49:16 UTC after the configuration observer's owner-verification handshake.
+Root `66425` continues that original browser journey, awaiting its first response;
+the executor still observed Working with an active first turn at 03:04:53 UTC.
+That pending observation is superseded by the completed first-turn assertions
+and subsequent browser failure below, not a passing original journey. The resolved
+hierarchy is Sandbox `sbx_a87eb72e32c54c6c941a3019b27b5965`, Workspace
+`wks_7437332e2afe4fea90b46d448b18c9a7`, Worktree
+`wkt_8e5251641ae34b3995ad27684a38b85d`, and Agent
+`agt_a0923aab778f41e7ba12e5cb54e8d8da`.
+
+`configuration-admission-final-fresh-MPFOrz/result.json` passed at
+02:52:49.160 UTC. It binds the verified owner, published profile/Trigger pins,
+first turn sequence 9 started at 02:52:34, and exact runtime image/pod to this
+Launch. Three observations show an Active Sandbox and Working Agent with no
+checkpoint or lifecycle operation. The runtime probe verifies all five exact
+installers, .NET 10.0.103 and Lean 4.33.0 in the actual separate Agent login shell,
+the exact system prompt, `gpt-5.6-sol`/`xhigh`, `never`/`danger-full-access`,
+twenty exact files across four skill archives discovered once each, and only
+`chrono-llm,ornn-api` with `proxy read`, zero nodes and no all-service/node grants.
+Worktree `/home/cma/trureturing/.worktrees/wt-1`, branch `cma/wt-1`, records
+commit `5a1706ce9897f520c74385e40811ab01278c0d78` with unchanged tracked source.
+The probe explicitly sets repository workload verification false. Configuration
+acceptance is not a completed first response or a heavy-workload execution pass;
+earlier workload/restored-file receipts remain bound to their original sources.
+
+The read-only source report `trureturing-base-compatibility-5a1706ce.md` finds all
+six root toolchain declarations and all 36 tooling project, lockfile, solution
+and build-property declarations byte-identical across heavy base `edc52b0f`,
+prior audited base `33a85901`, and this final base. Earlier reports incorrectly
+counted 35 tooling declarations; 36 is a reporting correction, not an added
+requirement. The full changed-tree comparison covers 122 prior/current and
+28,499 heavy/current leaf paths; changed executable behavior and seven added
+Lean modules prevent treating this as documentation-only or transferring build,
+performance or capacity results. No declaration-driven CMA profile change is
+required, but this is source/configuration compatibility evidence only.
+
+`live-provisioning-fNuXyZ/result.json` passed at 02:50:01.016 UTC for the same
+Launch in all four 1440/390-pixel light/dark views. Fixed identities bind the
+running Sandbox step, completed sign-in step and pending Workspace step to
+actual backend state. Canvas evidence confirms the three colors, running motion,
+completed/pending stillness and reduced-motion stillness, with no horizontal
+overflow. This observer issued zero resource commands and replaced zero production
+responses. The earlier `live-provisioning-uib1eK` failed capture remains failed.
+Final settled hierarchy, title and conversation layout acceptance still require
+their separate post-repeat evidence.
+
+### Final Fresh Reload Failure And Guarded Continuation
+
+Root verifier `66425` exited 1 around 03:10 UTC. Its immutable original
+`production-final-fresh/failure.json` records `TimeoutError` at stage
+`title-before-reload`. That stage label spans the mobile reload in the verifier;
+it is not a failed title-equality assertion. Saved `title-before-reload.json`
+passed at 03:09:39.670 with API/header/tab/tree agreement, and
+`04-agent-mobile-title.json` passed at 03:09:47.582 with API/header/tab agreement.
+The existing source order requires completed first-turn, exact prompt once,
+published profile pins, Active/Ready hierarchy and one existing-owner OAuth
+assertions before those files are written. Both title probes sent zero resource
+commands. The browser failure list is empty and the original command log contains
+only entry-intent and one Launch POST. Those completed assertions remain partial
+evidence; the missing successful reload and final result are not manufactured.
+
+Saved diagnostic `final-fresh-tool-readonly-6UXk3j/result.json`, observed at
+03:11:56.989, binds the exact final Sandbox, Agent and runtime pod. One bounded
+read-only runtime inspection found native `task_complete` at 03:03:32.247 and
+the final native transcript mtime at 03:03:32.248, while public completion was
+not observed until approximately 03:09. It records zero mutations and no
+environment reads. This is evidence of delayed public processing, not an Agent
+still executing until the public completion observation.
+
+The narrow core correction for redundant tool-update publication is implemented
+and independently reviewed with no blocking defect found. Output-only packets
+without status or title no longer manufacture durable generic `updated` events.
+Pending assistant text, first-message and operation evidence are still processed
+before that quiet path; current-Agent, generation, liveness and strict mutation
+checks remain unchanged. Six new regressions cover 4,096 quiet packets,
+assistant flush, owned/replayed evidence, stale generations and stopped Agents.
+The full core suite passed 587 tests with no failures or ignored tests; Clippy,
+scoped formatting, whitespace checks and secret scanning also passed. Saved
+source evidence is `output-update-publication-fix.md`. This prevents future log
+inflation without rewriting existing history; it is not deployment evidence.
+
+A separate read-path optimization is independently reviewed with no blocking
+defect found. Mongo validates the entire current bounded snapshot once for an
+exact requested prefix, including records beyond that prefix. Core still checks
+every identity and sequence and retains the separate uncommitted-tail check.
+For a complete Agent projection, this reduces full scans from one per 200-row
+page plus the tail check to two scans, not one. The new real-Mongo regression
+covers 405 rows, exact 200-row prefix, ordinary pagination, zero/missing/short
+prefixes, and gap, foreign-identity and uncommitted-tail corruption beyond the
+requested prefix. It also checks one aggregate find, one complete-log find and
+the shared snapshot session. Root session `40254` exited 0 after that real-Mongo
+test passed in 0.43 seconds and the existing missing-durable-log regression
+passed in 0.21 seconds, against the isolated pinned local Mongo image; test
+container cleanup completed. Core `agent_reads_tests` passed all 17 tests in
+session `26448`. Source review and local tests are not a passing production
+reload or rollout.
+
+The prepared `first-continuation-guard.mjs` and
+`verify-first-continuation.mjs` pass 15 offline guard tests and syntax checking.
+The continuation requires the retained failed admission/title evidence and the
+same exact completed one-turn transcript and four-ID hierarchy. Browser routes
+are GET-only, WebSockets are blocked, and control reads use fixed GET paths.
+New output is exclusively `production-final-fresh-recovered`; the original
+failed directory is never rewritten. A future pass must state read-only recovery,
+original result failed, no Launch replay and no fresh-admission retest. The script
+checks runtime image and web build, and now requires `CMA_API_REVISION` with
+matching API image and observed deployment counts. Independently verifying the
+exact new API pod is Ready remains a prerequisite: ready and updated replica
+counts alone can include different old/new pods during a surge rollout. Original
+evidence hashes are now rechecked before success. The combined continuation and
+hierarchy guard suite passes 22 offline tests; syntax checking passes. The final
+hierarchy verifier explicitly accepts the recovered baseline while preserving
+the failed original and recovery-only scope. No continuation production result
+is claimed here.
+
+### Correction Deployment And Resume In Progress
+
+API build session `79656` exited 0 after a 25-minute-28-second release build.
+The API image scan has zero High/Critical findings, and registry readback in
+`api-a5199c4d-push.json` passed at 03:56:40.731 UTC. Its digest is
+`a1738687e45cdf828eac2fc968d642976bc843017694d060f6e7b265cc571c3c`.
+Web registry readback passed at 03:32:01.631 UTC, digest
+`199e9f30dfdef2cbfe32a01ff4fb9b15f28f65528489ca239d343a61e2d28099`.
+Both name source `a5199c4d9d754986ac5ed55f54aaf5e56d08026d`.
+Root reports manifest validation 18 valid/zero skipped and lint passing;
+manifest commit `7371cd27` is pinned and pushed.
+
+Web preflight `paused-ready-observation-rollout-kisBRW/result.json` passed at
+03:57:54.197 UTC; API preflight `paused-ready-observation-rollout-DmVATl/result.json`
+passed at 03:58:35.761. Both bind the original paused hierarchy, checkpoint
+epoch 3 and native conversation, preserve their strict blocked reasons, and
+remain point-in-time observations. Separate conditional dispatch plans in
+`rollout-a5199c4d-137b489d-a5199c4d-web-before.json` and the corresponding
+`api-before.json` record 03:57:55.558 and 03:58:36.974 respectively; these are
+plan timestamps, not fabricated exact patch-admission times.
+
+Independent exact Ready evidence is preserved in the corrected Resume run's
+`initial-deployments.json` at 04:01:46.899 and `dispatch-deployments.json` at
+04:01:59.041. API generation 61 has only pod `cma-api-6d8f577748-cbs6f`, UID
+`dee8bf4c-3830-4091-bb7f-70db5dbbd31e`; web generation 30 has only
+`cma-web-757b8fc9cc-htg5k`, UID `55df3b3f-df9e-4704-9b5b-7231d0e1894a`.
+Those checks require the exact desired and running image digests, complete
+replica readiness and no old/terminating pods. Runtime `137b489d` is unchanged.
+
+Original `autopause-revival-Z2n91N` remains failed at `initial-paused`, with
+zero commands, unarmed/unreserved/undispatched gate, zero store or runtime
+execs and browser closed at 03:59:27.117. The issue was a scratch assertion
+against the dedicated `ProfileReferenceView`, which exposes only ID/revision;
+the corrected guard still requires exact digests on full nested Agent
+projections. Runtime-loop reports 91 focused tests/124 combined tests passing.
+This is a verifier correction, not a product profile/configuration change.
+
+Root `94379` owned the corrected `autopause-revival-nGNNYj` run. Its saved
+`resume-response.json` records one UI POST accepted with HTTP 202; root
+observed Reviving revision 43 at 04:02:03. This pending result was superseded by
+the HTTP 429 failure and read-only continuation below, not a success.
+Follow that accepted operation; do not issue another Resume,
+Launch or first prompt. The original final-fresh mobile-reload failure remains
+failed, and all remaining acceptance below is still required.
+
 ### Pending Corrected Acceptance
+
+At 04:22 UTC, saved `autopause-revival-nGNNYj/failure.json` remains failed in
+`await-active` on transcript HTTP 429. Its completion at 04:06:59.109 confirms
+the browser closed, zero runtime execs and exactly one dispatched Resume at
+04:02:02.328. Saved request logs contain 3,346 browser requests, including
+40 HTTP 429 responses, and 334 harness reads with one HTTP 429. Root traced
+the excess polling to repeatedly fetching retired Sandboxes and historical
+Workspaces. The frontend polling correction and its separate static-web rollout
+are recorded below; this failed watcher is not relabeled.
+
+Root's GET-only continuation `autopause-continuation-6GC3Ep` follows that same
+accepted Resume without a browser or resource command. Its saved `failure.json`
+records the ten-minute deadline failure at 04:22:06.115, stage
+`poll-sandbox-only`, with no immediate retry. All 60 reads avoided HTTP 429 and
+zero resource commands were issued. Its last state is Sandbox Reviving revision
+56 in `queued_message_delivery`, with Agent Ready but the lifecycle lease not
+settled. That is not a debt-free Active boundary. No lifecycle repair, deadline
+expiry or completion is inferred from planned timing.
+
+Frontend `a17bf80ec6fb019819edb9ba183450d2529037a8` was built, scanned and pushed;
+registry readback passed at 04:21:09.947 and manifest pin `9ed2f93c` records
+digest `5e558f0ce0c73d4b9b2511ceeadffb681cee0a2155e8293b33ca58688b1af22c`.
+The saved `static-web-only-rollout-QHCGdw/result.json` records the separately
+scoped static-web-image-only rollout request at 04:27:56.741, with unchanged
+API identity, config and routes, zero Sandbox commands and no runtime rollout.
+That receipt itself says `rollout-requested`; the executor separately confirmed
+exact Ready web generation 31, pod `cma-web-97c9498bb-nltvj`, UID
+`fef55d62-10a4-4713-8801-828bab0d1b15`, at the target digest. No all-owner-quiet
+claim was made. The active-web observation guard below remained unused. A
+bounded three-minute GET-only live polling observation is authorized, not yet
+accepted by this update.
+
+API source `e1ff6efa2463bc53a91cb04582a5011c1fb4ba1a` fixes the restore queue
+publication conflict. A known `SandboxStoreError::Conflict` from
+`complete_lifecycle_queue` now returns through the existing five-second
+`retry_queue_phase` under the original parent claim. Agent metadata can change
+while publication is attempted; the fix does not mutate Agent rows, replay
+effects, advance the phase, swallow unavailable/ambiguous results or release a
+newer worker's claim. Exact parent/owner/revision/work/lease/operation/runtime
+and capture checks and transactional validation remain in force. Independent
+review found no blocking defect. All six lifecycle queue tests and clippy pass;
+full serial CMA tests pass 521 with zero failures and 170 ignored, using
+`RUST_MIN_STACK=33554432 CARGO_INCREMENTAL=0`. The full parallel run had 520
+passes and one existing diagnostic tracing-capture failure; that test passes
+in isolation. Format, diff and scoped/commit secret scans pass. Root build
+`5206` is still pending; no API `e1ff6efa` rollout is claimed.
+
+The paused-observation wrapper and consumer now have an explicit
+`queue-publication-fix` mode, invoked with `--queue-publication-fix`. The old
+default remains the exact `a52e72ba` to `a5199c4d` rollout. The new mode permits
+only API `a5199c4d` to `e1ff6efa`, requires web `a17bf80e` already exact Ready,
+and retains runtime `137b489d`. The original Paused/no-debt predicate is
+unchanged; Reviving is refused. Both modes require identical SHA-256 hashes
+for all four reviewed Ready/Finish worker-source files. Receipt mode and target
+tuple are checked by the dispatcher and consumer, with the same per-patch
+freshness deadline. All 47 mode, paused-state and unchanged strict-audit tests
+pass; wrapper/consumer syntax and independent dispatcher review pass. This
+new mode is prepared only and has not been executed by this task.
+
+A separately named `exact-active-ready-web-only-observation-rollout-preflight`
+is implemented offline for a possible later web-only rollout. It requires a
+successful retained Resume-continuation receipt, exact restored native/full
+transcript and Agent log head, the same physical Ready runtime UID/generation
+and digest, then a fresh complete all-owner snapshot with only the exact
+Active/Ready/Ready-Finish reasons. Its only permitted non-None Sandbox work is
+an unleased credential-rotation timer more than five minutes away. API
+`a5199c4d`, runtime `137b489d` and all config remain unchanged; only the named
+web Deployment image may change. Fifteen-second freshness and five-second
+dispatch margin apply. Fourteen new groups plus 39 existing guard tests pass
+(53 total), and syntax passes. This wrapper was not executed. Current Reviving
+state is explicitly refused; an eventual paused deployment may instead use its
+own separately reviewed scope. Neither older guard was weakened or relabeled.
+
+The 03:35:45 UTC saved all-owner read in
+`all-owner-rollout-guard-cLkFLy/result.json` observes the retained final Sandbox
+automatically Paused at revision 42, without runtime, provision, capture, writer,
+lifecycle, credential or work debt. Its sole Agent is Paused at generation 1.
+The strict guard remains blocked by the exact final Launch's `Ready/Finish`
+state/work pair; earlier blocked `all-owner-rollout-guard-88chbB` is unchanged.
+A separate `paused-ready-observation` preflight was implemented and reviewed
+offline, then passed for the two rollouts recorded above. It preserves the strict audit and
+allows only that exact pair of reasons, with the original owner/four-ID hierarchy,
+native conversation, canonical checkpoint, completed Agent first message and
+resolved Launch evidence, no leases/effects/blocks/failure/recovery, and all
+other-owner checks unchanged. Four reviewed worker-source files match deployed
+`a52e72ba` and candidate `a5199c4d`: Ready bypasses control refresh, Finish
+bypasses resource-effect execution, and success/failure observation only reads
+the Agent and defers Launch polling until it stops. The separate preflight has
+a 15-second deadline and requires at least five seconds of remaining validity
+before conditional dispatch; it is not an atomic writer lease or a normal
+all-quiet result. Fourteen new offline groups plus 25 unchanged strict tests
+pass, and wrapper/consumer syntax checks pass. No production call was made by
+this guard-development task.
+
+Automatic Pause changes the original ordering assumption below: the prepared
+GET-only continuation requires Active/Ready and cannot itself revive Paused42.
+The executor's revised order is to finish both image rollouts, independently
+verify the paused baseline, issue one guarded owner UI Resume, then run the
+read-only continuation, explicit physical Pause and paused README repeat.
+The offline `autopause-revival` verifier admits only that one Resume, rechecks
+owner, exact profile digests, completed full transcript, original native
+conversation and fresh settled store/public state before dispatch, and checks
+the exact API/web pod images are Ready. After review hardening, 82 local tests
+and syntax checking pass; independent review found no blocking issue. The
+inspector UID is pinned before credential access and an exact restore-state
+allowlist immediately rejects unexpected work/failure states. The later dedicated
+profile-reference fixture correction and its 91-test result are recorded above.
+The helper preserves
+failed original evidence and does not claim manual-Pause, fresh-admission or
+first-flow acceptance. One production Resume is accepted and still in progress
+as recorded above; no restored-Active or continuation pass is claimed.
 
 The remaining superseding sequence in private `final-flow-audit.md` requires:
 
-1. Finish API `a52e72ba` image build, scan and registry digest verification, then
-   pin and deploy it only after a fresh completed all-owner quiet guard in a
-   separate dispatch step. The disposable first/Pause/Delete sequence is complete;
-   do not repeat its commands. Verify the deployed API before final admission.
+1. Finish both correction rollouts and independent exact-image readiness checks,
+   then the guarded one-Resume recovery from automatic Pause described above.
+   Run the guarded read-only reload continuation on the existing final-fresh
+   hierarchy. Preserve the original failed browser result and do not repeat its
+   admission, first prompt or completed disposable commands. Configuration,
+   four-view provisioning and pre-reload first-turn/title assertions already pass;
+   recovered desktop/mobile open and reload still require their own result.
    No heavy workload replay or extra manual Resume is added.
-2. Run the final fresh README journey and admission-bound configuration observer
-   as `final-fresh`, waiting for the observer's `owner_verified` marker before
-   admission. Explicitly Pause that fresh post-fix baseline and independently
-   verify physical provider-resource/pod teardown, not only the Paused API state.
+2. After that continuation passes, explicitly Pause its post-fix baseline and
+   independently verify physical provider-resource/pod teardown, not only the
+   Paused API state.
    This retained environment is separate from disposable `lifecycle-postfix`.
    Then run `final-repeat` with
    `CMA_REQUIRE_PAUSED_REPEAT=1` and the exact completed Pause proof.
