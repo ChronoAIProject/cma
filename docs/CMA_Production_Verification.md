@@ -1,5 +1,92 @@
 # Production Trigger Verification
 
+## Latest UI Follow-Up: 2026-09-08
+
+The owner-requested navigation, deletion, Sandbox overview, reference-name,
+step-motion and signed-out landing changes are deployed. This section supersedes
+the image pins in the historical acceptance campaign below, not its individual
+test results. Final follow-up passed at 09:25:16 UTC with the owner's retained
+Sandbox paused and its original conversation unchanged.
+
+| Role | Source Revision | Deployed SHA-256 |
+| --- | --- | --- |
+| Web | `e85286c0be7fec13dc2b5342a611c17c1f8c58a8` | `c91ca9214718ab2e3d440dc4307d0b7305f2c648a878e91653e92b5f54ab7a37` |
+| API | `d49ea8bc0036cfc83906f9cdbb72f9d137657eba` | `91a3b93f22f06283eb86dc05881ff0789954c154852246b6cf0cf0485e9b7e2a` |
+| Runtime, unchanged | `137b489de42ee227f86a67b9acdaf6f5b8ede085` | `3c47370e24aa95915aa6c74567a981358ab333e44ba766ca4389e9827b32b5b8` |
+
+- Web changes remove the anonymous Sign in button, use ChronoAI Managed Agent,
+  reveal Get/Started on the actual lenses after the first sweep, and spin once
+  before fading into authentication. Signed-in Home and step characters receive
+  no login activation callback. Reduced-motion and unavailable-WebGL paths remain
+  keyboard usable. Pending turns once per second; completed jumps every two seconds.
+- Sandbox status and actions no longer wait for optional detail or event reads.
+  The ordinary page shows pinned access settings and named contents; technical
+  details and Events load in Advanced. Inactive parents hide child navigation.
+  References use public names and canonical Profile, NyxID catalog and Ornn links.
+- All 1,080 frontend tests passed, as did formatting, lint, type checks, E2E
+  type checking and production build. Fourteen local browser cases passed at
+  1440/390px, covering deletion/reload, hierarchy availability, Home, actual
+  canvas pixels/motion and sign-in. Two additional sign-in reruns included
+  duplicate activation, reduced motion and unavailable-WebGL fallback.
+- `september-ux-production-pGNX8e` passed real anonymous NyxID handover and
+  authenticated Sandbox/Advanced/Agent reference checks at both widths in both
+  themes, without resource writes. The two NyxID services and all four Ornn
+  skills use their original names and canonical destinations. The owner's full
+  retained transcript hash matches pre-rollout evidence. Screenshots were inspected.
+  `september-ux-production-RcipZU` repeated these checks with explicit theme-color
+  transition settling before capture; the final dark-theme action labels are readable.
+- `lifecycle-home-production-kfc7Dr` passed both widths with empty Home details,
+  continuous nonblank 3D rendering, reduced motion, separated header controls,
+  full-height navigation and no resource writes. Runtime configuration stayed fixed;
+  final namespace inventory contained only healthy CMA Web/API pods.
+- Previously stuck Workspace `wks_7c0d57ba241849f8b689e5c786824bf5` is Removed.
+  Agent `agt_86105acca6e8426c98675019b5b948a8` now finishes its already-admitted
+  deletion, with its Worktree Removed. Interrupted-turn metadata is retained;
+  no manual record repair or runtime recreation was used.
+
+### Startup Incident And Recovery
+
+The Web rollout exposed a temporary Gateway backend-health handover gap: the
+new Pod was ready before public traffic stopped returning 503. The route
+reconciled and public Web access recovered; the first failed browser observation
+remains in `lifecycle-home-production-5kR2uH`.
+
+The API rollout at approximately 09:01 UTC exposed an existing startup defect.
+The default-profile verifier compared the derived `uses_count` against the
+fresh-seed value zero. The disposable creation test had legitimately increased
+all three default-profile counters to one. New API `4f70b34a` refused startup,
+and rolling back to `03fd185c` reproduced the same refusal. The API was unavailable
+until recovery at approximately 09:16 UTC; this was a real service interruption.
+
+Recovery `d49ea8bc` excludes only the derived use count from the in-memory
+deployment-configuration comparison. It neither resets database counters nor
+relaxes the pinned content, identity, publication or revision checks. Three unit
+tests, a real disposable MongoDB seed/use/restart/configuration-drift test, and
+Clippy passed. Two retired-runtime MongoDB cleanup tests also passed. Public
+post-recovery reads confirm all three production counters remain one at revision
+one. Both image scans and remote digest checks passed; all 18 manifest resources
+validated with zero skips and Kubernetes lint passed.
+
+`default-profile-recovery-yMf0hi` records the unavailable-API recovery guard:
+the pre-outage all-owner public inventory was settled, fresh Kubernetes reads
+showed zero runtimes/provider resources, the API was failing this exact startup
+check, and Web/configuration remained unchanged. Fresh public inventory was
+unavailable during the outage; recovery did not pretend otherwise. The original
+conversation was compared again after service returned. No database repair,
+Sandbox command, new diagnostic pod or runtime image change was used.
+
+### Remaining Evidence Limits
+
+The disposable live three-level deletion journey `live-deletion-flow-7fBU0r`
+failed after provisioning when its Sandbox reported `restore_failed`. Its
+Sandbox-only UI deletion subsequently completed in `disposable-cleanup-X0X34J`;
+retained stopped children are expected after Sandbox-only retirement. That failed
+journey is not a passing fresh Agent/Workspace deletion E2E test. Current deleted
+Agent/Worktree confirmation and local deletion-dialog tests are separate evidence.
+No new first prompt or full fresh Trigger-provisioning campaign was run during
+this UI follow-up. Earlier campaign evidence remains scoped to its recorded pins;
+none of these results guarantees every account, browser or future upstream state.
+
 ## Current Acceptance Campaign
 
 The later 2026-09-07 Truretruing request supersedes the historical runtime-change
