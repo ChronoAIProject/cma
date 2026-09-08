@@ -824,6 +824,20 @@ become one column, text wraps, and every action is available without hover.
 A network outage preserves the last successful view and names its observation
 time. No elapsed-time heuristic changes a server state.
 
+During Sandbox preparation, the sandbox row also shows the public Sandbox's
+current operation in plain language, total elapsed time from its recorded start,
+and the last successful status check. The same unframed status band appears on
+the Sandbox page. A native Activity details disclosure contains the ordered
+operation stages and recorded start time, using existing 14/13px type, secondary
+ink, level-2 separators and 16/12/8px spacing. Completed stages derive only from
+the server's sequential phase contract. Unknown phases have no guessed steps.
+Elapsed time never advances stages or supplies a percentage or ETA. Long file
+restore explicitly says that file-level progress is not reported; a successful
+status read is not described as proof of moving bytes. Reads are nonoverlapping,
+visible-only every 1.5 seconds, and recover after transient failure. Authorization
+or visibility denial clears the last observation. Raw runtime logs, credentials,
+commands and paths never enter the activity summary.
+
 ---
 
 ## 14. Retired terminal plane
@@ -927,7 +941,8 @@ Children return only after the Sandbox is active and its lifecycle operation has
 finished. An ordinary checkpoint save on an active Sandbox retains its readable
 children. Resume availability still comes from the public lifecycle record.
 The Sandbox page names the current state and explains why its children are
-unavailable. Recorded operation phases and start times belong in Advanced.
+unavailable. Plain-language operation progress and elapsed time remain visible;
+raw phase names and other technical facts belong in Advanced.
 No guessed readiness percentage.
 
 Deletion uses the existing risk confirmation, followed in the same overlay seat
@@ -976,7 +991,8 @@ failures preserve the main status and actions and offer retry.
 
 An Advanced icon-and-text command opens the shared wide Modal. Runtime version,
 IDs, profile revisions, limits, paths, recorded preparation, operation phases,
-timestamps and Events appear only there. Events load only while that dialog is
+technical timestamps and Events appear only there, except for the ordinary
+operation progress and its recorded start time. Events load only while that dialog is
 open and never hold the ordinary page hostage. The dialog scrolls its body,
 traps focus, closes with Escape and returns focus to Advanced.
 
@@ -1535,3 +1551,4 @@ Append-only. Never edit or delete an entry.
 | 2026-09-08 | Applied shared step-character motion across the product: yellow pending turns once per second, green completed jumps once every two seconds, with stable geometry, visibility pausing, still fallback and reduced-motion equivalence. |
 | 2026-09-08 | Simplified the owner Sandbox page around status, contents and agent access; moved technical facts and event reads into Advanced. Standardized original-name profile, NyxID service and Ornn skill links with owner-scoped resolution and canonical destinations. |
 | 2026-09-08 | Made the signed-out logo the Get Started control after one lens sweep, with a complete turn and opacity handover into sign-in; renamed its heading ChronoAI Managed Agent and removed the standalone sign-in button. Preserved all signed-in character behavior and accessible reduced-motion and static fallbacks. |
+| 2026-09-08 | Exposed shared plain-language Sandbox operation progress on the Trigger journey and Sandbox page, with recorded-stage activity, elapsed time, last successful check and explicit missing file-level telemetry. Kept technical events in Advanced and prohibited timer-driven completion or estimates. |
