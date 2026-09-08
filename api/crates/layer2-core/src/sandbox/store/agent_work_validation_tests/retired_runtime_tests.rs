@@ -22,6 +22,8 @@ fn retired_sandbox_delete_proof_is_scoped_to_terminal_owner_and_cleanup_steps() 
         .work
         .schedule(SandboxWorkStep::WaitForPurge, AT.into());
     assert!(retired_sandbox_cleanup_is_absent(&agent, &sandbox));
+    agent.conversation.active_turn = Some(9);
+    assert!(retired_sandbox_cleanup_is_absent(&agent, &sandbox));
     for variant in 0..8 {
         let mut agent = agent.clone();
         let mut sandbox = sandbox.clone();
