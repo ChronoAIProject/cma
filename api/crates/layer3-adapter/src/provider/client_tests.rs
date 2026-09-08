@@ -85,7 +85,7 @@ async fn serve_raw(response: String) -> (String, tokio::task::JoinHandle<String>
     (format!("http://{address}"), task)
 }
 
-async fn read_request(stream: &mut tokio::net::TcpStream) -> String {
+pub(super) async fn read_request(stream: &mut tokio::net::TcpStream) -> String {
     let mut bytes = Vec::new();
     let header_end = loop {
         let mut chunk = [0_u8; 1024];

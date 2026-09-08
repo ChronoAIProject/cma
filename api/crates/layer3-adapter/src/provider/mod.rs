@@ -17,3 +17,6 @@ pub(crate) use client::ProviderDeleteTarget;
 #[cfg(test)]
 #[path = "client_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+mod reclaimer_tests;
