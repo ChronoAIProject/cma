@@ -32,7 +32,9 @@ it.each([
   'holds messages for %s even without an operation projection',
   async (status) => {
     const client = agentClient({ readSandbox: async () => transitioning(status) });
-    const { result } = renderHook(() => useSandboxInput(client, 'agt_1', 'sbx_1'));
+    const { result } = renderHook(
+      () => useSandboxInput(client, 'agt_1', 'sbx_1').inputAvailability,
+    );
     await act(async () => {});
     expect(result.current.allowed).toBe(false);
     expect(result.current.notice).toBeTruthy();
@@ -59,7 +61,9 @@ it.each([
           startedAt: '2026-09-08T00:00:00Z',
         }),
     });
-    const { result } = renderHook(() => useSandboxInput(client, 'agt_1', 'sbx_1'));
+    const { result } = renderHook(
+      () => useSandboxInput(client, 'agt_1', 'sbx_1').inputAvailability,
+    );
     await act(async () => {});
     expect(result.current.allowed).toBe(false);
     expect(result.current.notice).toContain(label);
@@ -76,7 +80,9 @@ it.each(['work_in_progress', 'checkpoint_in_progress', 'not_paused', undefined] 
         lifecycle: { ...sandbox.lifecycle!, revive: { allowed: false, reason } },
       }),
     });
-    const { result } = renderHook(() => useSandboxInput(client, 'agt_1', 'sbx_1'));
+    const { result } = renderHook(
+      () => useSandboxInput(client, 'agt_1', 'sbx_1').inputAvailability,
+    );
     await act(async () => {});
     expect(result.current.allowed).toBe(false);
     expect(result.current.notice).toBeTruthy();
@@ -93,7 +99,9 @@ it.each(['checkpoint_in_progress', 'work_in_progress'] as const)(
         lifecycle: { ...sandbox.lifecycle!, pause: { allowed: false, reason } },
       }),
     });
-    const { result } = renderHook(() => useSandboxInput(client, 'agt_1', 'sbx_1'));
+    const { result } = renderHook(
+      () => useSandboxInput(client, 'agt_1', 'sbx_1').inputAvailability,
+    );
     await act(async () => {});
     expect(result.current.allowed).toBe(false);
     expect(result.current.notice).toBeTruthy();
@@ -108,7 +116,7 @@ it('does not use unrelated Pause ineligibility as Active message eligibility', a
       lifecycle: { ...sandbox.lifecycle!, pause: { allowed: false, reason: 'not_active' } },
     }),
   });
-  const { result } = renderHook(() => useSandboxInput(client, 'agt_1', 'sbx_1'));
+  const { result } = renderHook(() => useSandboxInput(client, 'agt_1', 'sbx_1').inputAvailability);
   await act(async () => {});
   expect(result.current).toEqual({ allowed: true });
 });
@@ -132,7 +140,7 @@ it('follows operator Pause and Resume at the lifecycle cadence and permits only 
     .mockRejectedValueOnce(new Error('read unavailable'))
     .mockResolvedValue(sandboxFixture());
   const client = agentClient({ readSandbox });
-  const { result } = renderHook(() => useSandboxInput(client, 'agt_1', 'sbx_1'));
+  const { result } = renderHook(() => useSandboxInput(client, 'agt_1', 'sbx_1').inputAvailability);
   await act(async () => {});
   expect(result.current.allowed).toBe(true);
   for (const interval of [5000, 1500]) {

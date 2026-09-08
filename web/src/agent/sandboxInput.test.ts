@@ -19,6 +19,44 @@ const saving = (phase: 'capture' | 'resume_writers'): SandboxDetail => ({
   },
 });
 
+it.each([
+  ['active', 'runtime-one', 'live'],
+  ['active', undefined, 'inactive'],
+  ['active', ' ', 'inactive'],
+  ['paused', undefined, 'paused'],
+  ['paused', 'runtime-one', 'paused'],
+  ['reviving', 'runtime-one', 'inactive'],
+  ['pausing', 'runtime-one', 'inactive'],
+] as const)(
+  'requires a fresh active runtime for metrics: %s/%s',
+  async (status, runtimeVersion, expected) => {
+    const client = agentClient({
+      readSandbox: async () => ({ ...sandboxFixture(status), runtimeVersion }),
+    });
+    const { result } = renderHook(() => useSandboxInput(client, 'agt_1', 'sbx_1'));
+    expect(result.current.resourceAvailability.state).toBe('checking');
+    await act(async () => {});
+    expect(result.current.resourceAvailability.state).toBe(expected);
+    if (status === 'paused') expect(result.current.inputAvailability.allowed).toBe(true);
+  },
+);
+
+it('keeps live resource eligibility separate from checkpoint input holds and expires stale observations', async () => {
+  vi.useFakeTimers();
+  const readSandbox = vi
+    .fn()
+    .mockResolvedValueOnce(saving('capture'))
+    .mockImplementation(() => new Promise(() => {}));
+  const client = agentClient({ readSandbox });
+  const { result } = renderHook(() => useSandboxInput(client, 'agt_1', 'sbx_1'));
+  await act(async () => {});
+  expect(result.current.inputAvailability.allowed).toBe(false);
+  expect(result.current.resourceAvailability).toEqual({ state: 'live', runtimeVersion: '1.2.3' });
+  await act(() => vi.advanceTimersByTimeAsync(10000));
+  expect(result.current.resourceAvailability.state).toBe('unavailable');
+  expect(readSandbox).toHaveBeenCalledTimes(2);
+});
+
 it('holds new input until a matching read, detects capture while Active and clears only after saving ends', async () => {
   vi.useFakeTimers();
   const readSandbox = vi
@@ -28,7 +66,9 @@ it('holds new input until a matching read, detects capture while Active and clea
     .mockResolvedValueOnce(saving('resume_writers'))
     .mockResolvedValue(sandboxFixture());
   const client = agentClient({ readSandbox });
-  const { result, unmount } = renderHook(() => useSandboxInput(client, 'agt_1', 'sbx_1'));
+  const { result, unmount } = renderHook(
+    () => useSandboxInput(client, 'agt_1', 'sbx_1').inputAvailability,
+  );
   expect(result.current.allowed).toBe(false);
   await act(async () => {});
   expect(result.current.allowed).toBe(true);
@@ -64,7 +104,9 @@ it.each(['missing', 'wrong_identity', 'failed'] as const)(
       readSandbox.mockResolvedValueOnce({ ...sandboxFixture(), id: 'sbx_other' });
     if (mode === 'failed') readSandbox.mockRejectedValueOnce(new Error('read unavailable'));
     const client = agentClient({ readSandbox });
-    const { result, unmount } = renderHook(() => useSandboxInput(client, 'agt_1', 'sbx_1'));
+    const { result, unmount } = renderHook(
+      () => useSandboxInput(client, 'agt_1', 'sbx_1').inputAvailability,
+    );
     await act(async () => {});
     expect(result.current.allowed).toBe(false);
     expect(result.current.notice).toBeDefined();
@@ -77,7 +119,7 @@ it.each(['missing', 'wrong_identity', 'failed'] as const)(
 it('does not reuse Pause eligibility and preserves normal paused-message revival', async () => {
   const sandbox = sandboxFixture('paused');
   const client = agentClient({ readSandbox: async () => sandbox });
-  const { result } = renderHook(() => useSandboxInput(client, 'agt_1', 'sbx_1'));
+  const { result } = renderHook(() => useSandboxInput(client, 'agt_1', 'sbx_1').inputAvailability);
   await act(async () => {});
   expect(sandbox.lifecycle?.pause.allowed).toBe(false);
   expect(result.current.allowed).toBe(true);
@@ -92,7 +134,7 @@ it('retains the recorded save time on a failed refresh but holds input until a f
       .mockRejectedValueOnce(new Error('offline'))
       .mockResolvedValue(sandboxFixture()),
   });
-  const { result } = renderHook(() => useSandboxInput(client, 'agt_1', 'sbx_1'));
+  const { result } = renderHook(() => useSandboxInput(client, 'agt_1', 'sbx_1').inputAvailability);
   await act(async () => {});
   await act(() => vi.advanceTimersByTimeAsync(1500));
   expect(result.current).toEqual({
@@ -111,7 +153,9 @@ it('expires an allowed observation when a refresh stalls without overlapping req
     .mockResolvedValueOnce(sandboxFixture())
     .mockImplementation(() => new Promise<SandboxDetail>(() => {}));
   const client = agentClient({ readSandbox });
-  const { result, unmount } = renderHook(() => useSandboxInput(client, 'agt_1', 'sbx_1'));
+  const { result, unmount } = renderHook(
+    () => useSandboxInput(client, 'agt_1', 'sbx_1').inputAvailability,
+  );
   await act(async () => {});
   expect(result.current.allowed).toBe(true);
   await act(() => vi.advanceTimersByTimeAsync(10000));
@@ -138,7 +182,9 @@ it('holds input after returning to a hidden tab until a new foreground read comp
     )
     .mockResolvedValue(sandboxFixture());
   const client = agentClient({ readSandbox });
-  const { result, unmount } = renderHook(() => useSandboxInput(client, 'agt_1', 'sbx_1'));
+  const { result, unmount } = renderHook(
+    () => useSandboxInput(client, 'agt_1', 'sbx_1').inputAvailability,
+  );
   await act(async () => {});
   await act(() => vi.advanceTimersByTimeAsync(5000));
   act(() => {
@@ -176,7 +222,7 @@ it('ignores late reads from another Agent and never overlaps or continues after 
     .mockResolvedValue(saving('capture'));
   const client = agentClient({ readSandbox });
   const { result, rerender, unmount } = renderHook(
-    ({ agentId }) => useSandboxInput(client, agentId, 'sbx_1'),
+    ({ agentId }) => useSandboxInput(client, agentId, 'sbx_1').inputAvailability,
     { initialProps: { agentId: 'agt_1' } },
   );
   await act(() => vi.advanceTimersByTimeAsync(20000));

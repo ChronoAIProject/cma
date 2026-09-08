@@ -123,6 +123,7 @@ try {
         if (path === '/api/v1/sandboxes/sbx_one')
           return reply({
             ...agent.sandbox,
+            runtime_version: 'runtime-one',
             limits: { max_workspaces: 4, max_agents_per_workspace: 4 },
             lifecycle: {
               pause: { allowed: true },

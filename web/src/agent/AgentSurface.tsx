@@ -213,6 +213,7 @@ export function AgentSurface({
         agentId={agentId}
         sandboxId={detail.sandbox.id}
         sandboxProfile={detail.sandbox.profile}
+        availability={controller.resourceAvailability}
         usage={conversation.usage}
       />
     </section>

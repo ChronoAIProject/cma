@@ -5,6 +5,9 @@ import { CmaClientProvider } from '../api/context';
 import { testClient } from '../test/client';
 import { AGENT_USAGE } from '../test/agent';
 import { Resources, cpuMillis, formatBytes } from './Resources';
+import type { SandboxResourceAvailability } from './sandboxInput';
+
+const liveAvailability = { state: 'live', runtimeVersion: 'runtime-one' } as const;
 
 const reading: AgentResources = {
   agent_id: 'agt_1',
@@ -27,6 +30,58 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+it('cancels reads on pause, ignores late samples, and starts CPU measurement again on activation or image change', async () => {
+  vi.useFakeTimers();
+  let finish: (value: AgentResources) => void = () => {};
+  const read = vi
+    .fn()
+    .mockResolvedValueOnce(reading)
+    .mockImplementationOnce(
+      () =>
+        new Promise<AgentResources>((resolve) => {
+          finish = resolve;
+        }),
+    )
+    .mockResolvedValueOnce({ ...reading, uptime_ms: 20000, cpu_usage_usec: 11000000 })
+    .mockResolvedValue({ ...reading, uptime_ms: 25000, cpu_usage_usec: 21000000 });
+  const client = testClient({ readAgentResources: read });
+  const draw = (availability: SandboxResourceAvailability) => (
+    <CmaClientProvider client={client}>
+      <Resources
+        agentId="agt_1"
+        sandboxId="sbx_1"
+        availability={availability}
+        usage={AGENT_USAGE}
+      />
+    </CmaClientProvider>
+  );
+  const { rerender } = render(draw(liveAvailability));
+  await act(async () => {});
+  await act(() => vi.advanceTimersByTimeAsync(5000));
+  expect(read).toHaveBeenCalledTimes(2);
+  rerender(
+    draw({ state: 'paused', notice: 'Sandbox paused. Live resources resume when it is active.' }),
+  );
+  expect(read.mock.calls[1]?.[1].signal.aborted).toBe(true);
+  await act(async () => finish({ ...reading, memory_bytes_used: 3 * 1024 ** 3 }));
+  await act(() => vi.advanceTimersByTimeAsync(15000));
+  expect(read).toHaveBeenCalledTimes(2);
+  expect(screen.getByText('RAM · paused')).toBeInTheDocument();
+  expect(screen.queryByRole('progressbar', { name: 'RAM' })).not.toBeInTheDocument();
+  expect(screen.getByRole('progressbar', { name: 'Context' })).toBeInTheDocument();
+  rerender(draw(liveAvailability));
+  await act(async () => {});
+  expect(read).toHaveBeenCalledTimes(3);
+  expect(screen.getByText('CPU · measuring')).toBeInTheDocument();
+  expect(screen.getByText('RAM · 1 GiB / 8 GiB')).toBeInTheDocument();
+  await act(() => vi.advanceTimersByTimeAsync(5000));
+  expect(screen.getByText('CPU · 2 cores / 4 cores')).toBeInTheDocument();
+  rerender(draw({ state: 'live', runtimeVersion: 'runtime-two' }));
+  await act(async () => {});
+  expect(read).toHaveBeenCalledTimes(5);
+  expect(screen.getByText('CPU · measuring')).toBeInTheDocument();
+});
+
 it('computes CPU cores only from comparable monotonic Sandbox samples', () => {
   expect(cpuMillis(undefined, reading)).toBeUndefined();
   expect(cpuMillis(reading, { ...reading, uptime_ms: 15000, cpu_usage_usec: 11000000 })).toBe(2000);
@@ -47,6 +102,7 @@ it('renders measured memory, network and context and derives live CPU on the nex
   const view = render(
     <CmaClientProvider client={testClient({ readAgentResources: read })}>
       <Resources
+        availability={liveAvailability}
         agentId="agt_1"
         sandboxId="sbx_1"
         usage={{ ...AGENT_USAGE, contextWindow: 10000 }}
@@ -80,7 +136,7 @@ it('retains last readings and explicitly marks a failed refresh', async () => {
   const read = vi.fn().mockResolvedValueOnce(reading).mockRejectedValue(new Error('offline'));
   render(
     <CmaClientProvider client={testClient({ readAgentResources: read })}>
-      <Resources agentId="agt_1" sandboxId="sbx_1" />
+      <Resources agentId="agt_1" sandboxId="sbx_1" availability={liveAvailability} />
     </CmaClientProvider>,
   );
   await act(async () => {
@@ -101,7 +157,7 @@ it('never displays a resource response for a different Agent', async () => {
         readAgentResources: vi.fn().mockResolvedValue({ ...reading, agent_id: 'other' }),
       })}
     >
-      <Resources agentId="agt_1" sandboxId="sbx_1" />
+      <Resources agentId="agt_1" sandboxId="sbx_1" availability={liveAvailability} />
     </CmaClientProvider>,
   );
   expect(await screen.findByText('Resources unavailable')).toBeInTheDocument();
@@ -131,6 +187,7 @@ it.each([null, 4000])(
     const draw = () => (
       <CmaClientProvider client={client}>
         <Resources
+          availability={liveAvailability}
           agentId="agt_1"
           sandboxId="sbx_1"
           sandboxProfile={{ id: 'profile', revision: 2, digest: 'digest' }}
@@ -166,6 +223,7 @@ it('leaves absolute readings without bars when pinned capacity cannot be read', 
       })}
     >
       <Resources
+        availability={liveAvailability}
         agentId="agt_1"
         sandboxId="sbx_1"
         sandboxProfile={{ id: 'profile', revision: 1 }}
@@ -199,7 +257,12 @@ it('ignores an old profile response and never carries configured capacity into a
   });
   const draw = (agentId: string, revision: number) => (
     <CmaClientProvider client={client}>
-      <Resources agentId={agentId} sandboxId="sbx_1" sandboxProfile={{ id: 'profile', revision }} />
+      <Resources
+        agentId={agentId}
+        sandboxId="sbx_1"
+        sandboxProfile={{ id: 'profile', revision }}
+        availability={liveAvailability}
+      />
     </CmaClientProvider>
   );
   const { rerender } = render(draw('agt_1', 1));

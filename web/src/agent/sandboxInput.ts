@@ -9,6 +9,15 @@ export interface SandboxInputAvailability {
   readonly savingStartedAt?: string;
 }
 
+export type SandboxResourceAvailability =
+  | { readonly state: 'live'; readonly runtimeVersion: string }
+  | { readonly state: 'checking' | 'paused' | 'inactive' | 'unavailable'; readonly notice: string };
+
+interface SandboxAvailability {
+  readonly inputAvailability: SandboxInputAvailability;
+  readonly resourceAvailability: SandboxResourceAvailability;
+}
+
 interface Observation {
   readonly agentId: string;
   readonly sandboxId: string;
@@ -20,7 +29,7 @@ export function useSandboxInput(
   client: CmaWebClient,
   agentId: string | undefined,
   sandboxId: string | undefined,
-): SandboxInputAvailability {
+): SandboxAvailability {
   const [observation, setObservation] = useState<Observation>();
   useEffect(() => {
     if (agentId === undefined || sandboxId === undefined) return;
@@ -88,12 +97,37 @@ export function useSandboxInput(
     };
   }, [agentId, client, sandboxId]);
 
-  if (
-    observation?.agentId !== agentId ||
-    observation?.sandboxId !== sandboxId ||
-    observation === undefined
-  )
-    return { allowed: false, notice: 'Checking Sandbox status.' };
+  const current =
+    observation?.agentId === agentId && observation?.sandboxId === sandboxId
+      ? observation
+      : undefined;
+  return {
+    inputAvailability: inputAvailability(current),
+    resourceAvailability: resourceAvailability(current),
+  };
+}
+
+function resourceAvailability(observation: Observation | undefined): SandboxResourceAvailability {
+  if (observation === undefined)
+    return { state: 'checking', notice: 'Checking Sandbox resources.' };
+  if (observation.stale || observation.sandbox?.lifecycle === undefined)
+    return {
+      state: 'unavailable',
+      notice: 'Sandbox status is unavailable. Live resources are held.',
+    };
+  const sandbox = observation.sandbox;
+  if (sandbox.status === 'paused')
+    return { state: 'paused', notice: 'Sandbox paused. Live resources resume when it is active.' };
+  if (sandbox.status !== 'active' || !sandbox.runtimeVersion?.trim())
+    return {
+      state: 'inactive',
+      notice: 'Live resources are unavailable while the Sandbox runtime is inactive.',
+    };
+  return { state: 'live', runtimeVersion: sandbox.runtimeVersion };
+}
+
+function inputAvailability(observation: Observation | undefined): SandboxInputAvailability {
+  if (observation === undefined) return { allowed: false, notice: 'Checking Sandbox status.' };
   const { sandbox, stale } = observation;
   const savingStartedAt = sandbox?.lifecycle?.checkpoint?.startedAt;
   if (stale)
