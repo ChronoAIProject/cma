@@ -3,6 +3,8 @@ import type { AgentStatus } from '../api/types';
 import { Button } from '../ui/Button';
 import { IconSendOutline16, IconStopFill16 } from '../ui/icons';
 import type { SandboxInputAvailability } from './sandboxInput';
+import type { TriggerQuickMessage } from '@chronoai/cma-sdk';
+import { QuickMessages } from './QuickMessages';
 
 interface ComposerProps {
   readonly status: AgentStatus;
@@ -11,6 +13,7 @@ interface ComposerProps {
   readonly starting?: boolean;
   readonly inputAvailability: SandboxInputAvailability;
   readonly busy: boolean;
+  readonly quickMessages?: readonly TriggerQuickMessage[];
   readonly onSend: (content: string, onAccepted: () => void) => Promise<void> | void;
   readonly onStop: () => Promise<void> | void;
 }
@@ -41,10 +44,12 @@ export function Composer({
   starting = false,
   inputAvailability,
   busy,
+  quickMessages = [],
   onSend,
   onStop,
 }: ComposerProps) {
   const [content, setContent] = useState('');
+  const [submitting, setSubmitting] = useState(false);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const sending = useRef(false);
   const composing = useRef(false);
@@ -77,8 +82,8 @@ export function Composer({
     return () => observer.disconnect();
   }, []);
 
-  const submit = () => {
-    const message = content.trim();
+  const submit = (quickMessage?: string) => {
+    const message = quickMessage ?? content.trim();
     if (
       message === '' ||
       composing.current ||
@@ -92,15 +97,24 @@ export function Composer({
       return;
     const draft = content;
     sending.current = true;
+    setSubmitting(true);
     void Promise.resolve(
-      onSend(message, () => setContent((current) => (current === draft ? '' : current))),
+      onSend(message, () => {
+        if (quickMessage === undefined) setContent((current) => (current === draft ? '' : current));
+      }),
     ).finally(() => {
       sending.current = false;
+      setSubmitting(false);
     });
   };
 
   return (
     <div className="agent-composer">
+      <QuickMessages
+        messages={quickMessages}
+        disabled={!usable || busy || running || starting || inputBlocked || submitting}
+        onSend={submit}
+      />
       {!hasNotice ? null : (
         <p id={noticeId} className="agent-composer__notice" role="status">
           {starting ? 'Starting. ' : null}

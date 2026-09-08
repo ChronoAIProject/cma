@@ -699,6 +699,30 @@ the draft. Track composition lifecycle as well as native composition flags and
 the IME key code used by Safari. Ordinary Enter sends after composition ends;
 Shift+Enter inserts a newline. Composition completion alone never sends.
 
+Trigger-created Agents show their original Trigger name as a native link in the
+conversation header; manually created and Workspace-Profile-created Agents have
+distinct written source labels. Source loading or failure does not block history
+or ordinary messages. Do not substitute internal IDs for missing display names.
+
+An unframed, wrapping row directly above the composer contains up to eight
+publisher-defined quick-message buttons. Use existing compact outline buttons,
+8px gaps and 44px mobile targets. Names wrap without widening the conversation.
+The row has its own scrollport, bounded to the smaller of 144px and 24vh, so
+eight long names cannot consume the conversation or displace the input.
+Keep 4px inset around the scrollport for focus rings and 8px before the input.
+Hover and keyboard focus show a description tooltip above the row, aligned to
+its leading edge, bounded to 320px wide and 160px tall with its own scroll. It uses
+the existing layer-2 ground, secondary ink, 12/18 type, 12px padding, 6px radius
+and border-l2. Portal it outside the row scrollport using the existing menu
+placement helper, 12px viewport inset and overlay level 1100. A 150ms hover-exit
+delay lets the pointer reach and scroll a long description; Escape dismisses it
+immediately without moving focus. Clicking
+sends the configured text through ordinary message admission, preserving any
+typed draft. The same availability, pending and active-turn guards apply. Reads,
+reloads and publication never send a message. Quick messages use the latest
+published Trigger revision; original creation provenance and first message stay
+unchanged. Retired Triggers expose provenance but no new quick-message actions.
+
 ### Preparation, pause, and recovery
 
 Preparation has stable step rows from Sandbox events and current instance facts:
@@ -1338,6 +1362,12 @@ read or failed mutation does not discard the draft.
    labels, theme, review-first checkbox, and optional sign-up hint. Render the
    actual server badge for preview after publication; unpublished labels use the
    checked-in server golden badge assets. Publisher content is plain text, not HTML.
+   Quick messages are editable repeated fieldsets, with Name, Description and
+   Message text. Add and remove use existing command buttons, never nested cards.
+   Limit names to 120 UTF-8 bytes, descriptions to 2,000 and text to 32,768; names
+   must be nonempty and unique ignoring case and surrounding whitespace. All
+   three fields are required per message, with at most eight messages. Saving a
+   draft does not alter visitor buttons until explicit publication.
 4. **Where it lives** edits labeled source-URL placements with add/remove commands.
    Every mutation retains one key and exact payload until its outcome is known.
    A placement is attribution and an allowed source declaration, not authentication.
@@ -1669,3 +1699,5 @@ Append-only. Never edit or delete an entry.
 | 2026-09-09 | Resolved Marketplace authors through the retained public identity directory for list and detail views. Missing names are explicitly unavailable; account IDs remain ownership authority and are never used as display-name fallbacks. |
 | 2026-09-09 | Added bounded, timestamped Live activity to lifecycle and deletion surfaces, with allowlisted plain-language entries, visible-only incremental reads, reconnect and access-loss handling, and manual-scroll preservation. |
 | 2026-09-09 | Removed deleted Sandbox detail and descendant reads from sidebar loading and refresh. Kept authorized inventory, mutable state, access-denial handling and direct conversation history independent of the hidden deleted hierarchy. |
+| 2026-09-09 | Added written Agent creation provenance and publisher-defined quick messages above the composer, with current published content, hover/focus descriptions, draft-preserving guarded submission and repeated authoring fields using existing controls. |
+| 2026-09-09 | Bounded the quick-message row independently from chat after mobile stress verification; portalled descriptions through the existing viewport-clamped menu placement and hover-exit delay so long descriptions remain readable. |

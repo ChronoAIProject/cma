@@ -45,6 +45,69 @@
   align-items: center;
 }
 
+.agent-header__source {
+  margin-top: 4px;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--dsw-alias-label-secondary);
+  overflow-wrap: anywhere;
+}
+
+.agent-header__source a {
+  color: var(--dsw-alias-state-business-primary);
+}
+
+.agent-quick-messages {
+  position: relative;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+  max-height: min(144px, 24vh);
+  margin: -4px -4px 4px;
+  padding: 4px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.agent-quick-message {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.agent-quick-message .button {
+  max-width: 100%;
+  height: auto;
+  min-height: 32px;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  text-align: left;
+}
+
+.agent-quick-message__description {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 1100;
+  width: min(320px, calc(100vw - 24px));
+  max-height: min(160px, calc(100dvh - 24px));
+  overflow-y: auto;
+  padding: 12px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 6px;
+  background: var(--dsw-alias-bg-layer-2);
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+  line-height: 18px;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 48rem) {
+  .agent-quick-message .button {
+    min-height: 44px;
+  }
+}
+
 .agent-header__title {
   gap: 16px;
   justify-content: space-between;
