@@ -46,6 +46,7 @@ mod checkpoint_lease_tests;
 mod checkpoint_maintenance_tests;
 mod execution_tests;
 mod lifecycle_failure_clock_tests;
+mod lifecycle_queue_conflict_tests;
 mod lifecycle_queue_tests;
 mod lifecycle_recovery_tests;
 mod reconciliation_tests;
