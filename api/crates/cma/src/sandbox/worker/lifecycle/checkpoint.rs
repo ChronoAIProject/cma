@@ -268,7 +268,7 @@ impl SandboxWorker {
         let receipt = self
             .dependencies
             .adapter
-            .checkpoint_for_teardown(&runtime, &request)
+            .verify_checkpoint_hold(&runtime, &request)
             .await
             .map_err(checkpoint_hold_failure)?;
         if !valid_held_receipt(&receipt, &request)

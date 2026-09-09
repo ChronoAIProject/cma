@@ -132,6 +132,13 @@ async fn held_checkpoints_replay_exactly_and_resume_only_for_the_owning_token() 
     assert_eq!(receipt.writer_resume_token, request.writer_resume_token);
     assert_eq!(
         adapter
+            .verify_checkpoint_hold(&handle, &request)
+            .await
+            .unwrap(),
+        receipt
+    );
+    assert_eq!(
+        adapter
             .checkpoint_for_teardown(&handle, &request)
             .await
             .unwrap(),
@@ -209,6 +216,10 @@ async fn held_checkpoints_replay_exactly_and_resume_only_for_the_owning_token() 
     );
     assert!(matches!(
         adapter.checkpoint_for_teardown(&handle, &request).await,
+        Err(AdapterError::Rejected(detail)) if detail.contains("checkpoint_hold_retired")
+    ));
+    assert!(matches!(
+        adapter.verify_checkpoint_hold(&handle, &request).await,
         Err(AdapterError::Rejected(detail)) if detail.contains("checkpoint_hold_retired")
     ));
     assert!(!backend.snapshot(&handle).await.unwrap().writers_held);

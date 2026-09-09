@@ -185,6 +185,17 @@ pub trait SandboxAdapter: Send + Sync {
         ))
     }
 
+    /// Revalidate the exact writer hold for an already-published checkpoint.
+    /// The caller must compare the receipt with its durable checkpoint identity.
+    /// Transports may omit archive transfer; the default replays the capture.
+    async fn verify_checkpoint_hold(
+        &self,
+        handle: &RuntimeHandle,
+        request: &CheckpointHoldRequest,
+    ) -> Result<CheckpointHoldReceipt> {
+        self.checkpoint_for_teardown(handle, request).await
+    }
+
     /// Release a retained checkpoint writer fence after an aborted teardown.
     async fn resume_checkpoint_writers(
         &self,

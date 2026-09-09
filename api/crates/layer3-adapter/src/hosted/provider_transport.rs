@@ -150,16 +150,7 @@ impl ProviderHostedControlTransport {
             .await?;
         }
 
-        let response = match self.control(endpoint, &request).await {
-            Ok(response) => response,
-            Err(error)
-                if matches!(request, RequestFrame::CheckpointForTeardown(_))
-                    && !error.is_runtime_loss() =>
-            {
-                return Err(self.recover_rejected_hold(endpoint, &request, error).await)
-            }
-            Err(error) => return Err(error),
-        };
+        let response = self.control_with_hold_recovery(endpoint, &request).await?;
 
         if let Some(checkpoint) = successful_checkpoint(&response) {
             let archive = self.archive(handle).await?;
@@ -187,6 +178,22 @@ impl ProviderHostedControlTransport {
             self.close_link(handle, &request.request.agent_id).await;
         }
         Ok(response)
+    }
+
+    async fn control_with_hold_recovery(
+        &self,
+        endpoint: &RuntimeEndpoint,
+        request: &RequestFrame,
+    ) -> crate::Result<ResponseFrame> {
+        match self.control(endpoint, request).await {
+            Err(error)
+                if matches!(request, RequestFrame::CheckpointForTeardown(_))
+                    && !error.is_runtime_loss() =>
+            {
+                Err(self.recover_rejected_hold(endpoint, request, error).await)
+            }
+            result => result,
+        }
     }
 
     async fn recover_rejected_hold(
@@ -374,6 +381,22 @@ impl super::HostedControlTransport for ProviderHostedControlTransport {
     ) -> crate::Result<ResponseFrame> {
         let endpoint = self.endpoint(handle).await?;
         self.exchange_at(handle, &endpoint, request).await
+    }
+
+    async fn verify_checkpoint_hold(
+        &self,
+        handle: &RuntimeHandle,
+        request: &crate::CheckpointHoldRequest,
+    ) -> crate::Result<ResponseFrame> {
+        // Require the sandbox binding, but do not transfer the archive again.
+        // The caller already published it and checks the pinned identity.
+        self.archive(handle).await?;
+        let endpoint = self.endpoint(handle).await?;
+        self.control_with_hold_recovery(
+            &endpoint,
+            &RequestFrame::CheckpointForTeardown(request.clone()),
+        )
+        .await
     }
 
     async fn open_agent(

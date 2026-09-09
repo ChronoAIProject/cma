@@ -282,6 +282,14 @@ impl SandboxAdapter for CodexAdapter {
         self.hosted.checkpoint_for_teardown(handle, request).await
     }
 
+    async fn verify_checkpoint_hold(
+        &self,
+        handle: &RuntimeHandle,
+        request: &CheckpointHoldRequest,
+    ) -> crate::Result<CheckpointHoldReceipt> {
+        self.hosted.verify_checkpoint_hold(handle, request).await
+    }
+
     async fn resume_checkpoint_writers(
         &self,
         handle: &RuntimeHandle,
