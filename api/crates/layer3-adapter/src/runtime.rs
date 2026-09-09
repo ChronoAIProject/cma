@@ -82,6 +82,8 @@ pub struct SandboxSpec {
     pub timeout_seconds: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub created_by: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub home_volume: Option<Box<crate::HomeVolumeAttachment>>,
 }
 
 impl Default for SandboxSpec {
@@ -96,6 +98,7 @@ impl Default for SandboxSpec {
             supervisor_program: DEFAULT_SUPERVISOR_PROGRAM.to_string(),
             timeout_seconds: None,
             created_by: None,
+            home_volume: None,
         }
     }
 }

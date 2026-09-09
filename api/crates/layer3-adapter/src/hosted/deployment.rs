@@ -135,6 +135,9 @@ impl HostedDeployment {
                 PLACEHOLDER_CREDENTIAL.to_string(),
             ),
         ]);
+        if spec.home_volume.is_some() {
+            env.insert("TMPDIR".into(), super::home::TRANSFER_ROOT.into());
+        }
         for (name, value) in &spec.environment {
             if env.contains_key(name) || name.starts_with("CHRONO_") || name.starts_with("NYXID_") {
                 return Err(AdapterError::Rejected(format!(
@@ -186,6 +189,7 @@ impl HostedDeployment {
             metadata,
             volumes: Vec::new(),
         };
+        super::home::render(&mut request, spec)?;
         request.metadata.insert(
             SPEC_FINGERPRINT_METADATA.to_string(),
             provider_request_fingerprint(&request)?,

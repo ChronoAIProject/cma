@@ -12,6 +12,7 @@ mod checkpoint;
 mod conversation;
 mod conversation_channel;
 mod error;
+mod home_volume;
 mod runtime;
 mod workspace;
 
@@ -46,6 +47,9 @@ pub use conversation::{
     UsageUpdate,
 };
 pub use error::{AdapterError, Result, RuntimeContractMismatch};
+pub use home_volume::{
+    HomeVolumeAttachment, HomeVolumePolicy, HomeVolumeReceipt, HomeVolumeRequest, HomeVolumeStore,
+};
 pub use runtime::{
     CommandReceipt, CredentialFrame, InstallReceipt, InstallRequest, RuntimeAdoptionRequest,
     RuntimeCredential, RuntimeHandle, RuntimeImage, RuntimeLifecycle, RuntimeObservation,

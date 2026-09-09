@@ -10,6 +10,9 @@ mod checkpoint_store;
 mod checkpoint_transport;
 mod control_correlation;
 mod deployment;
+mod home;
+#[cfg(test)]
+mod home_tests;
 mod memory;
 mod provider_backend;
 mod provider_endpoint;

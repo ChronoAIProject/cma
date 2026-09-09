@@ -206,7 +206,7 @@ RUN set -eux; \
         /home/cma/.cma/provider/codex \
         /home/cma/.cma/checkpoints \
         /home/cma/.codex/skills \
-        /var/lib/cma-runtime; \
+        /var/lib/cma-runtime /var/lib/cma-transfer; \
     mkdir /tmp/baseline-skills; \
     curl -fsSL -o /tmp/nyxid-source.tar.gz \
         "https://github.com/ChronoAIProject/NyxID/archive/${NYXID_SKILL_COMMIT}.tar.gz"; \
@@ -224,7 +224,7 @@ RUN set -eux; \
     test -s /home/cma/.codex/skills/nyxid/SKILL.md; \
     test -s /home/cma/.codex/skills/ornn-agent-manual-cli/SKILL.md; \
     test "$(find /home/cma/.codex/skills -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | sort | paste -sd, -)" = "nyxid,ornn-agent-manual-cli"; \
-    chown -R 10001:10001 /home/cma /var/lib/cma-runtime; \
+    chown -R 10001:10001 /home/cma /var/lib/cma-runtime /var/lib/cma-transfer; \
     rm -rf /tmp/baseline-skills /tmp/nyxid-source.tar.gz /tmp/ornn-source.tar.gz
 
 COPY --from=build /out/layer4-runtime /usr/local/bin/layer4-runtime
