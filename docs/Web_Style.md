@@ -1525,16 +1525,20 @@ look, press-to-spin and visibility disposal return to the unframed Home and
 authentication surfaces. The stable square is bounded to the available width,
 220px minimum when space permits and 520px maximum; compact Home uses 280px.
 The signed-in wordmark is 48px, weight 700, with zero tracking. Only the signed-out
-landing names the product ChronoAI Managed Agent, at 40px/1.2 with wrapping and
-zero tracking, and has no separate Sign in button. Its title alone uses self-hosted
+landing names the product ChronoAI Managed Agent on one unbroken line, with
+responsive `clamp(18px, 4.8vw, 40px)` type, 1.2 leading and zero tracking.
+Its lockup is at most 760px wide, retaining 24px horizontal padding, and has no
+separate Sign in button. Its title and cloud invitation use self-hosted
 OFL Shrikhand with the interface stack as fallback; the regular face is deliberately
 synthesized at weight 700 for the requested bold treatment. The glasses have no text.
-A cloud-shaped, 184px by 64px prompt says Click to start... above the character,
-with its top 96px above the reserved square. The signed-out lockup reserves
-120px top padding so the cloud never covers the character or clips the viewport.
+A cloud-shaped, 264px by 88px prompt says Click to start... above the character,
+with its top 120px above the reserved square. The signed-out lockup reserves
+144px top padding so the cloud never covers the character or clips the viewport.
 It uses layer-1 fill, primary ink,
-16px/24px semibold text, a quiet shadow and a 12px speech tail. Overlapping
-rounded lobes form the cloud without an image or new palette. Hover or keyboard
+24px/1.2 bold Shrikhand text, a quiet shadow and a 16px speech tail placed 92px
+from the left and 4px below the body. Two 112px by 64px rounded lobes, positioned
+40px from the left and 12px above the body, and 108px from the left at its top,
+form the cloud without an image or new palette. Hover or keyboard
 focus reveals it; five seconds without either reveals it automatically, including
 touch and WebGL fallback. Its 0.45-second entrance rises 12px from 0.85 scale
 with a small 1.04 overshoot. Hover/focus also triggers a 0.65-second character
@@ -1721,3 +1725,4 @@ Append-only. Never edit or delete an entry.
 | 2026-09-09 | Named connection-only dialogs Connect required accounts with Verify connections as the combined check, keeping permission setup distinct from publisher-required review. |
 | 2026-09-09 | Show retained public names for Operations owners, activity actors and user targets, with explicit unavailable names instead of subject IDs. Added Owner to the ordinary Sandbox information page and grouped the admin Agent inventory under its named Workspaces. |
 | 2026-09-09 | Read effective NyxID services from the Sandbox's public service list, including explicit owner grants, while preserving Agent lineage as an older-server fallback and the existing named service links. |
+| 2026-09-09 | Keep the signed-out ChronoAI Managed Agent title on one responsive line. Widen the landing lockup, enlarge the cloud invitation to 264px by 88px, and use matching bold Shrikhand at 24px inside it, preserving the existing activation and signed-in character behavior. |
