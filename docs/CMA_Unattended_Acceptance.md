@@ -1753,3 +1753,41 @@ image identity and measured results for each behavior, with unknowns left explic
   All 205 runnable runtime tests pass, with two existing ignored tests; formatting
   and all-target/all-feature runtime Clippy pass. The corrected Linux image check
   is pending; this source fix is not deployed or production acceptance.
+
+## Snapshot-derived export volumes and Linux proof — 2026-09-10
+
+- Source 5d7ba1c6 produced Linux/amd64 runtime manifest
+  sha256:0f0f01860aee08bbdf09804d6890ab3d76acab07aabfaa6863228325e9499984.
+  The exact filesystem layers, execution configuration and source revision match
+  the local loaded image. The fixed HIGH/CRITICAL vulnerability scan and all 21
+  runtime image contract checks pass. Registry upload and remote digest/revision
+  verification pass. The image is available but has not been deployed.
+- snapshot-export-linux-r7WlnI passes the real offline exporter with independently
+  captured read-only home, state and transfer volumes. A 64 MiB random payload
+  fixture plus image home files exported in 1,405 ms while the separate live
+  volume accepted 35 writes. Archive extraction confirms the earlier file values,
+  retained later-deleted file, absence of later-created files, exact named main
+  conversation and exclusion of temporary executable aliases. Replay, corrupted
+  output refusal, and writable home/state/transfer refusal all pass. All seven
+  disposable volumes and their containers were removed. This is a local separate
+  volume-copy test, not CSI capture or concurrent production acceptance.
+- Added namespaced allocation/observation/inventory/cleanup of distinct export
+  PVCs derived from the exact ready snapshot and complete export request. Pending
+  allocation returns before binding so a consumer can be scheduled. Snapshot UID
+  and capture time are verified through the first observed volume binding; later
+  observations require the same PVC UID and backing volume without needing the
+  source snapshot. Missing/replaced views never cause implicit reallocation.
+- View inventory is paginated and includes failed/deleting allocations. Cleanup
+  requires exact recorded ownership and UID/resourceVersion preconditions and
+  waits for finalizers. Seven request-level tests cover replay, ambiguous create,
+  source replacement before binding, source-independent bound observation, volume
+  loss/replacement, scope/policy refusal and complete cleanup inventory. The first
+  test filter matched no tests; the explicit snapshot_views filter ran all seven
+  successfully. Adapter Clippy and runtime/adapter source secret scans pass.
+- The full backend suite passes all 1,725 runnable tests with 188 existing
+  excluded/ignored. Workspace all-target/all-feature Clippy, formatting and diff
+  checks pass. Host disk remains approximately 37 GiB free.
+- Export-job execution and transfer, durable asynchronous capture/publication and
+  cleanup, publication while current Agents change, and recovery of children
+  created/deleted after capture remain unconnected. The production permissions
+  dependency is unchanged; no owner lifecycle operation or rollout was issued.
