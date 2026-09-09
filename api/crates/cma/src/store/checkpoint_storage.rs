@@ -38,6 +38,7 @@ pub(crate) struct ChronoStorage {
     download: reqwest::Url,
     tokens: Arc<token::StorageToken>,
     http: reqwest::Client,
+    download_parts: Arc<tokio::sync::Semaphore>,
 }
 
 impl ChronoStorage {
@@ -87,6 +88,7 @@ impl ChronoStorage {
             download,
             tokens: Arc::new(token::StorageToken::new(origin, config)?),
             http,
+            download_parts: Arc::new(tokio::sync::Semaphore::new(multipart::DOWNLOAD_CONCURRENCY)),
         })
     }
 }
