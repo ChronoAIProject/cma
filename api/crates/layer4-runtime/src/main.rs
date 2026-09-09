@@ -20,6 +20,7 @@ mod lanes;
 mod link;
 mod mutation_authority;
 mod mutation_journal;
+mod mutation_scope;
 mod paths;
 mod persistent_home;
 mod resource_cgroup;
