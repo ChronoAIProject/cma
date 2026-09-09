@@ -184,6 +184,7 @@ impl HostedDeployment {
             ]),
             timeout: spec.timeout_seconds.or(self.default_timeout_seconds),
             metadata,
+            volumes: Vec::new(),
         };
         request.metadata.insert(
             SPEC_FINGERPRINT_METADATA.to_string(),
@@ -196,6 +197,7 @@ impl HostedDeployment {
 pub(super) fn provider_request_fingerprint(
     request: &ProviderSandboxRequest,
 ) -> crate::Result<String> {
+    request.validate_volumes()?;
     let ProviderSandboxRequest {
         image,
         entrypoint,
@@ -203,6 +205,7 @@ pub(super) fn provider_request_fingerprint(
         resource_limits,
         timeout,
         metadata,
+        volumes,
     } = request;
     if metadata.contains_key(SPEC_FINGERPRINT_METADATA) {
         return Err(AdapterError::Rejected(
@@ -229,6 +232,14 @@ pub(super) fn provider_request_fingerprint(
     for (name, value) in stable_metadata {
         hash_string(&mut digest, name);
         hash_string(&mut digest, value);
+    }
+    // Existing volume-free runtime identities must survive this wire extension.
+    // Bound volumes add a separate domain and cover every serialized mount field.
+    if !volumes.is_empty() {
+        digest.update(b"\0cma-provider-volumes-v1\0");
+        let encoded = serde_json::to_string(volumes)
+            .map_err(|error| AdapterError::Rejected(format!("encode runtime volumes: {error}")))?;
+        hash_string(&mut digest, &encoded);
     }
     Ok(URL_SAFE_NO_PAD.encode(digest.finalize()))
 }

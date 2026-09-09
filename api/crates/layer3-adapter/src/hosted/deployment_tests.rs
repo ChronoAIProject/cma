@@ -15,6 +15,7 @@ fn request() -> ProviderSandboxRequest {
             ("memory".into(), "1024Mi".into()),
         ]),
         timeout: Some(3_600),
+        volumes: Vec::new(),
         metadata: BTreeMap::from([
             (SANDBOX_METADATA.into(), "sandbox-1".into()),
             ("cma/runtime-contract".into(), "2".into()),
@@ -29,6 +30,42 @@ fn provider_fingerprint_has_a_stable_golden_encoding() {
         provider_request_fingerprint(&request()).unwrap(),
         "vhTpfKGCsjfSjaATszKeZPGILJ9GDZqjjDNnDtxLpi0"
     );
+}
+
+#[test]
+fn persistent_mount_identity_cannot_be_replayed_with_another_claim_or_path() {
+    use crate::provider::{ProviderPersistentVolumeClaim, ProviderVolume};
+
+    let mut original = request();
+    let without_volume = provider_request_fingerprint(&original).unwrap();
+    original.volumes.push(ProviderVolume {
+        name: "home".into(),
+        pvc: ProviderPersistentVolumeClaim {
+            claim_name: "home-one".into(),
+            create_if_not_exists: false,
+            delete_on_sandbox_termination: false,
+        },
+        mount_path: "/home/cma".into(),
+        read_only: false,
+        sub_path: Some("home".into()),
+    });
+    let expected = provider_request_fingerprint(&original).unwrap();
+    assert_ne!(expected, without_volume);
+    for field in 0..6 {
+        let mut changed = original.clone();
+        let volume = &mut changed.volumes[0];
+        match field {
+            0 => volume.pvc.claim_name = "home-two".into(),
+            1 => volume.name = "different".into(),
+            2 => volume.mount_path = "/different".into(),
+            3 => volume.read_only = true,
+            4 => volume.sub_path = Some("other".into()),
+            _ => volume.sub_path = None,
+        }
+        assert_ne!(provider_request_fingerprint(&changed).unwrap(), expected);
+    }
+    original.volumes[0].pvc.create_if_not_exists = true;
+    assert!(provider_request_fingerprint(&original).is_err());
 }
 
 #[test]

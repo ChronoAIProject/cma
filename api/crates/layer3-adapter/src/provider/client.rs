@@ -77,6 +77,7 @@ impl SandboxClient {
         &self,
         request: &ProviderSandboxRequest,
     ) -> Result<ProviderSandbox, ProviderError> {
+        request.validate_volumes()?;
         let url = format!("{}/v1/sandboxes", self.base_url);
         let mut wire_request = request.clone();
         super::metadata::encode(&mut wire_request.metadata);
