@@ -19,13 +19,51 @@ RUN --mount=type=cache,id=cma-runtime-registry,target=/usr/local/cargo/registry,
     && mkdir /out \
     && cp /build/target/release/layer4-runtime /out/layer4-runtime
 
+# Build the upstream GitHub release with its one vulnerable indirect module
+# refreshed. No CLI source or transport code is patched.
+FROM debian:trixie-slim@sha256:d7e12182ce18b85b93007c1dedf31f2d29e01ccf3182cc4017c709b6259bc132 AS github-build
+ARG TARGETARCH
+ARG GH_VERSION=2.100.0
+ARG GH_SOURCE_COMMIT=45437bc7eeeb3359bbfddd1742f79de7652fd3e2
+ARG GH_SOURCE_SHA256=e16749bc0d99dc0633a3d5ebadf48ffff1c24beb1ce83e8f6a71bb64ce477e9a
+ARG GH_GO_VERSION=1.26.8
+ARG GH_GO_SHA256_AMD64=d0f743b33e8d8945e6b1f432edd15785c70507121d6e2a723b21285eddf8b57b
+ARG GH_GO_SHA256_ARM64=211ffced9dcb9633a55eac6364816ec0ddd951389a740e88fa8b3337971bdda0
+ARG GH_X_MOD_VERSION=0.40.0
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates curl \
+    && rm -rf /var/lib/apt/lists/*
+RUN set -eux; \
+    case "${TARGETARCH}" in \
+      amd64) want="${GH_GO_SHA256_AMD64}" ;; \
+      arm64) want="${GH_GO_SHA256_ARM64}" ;; \
+      *) echo "unsupported TARGETARCH: ${TARGETARCH}" >&2; exit 1 ;; \
+    esac; \
+    curl -fsSL -o /tmp/go.tar.gz "https://go.dev/dl/go${GH_GO_VERSION}.linux-${TARGETARCH}.tar.gz"; \
+    echo "${want}  /tmp/go.tar.gz" | sha256sum -c -; \
+    tar xzf /tmp/go.tar.gz -C /usr/local; \
+    rm /tmp/go.tar.gz; \
+    mkdir /source; \
+    curl -fsSL -o /tmp/gh-source.tar.gz "https://github.com/cli/cli/archive/${GH_SOURCE_COMMIT}.tar.gz"; \
+    echo "${GH_SOURCE_SHA256}  /tmp/gh-source.tar.gz" | sha256sum -c -; \
+    tar xzf /tmp/gh-source.tar.gz -C /source --strip-components=1; \
+    rm /tmp/gh-source.tar.gz
+WORKDIR /source
+ENV GOTOOLCHAIN=local CGO_ENABLED=0
+RUN --mount=type=cache,id=cma-gh-modules,target=/root/go/pkg/mod,sharing=locked \
+    --mount=type=cache,id=cma-gh-build-${TARGETARCH},target=/root/.cache/go-build,sharing=locked \
+    /usr/local/go/bin/go mod edit -require="golang.org/x/mod@v${GH_X_MOD_VERSION}" \
+    && /usr/local/go/bin/go mod download \
+    && /usr/local/go/bin/go mod verify \
+    && test "$(/usr/local/go/bin/go list -m -f '{{.Version}}' golang.org/x/mod)" = "v${GH_X_MOD_VERSION}" \
+    && /usr/local/go/bin/go build -mod=readonly -trimpath \
+        -ldflags="-s -w -X github.com/cli/cli/v2/internal/build.Version=${GH_VERSION} -X github.com/cli/cli/v2/internal/build.Date=2026-09-09" \
+        -o /out/gh ./cmd/gh
+
 # The NyxID CLI is published as a *-unknown-linux-gnu binary.
 FROM debian:trixie-slim@sha256:d7e12182ce18b85b93007c1dedf31f2d29e01ccf3182cc4017c709b6259bc132 AS runtime
 
 ARG NYXID_CLI_VERSION=v0.10.0
-ARG GH_VERSION=2.89.0
-ARG GH_SHA256_AMD64=d0422caade520530e76c1c558da47daebaa8e1203d6b7ff10ad7d6faba3490d8
-ARG GH_SHA256_ARM64=9e64a623dfc242990aa5d9b3f507111149c4282f66b68eaad1dc79eeb13b9ce5
 ARG CODEX_VERSION=0.147.0
 ARG CODEX_NATIVE_SHA256_AMD64=cb0a15567e9a60a5820d54b0f6ae86d504dc3805c1eab21a47f70e3eb7b73a40
 ARG CODEX_NATIVE_SHA256_ARM64=e23d0be344d2496986c985cd3db61e6f649b1ddd900e6afc1b5aaabbffcbb4e2
@@ -149,20 +187,8 @@ RUN set -eux; \
 # Use the genuine upstream CLI. The supervisor supplies an inert GH_TOKEN and
 # its local Unix-socket transport only when api-github is in the Sandbox grant;
 # the scoped NyxID credential remains in the supervisor, outside the home.
-RUN set -eux; \
-    case "${TARGETARCH}" in \
-      amd64) want="${GH_SHA256_AMD64}" ;; \
-      arm64) want="${GH_SHA256_ARM64}" ;; \
-      *) echo "unsupported TARGETARCH: ${TARGETARCH}" >&2; exit 1 ;; \
-    esac; \
-    mkdir /tmp/cma-gh; \
-    curl -fsSL -o /tmp/cma-gh/gh.tar.gz \
-        "https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_linux_${TARGETARCH}.tar.gz"; \
-    echo "${want}  /tmp/cma-gh/gh.tar.gz" | sha256sum -c -; \
-    tar xzf /tmp/cma-gh/gh.tar.gz -C /tmp/cma-gh --strip-components=1; \
-    install -m 0755 /tmp/cma-gh/bin/gh /usr/local/bin/gh; \
-    gh --version; \
-    rm -rf /tmp/cma-gh
+COPY --from=github-build /out/gh /usr/local/bin/gh
+RUN gh --version
 
 # Baseline skills are part of the runtime contract, so their source revisions
 # and source archives are pinned just like executable dependencies. Additional

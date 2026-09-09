@@ -269,7 +269,7 @@ async fn github_response_cannot_return_scoped_credentials() {
 }
 
 #[tokio::test]
-#[ignore = "requires the pinned genuine gh 2.89.0 executable"]
+#[ignore = "requires the pinned genuine gh executable"]
 async fn genuine_cli_uses_managed_socket_for_rest_and_graphql() {
     let executable = std::env::var("CMA_GH_CONTRACT_EXECUTABLE").expect("explicit gh executable");
     let version = tokio::process::Command::new(&executable)
@@ -277,9 +277,13 @@ async fn genuine_cli_uses_managed_socket_for_rest_and_graphql() {
         .output()
         .await
         .unwrap();
+    let pinned = include_str!("../../../../infra/runtime/Dockerfile")
+        .lines()
+        .find_map(|line| line.strip_prefix("ARG GH_VERSION="))
+        .expect("runtime GitHub CLI pin");
     assert!(String::from_utf8(version.stdout)
         .unwrap()
-        .starts_with("gh version 2.89.0 "));
+        .starts_with(&format!("gh version {pinned} ")));
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let fixture = Fixture::new(&format!("http://{}", listener.local_addr().unwrap()));
     let (sent, mut received) = mpsc::channel(4);
