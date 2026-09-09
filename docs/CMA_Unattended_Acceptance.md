@@ -21,7 +21,7 @@ Monitor disk usage and inspect exact targets before removing stale artifacts.
 | 6 | Terminated Sandbox snapshots are deleted | API 8a6cac05 deployed. Fresh production pause/resume and deletion test zosocG confirms zero snapshot objects and HTTP 404 for the previously readable file while the conversation record remains. Read-only observer pEIoAc verifies all 691 legacy objects across 18 Deleted Sandboxes removed (20.407 GiB), with exact owner snapshot keys, both histories and retained Sandbox records preserved. Provider version-history and unclassified orphan audits remain separate. |
 | 7 | All lifecycle screens show secret-free bounded live logs and sync time | Live activity deployed, with latest 100 allowlisted entries, bounded scroll, sync time and reconnect/access-loss handling. Production Sandbox/Agent pause/resume and all three deletion dialogs pass. Named README Launch/Sandbox restore displays pass at desktop/mobile, followed by restored chat. Some lifecycle rows remain generic completed-stage entries; every transition and creation surface is not yet comprehensively proved. |
 | 8 | New Agent fields are understandable, profiles have anchored hover details, deleted choices are excluded | Initial batch df6e58e3; production creation exposed mobile hover previews intercepting Create workspace. Corrected and deployed in fa3f6850: previews leave dialog header/footer reachable, selection dismisses pending/open preview. Real clicks and geometry pass at 1440x900, 390x900 and 390x600, both appearances; 1,131 frontend tests pass. |
-| 9 | No review/consent flash for no-review Triggers | Local consent persistence and six desktop/mobile, light/dark connection-only browser cases pass, including reload with already accepted software trust. Production named-Trigger and fresh-sign-in verification remain pending. |
+| 9 | No review/consent flash for no-review Triggers | Local consent persistence and six desktop/mobile, light/dark connection-only browser cases pass, including reload with already accepted software trust. Production connected-owner README admission passes without a review in ysYXXI. Missing-connection and fresh-sign-in production verification remain pending. |
 | 10 | Profiles and Marketplace use CMA-styled Ornn-inspired cards/details | Shared cards deployed in web 7c01741f and author names in API 7e7d458e. Production 18-case verification passes all three profile kinds in both directories at 1440/390/320px, light/dark, full-card detail navigation and Marketplace Use availability. Screenshots inspected. Evidence: profile-cards-64FpRT/result.json. |
 | 11 | Separate collapsible Live and Paused Sandbox groups | Deployed in web 40300b5e. Production desktop/mobile checks pass for both groups and persisted collapse on reload. Live transition cases additionally covered by local tests. |
 | 12 | Only the named Trureturing Trigger is used for Trigger testing | Active constraint. Older disposable-Trigger harnesses must not be reused unchanged. |
@@ -32,7 +32,7 @@ Monitor disk usage and inspect exact targets before removing stale artifacts.
 | 17 | Agent header and sidebar show consistent resource state | Production desktop/mobile Ready -> Working -> Ready -> Stopped transitions passed with zero MutationObserver mismatches, including reload. Evidence: agent-status-sync-oU399d/result.json. Normal-stop notice correction in web 57f793aa also passed actual live transitions: agent-status-sync-uzRQlH/result.json. |
 | 18 | Notifications animate on showing and dismissal | Pending shared notification audit, implementation and reduced-motion checks. |
 | 19 | Real native terminal and chat share one conversation, all CLI features, matching theme and reliable sizing | Pending pinned-engine feasibility and implementation. An independent second conversation or imitation terminal is not acceptance. |
-| 20 | gh through NyxID GitHub OAuth; identity per user; three-service Connect/Verify flow | Runtime d052e746 with upstream gh 2.100.0 passed Linux CLI/proxy checks and image scan, and is uploaded with its digest verified. Explicit durable instance service grants, renewal before revival, both SDKs and the effective-service UI pass local checks. Production runtime deployment, the owner's api-github grant, full contribution and three-service connection-flow verification remain pending. |
+| 20 | gh through NyxID GitHub OAuth; identity per user; three-service Connect/Verify flow | API/web 7c913fa6 and runtime d052e746 deployed. The owner explicitly received api-github access with original pins preserved. Shared Sandbox Profile revision 2 and named Trigger revision 3 require all three services. Actual runtime gh 2.100.0 REST and GraphQL calls through NyxID identify chronoai-shining; connected-owner README admission and named service links pass production checks. Contribution execution and missing-connection/fresh-sign-in production verification remain pending. |
 | 21 | Agent, Workspace and Sandbox deletion completes correctly | Durable live-child Workspace cascade deployed in 565f6286. Production zero/one/two-child deletion passed in 1,933 / 14,971 / 16,887 ms; desktop/mobile dialogs, reload recovery, page closure, Deleted Agents and removed Worktrees verified. Test Sandbox retirement completed. Same-Sandbox snapshot concurrency remains blocked by #4; do not call the full requirement complete. |
 
 ## Baseline
@@ -40,7 +40,7 @@ Monitor disk usage and inspect exact targets before removing stale artifacts.
 The previously deployed API includes bounded concurrent lifecycle reconciliation;
 see `CMA_Production_Verification.md` for image digests and recorded checks. That
 improves unrelated deletion latency but does not remove snapshot writer fencing.
-The latest recorded README-trigger revival took 368,142 ms; performance work remains.
+The latest recorded README-trigger revival took 478,740 ms; performance work remains.
 
 Owner histories remain in their existing Agents. Runtime changes must not silently
 rotate or pause the owner's active Sandbox. Production acceptance requires actual
@@ -735,5 +735,39 @@ image identity and measured results for each behavior, with unknowns left explic
   page resolves named service links even when Agent details are unavailable.
 - Runtime d052e746 is now uploaded and its remote Linux/amd64 digest is verified:
   sha256:5c5e15c03701b81bbeaf0f214f75f4cb9ed064b185022ac5586c734fbd6ada33.
-  This is registry evidence only; production still uses runtime 14c05f26 and no
-  instance grant has been dispatched. Disk remains at 27 GiB free.
+  At this checkpoint it was registry evidence only; deployment and instance
+  authorization subsequently completed as recorded below.
+- API/web source 7c913fa6 and runtime d052e746 deployed from the feature branch.
+  API digest f42cf6504627e37f207b727383f4c53a966da51e8a23bf609809e4396c87b4ac;
+  web digest be48809869efc9e33ae8a353a9b8db3fa46799d26555a1624c6012715ee96a75.
+  Linux builds, vulnerability scans, remote digest checks and rollouts pass.
+  Evidence: service-access-web-rollout-CYhPWc, service-access-api-rollout-Ta0rfB,
+  service-access-api-postflight-49XKwS. All 35 Sandbox records, child summaries
+  and both complete owner transcripts were preserved across the API rollout.
+  Admin visibility was reverified in admin-visibility-prod-7jRqzN.
+- Owner service-access command truretruing-github-grant-FYRT0G appended api-github
+  while fully Paused, preserving the original creation scope, Profile revision 1,
+  latest checkpoint, hierarchy and conversations. No original scope was rewritten.
+  Configuration evidence truretruing-three-service-profile-vHnrry publishes the
+  same Sandbox Profile at revision 2 and named Trigger at revision 3 with
+  chrono-llm, ornn-api and api-github. Both quick messages, no-review behavior,
+  Workspace/Agent pins, public ID and README placement were preserved.
+- Runtime evidence runtime-github-readonly-OfWjfY passes with genuine gh 2.100.0:
+  REST /user and GraphQL viewer both identify chronoai-shining through the
+  runtime private socket and NyxID GitHub proxy. No GitHub writes or Agent
+  messages were sent by that check. Effective-service browser evidence
+  effective-services-prod-t1bXFF passes at 1440/390/320px in both themes:
+  GitHub OAuth, Chrono LLM and ornn-api link to their original NyxID service pages.
+- README repeat current-readme-repeat-ysYXXI passes, Launch
+  lch_8369f8ad113a4d43926804fd102dd51c, in 478,740 ms. All three account checks
+  succeeded. Existing Sandbox, Workspace, Agent and Worktree identifiers and
+  both complete transcript hashes were preserved, with no first-prompt replay.
+  Main Agent retained eight turns and the second retained one. Home restore
+  took approximately 283 seconds; runtime provisioning approximately 99 seconds;
+  queued delivery approximately 60 seconds. Performance remains unsatisfied.
+  Launch/Sandbox desktop/mobile logs were bounded, timestamped and updated.
+  An overdue prior snapshot did not trigger another capture during the first
+  182,823 ms after revival; the full thirty-minute boundary was not observed.
+  Source was authenticated GitHub rendered README delivered at its source origin,
+  not a signed-in GitHub browser page or fresh-login connection acceptance.
+  Host disk has 26 GiB free. No Docker restart or cleanup was necessary.
