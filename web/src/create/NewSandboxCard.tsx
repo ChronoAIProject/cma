@@ -1,3 +1,4 @@
+import { Presence } from '../ui/Presence';
 import { useRef, useState } from 'react';
 import { SandboxCredentialSetup } from '../auth/SandboxCredentialSetup';
 import {
@@ -124,12 +125,14 @@ export function NewSandboxCard({
             <p className="create-error">Use one line no longer than 64 bytes.</p>
           ) : null}
         </div>
-        {command.failure === undefined ||
-        (command.failure.credentialSetupRequired && accountChecked) ? null : (
-          <p className="create-error" role="alert">
-            {command.failure.message}
-          </p>
-        )}
+        <Presence>
+          {command.failure === undefined ||
+          (command.failure.credentialSetupRequired && accountChecked) ? null : (
+            <p className="create-error" role="alert">
+              {command.failure.message}
+            </p>
+          )}
+        </Presence>
         {needsSignIn ? (
           <SandboxCredentialSetup
             expectedSubject={expectedSubject}

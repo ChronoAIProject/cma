@@ -1,3 +1,4 @@
+import { Presence } from '../ui/Presence';
 import { useCallback, useRef, useState } from 'react';
 import type { AdminSandboxSummary, SandboxStatus } from '@chronoai/cma-sdk';
 import { Button } from '../ui/Button';
@@ -212,31 +213,33 @@ function SandboxRecords({
       {detail === undefined ? null : (
         <SandboxDetail client={client} id={detail} onClose={() => setDetail(undefined)} />
       )}
-      {target === undefined || !canControl ? null : (
-        <RiskConfirmation
-          open
-          title={`Retire ${target.name}`}
-          description={`Retiring Sandbox ${target.id} stops its Agents and releases its runtime. It cannot be resumed. The operator action is audited.`}
-          acknowledgeLabel="I understand this Sandbox cannot be resumed."
-          confirmLabel={uncertain ? 'Check current state' : 'Retire Sandbox'}
-          busy={busy}
-          dismissible={!busy}
-          failure={
-            failure === undefined
-              ? undefined
-              : `${failure.message}${failure.code === undefined ? '' : ` (${failure.code})`}`
-          }
-          status={
-            uncertain
-              ? 'The previous outcome is unknown. Only a read will be sent next.'
-              : busy
-                ? 'Submitting'
-                : undefined
-          }
-          onCancel={() => setTarget(undefined)}
-          onConfirm={() => void retire()}
-        />
-      )}
+      <Presence>
+        {target === undefined || !canControl ? null : (
+          <RiskConfirmation
+            open
+            title={`Retire ${target.name}`}
+            description={`Retiring Sandbox ${target.id} stops its Agents and releases its runtime. It cannot be resumed. The operator action is audited.`}
+            acknowledgeLabel="I understand this Sandbox cannot be resumed."
+            confirmLabel={uncertain ? 'Check current state' : 'Retire Sandbox'}
+            busy={busy}
+            dismissible={!busy}
+            failure={
+              failure === undefined
+                ? undefined
+                : `${failure.message}${failure.code === undefined ? '' : ` (${failure.code})`}`
+            }
+            status={
+              uncertain
+                ? 'The previous outcome is unknown. Only a read will be sent next.'
+                : busy
+                  ? 'Submitting'
+                  : undefined
+            }
+            onCancel={() => setTarget(undefined)}
+            onConfirm={() => void retire()}
+          />
+        )}
+      </Presence>
     </>
   );
 }

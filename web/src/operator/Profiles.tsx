@@ -1,3 +1,4 @@
+import { Presence } from '../ui/Presence';
 import { useCallback, useRef, useState } from 'react';
 import type { AdminProfileSummary, ProfileKind, ProfileVisibility } from '@chronoai/cma-sdk';
 import { Button } from '../ui/Button';
@@ -211,34 +212,36 @@ function ProfileRecords({
           );
         })}
       </Records>
-      {target === undefined || !canControl ? null : (
-        <RiskConfirmation
-          open
-          title={`Retire ${target.name}`}
-          description={`Retire ${target.kind} profile ${target.name}. New creation from this profile will be refused; existing resources and published history remain. The operator action is audited.`}
-          acknowledgeLabel="I understand this profile will no longer be available for new resources."
-          confirmLabel={uncertain ? 'Check current state' : 'Retire profile'}
-          busy={busy}
-          dismissible={!busy}
-          failure={
-            failure === undefined
-              ? undefined
-              : `${failure.message}${failure.code === undefined ? '' : ` (${failure.code})`}`
-          }
-          status={
-            uncertain
-              ? 'The previous outcome is unknown. Only a read will be sent next.'
-              : busy
-                ? 'Submitting'
-                : undefined
-          }
-          onCancel={() => {
-            setTarget(undefined);
-            if (uncertain) records.refresh();
-          }}
-          onConfirm={() => void retire()}
-        />
-      )}
+      <Presence>
+        {target === undefined || !canControl ? null : (
+          <RiskConfirmation
+            open
+            title={`Retire ${target.name}`}
+            description={`Retire ${target.kind} profile ${target.name}. New creation from this profile will be refused; existing resources and published history remain. The operator action is audited.`}
+            acknowledgeLabel="I understand this profile will no longer be available for new resources."
+            confirmLabel={uncertain ? 'Check current state' : 'Retire profile'}
+            busy={busy}
+            dismissible={!busy}
+            failure={
+              failure === undefined
+                ? undefined
+                : `${failure.message}${failure.code === undefined ? '' : ` (${failure.code})`}`
+            }
+            status={
+              uncertain
+                ? 'The previous outcome is unknown. Only a read will be sent next.'
+                : busy
+                  ? 'Submitting'
+                  : undefined
+            }
+            onCancel={() => {
+              setTarget(undefined);
+              if (uncertain) records.refresh();
+            }}
+            onConfirm={() => void retire()}
+          />
+        )}
+      </Presence>
     </>
   );
 }

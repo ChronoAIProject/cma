@@ -1,3 +1,4 @@
+import { Presence } from '../../ui/Presence';
 import { useEffect, useState } from 'react';
 import type { ResourcePage } from '../../api/types';
 import { Button } from '../../ui/Button';
@@ -96,7 +97,9 @@ export function SkillPicker({
       <p id="profile-skill-search-help" className="profile-field__help">
         Search Ornn, then choose the skills and versions this agent should use.
       </p>
-      {catalog === undefined ? <p role="status">The skill catalogue is unavailable.</p> : null}
+      <Presence>
+        {catalog === undefined ? <p role="status">The skill catalogue is unavailable.</p> : null}
+      </Presence>
       {value.length === 0 ? (
         <p className="profile-field__help">No skills selected.</p>
       ) : (
@@ -202,22 +205,29 @@ export function SkillPicker({
         })}
       </ul>
       {state.loading ? <p role="status">Loading skills</p> : null}
-      {state.error !== undefined ? (
-        <div role="alert">
-          <p>{state.error}</p>
-          <Button
-            size="sm"
-            onClick={() => {
-              setState((previous) => ({ ...previous, loading: true, error: undefined }));
-              setReload((version) => version + 1);
-            }}
-          >
-            Try again
-          </Button>
-        </div>
-      ) : catalog !== undefined && !state.loading && state.items.length === 0 ? (
-        <p>No matching skills</p>
-      ) : null}
+      <>
+        {state.error !== undefined ? null : catalog !== undefined &&
+          !state.loading &&
+          state.items.length === 0 ? (
+          <p>No matching skills</p>
+        ) : null}
+        <Presence>
+          {state.error !== undefined ? (
+            <div role="alert">
+              <p>{state.error}</p>
+              <Button
+                size="sm"
+                onClick={() => {
+                  setState((previous) => ({ ...previous, loading: true, error: undefined }));
+                  setReload((version) => version + 1);
+                }}
+              >
+                Try again
+              </Button>
+            </div>
+          ) : null}
+        </Presence>
+      </>
       {state.next === undefined ? null : (
         <Button
           size="sm"

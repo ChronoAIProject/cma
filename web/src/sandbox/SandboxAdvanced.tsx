@@ -1,3 +1,4 @@
+import { Presence } from '../ui/Presence';
 import { useEffect, useRef, useState } from 'react';
 import type { CmaWebClient } from '../api/client';
 import type { SandboxDetail, SandboxEvent, WorkspaceDetail } from '../api/types';
@@ -150,12 +151,14 @@ export function SandboxAdvanced({
         ))}
         <section className="sandbox-page__band">
           <h3>Events</h3>
-          {error !== undefined ? (
-            <div role="alert">
-              <p>{error}</p>
-              <Button onClick={() => setRetry((value) => value + 1)}>Try again</Button>
-            </div>
-          ) : null}
+          <Presence>
+            {error !== undefined ? (
+              <div role="alert">
+                <p>{error}</p>
+                <Button onClick={() => setRetry((value) => value + 1)}>Try again</Button>
+              </div>
+            ) : null}
+          </Presence>
           {events === undefined ? (
             error === undefined ? (
               <p>Loading events</p>

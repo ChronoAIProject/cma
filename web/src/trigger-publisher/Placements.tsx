@@ -1,3 +1,4 @@
+import { Presence } from '../ui/Presence';
 import { useEffect, useState } from 'react';
 import type { TriggerDocument } from '@chronoai/cma-sdk';
 import type { CommandOptions } from '../api/client';
@@ -128,11 +129,13 @@ export function Placements({
           />
         </div>
       </div>
-      {validation === undefined ? null : (
-        <p role="alert" className="trigger-error">
-          {validation}
-        </p>
-      )}
+      <Presence>
+        {validation === undefined ? null : (
+          <p role="alert" className="trigger-error">
+            {validation}
+          </p>
+        )}
+      </Presence>
       <Button
         icon={<IconPlusOutline16 />}
         disabled={locked || placements.length >= 32}
@@ -140,16 +143,18 @@ export function Placements({
       >
         Add source URL
       </Button>
-      {command.failure === undefined || command.failure.conflict ? null : (
-        <div role="alert">
-          <p>{command.failure.message}</p>
-          {command.failure.uncertain ? (
-            <Button disabled={command.pending} onClick={command.retry}>
-              Retry original request
-            </Button>
-          ) : null}
-        </div>
-      )}
+      <Presence>
+        {command.failure === undefined || command.failure.conflict ? null : (
+          <div role="alert">
+            <p>{command.failure.message}</p>
+            {command.failure.uncertain ? (
+              <Button disabled={command.pending} onClick={command.retry}>
+                Retry original request
+              </Button>
+            ) : null}
+          </div>
+        )}
+      </Presence>
       <p className="trigger-caption">
         Source URLs provide attribution. They do not authenticate visitors or grant access to the
         publisher's resources.

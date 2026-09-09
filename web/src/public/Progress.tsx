@@ -1,3 +1,4 @@
+import { Presence } from '../ui/Presence';
 import { useEffect, useState } from 'react';
 import type { Launch, ServiceConnectionMetadata, TriggerPreview } from '@chronoai/cma-sdk';
 import { Button } from '../ui/Button';
@@ -171,12 +172,14 @@ export function Progress({
             : publicCopy.offline(new Date(progress.observedAt).toLocaleTimeString())}
         </p>
       )}
-      {progress.error === undefined ? null : (
-        <div className="public-notice">
-          <p>{progress.error}</p>
-          <Button onClick={progress.refresh}>{publicCopy.checkAgain}</Button>
-        </div>
-      )}
+      <Presence>
+        {progress.error === undefined ? null : (
+          <div className="public-notice">
+            <p>{progress.error}</p>
+            <Button onClick={progress.refresh}>{publicCopy.checkAgain}</Button>
+          </div>
+        )}
+      </Presence>
       {blocked?.type === 'connection_required' ? (
         <ConnectAssistant
           client={client}
@@ -191,43 +194,49 @@ export function Progress({
           onRecheck={progress.refresh}
         />
       ) : null}
-      {record.failure === undefined ? null : (
-        <div className="public-notice">
-          <p className="public-error" role="alert">
-            {failureRemediation(record.failure.code)}
-          </p>
-          <div className="public-actions">
-            <Button onClick={progress.refresh}>{publicCopy.checkAgain}</Button>
-            {agentId === undefined ? null : (
-              <Button onClick={() => onNavigate({ kind: 'agent', agentId })}>
-                {publicCopy.continue}
+      <Presence>
+        {record.failure === undefined ? null : (
+          <div className="public-notice">
+            <p className="public-error" role="alert">
+              {failureRemediation(record.failure.code)}
+            </p>
+            <div className="public-actions">
+              <Button onClick={progress.refresh}>{publicCopy.checkAgain}</Button>
+              {agentId === undefined ? null : (
+                <Button onClick={() => onNavigate({ kind: 'agent', agentId })}>
+                  {publicCopy.continue}
+                </Button>
+              )}
+              <Button onClick={() => startOver(record)}>{publicCopy.startOver}</Button>
+              <Button icon={<IconCopyOutline16 />} onClick={() => void copy()}>
+                {publicCopy.copySupport}
               </Button>
-            )}
-            <Button onClick={() => startOver(record)}>{publicCopy.startOver}</Button>
-            <Button icon={<IconCopyOutline16 />} onClick={() => void copy()}>
-              {publicCopy.copySupport}
-            </Button>
+            </div>
+            <Presence>
+              {copyStatus === undefined ? null : <p role="status">{copyStatus}</p>}
+            </Presence>
           </div>
-          {copyStatus === undefined ? null : <p role="status">{copyStatus}</p>}
-        </div>
-      )}
+        )}
+      </Presence>
       {record.state === 'cancelled' ? (
         <>
           <p>{publicCopy.cancelled}</p>
           <Button onClick={() => startOver(record)}>{publicCopy.startOver}</Button>
         </>
       ) : null}
-      {draft ? (
-        <ReviewCard
-          key={record.trust.confirmation_digest ?? record.id}
-          client={client}
-          record={record}
-          expectedSubject={owner}
-          preview={preview}
-          onChanged={progress.changed}
-          onClose={() => back(record)}
-        />
-      ) : null}
+      <Presence>
+        {draft ? (
+          <ReviewCard
+            key={record.trust.confirmation_digest ?? record.id}
+            client={client}
+            record={record}
+            expectedSubject={owner}
+            preview={preview}
+            onChanged={progress.changed}
+            onClose={() => back(record)}
+          />
+        ) : null}
+      </Presence>
     </section>
   );
 }

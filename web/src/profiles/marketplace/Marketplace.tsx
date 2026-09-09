@@ -1,3 +1,4 @@
+import { Presence } from '../../ui/Presence';
 import { useEffect, useRef, useState } from 'react';
 import type { AppRoute, ProfileKind } from '../../routing/routes';
 import type { ResourcePage } from '../../api/types';
@@ -151,23 +152,28 @@ export function Marketplace({
           })}
         </ul>
         {state.loading ? <p role="status">Loading profiles</p> : null}
-        {state.error === undefined ? (
-          !state.loading && state.items.length === 0 ? (
-            <p>No matching profiles</p>
-          ) : null
-        ) : (
-          <div role="alert">
-            <p>{state.error}</p>
-            <Button
-              onClick={() => {
-                setState((previous) => ({ ...previous, loading: true, error: undefined }));
-                setReload((version) => version + 1);
-              }}
-            >
-              Try again
-            </Button>
-          </div>
-        )}
+        <>
+          {state.error === undefined ? (
+            !state.loading && state.items.length === 0 ? (
+              <p>No matching profiles</p>
+            ) : null
+          ) : null}
+          <Presence>
+            {state.error === undefined ? null : (
+              <div role="alert">
+                <p>{state.error}</p>
+                <Button
+                  onClick={() => {
+                    setState((previous) => ({ ...previous, loading: true, error: undefined }));
+                    setReload((version) => version + 1);
+                  }}
+                >
+                  Try again
+                </Button>
+              </div>
+            )}
+          </Presence>
+        </>
         {state.next === undefined ? null : (
           <Button
             disabled={state.loading}

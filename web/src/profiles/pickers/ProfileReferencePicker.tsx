@@ -1,3 +1,4 @@
+import { Presence } from '../../ui/Presence';
 import { useEffect, useId, useRef, useState } from 'react';
 import type { ProfileReference, ResourcePage } from '../../api/types';
 import { Button } from '../../ui/Button';
@@ -201,24 +202,29 @@ export function ProfileReferencePicker({
         ))}
       </ul>
       {state.loading ? <p role="status">Loading profiles</p> : null}
-      {state.error === undefined ? (
-        !state.loading && entries.length === 0 ? (
-          <p>No matching published profiles</p>
-        ) : null
-      ) : (
-        <div role="alert">
-          <p>{state.error}</p>
-          <Button
-            type="button"
-            onClick={() => {
-              setState((previous) => ({ ...previous, loading: true, error: undefined }));
-              setReload((version) => version + 1);
-            }}
-          >
-            Try again
-          </Button>
-        </div>
-      )}
+      <>
+        {state.error === undefined ? (
+          !state.loading && entries.length === 0 ? (
+            <p>No matching published profiles</p>
+          ) : null
+        ) : null}
+        <Presence>
+          {state.error === undefined ? null : (
+            <div role="alert">
+              <p>{state.error}</p>
+              <Button
+                type="button"
+                onClick={() => {
+                  setState((previous) => ({ ...previous, loading: true, error: undefined }));
+                  setReload((version) => version + 1);
+                }}
+              >
+                Try again
+              </Button>
+            </div>
+          )}
+        </Presence>
+      </>
       {state.next === undefined ? null : (
         <Button
           type="button"

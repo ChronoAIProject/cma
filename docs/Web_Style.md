@@ -606,9 +606,11 @@ it is open.
 The two named wide forms remain 700px and 1000px. Every size is capped to the viewport; 440px is the
 base, not a minimum that can overflow a phone.
 
-Closed means **unmounted**, not hidden: a mounted dialog keeps its focus trap armed and steals focus
-from the page it is not covering. Focus is trapped inside it, Escape closes it, and focus returns to
-whatever opened it.
+Closed dialogs release their focus trap and return focus immediately. Their inert,
+accessibility-hidden exit frame may remain for the shared 200ms opacity fade,
+then unmounts. Initially closed dialogs render nothing. Focus is trapped only
+while open; Escape closes a dismissible dialog. Reopening during the fade cancels
+the pending removal and restores one active dialog.
 
 A width chosen per call site is how two dialogs asking the same kind of question end up different
 sizes. The exceptions are named classes a reviewer can find, never a size prop.
@@ -970,6 +972,15 @@ list still loading must not read "nothing here", because that is an answer, and 
 **Rows arriving fade in.** An Agent appearing in the tree, a turn arriving in the stream. Nothing
 moves position: a row that slides in pushes everything under it, and a list that reflows while
 somebody is reading it is worse than one that appears.
+
+Notifications and dialog surfaces fade in and out using the existing 200ms
+duration and shared easing curve. A dismissing notification retains its final
+content only until the exit finishes, becomes inert and accessibility-hidden
+immediately, and cannot dispatch another action. The semantic element and its
+layout remain unchanged during the fade. Reappearance cancels stale removal;
+reduced motion skips both animations and any visual exit retention. Loading
+skeletons, whole-page error states and conversation text retain their own existing
+presentation rather than acquiring a notification wrapper.
 
 An animation that loops has to say how it stops, and the suite checks that a sheet starting one
 carries a `reduce` block.
@@ -1726,3 +1737,4 @@ Append-only. Never edit or delete an entry.
 | 2026-09-09 | Show retained public names for Operations owners, activity actors and user targets, with explicit unavailable names instead of subject IDs. Added Owner to the ordinary Sandbox information page and grouped the admin Agent inventory under its named Workspaces. |
 | 2026-09-09 | Read effective NyxID services from the Sandbox's public service list, including explicit owner grants, while preserving Agent lineage as an older-server fallback and the existing named service links. |
 | 2026-09-09 | Keep the signed-out ChronoAI Managed Agent title on one responsive line. Widen the landing lockup, enlarge the cloud invitation to 264px by 88px, and use matching bold Shrikhand at 24px inside it, preserving the existing activation and signed-in character behavior. |
+| 2026-09-09 | Add shared showing and dismissal fades for notification messages and dialogs, retaining only an inert exit frame, releasing focus immediately, cancelling stale dismissal on reopen, and honoring reduced motion without changing message semantics or geometry. |

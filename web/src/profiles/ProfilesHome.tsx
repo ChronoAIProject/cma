@@ -1,3 +1,4 @@
+import { Presence } from '../ui/Presence';
 import { useEffect, useRef, useState } from 'react';
 import type { AppRoute, ProfileKind } from '../routing/routes';
 import { Button } from '../ui/Button';
@@ -127,23 +128,28 @@ export function ProfilesHome({
           })}
         </ul>
         {state.loading ? <p role="status">Loading profiles</p> : null}
-        {state.error === undefined ? (
-          !state.loading && state.items.length === 0 ? (
-            <p>No {label.toLowerCase()} profiles yet.</p>
-          ) : null
-        ) : (
-          <div role="alert">
-            <p>{state.error}</p>
-            <Button
-              onClick={() => {
-                setState((previous) => ({ ...previous, loading: true, error: undefined }));
-                setRevision((value) => value + 1);
-              }}
-            >
-              Try again
-            </Button>
-          </div>
-        )}
+        <>
+          {state.error === undefined ? (
+            !state.loading && state.items.length === 0 ? (
+              <p>No {label.toLowerCase()} profiles yet.</p>
+            ) : null
+          ) : null}
+          <Presence>
+            {state.error === undefined ? null : (
+              <div role="alert">
+                <p>{state.error}</p>
+                <Button
+                  onClick={() => {
+                    setState((previous) => ({ ...previous, loading: true, error: undefined }));
+                    setRevision((value) => value + 1);
+                  }}
+                >
+                  Try again
+                </Button>
+              </div>
+            )}
+          </Presence>
+        </>
         {state.next === undefined ? null : (
           <Button
             disabled={state.loading}

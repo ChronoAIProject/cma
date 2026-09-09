@@ -1,3 +1,4 @@
+import { Presence } from '../ui/Presence';
 import { useEffect, useRef, useState } from 'react';
 import {
   type CreatedServiceConnection,
@@ -244,9 +245,11 @@ export function ConnectAssistant({
         </>
       ) : (
         <>
+          <Presence>
+            {state === undefined ? null : <p role="status">{connectionStates[state]}</p>}
+          </Presence>
           {pending ? (
             <>
-              <p role="status">{connectionStates.pending}</p>
               {blocked && handoff?.hosted_url !== undefined ? (
                 <>
                   <p>{connectionCopy.blocked}</p>
@@ -260,10 +263,10 @@ export function ConnectAssistant({
                 </ol>
               )}
             </>
-          ) : (
-            <>{state === undefined ? null : <p role="status">{connectionStates[state]}</p>}</>
-          )}
-          {notConnected ? <p role="status">{connectionCopy.notConnected}</p> : null}
+          ) : null}
+          <Presence>
+            {notConnected ? <p role="status">{connectionCopy.notConnected}</p> : null}
+          </Presence>
           {state === 'satisfied' ? null : (
             <div className="public-actions">
               <Button disabled={disabled || busy || verifying} onClick={connect}>
@@ -276,11 +279,13 @@ export function ConnectAssistant({
           )}
         </>
       )}
-      {error === undefined ? null : (
-        <p className="public-error" role="alert">
-          {error}
-        </p>
-      )}
+      <Presence>
+        {error === undefined ? null : (
+          <p className="public-error" role="alert">
+            {error}
+          </p>
+        )}
+      </Presence>
     </section>
   );
 }

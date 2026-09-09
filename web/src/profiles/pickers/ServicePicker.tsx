@@ -1,3 +1,4 @@
+import { Presence } from '../../ui/Presence';
 import { useEffect, useState } from 'react';
 import { Button } from '../../ui/Button';
 import { Input } from '../../ui/Input';
@@ -91,26 +92,31 @@ export function ServicePicker({
             </li>
           ))}
       </ul>
-      {catalog === undefined ? (
-        <p role="status">The service catalogue is unavailable.</p>
-      ) : state.loading ? (
-        <p role="status">Loading services</p>
-      ) : state.error !== undefined ? (
-        <div role="alert">
-          <p>{state.error}</p>
-          <Button
-            type="button"
-            onClick={() => {
-              setState((previous) => ({ ...previous, loading: true, error: undefined }));
-              setReload((version) => version + 1);
-            }}
-          >
-            Try again
-          </Button>
-        </div>
-      ) : state.entries.length === 0 ? (
-        <p>No services available</p>
-      ) : null}
+      <>
+        {catalog === undefined ? (
+          <p role="status">The service catalogue is unavailable.</p>
+        ) : state.loading ? (
+          <p role="status">Loading services</p>
+        ) : state.error !== undefined ? null : state.entries.length === 0 ? (
+          <p>No services available</p>
+        ) : null}
+        <Presence>
+          {catalog === undefined ? null : state.loading ? null : state.error !== undefined ? (
+            <div role="alert">
+              <p>{state.error}</p>
+              <Button
+                type="button"
+                onClick={() => {
+                  setState((previous) => ({ ...previous, loading: true, error: undefined }));
+                  setReload((version) => version + 1);
+                }}
+              >
+                Try again
+              </Button>
+            </div>
+          ) : null}
+        </Presence>
+      </>
     </div>
   );
 }

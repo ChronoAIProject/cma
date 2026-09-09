@@ -1,3 +1,4 @@
+import { Presence } from './ui/Presence';
 import { lazy, Suspense, useCallback, useEffect, useState } from 'react';
 import { LandingCharacter } from './landing/LandingCharacter';
 import {
@@ -315,11 +316,13 @@ export function Console({
       center={
         <main className="console__surface">
           {actions.notice}
-          {actions.error === undefined ? null : (
-            <p className="console__action-error" role="alert">
-              {actions.error}
-            </p>
-          )}
+          <Presence>
+            {actions.error === undefined ? null : (
+              <p className="console__action-error" role="alert">
+                {actions.error}
+              </p>
+            )}
+          </Presence>
           {content}
         </main>
       }

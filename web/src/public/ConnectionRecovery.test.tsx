@@ -79,6 +79,8 @@ describe('pending connection recovery', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Verify' }));
     await act(async () => undefined);
     expect(satisfied).toHaveBeenCalledExactlyOnceWith('code');
+    expect(screen.getByText(/This account is not connected yet/)).toHaveAttribute('inert');
+    await act(() => vi.advanceTimersByTimeAsync(200));
     expect(screen.queryByText(/This account is not connected yet/)).not.toBeInTheDocument();
   });
 

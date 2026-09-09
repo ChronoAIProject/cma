@@ -1,3 +1,4 @@
+import { Presence } from '../ui/Presence';
 import type { TriggerQuickMessage } from '@chronoai/cma-sdk';
 import { Button } from '../ui/Button';
 import { Input } from '../ui/Input';
@@ -60,11 +61,13 @@ export function QuickMessageFields({
           />
         </fieldset>
       ))}
-      {error === undefined ? null : (
-        <p className="trigger-error" role="alert">
-          {error}
-        </p>
-      )}
+      <Presence>
+        {error === undefined ? null : (
+          <p className="trigger-error" role="alert">
+            {error}
+          </p>
+        )}
+      </Presence>
       <Button
         variant="outline"
         icon={<IconPlusOutline16 />}

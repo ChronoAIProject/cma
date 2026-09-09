@@ -1,3 +1,4 @@
+import { Presence } from '../ui/Presence';
 import { useEffect, useId, useRef, useState } from 'react';
 import type { PlatformSettings as Settings, StoredPlatformSettings } from '@chronoai/cma-sdk';
 import { Button } from '../ui/Button';
@@ -124,53 +125,59 @@ function SettingsEditor({
     >
       <p className="operator-notice">Revision {revision}</p>
       <FailureNotice failure={failure} />
-      {needsReview ? (
-        <div className="operator-conflict" role="status">
-          <p>
-            Your draft is retained.{' '}
-            {current === undefined
-              ? 'The current settings could not be read.'
-              : `The current revision is ${current.revision}.`}
-          </p>
-          <div className="operator-actions">
-            <Button
-              disabled={busy || current === undefined}
-              onClick={() => {
-                if (current !== undefined) {
-                  setDraft(current.settings);
-                  setBase(current.settings);
-                  setRevision(current.revision);
-                  setCurrent(undefined);
-                  setNeedsReview(false);
-                  setFailure(undefined);
-                }
-              }}
-            >
-              Load current values
-            </Button>
-            <Button
-              disabled={busy || current === undefined}
-              onClick={() => {
-                if (current !== undefined) {
-                  setDraft(reviewSettingsDraft(base, draft, current.settings));
-                  setBase(current.settings);
-                  setRevision(current.revision);
-                  setCurrent(undefined);
-                  setNeedsReview(false);
-                  setFailure(undefined);
-                }
-              }}
-            >
-              Review retained draft
-            </Button>
-            {current === undefined ? (
-              <Button disabled={busy} icon={<IconRefreshOutline16 />} onClick={() => void reread()}>
-                Read current settings
+      <Presence>
+        {needsReview ? (
+          <div className="operator-conflict" role="status">
+            <p>
+              Your draft is retained.{' '}
+              {current === undefined
+                ? 'The current settings could not be read.'
+                : `The current revision is ${current.revision}.`}
+            </p>
+            <div className="operator-actions">
+              <Button
+                disabled={busy || current === undefined}
+                onClick={() => {
+                  if (current !== undefined) {
+                    setDraft(current.settings);
+                    setBase(current.settings);
+                    setRevision(current.revision);
+                    setCurrent(undefined);
+                    setNeedsReview(false);
+                    setFailure(undefined);
+                  }
+                }}
+              >
+                Load current values
               </Button>
-            ) : null}
+              <Button
+                disabled={busy || current === undefined}
+                onClick={() => {
+                  if (current !== undefined) {
+                    setDraft(reviewSettingsDraft(base, draft, current.settings));
+                    setBase(current.settings);
+                    setRevision(current.revision);
+                    setCurrent(undefined);
+                    setNeedsReview(false);
+                    setFailure(undefined);
+                  }
+                }}
+              >
+                Review retained draft
+              </Button>
+              {current === undefined ? (
+                <Button
+                  disabled={busy}
+                  icon={<IconRefreshOutline16 />}
+                  onClick={() => void reread()}
+                >
+                  Read current settings
+                </Button>
+              ) : null}
+            </div>
           </div>
-        </div>
-      ) : null}
+        ) : null}
+      </Presence>
       <section>
         <h3>Defaults</h3>
         {(['sandbox', 'workspace', 'agent'] as const).map((kind) => (
@@ -330,7 +337,9 @@ function SettingsEditor({
         >
           {busy ? 'Saving' : 'Save settings'}
         </Button>
-        {saved ? <p role="status">Settings saved at revision {revision}.</p> : null}
+        <Presence>
+          {saved ? <p role="status">Settings saved at revision {revision}.</p> : null}
+        </Presence>
       </div>
     </form>
   );

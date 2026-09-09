@@ -1,3 +1,4 @@
+import { Presence } from '../ui/Presence';
 import type { ProfileKind, TriggerContent } from '@chronoai/cma-sdk';
 import { Input } from '../ui/Input';
 import { ChoiceGroup } from '../profiles/ChoiceGroup';
@@ -40,11 +41,13 @@ export function TargetStep({
           onSelect={(choice) => onSelect(kind, choice)}
         />
       ))}
-      {sentence === '' ? null : (
-        <p className="trigger-result" role="status">
-          {sentence}
-        </p>
-      )}
+      <Presence>
+        {sentence === '' ? null : (
+          <p className="trigger-result" role="status">
+            {sentence}
+          </p>
+        )}
+      </Presence>
       <TrustDisclosures profiles={profiles} />
     </>
   );
@@ -147,11 +150,13 @@ export function PresentationStep({
                 onChange={(event) => change(event.target.value)}
               />
             )}
-            {error === undefined ? null : (
-              <p className="trigger-error" role="alert">
-                {error}
-              </p>
-            )}
+            <Presence>
+              {error === undefined ? null : (
+                <p className="trigger-error" role="alert">
+                  {error}
+                </p>
+              )}
+            </Presence>
           </div>
         );
       })}

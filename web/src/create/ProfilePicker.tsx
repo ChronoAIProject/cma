@@ -1,3 +1,4 @@
+import { Presence } from '../ui/Presence';
 import { useEffect, useRef, useState } from 'react';
 import type { ProfileKind } from '../routing/routes';
 import { ChoiceGroup } from '../profiles/ChoiceGroup';
@@ -112,20 +113,22 @@ export function ProfilePicker({
         }}
       />
       {loading ? <p role="status">Loading profiles</p> : null}
-      {error === undefined ? null : (
-        <div role="alert">
-          <p>{error}</p>
-          <Button
-            disabled={disabled || loading}
-            onClick={() => {
-              setLoading(true);
-              setReload((value) => value + 1);
-            }}
-          >
-            Try again
-          </Button>
-        </div>
-      )}
+      <Presence>
+        {error === undefined ? null : (
+          <div role="alert">
+            <p>{error}</p>
+            <Button
+              disabled={disabled || loading}
+              onClick={() => {
+                setLoading(true);
+                setReload((value) => value + 1);
+              }}
+            >
+              Try again
+            </Button>
+          </div>
+        )}
+      </Presence>
       <ul className="create-profile-picker__list">
         {choices.map((choice) => (
           <ProfilePreview

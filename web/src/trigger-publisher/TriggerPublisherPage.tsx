@@ -1,3 +1,4 @@
+import { Presence } from '../ui/Presence';
 import { useEffect, useRef, useState } from 'react';
 import type { TriggerDocument } from '@chronoai/cma-sdk';
 import type { AppRoute } from '../routing/routes';
@@ -192,22 +193,24 @@ export function TriggerPublisherPage({
             ))}
           </ul>
           {listLoading ? <p role="status">Loading Triggers</p> : null}
-          {listFailure ? (
-            <div role="alert">
-              <p>Triggers could not be loaded.</p>
-              <Button
-                icon={<IconRefreshOutline16 />}
-                disabled={listLoading}
-                onClick={() => {
-                  setListLoading(true);
-                  setListFailure(false);
-                  setListReload((value) => value + 1);
-                }}
-              >
-                Try again
-              </Button>
-            </div>
-          ) : null}
+          <Presence>
+            {listFailure ? (
+              <div role="alert">
+                <p>Triggers could not be loaded.</p>
+                <Button
+                  icon={<IconRefreshOutline16 />}
+                  disabled={listLoading}
+                  onClick={() => {
+                    setListLoading(true);
+                    setListFailure(false);
+                    setListReload((value) => value + 1);
+                  }}
+                >
+                  Try again
+                </Button>
+              </div>
+            ) : null}
+          </Presence>
           {next === undefined ? null : (
             <Button disabled={listLoading} onClick={() => void more()}>
               Load more
@@ -226,58 +229,63 @@ export function TriggerPublisherPage({
               </Button>
             </div>
           ) : null}
-          {loading ? (
-            <p role="status">Loading Trigger</p>
-          ) : failure ? (
-            <div role="alert">
-              <p>This Trigger could not be loaded.</p>
-              <Button
-                icon={<IconRefreshOutline16 />}
-                onClick={() => setReload((value) => value + 1)}
-              >
-                Try again
-              </Button>
-            </div>
-          ) : view === 'embed' && document !== undefined ? (
-            <>
-              <EmbedPanel
+          <>
+            {loading ? (
+              <p role="status">Loading Trigger</p>
+            ) : failure ? null : view === 'embed' && document !== undefined ? (
+              <>
+                <EmbedPanel
+                  client={client}
+                  document={document}
+                  onManageSources={() => {
+                    setInitialStep(3);
+                    onNavigate({ kind: 'trigger', triggerId: document.id });
+                  }}
+                />
+                <Button
+                  icon={<IconEditOutline16 />}
+                  onClick={() => {
+                    setInitialStep(0);
+                    onNavigate({ kind: 'trigger', triggerId: document.id });
+                  }}
+                >
+                  Edit Trigger
+                </Button>
+              </>
+            ) : (
+              <TriggerWizard
+                key={triggerId ?? `new:${String(newVersion)}`}
                 client={client}
                 document={document}
-                onManageSources={() => {
-                  setInitialStep(3);
-                  onNavigate({ kind: 'trigger', triggerId: document.id });
+                initialStep={initialStep}
+                onChange={updateDocument}
+                onLock={setLocked}
+                onSaved={(value, savedStep) => {
+                  if (triggerId === undefined) {
+                    setInitialStep(savedStep);
+                    onNavigate({ kind: 'trigger', triggerId: value.id });
+                  }
+                }}
+                onPublished={(value) => {
+                  updateDocument(value);
+                  onNavigate({ kind: 'trigger_embed', triggerId: value.id });
                 }}
               />
-              <Button
-                icon={<IconEditOutline16 />}
-                onClick={() => {
-                  setInitialStep(0);
-                  onNavigate({ kind: 'trigger', triggerId: document.id });
-                }}
-              >
-                Edit Trigger
-              </Button>
-            </>
-          ) : (
-            <TriggerWizard
-              key={triggerId ?? `new:${String(newVersion)}`}
-              client={client}
-              document={document}
-              initialStep={initialStep}
-              onChange={updateDocument}
-              onLock={setLocked}
-              onSaved={(value, savedStep) => {
-                if (triggerId === undefined) {
-                  setInitialStep(savedStep);
-                  onNavigate({ kind: 'trigger', triggerId: value.id });
-                }
-              }}
-              onPublished={(value) => {
-                updateDocument(value);
-                onNavigate({ kind: 'trigger_embed', triggerId: value.id });
-              }}
-            />
-          )}
+            )}
+            <Presence>
+              {loading ? null : failure ? (
+                <div role="alert">
+                  <p>This Trigger could not be loaded.</p>
+                  <Button
+                    icon={<IconRefreshOutline16 />}
+                    onClick={() => setReload((value) => value + 1)}
+                  >
+                    Try again
+                  </Button>
+                </div>
+              ) : null}
+            </Presence>
+          </>
         </div>
       </div>
     </section>

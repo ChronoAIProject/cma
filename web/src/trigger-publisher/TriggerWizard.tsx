@@ -1,3 +1,4 @@
+import { Presence } from '../ui/Presence';
 import { useEffect, useRef, useState } from 'react';
 import type { ProfileKind, TriggerContent, TriggerDocument } from '@chronoai/cma-sdk';
 import type { CommandOptions } from '../api/client';
@@ -333,37 +334,43 @@ export function TriggerWizard({
           </label>
         </div>
       ) : null}
-      {command.failure === undefined && !placementConflict ? null : (
-        <div className="trigger-failure" role="alert">
-          <p>
-            {command.failure?.message ?? 'The saved draft changed. Your changes are still here.'}
-          </p>
-          {command.failure?.uncertain ? (
-            <Button disabled={command.pending} onClick={command.retry}>
-              Retry original request
-            </Button>
-          ) : null}
-          {conflict ? (
-            reloadConfirm ? (
-              <InlineConfirm
-                question="Replace your unsaved changes with the current saved draft?"
-                confirmLabel="Load current draft"
-                busy={locked}
-                onConfirm={() => void reload()}
-                onCancel={() => setReloadConfirm(false)}
-              />
-            ) : (
-              <Button disabled={locked} onClick={() => setReloadConfirm(true)}>
-                Load current draft
+      <Presence>
+        {command.failure === undefined && !placementConflict ? null : (
+          <div className="trigger-failure" role="alert">
+            <p>
+              {command.failure?.message ?? 'The saved draft changed. Your changes are still here.'}
+            </p>
+            {command.failure?.uncertain ? (
+              <Button disabled={command.pending} onClick={command.retry}>
+                Retry original request
               </Button>
-            )
-          ) : null}
-        </div>
-      )}
-      <p className="trigger-notice" role="status">
-        {notice ||
-          (command.pending ? 'Saving Trigger' : profileBusy ? 'Loading profile revisions' : '')}
-      </p>
+            ) : null}
+            {conflict ? (
+              reloadConfirm ? (
+                <InlineConfirm
+                  question="Replace your unsaved changes with the current saved draft?"
+                  confirmLabel="Load current draft"
+                  busy={locked}
+                  onConfirm={() => void reload()}
+                  onCancel={() => setReloadConfirm(false)}
+                />
+              ) : (
+                <Button disabled={locked} onClick={() => setReloadConfirm(true)}>
+                  Load current draft
+                </Button>
+              )
+            ) : null}
+          </div>
+        )}
+      </Presence>
+      <Presence>
+        {notice || command.pending || profileBusy ? (
+          <p className="trigger-notice" role="status">
+            {notice ||
+              (command.pending ? 'Saving Trigger' : profileBusy ? 'Loading profile revisions' : '')}
+          </p>
+        ) : null}
+      </Presence>
       <footer className="trigger-actions">
         <Button
           icon={<IconChevronLeftOutline14 />}

@@ -1,3 +1,4 @@
+import { Presence } from '../ui/Presence';
 import { useState } from 'react';
 import { Button } from '../ui/Button';
 import { Modal } from '../ui/Modal';
@@ -40,39 +41,43 @@ export function EditorActions({
   const nextRevision = (profile?.latestRevision?.revision ?? 0) + 1;
   return (
     <>
-      {errorCount > 0 ? (
-        <p className="profile-editor__failure" role="alert">
-          Review {errorCount} {errorCount === 1 ? 'field' : 'fields'} before saving.
-        </p>
-      ) : null}
-      {failure === undefined ? null : (
-        <div className="profile-editor__notice" role={failure.conflict ? 'status' : 'alert'}>
-          <p>{failure.message}</p>
-          {failure.conflict ? (
-            <div className="profile-editor__actions">
-              <Button
-                type="button"
-                disabled={pending !== undefined || readingCurrent}
-                onClick={() => void onLoadCurrent()}
-              >
-                Load current
+      <Presence>
+        {errorCount > 0 ? (
+          <p className="profile-editor__failure" role="alert">
+            Review {errorCount} {errorCount === 1 ? 'field' : 'fields'} before saving.
+          </p>
+        ) : null}
+      </Presence>
+      <Presence>
+        {failure === undefined ? null : (
+          <div className="profile-editor__notice" role={failure.conflict ? 'status' : 'alert'}>
+            <p>{failure.message}</p>
+            {failure.conflict ? (
+              <div className="profile-editor__actions">
+                <Button
+                  type="button"
+                  disabled={pending !== undefined || readingCurrent}
+                  onClick={() => void onLoadCurrent()}
+                >
+                  Load current
+                </Button>
+                <Button
+                  type="button"
+                  disabled={pending !== undefined || readingCurrent}
+                  onClick={() => void onRetry()}
+                >
+                  Retry save
+                </Button>
+              </div>
+            ) : failure.uncertain ? (
+              <Button type="button" disabled={pending !== undefined} onClick={() => void onRetry()}>
+                Retry
               </Button>
-              <Button
-                type="button"
-                disabled={pending !== undefined || readingCurrent}
-                onClick={() => void onRetry()}
-              >
-                Retry save
-              </Button>
-            </div>
-          ) : failure.uncertain ? (
-            <Button type="button" disabled={pending !== undefined} onClick={() => void onRetry()}>
-              Retry
-            </Button>
-          ) : null}
-        </div>
-      )}
-      {success === undefined ? null : <p role="status">{success}</p>}
+            ) : null}
+          </div>
+        )}
+      </Presence>
+      <Presence>{success === undefined ? null : <p role="status">{success}</p>}</Presence>
       <footer className="profile-editor__actions">
         <Button type="submit" variant="primary" disabled={locked || failure?.conflict || saved}>
           {pending === 'save' ? 'Saving' : 'Save draft'}

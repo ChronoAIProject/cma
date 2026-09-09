@@ -1,3 +1,4 @@
+import { Presence } from '../ui/Presence';
 import { useId, useState } from 'react';
 import type { KeyboardEvent, ReactNode } from 'react';
 import type { AgentStatus, SandboxStatus, SandboxSummary, WorkspaceDetail } from '../api/types';
@@ -289,11 +290,13 @@ export function Tree({
 
   return (
     <div className="resource-tree">
-      {refreshError === undefined ? null : (
-        <p className="resource-tree__notice" role="alert">
-          {refreshError}
-        </p>
-      )}
+      <Presence>
+        {refreshError === undefined ? null : (
+          <p className="resource-tree__notice" role="alert">
+            {refreshError}
+          </p>
+        )}
+      </Presence>
       {groups.map((group) => {
         const groupNode = `group:${group.id}`;
         const expanded = !collapsed.has(groupNode);

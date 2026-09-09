@@ -1,3 +1,4 @@
+import { Presence } from '../ui/Presence';
 import { useEffect, useRef, useState } from 'react';
 import type { AgentDetail, WorkspaceDetail } from '../api/types';
 import type { AppRoute } from '../routing/routes';
@@ -235,11 +236,13 @@ export function AgentDetails({
               Loading conversation activity.
             </p>
           ) : null}
-          {actionError === undefined ? null : (
-            <p className="agent-details__failure" role="alert">
-              {actionError}
-            </p>
-          )}
+          <Presence>
+            {actionError === undefined ? null : (
+              <p className="agent-details__failure" role="alert">
+                {actionError}
+              </p>
+            )}
+          </Presence>
           {confirmStop ? (
             <InlineConfirm
               question="Stop this Agent?"

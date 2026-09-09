@@ -1,3 +1,4 @@
+import { Presence } from '../ui/Presence';
 import { useEffect, useState } from 'react';
 import type { CmaWebClient } from '../api/client';
 import type { SandboxDetail, SandboxEvent, SandboxSummary, WorkspaceDetail } from '../api/types';
@@ -148,9 +149,11 @@ export function WherePicker({
           }}
         />
       </div>
-      {current === undefined || current.status === 'active' ? null : (
-        <p role="status">Sandbox: {sandboxLifecycleLabel(current)}</p>
-      )}
+      <Presence>
+        {current === undefined || current.status === 'active' ? null : (
+          <p role="status">Sandbox: {sandboxLifecycleLabel(current)}</p>
+        )}
+      </Presence>
       {current === undefined ? null : <LifecycleProgress client={client} sandbox={current} />}
       {current !== undefined &&
       ['provisioning', 'installing', 'failed'].includes(current.status) ? (
@@ -217,14 +220,16 @@ export function WherePicker({
           </Button>
         )}
       </div>
-      {error === undefined ? null : (
-        <div role="alert">
-          <p>{error}</p>
-          <Button disabled={disabled} onClick={() => setRevision((value) => value + 1)}>
-            Try again
-          </Button>
-        </div>
-      )}
+      <Presence>
+        {error === undefined ? null : (
+          <div role="alert">
+            <p>{error}</p>
+            <Button disabled={disabled} onClick={() => setRevision((value) => value + 1)}>
+              Try again
+            </Button>
+          </div>
+        )}
+      </Presence>
     </div>
   );
 }
