@@ -72,7 +72,18 @@ async fn review_needs_are_ordered_and_trust_is_needed_only_for_foreign_unsafe_cr
         .await
         .unwrap()
         .launch;
-    assert_eq!(reused.review.needs, vec![ReviewNeed::OwnerRequiresReview]);
+    assert_eq!(
+        reused.review.needs,
+        vec![
+            ReviewNeed::Connection {
+                service: ServiceId::new("github")
+            },
+            ReviewNeed::Connection {
+                service: ServiceId::new("slack")
+            },
+            ReviewNeed::OwnerRequiresReview,
+        ]
+    );
 
     for (owner, unsafe_profile) in [(VISITOR, true), (PUBLISHER, false)] {
         let fixture = fixture(default_reuse(), owner, unsafe_profile, false, vec![]).await;

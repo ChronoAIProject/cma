@@ -55,6 +55,14 @@ state. Active usable grants satisfy requirements; inactive, ambiguous, missing
 or unknown provider rows do not. A provider outage must not be converted into
 an empty successful grant list.
 
+Launch admission and explicit Start both recheck the service list in the
+Launch's frozen Trigger Sandbox Profile, including when reusing a live or
+paused Sandbox or an existing Agent. An unmet connection keeps the same Draft
+and resolved hierarchy available for connection assist. A revoked connection
+between admission and Start blocks work until a successful recheck. Replaying
+an already admitted command returns its recorded result without starting or
+checking again. These checks do not broaden an existing Sandbox's pinned grant.
+
 Current optional guidance appears **inside each service entry**:
 
 | Field | Meaning |

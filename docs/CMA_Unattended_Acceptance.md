@@ -562,3 +562,22 @@ image identity and measured results for each behavior, with unknowns left explic
   image had no referencing containers; only its redundant local image, OCI
   archive and extracted layout were removed. Source
   commits and verification reports remain available to reproduce it.
+- Trigger service checks now cover reused Sandboxes and Agents at admission
+  and explicit Start, using the frozen Trigger service list without rewriting
+  instance profiles or grants. Five new regressions cover all three requested
+  services, missing/inactive/unknown states, revocation before Start, malformed
+  and foreign responses, provider outage, idempotent replay and legacy Drafts
+  with empty requirements. Newly observed services produce durable events.
+  The shared HTTP contract now correctly returns a Draft for disconnected
+  GitHub on repeat Resume instead of incorrectly admitting work.
+- This connection-check batch passes all 1,613 isolated backend tests (176
+  environment-gated tests skipped), workspace Clippy, formatting, the doc-test
+  gate, secret scans, 1,397 TypeScript SDK contract checks and the Rust SDK's
+  complete shared-contract replay. The same 13 existing file-size violations
+  remain; no CI gate was weakened. Production deployment is still blocked by
+  Google interactive reauthentication and the owner's live runtime.
+- Read-only production observation at 2026-09-09T06:05:11Z found the owner
+  Sandbox Live on runtime 14c05f26, with one Workspace and no checkpoint or
+  lifecycle operation in progress. Both Agent histories retain the previously
+  recorded five-turn and one-turn hashes. No production mutation was made.
+  Disk monitoring after tests reports 36 GiB free.

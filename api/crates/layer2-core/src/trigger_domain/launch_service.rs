@@ -251,29 +251,18 @@ impl LaunchService {
                 self.require_sandbox_credentials(&caller.subject).await?;
             }
             let checked_at = now_rfc3339();
-            let requirements = if resolved.resolution.sandbox.is_pending() {
-                RequirementsSnapshot {
-                    services: self
-                        .connections
-                        .requirements(&caller.subject, &profiles.sandbox.content.nyxid_services)
-                        .await
-                        .map_err(connection_error)?,
-                    checked_at,
-                }
-            } else {
-                RequirementsSnapshot {
-                    services: Vec::new(),
-                    checked_at,
-                }
+            let requirements = RequirementsSnapshot {
+                services: self
+                    .connections
+                    .requirements(&caller.subject, &profiles.sandbox.content.nyxid_services)
+                    .await
+                    .map_err(connection_error)?,
+                checked_at,
             };
             requirements
                 .validate()
                 .map_err(|error| LaunchServiceError::Corrupt(error.to_string()))?;
-            validate_requirement_identity(
-                &profiles.sandbox.content.nyxid_services,
-                &requirements,
-                resolved.resolution.sandbox.is_pending(),
-            )?;
+            validate_requirement_identity(&profiles.sandbox.content.nyxid_services, &requirements)?;
             let review = ReviewRequirements::build(
                 &requirements,
                 trust.confirmation_digest.clone(),
