@@ -839,9 +839,19 @@ HTTPS hosted URL. Poll every 1.5 seconds with backoff for at most five minutes.
 CMA does not inspect cross-origin window contents. On satisfied, close the popup
 and continue the same intent. Expiry offers another explicit attempt.
 
-A blocked popup offers a same-tab destination and **I've connected it**. Services
-requiring manual setup link to NyxID and offer a recheck; never claim they support
-hosted setup. Do not request or display service credentials.
+A pending connection keeps **Connect** and **Verify** available in the existing
+wrapping action row. Connect reopens the current unexpired hosted link without
+creating another handoff; after a same-tab return without that in-memory URL,
+an explicit Connect may request a new link. Verify reads current status
+immediately, disables itself while checking, and explains when the account is
+still not connected. Late results from an aborted check cannot complete a newer
+attempt. A blocked popup retains its same-tab destination. Services requiring
+manual setup link to NyxID and offer a recheck; never claim they support hosted
+setup. Do not request or display service credentials.
+
+When connections are the only outstanding requirement, title the dialog
+**Connect required accounts** and label its combined recheck **Verify connections**.
+Do not describe this permission step as a new review or consent requirement.
 
 Repeat choice offers **Continue where you left off**, with title, time and the
 first-message excerpt, or **Start fresh**. The choice is an explicit server
@@ -1701,3 +1711,5 @@ Append-only. Never edit or delete an entry.
 | 2026-09-09 | Removed deleted Sandbox detail and descendant reads from sidebar loading and refresh. Kept authorized inventory, mutable state, access-denial handling and direct conversation history independent of the hidden deleted hierarchy. |
 | 2026-09-09 | Added written Agent creation provenance and publisher-defined quick messages above the composer, with current published content, hover/focus descriptions, draft-preserving guarded submission and repeated authoring fields using existing controls. |
 | 2026-09-09 | Bounded the quick-message row independently from chat after mobile stress verification; portalled descriptions through the existing viewport-clamped menu placement and hover-exit delay so long descriptions remain readable. |
+| 2026-09-09 | Kept Connect available during pending NyxID setup, reused current hosted links on reopen, and made Verify an immediate check with explicit still-not-connected feedback. Preserved popup blocking, same-tab recovery and credential-free storage. |
+| 2026-09-09 | Named connection-only dialogs Connect required accounts with Verify connections as the combined check, keeping permission setup distinct from publisher-required review. |

@@ -581,3 +581,26 @@ image identity and measured results for each behavior, with unknowns left explic
   lifecycle operation in progress. Both Agent histories retain the previously
   recorded five-turn and one-turn hashes. No production mutation was made.
   Disk monitoring after tests reports 36 GiB free.
+- Source 4491f42d contains the verified reused-resource service-check fix and
+  is pushed without a merge. The subsequent connection-assist UI keeps Connect
+  available while pending, reopens an unexpired link without another handoff,
+  and makes Verify immediate with explicit pending feedback. Late/foreign
+  handoff results are refused. Fixed a simultaneous three-service completion
+  race that could lose earlier results and prevent automatic continuation.
+  Connection-only dialogs now say Connect required accounts and Verify
+  connections, distinct from publisher-required review.
+- All 1,180 frontend tests, TypeScript, ESLint, changed-file formatting, source
+  secret scanning, production Vite build and production-dependency audit pass.
+  Seven new UI regressions cover reopen, immediate verification, in-flight
+  controls, foreign/stale results, direct recheck and simultaneous completion.
+  Browser evidence connection-recovery-local-wT5QQb/result.json passes six
+  desktop/mobile and light/dark cases at 1440/390/320px, with inspected screenshots,
+  bounded dialog geometry, no clipped buttons, exactly one mock Start after all
+  three services connect and zero production requests. This is local evidence,
+  not NyxID production OAuth acceptance. The first browser harness run omitted
+  the optional Trigger preview response; that fixture omission was corrected.
+- Google refresh still explicitly requires gcloud auth login. No registry push,
+  manifest pin or deployment was performed in this batch. The d052e746 runtime
+  candidate remains local; the api-github instance grant, no-review fresh-login
+  journey and actual contribution remain unverified. Host disk has 35 GiB free;
+  no additional Docker restart or cleanup was needed.

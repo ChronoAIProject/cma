@@ -345,7 +345,7 @@ try {
   await capture('connect-blocked');
   const connectionMutations = mutations.length;
   await page.reload({ waitUntil: 'networkidle0' });
-  await page.waitForFunction(() => document.body.textContent.includes("I've connected it"));
+  await page.waitForFunction(() => document.body.textContent.includes('Verify'));
   assert.equal(
     mutations.length,
     connectionMutations,

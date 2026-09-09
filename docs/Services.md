@@ -115,6 +115,15 @@ route change or a terminal outcome; bound in-flight reads and let the visitor
 initiate a supported new attempt when necessary. On return, refresh requirements
 and continue the same Draft through its explicit Start operation.
 
+Pending hosted setup keeps Connect and Verify available. Connect reopens the
+current unexpired in-memory link without minting another handoff. Verify reads
+the exact handoff immediately and reports when access is still pending; popup
+closure alone is never success. After reload, the hosted URL is intentionally
+absent from storage, so another explicit Connect can request a new link. Starting
+that replacement aborts the previous poll, and late results cannot satisfy the
+new attempt. Simultaneous satisfaction of several services continues the same
+Draft once; the backend still rechecks every service before admitting work.
+
 ## Connection Outcomes
 
 | Observation | Required client behavior |

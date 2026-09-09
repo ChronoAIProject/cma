@@ -22,7 +22,7 @@ type Surface = 'sandbox' | 'landing' | 'review';
 async function setup(
   surface: Surface,
   errors: unknown[] = [refusal()],
-  options: { record?: Launch; client?: ReturnType<typeof publicClient> } = {},
+  options: { record?: Launch; client?: ReturnType<typeof publicClient>; actionName?: string } = {},
 ) {
   const command = vi.fn();
   for (const error of errors) command.mockRejectedValueOnce(error);
@@ -95,7 +95,11 @@ async function setup(
       target: { value: 'Keep my draft' },
     });
   const name =
-    surface === 'sandbox' ? 'Create sandbox' : surface === 'landing' ? 'Open in CMA' : 'Continue';
+    surface === 'sandbox'
+      ? 'Create sandbox'
+      : surface === 'landing'
+        ? 'Open in CMA'
+        : (options.actionName ?? 'Continue');
   await actor.click(await screen.findByRole('button', { name }));
   await screen.findByText('Sign in to CMA with this same account before trying again.');
   return {
@@ -308,7 +312,7 @@ it('keeps Start fresh choice, placement, referrer, owner and retry key through r
 });
 
 it.each(['same-tab', 'reload'] as const)(
-  'requires explicit Continue after %s recovery even when a pending hosted connection becomes satisfied',
+  'requires explicit verification after %s recovery even when a pending hosted connection becomes satisfied',
   async (mode) => {
     const client = publicClient();
     const record: Launch = {
@@ -333,7 +337,11 @@ it.each(['same-tab', 'reload'] as const)(
       handoff_id: 'handoff-one',
       expires_at: new Date(Date.now() + 300_000).toISOString(),
     });
-    const test = await setup('review', [refusal()], { record, client });
+    const test = await setup('review', [refusal()], {
+      record,
+      client,
+      actionName: 'Verify connections',
+    });
     expect(readDraftRecovery(record.id)).toEqual({ owner: PUBLIC_USER.id });
     if (mode === 'reload') {
       test.unmount();
@@ -364,7 +372,7 @@ it.each(['same-tab', 'reload'] as const)(
     expect(screen.queryByRole('region', { name: 'Connect Code host' })).not.toBeInTheDocument();
     expect(test.command).toHaveBeenCalledOnce();
     expect(test.completed).not.toHaveBeenCalled();
-    await test.actor.click(screen.getByRole('button', { name: 'Continue' }));
+    await test.actor.click(screen.getByRole('button', { name: test.name }));
     await waitFor(() => expect(test.completed).toHaveBeenCalledOnce());
     const [first, second] = test.command.mock.calls;
     expect(second!.at(-1).idempotencyKey).not.toBe(first!.at(-1).idempotencyKey);
