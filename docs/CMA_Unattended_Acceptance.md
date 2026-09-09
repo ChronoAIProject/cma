@@ -957,3 +957,49 @@ image identity and measured results for each behavior, with unknowns left explic
   earlier "physical object listing" wording must not be read as a raw provider
   or version-history audit. Its 110 visible-object count remains valid evidence
   for the service API only; physical storage acceptance is still open.
+
+## Availability and durable warm runtime implementation — 2026-09-09
+
+- Production readback confirms API a0e306c6 and Web 5d840795 at 1/1 Ready.
+  The pause-transfer/settlement API above was deployed successfully; evidence is
+  service-access-api-rollout-szle2s and service-access-api-postflight-xAiUzb under
+  /tmp/cma-trureturing-loop.LvTezb. All 35 Sandbox records and owner histories
+  were preserved. current-readme-repeat-Hax3pL/result.json records the named
+  README-derived repeat reaching Ready in 338,892 ms, preserving both histories
+  and avoiding first-prompt replay. This proves the existing-owner repeat only;
+  fresh sign-in, missing connections and performance acceptance remain open.
+- Commit a65fafb4 adds mutable availability outside published environment
+  revisions, owner-only settings, public/published warmup eligibility, one-to-five
+  validation, private-copy defaults and transactionally fenced keepalive policy.
+  The original 1,197-test frontend run had one stale button-label expectation;
+  its corrected routed test, production build, E2E typecheck and format checks
+  now pass. The audit passes the required high-severity threshold with three
+  moderate development-tool advisories. Backend and both SDK suites passed.
+- The warm-runtime worker is now connected to production composition in source.
+  It reserves durable credential-free environments, proves installation before
+  Ready, atomically transfers exclusive ownership at admission and wakes immediate
+  replenishment. Runtime identity and installation receipts are reused before
+  user keys are minted. Lost warm runtimes receive a new persisted generation
+  under the same newly owned Sandbox ID. Profile edits/unshare, worker leases,
+  runtime reclamation and stale-pool capacity are fenced.
+- Four focused runtime tests pass, including credential ordering, exact runtime
+  reuse, lost-runtime recovery and invalid installation/identity refusal. Eight
+  real replica-set admission tests pass, including concurrent allocation capped
+  at five, ten competing owners, Trigger replay/quota preservation, private-copy
+  isolation, unshare cleanup, changed-revision worker fencing and ownership
+  handoff. The isolated Mongo containers were removed without persistent volumes.
+- These availability/warmup changes are not deployed yet. Truretruing warmup five
+  and keepalive remain to be enabled and verified after image/rollout checks.
+  This entry does not close the retained snapshot, live-progress, storage or
+  fresh-user verification requirements. Terminal synchronization remains deferred.
+- The default backend suite passes 1,642 tests (186 excluded/ignored by default).
+  A subsequent warm-runtime recovery review found that startup reconciliation
+  could apply checkpoint-loss failure before the initial provisioning worker
+  replaced a disappeared warm pod. The credential-free initial step now retains
+  provisioning authority; all 86 lifecycle-worker tests and Clippy pass afterward.
+  Dependency policy, source secret scanning and deployment configuration checks
+  pass. The repository file-size check reports 12 pre-existing oversized files;
+  none is introduced by this warm-runtime change, and that gate remains open.
+- Production preflight observation finds only CMA API/Web pods, three Paused
+  Sandboxes and the remaining records Retired. Truretruing's existing public
+  Profile is draft version 2. No owner pause was issued for this build.

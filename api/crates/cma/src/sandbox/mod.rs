@@ -18,6 +18,7 @@ mod title_scheduler;
 mod title_worker;
 mod titles;
 mod unavailable_credentials;
+mod warmup;
 mod worker;
 mod workspace_worker;
 

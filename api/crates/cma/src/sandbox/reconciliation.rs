@@ -75,6 +75,15 @@ impl SandboxReconciler {
         }
         for observation in &inventory {
             let id = SandboxId(observation.sandbox_id.clone());
+            // Read pool authority first: a concurrent claim publishes its owned
+            // Sandbox atomically, before the following fresh owned-record read.
+            if self
+                .store
+                .unowned_runtime_authority(&id, observation.generation, observation.handle.as_str())
+                .await?
+            {
+                continue;
+            }
             if let Some(current) = self.store.get_sandbox(&id).await? {
                 current
                     .validate()

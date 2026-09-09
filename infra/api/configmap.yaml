@@ -62,6 +62,10 @@ data:
   # runtime-absent window; this pin must never silently rotate an active Sandbox.
   # Build/contract checks do not replace production pause/restore verification.
   CHRONO_SANDBOX_IMAGE: "us-central1-docker.pkg.dev/aelf-shared-k8s-prod/aelf-prod-registry/cma-runtime@sha256:481dff74bcc87cef36ed29ac0d94465ae9fdc94d6dc97b0e3e717437f7be22ba"
+  # Public Profile availability controls credential-free warm runtime counts
+  # (1-5 per Profile) in MongoDB. The worker pins this image, the service floor
+  # and install bounds; changed pins retire old unowned reservations before
+  # replacement. Owned runtime rotation retains the existing checkpoint rules.
   # Default resource profiles are seeded only when no corresponding default
   # exists. Durable operator settings and published profiles own later choices.
   CHRONO_SANDBOX_CPU: "1"

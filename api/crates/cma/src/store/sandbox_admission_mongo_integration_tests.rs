@@ -19,6 +19,9 @@ use super::sandboxes::admitted_sandbox_document;
 const NOW: &str = "2026-09-05T00:00:00Z";
 const LATER: &str = "2026-09-05T00:01:00Z";
 
+#[path = "warm_sandboxes/mongo_integration_tests.rs"]
+mod warmup;
+
 async fn database(prefix: &str) -> (Client, String) {
     let uri = std::env::var("CHRONO_TEST_MONGODB_URI")
         .expect("CHRONO_TEST_MONGODB_URI must name a MongoDB replica set");
