@@ -198,8 +198,8 @@ async fn download_parts(
     sender: &mpsc::Sender<Result<Vec<u8>>>,
 ) -> Result<()> {
     let mut digest = Sha256::new();
-    // Ordered buffering holds at most four verified 32 MiB parts, including the
-    // part being delivered. No next window is polled while the consumer is full.
+    // The shared permits cover at most four 32 MiB parts across all downloads,
+    // including completed parts awaiting an earlier part or a slow consumer.
     let mut parts = stream::iter(manifest.parts.into_iter().enumerate())
         .map(|(index, sha)| {
             let part_size =
@@ -208,7 +208,7 @@ async fn download_parts(
         })
         .buffered(DOWNLOAD_CONCURRENCY);
     while let Some(part) = parts.next().await {
-        let part = part?;
+        let (_permit, part) = part?;
         digest.update(&part);
         for chunk in part.chunks(transfer::CHUNK_BYTES) {
             if sender.send(Ok(chunk.to_vec())).await.is_err() {
@@ -229,7 +229,13 @@ async fn download_part(
     key: String,
     sha: String,
     size: u64,
-) -> Result<Vec<u8>> {
+) -> Result<(tokio::sync::OwnedSemaphorePermit, Vec<u8>)> {
+    let permit = store
+        .download_parts
+        .clone()
+        .acquire_owned()
+        .await
+        .map_err(|_| unavailable("checkpoint download capacity is unavailable"))?;
     let response = transfer::download_response(store, &key, size).await?;
     let mut stream = response.bytes_stream();
     let mut bytes = Vec::with_capacity(size as usize);
@@ -250,5 +256,5 @@ async fn download_part(
             "checkpoint part download failed integrity verification",
         ));
     }
-    Ok(bytes)
+    Ok((permit, bytes))
 }

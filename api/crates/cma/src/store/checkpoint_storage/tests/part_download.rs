@@ -130,6 +130,47 @@ async fn download_cancellation_during_headers_drops_the_pending_window() {
     }
     tokio::time::sleep(Duration::from_millis(200)).await;
     assert_eq!(part_reads(&fixture, &key), multipart::DOWNLOAD_CONCURRENCY);
+    assert_eq!(
+        store.download_parts.available_permits(),
+        multipart::DOWNLOAD_CONCURRENCY
+    );
+    server.abort();
+}
+
+#[tokio::test]
+async fn simultaneous_downloads_share_the_memory_cap_and_release_it_on_cancellation() {
+    let (store, fixture, server) = fixture().await;
+    let (key, sha, size) = retained_archive(&fixture, multipart::DOWNLOAD_CONCURRENCY + 1);
+    let gates = gate_parts(&fixture, &key, multipart::DOWNLOAD_CONCURRENCY + 2);
+    let first = store.download(&key, "archive", &sha, size).await.unwrap();
+    wait_for_part_reads(&fixture, &key, multipart::DOWNLOAD_CONCURRENCY).await;
+    let clone = store.clone();
+    let mut second = clone.download(&key, "archive", &sha, size).await.unwrap();
+    assert!(
+        tokio::time::timeout(Duration::from_millis(100), second.chunks.recv())
+            .await
+            .is_err()
+    );
+    assert_eq!(part_reads(&fixture, &key), multipart::DOWNLOAD_CONCURRENCY);
+    assert_eq!(store.download_parts.available_permits(), 0);
+    drop(first);
+    wait_for_part_reads(&fixture, &key, 2 * multipart::DOWNLOAD_CONCURRENCY).await;
+    for gate in gates {
+        gate.add_permits(2);
+    }
+    let mut digest = Sha256::new();
+    let mut bytes = 0;
+    while let Some(chunk) = second.chunks.recv().await {
+        let chunk = chunk.unwrap();
+        bytes += chunk.len() as u64;
+        digest.update(chunk);
+    }
+    assert_eq!(bytes, size);
+    assert_eq!(format!("{:x}", digest.finalize()), sha);
+    assert_eq!(
+        store.download_parts.available_permits(),
+        multipart::DOWNLOAD_CONCURRENCY
+    );
     server.abort();
 }
 
