@@ -6,7 +6,7 @@ use crate::{
     HomeSnapshotObservation, HomeSnapshotReceipt, HomeSnapshotRequest, HomeVolumeAttachment,
 };
 
-fn request() -> HomeSnapshotExportRequest {
+pub(crate) fn request() -> HomeSnapshotExportRequest {
     let home = home_request();
     let receipt = super::super::identity::validate_claim(
         "cma-test",
@@ -42,7 +42,7 @@ fn request() -> HomeSnapshotExportRequest {
     }
 }
 
-fn snapshot() -> (u16, Value) {
+pub(crate) fn snapshot() -> (u16, Value) {
     let request = request();
     (
         200,
@@ -63,7 +63,7 @@ fn snapshot() -> (u16, Value) {
     )
 }
 
-fn claim(uid: &str, bound: bool) -> PersistentVolumeClaim {
+pub(crate) fn claim(uid: &str, bound: bool) -> PersistentVolumeClaim {
     let mut claim = identity::desired("cma-test", "deployment", &request()).unwrap();
     claim.metadata.uid = Some(uid.into());
     claim.metadata.resource_version = Some("12".into());

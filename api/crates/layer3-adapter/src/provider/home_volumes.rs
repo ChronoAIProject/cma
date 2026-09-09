@@ -1,4 +1,4 @@
-use k8s_openapi::api::core::v1::PersistentVolumeClaim;
+use k8s_openapi::api::core::v1::{PersistentVolumeClaim, Pod};
 use kube::api::{Api, DeleteParams, DynamicObject, ListParams, PostParams, Preconditions};
 use kube::core::{ApiResource, GroupVersionKind};
 
@@ -16,11 +16,15 @@ mod snapshots;
 #[path = "home_snapshot_views.rs"]
 mod snapshot_views;
 
+#[path = "home_snapshot_jobs.rs"]
+mod snapshot_jobs;
+
 /// Namespaced disk allocation and cleanup beneath recorded Sandbox home authority.
 #[derive(Clone)]
 pub struct PersistentHomeVolumes {
     claims: Api<PersistentVolumeClaim>,
     templates: Api<DynamicObject>,
+    export_pods: Api<Pod>,
     namespace: String,
     controller: String,
 }
@@ -50,6 +54,7 @@ impl PersistentHomeVolumes {
         );
         Ok(Self {
             claims: Api::namespaced(client.clone(), &namespace),
+            export_pods: Api::namespaced(client.clone(), &namespace),
             templates: Api::namespaced_with(client, &namespace, &resource),
             namespace,
             controller,

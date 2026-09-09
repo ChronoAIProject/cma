@@ -14,6 +14,7 @@ mod conversation_channel;
 mod error;
 mod home_snapshot;
 mod home_snapshot_export;
+mod home_snapshot_job;
 mod home_snapshot_view;
 mod home_volume;
 mod runtime;
@@ -58,6 +59,11 @@ pub use home_snapshot::{
 pub use home_snapshot_export::{
     HomeSnapshotConversationIdentity, HomeSnapshotExportConversation, HomeSnapshotExportReceipt,
     HomeSnapshotExportRequest, MAX_SNAPSHOT_EXPORT_CONVERSATIONS,
+};
+pub use home_snapshot_job::{
+    HomeSnapshotExportJobInventoryEntry, HomeSnapshotExportJobObservation,
+    HomeSnapshotExportJobPhase, HomeSnapshotExportJobReceipt, HomeSnapshotExportJobRequest,
+    HomeSnapshotExportJobStore,
 };
 pub use home_snapshot_view::{
     HomeSnapshotViewInventoryEntry, HomeSnapshotViewObservation, HomeSnapshotViewReceipt,
