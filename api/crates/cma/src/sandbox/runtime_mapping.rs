@@ -49,12 +49,19 @@ pub(crate) fn runtime_capabilities(capabilities: AdapterCapabilities) -> Runtime
 }
 
 pub(super) fn sandbox_spec(sandbox: &Sandbox, deployment_id: &str) -> SandboxSpec {
-    environment_spec(
+    let mut spec = environment_spec(
         &sandbox.id,
         &sandbox.profile,
         &sandbox.credential.effective_reaches(),
         deployment_id,
-    )
+    );
+    spec.home_volume = sandbox
+        .lifecycle
+        .home
+        .as_ref()
+        .and_then(|home| home.attachment())
+        .map(Box::new);
+    spec
 }
 
 pub(super) fn environment_spec(

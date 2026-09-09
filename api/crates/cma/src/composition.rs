@@ -206,6 +206,7 @@ impl ControlPlaneComposition {
                 skills: agent_skills,
             },
             SandboxLifecycleConfig {
+                home_policy: None,
                 execution: config.execution,
                 holder: worker_holder.clone(),
                 deployment_id: config.deployment_id.clone(),

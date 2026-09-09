@@ -17,6 +17,7 @@ use super::runtime_mapping::environment_spec;
 use crate::store::{MongoSandboxStore, WarmSandboxClaim};
 
 pub(crate) struct WarmSandboxWorker {
+    pub home_policy: Option<layer3_adapter::HomeVolumePolicy>,
     pub store: Arc<MongoSandboxStore>,
     pub adapter: Arc<dyn SandboxAdapter>,
     pub policy: Arc<dyn SandboxPolicySource>,
@@ -101,8 +102,12 @@ impl WarmSandboxWorker {
     }
 
     async fn run_claim(&self, claim: WarmSandboxClaim) -> Result<(), SandboxStoreError> {
-        let operation =
-            prepare_environment(self.adapter.as_ref(), &self.deployment_id, &claim.record);
+        let operation = prepare_environment(
+            self.adapter.as_ref(),
+            &self.deployment_id,
+            &claim.record,
+            self.home_policy.as_ref(),
+        );
         tokio::pin!(operation);
         let mut heartbeat = tokio::time::interval(Duration::from_secs(20));
         heartbeat.set_missed_tick_behavior(MissedTickBehavior::Skip);
@@ -140,16 +145,29 @@ pub(super) async fn prepare_environment(
     adapter: &dyn SandboxAdapter,
     deployment_id: &str,
     record: &WarmSandbox,
+    home_policy: Option<&layer3_adapter::HomeVolumePolicy>,
 ) -> Result<WarmSandbox, layer3_adapter::AdapterError> {
     let mut next = record.clone();
-    let spec = environment_spec(
+    let mut spec = environment_spec(
         &record.id,
         &record.plan.profile,
         &record.plan.reaches,
         deployment_id,
     );
+    spec.home_volume = record
+        .home
+        .as_ref()
+        .and_then(|home| home.attachment())
+        .map(Box::new);
     match record.state {
         WarmSandboxState::Preparing => {
+            if let Some(home) =
+                super::home::next_home(adapter, &record.id, record.home.as_deref(), home_policy)
+                    .await?
+            {
+                next.home = Some(Box::new(home));
+                return Ok(next);
+            }
             let handle = adapter.provision(&spec).await?;
             next.runtime = Some(RuntimeBinding {
                 runtime_id: handle.0,
@@ -203,6 +221,9 @@ pub(super) async fn prepare_environment(
                 if observation.sandbox_id == record.id.as_str() && observation.generation == 1 {
                     adapter.reclaim_runtime(&observation).await?;
                 }
+            }
+            if let Some(home) = &mut next.home {
+                super::home::release_home(adapter, home).await?;
             }
             next.state = WarmSandboxState::Retired;
         }

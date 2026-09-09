@@ -44,7 +44,7 @@ impl SandboxWorker {
 
     pub(super) async fn provision_lifecycle_runtime(
         &self,
-        sandbox: Sandbox,
+        mut sandbox: Sandbox,
         now: SystemTime,
     ) -> Result<(), SandboxStoreError> {
         let checkpoint = match pinned_checkpoint(&sandbox) {
@@ -74,6 +74,9 @@ impl SandboxWorker {
                 return self.complete_sandbox_only_phase(sandbox, next, stamp).await;
             }
         };
+        if let Some(failure) = self.prepare_sandbox_home(&mut sandbox, now).await? {
+            return self.handle_lifecycle_failure(sandbox, failure, now).await;
+        }
         let request = RuntimeProvisionRequest::new(
             generation,
             sandbox_spec(&sandbox, &self.config.deployment_id),

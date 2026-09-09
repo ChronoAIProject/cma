@@ -20,6 +20,9 @@ use super::runtime_mapping::sandbox_spec;
 
 const RECONCILIATION_INTERVAL: Duration = Duration::from_secs(15);
 
+#[path = "reconciliation_homes.rs"]
+mod homes;
+
 pub(crate) trait ReconciliationStore:
     SandboxReconciliationStore + SandboxMaintenanceStore + SandboxStore
 {
@@ -114,7 +117,7 @@ impl SandboxReconciler {
                 .await
                 .map_err(provider_error)?;
         }
-        Ok(())
+        self.reconcile_homes().await
     }
 
     async fn authority(&self) -> Result<BTreeMap<SandboxId, Sandbox>, SandboxStoreError> {

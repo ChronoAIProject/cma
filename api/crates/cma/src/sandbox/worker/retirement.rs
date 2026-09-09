@@ -182,6 +182,20 @@ impl SandboxWorker {
         mut sandbox: Sandbox,
         now: SystemTime,
     ) -> Result<(), SandboxStoreError> {
+        if let Some(home) = &mut sandbox.lifecycle.home {
+            if sandbox.runtime.is_some() {
+                return Err(SandboxStoreError::Corrupt(
+                    "home release still has a bound runtime".into(),
+                ));
+            }
+            if let Err(error) =
+                crate::sandbox::home::release_home(self.dependencies.adapter.as_ref(), home).await
+            {
+                return self
+                    .retry_failure(sandbox, adapter_failure(error), now)
+                    .await;
+            }
+        }
         let policy = match self.config.policy.current_sandbox_policy().await {
             Ok(policy) => policy,
             Err(_) => {

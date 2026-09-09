@@ -1374,3 +1374,52 @@ image identity and measured results for each behavior, with unknowns left explic
   histories unchanged and the failed test conversation still readable. API/web
   remain 1/1 Ready and Available. The failed test is retained for the recovery
   work; no replacement success is claimed for it. Local disk remains 15 GiB free.
+
+## Durable home allocation and lifecycle integration — 2026-09-09
+
+- Layer 3 now implements namespaced, initialized persistent home allocation,
+  exact storage-generation verification, paginated inventory and conditional
+  release. Existing-volume mounts cover the home, supervisor journals and
+  transfer scratch. Their immutable storage identity participates in the runtime
+  request fingerprint; installation and credential delivery verify it again.
+  Missing recorded storage never falls back to a newly allocated empty home.
+  Runtime teardown alone does not release the disk. Source: 40fd84d0.
+- The Sandbox worker records its allocation intent before storage I/O, then
+  records the returned disk identity before runtime provisioning. Warm workers
+  persist those same boundaries in separate claimed iterations. Warm admission
+  transfers the home with its existing runtime in the admission transaction.
+  Retirement releases storage after runtime teardown, and reconciliation reads
+  warm authority before fresh owned authority to clean up late orphan allocations.
+- Local fault tests prove recovery after an allocation committed but its response
+  was lost. Another test holds allocation while user deletion completes, then
+  lets the expired worker create its disk: its writeback conflicts and the next
+  reconciliation removes that exact unowned disk without minting credentials.
+- The first full regression run exposed excessive stack use after embedding the
+  new receipt in every Sandbox/request value. Optional home records now use
+  indirection, preserving their JSON representation while limiting async-frame
+  growth. All 1,667 runnable backend tests subsequently pass with the ordinary
+  test stack; 187 tests remain excluded/ignored by the default run. All-target,
+  all-feature Clippy and documentation checks pass. Dependency policy and source
+  secret scans pass. The unchanged file-size gate still reports 12 existing
+  violations; no new source file exceeds its limit.
+- Six real MongoDB replica-set warmup tests pass, including exclusive allocation,
+  private-copy isolation, replay, stale-revision cleanup and atomic home transfer.
+  The home-transfer test expires the readiness worker lease before admission,
+  then verifies that worker cannot publish over the newly owned Sandbox. An
+  initial test incorrectly expected an actively leased warm runtime to be
+  claimable; the existing exclusion behaved correctly. Disposable database
+  containers were removed and no persistent database volume was used.
+- This is not deployed or enabled: production composition still has no home
+  policy/store. A credential-free image-derived seed, source-backed permissions
+  and validated deployment configuration remain necessary. Persistent native
+  recovery must also be implemented: current restore bootstrap rejects an
+  already installed journal, and runtime-loss handling still requires an archive.
+  Do not activate mounts before those lifecycle paths and real Agent recovery
+  are proved. Consistent nonblocking snapshot orchestration remains unfinished.
+- Read-only production evidence warm-node-loss-XbcINm preserves both original
+  owner history hashes. The retained failed test is still Failed with no runtime
+  or snapshot, and its completed reply is still readable. API/web remain 1/1
+  Ready. No production mutation or rollout occurred in this batch. Fifteen old
+  Rust incremental-cache directories were removed after all compiler processes
+  finished; they are reproducible caches, with source and compiled test binaries
+  retained. Host free space returned from approximately 11 to 14 GiB.

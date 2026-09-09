@@ -7,6 +7,7 @@ mod checkpoint_maintenance;
 mod checkpoint_purger;
 mod composition;
 mod credential;
+mod home;
 mod live_agent_stopper;
 mod live_agents;
 mod policy;

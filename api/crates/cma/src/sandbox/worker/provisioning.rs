@@ -23,6 +23,9 @@ impl SandboxWorker {
         mut sandbox: Sandbox,
         now: SystemTime,
     ) -> Result<(), SandboxStoreError> {
+        if let Some(failure) = self.prepare_sandbox_home(&mut sandbox, now).await? {
+            return self.handle_failure(sandbox, failure, now).await;
+        }
         let spec = sandbox_spec(&sandbox, &self.config.deployment_id);
         if sandbox.work.execution.is_none() {
             let expected = sandbox.revision;

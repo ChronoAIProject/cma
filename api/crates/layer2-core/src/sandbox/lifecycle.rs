@@ -165,6 +165,8 @@ impl SandboxLifecycleOperation {
 #[serde(deny_unknown_fields)]
 pub struct SandboxLifecycleState {
     pub next_authority: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub home: Option<Box<super::SandboxHome>>,
     #[serde(default)]
     pub runtime_generation_high_water: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -187,6 +189,7 @@ impl Default for SandboxLifecycleState {
     fn default() -> Self {
         Self {
             next_authority: 1,
+            home: None,
             runtime_generation_high_water: 0,
             runtime_provision: None,
             checkpoint_capture: None,
@@ -201,6 +204,19 @@ impl Default for SandboxLifecycleState {
 
 impl SandboxLifecycleState {
     pub fn validate(&self, sandbox: &Sandbox) -> Result<(), SandboxModelError> {
+        if let Some(home) = &self.home {
+            home.validate(&sandbox.id)?;
+            if (sandbox.runtime.is_some() && home.attachment().is_none())
+                || (home.released
+                    && !matches!(
+                        sandbox.status,
+                        SandboxStatus::Retiring | SandboxStatus::Retired
+                    ))
+                || (sandbox.status == SandboxStatus::Retired && !home.released)
+            {
+                return Err(invalid_lifecycle());
+            }
+        }
         if self.next_authority == 0
             || self
                 .checkpoint_capture_completed_at
