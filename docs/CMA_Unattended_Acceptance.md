@@ -170,6 +170,28 @@ image identity and measured results for each behavior, with unknowns left explic
   while the writer was active. This proves the CSI/export primitive; it does not
   yet prove CMA control-plane publication or production snapshot scheduling.
 
+## Nonblocking checkpoint publication wiring — 2026-09-10
+
+- CMA's checkpoint scheduler now selects the immutable home export path when a
+  Sandbox has a bound persistent home. It leaves the live runtime writable while
+  CSI capture, snapshot-derived view allocation, exporter execution and archive
+  transfer run. Provider request/view/job identities are deterministic, so a
+  controller restart can observe and resume the same attempt rather than
+  allocating a second capture.
+- Publication is fenced against the latest Sandbox row after export completes;
+  Agent/Workspace changes made after the capture boundary remain in the current
+  state and are intentionally excluded from that checkpoint. Export Pods and
+  derived views are retired after successful publication; the latest source
+  snapshot remains available as the physical recovery point.
+- The API Role manifest now declares the concrete PVC, VolumeSnapshot, exporter
+  Pod and `pods/exec` operations required by this path. The Role has not yet
+  been applied in production because the current account cannot create/update
+  RBAC resources.
+- Focused CMA checkpoint tests (86) and layer2 checkpoint tests (58), formatting,
+  Clippy and compile checks pass. Production end-to-end publication, crash/node
+  recovery, physical old-snapshot cleanup and the full 30-minute boundary remain
+  open acceptance items.
+
 ## Next Verification Work
 
 - Untouched-Agent pause/resume and the initial three-minute snapshot delay now
