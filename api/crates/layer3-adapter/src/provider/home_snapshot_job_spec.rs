@@ -58,6 +58,8 @@ pub(super) fn desired(
         },
         "spec":{
             "restartPolicy":"Never", "activeDeadlineSeconds":7200, "terminationGracePeriodSeconds":1,
+            "runtimeClassName":"gvisor", "nodeSelector":{"sandbox.gke.io/runtime":"gvisor"},
+            "tolerations":[{"key":"sandbox.gke.io/runtime","operator":"Equal","value":"gvisor","effect":"NoSchedule"}],
             "serviceAccountName":"default", "automountServiceAccountToken":false, "enableServiceLinks":false,
             "securityContext":{"runAsNonRoot":true,"runAsUser":10001,"runAsGroup":10001,"fsGroup":10001,"fsGroupChangePolicy":"OnRootMismatch","seccompProfile":{"type":"RuntimeDefault"}},
             "initContainers":[export], "containers":[transfer],

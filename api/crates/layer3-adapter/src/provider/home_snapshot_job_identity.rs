@@ -68,6 +68,8 @@ pub(super) fn receipt(
         || actual.automount_service_account_token != Some(false)
         || actual.enable_service_links != Some(false)
         || actual.security_context != expected.security_context
+        || actual.runtime_class_name != expected.runtime_class_name
+        || actual.node_selector != expected.node_selector
         || actual.host_network.unwrap_or(false)
         || actual.host_pid.unwrap_or(false)
         || actual.host_ipc.unwrap_or(false)
