@@ -61,7 +61,7 @@ data:
   # Persist untouched Agent conversations before Ready. Update only in a verified
   # runtime-absent window; this pin must never silently rotate an active Sandbox.
   # Build/contract checks do not replace production pause/restore verification.
-  CHRONO_SANDBOX_IMAGE: "us-central1-docker.pkg.dev/aelf-shared-k8s-prod/aelf-prod-registry/cma-runtime@sha256:481dff74bcc87cef36ed29ac0d94465ae9fdc94d6dc97b0e3e717437f7be22ba"
+  CHRONO_SANDBOX_IMAGE: "us-central1-docker.pkg.dev/aelf-shared-k8s-prod/aelf-prod-registry/cma-runtime@sha256:00bfd9b736be7fbfa986a41f250ceefcd5ee26ab6bcddae5cd3082488781ef4d"
   # Public Profile availability controls credential-free warm runtime counts
   # (1-5 per Profile) in MongoDB. The worker pins this image, the service floor
   # and install bounds; changed pins retire old unowned reservations before

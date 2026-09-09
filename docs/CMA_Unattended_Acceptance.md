@@ -1077,3 +1077,136 @@ image identity and measured results for each behavior, with unknowns left explic
   to develop/main or owner resource deletion was performed. The earlier 12-file
   size-gate failures and retained nonblocking-snapshot, complete lifecycle,
   fresh-sign-in/missing-connection and physical storage audits remain open.
+
+## Warm admission and private-copy production acceptance — 2026-09-09
+
+- The original first-prompt check exposed an onboarding problem beyond Sandbox
+  provisioning: the configured formal-answer workflow started a full Lean build
+  to answer a beginner introduction. Launch Ready was observed, but the response
+  did not complete in the fifteen-minute observation window. After verifying
+  that the exact test Agent still contained only that test's first prompt, its
+  obsolete response was interrupted through the public API. Evidence:
+  obsolete-welcome-interrupt-PLqMxP. This test is not first-response acceptance.
+- The named Trigger's welcome now requests a concise README/documentation-based
+  introduction, three examples and a follow-up question, without builds, tests,
+  dependency installation or research-artifact creation for onboarding. The
+  research profiles, quick messages, placement, service requirements and normal
+  reuse policies are unchanged. Evidence: trigger-welcome-refinement-845hzz.
+  After the subsequent controlled fresh-admission test, production Trigger
+  revision 11 restores the normal reuse policies and retains this welcome.
+- Fresh launch lch_ad7b80be18a24ec1b32863de61da9995 was admitted from the actual
+  GitHub-rendered README badge in fresh-warm-readme-qPTEZr. It consumed the warm
+  runtime already created at 11:53:00 UTC; ownership and credential generation 1
+  were added without changing the provider runtime or generation. Active was
+  observed at 45,158 ms. A transient transcript GET returned HTTP 503 during
+  startup, ending that browser observation; it did not cancel the durable Launch
+  or Agent response. Verification continued against the same admitted Launch,
+  with no additional admission or prompt.
+- warm-readme-continuation-5HM3qf passes actual completed first response, exactly
+  one initial prompt, correctly owned hierarchy, matching Git identity in the
+  main repository and Worktrees through gh 2.100.0, enabled composer, reload
+  persistence and preserved original owner histories. The final reply is the
+  requested concise introduction, three examples and next-step question, and
+  explicitly distinguishes documentation from executed tests. Its last reply
+  timestamp is 275 seconds after admission; this includes model work and is not
+  the Sandbox provisioning duration. No transcript read failures occurred during
+  this continuation. The earlier 503 remains recorded and is not an outage-free
+  journey claim.
+- The same evidence confirms five installed, credential-free unowned runtimes
+  after assignment. Replacement pod sbx_42d821d7f2f3464f8767eaa9ddbdbe19 was
+  created at 12:14:23 UTC, five seconds after the 12:14:18 UTC admission. The
+  claimed runtime is absent from the unowned pool. The private-copy test also
+  independently observed the first claim's replacement already installed in the
+  replenished five-member pool.
+- Agent private-copy UI creation, editing, save and reload passed in
+  private-copy-production-fubEB6 before its later Workspace verifier failure.
+  Workspace and Sandbox copies passed the same browser checks in
+  private-copy-production-MHCVoL, including mobile screenshots, private ownership,
+  independent IDs and source revision provenance. The Workspace editor requires
+  Verify repository before saving; earlier attempts omitted that step or blocked
+  its read-only resolver POST. All copies created by those attempts were retired.
+  The accepted run used the actual resolver and normal save action.
+- The private Sandbox copy defaulted to warmup disabled, count one and keepalive
+  disabled, with warmup unavailable while private. It was privately published
+  and actually provisioned to a ready Workspace/Agent in 225,922 ms, with zero
+  Agent prompts. Its Sandbox ID and provider runtime were absent from the source
+  warm pool. The same five public warm IDs remained available afterward. The
+  exact private test Sandbox and all temporary copies were retired through the
+  public API; cleanup settled successfully. The source Profiles remain intact.
+- One attempted concurrent fresh Trigger launch was correctly refused with
+  sandbox_limit_reached while the two test Sandboxes and original owned Sandbox
+  occupied the owner's quota. That refusal consumed no warm runtime. The accepted
+  fresh launch above followed completed private-test cleanup; the quota was not
+  increased or bypassed.
+- Screenshot inspection caught an invalid mobile verification assumption: the
+  first resize screenshot was captured during the grid-track transition, while
+  overflow clipping kept document.scrollWidth within the viewport. The check now
+  requires the whole composer form to intersect the viewport. The independent
+  warm-mobile-layout-VREUAD production check covers a fresh 390px load and
+  desktop-to-mobile resizing after settling; both show the intended 56px rail,
+  334px content area and fully visible composer. The settled screenshot was
+  inspected. No layout source change was necessary.
+- These checks use the authenticated owner's account and GitHub's rendered
+  README served at its source origin. They do not prove a second authenticated
+  production account, a fresh browser sign-in or missing-service connection flow.
+  Actual keepalive inactivity, periodic-boundary and manual-pause observations
+  are recorded below. Consistent nonblocking snapshots remain unimplemented.
+
+## Large snapshot observation and transfer cleanup — 2026-09-09
+
+- warm-periodic-boundary-p609zv passed the full configured thirty-minute boundary:
+  runtime binding was at 11:53:00 UTC, no capture was observed before 12:23:00,
+  and the first capture was observed at 12:23:12. Epoch 1 published at 12:38:51.
+  Runtime logs put local archive sealing at 12:31:39 with 5,934,511,069 compressed
+  bytes. Capture plus publication therefore took approximately fifteen minutes
+  forty seconds. This is interval acceptance and evidence of poor large-save
+  performance, not writer noninterference acceptance.
+- Manual pause of the separate completed welcome test reached Paused at
+  12:29:49 UTC after admission around 12:24:45. The first verifier stopped on
+  an incorrect strict-null assertion against an omitted optional runtime field.
+  warm-pause-continuation-02Pgta continued the same admitted operation with zero
+  commands: the authoritative record is Paused with no binding, no matching pod,
+  a new snapshot, preserved transcript and Keep alive still enabled. Desktop and
+  mobile pages hide workspace descendants and show Resume. The mobile screenshot
+  was inspected; its late-loading service names/activity were not treated as
+  complete detail-page acceptance.
+- completed-warm-test-retirement-wo5wO8 retired only that test Sandbox after
+  checking its main transcript and unused configured Agent. All 56 listed
+  logical snapshot objects were absent afterward, including direct download
+  404s. This does not audit raw storage versions or soft-deleted data.
+- Keep alive observation warm-keepalive-2il0dy saw the Sandbox remain Active
+  through 940 quiet seconds, beyond the 900-second inactivity policy. Its combined
+  assertion failed because snapshot capture disabled manual pause. A subsequent
+  read in warm-keepalive-e5C7TI found the Sandbox Reviving. Public lifecycle events
+  show Active directly to Reviving, without an inactivity Pause. Kubernetes
+  recorded an OOM kill on its node at 12:39:57, the old pod stopped at 12:39:59,
+  and CMA began recovery at 12:40:17 from the newly published checkpoint. This
+  does not pass continuous keepalive acceptance or a successful restore claim.
+- Runtime source 090c2209 streams the compressed archive digest while writing,
+  removing a full local archive reread. Capture and restore buffer filesystem I/O
+  in 256 KiB blocks, and capture logs expose bounded, content-free byte counts
+  and stage timing. Its local round-trip, corruption, archive-bound and replay
+  checks passed. The initial image built successfully but was not deployed.
+- Runtime source d730d6ae additionally releases the held local transfer archive
+  after its writer token is retired and before processes resume. A successful
+  restore releases its downloaded compressed transfer before Agents start.
+  Cleanup failure preserves the held fence for an exact retry. Referenced remote
+  recovery points and unrelated local objects remain intact. Production transport
+  imports the exact remote bytes before every restore, including retries after a
+  supervisor restart; that path is now explicit in the restart regression test.
+  All 176 runnable local runtime tests and package Clippy pass; two explicit
+  ignored tests remain skipped. The Linux/amd64 image build and fixed
+  HIGH/CRITICAL vulnerability scan pass. The candidate digest is
+  00bfd9b736be7fbfa986a41f250ceefcd5ee26ab6bcddae5cd3082488781ef4d;
+  remote digest verification also passed. The source manifests now pin this
+  candidate for the next runtime rollout; production verification remains pending.
+  This reduces retained transfer
+  storage, but does not prove that peak capture/extraction memory or
+  uninterrupted snapshots are solved.
+- The remaining old warm test was checked to contain its single interrupted
+  test prompt and an untouched second Agent. Both original user histories still
+  match their recorded hashes. Public retirement was admitted in
+  old-warm-test-retirement-PWGzVL while its automatic recovery was in progress.
+  Retirement completed, its runtime is gone, and all 178 listed logical snapshot
+  objects were removed. Both temporary warm-test Sandboxes are now Deleted.
+  No original user Sandbox was retired. Host disk has 16 GiB free.
