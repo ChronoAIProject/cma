@@ -26,6 +26,7 @@ pub(super) fn sandbox() -> Sandbox {
         status: SandboxStatus::Active,
         failure: None,
         runtime: Some(RuntimeBinding {
+            boot_id: None,
             provision_generation: Some(1),
             runtime_id: "runtime-title".into(),
             runtime_version: "cma-runtime:dev".into(),

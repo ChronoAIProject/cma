@@ -4,6 +4,7 @@ use layer2_core::sandbox::{RuntimeBinding, SandboxReviveCause};
 fn capturing_sandbox() -> Sandbox {
     let mut value = stored_sandbox("sbx_capturing", "owner", SandboxStatus::Active, 4);
     value.runtime = Some(RuntimeBinding {
+        boot_id: None,
         runtime_id: "runtime-capturing".into(),
         runtime_version: "runtime-image-pinned".into(),
         provision_generation: Some(1),

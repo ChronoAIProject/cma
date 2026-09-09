@@ -87,6 +87,7 @@ fn sandbox(id: &str, owner: &str, status: SandboxStatus, runtime_version: &str) 
         status,
         failure: None,
         runtime: Some(RuntimeBinding {
+            boot_id: None,
             runtime_id: format!("runtime-{id}"),
             runtime_version: runtime_version.into(),
             provision_generation: None,

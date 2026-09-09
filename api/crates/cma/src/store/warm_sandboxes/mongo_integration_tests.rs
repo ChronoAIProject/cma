@@ -98,6 +98,7 @@ async fn make_ready(store: &MongoSandboxStore) -> SandboxId {
     let claim = store.claim_warmup_work(NOW, LATER).await.unwrap().unwrap();
     let mut next = claim.record.clone();
     next.runtime = Some(RuntimeBinding {
+        boot_id: None,
         runtime_id: format!("runtime-{}", next.id),
         runtime_version: IMAGE.into(),
         provision_generation: Some(1),
@@ -440,6 +441,7 @@ async fn claimed_home_transfers_atomically_and_refuses_the_previous_warm_worker(
     .unwrap();
     next.home = Some(Box::new(home.clone()));
     next.runtime = Some(RuntimeBinding {
+        boot_id: None,
         runtime_id: format!("runtime-{}", next.id),
         runtime_version: IMAGE.into(),
         provision_generation: Some(1),

@@ -169,7 +169,12 @@ pub(super) async fn prepare_environment(
                 return Ok(next);
             }
             let handle = adapter.provision(&spec).await?;
+            let boot_id =
+                super::runtime_attachment::provisioned_runtime_status(adapter, &spec, &handle, 1)
+                    .await?
+                    .map(|status| status.boot_id);
             next.runtime = Some(RuntimeBinding {
+                boot_id,
                 runtime_id: handle.0,
                 runtime_version: record.plan.runtime_version.clone(),
                 provision_generation: Some(1),
@@ -182,11 +187,24 @@ pub(super) async fn prepare_environment(
                 layer3_adapter::AdapterError::Rejected("warm runtime binding missing".into())
             })?;
             let handle = RuntimeHandle::new(&runtime.runtime_id);
-            let adoption = RuntimeAdoptionRequest::new(1, handle.clone(), spec)
+            let adoption = RuntimeAdoptionRequest::new(1, handle.clone(), spec.clone())
                 .with_expected_image(&record.plan.runtime_version);
             if adapter.adopt_runtime(&adoption).await?.is_none() {
                 next.state = WarmSandboxState::Retiring;
                 return Ok(next);
+            }
+            if let Some(status) =
+                super::runtime_attachment::provisioned_runtime_status(adapter, &spec, &handle, 1)
+                    .await?
+            {
+                if runtime.boot_id.as_ref() != Some(&status.boot_id)
+                    || status.credential_ready
+                    || status.agent_processes != 0
+                    || status.restore_pending
+                {
+                    next.state = WarmSandboxState::Retiring;
+                    return Ok(next);
+                }
             }
             let execution = record.plan.execution;
             let request = InstallRequest::with_timeouts(

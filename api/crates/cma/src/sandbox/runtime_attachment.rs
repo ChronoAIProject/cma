@@ -1,5 +1,8 @@
 use layer2_core::sandbox::Sandbox;
-use layer3_adapter::{AdapterError, RuntimeAdoptionRequest, RuntimeHandle, SandboxAdapter};
+use layer3_adapter::{
+    AdapterError, RuntimeAdoptionRequest, RuntimeHandle, RuntimeStatus, RuntimeStatusRequest,
+    SandboxAdapter, SandboxSpec,
+};
 
 use super::runtime_mapping::sandbox_spec;
 
@@ -50,7 +53,37 @@ pub(super) async fn adopt_bound_runtime(
             "provider did not adopt the exact bound runtime".into(),
         ));
     }
+    if sandbox.lifecycle.home.is_some() {
+        let status = adapter.runtime_status(&handle).await?;
+        if !sandbox
+            .runtime_process_matches(&status)
+            .map_err(|_| AdapterError::Rejected("runtime process identity is invalid".into()))?
+        {
+            return Err(AdapterError::Unavailable(
+                "bound runtime process was replaced; durable recovery is pending".into(),
+            ));
+        }
+    }
     Ok(handle)
+}
+
+/// Persist this process identity with the first binding, before installation or credentials.
+pub(super) async fn provisioned_runtime_status(
+    adapter: &dyn SandboxAdapter,
+    spec: &SandboxSpec,
+    handle: &RuntimeHandle,
+    generation: u64,
+) -> layer3_adapter::Result<Option<RuntimeStatus>> {
+    let Some(home) = &spec.home_volume else {
+        return Ok(None);
+    };
+    let status = adapter.runtime_status(handle).await?;
+    status.validate_for(&RuntimeStatusRequest {
+        sandbox_id: spec.sandbox_id.clone(),
+        generation,
+        home_identity: home.identity()?,
+    })?;
+    Ok(Some(status))
 }
 
 fn runtime_absent() -> AdapterError {

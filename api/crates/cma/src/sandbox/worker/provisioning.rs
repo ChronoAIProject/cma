@@ -89,8 +89,24 @@ impl SandboxWorker {
             .await
         {
             Ok(handle) => {
+                let boot_id = match crate::sandbox::runtime_attachment::provisioned_runtime_status(
+                    self.dependencies.adapter.as_ref(),
+                    &sandbox_spec(&sandbox, &self.config.deployment_id),
+                    &handle,
+                    generation,
+                )
+                .await
+                {
+                    Ok(status) => status.map(|status| status.boot_id),
+                    Err(error) => {
+                        return self
+                            .handle_failure(sandbox, adapter_failure(error), now)
+                            .await;
+                    }
+                };
                 let mut next = sandbox;
                 next.runtime = Some(RuntimeBinding {
+                    boot_id,
                     provision_generation: Some(generation),
                     runtime_id: handle.0,
                     runtime_version: self.config.runtime_version.clone(),

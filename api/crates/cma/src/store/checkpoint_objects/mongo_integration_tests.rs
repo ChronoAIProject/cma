@@ -780,6 +780,7 @@ async fn ambiguous_external_stage_admission_and_publication_reconcile_exactly() 
 fn active_sandbox(id: &str) -> Sandbox {
     let mut value = sandbox(id);
     value.runtime = Some(RuntimeBinding {
+        boot_id: None,
         runtime_id: format!("runtime-{id}"),
         runtime_version: "image-v1".into(),
         provision_generation: Some(1),

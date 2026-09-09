@@ -11,6 +11,9 @@ use super::{
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RuntimeBinding {
+    /// Process identity changes even when the provider reuses its runtime handle.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub boot_id: Option<String>,
     pub runtime_id: String,
     pub runtime_version: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]

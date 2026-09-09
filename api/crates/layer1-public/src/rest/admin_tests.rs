@@ -317,6 +317,7 @@ pub(crate) fn sandbox(id: &str, owner: &str, version: &str) -> Sandbox {
         status: SandboxStatus::Active,
         failure: None,
         runtime: Some(RuntimeBinding {
+            boot_id: None,
             provision_generation: Some(1),
             runtime_id: format!("runtime-{id}"),
             runtime_version: version.into(),

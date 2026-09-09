@@ -132,7 +132,14 @@ impl WarmSandbox {
             || seconds_from_rfc3339(&self.updated_at).is_none()
             || self.updated_at < self.created_at
             || self.runtime.as_ref().is_some_and(|binding| {
-                binding.provision_generation != Some(1)
+                !binding.valid_boot_id()
+                    || (binding.boot_id.is_some()
+                        && self
+                            .home
+                            .as_ref()
+                            .and_then(|home| home.attachment())
+                            .is_none())
+                    || binding.provision_generation != Some(1)
                     || binding.runtime_version != self.plan.runtime_version
                     || binding.runtime_id.trim().is_empty()
                     || seconds_from_rfc3339(&binding.bound_at).is_none()

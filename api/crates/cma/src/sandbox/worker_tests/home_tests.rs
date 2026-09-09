@@ -282,3 +282,103 @@ async fn deletion_wins_a_delayed_allocation_and_reconciliation_releases_its_late
         .iter()
         .all(|action| !action.starts_with("mint:")));
 }
+
+#[tokio::test]
+async fn process_identity_is_recorded_before_install_and_changed_process_cannot_receive_credentials(
+) {
+    let harness = Harness::new(vec![], 0, Duration::from_secs(60)).await;
+    let created = harness.create().await;
+    let now = start_time(&created);
+    let homes = Homes::new(&harness);
+    let worker = worker(&harness, homes.clone(), "boot-worker");
+    let mut stored = harness.stored(&created.id).await;
+    for _ in 0..5 {
+        if stored.runtime.is_some() {
+            break;
+        }
+        worker.run_one(&created.id, now).await.unwrap();
+        stored = harness.stored(&created.id).await;
+    }
+    let binding = stored.runtime.as_ref().unwrap();
+    assert!(binding.boot_id.is_some());
+    assert_eq!(stored.work.step, SandboxWorkStep::RunInstall);
+    assert!(harness.actions.snapshot().is_empty());
+    let handle = RuntimeHandle::new(&binding.runtime_id);
+    let adopter = adapter(&harness, homes.clone());
+    crate::sandbox::runtime_attachment::adopt_bound_runtime(adopter.as_ref(), &stored, "test")
+        .await
+        .unwrap();
+    let before = adopter.runtime_status(&handle).await.unwrap();
+    assert_eq!(binding.boot_id.as_deref(), Some(before.boot_id.as_str()));
+    assert!(!before.installation_ready);
+    harness
+        .backend
+        .restart_persistent_process(&handle)
+        .await
+        .unwrap();
+    assert!(adopter.runtime_inventory().await.unwrap()[0]
+        .lifecycle
+        .is_running());
+    assert!(matches!(
+        crate::sandbox::runtime_attachment::adopt_bound_runtime(adopter.as_ref(), &stored, "test")
+            .await,
+        Err(AdapterError::Unavailable(_))
+    ));
+    worker.run_one(&created.id, now).await.unwrap();
+    let waiting = harness.stored(&created.id).await;
+    assert_eq!(waiting.runtime, stored.runtime);
+    assert_eq!(waiting.work.step, SandboxWorkStep::RunInstall);
+    assert!(harness.actions.snapshot().is_empty());
+    assert!(
+        !harness
+            .backend
+            .snapshot(&handle)
+            .await
+            .unwrap()
+            .credential_delivered
+    );
+}
+
+#[tokio::test]
+async fn control_plane_restart_adopts_exact_persistent_process_and_status_failure_preserves_authority(
+) {
+    let harness = Harness::new(vec![], 0, Duration::from_secs(60)).await;
+    let created = harness.create().await;
+    let now = start_time(&created);
+    let homes = Homes::new(&harness);
+    let worker = worker(&harness, homes.clone(), "original-worker");
+    for _ in 0..8 {
+        if harness.stored(&created.id).await.status == SandboxStatus::Active {
+            break;
+        }
+        worker.run_one(&created.id, now).await.unwrap();
+    }
+    let mut active = harness.stored(&created.id).await;
+    assert_eq!(active.status, SandboxStatus::Active);
+    let revision = active.revision;
+    active.runtime.as_mut().unwrap().runtime_version = runtime_image();
+    active.revision += 1;
+    harness
+        .store
+        .save_sandbox(revision, active.clone())
+        .await
+        .unwrap();
+    let replacement = adapter(&harness, homes);
+    let reconciler = crate::sandbox::reconciliation::SandboxReconciler::new(
+        harness.store.clone(),
+        replacement,
+        Arc::new(harness.policy.clone()),
+        "test".into(),
+        runtime_image(),
+    );
+    reconciler.initialize(now).await.unwrap();
+    assert_eq!(harness.stored(&created.id).await, active);
+    harness.backend.fail_next(
+        WireOperation::RuntimeStatus,
+        "observation_failed",
+        "status could not be read",
+    );
+    assert!(reconciler.initialize(now).await.is_err());
+    assert_eq!(harness.stored(&created.id).await, active);
+    assert_eq!(harness.adapter.runtime_inventory().await.unwrap().len(), 1);
+}
