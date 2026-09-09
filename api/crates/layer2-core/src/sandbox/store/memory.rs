@@ -69,6 +69,11 @@ mod workspace_lifecycle;
 #[async_trait]
 impl SandboxStore for InMemorySandboxStore {
     async fn create_sandbox(&self, sandbox: Sandbox) -> Result<(), SandboxStoreError> {
+        if !sandbox.credential.service_grants.is_empty() {
+            return Err(SandboxStoreError::InvalidTransaction(
+                "service access requires an existing sandbox and an atomic grant",
+            ));
+        }
         if matches!(&sandbox.origin, SandboxOrigin::Trigger { .. }) {
             return Err(SandboxStoreError::InvalidTransaction(
                 "trigger sandboxes require atomic admission",
@@ -99,6 +104,7 @@ impl SandboxStore for InMemorySandboxStore {
         let mut state = self.lock();
         if state.sandboxes.get(&id).is_some_and(|current| {
             current.owner != sandbox.owner
+                || current.validate_service_access_successor(&sandbox).is_err()
                 || crate::sandbox::ProvisioningExecution::validate_successor(
                     current.work.execution,
                     sandbox.work.execution,
@@ -394,6 +400,9 @@ impl SandboxTransactionStore for InMemorySandboxStore {
                 let id = sandbox.id.clone();
                 if candidate.sandboxes.get(&id).is_some_and(|current| {
                     current.owner != sandbox.owner
+                        || current
+                            .validate_service_access_transaction(&sandbox, &event, &event_at)
+                            .is_err()
                         || crate::sandbox::ProvisioningExecution::validate_successor(
                             current.work.execution,
                             sandbox.work.execution,

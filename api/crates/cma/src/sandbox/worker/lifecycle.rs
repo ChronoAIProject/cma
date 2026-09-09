@@ -13,6 +13,7 @@ mod conversations;
 mod pause;
 mod queue;
 mod restore;
+mod service_access;
 mod support;
 
 impl SandboxWorker {

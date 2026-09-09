@@ -168,6 +168,9 @@ async fn apply_transaction(
                 return Err(ApplyError::Domain(SandboxStoreError::Conflict));
             }
             current
+                .validate_service_access_transaction(sandbox, event, event_at)
+                .map_err(|_| ApplyError::Domain(SandboxStoreError::Conflict))?;
+            current
                 .validate_checkpoint_capture_successor(sandbox)
                 .map_err(|_| ApplyError::Domain(SandboxStoreError::Conflict))?;
             layer2_core::sandbox::ProvisioningExecution::validate_successor(

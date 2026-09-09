@@ -48,6 +48,10 @@ pub(super) fn routes() -> Router<HierarchyState> {
         .route("/api/v1/sandboxes/{id}", get(read).delete(remove))
         .route("/api/v1/sandboxes/{id}/pause", post(pause))
         .route("/api/v1/sandboxes/{id}/revive", post(revive))
+        .route(
+            "/api/v1/sandboxes/{id}/service-access",
+            post(super::sandbox_service_access::grant),
+        )
         .route("/api/v1/sandboxes/{id}/events", get(events))
         .route(
             "/api/v1/sandboxes/{id}/snapshots/{epoch}/download",

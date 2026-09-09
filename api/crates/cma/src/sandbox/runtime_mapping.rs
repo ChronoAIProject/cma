@@ -64,7 +64,7 @@ pub(super) fn sandbox_spec(sandbox: &Sandbox, deployment_id: &str) -> SandboxSpe
             .collect::<BTreeMap<_, _>>(),
         reaches: sandbox
             .credential
-            .reaches
+            .effective_reaches()
             .iter()
             .map(ToString::to_string)
             .collect(),

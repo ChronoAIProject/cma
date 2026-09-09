@@ -157,6 +157,9 @@ impl SandboxWorker {
         sandbox: Sandbox,
         now: SystemTime,
     ) -> Result<(), SandboxStoreError> {
+        if sandbox.needs_service_access_credential() {
+            return self.renew_lifecycle_service_access(sandbox, now).await;
+        }
         let Some(handle) = runtime(&sandbox) else {
             return self
                 .handle_lifecycle_failure(

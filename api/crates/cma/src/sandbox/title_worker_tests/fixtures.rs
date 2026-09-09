@@ -32,6 +32,7 @@ pub(super) fn sandbox() -> Sandbox {
             bound_at: NOW.into(),
         }),
         credential: SandboxCredentialState {
+            service_grants: Vec::new(),
             reaches: vec![ServiceId::new("chrono-llm")],
             key_generation: 3,
             delivered: true,

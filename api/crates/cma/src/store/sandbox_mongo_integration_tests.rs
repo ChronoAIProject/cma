@@ -136,6 +136,7 @@ pub(super) fn sandbox(id: &str) -> Sandbox {
         failure: None,
         runtime: None,
         credential: SandboxCredentialState {
+            service_grants: Vec::new(),
             reaches: vec![],
             key_generation: 1,
             delivered: true,
@@ -621,6 +622,7 @@ mod execution_tests;
 mod launch_command_tests;
 mod profile_transaction_tests;
 mod sandbox_lifecycle_tests;
+mod service_access_tests;
 mod skill_material_tests;
 mod transaction_reconciliation_tests;
 #[tokio::test]

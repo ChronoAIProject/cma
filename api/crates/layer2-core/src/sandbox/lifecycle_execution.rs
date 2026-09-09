@@ -239,6 +239,9 @@ impl Sandbox {
         fence: u64,
         at: String,
     ) -> Result<(), SandboxModelError> {
+        if self.needs_service_access_credential() {
+            return Err(invalid_execution());
+        }
         self.advance_recovery_phase(
             SandboxRevivePhase::CredentialDelivery,
             SandboxRevivePhase::HomeRestore,

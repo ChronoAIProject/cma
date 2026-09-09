@@ -38,6 +38,7 @@ mod lifecycle;
 mod lifecycle_execution;
 mod lifecycle_execution_support;
 mod lifecycle_service;
+mod lifecycle_service_access;
 mod limits;
 mod pending_approvals;
 mod provision;
@@ -50,6 +51,10 @@ mod runtime_recovery_agents;
 #[allow(clippy::module_inception)]
 mod sandbox;
 mod service;
+mod service_access;
+mod service_access_service;
+#[cfg(test)]
+mod service_access_tests;
 mod service_admission;
 mod service_creation;
 mod service_trust;
@@ -113,7 +118,8 @@ pub use conversation_recorder::{
     AgentLiveFragment, AgentLiveFragmentKind, AgentLiveSubscription, DurableAgentUpdateRecorder,
 };
 pub use credential::{
-    SandboxCredentialAuthority, SandboxCredentialState, SandboxRevokeDebt, SandboxSignInState,
+    SandboxCredentialAuthority, SandboxCredentialState, SandboxRevokeDebt, SandboxServiceGrant,
+    SandboxSignInState,
 };
 pub use credential_prerequisite::{
     FixedSandboxCredentialPrerequisite, SandboxCredentialPrerequisite,

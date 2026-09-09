@@ -113,6 +113,10 @@ pub enum SandboxServiceError {
     SandboxOriginConflict,
     #[error("sandbox is not in a deletable state")]
     InvalidState,
+    #[error("sandbox service access request is invalid")]
+    InvalidServiceAccess,
+    #[error("new service access requires a fully paused sandbox")]
+    ServiceAccessRequiresPause,
     #[error("sandbox data is not usable: {0}")]
     Corrupt(String),
     #[error("sandbox dependency is unavailable: {0}")]
@@ -133,6 +137,8 @@ impl SandboxServiceError {
             Self::InvalidOrigin => "invalid_sandbox_origin",
             Self::SandboxOriginConflict => "sandbox_origin_conflict",
             Self::InvalidState => "sandbox_invalid_state",
+            Self::InvalidServiceAccess => "invalid_sandbox_service_access",
+            Self::ServiceAccessRequiresPause => "sandbox_service_access_requires_pause",
             Self::Corrupt(_) => "stored_sandbox_corrupt",
             Self::Unavailable(_) => "sandbox_service_unavailable",
         }
@@ -292,7 +298,11 @@ impl SandboxService {
         }
     }
 
-    async fn owned(&self, caller: &Caller, id: &SandboxId) -> Result<Sandbox, SandboxServiceError> {
+    pub(super) async fn owned(
+        &self,
+        caller: &Caller,
+        id: &SandboxId,
+    ) -> Result<Sandbox, SandboxServiceError> {
         self.store
             .get_sandbox(id)
             .await

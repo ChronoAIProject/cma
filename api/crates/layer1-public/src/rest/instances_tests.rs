@@ -45,6 +45,8 @@ const NOW: &str = "2026-09-05T00:00:00Z";
 
 #[path = "sandbox_lifecycle_view_tests.rs"]
 mod lifecycle_view_tests;
+#[path = "sandbox_service_access_tests.rs"]
+mod service_access_tests;
 type OperationKey = (String, String, String);
 type OperationRecord = ([u8; 32], Option<Vec<u8>>);
 
@@ -305,6 +307,7 @@ fn stored_sandbox(id: &str, owner: &str, status: SandboxStatus, max_workspaces: 
         failure: None,
         runtime: None,
         credential: SandboxCredentialState {
+            service_grants: Vec::new(),
             reaches: vec![],
             key_generation: 0,
             delivered: false,

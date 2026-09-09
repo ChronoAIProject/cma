@@ -72,6 +72,7 @@ export function workspaceSummary(value: Wire.WorkspaceSummary): WorkspaceSummary
 export function sandboxDetail(value: Wire.SandboxDetail): SandboxDetail {
   return {
     ...sandboxSummary(value),
+    nyxidServices: value.nyxid_services,
     limits: {
       maxWorkspaces: value.limits.max_workspaces,
       maxAgentsPerWorkspace: value.limits.max_agents_per_workspace,

@@ -132,8 +132,12 @@ describe('public REST web binding', () => {
       items: [{ id: 'sandbox-1', workspaceCount: 1, lastActivityAt: NOW }],
     });
     expect(test.fetch.mock.calls.at(-1)?.[0]).toBe('/api/v1/sandboxes?cursor=first');
-    test.reply(WIRE_SANDBOX_DETAIL);
+    test.reply({
+      ...WIRE_SANDBOX_DETAIL,
+      nyxid_services: ['chrono-llm', 'ornn-api', 'api-github'],
+    });
     expect(await client.readSandbox('sandbox-1')).toMatchObject({
+      nyxidServices: ['chrono-llm', 'ornn-api', 'api-github'],
       limits: { maxWorkspaces: 4, maxAgentsPerWorkspace: 2 },
       runtimeVersion: 'runtime-1',
       workspaces: [{ sandboxId: 'sandbox-1', worktreeCount: 1 }],

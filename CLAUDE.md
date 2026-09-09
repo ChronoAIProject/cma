@@ -208,6 +208,11 @@ implicitly. The owner may add Workspaces and Agents from independently selected
 published profiles within the recorded limits. Published profile changes never
 mutate existing instances.
 
+An explicit owner service-access command may append additional NyxID grants
+while the Sandbox is fully Paused. It preserves the original profile and creation
+scope, records the owner and time, and renews scoped credentials before revival.
+Profile publication never grants this additional instance access implicitly.
+
 #### Capabilities must be proved
 
 "This can never do that" and "that just failed" are separate typed facts.

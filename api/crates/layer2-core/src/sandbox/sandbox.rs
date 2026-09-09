@@ -93,6 +93,7 @@ impl Sandbox {
                 "sandbox.credential_or_work",
             ));
         }
+        self.validate_service_access()?;
         self.lifecycle.validate(self)?;
         self.validate_runtime_generation()?;
         self.validate_checkpoint_capture()?;

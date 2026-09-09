@@ -65,7 +65,17 @@ pub(super) fn lifecycle_sandbox_advanced(
         .is_some_and(|(old, new)| {
             old.authority().writer_resume_generation != new.authority().writer_resume_generation
         });
-    let result = if renewed_writer {
+    let result = if current.credential.current != next.credential.current {
+        let Some(authority) = next.credential.current.clone() else {
+            return false;
+        };
+        expected.replace_lifecycle_service_access_credential(
+            authority,
+            &lease.holder,
+            lease.fence,
+            appended_at.into(),
+        )
+    } else if renewed_writer {
         expected.retry_lifecycle_after_writer_resume(
             next.work.ready_at.clone(),
             &lease.holder,

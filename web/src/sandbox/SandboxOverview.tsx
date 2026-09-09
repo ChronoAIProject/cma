@@ -117,7 +117,7 @@ export function SandboxOverview({
     })();
     return () => abort.abort();
   }, [client, sandbox, retry]);
-  const reach = contents?.agents[0]?.reach;
+  const reach = sandbox.nyxidServices ?? contents?.agents[0]?.reach;
   const available = sandboxChildrenAvailable(sandbox);
   return (
     <>
