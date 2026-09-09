@@ -52,6 +52,7 @@ pub(crate) struct SandboxLifecycleConfig {
     pub deployment_id: String,
     pub runtime_version: String,
     pub title_model: String,
+    pub checkpoint_export: Option<super::checkpoint_maintenance::ExportDependencies>,
 }
 
 pub(crate) struct SandboxLifecycleComposition {
@@ -88,14 +89,26 @@ impl SandboxLifecycleComposition {
             config.runtime_version.clone(),
         )
         .with_profile_agents(Arc::clone(&dependencies.agents));
-        let checkpoints =
-            SandboxScheduler::for_checkpoints(SandboxCheckpointMaintenance::with_policy_source(
-                dependencies.store.clone(),
-                Arc::clone(&dependencies.adapter),
-                config.deployment_id.clone(),
-                format!("{}:checkpoint", config.holder),
-                Arc::clone(&dependencies.policy),
-            ));
+        let checkpoints = SandboxScheduler::for_checkpoints(
+            if let Some(export) = config.checkpoint_export.clone() {
+                SandboxCheckpointMaintenance::with_export_dependencies(
+                    dependencies.store.clone(),
+                    Arc::clone(&dependencies.adapter),
+                    config.deployment_id.clone(),
+                    format!("{}:checkpoint", config.holder),
+                    Arc::clone(&dependencies.policy),
+                    export,
+                )
+            } else {
+                SandboxCheckpointMaintenance::with_policy_source(
+                    dependencies.store.clone(),
+                    Arc::clone(&dependencies.adapter),
+                    config.deployment_id.clone(),
+                    format!("{}:checkpoint", config.holder),
+                    Arc::clone(&dependencies.policy),
+                )
+            },
+        );
         let updates = DurableAgentUpdateRecorder::new(Arc::clone(&dependencies.store));
         let registry = Arc::clone(&dependencies.registry);
         let titles = AgentTitleScheduler::new(AgentTitleWorker::new(

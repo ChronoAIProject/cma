@@ -98,6 +98,21 @@ impl ControlPlaneComposition {
             config.baseline_services.clone(),
         ));
         let adapter = production_adapter(config, Arc::clone(&stores.checkpoint_objects)).await?;
+        let checkpoint_export = if config.runtime.home_policy.is_some() {
+            let homes = layer3_adapter::provider::PersistentHomeVolumes::infer_namespaced(
+                &config.runtime.sandbox_namespace,
+                &config.deployment_id,
+            )
+            .await
+            .map_err(|error| format!("checkpoint export authority is not usable: {error}"))?;
+            Some(crate::sandbox::ExportDependencies {
+                homes: Arc::new(homes),
+                objects: Arc::clone(&stores.checkpoint_objects),
+                image: config.runtime.sandbox_image.clone(),
+            })
+        } else {
+            None
+        };
         let auth = AuthState::with_store_and_nyxid_public_url(
             config.auth_mode.clone(),
             Some(SignInRecords {
@@ -215,6 +230,7 @@ impl ControlPlaneComposition {
                 deployment_id: config.deployment_id.clone(),
                 runtime_version: config.runtime.sandbox_image.clone(),
                 title_model: config.default_profiles.agent_model.clone(),
+                checkpoint_export,
             },
         );
         let broker = Arc::new(

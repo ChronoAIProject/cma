@@ -4,6 +4,7 @@ mod agent_scheduler;
 mod agent_skills;
 mod agent_worker;
 mod checkpoint_maintenance;
+pub(crate) use checkpoint_maintenance::ExportDependencies;
 mod checkpoint_purger;
 mod composition;
 mod credential;

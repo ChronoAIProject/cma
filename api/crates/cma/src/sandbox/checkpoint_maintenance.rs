@@ -16,6 +16,7 @@ use layer3_adapter::{writer_resume_tokens_match, CheckpointWriterResumeRequest, 
 use super::runtime_attachment::adopt_bound_runtime;
 
 mod capture;
+mod export;
 mod lease;
 
 use lease::CaptureClock;
@@ -39,6 +40,14 @@ pub(crate) struct SandboxCheckpointMaintenance {
     deployment_id: String,
     holder: String,
     policy: Arc<dyn SandboxPolicySource>,
+    export: Option<ExportDependencies>,
+}
+
+#[derive(Clone)]
+pub(crate) struct ExportDependencies {
+    pub homes: Arc<layer3_adapter::provider::PersistentHomeVolumes>,
+    pub objects: Arc<crate::store::MongoCheckpointObjectStore>,
+    pub image: String,
 }
 
 impl SandboxCheckpointMaintenance {
@@ -71,6 +80,25 @@ impl SandboxCheckpointMaintenance {
             deployment_id,
             holder,
             policy,
+            export: None,
+        })
+    }
+
+    pub(crate) fn with_export_dependencies(
+        store: Arc<dyn SandboxCheckpointMaintenanceStore>,
+        adapter: Arc<dyn SandboxAdapter>,
+        deployment_id: String,
+        holder: String,
+        policy: Arc<dyn SandboxPolicySource>,
+        export: ExportDependencies,
+    ) -> Arc<Self> {
+        Arc::new(Self {
+            store,
+            adapter,
+            deployment_id,
+            holder,
+            policy,
+            export: Some(export),
         })
     }
 
@@ -126,6 +154,16 @@ impl SandboxCheckpointMaintenance {
             let workspaces = self.workspaces(&sandbox).await?;
             if validate_checkpoint_capture_work(&sandbox, &agents, &workspaces).is_err() {
                 return Ok(false);
+            }
+            if self.export.is_some()
+                && sandbox
+                    .lifecycle
+                    .home
+                    .as_ref()
+                    .is_some_and(|home| home.attachment().is_some())
+            {
+                self.capture_and_publish_export(&sandbox, clock).await?;
+                return Ok(true);
             }
             let mut next = sandbox.clone();
             let stamp = rfc3339_at(clock.now());
