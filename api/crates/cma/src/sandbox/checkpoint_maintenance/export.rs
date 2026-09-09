@@ -91,6 +91,25 @@ impl SandboxCheckpointMaintenance {
                     .unwrap_or(1),
                 conversations,
             };
+            // A controller restart may rediscover the same capture after Agent
+            // rows have advanced. Retire only older derived attempts for this
+            // deterministic capture identity before creating the new view/job.
+            for entry in dependencies
+                .homes
+                .view_inventory()
+                .await
+                .map_err(provider_error)?
+            {
+                if entry.request.snapshot.capture_id == request.snapshot.capture_id
+                    && entry.request != request
+                {
+                    dependencies
+                        .homes
+                        .remove_view(&entry.request, Some(&entry.receipt))
+                        .await
+                        .map_err(provider_error)?;
+                }
+            }
             let mut view = dependencies
                 .homes
                 .prepare_view(&request)
@@ -110,6 +129,22 @@ impl SandboxCheckpointMaintenance {
                 attempt: 1,
                 image: dependencies.image.clone(),
             };
+            for entry in dependencies
+                .homes
+                .export_job_inventory()
+                .await
+                .map_err(provider_error)?
+            {
+                if entry.request.export.snapshot.capture_id == job.export.snapshot.capture_id
+                    && entry.request != job
+                {
+                    dependencies
+                        .homes
+                        .remove_export_job(&entry.request, Some(&entry.receipt))
+                        .await
+                        .map_err(provider_error)?;
+                }
+            }
             let mut observed = dependencies
                 .homes
                 .prepare_export_job(&job)
