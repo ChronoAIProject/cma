@@ -11,6 +11,9 @@ use crate::seconds_from_rfc3339;
 
 use super::{Sandbox, SandboxModelError, SandboxStatus};
 
+#[path = "checkpoint_export.rs"]
+mod export;
+
 pub const SANDBOX_CHECKPOINT_INTERVAL_SECONDS: u64 =
     crate::platform::DEFAULT_CHECKPOINT_INTERVAL_SECONDS;
 pub const MAX_SANDBOX_CONVERSATION_SNAPSHOT_BYTES: u64 = 256 * 1024 * 1024;

@@ -30,6 +30,17 @@ pub struct HomeSnapshotExportRequest {
 }
 
 impl HomeSnapshotExportRequest {
+    /// Normalize the provider timestamp only when projecting into a service
+    /// clock. The full original timestamp remains bound by the request digest.
+    pub fn capture_time_unix_seconds(&self) -> Result<u64> {
+        self.validate()?;
+        let stamp = self.observation.captured_at.as_ref().ok_or_else(invalid)?;
+        let time: k8s_openapi::apimachinery::pkg::apis::meta::v1::Time =
+            serde_json::from_value(serde_json::Value::String(stamp.clone()))
+                .map_err(|_| invalid())?;
+        u64::try_from(time.0.as_second()).map_err(|_| invalid())
+    }
+
     pub fn validate(&self) -> Result<()> {
         self.observation.receipt.validate_for(&self.snapshot)?;
         let stamp = self.observation.captured_at.as_ref().ok_or_else(invalid)?;

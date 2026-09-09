@@ -23,8 +23,8 @@ pub(crate) async fn run(arguments: &[std::ffi::OsString]) -> Result<()> {
     }
     let request_path = PathBuf::from(&arguments[0]);
     let output = PathBuf::from(&arguments[1]);
-    let request: HomeSnapshotExportRequest =
-        io::read(&request_path)?.ok_or_else(|| invalid("snapshot export request is missing"))?;
+    let request: HomeSnapshotExportRequest = io::read_projected(&request_path)?
+        .ok_or_else(|| invalid("snapshot export request is missing"))?;
     request
         .validate()
         .map_err(|_| invalid("snapshot export request is invalid"))?;
