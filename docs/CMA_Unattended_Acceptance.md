@@ -40,7 +40,8 @@ Monitor disk usage and inspect exact targets before removing stale artifacts.
 The previously deployed API includes bounded concurrent lifecycle reconciliation;
 see `CMA_Production_Verification.md` for image digests and recorded checks. That
 improves unrelated deletion latency but does not remove snapshot writer fencing.
-The latest recorded README-trigger revival took 478,740 ms; performance work remains.
+The latest recorded README-trigger revival reached Ready in 377,000 ms;
+performance and continuous activity feedback work remain.
 
 Owner histories remain in their existing Agents. Runtime changes must not silently
 rotate or pause the owner's active Sandbox. Production acceptance requires actual
@@ -884,3 +885,23 @@ image identity and measured results for each behavior, with unknowns left explic
   with no unmatched objects. Deleted Sandboxes have no archives. This is current
   object-list evidence only; provider version history and runtime scratch
   retention remain open. Disk has 24 GiB free.
+- Named README Trigger Launch lch_1ae3cc65b8a44b1e8c352f274aa9e430 reached
+  Ready at 09:48:59 UTC, 377,000 ms after admission. It reused the same Sandbox,
+  Workspace, Agent and Worktree on runtime 7630fb16, retained the exact nine/one
+  turn hashes and reported Existing conversation preserved. Read-only supplemental
+  current-readme-repeat-vSj378/readiness-result.json passes these checks with
+  both Agents Ready and no active snapshot/lifecycle operation.
+- The original vSj378 harness did not pass its complete campaign: all early live
+  activity samples had the same last entry, failing the activity-advancement
+  assertion after readiness and transcript checks. That failure is retained;
+  continuous restore feedback remains unaccepted. No second Trigger admission or
+  additional pause was issued to repeat the test. The observation-only scratch
+  probe found one 1,806,570,892-byte sealed runtime archive and no upload/capture/
+  restore-staging temporary object after extraction. Total revival is still over
+  six minutes; this production observation is not a controlled speed benchmark.
+- Supplemental vSj378/view-result.json passes restored Agent views at
+  1440/390/320px after source/history reads and responsive layout settle. The
+  message field and its complete placeholder fit inside each viewport, with
+  no horizontal document overflow and zero forwarded mutations. Mobile screenshot
+  inspected. The original immediate-resize screenshot captured the grid midway
+  through its transition; the settled viewport checks verify the completed layout.
