@@ -48,6 +48,33 @@ impl CheckpointStore {
         blocking(move || restore_archive(&archive, &expected, &home, &scratch)).await
     }
 
+    /// The caller must have finished export or restore and retired any replay
+    /// authority before releasing this local transfer object.
+    pub(crate) async fn discard(&self, reference: &str) -> Result<()> {
+        let store = self.clone();
+        let reference = reference.to_string();
+        blocking(move || {
+            store.ensure_store()?;
+            let path = store.object_path(&reference)?;
+            match std::fs::symlink_metadata(&path) {
+                Ok(metadata) if metadata.is_file() && !metadata.file_type().is_symlink() => {
+                    crate::fs_durability::remove_file(&path)
+                        .map_err(checkpoint_io("remove finished checkpoint transfer"))
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                    crate::fs_durability::sync_parent(&path)
+                        .map_err(checkpoint_io("sync finished checkpoint removal"))
+                }
+                Ok(_) => Err(RuntimeError::rejected(
+                    "checkpoint_object_invalid",
+                    "checkpoint transfer object is not a regular file",
+                )),
+                Err(error) => Err(checkpoint_io("inspect finished checkpoint transfer")(error)),
+            }
+        })
+        .await
+    }
+
     pub(crate) fn download_path(&self, reference: &str) -> Result<PathBuf> {
         self.ensure_store()?;
         let path = self.object_path(reference)?;

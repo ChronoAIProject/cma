@@ -247,3 +247,57 @@ fn checkpoint_download_refuses_a_symlinked_object() {
     std::fs::remove_dir_all(config.home).unwrap();
     std::fs::remove_dir_all(config.checkpoint_root).unwrap();
 }
+
+#[tokio::test]
+async fn finished_transfer_removal_is_exact_idempotent_and_refuses_redirects() {
+    let config = config("finished-transfer");
+    let store = CheckpointStore::new(&config);
+    std::fs::write(config.home.join("work"), b"first snapshot").unwrap();
+    let first = store
+        .capture(&CheckpointRequest {
+            epoch: 1,
+            exclusions: Vec::new(),
+        })
+        .await
+        .unwrap();
+    std::fs::write(config.home.join("work"), b"newer snapshot").unwrap();
+    let second = store
+        .capture(&CheckpointRequest {
+            epoch: 2,
+            exclusions: Vec::new(),
+        })
+        .await
+        .unwrap();
+    let first_path = store.download_path(&first.object_reference).unwrap();
+    let second_path = store.download_path(&second.object_reference).unwrap();
+    store.discard(&first.object_reference).await.unwrap();
+    store.discard(&first.object_reference).await.unwrap();
+    assert!(!first_path.exists());
+    assert_eq!(
+        crate::checkpoint_manifest::sha256_file(&second_path).unwrap(),
+        second.sha256
+    );
+    assert!(store.discard("../work").await.is_err());
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(config.home.join("work"), &first_path).unwrap();
+        assert_eq!(
+            store
+                .discard(&first.object_reference)
+                .await
+                .unwrap_err()
+                .code,
+            "checkpoint_object_invalid"
+        );
+        assert!(std::fs::symlink_metadata(&first_path)
+            .unwrap()
+            .file_type()
+            .is_symlink());
+    }
+    assert_eq!(
+        std::fs::read(config.home.join("work")).unwrap(),
+        b"newer snapshot"
+    );
+    std::fs::remove_dir_all(config.home).unwrap();
+    std::fs::remove_dir_all(config.checkpoint_root).unwrap();
+}
