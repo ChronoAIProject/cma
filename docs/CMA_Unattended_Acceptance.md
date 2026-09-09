@@ -474,3 +474,22 @@ image identity and measured results for each behavior, with unknowns left explic
   resolve the same owner account, with no hardcoded identity and no upstream
   writes. Foreign hosts are refused; gh sees only an inert placeholder. This is
   local transport evidence, not deployed runtime proxy or Sandbox grant acceptance.
+- API 2c287473 deployed at
+  sha256:143574b0c5da9ca4477119fa48649d196f608232e5698b28ce8bac0fca4c33c4.
+  Evidence: lifecycle-api-rollout-DWsSY4 and lifecycle-api-postflight-OLndUU.
+  Both full owner histories, web/runtime pins and the thirty-minute interval
+  were preserved. Rollout is healthy with zero restarts and no helper Pods.
+  Earlier checks 8xohIg/fpOUYr refused the still-existing runtime; ogAnoW refused
+  because serial read-only validation exceeded the thirty-second freshness
+  limit. Three bounded read-only validation workers retained every check and
+  the same deadline; the fresh successful guard dispatched in a runtime-free
+  window. No owner pause or force teardown was performed.
+- Production snapshot-download-timing-cXswoy passed the actual private download
+  endpoint for epoch 35: 1,805,702,751 bytes in 83,741 ms, exact SHA-256 verified,
+  and both owner history hashes unchanged. The snapshot stayed current and the
+  Sandbox stayed Paused. Anonymous access returned 401 and an unavailable epoch
+  returned 404. No archive was saved locally. Sampled API memory peaked at
+  121 MiB. The earlier recorded comparable large-home download took 271 seconds;
+  this run is approximately 69% shorter, not a same-object controlled benchmark.
+  Full README-trigger revival is being observed separately in
+  current-readme-repeat-alV1hu; its admitted Launch must not be repeated.
