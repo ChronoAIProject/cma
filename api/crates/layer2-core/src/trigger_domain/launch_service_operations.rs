@@ -33,30 +33,21 @@ impl LaunchService {
             .read_trigger_profiles(&revision.content.target)
             .await
             .map_err(|error| LaunchServiceError::Unavailable(error.to_string()))?;
-        let requirements = if launch.resolution.sandbox.is_pending() {
+        if launch.resolution.sandbox.is_pending() {
             self.require_sandbox_credentials(&caller.subject).await?;
-            RequirementsSnapshot {
-                services: self
-                    .connections
-                    .requirements(&caller.subject, &profiles.sandbox.content.nyxid_services)
-                    .await
-                    .map_err(connection_error)?,
-                checked_at: now_rfc3339(),
-            }
-        } else {
-            RequirementsSnapshot {
-                services: Vec::new(),
-                checked_at: now_rfc3339(),
-            }
+        }
+        let requirements = RequirementsSnapshot {
+            services: self
+                .connections
+                .requirements(&caller.subject, &profiles.sandbox.content.nyxid_services)
+                .await
+                .map_err(connection_error)?,
+            checked_at: now_rfc3339(),
         };
         requirements
             .validate()
             .map_err(|error| LaunchServiceError::Corrupt(error.to_string()))?;
-        validate_requirement_identity(
-            &profiles.sandbox.content.nyxid_services,
-            &requirements,
-            launch.resolution.sandbox.is_pending(),
-        )?;
+        validate_requirement_identity(&profiles.sandbox.content.nyxid_services, &requirements)?;
         let changed_events = changed_requirement_events(&launch.requirements, &requirements);
         let missing = requirements
             .services
@@ -276,9 +267,14 @@ fn changed_requirement_events(
     refreshed
         .services
         .iter()
-        .zip(&previous.services)
-        .filter(|(refreshed, previous)| refreshed.state != previous.state)
-        .map(|(refreshed, _)| LaunchEventKind::RequirementChanged {
+        .filter(|refreshed| {
+            previous
+                .services
+                .iter()
+                .find(|previous| previous.service == refreshed.service)
+                .is_none_or(|previous| previous.state != refreshed.state)
+        })
+        .map(|refreshed| LaunchEventKind::RequirementChanged {
             service: refreshed.service.clone(),
             state: refreshed.state,
         })

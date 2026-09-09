@@ -26,6 +26,7 @@ use super::*;
 
 mod credential_prerequisite;
 mod request_validation;
+mod reused_connections;
 mod trust;
 
 const NOW: &str = "2026-09-05T00:00:00Z";
@@ -431,9 +432,12 @@ async fn nested_resolution_queries_only_applicable_context_and_requirements() {
         .await
         .unwrap()
         .launch;
-    assert!(launch.requirements.services.is_empty());
+    assert_eq!(
+        launch.requirements.services,
+        vec![requirement("github", ServiceRequirementState::Satisfied)]
+    );
     assert_eq!(reused.contexts.reads(), (1, 1, 1));
-    assert_eq!(reused.broker.calls(), 0);
+    assert_eq!(reused.broker.calls(), 1);
 }
 
 #[tokio::test]
@@ -748,7 +752,7 @@ async fn repeat_choice_returns_bounded_context_and_records_both_valid_branches()
     assert_eq!(resumed.work.step, LaunchWorkStep::ResolveSandbox);
     assert!(resumed.ready_at.is_none());
     assert!(resumed.review.needs.is_empty());
-    assert_eq!(fixture.broker.calls(), 0);
+    assert_eq!(fixture.broker.calls(), 2);
     assert_eq!(
         fixture.stats().await,
         TriggerStats {
