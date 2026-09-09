@@ -707,6 +707,7 @@ fn checkpoint_mutation(
             .iter()
             .map(SandboxCheckpointAgentGuard::capture)
             .collect(),
+        nonblocking: false,
         checkpoint,
         sandbox: next,
         appended_at: NOW.into(),

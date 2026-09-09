@@ -68,6 +68,11 @@ impl SandboxMutationGuard {
 pub struct SandboxCheckpointMutation {
     pub guard: SandboxMutationGuard,
     pub agents: Vec<SandboxCheckpointAgentGuard>,
+    /// A checkpoint read from an immutable snapshot may finish after live
+    /// Agent rows advance. Such publication fences the current Sandbox only;
+    /// the captured Agent set belongs to the snapshot and is intentionally not
+    /// compared with today's rows.
+    pub nonblocking: bool,
     pub checkpoint: SandboxCheckpointRef,
     pub sandbox: Sandbox,
     pub appended_at: String,
@@ -188,29 +193,34 @@ pub fn validate_checkpoint_mutation(
         .checkpoint
         .validate()
         .map_err(|_| invalid("checkpoint reference is invalid"))?;
-    let live = agents.iter().filter(|(agent, _)| agent.status.is_live());
-    let expected = live
-        .clone()
-        .map(|(agent, _)| SandboxCheckpointAgentGuard::capture(agent))
-        .collect::<BTreeSet<_>>();
-    let captured = mutation.agents.iter().cloned().collect::<BTreeSet<_>>();
-    if live.count() != expected.len()
-        || captured.len() != mutation.agents.len()
-        || captured != expected
-    {
+    if !mutation.nonblocking {
+        let live = agents.iter().filter(|(agent, _)| agent.status.is_live());
+        let expected = live
+            .clone()
+            .map(|(agent, _)| SandboxCheckpointAgentGuard::capture(agent))
+            .collect::<BTreeSet<_>>();
+        let captured = mutation.agents.iter().cloned().collect::<BTreeSet<_>>();
+        if live.count() != expected.len()
+            || captured.len() != mutation.agents.len()
+            || captured != expected
+        {
+            return Err(SandboxStoreError::Conflict);
+        }
+        if agents.iter().any(|(agent, last_seq)| {
+            agent.status.is_live() && agent.conversation.last_seq != *last_seq
+        }) {
+            return Err(SandboxStoreError::SequenceConflict);
+        }
+    } else if !mutation.agents.is_empty() {
         return Err(SandboxStoreError::Conflict);
     }
-    if agents
-        .iter()
-        .any(|(agent, last_seq)| agent.status.is_live() && agent.conversation.last_seq != *last_seq)
-    {
-        return Err(SandboxStoreError::SequenceConflict);
+    if !mutation.nonblocking {
+        let rows = agents
+            .iter()
+            .map(|(agent, _)| agent.clone())
+            .collect::<Vec<_>>();
+        validate_checkpoint_agents(current, &rows, &mutation.checkpoint)?;
     }
-    let rows = agents
-        .iter()
-        .map(|(agent, _)| agent.clone())
-        .collect::<Vec<_>>();
-    validate_checkpoint_agents(current, &rows, &mutation.checkpoint)?;
 
     if !checkpoint_sandbox_advanced(
         current,

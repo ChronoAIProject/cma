@@ -53,6 +53,7 @@ impl SandboxCheckpointMaintenance {
                         .publish_sandbox_checkpoint(SandboxCheckpointMutation {
                             guard: SandboxMutationGuard::capture(&claimed),
                             agents: guards,
+                            nonblocking: false,
                             checkpoint,
                             sandbox: next.clone(),
                             appended_at: stamp,
