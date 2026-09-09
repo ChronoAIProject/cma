@@ -15,8 +15,7 @@ pub(crate) fn replace_home(home: &Path, staged: &Path, scratch: &Path) -> Result
     ));
     let mut cleanup = Cleanup(Some(backup.clone()));
     copy_tree(home, &backup)?;
-    clear_directory(home)?;
-    if let Err(error) = copy_contents(staged, home) {
+    if let Err(error) = clear_directory(home).and_then(|_| copy_contents(staged, home)) {
         let rollback = clear_directory(home).and_then(|_| copy_contents(&backup, home));
         return match rollback {
             Ok(()) => Err(error),
@@ -231,8 +230,7 @@ fn clear_directory(root: &Path) -> Result<()> {
             .file_type()
             .map_err(copy_io("inspect home entry for replacement"))?;
         if kind.is_dir() && !kind.is_symlink() {
-            crate::fs_durability::remove_dir_all(&path)
-                .map_err(copy_io("remove old home directory"))?;
+            remove_tree(&path).map_err(copy_io("remove old home directory"))?;
         } else {
             crate::fs_durability::remove_file(&path).map_err(copy_io("remove old home entry"))?;
         }
@@ -253,6 +251,55 @@ fn validate_home(home: &Path) -> Result<()> {
         ));
     }
     Ok(())
+}
+
+/// Remove a supervisor-owned tree, including archived read-only directories.
+/// Only directory modes change: regular files may share inodes with live home.
+pub(crate) fn remove_tree(root: &Path) -> std::io::Result<()> {
+    match std::fs::symlink_metadata(root) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return crate::fs_durability::sync_parent(root);
+        }
+        Ok(metadata) if metadata.is_dir() && !metadata.file_type().is_symlink() => {}
+        Ok(_) => {
+            return Err(std::io::Error::other(
+                "removal root is not a real directory",
+            ))
+        }
+        Err(error) => return Err(error),
+    }
+    let mut pending = vec![root.to_path_buf()];
+    while let Some(path) = pending.pop() {
+        let mut options = std::fs::OpenOptions::new();
+        options.read(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt as _;
+            options.custom_flags(libc::O_CLOEXEC | libc::O_DIRECTORY | libc::O_NOFOLLOW);
+        }
+        let directory = options.open(&path)?;
+        let metadata = directory.metadata()?;
+        if !metadata.is_dir() {
+            return Err(std::io::Error::other(
+                "removal entry changed from a directory",
+            ));
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            let current = mode(&metadata);
+            if current & 0o700 != 0o700 {
+                directory.set_permissions(std::fs::Permissions::from_mode(current | 0o700))?;
+            }
+        }
+        for entry in std::fs::read_dir(path)? {
+            let entry = entry?;
+            if entry.file_type()?.is_dir() {
+                pending.push(entry.path());
+            }
+        }
+    }
+    crate::fs_durability::remove_dir_all(root)
 }
 
 #[cfg(unix)]
@@ -302,7 +349,7 @@ impl Cleanup {
         };
         match std::fs::symlink_metadata(path) {
             Ok(metadata) if metadata.is_dir() && !metadata.file_type().is_symlink() => {
-                crate::fs_durability::remove_dir_all(path)?;
+                remove_tree(path)?;
             }
             Ok(_) => {
                 return Err(std::io::Error::new(

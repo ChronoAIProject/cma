@@ -1267,3 +1267,10 @@ image identity and measured results for each behavior, with unknowns left explic
   remain skipped. Source scanning and formatting pass. The new restore change
   has not yet been built or deployed. It reduces restore duplication and does
   not implement a consistent live snapshot or prove peak memory safety.
+- Follow-up cleanup makes supervisor-owned restore directories removable even
+  when they inherit read-only modes. Only temporary directory modes change;
+  hard-linked regular-file permissions and published home directory modes remain
+  intact. Staging cleanup failure is now reported before restore succeeds, and
+  a failure while clearing the old home also enters the existing rollback path.
+  The new read-only-tree regression and all 181 runnable runtime tests pass;
+  two existing ignored tests remain skipped. Package Clippy also passes.

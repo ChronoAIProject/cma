@@ -18,7 +18,7 @@ impl Fixture {
 
 impl Drop for Fixture {
     fn drop(&mut self) {
-        std::fs::remove_dir_all(&self.0).unwrap();
+        remove_tree(&self.0).unwrap();
     }
 }
 
@@ -139,4 +139,38 @@ fn destination_collision_and_symlink_source_leave_existing_files_untouched() {
     assert!(copy_file(&alias, &absent, 0o600).is_err());
     assert!(!absent.exists());
     assert_eq!(std::fs::read_to_string(&source).unwrap(), "source data");
+}
+
+#[test]
+fn read_only_trees_are_replaced_and_cleaned_without_changing_live_file_modes() {
+    let fixture = Fixture::new("read-only");
+    let home = fixture.0.join("home");
+    let staged = fixture.0.join("staged");
+    let scratch = fixture.0.join("scratch");
+    for root in [&home, &staged] {
+        let child = root.join("locked");
+        std::fs::create_dir_all(&child).unwrap();
+        std::fs::write(child.join("file"), "read-only contents").unwrap();
+        std::fs::set_permissions(child.join("file"), std::fs::Permissions::from_mode(0o400))
+            .unwrap();
+        std::fs::set_permissions(&child, std::fs::Permissions::from_mode(0o500)).unwrap();
+    }
+    std::fs::create_dir(&scratch).unwrap();
+
+    replace_home(&home, &staged, &scratch).unwrap();
+    remove_tree(&staged).unwrap();
+
+    assert!(!staged.exists());
+    assert_eq!(std::fs::read_dir(&scratch).unwrap().count(), 0);
+    assert_eq!(
+        std::fs::metadata(home.join("locked")).unwrap().mode() & 0o777,
+        0o500
+    );
+    let file = home.join("locked/file");
+    assert_eq!(std::fs::metadata(&file).unwrap().mode() & 0o777, 0o400);
+    assert_eq!(std::fs::metadata(&file).unwrap().nlink(), 1);
+    assert_eq!(
+        std::fs::read_to_string(&file).unwrap(),
+        "read-only contents"
+    );
 }
