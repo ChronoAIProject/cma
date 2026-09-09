@@ -826,3 +826,35 @@ image identity and measured results for each behavior, with unknowns left explic
   title line and larger matching-font cloud, no horizontal overflow or page
   errors, plus real NyxID sign-in handover. Desktop/mobile screenshots inspected.
   Host disk has 25 GiB free; no broad Docker restart or cleanup was needed.
+
+## Notification animation rollout — 2026-09-09
+
+- Web source 5d840795 adds shared 200ms showing/dismissal fades to notification
+  messages and dialogs. Dismissed elements become inert and accessibility-hidden
+  immediately. Modal focus and scroll locks release immediately; a new opening
+  cancels the pending removal. Conditional creation, deletion, review and Advanced
+  parents retain their exit lifecycle. Credential recovery aborts outstanding
+  checks and closes its popup as soon as the containing notice exits.
+- All 1,194 frontend tests pass. Six presence tests include rapid reopen, focus,
+  timer cleanup and live reduced-motion changes. Existing disappearance assertions
+  now verify the inert exit frame and its eventual removal. TypeScript, ESLint,
+  formatting, production build and source secret scan pass. An independently
+  committed js-yaml 4.3.2 lockfile update fixes the newly reported high-severity
+  empty-merge CPU advisory; npm ci and the high-severity audit gate pass. Three
+  moderate development-only Vitest findings remain reported by npm audit.
+- Linux/amd64 image build, fixed HIGH/CRITICAL vulnerability scan and remote
+  digest verification pass. Web 5d840795 is deployed at
+  sha256:59eb529a8b6e594bb641ab6787f73c34ac034ca89d236ed349d8983b4b6035dd.
+  Server manifest dry run and rollout pass, with healthy API and web pods and
+  zero restarts. Rollout evidence: service-access-web-rollout-M8INfv.
+- Browser evidence notification-motion-Ye347e (local) and
+  notification-motion-anY733 (production) passes at 1440/390/320px, light/dark,
+  including reduced motion. Measured opacity changes cover Advanced, deletion
+  confirmation, New Agent and profile retry notices; focus/scroll release and
+  quick reopen pass. Profile failures were injected read responses; no resource
+  mutation reached production. Screenshots inspected. The observer was corrected
+  to stop attributing reopened or disconnected DOM frames to a prior exit phase.
+- Latest landing requirements remain accepted after the web rollout:
+  cloud-landing-Xytl4Q passes all six production cases, including one-line title,
+  larger cloud and matching Shrikhand text, real sign-in handover and no overflow.
+  Desktop/mobile screenshots were inspected. Disk still has 25 GiB available.
