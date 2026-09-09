@@ -61,7 +61,7 @@ data:
   # Persist untouched Agent conversations before Ready. Update only in a verified
   # runtime-absent window; this pin must never silently rotate an active Sandbox.
   # Build/contract checks do not replace production pause/restore verification.
-  CHRONO_SANDBOX_IMAGE: "us-central1-docker.pkg.dev/aelf-shared-k8s-prod/aelf-prod-registry/cma-runtime@sha256:dc2742368ac98d3497e3841cc46997b7d2f2051453c5dcb6c9e184a11eeaa1d0"
+  CHRONO_SANDBOX_IMAGE: "us-central1-docker.pkg.dev/aelf-shared-k8s-prod/aelf-prod-registry/cma-runtime@sha256:5c5e15c03701b81bbeaf0f214f75f4cb9ed064b185022ac5586c734fbd6ada33"
   # Default resource profiles are seeded only when no corresponding default
   # exists. Durable operator settings and published profiles own later choices.
   CHRONO_SANDBOX_CPU: "1"
