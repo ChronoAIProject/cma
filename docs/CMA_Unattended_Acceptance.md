@@ -780,5 +780,49 @@ image identity and measured results for each behavior, with unknowns left explic
   and screenshots pass. This exercises the requested no-artifacts behavior;
   successful PR publication is separate from the read-only GitHub proxy proof.
   Subsequent preservation checks must retain the new ninth turn.
-  Settled service-link repeat effective-services-prod-CNoOuw passes after profile
-  and skill names finish loading; the mobile screenshot was inspected.
+  Service-link repeat effective-services-prod-RVX4XD passes after both Agent
+  settings and their profile and skill names finish loading; the mobile screenshot
+  was inspected. Earlier service-only screenshots caught pending Agent references.
+
+## Restore performance and landing update — 2026-09-09
+
+- Runtime source 7630fb16 removes the redundant full payload decompression during
+  restore. It validates archive identity and the complete manifest before staging,
+  then checks file hashes, payload length and the compression trailer while
+  extracting before replacing home. Upload publication retains its independent
+  full validation. Corrupt/truncated trailers, trailing members and payload length
+  mismatches preserve the old home and remove incomplete staging.
+- All 174 runtime tests pass (two environment-gated tests skipped), including
+  28 focused checkpoint checks. Clippy, formatting, workspace doc-test gate and
+  source scanning pass. Linux/amd64 build, image scan, remote digest verification
+  and all 18 real-image runtime checks pass. Candidate archive digest:
+  sha256:481dff74bcc87cef36ed29ac0d94465ae9fdc94d6dc97b0e3e717437f7be22ba.
+  Evidence: runtime-7630fb16-contract.json and matching build/scan/push records.
+- Controlled local runtime-restore-benchmark-ZETDBg uses the same 256 MiB fixture,
+  two CPU limit and three restores per image. Median restore falls from 2,144 ms
+  to 1,763 ms (17.8%). Every restored file hash matches. Exact temporary containers
+  and volumes were removed. This is local comparison evidence, not production
+  latency acceptance, and does not remove the snapshot writer hold.
+- One authorized normal pause was admitted in admin-hotfix-authorized-pause-EL71KF.
+  Snapshot saved at 09:02:21 UTC. Read-only authorized-pause-observation-BQlP4r
+  preserved both complete histories, now nine turns and one turn, through teardown.
+  A new user-admitted named-Trigger Launch lch_fc6da80f167a45e3b928050bd054baaf
+  arrived at 09:04:46 UTC during teardown and started revival. The observer stopped
+  when state changed; no repeated pause or runtime rollout was dispatched.
+  Candidate 7630fb16 remains undeployed and the runtime manifest still pins d052e746.
+- The user additionally requested a one-line signed-out product title, larger
+  cloud and larger matching invitation type. Web source 276b830b implements a
+  responsive one-line title and a 264px by 88px cloud with bold 24px Shrikhand.
+  Signed-in character behavior and activation timing remain unchanged.
+  Six focused existing tests, formatting, TypeScript, lint, build and source
+  scan pass. Local browser cloud-landing-a9ndQD covers 1440/768/390/320px, both
+  themes, hover/five-second reveal, rendered Three.js, reduced motion, static
+  fallback and single sign-in handover.
+- Web 276b830b deployed at
+  sha256:f8374a4c8c9d0aaa796f419a91760393f9bad48d1a07ec435b35e5f7aafa30e0.
+  Linux build, image scan, remote digest check and server manifest dry run pass.
+  Rollout service-access-web-rollout-Slh7xI is healthy; API/runtime remain unchanged.
+  Production cloud-landing-bSjsEv passes all six browser cases with one visible
+  title line and larger matching-font cloud, no horizontal overflow or page
+  errors, plus real NyxID sign-in handover. Desktop/mobile screenshots inspected.
+  Host disk has 25 GiB free; no broad Docker restart or cleanup was needed.
