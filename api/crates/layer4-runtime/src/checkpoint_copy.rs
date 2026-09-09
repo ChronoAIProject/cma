@@ -150,17 +150,23 @@ fn link_quiet_file(
     }
     let linked =
         std::fs::symlink_metadata(destination).map_err(copy_io("inspect linked restored file"))?;
-    if !linked.is_file()
-        || linked.file_type().is_symlink()
-        || linked.dev() != metadata.dev()
-        || linked.ino() != metadata.ino()
-    {
+    if !linked.is_file() || linked.file_type().is_symlink() {
         crate::fs_durability::remove_file(destination)
             .map_err(copy_io("remove changed restore source link"))?;
         return Err(RuntimeError::rejected(
             "restore_entry_changed",
             "restore source changed while linking its file",
         ));
+    }
+    // Some sandbox filesystems successfully create a hard link but report a
+    // different device/inode for the destination (for example, overlay-backed
+    // gVisor mounts). That is a storage-layout difference, not evidence that
+    // the staged source changed. Fall back to the verified streaming copy so
+    // restore remains correct without requiring hard-link semantics.
+    if linked.dev() != metadata.dev() || linked.ino() != metadata.ino() {
+        crate::fs_durability::remove_file(destination)
+            .map_err(copy_io("remove incompatible restore source link"))?;
+        return Ok(false);
     }
     opened
         .sync_all()
