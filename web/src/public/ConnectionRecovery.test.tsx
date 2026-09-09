@@ -1,7 +1,7 @@
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ServiceConnectionStatus } from '@chronoai/cma-sdk';
-import { PUBLIC_RECORD, publicClient } from '../test/public';
+import { PUBLIC_RECORD, PUBLIC_TRUST, publicClient } from '../test/public';
 import { ConnectAssistant } from './ConnectAssistant';
 import { rememberConnectionReturn } from './connectionReturn';
 import { ReviewCard } from './ReviewCard';
@@ -151,56 +151,71 @@ describe('pending connection recovery', () => {
   });
 });
 
-it('continues once when all three services become connected in the same render batch', async () => {
-  const client = publicClient();
-  const services = ['chrono-llm', 'ornn-api', 'api-github'];
-  const record = {
-    ...PUBLIC_RECORD,
-    state: 'draft' as const,
-    review: {
-      can_start_now: false,
-      needs: services.map((service) => ({ type: 'connection' as const, service })),
-    },
-  };
-  for (const service of services)
-    rememberConnectionReturn(record.id, service, {
-      handoff_id: service,
-      expires_at: pending.expires_at,
+it.each([false, true])(
+  'continues once after three connections with prior landing consent: %s',
+  async (landingConfirmed) => {
+    const client = publicClient();
+    const services = ['chrono-llm', 'ornn-api', 'api-github'];
+    const record = {
+      ...(landingConfirmed ? PUBLIC_TRUST : PUBLIC_RECORD),
+      state: 'draft' as const,
+      confirmations: landingConfirmed
+        ? [
+            {
+              surface: 'landing' as const,
+              trust_confirmed_digest: PUBLIC_TRUST.trust.confirmation_digest,
+              acknowledgements: [],
+              confirmed_at: PUBLIC_RECORD.created_at,
+            },
+          ]
+        : [],
+      review: {
+        can_start_now: false,
+        needs: services.map((service) => ({ type: 'connection' as const, service })),
+      },
+    };
+    for (const service of services)
+      rememberConnectionReturn(record.id, service, {
+        handoff_id: service,
+        expires_at: pending.expires_at,
+      });
+    vi.mocked(client.requests.requirements).mockResolvedValue({
+      checked_at: record.created_at,
+      services: services.map((service) => ({
+        service,
+        state: 'missing',
+        display_name: service,
+        connection_mode: 'hosted',
+      })),
     });
-  vi.mocked(client.requests.requirements).mockResolvedValue({
-    checked_at: record.created_at,
-    services: services.map((service) => ({
-      service,
-      state: 'missing',
-      display_name: service,
-      connection_mode: 'hosted',
-    })),
-  });
-  const settlements: (() => void)[] = [];
-  vi.mocked(client.requests.readConnection).mockImplementation(
-    (id) =>
-      new Promise((resolve) => {
-        settlements.push(() =>
-          resolve({ ...pending, handoff_id: id, service_id: id, state: 'satisfied' }),
-        );
-      }),
-  );
-  render(<ReviewCard client={client} record={record} onChanged={vi.fn()} onClose={vi.fn()} />);
-  await act(async () => undefined);
-  expect(screen.getByRole('dialog', { name: 'Connect required accounts' })).toBeInTheDocument();
-  expect(screen.getByRole('button', { name: 'Verify connections' })).toBeEnabled();
-  await act(async () => {
-    await vi.advanceTimersByTimeAsync(1500);
-  });
-  expect(settlements).toHaveLength(3);
-  await act(async () => {
-    settlements.forEach((settle) => settle());
-  });
-  expect(client.requests.start).toHaveBeenCalledOnce();
-  expect(client.requests.start).toHaveBeenCalledWith(
-    record.id,
-    expect.any(Object),
-    expect.any(Object),
-  );
-  expect(client.requests.createOrResume).not.toHaveBeenCalled();
-});
+    const settlements: (() => void)[] = [];
+    vi.mocked(client.requests.readConnection).mockImplementation(
+      (id) =>
+        new Promise((resolve) => {
+          settlements.push(() =>
+            resolve({ ...pending, handoff_id: id, service_id: id, state: 'satisfied' }),
+          );
+        }),
+    );
+    render(<ReviewCard client={client} record={record} onChanged={vi.fn()} onClose={vi.fn()} />);
+    await act(async () => undefined);
+    expect(screen.getByRole('dialog', { name: 'Connect required accounts' })).toBeInTheDocument();
+    expect(screen.queryByRole('checkbox')).not.toBeInTheDocument();
+    expect(screen.queryByRole('dialog', { name: 'Review and continue' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Verify connections' })).toBeEnabled();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1500);
+    });
+    expect(settlements).toHaveLength(3);
+    await act(async () => {
+      settlements.forEach((settle) => settle());
+    });
+    expect(client.requests.start).toHaveBeenCalledOnce();
+    expect(client.requests.start).toHaveBeenCalledWith(
+      record.id,
+      { trust_confirmed_digest: undefined, acknowledgements: [] },
+      expect.any(Object),
+    );
+    expect(client.requests.createOrResume).not.toHaveBeenCalled();
+  },
+);

@@ -246,6 +246,10 @@ grant additional authority.
 For a no-review Trigger, `start_if_ready: true` explicitly accepts the frozen
 configuration, including its exact command/environment trust digest. Connection
 requirements still must be satisfied; publisher-required review is not bypassed.
+That explicit click is retained as the Launch's single `landing` confirmation
+even while its state is `draft` and connections are missing. Provisioning and
+the first message remain unstarted. Connection rechecks retain the original
+confirmation and timestamp; they must not ask for the same software trust again.
 If all requirements are satisfied, the same authenticated POST records consent
 and returns 202 with an admitted Launch. Otherwise it returns 201 with the
 durable draft and `review.needs`. Review can require service connections,
@@ -266,11 +270,20 @@ Idempotency-Key: visitor-reviewed-start-example
 }
 ```
 
-Omit the trust field when no trust is needed. Use the Launch trust manifest's
+Omit the trust field when no trust is needed, including a no-review draft whose
+landing confirmation already accepted the frozen digest. Keep acknowledgements
+empty for that continuation; Start preserves, rather than replaces, the recorded
+confirmation. Use the Launch trust manifest's
 confirmation digest, not a guessed profile digest or a digest computed from
 display text. Start rechecks current connections and requirements before
 admission. Replaying the original create key returns its original response;
 it is not a substitute for Start and does not refresh a recorded draft.
+
+Rollback compatibility: older API validation rejects an unstarted Launch with a
+recorded confirmation. Once this release admits such a draft, any rollback API
+must retain this validation support, including for cancelled unstarted Launches.
+Do not erase confirmations, fabricate a start or delete Launch history to make
+an older binary accept the records. No serialized field was added.
 
 ## Accounts And Connections
 

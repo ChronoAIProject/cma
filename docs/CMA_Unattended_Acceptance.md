@@ -21,7 +21,7 @@ Monitor disk usage and inspect exact targets before removing stale artifacts.
 | 6 | Terminated Sandbox snapshots are deleted | API 8a6cac05 deployed. Fresh production pause/resume and deletion test zosocG confirms zero snapshot objects and HTTP 404 for the previously readable file while the conversation record remains. Read-only observer pEIoAc verifies all 691 legacy objects across 18 Deleted Sandboxes removed (20.407 GiB), with exact owner snapshot keys, both histories and retained Sandbox records preserved. Provider version-history and unclassified orphan audits remain separate. |
 | 7 | All lifecycle screens show secret-free bounded live logs and sync time | Live activity deployed, with latest 100 allowlisted entries, bounded scroll, sync time and reconnect/access-loss handling. Production Sandbox/Agent pause/resume and all three deletion dialogs pass. Named README Launch/Sandbox restore displays pass at desktop/mobile, followed by restored chat. Some lifecycle rows remain generic completed-stage entries; every transition and creation surface is not yet comprehensively proved. |
 | 8 | New Agent fields are understandable, profiles have anchored hover details, deleted choices are excluded | Initial batch df6e58e3; production creation exposed mobile hover previews intercepting Create workspace. Corrected and deployed in fa3f6850: previews leave dialog header/footer reachable, selection dismisses pending/open preview. Real clicks and geometry pass at 1440x900, 390x900 and 390x600, both appearances; 1,131 frontend tests pass. |
-| 9 | No review/consent flash for no-review Triggers | Pending browser verification against the required Trigger, including fresh sign-in and resumed Launch. |
+| 9 | No review/consent flash for no-review Triggers | Local consent persistence and six desktop/mobile, light/dark connection-only browser cases pass, including reload with already accepted software trust. Production named-Trigger and fresh-sign-in verification remain pending. |
 | 10 | Profiles and Marketplace use CMA-styled Ornn-inspired cards/details | Shared cards deployed in web 7c01741f and author names in API 7e7d458e. Production 18-case verification passes all three profile kinds in both directories at 1440/390/320px, light/dark, full-card detail navigation and Marketplace Use availability. Screenshots inspected. Evidence: profile-cards-64FpRT/result.json. |
 | 11 | Separate collapsible Live and Paused Sandbox groups | Deployed in web 40300b5e. Production desktop/mobile checks pass for both groups and persisted collapse on reload. Live transition cases additionally covered by local tests. |
 | 12 | Only the named Trureturing Trigger is used for Trigger testing | Active constraint. Older disposable-Trigger harnesses must not be reused unchanged. |
@@ -604,3 +604,30 @@ image identity and measured results for each behavior, with unknowns left explic
   candidate remains local; the api-github instance grant, no-review fresh-login
   journey and actual contribution remain unverified. Host disk has 35 GiB free;
   no additional Docker restart or cleanup was needed.
+- No-review admission now retains the original Landing confirmation while
+  connections are missing, without admitting provisioning. Start and partial
+  connection rechecks preserve its exact frozen trust and timestamp; publisher
+  review still requires explicit confirmation. Both stores reject rewritten or
+  removed confirmations. No serialized field was added. Older API validation
+  rejects these unstarted confirmed records, including cancelled records;
+  rollback must retain compatible validation rather than erase consent history.
+- All 1,617 isolated backend tests pass (177 environment-gated tests skipped).
+  All 41 selected disposable Mongo replica-set tests pass, including real store
+  reopen, retained pending consent, immutable confirmation and one continuation.
+  The initial full build caught and corrected a test-only TriggerId constructor.
+  Mongo initially exposed an older cooldown assertion expecting capture before
+  the thirty-minute default; 2014776f tests the configured one-minute interval
+  and default interval independently without changing production behavior.
+  Exact labelled disposable containers were removed by the test harness.
+- This consent batch passes Clippy, formatting, the doc-test gate, 1,397
+  TypeScript SDK contract checks and complete Rust SDK shared-contract replay.
+  Eight focused frontend checks, TypeScript and ESLint pass. Browser evidence
+  recorded-consent-local-w4pbPe/result.json passes 1440/390/320px, both themes:
+  reload with prior software trust, no observed review/checkbox insertion,
+  bounded connection dialog, three connection completions and exactly one mock
+  Start. Desktop/mobile screenshots were inspected. Zero production requests
+  were sent by that harness; it is not production OAuth acceptance.
+- Google authentication at 06:38 UTC still requires interactive renewal. The
+  earlier CMA browser cookie returned HTTP 401 during the 06:39 UTC read-only
+  observation, so no newer runtime or history status is claimed from that read.
+  No registry push, manifest pin or rollout occurred. Disk has 33 GiB free.

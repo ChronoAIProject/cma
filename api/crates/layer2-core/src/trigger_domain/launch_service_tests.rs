@@ -25,6 +25,7 @@ use crate::{
 use super::*;
 
 mod credential_prerequisite;
+mod no_review_consent;
 mod request_validation;
 mod reused_connections;
 mod trust;

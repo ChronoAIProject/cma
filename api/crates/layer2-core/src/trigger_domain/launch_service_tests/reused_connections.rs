@@ -51,7 +51,11 @@ async fn reused_parents_and_agents_cannot_skip_missing_service_checks() {
                     service: ServiceId::new("api-github")
                 }]
             );
-            assert!(draft.confirmations.is_empty());
+            assert_eq!(draft.confirmations.len(), 1);
+            assert_eq!(
+                draft.confirmations[0].surface,
+                LaunchConsentSurface::Landing
+            );
             assert!(draft.started_at.is_none());
             assert_eq!(draft.work.step, LaunchWorkStep::None);
             assert_eq!(fixture.broker.calls(), 1);

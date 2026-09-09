@@ -16,6 +16,12 @@ pub(super) fn admission(admission: &LaunchAdmission) -> Result<(), LaunchStoreEr
     {
         return Err(LaunchStoreError::TriggerUnavailable);
     }
+    if admission.trigger.revision.content.consent.always_review
+        && admission.launch.started_at.is_none()
+        && !admission.launch.confirmations.is_empty()
+    {
+        return Err(corrupt("publisher-required review cannot be preconfirmed"));
+    }
     if admission.launch.event_head != 0 {
         return Err(corrupt("new Launch has a nonzero event head"));
     }
@@ -37,6 +43,7 @@ pub(super) fn immutable_launch(current: &Launch, changed: &Launch) -> Result<(),
         || current.placement_id != changed.placement_id
         || current.referrer_origin != changed.referrer_origin
         || current.trust != changed.trust
+        || !changed.confirmations.starts_with(&current.confirmations)
         || current.command_key_hash != changed.command_key_hash
         || current.command_fingerprint != changed.command_fingerprint
         || current.created_at != changed.created_at
