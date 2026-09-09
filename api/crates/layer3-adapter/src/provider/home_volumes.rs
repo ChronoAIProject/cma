@@ -20,6 +20,16 @@ pub struct PersistentHomeVolumes {
 }
 
 impl PersistentHomeVolumes {
+    pub async fn infer_namespaced(
+        namespace: impl Into<String>,
+        controller: impl Into<String>,
+    ) -> Result<Self> {
+        let client = kube::Client::try_default().await.map_err(|_| {
+            AdapterError::Unavailable("durable home Kubernetes authority is unavailable".into())
+        })?;
+        Self::namespaced(client, namespace, controller)
+    }
+
     pub fn namespaced(
         client: kube::Client,
         namespace: impl Into<String>,

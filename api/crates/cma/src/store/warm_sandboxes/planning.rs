@@ -163,7 +163,10 @@ async fn plan(
         if record.state == WarmSandboxState::Retiring {
             continue;
         }
-        if Some(&record.plan) == desired.as_ref() && retained < target {
+        let home_matches = record.home.as_ref().map(|home| &home.request.policy)
+            == store.warm_home_policy.as_ref()
+            || (record.state == WarmSandboxState::Preparing && record.home.is_none());
+        if Some(&record.plan) == desired.as_ref() && home_matches && retained < target {
             retained += 1;
         } else {
             record.state = WarmSandboxState::Retiring;

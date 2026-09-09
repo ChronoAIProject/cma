@@ -10,6 +10,9 @@ use layer2_core::sandbox::{ProvisioningExecution, RuntimeBinding, WarmSandbox, W
 
 const IMAGE: &str = "runtime-warm-test";
 
+#[path = "home_policy_tests.rs"]
+mod home_policy_tests;
+
 fn bounds() -> ProfileCapacityBounds {
     ProfileCapacityBounds {
         min_cpu_millis: 100,
@@ -418,7 +421,7 @@ async fn claimed_reservation_transfers_reclaim_authority_to_owned_sandbox() {
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
 async fn claimed_home_transfers_atomically_and_refuses_the_previous_warm_worker() {
-    let (client, name, store, _, profile) = fixture(1).await;
+    let (client, name, mut store, _, profile) = fixture(1).await;
     reconcile(&store, &profile).await;
     let preparing = store.claim_warmup_work(NOW, LATER).await.unwrap().unwrap();
     let mut next = preparing.record.clone();
@@ -439,6 +442,7 @@ async fn claimed_home_transfers_atomically_and_refuses_the_previous_warm_worker(
         storage_generation: "original-disk".into(),
     })
     .unwrap();
+    store.warm_home_policy = Some(home.request.policy.clone());
     next.home = Some(Box::new(home.clone()));
     next.runtime = Some(RuntimeBinding {
         boot_id: None,

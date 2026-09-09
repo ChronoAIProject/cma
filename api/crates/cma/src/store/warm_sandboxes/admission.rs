@@ -56,6 +56,8 @@ pub(in crate::store) async fn claim_ready(
         "record.plan.profile.revision": i64::from(sandbox.profile.revision),
         "record.plan.profile.digest": &sandbox.profile.digest,
         "record.plan.runtime_version": runtime_version,
+        "record.home.request.policy": crate::store::sandbox_mongo::record_bson(&store.warm_home_policy)
+            .map_err(|error| AdmissionError::Domain(layer2_core::sandbox::SandboxStoreError::Corrupt(error)))?,
         "record.plan.reaches": crate::store::sandbox_mongo::record_bson(&reaches)
             .map_err(|error| AdmissionError::Domain(layer2_core::sandbox::SandboxStoreError::Corrupt(error)))?,
         "lease_until": { "$lte": at },

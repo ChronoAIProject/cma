@@ -15,6 +15,7 @@ pub(crate) struct RuntimeConfig {
     pub sandbox_api_key: String,
     pub sandbox_image: String,
     pub sandbox_namespace: String,
+    pub home_policy: Option<layer3_adapter::HomeVolumePolicy>,
     pub upstream_base_url: String,
     pub upstream_wire_api: String,
     pub platform_base_url: String,
@@ -28,6 +29,7 @@ impl fmt::Debug for RuntimeConfig {
             .field("sandbox_api_key", &"<redacted>")
             .field("sandbox_image", &self.sandbox_image)
             .field("sandbox_namespace", &self.sandbox_namespace)
+            .field("home_policy", &self.home_policy)
             .field("upstream_base_url", &self.upstream_base_url)
             .field("upstream_wire_api", &self.upstream_wire_api)
             .field("platform_base_url", &self.platform_base_url)
@@ -71,6 +73,7 @@ impl RuntimeConfig {
             sandbox_api_key,
             sandbox_image,
             sandbox_namespace,
+            home_policy: super::home::from_lookup(lookup)?,
             upstream_base_url,
             upstream_wire_api,
             platform_base_url,
