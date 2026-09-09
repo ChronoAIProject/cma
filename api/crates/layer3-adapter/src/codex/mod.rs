@@ -113,6 +113,10 @@ impl SandboxAdapter for CodexAdapter {
         self.hosted.provision(spec).await
     }
 
+    async fn runtime_status(&self, handle: &RuntimeHandle) -> crate::Result<crate::RuntimeStatus> {
+        self.hosted.runtime_status(handle).await
+    }
+
     async fn provision_runtime(
         &self,
         request: &RuntimeProvisionRequest,

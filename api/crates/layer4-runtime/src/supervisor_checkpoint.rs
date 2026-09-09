@@ -162,6 +162,13 @@ impl Supervisor {
                 "restore request does not match the inherited installation checkpoint",
             ));
         }
+        let already_restored = crate::persistent_home::begin_restore(&self.config, request)?;
+        if already_restored {
+            // A retried transport may have reimported the archive. Acknowledge
+            // the durable completion while preserving all subsequent user work.
+            self.checkpoint.discard(&request.object_reference).await?;
+            return Ok(ResponseFrame::Restore(Acknowledgement::default()));
+        }
         if !self.agents.read().await.is_empty() {
             return Err(RuntimeError::rejected(
                 "restore_agents_open",
@@ -175,6 +182,7 @@ impl Supervisor {
         // Keeping its local compressed transfer after extraction needlessly
         // competes with restored files and the Agents that are about to start.
         self.checkpoint.discard(&request.object_reference).await?;
+        crate::persistent_home::complete_restore(&self.config, request)?;
         fence
             .resume()
             .map_err(|error| RuntimeError::unavailable("writer_resume_failed", error))?;

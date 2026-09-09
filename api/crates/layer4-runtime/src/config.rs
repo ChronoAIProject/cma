@@ -18,6 +18,8 @@ pub(crate) struct ProxyConfig {
 pub(crate) struct RuntimeConfig {
     pub bind: SocketAddr,
     pub sandbox_id: String,
+    pub generation: u64,
+    pub home_identity: Option<String>,
     pub home: PathBuf,
     pub state_root: PathBuf,
     pub checkpoint_root: PathBuf,
@@ -49,6 +51,29 @@ impl RuntimeConfig {
             .map(PathBuf::from)
             .unwrap_or_else(|| PathBuf::from(DEFAULT_STATE_ROOT).join(&sandbox_id));
         validate_state_root(&state_root, &home)?;
+        let generation = process_env
+            .get("CHRONO_RUNTIME_GENERATION")
+            .map(|value| {
+                value
+                    .parse::<u64>()
+                    .ok()
+                    .filter(|number| *number != 0 && number.to_string() == *value)
+                    .ok_or_else(|| {
+                        "CHRONO_RUNTIME_GENERATION must be a nonzero canonical integer".to_string()
+                    })
+            })
+            .transpose()?
+            .unwrap_or(1);
+        let home_identity = process_env
+            .get("CHRONO_RUNTIME_HOME_IDENTITY")
+            .filter(|value| !value.is_empty())
+            .cloned();
+        if home_identity
+            .as_ref()
+            .is_some_and(|value| !layer3_adapter::valid_home_identity(value))
+        {
+            return Err("CHRONO_RUNTIME_HOME_IDENTITY must be a canonical home fingerprint".into());
+        }
 
         let bind = env_socket(&process_env, "CHRONO_RUNTIME_BIND", DEFAULT_BIND)?;
         process_env.insert("HOME".into(), home.to_string_lossy().into_owned());
@@ -93,6 +118,8 @@ impl RuntimeConfig {
         Ok(Self {
             bind,
             sandbox_id,
+            generation,
+            home_identity,
             checkpoint_root: std::env::temp_dir().join("cma-checkpoints"),
             home,
             state_root,
@@ -127,6 +154,8 @@ impl RuntimeConfig {
         Self {
             bind: "127.0.0.1:0".parse().unwrap(),
             sandbox_id: "sandbox-test".into(),
+            generation: 1,
+            home_identity: None,
             checkpoint_root,
             home,
             state_root,

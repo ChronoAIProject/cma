@@ -1,10 +1,7 @@
 //! Mount the initialized home layout without giving the runtime allocation authority.
 
-use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
-use sha2::{Digest, Sha256};
-
 use crate::provider::{ProviderPersistentVolumeClaim, ProviderSandboxRequest, ProviderVolume};
-use crate::{AdapterError, SandboxSpec};
+use crate::SandboxSpec;
 
 pub(super) const TRANSFER_ROOT: &str = "/var/lib/cma-transfer";
 
@@ -16,12 +13,13 @@ pub(super) fn render(
         return Ok(());
     };
     home.validate_for(&spec.sandbox_id)?;
-    let encoded = serde_json::to_vec(home)
-        .map_err(|_| AdapterError::Rejected("durable home identity cannot be encoded".into()))?;
-    request.metadata.insert(
-        "cma/home-identity".into(),
-        URL_SAFE_NO_PAD.encode(Sha256::digest(encoded)),
-    );
+    let identity = home.identity()?;
+    request
+        .metadata
+        .insert("cma/home-identity".into(), identity.clone());
+    request
+        .env
+        .insert("CHRONO_RUNTIME_HOME_IDENTITY".into(), identity);
     for (name, mount_path, sub_path) in [
         ("cma-home", spec.home_directory.as_str(), "home"),
         ("cma-state", "/var/lib/cma-runtime", "state"),

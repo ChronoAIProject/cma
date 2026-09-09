@@ -97,6 +97,14 @@ pub struct HomeVolumeAttachment {
 }
 
 impl HomeVolumeAttachment {
+    pub fn identity(&self) -> Result<String> {
+        use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
+        self.receipt.validate_for(&self.request)?;
+        let encoded = serde_json::to_vec(self)
+            .map_err(|_| invalid("durable home identity cannot be encoded"))?;
+        Ok(URL_SAFE_NO_PAD.encode(Sha256::digest(encoded)))
+    }
+
     pub fn validate_for(&self, sandbox_id: &str) -> Result<()> {
         self.receipt.validate_for(&self.request)?;
         if self.request.sandbox_id != sandbox_id {

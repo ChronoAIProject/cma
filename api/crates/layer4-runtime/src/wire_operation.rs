@@ -2,6 +2,7 @@ use layer3_adapter::wire::WireOperation;
 
 pub(crate) fn for_tag(tag: &str) -> Option<WireOperation> {
     Some(match tag {
+        "runtime_status" => WireOperation::RuntimeStatus,
         "install" => WireOperation::Install,
         "bootstrap_restore" => WireOperation::BootstrapRestore,
         "prepare_workspace" => WireOperation::PrepareWorkspace,

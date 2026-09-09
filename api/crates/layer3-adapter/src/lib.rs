@@ -14,6 +14,7 @@ mod conversation_channel;
 mod error;
 mod home_volume;
 mod runtime;
+mod runtime_status;
 mod workspace;
 
 pub mod codex;
@@ -57,6 +58,7 @@ pub use runtime::{
     DEFAULT_COMMAND_TIMEOUT_SECONDS, DEFAULT_HOME_DIRECTORY, DEFAULT_SUPERVISOR_PROGRAM,
     DEFAULT_TOTAL_TIMEOUT_SECONDS,
 };
+pub use runtime_status::{valid_home_identity, RuntimeStatus, RuntimeStatusRequest};
 pub use workspace::{
     SetupReceipt, WorkspaceReceipt, WorkspaceRemoveReceipt, WorkspaceRemoveRequest,
     WorkspaceRequest, WorkspaceSetupRequest, WorkspaceSource, WorktreeReceipt, WorktreeRef,

@@ -127,6 +127,7 @@ pub struct AgentHomeRemoveReceipt {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum WireOperation {
+    RuntimeStatus,
     Install,
     BootstrapRestore,
     PrepareWorkspace,
@@ -181,6 +182,7 @@ pub enum CheckpointUploadResponse {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "t", rename_all = "snake_case")]
 pub enum RequestFrame {
+    RuntimeStatus(crate::RuntimeStatusRequest),
     Install(InstallRequest),
     BootstrapRestore(RestoreBootstrapRequest),
     PrepareWorkspace(WorkspaceRequest),
@@ -204,6 +206,7 @@ pub enum RequestFrame {
 impl RequestFrame {
     pub const fn operation(&self) -> WireOperation {
         match self {
+            Self::RuntimeStatus(_) => WireOperation::RuntimeStatus,
             Self::Install(_) => WireOperation::Install,
             Self::BootstrapRestore(_) => WireOperation::BootstrapRestore,
             Self::PrepareWorkspace(_) => WireOperation::PrepareWorkspace,
@@ -230,6 +233,7 @@ impl RequestFrame {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "t", rename_all = "snake_case")]
 pub enum ResponseFrame {
+    RuntimeStatus(crate::RuntimeStatus),
     Install(InstallReceipt),
     BootstrapRestore(RestoreBootstrapReceipt),
     PrepareWorkspace(WorkspaceReceipt),
