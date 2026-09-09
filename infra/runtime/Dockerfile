@@ -53,6 +53,7 @@ ENV GOTOOLCHAIN=local CGO_ENABLED=0
 RUN --mount=type=cache,id=cma-gh-modules,target=/root/go/pkg/mod,sharing=locked \
     --mount=type=cache,id=cma-gh-build-${TARGETARCH},target=/root/.cache/go-build,sharing=locked \
     /usr/local/go/bin/go mod edit -require="golang.org/x/mod@v${GH_X_MOD_VERSION}" \
+    && /usr/local/go/bin/go mod download golang.org/x/mod \
     && /usr/local/go/bin/go mod download \
     && /usr/local/go/bin/go mod verify \
     && test "$(/usr/local/go/bin/go list -m -f '{{.Version}}' golang.org/x/mod)" = "v${GH_X_MOD_VERSION}" \
