@@ -177,7 +177,9 @@ fn restore_archive(archive: &Path, expected: &str, home: &Path, scratch: &Path) 
     let mut cleanup = Cleanup(Some(staged.clone()));
     crate::checkpoint_archive::extract(archive, expected, home, &staged)?;
     crate::checkpoint_copy::replace_home(home, &staged, scratch)?;
-    cleanup.remove_now();
+    cleanup
+        .remove_now()
+        .map_err(checkpoint_io("remove restored staging tree"))?;
     Ok(())
 }
 
@@ -237,16 +239,19 @@ fn stamp() -> u128 {
 struct Cleanup(Option<PathBuf>);
 
 impl Cleanup {
-    fn remove_now(&mut self) {
-        if let Some(path) = self.0.take() {
-            let _ = std::fs::remove_dir_all(path);
-        }
+    fn remove_now(&mut self) -> std::io::Result<()> {
+        let Some(path) = self.0.as_ref() else {
+            return Ok(());
+        };
+        crate::checkpoint_copy::remove_tree(path)?;
+        self.0 = None;
+        Ok(())
     }
 }
 
 impl Drop for Cleanup {
     fn drop(&mut self) {
-        self.remove_now();
+        let _ = self.remove_now();
     }
 }
 
