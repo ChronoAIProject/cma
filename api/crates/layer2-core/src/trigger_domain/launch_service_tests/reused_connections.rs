@@ -301,6 +301,18 @@ async fn legacy_reused_draft_records_each_newly_checked_service() {
         .events(&fixture.caller, &draft.id, draft.event_head, None)
         .await
         .unwrap();
+    let refreshed = fixture
+        .service
+        .read(&fixture.caller, &draft.id)
+        .await
+        .unwrap();
+    let check = refreshed
+        .steps
+        .iter()
+        .find(|step| step.key == LaunchStepKey::CheckingRequirements)
+        .unwrap();
+    assert_eq!(check.status, LaunchStepStatus::Blocked);
+    assert!(check.completed_at.is_none());
     assert_eq!(
         events.iter().map(|event| &event.kind).collect::<Vec<_>>(),
         requirements(ServiceRequirementState::Missing)
@@ -309,6 +321,9 @@ async fn legacy_reused_draft_records_each_newly_checked_service() {
                 service: requirement.service,
                 state: requirement.state,
             })
+            .chain([LaunchEventKind::StepChanged {
+                step: check.clone()
+            }])
             .collect::<Vec<_>>()
             .iter()
             .collect::<Vec<_>>()

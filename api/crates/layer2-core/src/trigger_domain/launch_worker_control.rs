@@ -117,6 +117,7 @@ impl Launch {
             let mut events = requirement_event(self, &reason, requirement, false, &at)?
                 .into_iter()
                 .collect::<Vec<_>>();
+            events.extend(self.sync_requirement_step(&at)?);
             let step = self.work.step;
             self.work
                 .defer(holder, fence, retry_at.clone())
@@ -159,6 +160,7 @@ impl Launch {
             let mut events = requirement_event(self, &expected_reason, requirement, true, &at)?
                 .into_iter()
                 .collect::<Vec<_>>();
+            events.extend(self.sync_requirement_step(&at)?);
             self.blocked_reason = None;
             events.push(self.set_step(
                 worker_step_key(self.work.step)?,

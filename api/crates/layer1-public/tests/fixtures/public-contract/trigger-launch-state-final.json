@@ -31,10 +31,9 @@
             },
             {
               "key": "checking_requirements",
-              "status": "completed",
-              "safe_detail": "",
-              "started_at": "2026-09-07T00:00:00Z",
-              "completed_at": "2026-09-07T00:00:00Z"
+              "status": "blocked",
+              "safe_detail": "Connect required accounts to continue",
+              "started_at": "2026-09-07T00:00:00Z"
             },
             {
               "key": "sandbox",
@@ -111,7 +110,6 @@
         "launch_review_create_requirements_checked_at": "/requirements/checked_at",
         "launch_review_create_steps_0_completed_at": "/steps/0/completed_at",
         "launch_review_create_steps_0_started_at": "/steps/0/started_at",
-        "launch_review_create_steps_1_completed_at": "/steps/1/completed_at",
         "launch_review_create_steps_1_started_at": "/steps/1/started_at",
         "launch_review_create_updated_at": "/updated_at",
         "public_id": "/public_id",
@@ -179,10 +177,9 @@
             },
             {
               "key": "checking_requirements",
-              "status": "completed",
-              "safe_detail": "",
-              "started_at": "2026-09-07T00:00:00Z",
-              "completed_at": "2026-09-07T00:00:00Z"
+              "status": "blocked",
+              "safe_detail": "Connect required accounts to continue",
+              "started_at": "2026-09-07T00:00:00Z"
             },
             {
               "key": "sandbox",
@@ -259,7 +256,6 @@
         "launch_review_create_requirements_checked_at": "/requirements/checked_at",
         "launch_review_create_steps_0_completed_at": "/steps/0/completed_at",
         "launch_review_create_steps_0_started_at": "/steps/0/started_at",
-        "launch_review_create_steps_1_completed_at": "/steps/1/completed_at",
         "launch_review_create_steps_1_started_at": "/steps/1/started_at",
         "launch_review_create_updated_at": "/updated_at",
         "public_id": "/public_id",
@@ -329,10 +325,9 @@
             },
             {
               "key": "checking_requirements",
-              "status": "completed",
-              "safe_detail": "",
-              "started_at": "2026-09-07T00:00:00Z",
-              "completed_at": "2026-09-07T00:00:00Z"
+              "status": "blocked",
+              "safe_detail": "Connect required accounts to continue",
+              "started_at": "2026-09-07T00:00:00Z"
             },
             {
               "key": "sandbox",
@@ -409,7 +404,6 @@
         "launch_review_create_requirements_checked_at": "/requirements/checked_at",
         "launch_review_create_steps_0_completed_at": "/steps/0/completed_at",
         "launch_review_create_steps_0_started_at": "/steps/0/started_at",
-        "launch_review_create_steps_1_completed_at": "/steps/1/completed_at",
         "launch_review_create_steps_1_started_at": "/steps/1/started_at",
         "launch_review_create_updated_at": "/updated_at",
         "public_id": "/public_id",
@@ -536,10 +530,9 @@
             },
             {
               "key": "checking_requirements",
-              "status": "completed",
-              "safe_detail": "",
-              "started_at": "2026-09-07T00:00:00Z",
-              "completed_at": "2026-09-07T00:00:00Z"
+              "status": "blocked",
+              "safe_detail": "Connect required accounts to continue",
+              "started_at": "2026-09-07T00:00:00Z"
             },
             {
               "key": "sandbox",
@@ -616,7 +609,6 @@
         "launch_review_create_requirements_checked_at": "/requirements/checked_at",
         "launch_review_create_steps_0_completed_at": "/steps/0/completed_at",
         "launch_review_create_steps_0_started_at": "/steps/0/started_at",
-        "launch_review_create_steps_1_completed_at": "/steps/1/completed_at",
         "launch_review_create_steps_1_started_at": "/steps/1/started_at",
         "launch_review_create_updated_at": "/updated_at",
         "public_id": "/public_id",
@@ -743,10 +735,9 @@
             },
             {
               "key": "checking_requirements",
-              "status": "completed",
-              "safe_detail": "",
-              "started_at": "2026-09-07T00:00:00Z",
-              "completed_at": "2026-09-07T00:00:00Z"
+              "status": "blocked",
+              "safe_detail": "Connect required accounts to continue",
+              "started_at": "2026-09-07T00:00:00Z"
             },
             {
               "key": "sandbox",
@@ -823,7 +814,6 @@
         "launch_review_create_requirements_checked_at": "/requirements/checked_at",
         "launch_review_create_steps_0_completed_at": "/steps/0/completed_at",
         "launch_review_create_steps_0_started_at": "/steps/0/started_at",
-        "launch_review_create_steps_1_completed_at": "/steps/1/completed_at",
         "launch_review_create_steps_1_started_at": "/steps/1/started_at",
         "launch_review_create_updated_at": "/updated_at",
         "public_id": "/public_id",
@@ -950,10 +940,9 @@
             },
             {
               "key": "checking_requirements",
-              "status": "completed",
-              "safe_detail": "",
-              "started_at": "2026-09-07T00:00:00Z",
-              "completed_at": "2026-09-07T00:00:00Z"
+              "status": "blocked",
+              "safe_detail": "Connect required accounts to continue",
+              "started_at": "2026-09-07T00:00:00Z"
             },
             {
               "key": "sandbox",
@@ -1030,7 +1019,6 @@
         "launch_review_create_requirements_checked_at": "/requirements/checked_at",
         "launch_review_create_steps_0_completed_at": "/steps/0/completed_at",
         "launch_review_create_steps_0_started_at": "/steps/0/started_at",
-        "launch_review_create_steps_1_completed_at": "/steps/1/completed_at",
         "launch_review_create_steps_1_started_at": "/steps/1/started_at",
         "launch_review_create_updated_at": "/updated_at",
         "public_id": "/public_id",
