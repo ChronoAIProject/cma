@@ -1314,3 +1314,63 @@ image identity and measured results for each behavior, with unknowns left explic
   untagged converted Docker image were removed after checking they were unused.
   Both are reproducible build artifacts; no user files or production snapshots
   were deleted by that cleanup.
+
+## Persistent storage capability proof — 2026-09-09
+
+- This turn follows the node-loss finding with a bounded, credential-free storage
+  experiment in a temporary namespace, cma-storage-check-20260909. It uses the
+  exact a70ab086 Linux runtime image, production gVisor runtime class, UID 10001,
+  disabled service-account token mounting, an XFS persistent disk and exclusive
+  ReadWriteOncePod access. No CMA Sandbox record, owner conversation or live
+  production runtime was modified by the experiment.
+- File-level FICLONE still fails with ENOTTY on the real XFS persistent mount.
+  Changing the disk filesystem alone therefore does not provide the required
+  fast immutable source inside this gVisor runtime. Evidence:
+  storage-capability-L1nIID/capability.json under /tmp/cma-trureturing-loop.LvTezb.
+- A CSI disk snapshot completed in 74,816 ms for the initial fixture. The second
+  snapshot published its creation timestamp while still not ready at 17,406 ms;
+  it became ready at 67,444 ms. During that pending-copy interval, the runtime
+  modified an existing file, deleted two files and created two directories with
+  new content. The snapshot remained not ready after those operations finished.
+  Evidence: storage-snapshot-concurrency-dczp3b/capture.json and mutation.json.
+- A distinct PVC restored from that second snapshot contains the exact original
+  file content and both subsequently deleted files, and excludes both subsequent
+  directory creations. The original live volume contains the newer changes.
+  The restored subdirectory is owned by UID 10001 and writable by a new non-root
+  runtime without fsGroup, proving that an initialized subPath can retain its
+  ownership without changing the shared provider's Pod template. This is a
+  filesystem capability proof; it does not yet prove CMA conversation/metadata
+  consistency, a universally safe capture barrier or uninterrupted app flows.
+- The source test Pod was deleted with a UID precondition. A replacement Pod
+  was required to run on a different node and mounted the same PVC UID/PV.
+  Latest file content, new directories, prior deletions and further writes all
+  passed in 22,832 ms. Evidence: storage-node-replacement-x1cikT/result.json and
+  snapshot-restore.json. This is a controlled Pod replacement, not a second
+  actual node shutdown or a production CMA Agent recovery.
+- Cleanup storage-capability-cleanup-B6Kqxn verified the exact isolated targets
+  and removed both completed test Pods, two PVCs/PVs, two disk snapshots and
+  their contents, the snapshot class and namespace. CSI deletion finalizers
+  completed. The GCP identity cannot directly read compute snapshots, so direct
+  raw GCP inspection was unavailable; no broader IAM permission was requested.
+  Synthetic test data is discarded; local verification evidence is retained.
+- The adapter now has typed existing-volume references, rejects implicit
+  provider allocation/deletion and malformed or overlapping mount paths before
+  network access, and includes every mount field in the runtime request's
+  fingerprint. Volume-free requests preserve their existing golden identity
+  and wire shape. This is a prerequisite only: runtime rendering still supplies
+  no volumes, and no production configuration or image was changed this turn.
+  Source commit 9e5a1a1a passes all 127 adapter tests, all-target/all-feature
+  Clippy, whole-workspace all-target/all-feature compilation, formatting,
+  diff validation and the adapter source secret scan.
+- Next implementation must durably allocate and own each Sandbox home, initialize
+  credential-free directories, transfer warm ownership before credentials, retain
+  the disk across runtime loss and release it through recorded lifecycle cleanup.
+  Snapshot orchestration must then capture and export an immutable disk view
+  while live operations continue, with conversation metadata from the same view,
+  correct post-capture creation/deletion handling and bounded latest-only cleanup.
+  No capture-duration writer fence may be carried forward as completion of the
+  user's uninterrupted-save requirement. All retained acceptance remains active.
+- Final production readback warm-node-loss-lcwaAs reconfirmed the original owner
+  histories unchanged and the failed test conversation still readable. API/web
+  remain 1/1 Ready and Available. The failed test is retained for the recovery
+  work; no replacement success is claimed for it. Local disk remains 15 GiB free.
