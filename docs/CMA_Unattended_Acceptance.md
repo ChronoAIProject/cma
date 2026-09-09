@@ -1737,3 +1737,19 @@ image identity and measured results for each behavior, with unknowns left explic
   publication and cleanup, current Agent changes after capture, and production
   concurrency/recovery acceptance remain required. The cluster home-role
   dependency remains unchanged, with the prepared API image still undeployed.
+
+## Snapshot export source correction — 2026-09-10
+
+- The real Linux export campaign found a source/configuration defect: the offline
+  command used writable export output as its installation-journal root. Hosted
+  persistent runtimes place that journal in the same disk's transfer mount at
+  /var/lib/cma-transfer/cma-checkpoints. The exporter now reads that captured
+  path and requires it, home and runtime state all to be mounted read-only.
+  Output remains separately writable. A valid installation record placed only
+  in output cannot authorize export; no missing source record is repaired.
+- The isolated Docker campaign also now reproduces the hosted TMPDIR and transfer
+  mount, copies all three source mounts before starting the live writer, and
+  checks writable-source refusal independently for home, state and transfer.
+  All 205 runnable runtime tests pass, with two existing ignored tests; formatting
+  and all-target/all-feature runtime Clippy pass. The corrected Linux image check
+  is pending; this source fix is not deployed or production acceptance.

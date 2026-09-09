@@ -28,7 +28,7 @@ pub(crate) async fn run(arguments: &[std::ffi::OsString]) -> Result<()> {
     request
         .validate()
         .map_err(|_| invalid("snapshot export request is invalid"))?;
-    let config = source_config(&request, &output)?;
+    let config = source_config(&request)?;
     let source = ReadOnlySource::open(config, &output)?;
     let receipt = tokio::task::spawn_blocking(move || export(&source, &request, &output))
         .await
@@ -41,7 +41,7 @@ pub(crate) async fn run(arguments: &[std::ffi::OsString]) -> Result<()> {
     Ok(())
 }
 
-fn source_config(request: &HomeSnapshotExportRequest, output: &Path) -> Result<RuntimeConfig> {
+fn source_config(request: &HomeSnapshotExportRequest) -> Result<RuntimeConfig> {
     let sandbox_id = &request.snapshot.home.request.sandbox_id;
     crate::paths::safe_component(sandbox_id, "snapshot sandbox id")?;
     Ok(RuntimeConfig {
@@ -57,7 +57,10 @@ fn source_config(request: &HomeSnapshotExportRequest, output: &Path) -> Result<R
         ),
         home: PathBuf::from("/home/cma"),
         state_root: PathBuf::from("/var/lib/cma-runtime").join(sandbox_id),
-        checkpoint_root: output.to_path_buf(),
+        // Hosted persistent homes place TMPDIR on the same disk as home and
+        // runtime state. Installation and writer journals live beneath it;
+        // the export output must never stand in for that captured authority.
+        checkpoint_root: PathBuf::from("/var/lib/cma-transfer/cma-checkpoints"),
         install_env: BTreeMap::new(),
         process_env: BTreeMap::new(),
         model_proxy: None,
@@ -74,18 +77,15 @@ struct ReadOnlySource {
 
 impl ReadOnlySource {
     fn open(config: RuntimeConfig, output: &Path) -> Result<Self> {
-        for path in [&config.home, &config.state_root, output] {
+        io::directory(output)?;
+        for path in [&config.home, &config.state_root, &config.checkpoint_root] {
             io::directory(path)?;
+            if output.starts_with(path) || path.starts_with(output) || !io::read_only(path)? {
+                return Err(invalid("snapshot home and journals must be mounted read-only with separate writable export storage"));
+            }
         }
-        if output.starts_with(&config.home)
-            || config.home.starts_with(output)
-            || output.starts_with(&config.state_root)
-            || config.state_root.starts_with(output)
-            || !io::read_only(&config.home)?
-            || !io::read_only(&config.state_root)?
-            || io::read_only(output)?
-        {
-            return Err(invalid("snapshot home and journals must be mounted read-only with separate writable export storage"));
+        if io::read_only(output)? {
+            return Err(invalid("snapshot export output must be mounted writable"));
         }
         Ok(Self { config })
     }
