@@ -40,7 +40,7 @@ Monitor disk usage and inspect exact targets before removing stale artifacts.
 The previously deployed API includes bounded concurrent lifecycle reconciliation;
 see `CMA_Production_Verification.md` for image digests and recorded checks. That
 improves unrelated deletion latency but does not remove snapshot writer fencing.
-The last recorded README-trigger revival took 508,520 ms; performance work remains.
+The latest recorded README-trigger revival took 368,142 ms; performance work remains.
 
 Owner histories remain in their existing Agents. Runtime changes must not silently
 rotate or pause the owner's active Sandbox. Production acceptance requires actual
@@ -493,3 +493,22 @@ image identity and measured results for each behavior, with unknowns left explic
   this run is approximately 69% shorter, not a same-object controlled benchmark.
   Full README-trigger revival is being observed separately in
   current-readme-repeat-alV1hu; its admitted Launch must not be repeated.
+- Production current-readme-repeat-alV1hu passed with exactly one README Trigger
+  click, Launch lch_88b886793b6d4b09b0a19b7dbf86ad50, in 368,142 ms. All hierarchy
+  IDs and both complete histories were preserved, with no first-prompt replay.
+  Compared with the earlier 505,850 ms run, observed revival was 27% shorter.
+  Home restore still occupied approximately 277 seconds and queued delivery
+  approximately 61 seconds; latency is not considered finished. Desktop/mobile
+  Launch and Sandbox progress was bounded and timestamped, with unavailable
+  children hidden. A subsequent 181,965 ms had no early snapshot; this was not
+  an overdue-snapshot or full thirty-minute boundary test. The README came from
+  GitHub's authenticated rendered API at its source origin, not a signed-in
+  GitHub browser page or fresh-sign-in acceptance. Do not repeat this Launch.
+- Settled production trigger-quick-messages-03lBaD passed at 1440/390/320px in
+  both themes: source name, descriptions, enabled shortcuts, exact intercepted
+  requests and retained drafts. Zero commands were forwarded and both complete
+  histories were unchanged. Reviewed settled screenshots confirm correct layout;
+  the earlier README harness captured loading and an unfinished responsive grid
+  transition, which are not settled visual acceptance evidence. Owner Sandbox
+  and both Agents remain available after revival; no API/runtime rollout is
+  permitted while any owner runtime remains. Host disk has 41 GiB free.
