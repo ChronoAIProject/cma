@@ -159,6 +159,63 @@ describe('minimal review', () => {
 });
 
 describe('durable progress', () => {
+  it('keeps missing accounts blocked until a durable completion is observed', async () => {
+    const client = publicClient();
+    let stream: LaunchStreamOptions | undefined;
+    const waiting: Launch = {
+      ...PUBLIC_RECORD,
+      steps: PUBLIC_RECORD.steps.map((step) =>
+        step.key === 'checking_requirements'
+          ? {
+              key: step.key,
+              status: 'blocked',
+              safe_detail: 'Connect required accounts to continue',
+              started_at: PUBLIC_RECORD.created_at,
+            }
+          : step,
+      ),
+    };
+    vi.mocked(client.requests.read).mockResolvedValue(waiting);
+    vi.mocked(client.requests.stream).mockImplementation(async (_id, options) => {
+      stream = options;
+      await new Promise(() => undefined);
+    });
+    render(<Progress client={client} id={waiting.id} onNavigate={vi.fn()} />);
+    await screen.findByText('Connect required accounts to continue');
+    await waitFor(() => expect(stream).toBeDefined());
+    const row = screen.getByRole('heading', { name: "Checking what's needed" }).closest('li');
+    expect(row).toHaveTextContent('Needs you');
+    expect(row).not.toHaveTextContent('Done');
+    const checked: Launch = {
+      ...waiting,
+      revision: 2,
+      event_head: 2,
+      steps: waiting.steps.map((step) =>
+        step.key === 'checking_requirements'
+          ? {
+              ...step,
+              status: 'completed',
+              safe_detail: 'Required accounts are connected',
+              completed_at: waiting.updated_at,
+            }
+          : step,
+      ),
+    };
+    vi.mocked(client.requests.read).mockResolvedValue(checked);
+    await act(async () => {
+      await stream?.onEvent({
+        launch_id: waiting.id,
+        seq: 2,
+        appended_at: waiting.updated_at,
+        kind: { type: 'step_changed', step: checked.steps[1]! },
+      });
+    });
+    expect(row).toHaveTextContent('Done');
+    expect(row).toHaveTextContent('Required accounts are connected');
+    expect(row).not.toHaveTextContent('Needs you');
+    expect(client.requests.start).not.toHaveBeenCalled();
+  });
+
   it('does not acknowledge an event before its refreshed durable record is visible', async () => {
     const client = publicClient();
     let stream: LaunchStreamOptions | undefined;

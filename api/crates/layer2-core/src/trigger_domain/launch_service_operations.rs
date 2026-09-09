@@ -115,6 +115,11 @@ impl LaunchService {
             can_start_now: true,
         };
         let now = now_rfc3339();
+        events.extend(
+            launch
+                .sync_requirement_step(&now)
+                .map_err(|error| LaunchServiceError::Corrupt(error.to_string()))?,
+        );
         let started = if consent_recorded {
             launch.start_confirmed(now.clone())
         } else {
@@ -257,13 +262,14 @@ impl LaunchService {
         mut launch: Launch,
         requirements: RequirementsSnapshot,
         review: ReviewRequirements,
-        events: Vec<LaunchEventKind>,
+        mut events: Vec<LaunchEventKind>,
     ) -> Result<Launch, LaunchServiceError> {
         let expected_revision = launch.revision;
         let now = now_rfc3339();
-        launch
+        let progress = launch
             .refresh_review(requirements, review, now.clone())
             .map_err(|error| LaunchServiceError::Corrupt(error.to_string()))?;
+        events.extend(progress);
         self.launches
             .commit_launch(LaunchCommit {
                 expected_revision,

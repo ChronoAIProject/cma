@@ -3,9 +3,10 @@ use crate::seconds_from_rfc3339;
 
 use super::requirements::valid_digest;
 use super::{
-    Launch, LaunchBlockedReason, LaunchConfirmation, LaunchConsentSurface, LaunchSeed, LaunchState,
-    LaunchStep, LaunchStepKey, LaunchStepStatus, LaunchWorkState, LaunchWorkStep,
-    RequirementsSnapshot, ResolvedResource, ReviewNeed, ReviewRequirements, TriggerError,
+    Launch, LaunchBlockedReason, LaunchConfirmation, LaunchConsentSurface, LaunchEventKind,
+    LaunchSeed, LaunchState, LaunchStep, LaunchStepKey, LaunchStepStatus, LaunchWorkState,
+    LaunchWorkStep, RequirementsSnapshot, ResolvedResource, ReviewNeed, ReviewRequirements,
+    TriggerError,
 };
 
 impl Launch {
@@ -15,7 +16,7 @@ impl Launch {
         } else {
             FirstMessageDelivery::Completed
         };
-        let launch = Self {
+        let mut launch = Self {
             id: crate::LaunchId::generate(),
             trigger_id: seed.trigger_id,
             revision_digest: seed.revision_digest,
@@ -45,6 +46,7 @@ impl Launch {
             ready_at: None,
             revision: 1,
         };
+        launch.sync_requirement_step(&launch.created_at.clone())?;
         launch.validate()?;
         Ok(launch)
     }
@@ -102,6 +104,7 @@ impl Launch {
 
     fn begin_start(&mut self, at: String) -> Result<(), TriggerError> {
         self.transition(LaunchState::Resolving, at.clone())?;
+        self.sync_requirement_step(&at)?;
         self.started_at = Some(at.clone());
         self.work = LaunchWorkState::new(LaunchWorkStep::ResolveSandbox, at);
         self.validate()
@@ -131,7 +134,7 @@ impl Launch {
         requirements: RequirementsSnapshot,
         review: ReviewRequirements,
         at: String,
-    ) -> Result<(), TriggerError> {
+    ) -> Result<Option<LaunchEventKind>, TriggerError> {
         if self.state != LaunchState::Draft || seconds_from_rfc3339(&at).is_none() {
             return Err(TriggerError::new("launch_not_reviewable", "state"));
         }
@@ -139,9 +142,42 @@ impl Launch {
         review.validate()?;
         self.requirements = requirements;
         self.review = review;
+        let event = self.sync_requirement_step(&at)?;
         self.updated_at = at;
         self.bump_revision()?;
-        self.validate()
+        self.validate()?;
+        Ok(event)
+    }
+
+    pub(super) fn sync_requirement_step(
+        &mut self,
+        at: &str,
+    ) -> Result<Option<LaunchEventKind>, TriggerError> {
+        let missing = self
+            .requirements
+            .services
+            .iter()
+            .any(|service| service.needs_connection());
+        let (status, detail) = if missing {
+            (
+                LaunchStepStatus::Blocked,
+                "Connect required accounts to continue",
+            )
+        } else {
+            (
+                LaunchStepStatus::Completed,
+                "Required accounts are connected",
+            )
+        };
+        if self
+            .steps
+            .iter()
+            .any(|step| step.key == LaunchStepKey::CheckingRequirements && step.status == status)
+        {
+            return Ok(None);
+        }
+        self.set_step(LaunchStepKey::CheckingRequirements, status, detail, at)
+            .map(Some)
     }
 
     pub fn transition(&mut self, next: LaunchState, at: String) -> Result<(), TriggerError> {

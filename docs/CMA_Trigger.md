@@ -279,6 +279,13 @@ display text. Start rechecks current connections and requirements before
 admission. Replaying the original create key returns its original response;
 it is not a substitute for Start and does not refresh a recorded draft.
 
+The recorded `checking_requirements` step stays `blocked` while any service is
+missing, inactive or unknown. Partial verification never marks it complete.
+Successful Start verification records completion and its timestamp; losing a
+required connection during preparation records it as blocked again. These step
+changes use the same durable Launch events as resource preparation, so reloads,
+event streams and other public clients see the same status.
+
 Rollback compatibility: older API validation rejects an unstarted Launch with a
 recorded confirmation. Once this release admits such a draft, any rollback API
 must retain this validation support, including for cancelled unstarted Launches.

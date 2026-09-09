@@ -53,6 +53,14 @@ async fn no_review_click_retains_exact_consent_through_connection_setup_and_rest
             .collect::<Vec<_>>()
     );
     assert!(draft.started_at.is_none());
+    let check = draft
+        .steps
+        .iter()
+        .find(|step| step.key == LaunchStepKey::CheckingRequirements)
+        .unwrap();
+    assert_eq!(check.status, LaunchStepStatus::Blocked);
+    assert!(check.completed_at.is_none());
+    assert_eq!(check.safe_detail, "Connect required accounts to continue");
     assert_eq!(draft.work.step, LaunchWorkStep::None);
     assert!(fixture
         .launches
@@ -102,6 +110,14 @@ async fn no_review_click_retains_exact_consent_through_connection_setup_and_rest
             .iter()
             .all(|need| matches!(need, ReviewNeed::Connection { .. })));
         assert_eq!(refreshed.state, LaunchState::Draft);
+        assert_eq!(
+            refreshed
+                .steps
+                .iter()
+                .find(|step| step.key == LaunchStepKey::CheckingRequirements)
+                .unwrap(),
+            check
+        );
     }
     fixture.broker.set(requirements(3));
     let started = restarted
@@ -120,6 +136,14 @@ async fn no_review_click_retains_exact_consent_through_connection_setup_and_rest
     assert_eq!(started.trust, draft.trust);
     assert_eq!(started.revision_digest, draft.revision_digest);
     assert!(started.review.needs.is_empty());
+    let completed = started
+        .steps
+        .iter()
+        .find(|step| step.key == LaunchStepKey::CheckingRequirements)
+        .unwrap();
+    assert_eq!(completed.status, LaunchStepStatus::Completed);
+    assert_eq!(completed.completed_at, started.started_at);
+    assert_eq!(completed.safe_detail, "Required accounts are connected");
     assert_eq!(started.first_message, FirstMessageDelivery::Queued);
     let events = restarted
         .events(&fixture.caller, &draft.id, 0, None)
@@ -133,6 +157,7 @@ async fn no_review_click_retains_exact_consent_through_connection_setup_and_rest
         1
     );
     assert_eq!(fixture.stats().await.launches_total, 1);
+    assert_eq!(events.iter().filter(|event| matches!(&event.kind, LaunchEventKind::StepChanged { step } if step.key == LaunchStepKey::CheckingRequirements && step.status == LaunchStepStatus::Completed)).count(), 1);
 }
 
 #[tokio::test]

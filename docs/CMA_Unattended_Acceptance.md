@@ -631,3 +631,33 @@ image identity and measured results for each behavior, with unknowns left explic
   earlier CMA browser cookie returned HTTP 401 during the 06:39 UTC read-only
   observation, so no newer runtime or history status is claimed from that read.
   No registry push, manifest pin or rollout occurred. Disk has 33 GiB free.
+- Sources 2014776f/d4fedc84 are pushed on the existing feature branch without
+  a merge. Renewed CMA access through the locally authenticated NyxID CLI at
+  06:41 UTC, using the real state/PKCE callback and checking the exact owner.
+  Evidence: cli-owner-session-rTwYoz/result.json. This was authentication only:
+  no Trigger visit or resource command, and not a fresh-browser UX proof.
+- At 06:42 UTC the owner Sandbox was Live on unchanged runtime 14c05f26, with
+  one Workspace and no capture/lifecycle operation. The main Agent now has six
+  turns, SHA-256 c51e47b1b45c5459d6ebec1b7595c504bea18b06034a8c81896c488c5eba4c77.
+  At 06:44 UTC its original five-turn prefix matched the previous full-history
+  hash exactly. The other Agent retains its one-turn hash
+  1e9e314f75d3045ce6b26e8d9be46b3f7ba580143c23c509afb5b553b11be303.
+  This continuation sent no message, Launch, pause or other owner-work mutation.
+  Subsequent preservation checks must include the owner's newly added turn.
+- Corrected Checking what's needed to remain blocked for missing/inactive/unknown
+  accounts, with no completed timestamp. Start completes it only after successful
+  verification; preparation-time connection loss and recovery update the same
+  durable step and event stream. Partial checks preserve the blocked step without
+  duplicate completion. Updated shared HTTP expectations, preserving the exact
+  u64 overflow fixture after a mechanical JSON edit initially rounded its value.
+- The progress batch passes all 1,617 isolated backend tests and 41 selected
+  Mongo integration tests, Clippy, Rust formatting, 1,397 TypeScript SDK contract
+  checks and Rust SDK replay. Nineteen focused frontend tests, TypeScript, ESLint
+  and formatting pass. Browser recorded-consent-local-Xrgcol/result.json passes
+  all six viewport/theme cases, connection-only reload and actual completed-step
+  rendering after verification. Screenshots were inspected; no production
+  requests were sent. The same 13 existing source-size violations remain; no
+  gate was weakened. Disposable Mongo containers are absent. Disk has 32 GiB free.
+- Final frontend run passes all 1,182 tests across 108 files. The final Rust
+  doc-test gate also passes. These commits are source/test evidence only;
+  production API, web and runtime images have not changed during this turn.

@@ -1310,6 +1310,14 @@ async fn start_rechecks_requirements_and_requires_the_exact_trust_digest() {
                 service: ServiceId::new("slack"),
                 state: ServiceRequirementState::Satisfied,
             },
+            LaunchEventKind::StepChanged {
+                step: started
+                    .steps
+                    .iter()
+                    .find(|step| step.key == LaunchStepKey::CheckingRequirements)
+                    .unwrap()
+                    .clone(),
+            },
             LaunchEventKind::ConfirmationRecorded,
             LaunchEventKind::StateChanged {
                 from: LaunchState::Draft,
