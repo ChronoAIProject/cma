@@ -105,6 +105,12 @@ impl Sandbox {
         }
         if let (Some(current), Some(binding)) = (&self.runtime, &next.runtime) {
             if current.runtime_id == binding.runtime_id
+                && current.boot_id.is_some()
+                && current.boot_id != binding.boot_id
+            {
+                return Err(invalid_generation());
+            }
+            if current.runtime_id == binding.runtime_id
                 && current.provision_generation.is_some()
                 && current.provision_generation != binding.provision_generation
             {
@@ -130,6 +136,18 @@ impl Sandbox {
 
     pub(super) fn validate_runtime_generation(&self) -> Result<(), SandboxModelError> {
         let high_water = self.lifecycle.runtime_generation_high_water;
+        if self.runtime.as_ref().is_some_and(|runtime| {
+            !runtime.valid_boot_id()
+                || (runtime.boot_id.is_some()
+                    && self
+                        .lifecycle
+                        .home
+                        .as_ref()
+                        .and_then(|home| home.attachment())
+                        .is_none())
+        }) {
+            return Err(invalid_generation());
+        }
         if self
             .runtime
             .as_ref()

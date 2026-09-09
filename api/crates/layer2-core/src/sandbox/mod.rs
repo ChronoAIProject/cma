@@ -47,6 +47,7 @@ mod queued_message;
 mod revive;
 mod rotate;
 mod runtime_generation;
+mod runtime_health;
 mod runtime_recovery;
 mod runtime_recovery_agents;
 #[allow(clippy::module_inception)]

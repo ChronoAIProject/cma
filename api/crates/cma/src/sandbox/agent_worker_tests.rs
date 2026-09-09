@@ -108,6 +108,7 @@ impl Harness {
             .await
             .unwrap();
         sandbox.runtime = Some(RuntimeBinding {
+            boot_id: None,
             provision_generation: Some(generation),
             runtime_id: runtime.0.clone(),
             runtime_version: CodexSandboxSpec::default().deployment.image.uri,

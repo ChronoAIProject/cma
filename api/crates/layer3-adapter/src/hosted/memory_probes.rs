@@ -5,6 +5,32 @@ use crate::wire::{RequestFrame, WireFailure, WireOperation};
 use crate::{AdapterError, AgentSlot, ConversationUpdate, RuntimeHandle};
 
 impl InMemoryHostedBackend {
+    /// Simulate a supervisor replacement while retaining provider and disk identity.
+    /// Filesystem receipts survive; credentials and live Agent processes do not.
+    pub async fn restart_persistent_process(&self, handle: &RuntimeHandle) -> crate::Result<()> {
+        let mut runtimes = self.runtimes.lock().await;
+        let runtime = runtimes
+            .get_mut(handle)
+            .ok_or_else(|| AdapterError::Unavailable("runtime is absent".into()))?;
+        if runtime
+            .request
+            .env
+            .get("CHRONO_RUNTIME_HOME_IDENTITY")
+            .is_none_or(String::is_empty)
+        {
+            return Err(AdapterError::Rejected(
+                "runtime has no persistent home".into(),
+            ));
+        }
+        let incarnation = self.next_handle.fetch_add(1, Ordering::Relaxed) + 1;
+        runtime.boot_id = format!("{incarnation:032x}");
+        runtime.credential_delivered = false;
+        for agent in runtime.agents.values_mut() {
+            agent.running = false;
+        }
+        Ok(())
+    }
+
     pub async fn snapshot(&self, handle: &RuntimeHandle) -> crate::Result<InMemoryRuntimeSnapshot> {
         self.runtimes
             .lock()

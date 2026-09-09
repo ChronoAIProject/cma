@@ -239,14 +239,38 @@ impl SandboxReconciler {
         {
             return Ok(false);
         }
+        let mut next = sandbox.clone();
         if binding.provision_generation.is_none() {
-            let mut next = sandbox.clone();
             next.record_adopted_runtime_generation(
                 binding,
                 observation.generation,
                 rfc3339_at(now),
             )
             .map_err(|error| corrupt(&error.to_string()))?;
+        }
+        if sandbox.lifecycle.home.is_some() {
+            let status = self
+                .adapter
+                .runtime_status(&observation.handle)
+                .await
+                .map_err(provider_error)?;
+            if !next
+                .runtime_process_matches(&status)
+                .map_err(|error| corrupt(&error.to_string()))?
+                || (matches!(
+                    sandbox.status,
+                    SandboxStatus::Active
+                        | SandboxStatus::CredentialRotating
+                        | SandboxStatus::Pausing
+                ) && (!status.installation_ready || !status.credential_ready))
+            {
+                return Ok(false);
+            }
+            let expected = next.runtime.clone().expect("adopted runtime is bound");
+            next.record_runtime_boot(&expected, &status, rfc3339_at(now))
+                .map_err(|error| corrupt(&error.to_string()))?;
+        }
+        if next != *sandbox {
             self.store.save_sandbox(sandbox.revision, next).await?;
         }
         Ok(true)

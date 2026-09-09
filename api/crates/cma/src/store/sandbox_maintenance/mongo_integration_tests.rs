@@ -46,6 +46,7 @@ pub(in crate::store) fn active_sandbox(id: &str) -> Sandbox {
     let mut value = sandbox(id);
     value.name = id.into();
     value.runtime = Some(RuntimeBinding {
+        boot_id: None,
         runtime_id: format!("runtime-{id}"),
         runtime_version: "image-v1".into(),
         provision_generation: Some(1),

@@ -40,6 +40,7 @@ pub(super) fn sandbox() -> Sandbox {
         status: SandboxStatus::Active,
         failure: None,
         runtime: Some(RuntimeBinding {
+            boot_id: None,
             runtime_id: "runtime-old".into(),
             runtime_version: "image-v1".into(),
             provision_generation: None,

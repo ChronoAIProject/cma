@@ -135,7 +135,8 @@ pub(super) fn lifecycle_failure_class(
 }
 
 pub(super) fn valid_runtime_binding(binding: &RuntimeBinding, at: &str) -> bool {
-    binding.runtime_id.trim() == binding.runtime_id
+    binding.valid_boot_id()
+        && binding.runtime_id.trim() == binding.runtime_id
         && !binding.runtime_id.is_empty()
         && binding.runtime_id.len() <= MAX_RUNTIME_ID_BYTES
         && !binding.runtime_id.chars().any(char::is_control)

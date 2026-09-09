@@ -590,6 +590,7 @@ async fn claimed_pause_fixture(store: &MongoSandboxStore, suffix: &str) -> (Sand
     let mut value = sandbox(&format!("sbx_lifecycle_{suffix}"));
     value.name = format!("lifecycle-{suffix}");
     value.runtime = Some(RuntimeBinding {
+        boot_id: None,
         runtime_id: format!("runtime-{suffix}"),
         runtime_version: "image-v1".into(),
         provision_generation: Some(1),

@@ -1498,3 +1498,75 @@ image identity and measured results for each behavior, with unknowns left explic
   formatting and source secret scanning pass. The next step is the pinned Linux
   image and native conversation verification, then durable control-plane source
   selection and production activation. Nonblocking snapshot work remains active.
+- Runtime cb0c99d9 subsequently completed its exact-source Linux/amd64 build at
+  manifest sha256:1aa2d73c547af3cf0ad2ad985ed4ef8504d496fde8fc43691494fb9230976391.
+  Native Docker loading and source/platform identity verification passed, followed
+  by the fixed HIGH/CRITICAL image vulnerability scan and all 21 image contract
+  checks. The contract campaign removed its disposable container and volume.
+  Evidence: runtime-cb0c99d9-build.json, runtime-cb0c99d9-archive.json,
+  runtime-cb0c99d9-trivy.json and runtime-cb0c99d9-contract.json under the retained
+  scratch directory. These checks do not prove native conversation reopening.
+- The status readback still finds API and web each 1/1 Ready at the previously
+  deployed digests. This candidate has not been pushed or deployed, and no
+  production mutation was issued. Native conversation recovery, control-plane
+  integration and consistent nonblocking snapshots remain unfinished. Host disk
+  had approximately 11 GiB free before local image loading and scanning; two
+  earlier targeted Docker cache pruning attempts reclaimed zero bytes.
+
+## Native conversation reopening and process adoption — 2026-09-10
+
+- Local campaign native-home-recovery-am2zjZ uses the exact cb0c99d9 Linux image,
+  the pinned Codex 0.147.0 and ACP bridge 1.4.0, real Workspace/Worktree creation,
+  and three retained Docker volumes. It completes an actual native conversation
+  turn, writes a Worktree file, then forcibly kills the entire container without
+  a close receipt or snapshot. A same-generation replacement refuses reopening
+  with agent_process_not_live. A generation-2 replacement recognizes completed
+  installation, receives credentials again and loads the original conversation.
+- The native session ID remains 01a086db-d725-7121-9b15-777d0f031ae4. Its original
+  transcript byte prefix retains SHA-256
+  b2448e29e475739c9712664063c4491ebc35e5e136b5b2150afa2122085a63f8,
+  the Worktree file is unchanged, and ACP replays the original conversation.
+  A second prompt completes with the first prompt and reply in its actual native
+  model request. Exactly two user-message records exist afterward; no initial
+  prompt was replayed. The response service is a local synthetic fixture inside
+  the network-disabled container. This proves native kernel persistence and
+  reopening, not production model access, the public Trigger or node recovery.
+  All three disposable containers and volumes were removed; only evidence remains.
+- The first campaign attempt PPWIbG used a hyphen in a Workspace ID, which the
+  existing runtime identity contract refuses. Correcting that fixture to use
+  native_workspace produced the passing complete campaign above; the application
+  contract was unchanged. Both attempts cleaned their exact local resources.
+- RuntimeBinding now optionally persists the supervisor boot identity. Owned,
+  warm and replacement provisioning read the exact Sandbox/generation/home-bound
+  status before publishing that binding. Generic Sandbox persistence refuses
+  overwriting or clearing a known boot ID on the same provider runtime. Older
+  volume-free bindings retain their serialized representation and adoption path.
+- Worker attachment checks the recorded process before continuing runtime work.
+  Continuous reconciliation also probes process identity and required readiness;
+  provider Running alone cannot mask a replaced process. Failed status reads do
+  not erase bindings or reclaim resources. Persistent warm checks retire a
+  restarted or credentialed runtime instead of republishing it as available.
+- Seven new core/worker regressions cover durable identity, foreign observations,
+  compatibility, process replacement before credentials, control-plane adoption,
+  unavailable status reads and contaminated/restarted warm environments. The full
+  backend suite passes 1,690 runnable tests, with 187 existing excluded/ignored.
+  All-target/all-feature Clippy, documentation checks (zero doctests), dependency
+  policy and source secret scanning pass. The file-size gate retains the same 12 existing violations; no newly
+  oversized source was introduced.
+- This is still incomplete and not deployed. Reconciliation now detects a process
+  replacement, but durable runtime-loss recovery still selects archive checkpoints.
+  Native-home source selection, preservation of pause/rotation and child-operation
+  intent, exclusive old-runtime removal, mounted archive migration and production
+  storage/configuration remain required before activation. Consistent nonblocking
+  snapshots and all remaining retained acceptance are still active.
+- Read-only production observation warm-node-loss-uNAulp again preserves both
+  original owner conversation hashes and the failed test's completed reply. The
+  retained test remains Failed revision 16 with no runtime or checkpoint. API and
+  web each remain 1/1 Ready. No production mutation occurred in this batch. Host
+  disk reached approximately 9.4 GiB free during compilation; no user data or
+  production resources were deleted.
+- After compilation, two obsolete local OCI archives, runtime-1727bb8d.oci.tar
+  and runtime-d052e746.oci.tar, were removed. Their regular-file identity, exact
+  build/manifest digest and retained Git source commits were checked first.
+  They total 811,852,288 bytes and are reproducible build artifacts; their
+  metadata/evidence, current candidate archive and deployed runtime archive remain.

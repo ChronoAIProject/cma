@@ -1033,6 +1033,7 @@ pub(super) fn sandbox_resource(
             detail: "sandbox provisioning failed".into(),
         }),
         runtime: (status == SandboxStatus::Active).then(|| RuntimeBinding {
+            boot_id: None,
             provision_generation: Some(1),
             runtime_id: "runtime-launch".into(),
             runtime_version: "test".into(),

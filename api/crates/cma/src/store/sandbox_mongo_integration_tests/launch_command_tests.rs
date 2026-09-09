@@ -270,6 +270,7 @@ async fn admit_failed(store: &MongoSandboxStore, suffix: &str, launch_id: &str) 
         detail: "github".into(),
     });
     failed.runtime = Some(RuntimeBinding {
+        boot_id: None,
         runtime_id: format!("runtime-{suffix}"),
         runtime_version: "image-v1".into(),
         provision_generation: Some(1),
