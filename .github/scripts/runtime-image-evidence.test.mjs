@@ -20,6 +20,7 @@ const proof = { checks, artifacts: {
   runtime: '2'.repeat(64), launcher: expected.CODEX_LAUNCHER_SHA256,
   native: expected.CODEX_NATIVE_SHA256_AMD64, acp: expected.CODEX_ACP_SHA256,
   codexVersion: `codex-cli ${expected.CODEX_VERSION}`, acpVersion: expected.CODEX_ACP_VERSION,
+  gh: '3'.repeat(64), ghVersion: expected.GH_VERSION,
 } };
 const record = () => structuredClone({ schema: 'cma-runtime-image-v1', scope: 'local-contract-3-no-provider-or-model', commit, image, sourceReference: null, result: 'pass', cleanup: { containers: 0, volumes: 0 }, proof });
 
@@ -30,6 +31,8 @@ test('closed runtime evidence requires every real probe and exact cleanup', () =
     (v) => { v.proof.checks.pop(); }, (v) => { v.proof.checks = []; },
     (v) => { v.proof.artifacts.native = '0'.repeat(64); },
     (v) => { v.proof.artifacts.runtime = ''; },
+    (v) => { v.proof.artifacts.gh = ''; },
+    (v) => { v.proof.artifacts.ghVersion = '0.0.0'; },
     (v) => { v.cleanup = null; }, (v) => { v.cleanup.containers = 1; },
     (v) => { v.image.Id = `sha256:${'9'.repeat(64)}`; },
     (v) => { v.image.Config.Labels['org.opencontainers.image.source'] = 'https://example.invalid'; },

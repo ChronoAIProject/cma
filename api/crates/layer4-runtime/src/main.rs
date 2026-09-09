@@ -12,6 +12,7 @@ mod conversation;
 mod failure;
 mod fs_durability;
 mod git;
+mod github_proxy;
 mod install;
 mod install_state;
 mod install_state_validation;

@@ -25,6 +25,7 @@ pub(crate) struct RuntimeConfig {
     pub process_env: BTreeMap<String, String>,
     pub model_proxy: Option<ProxyConfig>,
     pub platform_proxy: Option<ProxyConfig>,
+    pub github_proxy: Option<crate::github_proxy::GithubProxyConfig>,
     pub nyxid_url: Option<String>,
     pub allow_local_git: bool,
 }
@@ -83,6 +84,11 @@ impl RuntimeConfig {
             .get("NYXID_URL")
             .map(|value| value.trim().trim_end_matches('/').to_string())
             .filter(|value| !value.is_empty());
+        let github_proxy = crate::github_proxy::configuration(
+            &state_root,
+            &mut process_env,
+            platform_proxy.as_ref(),
+        )?;
 
         Ok(Self {
             bind,
@@ -94,6 +100,7 @@ impl RuntimeConfig {
             process_env,
             model_proxy,
             platform_proxy,
+            github_proxy,
             nyxid_url,
             allow_local_git: false,
         })
@@ -127,6 +134,7 @@ impl RuntimeConfig {
             process_env: env,
             model_proxy: None,
             platform_proxy: None,
+            github_proxy: None,
             nyxid_url: None,
             allow_local_git: true,
         }

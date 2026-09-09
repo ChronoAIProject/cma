@@ -14,7 +14,7 @@ const fields = (value, keys) => assert.deepEqual(Object.keys(value).sort(), [...
 
 export function pins(dockerfile) {
   const result = {};
-  for (const name of ['CODEX_VERSION', 'CODEX_ACP_VERSION', 'CODEX_NATIVE_SHA256_AMD64', 'CODEX_LAUNCHER_SHA256', 'CODEX_ACP_SHA256']) {
+  for (const name of ['CODEX_VERSION', 'CODEX_ACP_VERSION', 'CODEX_NATIVE_SHA256_AMD64', 'CODEX_LAUNCHER_SHA256', 'CODEX_ACP_SHA256', 'GH_VERSION']) {
     const matches = [...dockerfile.matchAll(new RegExp(`^ARG ${name}=([^\\s]+)$`, 'gm'))];
     assert.equal(matches.length, 1);
     result[name] = matches[0][1];
@@ -37,13 +37,15 @@ export function validateImage(image, commit, expectedId) {
 export function validateProbe(proof, expected) {
   fields(proof, ['checks', 'artifacts']);
   assert.deepEqual(proof.checks, checks);
-  fields(proof.artifacts, ['runtime', 'launcher', 'native', 'acp', 'codexVersion', 'acpVersion']);
+  fields(proof.artifacts, ['runtime', 'launcher', 'native', 'acp', 'codexVersion', 'acpVersion', 'gh', 'ghVersion']);
   assert.match(proof.artifacts.runtime, /^[0-9a-f]{64}$/);
   assert.equal(proof.artifacts.launcher, expected.CODEX_LAUNCHER_SHA256);
   assert.equal(proof.artifacts.native, expected.CODEX_NATIVE_SHA256_AMD64);
   assert.equal(proof.artifacts.acp, expected.CODEX_ACP_SHA256);
   assert.equal(proof.artifacts.codexVersion, `codex-cli ${expected.CODEX_VERSION}`);
   assert.equal(proof.artifacts.acpVersion, expected.CODEX_ACP_VERSION);
+  assert.match(proof.artifacts.gh, /^[0-9a-f]{64}$/);
+  assert.equal(proof.artifacts.ghVersion, expected.GH_VERSION);
 }
 
 export function validateEvidence(value, commit, expectedId, expected, sourceReference = null) {
@@ -93,7 +95,7 @@ export function campaign(imageRef, commit, output, command = docker) {
     stage = 'volume-create';
     command(['volume', 'create', '--label', label, identity]);
     stage = 'container-create';
-    command(['create', '--name', identity, '--label', label, '--network', 'none', '--read-only', '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges=true', '--pids-limit', '128', '--memory', '1g', '--cpus', '2', '--tmpfs', '/tmp:rw,nosuid,nodev,size=536870912,mode=1777', '--tmpfs', '/var/lib/cma-runtime:rw,nosuid,nodev,size=67108864,uid=10001,gid=10001,mode=700', '--mount', `type=volume,source=${identity},target=/home/cma`, '--mount', `type=bind,source=${resolve(root, '.github/scripts/runtime-image-probe.mjs')},target=/opt/cma-probe.mjs,readonly`, '--env', `CHRONO_SANDBOX_ID=${identity}`, image.Id]);
+    command(['create', '--name', identity, '--label', label, '--network', 'none', '--read-only', '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges=true', '--pids-limit', '128', '--memory', '1g', '--cpus', '2', '--tmpfs', '/tmp:rw,nosuid,nodev,size=536870912,mode=1777', '--tmpfs', '/var/lib/cma-runtime:rw,nosuid,nodev,size=67108864,uid=10001,gid=10001,mode=700', '--mount', `type=volume,source=${identity},target=/home/cma`, '--mount', `type=bind,source=${resolve(root, '.github/scripts/runtime-image-probe.mjs')},target=/opt/cma-probe.mjs,readonly`, '--mount', `type=bind,source=${resolve(root, '.github/scripts/runtime-github-probe.mjs')},target=/opt/runtime-github-probe.mjs,readonly`, '--env', `CHRONO_SANDBOX_ID=${identity}`, '--env', 'CHRONO_SANDBOX_REACHES=api-github', '--env', 'CHRONO_PLATFORM_BASE_URL=http://127.0.0.1:9192', image.Id]);
     stage = 'container-start';
     command(['start', identity]);
     stage = 'probe';

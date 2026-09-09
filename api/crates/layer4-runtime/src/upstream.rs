@@ -94,6 +94,7 @@ struct ProxyState {
     target: TargetBase,
     credential: CredentialHolder,
     client: reqwest::Client,
+    allowed_host: Option<&'static str>,
 }
 
 struct PreparedProxy {
@@ -105,6 +106,7 @@ struct PreparedProxy {
 
 pub(crate) struct PreparedProxies {
     proxies: Vec<PreparedProxy>,
+    github: Option<crate::github_proxy::PreparedGithubProxy>,
 }
 
 impl PreparedProxies {
@@ -116,10 +118,17 @@ impl PreparedProxies {
         {
             proxies.push(bind_proxy(proxy).await?);
         }
-        Ok(Self { proxies })
+        let github = match &config.github_proxy {
+            Some(config) => Some(crate::github_proxy::PreparedGithubProxy::bind(config).await?),
+            None => None,
+        };
+        Ok(Self { proxies, github })
     }
 
     pub(crate) fn start(self, credential: CredentialHolder) {
+        if let Some(github) = self.github {
+            github.start(credential.clone());
+        }
         for proxy in self.proxies {
             spawn_proxy(proxy, credential.clone());
         }
@@ -148,17 +157,7 @@ async fn bind_proxy(config: &ProxyConfig) -> Result<PreparedProxy> {
 }
 
 fn spawn_proxy(proxy: PreparedProxy, credential: CredentialHolder) {
-    let client = reqwest::Client::builder()
-        .redirect(reqwest::redirect::Policy::none())
-        .timeout(std::time::Duration::from_secs(600))
-        .build()
-        .expect("credential proxy HTTP client builds");
-    let state = ProxyState {
-        target: proxy.target,
-        credential,
-        client,
-    };
-    let app = Router::new().fallback(any(forward)).with_state(state);
+    let app = router(proxy.target, credential, None);
     tokio::spawn(async move {
         tracing::info!(proxy = proxy.role, bind = %proxy.bind, "credential proxy listening");
         if let Err(error) = axum::serve(proxy.listener, app).await {
@@ -167,7 +166,32 @@ fn spawn_proxy(proxy: PreparedProxy, credential: CredentialHolder) {
     });
 }
 
+pub(crate) fn router(
+    target: TargetBase,
+    credential: CredentialHolder,
+    allowed_host: Option<&'static str>,
+) -> Router {
+    let client = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .timeout(std::time::Duration::from_secs(600))
+        .build()
+        .expect("credential proxy HTTP client builds");
+    let state = ProxyState {
+        target,
+        credential,
+        client,
+        allowed_host,
+    };
+    Router::new().fallback(any(forward)).with_state(state)
+}
+
 async fn forward(State(state): State<ProxyState>, request: Request) -> Response {
+    if state
+        .allowed_host
+        .is_some_and(|host| !allowed_request_host(&request, host))
+    {
+        return (StatusCode::FORBIDDEN, "proxy destination is not permitted").into_response();
+    }
     let Some(credential) = state.credential.get().await else {
         return (
             StatusCode::SERVICE_UNAVAILABLE,
@@ -228,6 +252,28 @@ async fn forward(State(state): State<ProxyState>, request: Request) -> Response 
     *proxied.status_mut() = status;
     copy_response_headers(&headers, proxied.headers_mut());
     proxied
+}
+
+fn allowed_request_host(request: &Request, host: &str) -> bool {
+    let matches = |value: &str| {
+        value.eq_ignore_ascii_case(host) || value.eq_ignore_ascii_case(&format!("{host}:443"))
+    };
+    let mut hosts = request.headers().get_all(header::HOST).iter();
+    let valid_host = hosts
+        .next()
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(matches)
+        && hosts.next().is_none();
+    valid_host
+        && request.method() != axum::http::Method::CONNECT
+        && request
+            .uri()
+            .scheme_str()
+            .is_none_or(|scheme| scheme == "https")
+        && request
+            .uri()
+            .authority()
+            .is_none_or(|authority| matches(authority.as_str()))
 }
 
 fn copy_request_headers(source: &HeaderMap, target: &mut HeaderMap) {

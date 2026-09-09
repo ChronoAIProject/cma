@@ -6,10 +6,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { pathToFileURL } from 'node:url';
+import { githubProxyProbe } from './runtime-github-probe.mjs';
 
 export const checks = [
   'installed-artifacts', 'non-root-read-only', 'credential-before-install-refused',
-  'install-exact-replay', 'credential-after-install', 'daemon-writer-active',
+  'install-exact-replay', 'credential-after-install', 'github-api-proxy', 'daemon-writer-active',
   'agent-home-helper-aliases', 'agent-shell-inherited-path', 'escaping-helper-refused',
   'checkpoint-writers-held', 'checkpoint-exact-replay', 'wrong-resume-token-refused',
   'mutation-while-held-refused', 'checkpoint-download-digest', 'writer-resumed',
@@ -160,12 +161,15 @@ export async function probe(onStage = () => {}) {
   const artifacts = {};
   for (const [name, path] of Object.entries({
     runtime: '/usr/local/bin/layer4-runtime',
+    gh: '/usr/local/bin/gh',
     launcher: '/usr/local/lib/node_modules/@openai/codex/bin/codex.js',
     native: '/usr/local/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl/bin/codex',
     acp: '/usr/local/lib/node_modules/@agentclientprotocol/codex-acp/dist/index.js',
   })) artifacts[name] = sha256(readFileSync(path));
   artifacts.codexVersion = installedCodexVersion('/home/cma');
   artifacts.acpVersion = JSON.parse(readFileSync('/usr/local/lib/node_modules/@agentclientprotocol/codex-acp/package.json')).version;
+  const ghVersion = execFileSync('/usr/local/bin/gh', ['--version'], { encoding: 'utf8', timeout: 10000, stdio: ['ignore', 'pipe', 'pipe'] });
+  artifacts.ghVersion = /^gh version ([0-9]+\.[0-9]+\.[0-9]+) /.exec(ghVersion)?.[1];
   complete('installed-artifacts');
   assert.equal(process.getuid(), 10001);
   assert.throws(() => writeFileSync('/usr/local/cma-ci-write-refusal', 'refused'));
@@ -195,6 +199,8 @@ export async function probe(onStage = () => {}) {
   complete('install-exact-replay');
   assert.deepEqual(await control(credential), { t: 'credential', operation_id: credential.operation_id, installed: true });
   complete('credential-after-install');
+  await githubProxyProbe(secret);
+  complete('github-api-proxy');
   const counter = () => readFileSync('/home/cma/ci-writer', 'utf8');
   await delay(100);
   const before = counter();

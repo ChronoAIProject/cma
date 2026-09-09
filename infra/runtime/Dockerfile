@@ -23,6 +23,9 @@ RUN --mount=type=cache,id=cma-runtime-registry,target=/usr/local/cargo/registry,
 FROM debian:trixie-slim@sha256:d7e12182ce18b85b93007c1dedf31f2d29e01ccf3182cc4017c709b6259bc132 AS runtime
 
 ARG NYXID_CLI_VERSION=v0.10.0
+ARG GH_VERSION=2.89.0
+ARG GH_SHA256_AMD64=d0422caade520530e76c1c558da47daebaa8e1203d6b7ff10ad7d6faba3490d8
+ARG GH_SHA256_ARM64=9e64a623dfc242990aa5d9b3f507111149c4282f66b68eaad1dc79eeb13b9ce5
 ARG CODEX_VERSION=0.147.0
 ARG CODEX_NATIVE_SHA256_AMD64=cb0a15567e9a60a5820d54b0f6ae86d504dc3805c1eab21a47f70e3eb7b73a40
 ARG CODEX_NATIVE_SHA256_ARM64=e23d0be344d2496986c985cd3db61e6f649b1ddd900e6afc1b5aaabbffcbb4e2
@@ -142,6 +145,24 @@ RUN set -eux; \
     install -m 0755 "$(find /tmp/nyxid-cli -type f -name nyxid -perm -u+x | head -1)" /usr/local/bin/nyxid; \
     rm -rf /tmp/nyxid-cli; \
     nyxid --version
+
+# Use the genuine upstream CLI. The supervisor supplies an inert GH_TOKEN and
+# its local Unix-socket transport only when api-github is in the Sandbox grant;
+# the scoped NyxID credential remains in the supervisor, outside the home.
+RUN set -eux; \
+    case "${TARGETARCH}" in \
+      amd64) want="${GH_SHA256_AMD64}" ;; \
+      arm64) want="${GH_SHA256_ARM64}" ;; \
+      *) echo "unsupported TARGETARCH: ${TARGETARCH}" >&2; exit 1 ;; \
+    esac; \
+    mkdir /tmp/cma-gh; \
+    curl -fsSL -o /tmp/cma-gh/gh.tar.gz \
+        "https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_linux_${TARGETARCH}.tar.gz"; \
+    echo "${want}  /tmp/cma-gh/gh.tar.gz" | sha256sum -c -; \
+    tar xzf /tmp/cma-gh/gh.tar.gz -C /tmp/cma-gh --strip-components=1; \
+    install -m 0755 /tmp/cma-gh/bin/gh /usr/local/bin/gh; \
+    gh --version; \
+    rm -rf /tmp/cma-gh
 
 # Baseline skills are part of the runtime contract, so their source revisions
 # and source archives are pinned just like executable dependencies. Additional
