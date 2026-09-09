@@ -680,8 +680,33 @@ image identity and measured results for each behavior, with unknowns left explic
   another owner's Sandboxes. Two foreign Sandboxes are Live. Shining's original
   Sandbox is Paused at revision 741 with its Workspace and two Agents retained.
   No owner message, Launch, pause, deletion or runtime mutation was sent.
-- Deployment is pending: Google Cloud explicitly requires interactive
-  reauthentication (`gcloud auth login`). The existing all-owner rollout guard
-  must also confirm there are no owner runtimes before an API rollout. No image
-  was pushed or deployed in this admin-fix batch. The earlier service-grant WIP
-  remains parked in its named stash; the full acceptance register remains open.
+- Google Cloud authentication recovered. Source 2759e53c passed Linux/amd64
+  builds, image vulnerability scans and remote digest verification. Web rollout
+  admin-web-rollout-RPYxdw completed first; its verified image is
+  sha256:c97093e52292bea6cfe239a7aa60bc4fb6d3e5463d795b839cb7f686e160d806.
+- The owner then explicitly authorized pausing live Sandboxes and rolling out.
+  Only Shining's Sandbox remained Live; one normal pause request was admitted
+  at 07:59:25 UTC (admin-hotfix-authorized-pause-dhSipV). Snapshot epoch 40 was
+  saved at 08:04:02 UTC, and pause completed at 08:07:12 UTC. The two foreign
+  Sandboxes were already Paused. No runtime was forcibly deleted.
+- API rollout admin-api-rollout-cR6ejI completed at approximately 08:08 UTC with
+  image sha256:d4ed2928d52b78aad91ec86c3ec7556e576b23ada8cf92efbd6e36874624f890.
+  The guard verified all-owner paused/retired inventory, absent runtimes,
+  settled lifecycle work, valid snapshots and current transcripts immediately
+  before dispatch. Postflight admin-api-postflight-4L5FJI preserved the full
+  hashes of all 35 Sandbox records, their Workspace/Agent summaries and both
+  owner conversations (eight turns and one turn). Runtime configuration and
+  the thirty-minute snapshot setting are unchanged. Both system pods are
+  healthy with zero restarts. Feature-branch pins are committed and pushed;
+  neither develop nor main was merged.
+- Production acceptance admin-visibility-prod-PzR2y2 passes with actual owners
+  Shining and calvin tan, the foreign Workspace/Agent hierarchy, 200 foreign
+  Activity entries, 26 Profile inventory rows, and the ordinary Sandbox Owner
+  field. Human creator/actor fields contain names. Anonymous admin reads are
+  denied and ordinary foreign resource routes remain owner-scoped. Desktop
+  light and mobile dark browser checks pass with no resource commands, page
+  errors or horizontal overflow. Settled repeat admin-visibility-prod-HQDwHD
+  also passes after awaiting profile-name resolution; desktop hierarchy and
+  mobile Owner screenshots were inspected.
+  The full acceptance register remains open, including service grants and
+  nonblocking snapshots. Host disk has 28 GiB free; no cleanup was needed.
