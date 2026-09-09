@@ -127,6 +127,7 @@ fn provider_request() -> ProviderSandboxRequest {
         ]),
         timeout: None,
         metadata: BTreeMap::from([("cma/sandbox".into(), "sandbox-1".into())]),
+        volumes: Vec::new(),
     }
 }
 
@@ -146,6 +147,44 @@ fn provider_rows_ignore_unknown_fields() {
 
     assert_eq!(sandbox.id, "runtime-1");
     assert!(sandbox.is_running());
+}
+
+#[tokio::test]
+async fn provider_create_sends_exact_existing_mounts_and_refuses_implicit_allocation() {
+    let fixture = serve(vec![Reply {
+        status: 202,
+        body: r#"{"id":"runtime-volume","status":{"state":"Running"}}"#,
+    }])
+    .await;
+    let client = SandboxClient::new(&fixture.base_url, "fixture-provider");
+    let mut request = provider_request();
+    request.volumes.push(ProviderVolume {
+        name: "home".into(),
+        pvc: ProviderPersistentVolumeClaim {
+            claim_name: "cma-home-test".into(),
+            create_if_not_exists: false,
+            delete_on_sandbox_termination: false,
+        },
+        mount_path: "/home/cma".into(),
+        read_only: false,
+        sub_path: Some("home".into()),
+    });
+    client.create(&request).await.unwrap();
+    let sent = fixture.finish().await;
+    let body: serde_json::Value =
+        serde_json::from_str(sent[0].split_once("\r\n\r\n").unwrap().1).unwrap();
+    assert_eq!(
+        body["volumes"],
+        serde_json::json!([{
+        "name":"home", "pvc":{"claimName":"cma-home-test","createIfNotExists":false,"deleteOnSandboxTermination":false},
+            "mountPath":"/home/cma", "readOnly":false, "subPath":"home"
+        }])
+    );
+    request.volumes[0].pvc.create_if_not_exists = true;
+    assert!(matches!(
+        client.create(&request).await,
+        Err(ProviderError::Malformed(_))
+    ));
 }
 
 #[tokio::test]
@@ -254,6 +293,7 @@ async fn provider_lifecycle_uses_published_paths_and_header_authentication() {
     assert!(json["timeout"].is_null());
     assert_eq!(json["resourceLimits"]["cpu"], "1000m");
     assert!(json.get("resource_limits").is_none());
+    assert!(json.get("volumes").is_none());
 }
 
 #[test]

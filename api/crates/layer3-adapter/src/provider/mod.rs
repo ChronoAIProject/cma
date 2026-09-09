@@ -4,6 +4,7 @@ mod client;
 mod metadata;
 mod model;
 mod reclaimer;
+mod volumes;
 
 pub use client::SandboxClient;
 pub use model::{
@@ -11,6 +12,7 @@ pub use model::{
     ProviderSandboxRequest, ProviderSandboxStatus,
 };
 pub use reclaimer::BatchSandboxReclaimer;
+pub use volumes::{ProviderPersistentVolumeClaim, ProviderVolume};
 
 pub(crate) use client::ProviderDeleteTarget;
 

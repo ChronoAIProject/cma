@@ -20,6 +20,14 @@ pub struct ProviderSandboxRequest {
     /// An absent timeout serializes as null; the provider distinguishes it from omission.
     pub timeout: Option<u64>,
     pub metadata: BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub volumes: Vec<super::ProviderVolume>,
+}
+
+impl ProviderSandboxRequest {
+    pub(crate) fn validate_volumes(&self) -> Result<(), ProviderError> {
+        super::volumes::validate(&self.volumes)
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]

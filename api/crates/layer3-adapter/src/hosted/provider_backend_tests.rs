@@ -35,6 +35,7 @@ fn request(sandbox_id: &str, generation: u64, fingerprint: &str) -> ProviderSand
         resource_limits: BTreeMap::new(),
         timeout: None,
         metadata: metadata(sandbox_id, generation, fingerprint),
+        volumes: Vec::new(),
     }
 }
 
