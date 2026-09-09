@@ -82,6 +82,7 @@ fn workspace_profile(id: &str, owner: &str, visibility: ProfileVisibility) -> Wo
 
 fn sandbox_profile(id: &str, owner: &str, visibility: ProfileVisibility) -> SandboxProfile {
     SandboxProfile {
+        availability: Default::default(),
         id: SandboxProfileId(id.into()),
         owner: SubjectId(owner.into()),
         name: format!("Sandbox {id}"),

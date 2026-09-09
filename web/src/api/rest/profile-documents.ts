@@ -36,7 +36,19 @@ export function profileDocument<WireContent, Content>(
   value: Wire.ProfileDocument<WireContent>,
   decode: (value: WireContent) => Content,
 ): ProfileDocument<Content> {
-  return { ...profileSummary(value), draft: decode(value.draft) };
+  return {
+    ...profileSummary(value),
+    draft: decode(value.draft),
+    ...(value.availability === undefined
+      ? {}
+      : {
+          availability: {
+            warmupEnabled: value.availability.warmup_enabled,
+            warmupCount: value.availability.warmup_count,
+            alwaysKeepAlive: value.availability.always_keep_alive,
+          },
+        }),
+  };
 }
 
 export function profileRevision<WireContent, Content>(
@@ -58,6 +70,16 @@ export function profileEditor<Kind extends Wire.ProfileKind>(
 ): ProfileEditorClient<ProfileContents[Kind]> {
   const document = (value: Wire.ProfileDocument<Wire.ProfileContents[Kind]>) =>
     profileDocument(value, codec.decode);
+  const availability = (value: ProfileDocument<unknown>['availability']) =>
+    value === undefined
+      ? {}
+      : {
+          availability: {
+            warmup_enabled: value.warmupEnabled,
+            warmup_count: value.warmupCount,
+            always_keep_alive: value.alwaysKeepAlive,
+          },
+        };
   return {
     readProfile: async (id, options) => document(await resource.read(id, options)),
     createProfile: async (input, options) =>
@@ -67,6 +89,7 @@ export function profileEditor<Kind extends Wire.ProfileKind>(
             name: input.name,
             description: input.description,
             content: codec.encode(input.content),
+            ...availability(input.availability),
           },
           options,
         ),
@@ -80,6 +103,7 @@ export function profileEditor<Kind extends Wire.ProfileKind>(
             description: input.description,
             content: codec.encode(input.content),
             draft_version: input.draftVersion,
+            ...availability(input.availability),
           },
           options,
         ),

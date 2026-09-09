@@ -17,6 +17,80 @@ use super::InMemorySandboxStore;
 const TARGET_IMAGE: &str = "image-v2";
 
 #[tokio::test]
+async fn keep_alive_policy_applies_to_existing_sandboxes_and_preserves_manual_pause() {
+    use crate::profiles::{
+        InMemoryProfileStore, ProfileVisibility, SandboxProfile, SandboxProfileStore,
+    };
+    use crate::sandbox::store::{
+        SandboxLifecycleCommand, SandboxLifecycleCommandResult, SandboxLifecycleCommandStore,
+    };
+    let profiles = InMemoryProfileStore::default();
+    let store = InMemorySandboxStore::with_profiles(profiles.clone());
+    let value = stored_sandbox("sbx_keepalive", "owner-a");
+    let mut profile = SandboxProfile {
+        availability: Default::default(),
+        id: value.profile.id.clone(),
+        owner: value.owner.clone(),
+        name: "Availability".into(),
+        description: String::new(),
+        visibility: ProfileVisibility::Private,
+        forked_from: None,
+        uses_count: 0,
+        draft: value.profile.content.clone(),
+        draft_version: 1,
+        created_at: IDLE_AT.into(),
+        updated_at: IDLE_AT.into(),
+        retired_at: None,
+    };
+    profiles
+        .create_sandbox_profile(profile.clone())
+        .await
+        .unwrap();
+    store.create_sandbox(value.clone()).await.unwrap();
+    let first_agent = stored_agent(&value, "agt_keepalive_first", "conversation-first", 1);
+    store.create_agent(first_agent.clone()).await.unwrap();
+    insert_logs(&store, &first_agent.id, &[IDLE_AT]);
+    profile.availability.always_keep_alive = true;
+    profile.draft_version = 2;
+    profiles
+        .save_sandbox_draft(1, profile.clone())
+        .await
+        .unwrap();
+    assert_pause_not_eligible(&store, &value.id).await;
+    assert_eq!(
+        store.get_sandbox(&value.id).await.unwrap(),
+        Some(value.clone())
+    );
+    let manual = store
+        .schedule_sandbox_lifecycle(SandboxLifecycleCommand::pause(
+            value.id.clone(),
+            value.owner.clone(),
+            NOW.into(),
+            None,
+        ))
+        .await
+        .unwrap();
+    assert!(matches!(manual, SandboxLifecycleCommandResult::Accepted(_)));
+
+    let second = stored_sandbox("sbx_policy_disabled", "owner-a");
+    store.create_sandbox(second.clone()).await.unwrap();
+    let second_agent = stored_agent(&second, "agt_keepalive_second", "conversation-second", 1);
+    store.create_agent(second_agent.clone()).await.unwrap();
+    insert_logs(&store, &second_agent.id, &[IDLE_AT]);
+    assert_pause_not_eligible(&store, &second.id).await;
+    profile.availability.always_keep_alive = false;
+    profile.draft_version = 3;
+    profiles.save_sandbox_draft(2, profile).await.unwrap();
+    assert_eq!(
+        store
+            .schedule_inactivity_pause(pause_request(&second.id))
+            .await
+            .unwrap(),
+        SandboxMaintenanceOutcome::Scheduled
+    );
+}
+
+#[tokio::test]
 async fn maintenance_candidates_are_global_stable_active_and_bounded() {
     let store = InMemorySandboxStore::default();
     for (id, owner, status) in [

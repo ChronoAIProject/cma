@@ -213,6 +213,14 @@ while the Sandbox is fully Paused. It preserves the original profile and creatio
 scope, records the owner and time, and renews scoped credentials before revival.
 Profile publication never grants this additional instance access implicitly.
 
+Sandbox Profile availability is a mutable scheduling policy, separate from its
+immutable environment revisions. Always keep alive applies to existing and future
+Sandboxes of that Profile and prevents inactivity pause; explicit manual pause
+remains available. Warmup is restricted to published public Profiles, with a target
+of one through five unowned runtimes. Private forks have their own default policy
+and provision fresh. Changing this policy never rewrites pinned environments,
+ownership or conversations.
+
 #### Capabilities must be proved
 
 "This can never do that" and "that just failed" are separate typed facts.
@@ -316,7 +324,9 @@ controller takes back over live runtimes, replaces lost ones, recovers durable
 operations and reclaims resources no record owns. Reconciliation is owner- and
 writer-fenced; an expired worker must not mutate a newer worker's resources.
 
-Quiet Sandboxes pause according to platform settings after every Agent is quiet.
+Quiet Sandboxes pause according to platform settings after every Agent is quiet,
+unless their Profile has Always keep alive enabled. Inactivity admission fences
+the mutable Profile policy in the same transaction as its Sandbox/Agent evidence.
 Any admitted message, creation or Launch that needs one revives it. The owner
 does not need to repair a deployment by clicking a revive control.
 

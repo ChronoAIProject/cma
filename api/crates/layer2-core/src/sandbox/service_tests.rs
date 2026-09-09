@@ -387,6 +387,7 @@ fn profile(
     unsafe_content: bool,
 ) -> SandboxProfile {
     SandboxProfile {
+        availability: Default::default(),
         id: SandboxProfileId(id.into()),
         owner: SubjectId(owner.into()),
         name: name.into(),

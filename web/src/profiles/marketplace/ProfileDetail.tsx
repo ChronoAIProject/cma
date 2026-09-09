@@ -175,7 +175,7 @@ function Detail({
             <p>{failure.message}</p>
             {failure.uncertain ? (
               <Button disabled={pending} onClick={() => void fork()}>
-                Retry fork
+                Retry private copy
               </Button>
             ) : null}
           </div>
@@ -198,10 +198,18 @@ function Detail({
             disabled={pending || failure?.uncertain || forkedId !== undefined}
             onClick={() => void fork()}
           >
-            {pending ? 'Forking' : 'Fork to my profiles'}
+            {pending ? 'Creating private copy' : 'Customize a private copy'}
           </Button>
         ) : null}
       </footer>
+      {canManage ? (
+        <p className="profile-field__help">
+          Use the shared profile as published, or create your own private copy to edit its settings.
+          {kind === 'sandbox'
+            ? ' A private copy starts a fresh sandbox and does not use the original profile’s warm sandboxes.'
+            : ''}
+        </p>
+      ) : null}
       {onUse === undefined ? (
         <p className="profile-field__help">Profile creation is unavailable from this view.</p>
       ) : null}

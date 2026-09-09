@@ -15,6 +15,32 @@ import { createProfileViewsClient } from './profiles';
 const options = { idempotencyKey: 'profile-command-819' };
 
 describe('public profile web binding', () => {
+  it('round-trips mutable Sandbox availability through the public SDK without changing content', async () => {
+    const test = restTransport();
+    const api = createProfileViewsClient(test.sdk).sandbox;
+    const availability = { warmup_enabled: true, warmup_count: 5, always_keep_alive: true };
+    const wire = { ...wireProfile('sandbox'), availability };
+    test.reply(wire);
+    const profile = await api.readProfile('sandbox-1');
+    expect(profile.availability).toEqual({
+      warmupEnabled: true,
+      warmupCount: 5,
+      alwaysKeepAlive: true,
+    });
+    test.reply(wire);
+    await api.saveProfile(
+      profile.id,
+      {
+        name: profile.name,
+        description: profile.description,
+        content: profile.draft,
+        draftVersion: profile.draftVersion,
+        availability: profile.availability,
+      },
+      options,
+    );
+    expect(test.body()).toMatchObject({ availability, content: PROFILE_CONTENTS.sandbox });
+  });
   it('binds public authoring reads and a read-only repository resolve without a command key', async () => {
     const test = restTransport();
     const authoring = createProfileViewsClient(test.sdk).authoring;

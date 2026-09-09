@@ -13,6 +13,13 @@ export function validateSandboxProfile(
     ...validateMetadata(draft),
     ...commandErrors(value.softwareInstallCommands, 32, 'softwareInstallCommands'),
   };
+  if (
+    draft.availability !== undefined &&
+    (!Number.isInteger(draft.availability.warmupCount) ||
+      draft.availability.warmupCount < 1 ||
+      draft.availability.warmupCount > 5)
+  )
+    errors.warmupCount = 'Choose a whole number from 1 to 5.';
   if (bounds === undefined)
     errors.cpuMillis = 'Resource limits could not be loaded. Try again before saving.';
   else {

@@ -12,7 +12,12 @@ import type { FieldErrors } from './validation';
 export type ProfileCommand = 'save' | 'publish' | 'visibility' | 'retire';
 
 function draftOf<Content>(profile: ProfileDocument<Content>): ProfileDraft<Content> {
-  return { name: profile.name, description: profile.description, content: profile.draft };
+  return {
+    name: profile.name,
+    description: profile.description,
+    content: profile.draft,
+    ...(profile.availability === undefined ? {} : { availability: profile.availability }),
+  };
 }
 
 interface Transaction<Content> {

@@ -42,11 +42,17 @@ impl SandboxMaintenanceStore for InMemorySandboxStore {
             .cloned()
             .ok_or(SandboxStoreError::NotFound)?;
         let activities = live_agent_activities(&state, &current.id)?;
-        persist_application(
-            &mut state,
-            apply_inactivity_pause(&current, &activities, &request)?,
-            request.requested_at,
-        )
+        self.profiles
+            .with_sandbox_availability(&current.profile.id, |availability| {
+                if availability.always_keep_alive {
+                    return Ok(SandboxMaintenanceOutcome::NotEligible);
+                }
+                persist_application(
+                    &mut state,
+                    apply_inactivity_pause(&current, &activities, &request)?,
+                    request.requested_at,
+                )
+            })
     }
 
     async fn schedule_image_rotation(

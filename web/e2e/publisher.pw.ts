@@ -115,7 +115,7 @@ test('J5 profiles publish to Marketplace, second owner forks, wizard publishes e
   for (const kind of ['agent', 'sandbox'] as const) {
     await second.goto(`${h.config.baseURL}/marketplace/${kind}/${ids[kind]}`);
     await expect(second.getByRole('heading', { name: names[kind], exact: true })).toBeVisible();
-    await second.getByRole('button', { name: 'Fork to my profiles', exact: true }).click();
+    await second.getByRole('button', { name: 'Customize a private copy', exact: true }).click();
     await second.waitForURL(new RegExp(`/profiles/${kind}-profiles/[^/]+$`));
     const forkId = new URL(second.url()).pathname.split('/').at(-1)!;
     expect(forkId).not.toBe(ids[kind]);

@@ -239,6 +239,7 @@ use super::trigger_openapi_shapes::*;
         WorkspaceProfileContentBody,
         EnvironmentVariableBody,
         SandboxProfileContentBody,
+        SandboxProfileAvailabilityBody,
         CreateAgentProfileRequest,
         UpdateAgentProfileRequest,
         CreateWorkspaceProfileRequest,

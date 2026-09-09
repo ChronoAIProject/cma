@@ -20,6 +20,7 @@ import { ResourceFields } from './pickers/ResourceFields';
 import { ServicePicker } from './pickers/ServicePicker';
 import { validateSandboxProfile } from './sandboxValidation';
 import { useCapacityBounds } from './capacityBounds';
+import { SandboxAvailabilityFields } from './SandboxAvailabilityFields';
 
 const INITIAL: ProfileDraft<SandboxProfileContent> = {
   name: '',
@@ -80,6 +81,7 @@ function SandboxEditor({
           editor.change({ ...editor.draft, content: { ...value, ...next } });
         return (
           <>
+            <SandboxAvailabilityFields editor={editor} />
             <section className="profile-editor__band">
               <h2>Size</h2>
               <ResourceFields

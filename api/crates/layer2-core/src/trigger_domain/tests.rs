@@ -116,6 +116,7 @@ pub(super) async fn seed_profiles(
         .expect("workspace revision");
 
     let sandbox = SandboxProfile {
+        availability: Default::default(),
         id: sandbox_id.clone(),
         owner: owner.clone(),
         name: "Lean Sandbox".into(),

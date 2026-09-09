@@ -486,6 +486,7 @@ impl<T> WorkspaceLifecycleStore for T where
 #[derive(Clone, Default)]
 pub struct InMemorySandboxStore {
     state: Arc<Mutex<State>>,
+    profiles: crate::profiles::InMemoryProfileStore,
 }
 
 #[derive(Clone, Default)]
@@ -502,6 +503,13 @@ struct State {
 }
 
 impl InMemorySandboxStore {
+    pub fn with_profiles(profiles: crate::profiles::InMemoryProfileStore) -> Self {
+        Self {
+            profiles,
+            ..Self::default()
+        }
+    }
+
     fn lock(&self) -> std::sync::MutexGuard<'_, State> {
         self.state
             .lock()
