@@ -185,6 +185,26 @@ fn read_only_mount_gate_rejects_writable_sources_before_any_export_write() {
     assert_eq!(std::fs::read_dir(&fixture.output).unwrap().count(), 0);
 }
 
+#[cfg(unix)]
+#[test]
+fn projected_request_links_are_resolved_only_inside_the_mount() {
+    let fixture = Fixture::new();
+    let projected = fixture.root.join("projected");
+    let data = projected.join("..data");
+    std::fs::create_dir_all(&data).unwrap();
+    std::fs::write(data.join("request.json"), br#"{"ok":true}"#).unwrap();
+    std::os::unix::fs::symlink("..data", projected.join("current")).unwrap();
+    let value: serde_json::Value = io::read_projected(&projected.join("current/request.json"))
+        .unwrap()
+        .unwrap();
+    assert_eq!(value["ok"], true);
+
+    let outside = fixture.root.join("outside.json");
+    std::fs::write(&outside, br#"{"ok":false}"#).unwrap();
+    std::os::unix::fs::symlink(&outside, projected.join("escape.json")).unwrap();
+    assert!(io::read_projected::<serde_json::Value>(&projected.join("escape.json")).is_err());
+}
+
 #[test]
 fn source_generation_and_installation_are_verified_without_repair() {
     let fixture = Fixture::new();
