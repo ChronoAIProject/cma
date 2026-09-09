@@ -1274,3 +1274,43 @@ image identity and measured results for each behavior, with unknowns left explic
   a failure while clearing the old home also enters the existing rollback path.
   The new read-only-tree regression and all 181 runnable runtime tests pass;
   two existing ignored tests remain skipped. Package Clippy also passes.
+
+## Current goal status and node-loss finding — 2026-09-09
+
+- Quiet keepalive observation warm-keepalive-vLg3TD passed at 13:33:37 UTC:
+  the test Sandbox remained Active after 948 quiet seconds, beyond the normal
+  900-second inactivity threshold, with manual pause available and no capture
+  in progress. This proves suppression of inactivity pause at that boundary;
+  it does not prove continuous availability through a provider or node failure.
+- Runtime source a70ab086 is built, scanned and uploaded as manifest
+  sha256:d0fd7ffb930887c2ae8e5532f73c118d604ccdc13fa59045526ded8f33008cd3.
+  All 21 actual Linux image checks pass, including archive removal after writer
+  release, reimport, restore and staging cleanup. The 256 MiB restore benchmark
+  runtime-restore-benchmark-lt43QO measured same-filesystem medians of 1,901 ms
+  before and 1,648 ms after (13.3% faster); cross-filesystem fallback measured
+  1,695 ms and 1,715 ms. These are local fixture results, not production latency
+  or peak-memory acceptance. This image is not deployed; production remains on
+  d730d6ae. Tooling commit 0f228780 changes the verification probe only.
+- The fresh test's periodic observer warm-periodic-boundary-Ni07X8 failed before
+  its first due capture at 13:43:09 UTC. Kubernetes records a node Shutdown and
+  NodeNotReady event at 13:41:02 UTC, then node recovery at 13:42:53 UTC. The
+  original runtime Pod UID was replaced. Public Sandbox events record Active
+  to Failed at 13:41:08 UTC with runtime_lost and no completed checkpoint.
+  No inactivity pause or capture was admitted. The immediate failure is a node
+  shutdown; the underlying reason for that shutdown is not established here.
+- Read-only evidence warm-node-loss-dzL3WP records the public lifecycle events,
+  provider events and current state. The test Sandbox remains Failed, with no
+  runtime binding or snapshot; its single completed conversation turn is still
+  readable. Both original owner conversation hashes remain unchanged. The API
+  and web deployments each remain 1/1 Ready and Available. No pause, retirement,
+  rollout or other production mutation was issued during this investigation.
+- The remaining snapshot work now also includes recovery when a runtime is lost
+  before its first checkpoint. The failed test cannot be used for the planned
+  pause/restore acceptance. Consistent nonblocking capture, raw storage version
+  cleanup, missing-service/fresh-sign-in admission, positive contribution PRs
+  and the outstanding UI acceptance cases remain unfinished. Do not mark the
+  goal complete or describe the remaining work as deployment alone.
+- Disk has 15 GiB free. The unused intermediate runtime-090c2209.oci.tar and one
+  untagged converted Docker image were removed after checking they were unused.
+  Both are reproducible build artifacts; no user files or production snapshots
+  were deleted by that cleanup.
