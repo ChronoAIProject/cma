@@ -36,6 +36,16 @@ pub trait HostedControlTransport: Send + Sync {
         request: RequestFrame,
     ) -> crate::Result<ResponseFrame>;
 
+    /// Revalidate a published checkpoint's writer hold without requiring export.
+    async fn verify_checkpoint_hold(
+        &self,
+        handle: &RuntimeHandle,
+        request: &crate::CheckpointHoldRequest,
+    ) -> crate::Result<ResponseFrame> {
+        self.exchange(handle, RequestFrame::CheckpointForTeardown(request.clone()))
+            .await
+    }
+
     async fn open_agent(
         &self,
         handle: &RuntimeHandle,
@@ -194,6 +204,14 @@ impl HostedBackend for ProviderHostedBackend {
         request: RequestFrame,
     ) -> crate::Result<ResponseFrame> {
         self.transport.exchange(handle, request).await
+    }
+
+    async fn verify_checkpoint_hold(
+        &self,
+        handle: &RuntimeHandle,
+        request: &crate::CheckpointHoldRequest,
+    ) -> crate::Result<ResponseFrame> {
+        self.transport.verify_checkpoint_hold(handle, request).await
     }
 
     async fn open_agent(

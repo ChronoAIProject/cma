@@ -60,6 +60,16 @@ pub trait HostedBackend: Send + Sync {
         request: RequestFrame,
     ) -> Result<ResponseFrame>;
 
+    /// Revalidate a published checkpoint's writer hold without requiring export.
+    async fn verify_checkpoint_hold(
+        &self,
+        handle: &RuntimeHandle,
+        request: &crate::CheckpointHoldRequest,
+    ) -> Result<ResponseFrame> {
+        self.exchange(handle, RequestFrame::CheckpointForTeardown(request.clone()))
+            .await
+    }
+
     /// Open keeps the ACP channel out of the JSON control receipt while using
     /// the same launch frame that Layer 4 acknowledges.
     async fn open_agent(
