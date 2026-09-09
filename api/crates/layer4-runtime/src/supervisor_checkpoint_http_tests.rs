@@ -156,6 +156,10 @@ fn held_checkpoint_http_disconnect_retains_fence_and_exact_replay() {
             .expect("detached capture retains its completed writer hold")
             .receipt
             .clone();
+        let archive = config
+            .checkpoint_root
+            .join(&first.checkpoint.object_reference);
+        assert!(archive.is_file(), "held capture must remain exportable");
         let replay = reqwest::Client::new()
             .post(format!("http://{address}/runtime/control"))
             .json(&request)
@@ -177,6 +181,10 @@ fn held_checkpoint_http_disconnect_retains_fence_and_exact_replay() {
             ResponseFrame::ResumeCheckpointWriters(_)
         ));
         assert!(supervisor.held_checkpoint.lock().await.is_none());
+        assert!(
+            !archive.exists(),
+            "writer resumption releases local archive storage"
+        );
         server.abort();
         let _ = server.await;
         cleanup(&config);
@@ -269,10 +277,15 @@ fn restore_http_disconnect_keeps_gate_and_finishes_phase_transition() {
         std::fs::write(config.home.join("preserved"), "replace-me").unwrap();
         let (address, server) = serve(Arc::clone(&supervisor)).await;
         let (release, blocker) = pause_archive_worker().await;
+        let archive = config.checkpoint_root.join(&restore.object_reference);
         disconnect_during_operation(address, &supervisor, &RequestFrame::Restore(restore)).await;
         assert_eq!(supervisor.phase().await, Phase::RestoreCredentialed);
         assert_queued_until_archive_finishes(&supervisor, release, blocker).await;
         assert_eq!(supervisor.phase().await, Phase::Credentialed);
+        assert!(
+            !archive.exists(),
+            "successful restore releases its local transfer"
+        );
         assert_eq!(
             std::fs::read_to_string(config.home.join("preserved")).unwrap(),
             "checkpoint-http-payload"
