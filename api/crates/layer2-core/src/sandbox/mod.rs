@@ -32,6 +32,7 @@ mod first_message_dispatch;
 mod first_message_service;
 mod hierarchy;
 mod home;
+mod home_recovery;
 mod inactivity;
 mod launch_recovery;
 mod launch_service;
@@ -71,6 +72,7 @@ mod workspace;
 mod workspace_service;
 mod workspace_work;
 mod worktree;
+pub use home_recovery::{SandboxHomeRecovery, SandboxRecoveryPause};
 pub use warmup::{WarmSandbox, WarmSandboxPlan, WarmSandboxState};
 
 pub use admin::{

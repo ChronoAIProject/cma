@@ -250,6 +250,19 @@ fn apply_revive(
             Some(SandboxLifecycleOperation::Revive { .. })
         )
     {
+        let mut sandbox = current.clone();
+        if sandbox
+            .cancel_recovery_pause(&command.requested_at)
+            .map_err(|error| SandboxStoreError::Corrupt(error.to_string()))?
+        {
+            return Ok(PendingApplication::Commit {
+                expected_revision: current.revision,
+                sandbox,
+                event: SandboxEventKind::WorkStepCompleted {
+                    step: SandboxWorkStep::RunLifecycleOperation,
+                },
+            });
+        }
         return Ok(accepted(
             current,
             SandboxLaunchCommandDisposition::AlreadyScheduled,

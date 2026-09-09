@@ -25,6 +25,9 @@ impl SandboxWorker {
         sandbox: Sandbox,
         now: SystemTime,
     ) -> Result<(), SandboxStoreError> {
+        if sandbox.retained_home_recovery().is_some() {
+            return self.verify_lifecycle_home(sandbox, now).await;
+        }
         let checkpoint = match pinned_checkpoint(&sandbox) {
             Ok(checkpoint) => checkpoint.clone(),
             Err(failure) => return self.handle_lifecycle_failure(sandbox, failure, now).await,
@@ -48,7 +51,11 @@ impl SandboxWorker {
         now: SystemTime,
     ) -> Result<(), SandboxStoreError> {
         let checkpoint = match pinned_checkpoint(&sandbox) {
-            Ok(checkpoint) => checkpoint.clone(),
+            Ok(checkpoint) if sandbox.retained_home_recovery().is_none() => {
+                Some(checkpoint.clone())
+            }
+            _ if sandbox.retained_home_recovery().is_some() => None,
+            Ok(_) => unreachable!("archive recovery was matched"),
             Err(failure) => return self.handle_lifecycle_failure(sandbox, failure, now).await,
         };
         let generation = match sandbox.lifecycle.runtime_provision.as_ref() {
@@ -77,6 +84,11 @@ impl SandboxWorker {
         if let Some(failure) = self.prepare_sandbox_home(&mut sandbox, now).await? {
             return self.handle_lifecycle_failure(sandbox, failure, now).await;
         }
+        if sandbox.retained_home_recovery().is_some() {
+            if let Err(failure) = self.verify_retained_home_and_absence(&sandbox).await {
+                return self.handle_lifecycle_failure(sandbox, failure, now).await;
+            }
+        }
         let request = RuntimeProvisionRequest::new(
             generation,
             sandbox_spec(&sandbox, &self.config.deployment_id),
@@ -89,42 +101,49 @@ impl SandboxWorker {
                     .await
             }
         };
-        let restore = checkpoint.restore_request().map_err(model_error)?;
-        let bootstrap = RestoreBootstrapRequest::new(
-            operation_id(&sandbox, "bootstrap_restore")?,
-            sandbox.id.to_string(),
-            restore.clone(),
-        );
-        let receipt = match self
-            .dependencies
-            .adapter
-            .bootstrap_restore(&handle, &bootstrap)
+        if let Some(checkpoint) = checkpoint {
+            let restore = checkpoint.restore_request().map_err(model_error)?;
+            let bootstrap = RestoreBootstrapRequest::new(
+                operation_id(&sandbox, "bootstrap_restore")?,
+                sandbox.id.to_string(),
+                restore.clone(),
+            );
+            let receipt = match self
+                .dependencies
+                .adapter
+                .bootstrap_restore(&handle, &bootstrap)
+                .await
+            {
+                Ok(receipt) => receipt,
+                Err(error) => {
+                    return self
+                        .handle_lifecycle_failure(sandbox, adapter_failure(error), now)
+                        .await
+                }
+            };
+            if receipt.operation_id != bootstrap.operation_id
+                || receipt.request_sha256 != bootstrap.request_sha256
+                || receipt.restore_request_sha256 != restore.computed_sha256()
+                || !receipt.installation_inherited
+            {
+                if let Err(error) = self.dependencies.adapter.teardown(&handle).await {
+                    tracing::warn!(sandbox_id = %sandbox.id, runtime_id = %handle.0, error = %error, "invalid restore bootstrap left replacement cleanup unconfirmed");
+                }
+                return self
+                    .handle_lifecycle_failure(
+                        sandbox,
+                        WorkerFailure::terminal_security(
+                            "runtime returned invalid restore bootstrap evidence",
+                        ),
+                        now,
+                    )
+                    .await;
+            }
+        } else if let Err(failure) = self
+            .verify_native_runtime(&sandbox, &handle, generation, false)
             .await
         {
-            Ok(receipt) => receipt,
-            Err(error) => {
-                return self
-                    .handle_lifecycle_failure(sandbox, adapter_failure(error), now)
-                    .await
-            }
-        };
-        if receipt.operation_id != bootstrap.operation_id
-            || receipt.request_sha256 != bootstrap.request_sha256
-            || receipt.restore_request_sha256 != restore.computed_sha256()
-            || !receipt.installation_inherited
-        {
-            if let Err(error) = self.dependencies.adapter.teardown(&handle).await {
-                tracing::warn!(sandbox_id = %sandbox.id, runtime_id = %handle.0, error = %error, "invalid restore bootstrap left replacement cleanup unconfirmed");
-            }
-            return self
-                .handle_lifecycle_failure(
-                    sandbox,
-                    WorkerFailure::terminal_security(
-                        "runtime returned invalid restore bootstrap evidence",
-                    ),
-                    now,
-                )
-                .await;
+            return self.handle_lifecycle_failure(sandbox, failure, now).await;
         }
 
         let stamp = rfc3339_at(now);
@@ -258,6 +277,9 @@ impl SandboxWorker {
                 )
                 .await;
         };
+        if sandbox.retained_home_recovery().is_some() {
+            return self.accept_lifecycle_home(sandbox, &handle, now).await;
+        }
         let checkpoint = match pinned_checkpoint(&sandbox) {
             Ok(checkpoint) => checkpoint,
             Err(failure) => return self.handle_lifecycle_failure(sandbox, failure, now).await,
@@ -321,9 +343,9 @@ impl SandboxWorker {
         .map_err(model_error)?;
         let mut events = vec![SandboxEventKind::StatusChanged {
             from: sandbox.status,
-            to: SandboxStatus::Active,
+            to: next.status,
         }];
-        match operation {
+        match operation.filter(|_| next.status == SandboxStatus::Active) {
             Some(SandboxLifecycleOperation::Revive { .. }) => {
                 events.push(SandboxEventKind::Revived)
             }
@@ -353,20 +375,12 @@ pub(super) fn replacement_runtime_generation(
 ) -> Result<u64, WorkerFailure> {
     let next_agent_generation = agents
         .iter()
-        .filter(|agent| sandbox.restores_agent(agent))
-        .map(|agent| {
-            agent
-                .conversation
-                .runtime_generation
-                .ok_or_else(|| {
-                    WorkerFailure::terminal_security(
-                        "live agent runtime generation is absent during restore",
-                    )
-                })?
-                .checked_add(1)
-                .ok_or_else(|| {
-                    WorkerFailure::terminal_validation("agent runtime generation is exhausted")
-                })
+        .filter(|agent| agent.status.is_live())
+        .filter_map(|agent| agent.conversation.runtime_generation)
+        .map(|generation| {
+            generation.checked_add(1).ok_or_else(|| {
+                WorkerFailure::terminal_validation("agent runtime generation is exhausted")
+            })
         })
         .collect::<Result<Vec<_>, _>>()?
         .into_iter()

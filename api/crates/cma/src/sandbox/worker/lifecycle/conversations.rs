@@ -37,7 +37,9 @@ impl SandboxWorker {
                 .await;
         };
         let checkpoint = match pinned_checkpoint(&sandbox) {
-            Ok(checkpoint) => checkpoint,
+            Ok(checkpoint) if sandbox.retained_home_recovery().is_none() => Some(checkpoint),
+            _ if sandbox.retained_home_recovery().is_some() => None,
+            Ok(_) => unreachable!("archive recovery was matched"),
             Err(failure) => return self.handle_lifecycle_failure(sandbox, failure, now).await,
         };
         let agents = self.lifecycle_agents(&sandbox).await?;
@@ -263,11 +265,11 @@ impl SandboxWorker {
 fn validate_reopen_set<'a>(
     sandbox: &Sandbox,
     agents: &'a [Agent],
-    checkpoint: &layer2_core::sandbox::SandboxCheckpointRef,
+    checkpoint: Option<&layer2_core::sandbox::SandboxCheckpointRef>,
 ) -> Result<Vec<&'a Agent>, WorkerFailure> {
     let by_id = checkpoint
-        .conversations
-        .iter()
+        .into_iter()
+        .flat_map(|checkpoint| &checkpoint.conversations)
         .map(|conversation| {
             (
                 &conversation.agent_id,
@@ -286,8 +288,10 @@ fn validate_reopen_set<'a>(
                 .conversation
                 .conversation_id
                 .as_deref()
-                .zip(by_id.get(&agent.id).copied())
-                .is_some_and(|(current, checkpoint)| current == checkpoint)
+                .is_some_and(|current| {
+                    sandbox.retained_home_recovery().is_some()
+                        || by_id.get(&agent.id).copied() == Some(current)
+                })
     });
     if matches {
         Ok(live)

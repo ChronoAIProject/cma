@@ -30,6 +30,8 @@ mod authority;
 mod bootstrap;
 #[path = "memory_checkpoint.rs"]
 mod checkpoint;
+#[path = "memory_home.rs"]
+mod home;
 #[path = "memory_mutations.rs"]
 mod mutations;
 #[path = "memory_probes.rs"]
@@ -94,6 +96,7 @@ struct MemoryOperation {
 pub struct InMemoryHostedBackend {
     next_handle: Arc<AtomicU64>,
     runtimes: Arc<Mutex<BTreeMap<RuntimeHandle, MemoryRuntime>>>,
+    retained_homes: Arc<Mutex<BTreeMap<String, MemoryRuntime>>>,
     requests: Arc<Mutex<Vec<(RuntimeHandle, RequestFrame)>>>,
     failures: Arc<StdMutex<VecDeque<WireFailure>>>,
     lost_responses: Arc<StdMutex<VecDeque<WireOperation>>>,
@@ -123,27 +126,27 @@ impl HostedBackend for InMemoryHostedBackend {
         }
         let id = self.next_handle.fetch_add(1, Ordering::Relaxed) + 1;
         let handle = RuntimeHandle(format!("runtime-{id}"));
-        runtimes.insert(
-            handle.clone(),
-            MemoryRuntime {
-                request,
-                boot_id: format!("{id:032x}"),
-                install: None,
-                restore_bootstrap: None,
-                credential_delivered: false,
-                workspaces: BTreeMap::new(),
-                operations: BTreeMap::new(),
-                authorities: BTreeMap::new(),
-                worktrees: BTreeMap::new(),
-                homes: BTreeMap::new(),
-                agents: BTreeMap::new(),
-                writer_fence_captures: 0,
-                held_checkpoint: None,
-                resumed_checkpoint_tokens: BTreeSet::new(),
-                restored_object: None,
-                restored_conversations: BTreeMap::new(),
-            },
-        );
+        let mut runtime = MemoryRuntime {
+            request,
+            boot_id: format!("{id:032x}"),
+            install: None,
+            restore_bootstrap: None,
+            credential_delivered: false,
+            workspaces: BTreeMap::new(),
+            operations: BTreeMap::new(),
+            authorities: BTreeMap::new(),
+            worktrees: BTreeMap::new(),
+            homes: BTreeMap::new(),
+            agents: BTreeMap::new(),
+            writer_fence_captures: 0,
+            held_checkpoint: None,
+            resumed_checkpoint_tokens: BTreeSet::new(),
+            restored_object: None,
+            restored_conversations: BTreeMap::new(),
+        };
+        let retained = self.retained_homes.lock().await;
+        home::attach(&mut runtime, &runtimes, &retained)?;
+        runtimes.insert(handle.clone(), runtime);
         Ok(handle)
     }
 
@@ -176,7 +179,12 @@ impl HostedBackend for InMemoryHostedBackend {
 
     async fn reclaim(&self, observation: &RuntimeObservation) -> crate::Result<()> {
         let mut runtimes = self.runtimes.lock().await;
-        state::reclaim(&mut runtimes, observation)
+        let removed = state::reclaim(&mut runtimes, observation)?;
+        if let Some(runtime) = removed {
+            let mut retained = self.retained_homes.lock().await;
+            home::retain(runtime, &mut retained)?;
+        }
+        Ok(())
     }
 
     async fn exchange(
@@ -427,12 +435,12 @@ impl HostedBackend for InMemoryHostedBackend {
     }
 
     async fn teardown(&self, handle: &RuntimeHandle) -> crate::Result<()> {
-        if self.runtimes.lock().await.remove(handle).is_none() {
-            return Err(AdapterError::Unavailable(format!(
-                "unknown runtime {}",
-                handle.0
-            )));
-        }
+        let mut runtimes = self.runtimes.lock().await;
+        let runtime = runtimes
+            .remove(handle)
+            .ok_or_else(|| AdapterError::Unavailable(format!("unknown runtime {}", handle.0)))?;
+        let mut retained = self.retained_homes.lock().await;
+        home::retain(runtime, &mut retained)?;
         Ok(())
     }
 }

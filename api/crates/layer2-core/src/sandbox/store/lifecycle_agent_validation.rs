@@ -62,7 +62,10 @@ pub(super) fn validate_lifecycle_agent_phase(
             {
                 return Err(invalid("sandbox-only lifecycle phase changed agents"));
             }
-            if mutation.sandbox.status == SandboxStatus::Active {
+            if mutation.sandbox.status == SandboxStatus::Active
+                || (current.retained_home_recovery().is_some()
+                    && mutation.sandbox.status == SandboxStatus::Pausing)
+            {
                 validate_final_publication_agents(current, agents)?;
             }
         }

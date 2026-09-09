@@ -342,7 +342,17 @@ fn validate_next_sandbox(
         || next.profile != current.profile
         || next.limits != current.limits
         || next.created_at != current.created_at
-        || next.lifecycle.next_authority != current.lifecycle.next_authority
+        || (next.lifecycle.next_authority != current.lifecycle.next_authority
+            && !(current.lifecycle.next_authority.checked_add(1)
+                == Some(next.lifecycle.next_authority)
+                && matches!(
+                    current.lifecycle.operation,
+                    Some(SandboxLifecycleOperation::Revive { .. })
+                )
+                && matches!(
+                    next.lifecycle.operation,
+                    Some(SandboxLifecycleOperation::Pause { .. })
+                )))
         || next.work.execution != current.work.execution
     {
         return Err(invalid(

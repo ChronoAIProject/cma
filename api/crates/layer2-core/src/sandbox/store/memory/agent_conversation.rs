@@ -17,6 +17,14 @@ impl AgentConversationStore for InMemorySandboxStore {
         let mut state = self.lock();
         let mut candidate = state.clone();
         validate_mutation(&candidate, &mutation)?;
+        if mutation.admission_guard.is_some() {
+            candidate
+                .sandboxes
+                .get_mut(&mutation.agent.sandbox_id)
+                .ok_or(SandboxStoreError::Conflict)?
+                .cancel_recovery_pause(&mutation.appended_at)
+                .map_err(|error| SandboxStoreError::Corrupt(error.to_string()))?;
+        }
 
         let id = mutation.agent.id.clone();
         candidate.agents.insert(id.clone(), mutation.agent);

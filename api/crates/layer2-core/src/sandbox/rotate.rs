@@ -164,19 +164,32 @@ impl SandboxRotationAccounting {
     ) -> Result<SandboxRotationAccountingOutcome, SandboxModelError> {
         self.validate()?;
         checkpoint.validate()?;
-        if self.rotated_at.as_deref() == Some(checkpoint.sealed_at.as_str()) {
+        self.account_at(&checkpoint.sealed_at)
+    }
+
+    pub(super) fn account_at(
+        &mut self,
+        boundary: &str,
+    ) -> Result<SandboxRotationAccountingOutcome, SandboxModelError> {
+        self.validate()?;
+        if seconds_from_rfc3339(boundary).is_none() {
+            return Err(invalid_rotation_accounting());
+        }
+        if self.rotated_at.as_deref() == Some(boundary) {
             return Ok(SandboxRotationAccountingOutcome::AlreadyAccounted);
         }
-        if self.rotated_at.as_deref().is_some_and(|previous| {
-            seconds_from_rfc3339(previous) > seconds_from_rfc3339(&checkpoint.sealed_at)
-        }) {
+        if self
+            .rotated_at
+            .as_deref()
+            .is_some_and(|previous| seconds_from_rfc3339(previous) > seconds_from_rfc3339(boundary))
+        {
             return Err(invalid_rotation_accounting());
         }
         self.rotations = self
             .rotations
             .checked_add(1)
             .ok_or_else(invalid_rotation_accounting)?;
-        self.rotated_at = Some(checkpoint.sealed_at.clone());
+        self.rotated_at = Some(boundary.into());
         Ok(SandboxRotationAccountingOutcome::Accounted {
             rotations: self.rotations,
         })

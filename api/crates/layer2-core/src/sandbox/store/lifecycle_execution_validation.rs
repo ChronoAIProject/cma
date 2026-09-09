@@ -234,6 +234,9 @@ fn verify_checkpoint(
     fence: u64,
     at: &str,
 ) -> Result<(), crate::sandbox::SandboxModelError> {
+    if let Some(source) = expected.retained_home_recovery().cloned() {
+        return expected.complete_lifecycle_home_verification(&source, holder, fence, at.into());
+    }
     let checkpoint = expected
         .lifecycle
         .checkpoints

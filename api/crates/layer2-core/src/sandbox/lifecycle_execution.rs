@@ -175,7 +175,9 @@ impl Sandbox {
         fence: u64,
         at: String,
     ) -> Result<(), SandboxModelError> {
-        if self.lifecycle.checkpoints.latest.as_ref() != Some(verified) {
+        if self.lifecycle.home_recovery.is_some()
+            || self.lifecycle.checkpoints.latest.as_ref() != Some(verified)
+        {
             return Err(invalid_execution());
         }
         self.advance_recovery_phase(
@@ -420,32 +422,52 @@ impl Sandbox {
         if crate::seconds_from_rfc3339(&credential_rotation_at).is_none() {
             return Err(invalid_execution());
         }
-        self.apply_claimed_with_step(
-            holder,
-            fence,
-            SandboxWorkStep::WaitForCredentialRotation,
-            credential_rotation_at,
-            at.clone(),
-            |next| {
-                let rotation = matches!(
+        let resume_pause = self
+            .lifecycle
+            .home_recovery
+            .as_ref()
+            .and_then(|source| source.resume_pause.clone());
+        let next_step = if resume_pause.is_some() {
+            SandboxWorkStep::RunLifecycleOperation
+        } else {
+            SandboxWorkStep::WaitForCredentialRotation
+        };
+        let ready_at = if resume_pause.is_some() {
+            at.clone()
+        } else {
+            credential_rotation_at
+        };
+        self.apply_claimed_with_step(holder, fence, next_step, ready_at, at.clone(), |next| {
+            let rotation = matches!(
+                next.lifecycle.operation,
+                Some(SandboxLifecycleOperation::ImageRotation {
+                    phase: SandboxImageRotationPhase::PublishActive,
+                    ..
+                })
+            );
+            let publishable = rotation
+                || matches!(
                     next.lifecycle.operation,
-                    Some(SandboxLifecycleOperation::ImageRotation {
-                        phase: SandboxImageRotationPhase::PublishActive,
+                    Some(SandboxLifecycleOperation::Revive {
+                        phase: SandboxRevivePhase::PublishActive,
                         ..
                     })
                 );
-                let publishable = rotation
-                    || matches!(
-                        next.lifecycle.operation,
-                        Some(SandboxLifecycleOperation::Revive {
-                            phase: SandboxRevivePhase::PublishActive,
-                            ..
-                        })
-                    );
-                if !publishable || next.runtime.is_none() {
-                    return Err(invalid_execution());
-                }
-                if rotation {
+            if !publishable || next.runtime.is_none() {
+                return Err(invalid_execution());
+            }
+            if rotation {
+                if next.lifecycle.home_recovery.is_some() {
+                    let boundary = next
+                        .lifecycle
+                        .operation
+                        .as_ref()
+                        .ok_or_else(invalid_execution)?
+                        .authority()
+                        .requested_at
+                        .clone();
+                    next.lifecycle.rotation.account_at(&boundary)?;
+                } else {
                     let checkpoint = next
                         .lifecycle
                         .checkpoints
@@ -454,12 +476,19 @@ impl Sandbox {
                         .ok_or_else(invalid_execution)?;
                     next.lifecycle.rotation.account(&checkpoint)?;
                 }
-                next.lifecycle.operation = None;
-                next.lifecycle.paused_notice = None;
+            }
+            next.lifecycle.operation = None;
+            next.lifecycle.home_recovery = None;
+            next.lifecycle.paused_notice = None;
+            if let Some(pause) = resume_pause {
+                next.lifecycle
+                    .start_pause(&next.id, at.clone(), pause.notice)?;
+                next.transition(SandboxStatus::Pausing, at, None)?;
+            } else {
                 next.transition(SandboxStatus::Active, at, None)?;
-                Ok(())
-            },
-        )
+            }
+            Ok(())
+        })
     }
 
     /// Fail the current lifecycle with a stable phase-derived class.

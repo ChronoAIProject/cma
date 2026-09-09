@@ -353,7 +353,7 @@ async fn revive_pins_checkpoint_and_replays_without_changing_its_cause() {
         panic!("revive operation was not persisted");
     };
     assert_eq!(*cause, SandboxReviveCause::AgentMessage);
-    assert_eq!(*checkpoint_epoch, 9);
+    assert_eq!(*checkpoint_epoch, Some(9));
 
     let replay = store
         .schedule_sandbox_lifecycle(SandboxLifecycleCommand::revive(
