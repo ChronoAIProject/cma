@@ -20,7 +20,7 @@ spec:
     metadata:
       annotations:
         # Reload the environment-bound runtime pin when its ConfigMap changes.
-        cma.chronoai.dev/runtime-image: "sha256:00bfd9b736be7fbfa986a41f250ceefcd5ee26ab6bcddae5cd3082488781ef4d"
+        cma.chronoai.dev/runtime-image: "sha256:d320881314203bdee25caeb70ea36abc1f0f446ea792b34dd66b1b3dc7ac0b1e"
       labels:
         app.kubernetes.io/name: cma-api
         app.kubernetes.io/part-of: cma
