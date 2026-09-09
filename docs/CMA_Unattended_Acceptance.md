@@ -151,6 +151,25 @@ image identity and measured results for each behavior, with unknowns left explic
   Host disk remains 56 GiB free; Docker restart or local artifact pruning was
   not necessary.
 
+## Snapshot exporter CSI correction — 2026-09-10
+
+- The first real CSI exporter probe failed before reading its request because
+  Kubernetes DownwardAPI files are atomic projected `..data` symlinks and the
+  runtime's `O_NOFOLLOW` request reader rejected that provider-created link with
+  `FilesystemLoop`. The exporter now canonicalizes only the projected request,
+  requires the resolved file to remain beneath its mount, and then applies the
+  existing no-follow bounded reader. User-controlled archive and source paths
+  remain no-follow.
+- Runtime tests pass 205/205 (two existing ignored), formatting and all-target
+  runtime Clippy pass. Candidate image
+  `sha256:34f41f16cbc6c61fbea2e4cfb5f5715b68ef5af168c2711bbf76d055a1851f94`
+  was built and pushed under the debug tag only.
+- A repeat generated-data CSI probe using that image passed exporter execution,
+  archive transfer, exact cleanup, and concurrent-write evidence: 17,877,867
+  archive bytes, 1,000 ms export, 88 writes during export, and capture began
+  while the writer was active. This proves the CSI/export primitive; it does not
+  yet prove CMA control-plane publication or production snapshot scheduling.
+
 ## Next Verification Work
 
 - Untouched-Agent pause/resume and the initial three-minute snapshot delay now

@@ -39,6 +39,23 @@ pub(super) fn read<T: DeserializeOwned>(path: &Path) -> Result<Option<T>> {
         .map_err(|_| invalid("export record is malformed"))
 }
 
+/// Read a Kubernetes projected file (for example a DownwardAPI annotation).
+/// Atomic projected volumes expose the file through an in-volume `..data`
+/// symlink. Resolve that provider-created link, require the result to remain
+/// under the projected mount, then pass the canonical path through the normal
+/// no-follow reader so user-controlled links are still rejected.
+pub(super) fn read_projected<T: DeserializeOwned>(path: &Path) -> Result<Option<T>> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| invalid("projected record has no parent"))?;
+    let parent = std::fs::canonicalize(parent).map_err(failure)?;
+    let canonical = std::fs::canonicalize(path).map_err(failure)?;
+    if !canonical.starts_with(&parent) {
+        return Err(invalid("projected record resolves outside its mount"));
+    }
+    read(&canonical)
+}
+
 pub(super) fn publish<T: Serialize + DeserializeOwned + PartialEq>(
     path: &Path,
     value: &T,
@@ -124,10 +141,15 @@ pub(super) fn invalid(detail: &'static str) -> RuntimeError {
     RuntimeError::rejected("snapshot_export_invalid", detail)
 }
 
-fn failure(_error: std::io::Error) -> RuntimeError {
+fn failure(error: std::io::Error) -> RuntimeError {
     // Source paths can contain user-controlled file names; keep command logs bounded.
+    // The error kind is sufficient to diagnose provider mount failures without
+    // exposing paths or file contents from the captured home.
     RuntimeError::unavailable(
         "snapshot_export_io",
-        "snapshot export storage operation failed",
+        format!(
+            "snapshot export storage operation failed ({:?})",
+            error.kind()
+        ),
     )
 }
