@@ -301,6 +301,12 @@ before the previous archive is pruned. Restart recovery resumes from database
 authority rather than the memory of a former worker. A stale worker cannot
 resume writers or retire a replacement runtime under an expired fence.
 
+After restored Agents reopen, queue completion rechecks their internal metadata
+and lease settlement within five seconds (or the configured retry delay if
+shorter). External failures keep the normal retry delay, and an uncertain message
+dispatch retains its full grace period. A conflicting completion cannot replace
+a newer parent revision, release a replacement worker's lease or discard input.
+
 ## Trigger And Visitor Ownership
 
 Triggers select exact public profile revisions and reuse policies. Reuse matches

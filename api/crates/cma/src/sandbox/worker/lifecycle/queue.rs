@@ -1,4 +1,4 @@
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
 
 use layer2_core::sandbox::store::{
     SandboxLifecycleAgentMutation, SandboxLifecycleAgentScope, SandboxStoreError,
@@ -94,7 +94,7 @@ impl SandboxWorker {
             .find(|agent| !queue_agent_is_quiet(agent))
         {
             tracing::debug!(agent_id = %agent.id, "lifecycle queue is waiting for agent settlement");
-            return self.retry_queue_phase(sandbox, now).await;
+            return self.retry_queue_settlement(sandbox, now).await;
         }
 
         let pending = agents
@@ -164,10 +164,27 @@ impl SandboxWorker {
             // Reopened agents can publish metadata after the queue snapshot. Retry only
             // this internal commit, under the unchanged parent revision and claim.
             Err(SandboxStoreError::Conflict) => {
-                Box::pin(self.retry_queue_phase(sandbox, now)).await
+                Box::pin(self.retry_queue_settlement(sandbox, now)).await
             }
             outcome => outcome,
         }
+    }
+
+    async fn retry_queue_settlement(
+        &self,
+        sandbox: Sandbox,
+        now: SystemTime,
+    ) -> Result<(), SandboxStoreError> {
+        // Reopened agents finish their metadata/lease commits independently.
+        // Recheck local state promptly without shortening external failure
+        // backoff or the grace period for an ambiguous message dispatch.
+        self.handle_lifecycle_failure_after(
+            sandbox,
+            WorkerFailure::retryable("lifecycle queued messages still require settlement"),
+            now,
+            self.config.retry_delay.min(Duration::from_secs(5)),
+        )
+        .await
     }
 
     async fn retry_queue_phase(

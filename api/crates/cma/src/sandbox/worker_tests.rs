@@ -398,6 +398,16 @@ struct Harness {
 
 impl Harness {
     async fn new(commands: Vec<String>, workspace_count: u16, retention: Duration) -> Self {
+        Self::new_with_retry_delay(commands, workspace_count, retention, Duration::from_secs(5))
+            .await
+    }
+
+    async fn new_with_retry_delay(
+        commands: Vec<String>,
+        workspace_count: u16,
+        retention: Duration,
+        retry_delay: Duration,
+    ) -> Self {
         let profiles = Arc::new(InMemoryProfileStore::default());
         let mut workspace_profiles = Vec::new();
         for index in 0..workspace_count {
@@ -446,7 +456,7 @@ impl Harness {
         let mut config =
             SandboxWorkerConfig::new("worker-a", "test", runtime_image(), policy.clone());
         config.lease_duration = Duration::from_secs(60);
-        config.retry_delay = Duration::from_secs(5);
+        config.retry_delay = retry_delay;
         let worker = SandboxWorker::new(dependencies, config);
         Self {
             store,
