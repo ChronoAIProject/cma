@@ -73,17 +73,16 @@ pub(super) fn memory_observation(
 pub(super) fn reclaim(
     runtimes: &mut BTreeMap<RuntimeHandle, MemoryRuntime>,
     observation: &RuntimeObservation,
-) -> crate::Result<()> {
+) -> crate::Result<Option<MemoryRuntime>> {
     let Some(runtime) = runtimes.get(&observation.handle) else {
-        return Ok(());
+        return Ok(None);
     };
     if memory_observation(&observation.handle, &runtime.request)? != *observation {
         return Err(AdapterError::Rejected(
             "provider runtime changed after it was observed".into(),
         ));
     }
-    runtimes.remove(&observation.handle);
-    Ok(())
+    Ok(runtimes.remove(&observation.handle))
 }
 
 pub(super) fn require_credential(

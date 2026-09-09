@@ -10,20 +10,61 @@ pub(super) fn recover_agent(
     at: &str,
 ) -> Result<(Agent, Vec<AgentLogKind>), SandboxModelError> {
     current.validate_conversation()?;
+    let retained_home = sandbox
+        .lifecycle
+        .home
+        .as_ref()
+        .is_some_and(|home| home.attachment().is_some())
+        && sandbox.credential.current.is_some();
+    // Preserve unfinished creation and explicit cleanup. The new runtime generation
+    // invalidates process receipts, while filesystem intents remain authoritative.
+    if retained_home
+        && (current.status == AgentStatus::Starting || current.requested_stop_reason.is_some())
+    {
+        let mut next = current.clone();
+        next.work.lease = None;
+        next.work.ready_at = at.into();
+        let mut logs = Vec::new();
+        if let Some(previous_generation) = current.conversation.runtime_generation {
+            let runtime_generation = previous_generation
+                .checked_add(1)
+                .ok_or_else(invalid_sequence)?;
+            next.conversation.runtime_generation = Some(runtime_generation);
+            logs.push(AgentLogKind::RuntimeGenerationRetired {
+                previous_generation,
+                runtime_generation,
+            });
+        }
+        // PublishReady retains its exact open receipt and conversation ID. Its
+        // normal reconnect path loads that conversation before publishing Ready.
+        next.conversation.last_seq = current
+            .conversation
+            .last_seq
+            .checked_add(u64::try_from(logs.len()).map_err(|_| invalid_sequence())?)
+            .ok_or_else(invalid_sequence)?;
+        next.updated_at = at.into();
+        next.revision = current
+            .revision
+            .checked_add(1)
+            .ok_or_else(invalid_sequence)?;
+        next.validate_conversation()?;
+        return Ok((next, logs));
+    }
     let covered = current.status != AgentStatus::Starting
         && current.requested_stop_reason.is_none()
-        && sandbox
-            .lifecycle
-            .checkpoints
-            .latest
-            .as_ref()
-            .is_some_and(|checkpoint| {
-                checkpoint.conversations.iter().any(|conversation| {
-                    conversation.agent_id == current.id
-                        && Some(conversation.conversation_id.as_str())
-                            == current.conversation.conversation_id.as_deref()
-                })
-            });
+        && (retained_home && current.conversation.conversation_id.is_some()
+            || sandbox
+                .lifecycle
+                .checkpoints
+                .latest
+                .as_ref()
+                .is_some_and(|checkpoint| {
+                    checkpoint.conversations.iter().any(|conversation| {
+                        conversation.agent_id == current.id
+                            && Some(conversation.conversation_id.as_str())
+                                == current.conversation.conversation_id.as_deref()
+                    })
+                }));
     let mut next = current.clone();
     let mut logs = Vec::new();
     if let Some(turn_sequence) = next.conversation.active_turn.take() {
@@ -89,8 +130,22 @@ pub(super) fn recover_agent(
         });
     }
     next.work.schedule(AgentWorkStep::None, at.into());
-    next.work.receipts.clear();
-    next.work.cleanup_debt.clear();
+    if retained_home {
+        next.work.receipts.retain(|receipt| {
+            !matches!(
+                receipt.step,
+                AgentWorkStep::OpenConversation
+                    | AgentWorkStep::PublishReady
+                    | AgentWorkStep::PublishConnection
+            )
+        });
+        next.work
+            .cleanup_debt
+            .retain(|debt| debt.step != AgentWorkStep::OpenConversation);
+    } else {
+        next.work.receipts.clear();
+        next.work.cleanup_debt.clear();
+    }
     next.updated_at = at.into();
     next.revision = current
         .revision

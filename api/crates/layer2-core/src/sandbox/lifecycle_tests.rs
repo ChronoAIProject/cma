@@ -110,7 +110,7 @@ fn revive_pins_the_latest_checkpoint_and_never_allocates_a_writer_token() {
     assert!(authority.writer_resume_token.is_none());
     assert_eq!(*phase, SandboxRevivePhase::CheckpointVerification);
     assert_eq!(*cause, SandboxReviveCause::ExplicitRequest);
-    assert_eq!(*checkpoint_epoch, 7);
+    assert_eq!(*checkpoint_epoch, Some(7));
     value.validate().unwrap();
 }
 

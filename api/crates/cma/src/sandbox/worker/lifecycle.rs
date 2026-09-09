@@ -10,6 +10,7 @@ use super::SandboxWorker;
 
 mod checkpoint;
 mod conversations;
+mod home_recovery;
 mod pause;
 mod queue;
 mod restore;

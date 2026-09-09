@@ -46,7 +46,7 @@ impl Sandbox {
             ));
         }
         if self.status == SandboxStatus::Reviving {
-            self.validate()?;
+            self.cancel_recovery_pause(&at)?;
             return Ok(None);
         }
         let mut next = self.clone();
@@ -72,6 +72,11 @@ impl Sandbox {
 
     /// New reservations have no checkpoint content until their first runtime intent.
     pub fn restores_agent(&self, agent: &Agent) -> bool {
+        if self.retained_home_recovery().is_some() {
+            return agent.status.is_live()
+                && agent.status != AgentStatus::Starting
+                && agent.requested_stop_reason.is_none();
+        }
         agent.status.is_live()
             && !(self.status == SandboxStatus::Reviving
                 && self

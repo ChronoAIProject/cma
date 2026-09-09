@@ -102,7 +102,7 @@ async fn lifecycle_commands_are_owner_bound_gap_free_and_concurrently_idempotent
     assert!(matches!(
         revived.sandbox.lifecycle.operation,
         Some(SandboxLifecycleOperation::Revive {
-            checkpoint_epoch: 7,
+            checkpoint_epoch: Some(7),
             ..
         })
     ));
