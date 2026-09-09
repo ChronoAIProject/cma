@@ -186,6 +186,7 @@ impl SandboxWorker {
                 .filter(|agent| agent.status.is_live())
                 .map(SandboxCheckpointAgentGuard::capture)
                 .collect(),
+            nonblocking: false,
             checkpoint,
             sandbox: next.clone(),
             appended_at: stamp,

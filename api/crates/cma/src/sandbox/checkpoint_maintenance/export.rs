@@ -8,9 +8,7 @@
 
 use std::time::Duration;
 
-use layer2_core::sandbox::store::{
-    SandboxCheckpointAgentGuard, SandboxCheckpointMutation, SandboxMutationGuard,
-};
+use layer2_core::sandbox::store::{SandboxCheckpointMutation, SandboxMutationGuard};
 use layer2_core::sandbox::{Sandbox, SandboxCheckpointRef};
 use layer3_adapter::{
     HomeSnapshotExportJobRequest, HomeSnapshotExportJobStore, HomeSnapshotExportRequest,
@@ -145,17 +143,18 @@ impl SandboxCheckpointMaintenance {
                 .map_err(provider_error)?;
             let checkpoint =
                 SandboxCheckpointRef::seal_export(&job.export, &receipt).map_err(model_error)?;
-            let guards = agents
-                .iter()
-                .filter(|agent| agent.status.is_live())
-                .map(SandboxCheckpointAgentGuard::capture)
-                .collect();
+            let current = self
+                .store
+                .get_sandbox(&sandbox.id)
+                .await?
+                .ok_or(SandboxStoreError::NotFound)?;
             self.store
                 .publish_sandbox_checkpoint(SandboxCheckpointMutation {
-                    guard: SandboxMutationGuard::capture(sandbox),
-                    agents: guards,
+                    guard: SandboxMutationGuard::capture(&current),
+                    agents: Vec::new(),
+                    nonblocking: true,
                     checkpoint,
-                    sandbox: sandbox.clone(),
+                    sandbox: current,
                     appended_at: layer2_core::rfc3339_at(clock.now()),
                 })
                 .await?;

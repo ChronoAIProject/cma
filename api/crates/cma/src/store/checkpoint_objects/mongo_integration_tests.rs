@@ -946,6 +946,7 @@ async fn publish_result(
         .publish_sandbox_checkpoint(SandboxCheckpointMutation {
             guard: SandboxMutationGuard::capture(current),
             agents: Vec::new(),
+            nonblocking: false,
             checkpoint,
             sandbox: next.clone(),
             appended_at: "2026-09-05T00:00:00Z".into(),

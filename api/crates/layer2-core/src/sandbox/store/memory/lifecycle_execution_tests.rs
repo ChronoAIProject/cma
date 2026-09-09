@@ -197,6 +197,7 @@ async fn checkpoint_metadata_retains_only_the_latest_complete_generation() {
                     .iter()
                     .map(SandboxCheckpointAgentGuard::capture)
                     .collect(),
+                nonblocking: false,
                 checkpoint,
                 sandbox: next,
                 appended_at: NOW.into(),
@@ -579,6 +580,7 @@ fn checkpoint_mutation(
             .iter()
             .map(SandboxCheckpointAgentGuard::capture)
             .collect(),
+        nonblocking: false,
         checkpoint,
         sandbox: next,
         appended_at: NOW.into(),
