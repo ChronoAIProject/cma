@@ -79,7 +79,8 @@ spec:
               memory: 256Mi
             limits:
               cpu: 1000m
-              # Four lifecycle sweeps can each hold bounded multipart buffers.
+              # Four lifecycle sweeps can each hold bounded multipart buffers:
+              # up to four 32 MiB parts per upload or ordered restore download.
               memory: 1Gi
           # Startup validates MongoDB schema/indexes and composes provider
           # authorities before binding. The existing 30-minute budget is
