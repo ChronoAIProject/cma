@@ -28,6 +28,7 @@ mod resource_network;
 mod resources;
 mod restore_bootstrap;
 mod skills;
+mod snapshot_export;
 mod supervisor;
 mod upstream;
 mod upstream_guard;
@@ -55,6 +56,15 @@ async fn main() {
 }
 
 async fn run() -> Result<(), String> {
+    let arguments = std::env::args_os().skip(1).collect::<Vec<_>>();
+    if let Some(command) = arguments.first() {
+        if command == "--export-home-snapshot" {
+            return snapshot_export::run(&arguments[1..])
+                .await
+                .map_err(|error| error.to_string());
+        }
+        return Err("unknown runtime command".into());
+    }
     let config = config::RuntimeConfig::from_environment()?;
     let bind = config.bind;
     let writer_boundary = writer_fence::SupervisorBoundary::install()?;

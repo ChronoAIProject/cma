@@ -13,6 +13,7 @@ mod conversation;
 mod conversation_channel;
 mod error;
 mod home_snapshot;
+mod home_snapshot_export;
 mod home_volume;
 mod runtime;
 mod runtime_status;
@@ -52,6 +53,10 @@ pub use error::{AdapterError, Result, RuntimeContractMismatch};
 pub use home_snapshot::{
     HomeSnapshotInventoryEntry, HomeSnapshotObservation, HomeSnapshotReceipt, HomeSnapshotRequest,
     HomeSnapshotStore,
+};
+pub use home_snapshot_export::{
+    HomeSnapshotConversationIdentity, HomeSnapshotExportConversation, HomeSnapshotExportReceipt,
+    HomeSnapshotExportRequest, MAX_SNAPSHOT_EXPORT_CONVERSATIONS,
 };
 pub use home_volume::{
     HomeVolumeAttachment, HomeVolumePolicy, HomeVolumeReceipt, HomeVolumeRequest, HomeVolumeStore,
