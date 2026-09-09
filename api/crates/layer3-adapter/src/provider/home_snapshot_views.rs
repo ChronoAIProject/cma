@@ -180,4 +180,4 @@ impl HomeSnapshotViewStore for PersistentHomeVolumes {
 
 #[cfg(test)]
 #[path = "home_snapshot_views_tests.rs"]
-mod tests;
+pub(super) mod tests;

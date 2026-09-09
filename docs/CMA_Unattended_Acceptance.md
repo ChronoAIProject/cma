@@ -1791,3 +1791,32 @@ image identity and measured results for each behavior, with unknowns left explic
   cleanup, publication while current Agents change, and recovery of children
   created/deleted after capture remain unconnected. The production permissions
   dependency is unchanged; no owner lifecycle operation or rollout was issued.
+
+## Offline export Pod execution and streaming — 2026-09-10
+
+- Added an exact-attempt exporter Pod with a pinned runtime image. Its init
+  container mounts only the distinct snapshot-derived disk's home, state and
+  transfer directories read-only and seals the archive into separate temporary
+  output. The remaining transfer container can read only that output, runs no
+  supervisor, Agent or network server, and receives no user or Kubernetes token.
+  The request is projected from recorded non-secret Pod metadata.
+- Allocation and observation return pending stages without waiting for export.
+  Request/image/mount/security settings, Pod UID and source-view binding are
+  verified; missing or replaced Pods never implicitly start another attempt.
+  Inventory includes failed/deleting Pods and exact cleanup waits for removal.
+- Upload reads through Kubernetes exec, with the expected Pod UID checked inside
+  the transfer container to close the name-resolution race. Receipt size, full
+  archive length/hash, successful remote exit and unchanged ready Pod identity
+  are required before upload EOF can commit. Backpressure bounds memory; read
+  failures reach the sink as errors. No source paths or file contents are logged.
+- Ten new scheduler/transfer regressions pass, including actual WebSocket exec
+  framing, truncated/corrupt/oversized data, missing/non-success remote status,
+  late Pod replacement and receipt refusal. All 165 adapter tests pass with none
+  skipped. Adapter all-target/all-feature Clippy, formatting and source/example
+  secret scans pass. Kube's existing WebSocket dependency is enabled; flate2 is
+  reused only by the isolated probe's development code, with no version changes.
+- The explicit snapshot_export_probe example exercises the real CSI path with
+  generated data, a continuously writing source, archive extraction and exact
+  cleanup. Cluster execution remains pending. Production composition and durable
+  checkpoint publication are still unconnected; current storage Role permissions
+  remain insufficient for API activation and no live configuration was enabled.
