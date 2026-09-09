@@ -1210,3 +1210,29 @@ image identity and measured results for each behavior, with unknowns left explic
   Retirement completed, its runtime is gone, and all 178 listed logical snapshot
   objects were removed. Both temporary warm-test Sandboxes are now Deleted.
   No original user Sandbox was retired. Host disk has 16 GiB free.
+- Runtime d730d6ae was deployed at 13:09 UTC through immutable manifest source
+  d4f77b19. Evidence: snapshot-runtime-rollout-X9LNW4 and
+  snapshot-runtime-postflight-DA1vzl under /tmp/cma-trureturing-loop.LvTezb.
+  The existing API and web image digests remain unchanged; the API reloaded its
+  configured runtime image and both deployments returned to 1/1 Ready, with no
+  container restarts. The public landing page returned HTTP 200. The all-owner
+  preflight found three Paused and 35 Retired Sandboxes, with no owned runtime.
+  Postflight verified all 38 complete Sandbox records and child-summary hashes
+  unchanged, including valid paused recovery points and passive superseded-key
+  revocation debt. The owner's original one-turn and nine-turn histories still
+  match their saved hashes. No owner Sandbox commands were sent.
+- At 13:10:20 UTC, all five replacement warm runtimes were installed on digest
+  00bfd9b736be7fbfa986a41f250ceefcd5ee26ab6bcddae5cd3082488781ef4d,
+  with credential-free installation receipts, no fixed Git identity and no old
+  warm runtime remaining. Truretruing availability remains warmup enabled,
+  count five and Always keep alive enabled; the global checkpoint interval is
+  still 1,800 seconds. The new deployment helper initially rejected unsupported
+  owner-only transcript assumptions, existing passive paused-key debt and an
+  omitted optional pagination cursor before any mutation; the corrected guard
+  retains complete admin record hashes and owner-visible transcript hashes.
+  It records point-in-time checks, not an atomic database writer lease.
+- This rollout verifies image identity, installation and preservation. It does
+  not yet verify actual production archive release after capture/restore, peak
+  memory, improved large-save timing or uninterrupted snapshots. Those remain
+  active implementation and acceptance work, together with clean continuous
+  keepalive, fresh-sign-in/missing-service admission and the remaining register.
