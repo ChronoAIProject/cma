@@ -8,7 +8,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use k8s_openapi::api::core::v1::Pod;
 use kube::{
-    api::{Api, AttachedProcess, PostParams},
+    api::{Api, AttachedProcess, LogParams, PostParams},
     config::KubeConfigOptions,
 };
 use layer3_adapter::{provider::PersistentHomeVolumes, *};
@@ -256,6 +256,42 @@ impl Probe {
         }
         Ok(())
     }
+
+    async fn failure_evidence(&self) -> Result<Value> {
+        let Some(job) = &self.job else {
+            return Ok(Value::Null);
+        };
+        let digest = job.computed_sha256()?;
+        let name = format!("cma-export-{}", &digest[..48]);
+        let Some(pod) = self.pods.get_opt(&name).await? else {
+            return Ok(Value::Null);
+        };
+        if pod
+            .metadata
+            .annotations
+            .as_ref()
+            .and_then(|values| values.get("cma/home-export-digest"))
+            != Some(&digest)
+        {
+            return Err("probe diagnostics target changed authority".into());
+        }
+        // This probe contains only the image seed and generated data, never user
+        // credentials or an existing Sandbox. Keep its diagnostics bounded.
+        let logs = self
+            .pods
+            .logs(
+                &name,
+                &LogParams {
+                    container: Some("export".into()),
+                    tail_lines: Some(20),
+                    limit_bytes: Some(8192),
+                    ..LogParams::default()
+                },
+            )
+            .await
+            .ok();
+        Ok(json!({"pod":name,"status":pod.status,"exportLog":logs}))
+    }
 }
 
 async fn observe_capture(
@@ -317,11 +353,16 @@ async fn main() -> Result<()> {
     };
     let result = probe.run().await;
     let stage = probe.stage;
+    let diagnostic = if result.is_err() {
+        probe.failure_evidence().await.ok()
+    } else {
+        None
+    };
     probe.stage("cleanup");
     let cleanup = probe.cleanup().await;
     println!(
         "{}",
-        json!({"result":if result.is_ok() && cleanup.is_ok() { "pass" } else { "fail" },"stage":stage,"identity":identity,"evidence":result.as_ref().ok(),"failure":result.as_ref().err().map(ToString::to_string),"cleanup":cleanup.as_ref().err().map(ToString::to_string)})
+        json!({"result":if result.is_ok() && cleanup.is_ok() { "pass" } else { "fail" },"stage":stage,"identity":identity,"evidence":result.as_ref().ok(),"failure":result.as_ref().err().map(ToString::to_string),"diagnostic":diagnostic,"cleanup":cleanup.as_ref().err().map(ToString::to_string)})
     );
     cleanup?;
     result

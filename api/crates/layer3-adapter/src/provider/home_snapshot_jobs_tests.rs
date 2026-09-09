@@ -67,6 +67,7 @@ fn pod_mounts_only_snapshot_input_and_has_no_user_or_cluster_credentials() {
     let value = serde_json::to_value(pod("export-one", Phase::Pending)).unwrap();
     let spec = &value["spec"];
     assert_eq!(spec["automountServiceAccountToken"], false);
+    assert_eq!(spec["runtimeClassName"], "gvisor");
     assert_eq!(
         spec["volumes"][0]["persistentVolumeClaim"]["claimName"],
         request().view.volume_reference
@@ -225,6 +226,7 @@ fn foreign_mounts_execution_and_credentials_are_rejected() {
         ("/metadata/labels/app.kubernetes.io~1name", json!("other")),
         ("/spec/automountServiceAccountToken", json!(true)),
         ("/spec/securityContext/runAsUser", json!(0)),
+        ("/spec/runtimeClassName", json!("other")),
         ("/spec/initContainers/0/image", json!("other:latest")),
         ("/spec/containers/0/volumeMounts/0/readOnly", json!(false)),
         (

@@ -1820,3 +1820,16 @@ image identity and measured results for each behavior, with unknowns left explic
   cleanup. Cluster execution remains pending. Production composition and durable
   checkpoint publication are still unconnected; current storage Role permissions
   remain insufficient for API activation and no live configuration was enabled.
+- Full backend verification passes 1,735 runnable tests with 188 existing
+  excluded/ignored; all-workspace/all-target/all-feature Clippy and dependency
+  policy pass. The dependency policy reports its existing duplicate-version
+  warnings without violations.
+- Isolated cluster campaign storage-export-probe-fgMWnV (5f476f60) allocated the
+  source, completed fixture installation and CSI capture, and started the writer
+  before the snapshot became ready. Its exporter exited unsuccessfully. The
+  probe completed exact cleanup, including source/view PVCs, snapshot and Pods.
+  It did not retain the failed container log before cleanup; cloud log-view
+  permission is unavailable, so the cause is not established by that run.
+  The probe now retains bounded diagnostics of only its generated-data exporter.
+  Export Pods and the probe source now explicitly use the same gVisor class,
+  node selector and scheduling tolerance as CMA's persistent-home seed.

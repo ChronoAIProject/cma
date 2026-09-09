@@ -48,6 +48,8 @@ pub fn source_pod(
         "metadata":{"namespace":namespace,"name":identity,"labels":{"cma/export-proof":identity}},
         "spec":{
             "restartPolicy":"Never","activeDeadlineSeconds":2400,"terminationGracePeriodSeconds":1,
+            "runtimeClassName":"gvisor","nodeSelector":{"sandbox.gke.io/runtime":"gvisor"},
+            "tolerations":[{"key":"sandbox.gke.io/runtime","operator":"Equal","value":"gvisor","effect":"NoSchedule"}],
             "automountServiceAccountToken":false,"enableServiceLinks":false,
             "securityContext":{"runAsNonRoot":true,"runAsUser":10001,"runAsGroup":10001,"fsGroup":10001,"seccompProfile":{"type":"RuntimeDefault"}},
             "containers":[{
