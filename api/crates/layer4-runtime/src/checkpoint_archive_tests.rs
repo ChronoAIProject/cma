@@ -78,9 +78,9 @@ fn captures_are_compressed_deterministic_and_replay_the_exact_object() {
     assert_eq!(&encoded[..4], &[0x1f, 0x8b, 8, 0]);
     assert!(encoded.len() < bytes.len() / 100);
     assert_eq!(first.sha256, hex(&Sha256::digest(&encoded)));
-    let inspected = inspect(&first.path, &first.sha256, &fixture.home).unwrap();
+    inspect(&first.path, &first.sha256, &fixture.home).unwrap();
     let restored = fixture.root.join("restored");
-    extract(&first.path, &inspected, &restored).unwrap();
+    extract(&first.path, &first.sha256, &fixture.home, &restored).unwrap();
     assert_eq!(std::fs::read(restored.join("file")).unwrap(), bytes);
 }
 
@@ -91,11 +91,12 @@ fn legacy_uncompressed_archives_still_restore_with_exact_manifest_offsets() {
     std::fs::write(fixture.home.join("b"), b"second").unwrap();
     let manifest = crate::checkpoint_manifest::collect(&fixture.home, &[]).unwrap();
     let bytes = legacy_bytes(&manifest, b"firstsecond");
-    let inspected = fixture.inspect(&bytes).unwrap();
+    fixture.inspect(&bytes).unwrap();
     let destination = fixture.root.join("restored");
     extract(
         &fixture.store.join("candidate.cma"),
-        &inspected,
+        &hex(&Sha256::digest(&bytes)),
+        &fixture.home,
         &destination,
     )
     .unwrap();
@@ -226,6 +227,51 @@ async fn corrupt_inner_file_never_replaces_home_and_upload_replays_remain_exact(
     );
     assert!(!fixture.home.join("file").exists());
     assert_eq!(std::fs::read_dir(&fixture.store).unwrap().count(), 1);
+}
+
+#[tokio::test]
+async fn restore_rejects_late_corruption_without_replacing_home_or_leaving_staging() {
+    let fixture = Fixture::new("restore-late-corruption");
+    std::fs::write(fixture.home.join("preserved"), b"owner data").unwrap();
+    let mut config = crate::config::RuntimeConfig::for_test(fixture.home.clone());
+    config.checkpoint_root = fixture.store.clone();
+    let store = crate::checkpoint::CheckpointStore::new(&config);
+    let manifest = single_file(7, hex(&Sha256::digest(b"payload")));
+    let valid = compressed(&legacy_bytes(&manifest, b"payload"));
+    let mut corrupt_crc = valid.clone();
+    let crc = corrupt_crc.len() - 8;
+    corrupt_crc[crc] ^= 1;
+    let mut trailing = valid.clone();
+    trailing.extend_from_slice(b"trailing");
+    let mut concatenated = valid.clone();
+    concatenated.extend_from_slice(&valid);
+    for bytes in [
+        corrupt_crc,
+        valid[..valid.len() - 1].to_vec(),
+        trailing,
+        concatenated,
+        compressed(&legacy_bytes(&manifest, b"payloadextra")),
+        compressed(&legacy_bytes(&manifest, b"short")),
+    ] {
+        let digest = hex(&Sha256::digest(&bytes));
+        let reference = format!("home-{digest}.cma");
+        let path = fixture.store.join(&reference);
+        std::fs::write(&path, &bytes).unwrap();
+        assert!(store
+            .restore(&layer3_adapter::RestoreRequest {
+                object_reference: reference,
+                sha256: digest,
+            })
+            .await
+            .is_err());
+        assert_eq!(
+            std::fs::read(fixture.home.join("preserved")).unwrap(),
+            b"owner data"
+        );
+        assert_eq!(std::fs::read_dir(&fixture.home).unwrap().count(), 1);
+        assert_eq!(std::fs::read_dir(&fixture.store).unwrap().count(), 1);
+        std::fs::remove_file(path).unwrap();
+    }
 }
 
 #[test]

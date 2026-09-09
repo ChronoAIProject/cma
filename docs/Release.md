@@ -429,6 +429,13 @@ unchanged. The compressed-checkpoint runtime restores both historical plain
 archives and new compressed archives without an uncompressed archive staging
 file.
 
+Restoration verifies the archive SHA-256 and validates the complete manifest
+before creating a staging directory. It then reads the payload once to extract
+files, checking each file digest and the compression trailer before replacing
+the Sandbox home. Upload publication still independently checks the full archive.
+This avoids a duplicate restore decompression without changing the archive
+format, integrity checks or runtime contract.
+
 This is a forward-compatible adoption, not a reversible image-only change.
 Once a Sandbox has retained a compressed checkpoint, do not roll its runtime
 back to an image that only reads plain archives. Runtime contract 3 alone does
