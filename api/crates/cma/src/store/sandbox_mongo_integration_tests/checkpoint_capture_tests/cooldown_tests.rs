@@ -84,6 +84,9 @@ async fn failed_capture_completion_persists_cooldown_across_legacy_decode_and_re
     let events = reopened.sandbox_events(&current.id, 0, 100).await.unwrap();
     for at in [MINUTE, BEFORE] {
         assert!(!layer2_core::sandbox::sandbox_checkpoint_due(&current, at));
+        assert!(!layer2_core::sandbox::sandbox_checkpoint_due_with_interval(
+            &current, at, 60
+        ));
         let mut forged = current.clone();
         forged.lifecycle.checkpoint_capture_completed_at = None;
         forged.begin_checkpoint_capture(at.into()).unwrap();
@@ -114,8 +117,15 @@ async fn failed_capture_completion_persists_cooldown_across_legacy_decode_and_re
         reopened.sandbox_events(&current.id, 0, 100).await.unwrap(),
         events
     );
-    assert!(layer2_core::sandbox::sandbox_checkpoint_due(
+    assert!(!layer2_core::sandbox::sandbox_checkpoint_due(
         &current, BOUNDARY
+    ));
+    assert!(layer2_core::sandbox::sandbox_checkpoint_due(
+        &current,
+        "2026-09-05T00:30:00Z"
+    ));
+    assert!(layer2_core::sandbox::sandbox_checkpoint_due_with_interval(
+        &current, BOUNDARY, 60
     ));
     let mut next = current.clone();
     next.begin_checkpoint_capture(BOUNDARY.into()).unwrap();
