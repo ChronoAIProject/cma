@@ -1672,3 +1672,32 @@ image identity and measured results for each behavior, with unknowns left explic
   of user changes after capture, and actual concurrent production verification.
   Deployment permissions for creating/listing/deleting snapshots will belong
   to that later integration; the prepared home-activation Role remains unchanged.
+
+## Prepared durable-home API image — 2026-09-10
+
+- Exact source f8ca753c17572ab5fb4ef7180b98d89caa670f8c produced Linux/amd64
+  API manifest sha256:792b6cdbff831fa62fa8b2be1c2efc6d65454b3fc061a59f6c0f5ce09976170f.
+  The image was loaded locally with its original config identity; x86_64
+  execution and Gitleaks 8.30.1 succeeded. The API reached configuration
+  validation and exited as expected because the isolated, network-disabled
+  check intentionally supplied no MongoDB configuration or credentials.
+- The fixed HIGH/CRITICAL image vulnerability scan passes with a freshly
+  downloaded database. Its first attempt stalled in docker-credential-desktop
+  while looking up credentials for the public database. After confirming that
+  child process, the scan was stopped and rerun with an empty Docker auth
+  directory. The database then downloaded successfully; no scan policy was
+  relaxed. The helper now uses anonymous auth for its public database fetch.
+- Registry upload and exact remote digest/platform/revision verification pass.
+  Evidence: api-f8ca753c-build.json, api-f8ca753c-archive.json,
+  api-f8ca753c-trivy.json and api-f8ca753c-push.json in the retained scratch
+  directory. The source Deployment manifest is pinned to this prepared image.
+  The later 4048d856 snapshot primitive is not part of this image and is not
+  connected to production saving.
+- No rollout has been issued: the live API remains at 1b175122 and the web at
+  99f1edc8, both 1/1 Ready. Readback still finds only BatchSandbox permissions
+  on the API's Role. The four home keys remain disabled until an authorized
+  administrator applies infra/api/serviceaccount.yaml. This is a permissions
+  dependency, not a request for another application login.
+- Removed the exact disposable cma-home-policy-20260910 Mongo container after
+  its replica-set tests finished; it held only temporary test data. Its proof
+  and all owner resources remain. Host disk has approximately 42 GiB free.
