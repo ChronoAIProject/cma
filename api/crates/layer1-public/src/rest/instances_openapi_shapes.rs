@@ -70,6 +70,8 @@ pub struct SandboxLimitsView {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
 pub struct SandboxView {
     pub id: String,
+    pub owner: String,
+    pub owner_name: Option<String>,
     pub name: String,
     #[schema(value_type = String)]
     pub status: SandboxStatus,
@@ -92,6 +94,8 @@ impl From<&Sandbox> for SandboxView {
     fn from(value: &Sandbox) -> Self {
         Self {
             id: value.id.to_string(),
+            owner: value.owner.0.clone(),
+            owner_name: None,
             name: value.name.clone(),
             status: value.status,
             profile: ProfileReferenceView {

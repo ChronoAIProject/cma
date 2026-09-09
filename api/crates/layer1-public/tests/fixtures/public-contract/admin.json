@@ -529,6 +529,7 @@
             {
               "id": "sbx_contract",
               "owner": "owner-a",
+              "owner_name": "Alex Chen",
               "name": "Sandbox sbx_contract",
               "status": "active",
               "runtime_version": "runtime-v1",
@@ -558,6 +559,7 @@
           "content-type": "application/json"
         },
         "body": {
+          "owner_name": "Alex Chen",
           "sandbox": {
             "id": "sbx_contract",
             "owner": "owner-a",
@@ -695,6 +697,7 @@
               "kind": "agent",
               "id": "agp_contract",
               "owner": "owner-a",
+              "owner_name": "Alex Chen",
               "name": "Agent agp_contract",
               "visibility": "public",
               "updated_at": "2026-09-05T00:00:00Z",
@@ -704,6 +707,7 @@
               "kind": "agent",
               "id": "agp_default",
               "owner": "owner-a",
+              "owner_name": "Alex Chen",
               "name": "Agent agp_default",
               "visibility": "public",
               "updated_at": "2026-09-05T00:00:00Z",
@@ -734,6 +738,7 @@
           "kind": "agent",
           "id": "agp_contract",
           "owner": "owner-a",
+          "owner_name": null,
           "name": "Agent agp_contract",
           "visibility": "public",
           "updated_at": "2026-09-05T00:00:00Z",
@@ -1079,6 +1084,8 @@
               "id": "activity_contract",
               "at": "2026-09-05T00:00:00Z",
               "actor": "operator-a",
+              "actor_name": "Morgan Park",
+              "target_name": null,
               "action": "configure",
               "target": {
                 "kind": "resource",

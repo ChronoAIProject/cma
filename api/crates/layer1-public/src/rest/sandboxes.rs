@@ -18,8 +18,8 @@ use crate::AuthenticatedCaller;
 use super::idempotency::{IdempotencyKey, RequestBody};
 use super::instances::{confirmed_digest, execute_command, execute_empty_command, HierarchyState};
 use super::instances_openapi_shapes::{
-    CreateSandboxRequest, OwnerSandboxDetailView, OwnerSandboxPageView, SandboxEventView,
-    SandboxView,
+    CreateSandboxRequest, OwnerSandboxDetailView, OwnerSandboxPageView, OwnerSandboxSummaryView,
+    SandboxEventView, SandboxView,
 };
 use super::instances_problem::HierarchyProblem;
 use super::BodyProblem;
@@ -180,8 +180,22 @@ pub(super) async fn list(
         )
         .await
         .map_err(HierarchyProblem::sandbox_read)?;
+    let subjects: Vec<_> = page
+        .items
+        .iter()
+        .map(|row| row.sandbox.owner.clone())
+        .collect();
+    let names = super::public_names::resolve(&state.users, &subjects).await;
     Ok(Json(OwnerSandboxPageView {
-        items: page.items.into_iter().map(Into::into).collect(),
+        items: page
+            .items
+            .into_iter()
+            .map(|row| {
+                let mut view = OwnerSandboxSummaryView::from(row);
+                view.sandbox.owner_name = names.get(&view.sandbox.owner).cloned();
+                view
+            })
+            .collect(),
         next: page.next,
     }))
 }
@@ -192,13 +206,17 @@ pub(super) async fn read(
     AuthenticatedCaller(caller): AuthenticatedCaller,
     Path(id): Path<String>,
 ) -> Result<Json<OwnerSandboxDetailView>, HierarchyProblem> {
-    state
+    let value = state
         .hierarchy
         .sandbox(&caller, &SandboxId(id))
         .await
-        .map(Into::into)
-        .map(Json)
-        .map_err(HierarchyProblem::sandbox_read)
+        .map_err(HierarchyProblem::sandbox_read)?;
+    let names =
+        super::public_names::resolve(&state.users, std::slice::from_ref(&value.sandbox.owner))
+            .await;
+    let mut view = OwnerSandboxDetailView::from(value);
+    view.sandbox.owner_name = names.get(&view.sandbox.owner).cloned();
+    Ok(Json(view))
 }
 
 #[utoipa::path(delete, path = "/api/v1/sandboxes/{id}", tag = "sandboxes", params(("id" = String, Path), ("Idempotency-Key" = String, Header)), responses((status = 202, body = SandboxView), (status = 404, body = crate::rest::ProblemDocument)))]

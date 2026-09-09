@@ -120,12 +120,11 @@ pub(super) fn fixture_with_operations(
     let hierarchy = HierarchyReadService::new(store.clone());
     let operations = Arc::new(MemoryOperationStore::default());
     let operation_store: Arc<dyn OperationStore> = injected.unwrap_or_else(|| operations.clone());
-    let router = hierarchy_router(HierarchyState::new(
-        sandboxes,
-        workspaces,
-        hierarchy,
-        operation_store,
-    ));
+    let router = hierarchy_router(
+        HierarchyState::new(sandboxes, workspaces, hierarchy, operation_store).with_user_directory(
+            layer2_core::UserDirectory::new(super::public_names::tests::Names::seeded()),
+        ),
+    );
     Fixture {
         router,
         store,
@@ -893,6 +892,8 @@ async fn hierarchy_reads_filter_page_count_and_replay_events() {
     .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(page["items"][0]["id"], "sbx_1");
+    assert_eq!(page["items"][0]["owner"], "owner");
+    assert_eq!(page["items"][0]["owner_name"], "Research Creator");
     assert_eq!(page["next"], "sbx_1");
     let (status, page) = json_response(
         &fixture.router,
@@ -914,6 +915,8 @@ async fn hierarchy_reads_filter_page_count_and_replay_events() {
     )
     .await;
     assert_eq!(detail["workspace_count"], 1);
+    assert_eq!(detail["owner"], "owner");
+    assert_eq!(detail["owner_name"], "Research Creator");
     assert_eq!(detail["worktree_count"], 1);
     assert_eq!(detail["agent_count"], 1);
     assert_eq!(detail["workspaces"][0]["id"], "wks_3");

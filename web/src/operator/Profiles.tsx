@@ -189,9 +189,7 @@ function ProfileRecords({
                 <p className="operator-meta">
                   <span>{stateWord(row.kind)}</span>
                   <span>{row.visibility}</span>
-                  <span>
-                    Owner <code>{row.owner}</code>
-                  </span>
+                  <span>Owner {row.owner_name?.trim() || 'Name unavailable'}</span>
                 </p>
               </div>
               <div>

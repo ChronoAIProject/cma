@@ -78,6 +78,8 @@ export interface SandboxLifecycle {
 
 export interface SandboxSummary {
   readonly id: string;
+  readonly owner?: string;
+  readonly ownerName?: string;
   readonly name: string;
   readonly status: SandboxStatus;
   readonly lifecycle?: SandboxLifecycle;

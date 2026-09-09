@@ -14,6 +14,7 @@ export const sandboxRow: AdminSandboxSummary = {
   id: 'sbx-1',
   name: 'Research Sandbox',
   owner: 'owner-1',
+  owner_name: 'Alex Chen',
   status: 'active',
   runtime_version: 'runtime-2',
   agent_count: 1,
@@ -25,11 +26,13 @@ export const profileRow: AdminProfileSummary = {
   kind: 'agent',
   name: 'Research Agent',
   owner: 'owner-1',
+  owner_name: 'Alex Chen',
   visibility: 'public',
   updated_at: now,
   retired_at: null,
 };
 export const detail: AdminSandboxDetail = {
+  owner_name: 'Alex Chen',
   sandbox: {
     id: sandboxRow.id,
     name: sandboxRow.name,
@@ -125,6 +128,7 @@ export function operatorClient() {
           id: 'act-1',
           at: now,
           actor: 'operator-1',
+          actor_name: 'Morgan Park',
           action: 'configure',
           target: { kind: 'resource', id: 'platform' },
           outcome: { status: 'succeeded' },

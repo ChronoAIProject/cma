@@ -170,9 +170,7 @@ function SandboxRecords({
                 {row.name} <span className="operator-state">{stateWord(row.status)}</span>
               </p>
               <p className="operator-meta">
-                <span>
-                  Owner <code>{row.owner}</code>
-                </span>
+                <span>Owner {row.owner_name?.trim() || 'Name unavailable'}</span>
                 <span>{row.agent_count} Agents</span>
                 <span>Runtime {row.runtime_version ?? 'not bound'}</span>
               </p>

@@ -77,6 +77,15 @@ async fn marketplace_resolves_public_author_names_without_changing_ownership() {
         assert_eq!(entry.summary.owner_display, expected);
         assert_eq!(entry.owner, profile.owner);
         assert_eq!(entry.summary.name, profile.name);
+        let names = directory
+            .display_names(&[profile.owner.clone(), SubjectId::new("missing-person")])
+            .await
+            .unwrap();
+        assert_eq!(
+            names.get(profile.owner.as_str()).map(String::as_str),
+            display_name.filter(|name| !name.trim().is_empty())
+        );
+        assert!(!names.contains_key("missing-person"));
     }
     let names = super::directory::public_display_names(&client, &name, &["unrelated".into()])
         .await

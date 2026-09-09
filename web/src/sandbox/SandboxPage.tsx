@@ -209,9 +209,18 @@ export function SandboxPage({
           {sandbox.failure?.remediation ?? 'Open Advanced for the reported failure.'}
         </p>
       ) : null}
-      <p>
-        Profile: <ReferenceLink kind="sandbox" id={sandbox.profile.id} />
-      </p>
+      <dl>
+        <div>
+          <dt>Owner</dt>
+          <dd>{sandbox.ownerName?.trim() || 'Name unavailable'}</dd>
+        </div>
+        <div>
+          <dt>Profile</dt>
+          <dd>
+            <ReferenceLink kind="sandbox" id={sandbox.profile.id} />
+          </dd>
+        </div>
+      </dl>
       <SandboxOverview
         client={client}
         sandbox={sandbox}

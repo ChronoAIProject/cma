@@ -126,7 +126,8 @@ impl ControlPlaneComposition {
             Arc::clone(&settings),
             sandbox_operators,
             Arc::clone(&activity),
-        );
+        )
+        .with_user_directory(Arc::clone(&users));
         let operations: Arc<dyn OperationStore> = stores.operations.clone();
         let profiles = ProfilesState::new(
             stores.sandbox_profiles.clone(),
@@ -139,7 +140,8 @@ impl ControlPlaneComposition {
             Arc::clone(&workspace_service),
             hierarchy,
             Arc::clone(&operations),
-        );
+        )
+        .with_user_directory(Arc::clone(&users));
         let recorder = ActivityRecorder::new(Arc::clone(&activity));
         let profile_authoring = ProfileAuthoringService::new(
             authoring_bounds,

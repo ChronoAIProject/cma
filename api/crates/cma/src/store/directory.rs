@@ -26,6 +26,22 @@ pub(super) async fn public_display_names(
     database: &str,
     subjects: &[String],
 ) -> Result<BTreeMap<String, String>, StoreError> {
+    let users = majority_collection::<NameDoc>(&client.database(database), USERS);
+    read_display_names(&users, subjects).await
+}
+
+#[derive(Deserialize)]
+struct NameDoc {
+    #[serde(rename = "_id")]
+    subject: String,
+    document_schema_version: i64,
+    display_name: Option<String>,
+}
+
+async fn read_display_names(
+    users: &Collection<NameDoc>,
+    subjects: &[String],
+) -> Result<BTreeMap<String, String>, StoreError> {
     if subjects.len() > 200 {
         return Err(StoreError::Malformed(
             "author lookup exceeds its page bound".into(),
@@ -34,14 +50,6 @@ pub(super) async fn public_display_names(
     if subjects.is_empty() {
         return Ok(BTreeMap::new());
     }
-    #[derive(Deserialize)]
-    struct NameDoc {
-        #[serde(rename = "_id")]
-        subject: String,
-        document_schema_version: i64,
-        display_name: Option<String>,
-    }
-    let users = majority_collection::<NameDoc>(&client.database(database), USERS);
     let mut cursor = users
         .find(doc! { "_id": { "$in": subjects } })
         .projection(doc! { "_id": 1, "document_schema_version": 1, "display_name": 1 })
@@ -123,6 +131,14 @@ impl MongoUserDirectoryStore {
 
 #[async_trait::async_trait]
 impl UserDirectoryStore for MongoUserDirectoryStore {
+    async fn display_names(
+        &self,
+        subjects: &[SubjectId],
+    ) -> Result<BTreeMap<String, String>, StoreError> {
+        let subjects: Vec<_> = subjects.iter().map(|subject| subject.0.clone()).collect();
+        read_display_names(&self.users.clone_with_type::<NameDoc>(), &subjects).await
+    }
+
     async fn observe(&self, identity: &PublicIdentity) -> Result<(), StoreError> {
         let at = layer2_core::now_rfc3339();
         let observed_at = DateTime::now();

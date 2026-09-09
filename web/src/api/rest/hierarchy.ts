@@ -12,6 +12,8 @@ import type {
 export function sandboxSummary(value: Wire.SandboxSummary): SandboxSummary {
   return {
     id: value.id,
+    owner: value.owner,
+    ownerName: value.owner_name ?? undefined,
     name: value.name,
     status: value.status,
     lifecycle:
