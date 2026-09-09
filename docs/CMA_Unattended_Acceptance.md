@@ -1701,3 +1701,39 @@ image identity and measured results for each behavior, with unknowns left explic
 - Removed the exact disposable cma-home-policy-20260910 Mongo container after
   its replica-set tests finished; it held only temporary test data. Its proof
   and all owner resources remain. Host disk has approximately 42 GiB free.
+
+## Immutable snapshot archive exporter — 2026-09-10
+
+- Added an offline runtime command, --export-home-snapshot, that accepts a
+  bounded request file and separate existing output directory. It does not
+  start the supervisor, network services, credential proxies or Agent processes.
+  Production admission requires canonical read-only home/journal mounts,
+  writable nonoverlapping output storage, the original persistent-home identity
+  and runtime generation, and completed installation. The provider must still
+  mount and verify a distinct volume restored from the recorded CSI snapshot;
+  a read-only mount alone is not evidence of an immutable backing disk.
+- The typed request binds the exact ready snapshot, provider capture timestamp,
+  source runtime generation and admitted Agent/conversation identities. Export
+  reads each named native conversation from that fixed tree and seals their
+  hashes alongside the whole-home archive receipt. It refuses missing or
+  duplicate native identities instead of selecting a newer child conversation.
+  Existing whole-home capture keeps its previous newest-conversation behavior.
+- Output authority is pinned before capture. Exact replay verifies the retained
+  archive bytes and receipt; another capture, corrupt bytes, symlinked or
+  oversized records cannot be adopted or overwritten. Disposable Codex aliases
+  are excluded using the same pure renderer as regular checkpoints. Only
+  archive size and conversation count are logged; content stays in the archive.
+- Eight new exporter regressions and the existing conversation check pass.
+  The first run exposed an invalid fixture that tried to create Completed
+  installation state directly; the fixture now records Started then Completed
+  using the real transition functions. The full backend suite passes 1,717
+  runnable tests, with 188 excluded/ignored. Runtime/adapter Clippy, formatting
+  and source secret scans pass. Tests cover actual archive extraction, selected
+  conversation hashes, later changes in a separate live tree, source binding
+  preservation, replay and refusal cases. Positive read-only mount admission
+  still needs the Linux container campaign; writable-source refusal passes.
+- The exporter is not yet connected to control-plane saving or deployed.
+  Snapshot-view allocation, export execution/transfer, durable asynchronous
+  publication and cleanup, current Agent changes after capture, and production
+  concurrency/recovery acceptance remain required. The cluster home-role
+  dependency remains unchanged, with the prepared API image still undeployed.

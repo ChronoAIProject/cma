@@ -26,7 +26,7 @@ pub(crate) fn expected_home(slot: &crate::AgentSlot) -> String {
     format!("{AGENT_HOME_ROOT}/{}/home", slot.0)
 }
 
-pub(crate) fn checkpoint_exclusions(agents: &[crate::AgentSlot]) -> crate::Result<Vec<String>> {
+pub fn checkpoint_exclusions(agents: &[crate::AgentSlot]) -> crate::Result<Vec<String>> {
     // The image's version checks also create aliases in the default home.
     let mut paths = BTreeSet::from([".codex/tmp/arg0".to_string()]);
     for agent in agents {
