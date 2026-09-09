@@ -17,6 +17,52 @@ use layer3_adapter::{
 };
 
 #[tokio::test]
+async fn reopened_agent_settlement_rechecks_promptly_without_duplicate_runtime_work() {
+    for delay in [1, 60] {
+        let harness = Harness::new_with_retry_delay(
+            Vec::new(),
+            0,
+            Duration::from_secs(60),
+            Duration::from_secs(delay),
+        )
+        .await;
+        let created = harness.create().await;
+        let now = start_time(&created);
+        harness.drive_active(&created.id, now).await;
+        let mut agent = ready_agent(&created, now);
+        agent.work.step = AgentWorkStep::PublishConnection;
+        harness.store.create_agent(agent.clone()).await.unwrap();
+        let queue_at = now + Duration::from_secs(1);
+        begin_queue_phase(&harness, &created.id, queue_at).await;
+        let requests = harness.backend.requests().await;
+
+        harness.run(&created.id, queue_at).await;
+        let retry = harness.stored(&created.id).await;
+        let retry_at = queue_at + Duration::from_secs(delay.min(5));
+        assert_eq!(retry.work.ready_at, rfc3339_at(retry_at));
+        assert!(retry.work.lease.is_none());
+        assert_eq!(
+            harness.store.get_agent(&agent.id).await.unwrap(),
+            Some(agent.clone())
+        );
+        assert_eq!(harness.backend.requests().await, requests);
+        assert!(!harness.worker.run_one(&created.id, queue_at).await.unwrap());
+
+        let revision = agent.revision;
+        agent.work.step = AgentWorkStep::None;
+        agent.revision += 1;
+        harness.store.save_agent(revision, agent).await.unwrap();
+        harness.run(&created.id, retry_at).await;
+        harness.run(&created.id, retry_at).await;
+        assert_eq!(
+            harness.stored(&created.id).await.status,
+            SandboxStatus::Active
+        );
+        assert_eq!(harness.backend.requests().await, requests);
+    }
+}
+
+#[tokio::test]
 async fn revived_worker_delivers_each_queued_message_once_then_publishes_active() {
     let harness = Harness::new(Vec::new(), 0, Duration::from_secs(60)).await;
     let created = harness.create().await;
@@ -110,7 +156,13 @@ async fn revived_worker_delivers_each_queued_message_once_then_publishes_active(
 
 #[tokio::test]
 async fn restarted_worker_retires_an_abandoned_queue_fence_without_resending() {
-    let harness = Harness::new(Vec::new(), 0, Duration::from_secs(60)).await;
+    let harness = Harness::new_with_retry_delay(
+        Vec::new(),
+        0,
+        Duration::from_secs(60),
+        Duration::from_secs(60),
+    )
+    .await;
     let created = harness.create().await;
     let now = start_time(&created);
     harness.drive_active(&created.id, now).await;
@@ -199,6 +251,10 @@ async fn restarted_worker_retires_an_abandoned_queue_fence_without_resending() {
 
     let before_grace = queue_at + Duration::from_secs(QUEUED_MESSAGE_DISPATCH_GRACE_SECONDS - 100);
     harness.run(&created.id, before_grace).await;
+    assert_eq!(
+        harness.stored(&created.id).await.work.ready_at,
+        rfc3339_at(before_grace + Duration::from_secs(60)),
+    );
     let still_fenced = harness.store.get_agent(&agent.id).await.unwrap().unwrap();
     assert_eq!(
         still_fenced.conversation.queued_messages[0].state,

@@ -33,7 +33,13 @@ async fn claimed_queue(harness: &Harness) -> (Sandbox, Agent, SystemTime) {
 
 #[tokio::test]
 async fn restored_metadata_conflict_releases_only_queue_completion_for_prompt_retry() {
-    let harness = Harness::new(Vec::new(), 0, Duration::from_secs(60)).await;
+    let harness = Harness::new_with_retry_delay(
+        Vec::new(),
+        0,
+        Duration::from_secs(60),
+        Duration::from_secs(60),
+    )
+    .await;
     let (claimed, stale_agent, now) = claimed_queue(&harness).await;
     DurableAgentUpdateRecorder::new(harness.store.clone())
         .record_update(
