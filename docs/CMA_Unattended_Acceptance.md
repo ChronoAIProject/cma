@@ -25,7 +25,7 @@ Monitor disk usage and inspect exact targets before removing stale artifacts.
 | 10 | Profiles and Marketplace use CMA-styled Ornn-inspired cards/details | Shared cards deployed in web 7c01741f and author names in API 7e7d458e. Production 18-case verification passes all three profile kinds in both directories at 1440/390/320px, light/dark, full-card detail navigation and Marketplace Use availability. Screenshots inspected. Evidence: profile-cards-64FpRT/result.json. |
 | 11 | Separate collapsible Live and Paused Sandbox groups | Deployed in web 40300b5e. Production desktop/mobile checks pass for both groups and persisted collapse on reload. Live transition cases additionally covered by local tests. |
 | 12 | Only the named Trureturing Trigger is used for Trigger testing | Active constraint. Older disposable-Trigger harnesses must not be reused unchanged. |
-| 13 | Persist Trigger/manual provenance and owner-defined quick messages | API 20e580fb/web 623cba22 deployed; named Trigger revision 2 publishes both requested messages. Production browser checks HVxuxo and avwGVx pass at 1440/390/320px, both themes, for source attribution, exact intercepted clicks, descriptions, draft preservation and authoring. Actual introduction delivery is being observed in live-introduction-shortcut-kZHSEl. GitHub contribution execution remains dependent on #20. |
+| 13 | Persist Trigger/manual provenance and owner-defined quick messages | API 20e580fb/web 623cba22 deployed; named Trigger revision 2 publishes both requested messages. Production browser checks HVxuxo and avwGVx pass at 1440/390/320px, both themes, for source attribution, exact intercepted clicks, descriptions, draft preservation and authoring. Actual introduction delivery kZHSEl passed: one click from Paused, one completed reply, preserved historical prefix and second Agent history, unchanged hierarchy and desktop/mobile reload. GitHub contribution execution remains dependent on #20. |
 | 14 | No unavailable Sandbox/Workspace expansion controls or children | Sandbox gating retained; preparing/deleting/failed Workspaces now also hide children and expansion controls. Local tests pass; production verification pending. |
 | 15 | Standard Sandbox states; deleted hidden; deletion dialog explains removal | Resource-specific labels implemented; snapshots no longer replace Live/Pausing. Explicit Needs attention remains for genuine failures. Production coverage pending. |
 | 16 | IME confirmation Enter never sends; ordinary Enter sends | Deployed in web 40300b5e. Production desktop/mobile synthetic composition, keyCode 229, Shift+Enter and ordinary Enter checks pass; draft retained. Ordinary-send requests intercepted before reaching the Agent. Native OS IME selection still requires a real keyboard check, not claimed by browser-generated events. |
@@ -437,3 +437,12 @@ image identity and measured results for each behavior, with unknowns left explic
   current Sandbox grant still contains only chrono-llm and ornn-api. Runtime
   proxy implementation and an explicit durable api-github grant remain required;
   neither is implied by the owner's separate NyxID service connection.
+- 2026-09-09 04:46 UTC: live-introduction-shortcut-kZHSEl passed actual production
+  delivery of Introduce Truretruing. Exactly one click from Paused produced one
+  completed turn and a 6,169-character assistant reply. Both old conversation
+  histories and all hierarchy IDs were preserved; desktop/mobile reload passed.
+  The original unsent draft was retained after clicking. Total verification took
+  871,091 ms; Live was observed after roughly nine minutes and the completed
+  reply after 824,980 ms. This is delivery acceptance, not acceptable latency.
+  Screenshots were reviewed. The main Agent now has one authorized additional
+  turn; future preservation baselines must include it.
