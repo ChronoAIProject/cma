@@ -203,6 +203,25 @@ fn source_generation_and_installation_are_verified_without_repair() {
 }
 
 #[test]
+fn installation_authority_must_come_from_captured_transfer_storage() {
+    let fixture = Fixture::new();
+    let source = fixture.source.config.checkpoint_root.join("runtime-state");
+    // A valid installation record in writable output is not captured evidence.
+    std::fs::rename(&source, fixture.output.join("runtime-state")).unwrap();
+    assert!(fixture.run().is_err());
+    assert!(!fixture.output.join("export-request.json").exists());
+    assert!(!source.exists());
+    std::fs::rename(fixture.output.join("runtime-state"), &source).unwrap();
+    fixture.run().unwrap();
+
+    let configured = source_config(&fixture.request).unwrap();
+    assert_eq!(
+        configured.checkpoint_root,
+        Path::new("/var/lib/cma-transfer/cma-checkpoints")
+    );
+}
+
+#[test]
 fn missing_or_duplicate_conversations_never_publish_an_archive() {
     for duplicate in [false, true] {
         let fixture = Fixture::new();
