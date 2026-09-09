@@ -461,3 +461,16 @@ image identity and measured results for each behavior, with unknowns left explic
   budget refinement; only the final 2c287473 image is a deployment candidate.
   Host disk remains at 41 GiB free, with no Docker restart or pruning needed.
   Production latency acceptance follows deployment; #4 remains unsatisfied.
+- The final 2c287473 Linux/amd64 API build, fixed HIGH/CRITICAL image scan and
+  remote digest verification pass. The deployment manifest pins
+  sha256:143574b0c5da9ca4477119fa48649d196f608232e5698b28ce8bac0fca4c33c4.
+  Initial read-only rollout guard 8xohIg correctly refused while the owner's
+  normal automatic pause was still tearing down its runtime. The new snapshot
+  was sealed at 05:05:05 UTC, 281 seconds after pause admission; no owner pause
+  or runtime rotation was issued by this verification.
+- GitHub read-only integration /tmp/cma-gh-nyxid-proof.oVe153 passed real gh
+  2.89.0 REST account/repository and GraphQL viewer requests through a Unix socket
+  and the authenticated local NyxID CLI to api-github. Both identity projections
+  resolve the same owner account, with no hardcoded identity and no upstream
+  writes. Foreign hosts are refused; gh sees only an inert placeholder. This is
+  local transport evidence, not deployed runtime proxy or Sandbox grant acceptance.
