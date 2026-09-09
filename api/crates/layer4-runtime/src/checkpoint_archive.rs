@@ -13,6 +13,8 @@ mod reader;
 const MAGIC: &[u8; 16] = b"CMAHOMEARCHIVE1\n";
 const HEADER_BYTES: u64 = 24;
 const MAX_MANIFEST_BYTES: u64 = 128 * 1024 * 1024;
+// Combine the compressor's small writes before crossing the sandbox filesystem.
+pub(super) const ARCHIVE_BUFFER_BYTES: usize = 256 * 1024;
 pub(crate) const MAX_ARCHIVE_BYTES: u64 =
     HEADER_BYTES + MAX_MANIFEST_BYTES + crate::checkpoint_manifest::MAX_PAYLOAD_BYTES;
 
@@ -29,8 +31,10 @@ pub(crate) struct InspectedArchive {
 }
 
 pub(crate) fn seal(root: &Path, store: &Path, exclusions: &[String]) -> Result<SealedArchive> {
+    let started = std::time::Instant::now();
     ensure_store(store)?;
     let manifest = crate::checkpoint_manifest::collect(root, exclusions)?;
+    let collected = started.elapsed();
     let encoded = serde_json::to_vec(&manifest).map_err(|error| {
         RuntimeError::unavailable(
             "checkpoint_manifest_failed",
@@ -51,8 +55,9 @@ pub(crate) fn seal(root: &Path, store: &Path, exclusions: &[String]) -> Result<S
         .open(&temporary)
         .map_err(archive_io("create checkpoint archive"))?;
     let output = ArchiveWriter {
-        file: BufWriter::new(file),
+        file: BufWriter::with_capacity(ARCHIVE_BUFFER_BYTES, file),
         size: 0,
+        digest: Sha256::new(),
     };
     let mut archive = GzEncoder::new(output, Compression::fast());
     archive
@@ -78,9 +83,12 @@ pub(crate) fn seal(root: &Path, store: &Path, exclusions: &[String]) -> Result<S
         .get_ref()
         .sync_all()
         .map_err(archive_io("sync checkpoint archive"))?;
-    drop(archive);
-
-    let sha256 = crate::checkpoint_manifest::sha256_file(&temporary)?;
+    // Hash the exact compressed bytes accepted by the writer, including the
+    // gzip trailer. Flush and sync must succeed before publishing that identity.
+    // Export and restore independently verify the retained object's bytes.
+    let archive_bytes = archive.size;
+    let sha256 = hex(&archive.digest.finalize());
+    drop(archive.file);
     let reference = format!("home-{sha256}.cma");
     let path = store.join(&reference);
     match crate::fs_durability::hard_link(&temporary, &path) {
@@ -101,6 +109,14 @@ pub(crate) fn seal(root: &Path, store: &Path, exclusions: &[String]) -> Result<S
         Err(error) => return Err(archive_io("publish checkpoint archive")(error)),
     }
     cleanup.disarm();
+    tracing::info!(
+        entries = manifest.entries.len(),
+        payload_bytes = manifest.entries.iter().map(|entry| entry.size).sum::<u64>(),
+        archive_bytes,
+        manifest_millis = collected.as_millis() as u64,
+        seal_millis = started.elapsed().as_millis() as u64,
+        "checkpoint archive capture completed"
+    );
     Ok(SealedArchive {
         reference,
         sha256,
@@ -319,6 +335,7 @@ fn extract_file(
 struct ArchiveWriter {
     file: BufWriter<std::fs::File>,
     size: u64,
+    digest: Sha256,
 }
 
 impl std::io::Write for ArchiveWriter {
@@ -329,6 +346,7 @@ impl std::io::Write for ArchiveWriter {
             ));
         }
         let written = self.file.write(bytes)?;
+        self.digest.update(&bytes[..written]);
         self.size += written as u64;
         Ok(written)
     }

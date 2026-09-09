@@ -33,7 +33,7 @@ impl ArchiveReader {
         source
             .rewind()
             .map_err(archive_io("rewind checkpoint archive"))?;
-        let source = BufReader::new(source);
+        let source = BufReader::with_capacity(super::ARCHIVE_BUFFER_BYTES, source);
         Ok(if compressed {
             Self::Gzip(Box::new(GzDecoder::new(source)))
         } else {
