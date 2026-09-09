@@ -193,6 +193,27 @@ impl SandboxCheckpointMaintenance {
                     appended_at: layer2_core::rfc3339_at(clock.now()),
                 })
                 .await?;
+            // Keep one physical recovery point per Sandbox.  The newly
+            // published capture is now authoritative, so older captures (and
+            // any abandoned retry from a prior epoch) can be released with
+            // their exact provider receipts.  Cleanup is receipt guarded by
+            // the provider and is safe to repeat after a controller restart.
+            for entry in dependencies
+                .homes
+                .snapshot_inventory()
+                .await
+                .map_err(provider_error)?
+            {
+                if entry.request.home.request.sandbox_id == request.snapshot.home.request.sandbox_id
+                    && entry.request.capture_id != request.snapshot.capture_id
+                {
+                    dependencies
+                        .homes
+                        .remove_snapshot(&entry.request, Some(&entry.receipt))
+                        .await
+                        .map_err(provider_error)?;
+                }
+            }
             // The immutable source snapshot remains as the Sandbox's latest
             // physical recovery point. Export Pods and derived writable views
             // are staging resources and can be retired after publication.
