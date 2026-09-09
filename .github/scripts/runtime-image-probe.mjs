@@ -14,7 +14,8 @@ export const checks = [
   'agent-home-helper-aliases', 'agent-shell-inherited-path', 'escaping-helper-refused',
   'checkpoint-writers-held', 'checkpoint-exact-replay', 'wrong-resume-token-refused',
   'mutation-while-held-refused', 'checkpoint-download-digest', 'writer-resumed',
-  'retired-hold-refused', 'whole-home-restore',
+  'checkpoint-local-release', 'retired-hold-refused', 'checkpoint-reimport',
+  'whole-home-restore', 'restore-local-release',
 ];
 const checkpointFailures = [
   'writer_fence_failed', 'checkpoint_io_failed', 'checkpoint_changed',
@@ -265,15 +266,30 @@ export async function probe(onStage = () => {}) {
   assert.equal(receipt.checkpoint.object_reference, `home-${receipt.checkpoint.sha256}.cma`);
   const download = await fetch(`http://127.0.0.1:9090/runtime/checkpoints/${receipt.checkpoint.object_reference}`, { signal: AbortSignal.timeout(30000), redirect: 'error' });
   assert.equal(download.status, 200);
-  assert.equal(sha256(Buffer.from(await download.arrayBuffer())), receipt.checkpoint.sha256);
+  const retainedArchive = Buffer.from(await download.arrayBuffer());
+  assert.equal(sha256(retainedArchive), receipt.checkpoint.sha256);
   complete('checkpoint-download-digest');
   const resume = { t: 'resume_checkpoint_writers', writer_resume_token: hold.writer_resume_token };
   assert.equal((await control(resume)).writers_resumed, true);
   await delay(150);
   assert.notEqual(counter(), heldCounter);
   complete('writer-resumed');
+  const archiveUrl = `http://127.0.0.1:9090/runtime/checkpoints/${receipt.checkpoint.object_reference}`;
+  const archivePath = join(tmpdir(), 'cma-checkpoints', receipt.checkpoint.object_reference);
+  assert.equal(existsSync(archivePath), false);
+  assert.equal((await fetch(archiveUrl, { signal: AbortSignal.timeout(30000) })).status, 404);
+  complete('checkpoint-local-release');
   assert.equal((await control(hold)).code, 'checkpoint_hold_retired');
   complete('retired-hold-refused');
+  // Production imports the durable remote recovery point before each restore.
+  // The retired transfer itself must not stay on the outgoing runtime's disk.
+  const imported = await fetch(archiveUrl, {
+    method: 'PUT', headers: { 'content-type': 'application/octet-stream' },
+    body: retainedArchive, signal: AbortSignal.timeout(30000), redirect: 'error',
+  });
+  assert.equal(imported.status, 204);
+  assert.equal(existsSync(archivePath), true);
+  complete('checkpoint-reimport');
   for (const [path] of retained) writeFileSync(path, 'changed-after-checkpoint');
   assert.deepEqual(await control({ t: 'restore', object_reference: receipt.checkpoint.object_reference, sha256: receipt.checkpoint.sha256 }), { t: 'restore', accepted: true });
   for (const [path, bytes] of retained) assert.equal(readFileSync(path, 'utf8'), bytes);
@@ -281,6 +297,10 @@ export async function probe(onStage = () => {}) {
   assert.equal(readFileSync(`${agentHome}/auth.json`, 'utf8'), '{"fixture":"retained-auth-fixture"}');
   assert.equal(existsSync(aliasRoot), false);
   complete('whole-home-restore');
+  assert.equal(existsSync(archivePath), false);
+  assert.equal((await fetch(archiveUrl, { signal: AbortSignal.timeout(30000) })).status, 404);
+  assert.equal(readdirSync(join(tmpdir(), 'cma-checkpoints')).some(name => /^\.restore-(?:staging|backup)-/.test(name)), false);
+  complete('restore-local-release');
   assert.deepEqual(completed, checks);
   return { checks: completed, artifacts };
 }
