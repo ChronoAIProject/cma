@@ -272,6 +272,8 @@ NODE
 WORKDIR /home/cma
 USER 10001:10001
 ENV HOME=/home/cma \
+    CHRONO_RUNTIME_GENERATION=1 \
+    CHRONO_RUNTIME_HOME_IDENTITY="" \
     PATH=/home/cma/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
     CHRONO_RUNTIME_BIND=0.0.0.0:9090 \
     TERM=xterm-256color

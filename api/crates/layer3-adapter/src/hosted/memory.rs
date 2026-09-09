@@ -34,6 +34,8 @@ mod checkpoint;
 mod mutations;
 #[path = "memory_probes.rs"]
 mod probes;
+#[path = "memory_status.rs"]
+mod status;
 #[path = "memory_workspace.rs"]
 mod workspace;
 
@@ -63,6 +65,7 @@ struct MemoryAgent {
 #[derive(Debug, Clone)]
 struct MemoryRuntime {
     request: ProviderSandboxRequest,
+    boot_id: String,
     install: Option<((String, String), InstallReceipt)>,
     restore_bootstrap: Option<RestoreBootstrapReceipt>,
     credential_delivered: bool,
@@ -124,6 +127,7 @@ impl HostedBackend for InMemoryHostedBackend {
             handle.clone(),
             MemoryRuntime {
                 request,
+                boot_id: format!("{id:032x}"),
                 install: None,
                 restore_bootstrap: None,
                 credential_delivered: false,
@@ -200,6 +204,7 @@ impl HostedBackend for InMemoryHostedBackend {
                     | RequestFrame::ResumeCheckpointWriters(_)
                     | RequestFrame::CaptureAgent(_)
                     | RequestFrame::Resources
+                    | RequestFrame::RuntimeStatus(_)
             )
         {
             return refused(operation, "checkpoint_writers_held");
@@ -273,6 +278,7 @@ impl HostedBackend for InMemoryHostedBackend {
                 checkpoint::restore(runtime, &self.archives, request, operation)
             }
             RequestFrame::Resources => checkpoint::resources(runtime),
+            RequestFrame::RuntimeStatus(request) => status::inspect(runtime, request),
             RequestFrame::OpenAgent(_) => Err(AdapterError::Rejected(
                 "open_agent must use the hosted conversation path".into(),
             )),

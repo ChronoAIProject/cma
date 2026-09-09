@@ -26,6 +26,13 @@ pub trait SandboxAdapter: Send + Sync {
 
     async fn provision(&self, spec: &SandboxSpec) -> Result<RuntimeHandle>;
 
+    /// Read the current process incarnation only for a verified persistent home.
+    async fn runtime_status(&self, _handle: &RuntimeHandle) -> Result<crate::RuntimeStatus> {
+        Err(crate::AdapterError::Unsupported(
+            "persistent runtime status is not supported".into(),
+        ))
+    }
+
     /// Provision an exact non-zero runtime generation.
     async fn provision_runtime(&self, request: &RuntimeProvisionRequest) -> Result<RuntimeHandle> {
         if request.generation == 0 {

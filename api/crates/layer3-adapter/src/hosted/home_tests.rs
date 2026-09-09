@@ -71,6 +71,10 @@ fn mounted_home_pins_storage_generation_and_keeps_all_writable_state_on_one_disk
     let deployment = super::HostedDeployment::default();
     let original = deployment.render(&spec()).unwrap();
     assert_eq!(original.env["TMPDIR"], super::home::TRANSFER_ROOT);
+    assert_eq!(
+        original.env["CHRONO_RUNTIME_HOME_IDENTITY"],
+        attachment().identity().unwrap()
+    );
     assert_eq!(original.volumes.len(), 3);
     assert_eq!(
         original
@@ -160,4 +164,33 @@ async fn reattachment_and_credentials_require_the_original_disk_and_teardown_pre
     restarted.teardown(&handle).await.unwrap();
     assert!(restarted.runtime_inventory().await.unwrap().is_empty());
     assert_eq!(store.inventory().await.unwrap(), [attachment()]);
+}
+
+#[tokio::test]
+async fn runtime_status_requires_exact_persistent_storage_and_does_not_deliver_credentials() {
+    let (adapter, backend) = CodexAdapter::in_memory(CodexSandboxSpec::default());
+    let store = Arc::new(Storage::default());
+    let adapter = adapter.with_home_volumes(store.clone());
+    let handle = adapter.provision(&spec()).await.unwrap();
+    let initial = adapter.runtime_status(&handle).await.unwrap();
+    assert!(!initial.installation_ready && !initial.credential_ready);
+    assert_eq!(initial.home_identity, attachment().identity().unwrap());
+    adapter
+        .run_install(&handle, &crate::InstallRequest::new("install", vec![]))
+        .await
+        .unwrap();
+    let installed = adapter.runtime_status(&handle).await.unwrap();
+    assert_eq!(installed.boot_id, initial.boot_id);
+    assert!(installed.installation_ready && !installed.credential_ready);
+    let before = backend.requests().await.len();
+    store.missing.store(true, Ordering::SeqCst);
+    assert!(adapter.runtime_status(&handle).await.is_err());
+    assert_eq!(backend.requests().await.len(), before);
+    assert!(
+        !backend
+            .snapshot(&handle)
+            .await
+            .unwrap()
+            .credential_delivered
+    );
 }

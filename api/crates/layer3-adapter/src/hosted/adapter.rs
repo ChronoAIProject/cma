@@ -184,6 +184,10 @@ impl SandboxAdapter for HostedAdapter {
         self.provision_exact(spec, 1).await
     }
 
+    async fn runtime_status(&self, handle: &RuntimeHandle) -> crate::Result<crate::RuntimeStatus> {
+        self.inspect_runtime_status(handle).await
+    }
+
     async fn provision_runtime(
         &self,
         request: &RuntimeProvisionRequest,

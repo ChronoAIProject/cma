@@ -5,6 +5,35 @@ use crate::hosted::deployment::{provider_request_identity, ProviderIdentity};
 use crate::{AdapterError, RuntimeAdoptionRequest, RuntimeHandle, RuntimeObservation, SandboxSpec};
 
 impl HostedAdapter {
+    pub(super) async fn inspect_runtime_status(
+        &self,
+        handle: &RuntimeHandle,
+    ) -> crate::Result<crate::RuntimeStatus> {
+        let state = self.known_state(handle).await?;
+        let home = state
+            .home_volume
+            .as_ref()
+            .ok_or_else(|| AdapterError::Unsupported("runtime has no persistent home".into()))?;
+        self.verify_home(home).await?;
+        let request = crate::RuntimeStatusRequest {
+            sandbox_id: state.provision.sandbox_id,
+            generation: state.provision.generation,
+            home_identity: home.identity()?,
+        };
+        let response = self
+            .exchange(
+                handle,
+                crate::wire::RequestFrame::RuntimeStatus(request.clone()),
+            )
+            .await?;
+        let crate::wire::ResponseFrame::RuntimeStatus(status) = response else {
+            return Err(AdapterError::unexpected_reply("runtime status"));
+        };
+        status.validate_for(&request)?;
+        self.verify_home(home).await?;
+        Ok(status)
+    }
+
     pub(super) async fn provision_exact(
         &self,
         spec: &SandboxSpec,

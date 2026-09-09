@@ -1423,3 +1423,50 @@ image identity and measured results for each behavior, with unknowns left explic
   Rust incremental-cache directories were removed after all compiler processes
   finished; they are reproducible caches, with source and compiled test binaries
   retained. Host free space returned from approximately 11 to 14 GiB.
+
+## Persistent runtime status and restore completion — 2026-09-09
+
+- Added an internal read-only runtime status request bound to the exact Sandbox,
+  provision generation and persistent home fingerprint. The adapter verifies the
+  original disk before and after the request. Every supervisor start gets a new
+  boot identity, including a process replacement behind the same provider handle.
+  Status exposes installation/credential readiness, pending restore and live
+  Agent bridge count; it contains no credentials or home contents. Observation
+  bypasses the operation gate and does not repair installation or mutation journals.
+- Mounted runtimes establish a bounded, durable home binding outside the home
+  tree before installation. An existing installation without that binding is
+  refused. Missing mounted homes are not recreated empty; missing, foreign,
+  corrupt, oversized or symlinked binding records cannot authorize credential
+  delivery. Binding publication uses a synced temporary file and atomic
+  publication, and incomplete unpublished writes are discarded on startup.
+- Persistent archive restore records Started before replacement and Completed
+  only after durable home replacement and scratch cleanup. Restart recognizes a
+  completed inherited installation without extracting the old archive again.
+  Exact restore replay acknowledges completion and discards duplicate imported
+  scratch while preserving later edits, deletions and newly created directories.
+  Credentials remain process-local and must be delivered again after restart.
+  Unmounted runtimes retain the existing archive/bootstrap behavior.
+- Nine runtime regressions and one adapter regression were added. Two initial
+  assertions used a Workspace operation ID that violated the existing exact
+  identity contract; correcting the test request exercised real post-restart
+  Workspace creation successfully. A targeted run passed with one transient
+  nextest leaky-process observation. The subsequent complete backend run passed
+  all 1,677 runnable tests, with no leak reported; 187 remain excluded/ignored.
+  All-target/all-feature Clippy, documentation checks (zero doctests), dependency
+  policy, source secret scanning and configuration-key checks pass. The file-size gate still has its same 12
+  existing violations, with no newly oversized source.
+- Further inspection disproved the proposed CloseAgent-then-reopen shortcut:
+  runtime mutation authority permanently retires an Agent process identity on
+  close, and its original open receipt also cannot replay without a live bridge.
+  Persistent recovery needs explicit new runtime/Agent process authority while
+  preserving filesystem mutation receipts and deletion tombstones. Do not weaken
+  cleanup dominance or treat this status protocol as complete Agent recovery.
+  Control-plane recovery-source selection, process-generation fencing, real
+  native conversation reopening, initialized seed/configuration/permissions,
+  image build and production activation remain unfinished. Nonblocking snapshots
+  and all remaining retained production acceptance are still active.
+- Read-only production evidence warm-node-loss-NO0rJS again preserves both
+  original owner transcript hashes. The retained test remains Failed revision
+  16, with no runtime or checkpoint and its completed reply still readable.
+  API and web remain 1/1 Ready. This batch made no production mutation or rollout.
+  Host free disk space is approximately 12 GiB; no additional cleanup was needed.
