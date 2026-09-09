@@ -65,7 +65,7 @@ describe('connection assistant', () => {
     );
     view.unmount();
     render(<ConnectAssistant {...props} />);
-    expect(screen.getByRole('button', { name: "I've connected it" })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Verify' })).toBeInTheDocument();
     await act(async () => {
       await vi.advanceTimersByTimeAsync(1500);
     });
@@ -151,7 +151,7 @@ describe('connection assistant', () => {
       'href',
       'https://identity.example.test/connect',
     );
-    fireEvent.click(screen.getByRole('button', { name: "I've connected it" }));
+    fireEvent.click(screen.getByRole('button', { name: 'Verify' }));
     await act(async () => {
       await vi.advanceTimersByTimeAsync(1500);
     });

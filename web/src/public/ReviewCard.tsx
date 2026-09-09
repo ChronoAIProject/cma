@@ -17,6 +17,7 @@ import { routePath } from '../routing/routes';
 import { Modal } from '../ui/Modal';
 import { needNames, needOrder, publicCopy } from '../vocabulary/needs';
 import { refusalSentence } from '../vocabulary/errors';
+import { connectionCopy } from '../vocabulary/connect';
 import type { PublicClient } from './client';
 import { isUnsettledCommand } from './admission';
 import { ConnectAssistant } from './ConnectAssistant';
@@ -53,6 +54,7 @@ export function ReviewCard({
       ),
   );
   const [connected, setConnected] = useState<readonly string[]>([]);
+  const connectedServices = useRef<readonly string[]>([]);
   const [metadata, setMetadata] = useState<readonly ServiceConnectionMetadata[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | undefined>(
@@ -69,6 +71,7 @@ export function ReviewCard({
   const trust = needs.find((need) => need.type === 'trust_confirmation');
   const ownerReview = needs.some((need) => need.type === 'owner_requires_review');
   const missing = needs.flatMap((need) => (need.type === 'connection' ? [need.service] : []));
+  const connectionsOnly = missing.length > 0 && missing.length === needs.length;
 
   useEffect(() => {
     const controller = new AbortController();
@@ -138,7 +141,10 @@ export function ReviewCard({
           'launch_changed',
         ].includes(cause.code ?? '')
       ) {
-        if (cause.code === 'launch_requirements_not_met') setConnected([]);
+        if (cause.code === 'launch_requirements_not_met') {
+          connectedServices.current = [];
+          setConnected([]);
+        }
         try {
           onChanged(await client.requests.read(record.id));
         } catch {
@@ -151,7 +157,8 @@ export function ReviewCard({
     }
   };
   const satisfy = (service: string) => {
-    const next = [...new Set([...connected, service])];
+    const next = [...new Set([...connectedServices.current, service])];
+    connectedServices.current = next;
     setConnected(next);
     if (
       !ownerReview &&
@@ -164,7 +171,7 @@ export function ReviewCard({
   return (
     <Modal
       open
-      title={publicCopy.review}
+      title={connectionsOnly ? connectionCopy.required : publicCopy.review}
       onClose={onClose}
       dismissible={!busy}
       footer={
@@ -173,7 +180,11 @@ export function ReviewCard({
           disabled={busy || needsSignIn || (!uncertain && !canStart)}
           onClick={() => void start(true)}
         >
-          {uncertain ? publicCopy.retry : publicCopy.continue}
+          {uncertain
+            ? publicCopy.retry
+            : connectionsOnly
+              ? connectionCopy.verifyAll
+              : publicCopy.continue}
         </Button>
       }
     >
