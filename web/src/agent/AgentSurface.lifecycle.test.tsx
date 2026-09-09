@@ -85,6 +85,10 @@ it('waits for the shared live Sandbox observation and never polls resources for 
   expect(screen.getByText('RAM · 1 GiB / 8 GiB')).toBeInTheDocument();
   expect(screen.getByText('CPU · measuring')).toBeInTheDocument();
   expect(
+    screen.getByText('Sandbox paused. Live resources resume when it is active.'),
+  ).toHaveAttribute('inert');
+  await act(() => vi.advanceTimersByTimeAsync(200));
+  expect(
     screen.queryByText('Sandbox paused. Live resources resume when it is active.'),
   ).not.toBeInTheDocument();
   expect(draft).toHaveValue('Preserve this draft');

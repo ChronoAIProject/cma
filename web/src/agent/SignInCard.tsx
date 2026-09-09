@@ -1,3 +1,4 @@
+import { Presence } from '../ui/Presence';
 import { useState } from 'react';
 import type { RecoveryNotice } from './model';
 import { Button } from '../ui/Button';
@@ -48,8 +49,8 @@ export function SignInCard({ notice }: { readonly notice: RecoveryNotice }) {
           />
         </div>
       )}
-      {copied ? <p role="status">Copied</p> : null}
-      {copyError ? <p role="alert">The code could not be copied.</p> : null}
+      <Presence>{copied ? <p role="status">Copied</p> : null}</Presence>
+      <Presence>{copyError ? <p role="alert">The code could not be copied.</p> : null}</Presence>
       {url === undefined ? null : (
         <a href={url} target="_blank" rel="noreferrer noopener">
           Continue sign in <IconRightUpOutline16 />

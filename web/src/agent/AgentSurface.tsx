@@ -1,3 +1,4 @@
+import { Presence } from '../ui/Presence';
 import { useEffect, useRef } from 'react';
 import type { AgentStatus } from '../api/types';
 import type { AppRoute } from '../routing/routes';
@@ -170,19 +171,21 @@ export function AgentSurface({
         <AgentSourceLabel source={source} />
       </header>
 
-      {issue === undefined ? null : (
-        <div className="agent-action-error" role={historyIncomplete ? 'status' : 'alert'}>
-          <span>{issue}</span>
-          {historyIncomplete ? null : (
-            <Button
-              size="sm"
-              icon={<IconCloseOutline16 />}
-              aria-label="Dismiss error"
-              onClick={controller.clearActionError}
-            />
-          )}
-        </div>
-      )}
+      <Presence>
+        {issue === undefined ? null : (
+          <div className="agent-action-error" role={historyIncomplete ? 'status' : 'alert'}>
+            <span>{issue}</span>
+            {historyIncomplete ? null : (
+              <Button
+                size="sm"
+                icon={<IconCloseOutline16 />}
+                aria-label="Dismiss error"
+                onClick={controller.clearActionError}
+              />
+            )}
+          </div>
+        )}
+      </Presence>
 
       <div className="agent-surface__conversation">
         {status === 'starting' ||

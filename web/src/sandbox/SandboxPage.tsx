@@ -1,3 +1,4 @@
+import { Presence } from '../ui/Presence';
 import { useEffect, useId, useRef, useState } from 'react';
 import { ApiError } from '@chronoai/cma-sdk';
 import type { CmaWebClient } from '../api/client';
@@ -196,19 +197,23 @@ export function SandboxPage({
       {permissions.pauseSandbox && lifecycleAction.reason !== undefined ? (
         <p id={lifecycleReasonId}>{lifecycleAction.reason}</p>
       ) : null}
-      {pollError ? <p role="alert">Progress could not be refreshed. Reconnecting.</p> : null}
+      <Presence>
+        {pollError ? <p role="alert">Progress could not be refreshed. Reconnecting.</p> : null}
+      </Presence>
       <LifecycleProgress
         client={client}
         sandbox={sandbox}
         observedAt={state.observedAt}
         stale={pollError}
       />
-      {sandbox.status === 'failed' ? (
-        <p role="alert">
-          Your sandbox needs attention.{' '}
-          {sandbox.failure?.remediation ?? 'Open Advanced for the reported failure.'}
-        </p>
-      ) : null}
+      <Presence>
+        {sandbox.status === 'failed' ? (
+          <p role="alert">
+            Your sandbox needs attention.{' '}
+            {sandbox.failure?.remediation ?? 'Open Advanced for the reported failure.'}
+          </p>
+        ) : null}
+      </Presence>
       <dl>
         <div>
           <dt>Owner</dt>
@@ -229,9 +234,11 @@ export function SandboxPage({
         onAction={onAction}
         onNavigate={onNavigate}
       />
-      {advanced ? (
-        <SandboxAdvanced client={client} sandbox={sandbox} onClose={() => setAdvanced(false)} />
-      ) : null}
+      <Presence>
+        {advanced ? (
+          <SandboxAdvanced client={client} sandbox={sandbox} onClose={() => setAdvanced(false)} />
+        ) : null}
+      </Presence>
     </section>
   );
 }

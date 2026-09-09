@@ -1,3 +1,4 @@
+import { Presence } from '../ui/Presence';
 import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import type { AgentStatus } from '../api/types';
 import { Button } from '../ui/Button';
@@ -115,22 +116,24 @@ export function Composer({
         disabled={!usable || busy || running || starting || inputBlocked || submitting}
         onSend={submit}
       />
-      {!hasNotice ? null : (
-        <p id={noticeId} className="agent-composer__notice" role="status">
-          {starting ? 'Starting. ' : null}
-          {notice}
-          {inputAvailability.savingStartedAt === undefined ? null : (
-            <>
-              {' '}
-              Saving started{' '}
-              <time dateTime={inputAvailability.savingStartedAt}>
-                {new Date(inputAvailability.savingStartedAt).toLocaleString()}
-              </time>
-              .
-            </>
-          )}
-        </p>
-      )}
+      <Presence>
+        {!hasNotice ? null : (
+          <p id={noticeId} className="agent-composer__notice" role="status">
+            {starting ? 'Starting. ' : null}
+            {notice}
+            {inputAvailability.savingStartedAt === undefined ? null : (
+              <>
+                {' '}
+                Saving started{' '}
+                <time dateTime={inputAvailability.savingStartedAt}>
+                  {new Date(inputAvailability.savingStartedAt).toLocaleString()}
+                </time>
+                .
+              </>
+            )}
+          </p>
+        )}
+      </Presence>
       <form
         className="agent-composer__form"
         aria-label="Message Agent"

@@ -12,6 +12,7 @@ import './styles/base.css';
 import './styles/components.css';
 import './AppError.css';
 import { lazy, Suspense, useState } from 'react';
+import { Presence } from './ui/Presence';
 import { useCmaClient, useCreationClient, usePublicClient } from './api/context';
 import type { CreationRequest } from './create/CreationFlow';
 import { ReferenceProvider } from './profiles/ReferenceLink';
@@ -90,28 +91,30 @@ export function App() {
           void signOut();
         }}
       />
-      {request === undefined ||
-      request.owner !== state.user.id ||
-      creation === undefined ||
-      state.user.visitor ||
-      !state.user.capabilities.includes('use_own_sandboxes') ? null : (
-        <Suspense fallback={null}>
-          <CreationFlow
-            key={state.user.id}
-            request={request.value}
-            client={client}
-            catalog={creation}
-            canCreateSandbox={state.user.capabilities.includes('create_sandbox')}
-            onClose={() => setRequest(undefined)}
-            onChanged={() => setHierarchyRevision((value) => value + 1)}
-            onCreated={(route) => {
-              setRequest(undefined);
-              setHierarchyRevision((value) => value + 1);
-              router.navigate(route);
-            }}
-          />
-        </Suspense>
-      )}
+      <Presence>
+        {request === undefined ||
+        request.owner !== state.user.id ||
+        creation === undefined ||
+        state.user.visitor ||
+        !state.user.capabilities.includes('use_own_sandboxes') ? null : (
+          <Suspense fallback={null}>
+            <CreationFlow
+              key={state.user.id}
+              request={request.value}
+              client={client}
+              catalog={creation}
+              canCreateSandbox={state.user.capabilities.includes('create_sandbox')}
+              onClose={() => setRequest(undefined)}
+              onChanged={() => setHierarchyRevision((value) => value + 1)}
+              onCreated={(route) => {
+                setRequest(undefined);
+                setHierarchyRevision((value) => value + 1);
+                router.navigate(route);
+              }}
+            />
+          </Suspense>
+        )}
+      </Presence>
     </ReferenceProvider>
   );
 }

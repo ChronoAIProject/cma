@@ -1,3 +1,4 @@
+import { Presence } from './ui/Presence';
 import { useEffect, useRef, useState } from 'react';
 import type { CmaWebClient } from './api/client';
 import { ApiError } from '@chronoai/cma-sdk';
@@ -216,13 +217,15 @@ export function DeletionDialog({
         stale={readError !== undefined}
         loading={observation === undefined && readError === undefined}
       />
-      {observation?.failure === undefined ? null : (
-        <p role="alert">
-          Cleanup reported: {observation.failure.detail}. Deletion is not complete.
-        </p>
-      )}
-      {commandError === undefined ? null : <p role="alert">{commandError}</p>}
-      {readError === undefined ? null : <p role="alert">{readError}</p>}
+      <Presence>
+        {observation?.failure === undefined ? null : (
+          <p role="alert">
+            Cleanup reported: {observation.failure.detail}. Deletion is not complete.
+          </p>
+        )}
+      </Presence>
+      <Presence>{commandError === undefined ? null : <p role="alert">{commandError}</p>}</Presence>
+      <Presence>{readError === undefined ? null : <p role="alert">{readError}</p>}</Presence>
     </Modal>
   );
 }

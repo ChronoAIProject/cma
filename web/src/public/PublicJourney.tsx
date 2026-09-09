@@ -1,3 +1,4 @@
+import { Presence } from '../ui/Presence';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   repeatChoiceFrom,
@@ -288,43 +289,47 @@ function Entry({
           onRegister={() => start({ screen: 'register' })}
         />
       )}
-      {error === undefined ? null : (
-        <div className="public-notice">
-          <p className="public-error" role="alert">
-            {error}
-          </p>
-          {needsSignIn ? (
-            <SandboxCredentialSetup
-              returnTo={credentialReturnTo}
-              expectedSubject={intent?.owner}
-              onChecked={() => {
-                setNeedsSignIn(false);
-                setError(undefined);
-              }}
-            />
-          ) : (
-            <Button
-              disabled={busy}
-              onClick={() => {
-                if (preview === undefined) {
+      <Presence>
+        {error === undefined ? null : (
+          <div className="public-notice">
+            <p className="public-error" role="alert">
+              {error}
+            </p>
+            {needsSignIn ? (
+              <SandboxCredentialSetup
+                returnTo={credentialReturnTo}
+                expectedSubject={intent?.owner}
+                onChecked={() => {
+                  setNeedsSignIn(false);
                   setError(undefined);
-                  setRevision((value) => value + 1);
-                } else start();
-              }}
-            >
-              {publicCopy.retry}
-            </Button>
-          )}
-        </div>
-      )}
-      {existing === undefined ? null : (
-        <RepeatChoice
-          existing={existing}
-          busy={busy}
-          onChoose={(choice) => start(undefined, choice)}
-          onClose={() => setExisting(undefined)}
-        />
-      )}
+                }}
+              />
+            ) : (
+              <Button
+                disabled={busy}
+                onClick={() => {
+                  if (preview === undefined) {
+                    setError(undefined);
+                    setRevision((value) => value + 1);
+                  } else start();
+                }}
+              >
+                {publicCopy.retry}
+              </Button>
+            )}
+          </div>
+        )}
+      </Presence>
+      <Presence>
+        {existing === undefined ? null : (
+          <RepeatChoice
+            existing={existing}
+            busy={busy}
+            onChoose={(choice) => start(undefined, choice)}
+            onClose={() => setExisting(undefined)}
+          />
+        )}
+      </Presence>
     </>
   );
 }

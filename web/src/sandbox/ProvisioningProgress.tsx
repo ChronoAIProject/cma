@@ -1,3 +1,4 @@
+import { Presence } from '../ui/Presence';
 import type { Failure } from '../api/types';
 import type { ProvisioningStep } from './progress';
 import './ProvisioningProgress.css';
@@ -36,14 +37,16 @@ export function ProvisioningProgress({
           </li>
         ))}
       </ol>
-      {failure === undefined ? null : (
-        <div className="provisioning-progress__failure" role="alert">
-          <p>{failure.detail}</p>
-          <p>
-            {failure.remediation ?? 'Review the selected profile before creating a replacement.'}
-          </p>
-        </div>
-      )}
+      <Presence>
+        {failure === undefined ? null : (
+          <div className="provisioning-progress__failure" role="alert">
+            <p>{failure.detail}</p>
+            <p>
+              {failure.remediation ?? 'Review the selected profile before creating a replacement.'}
+            </p>
+          </div>
+        )}
+      </Presence>
     </section>
   );
 }

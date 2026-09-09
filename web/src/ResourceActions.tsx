@@ -1,4 +1,5 @@
 import { useRef, useState } from 'react';
+import { Presence } from './ui/Presence';
 import type { CmaWebClient } from './api/client';
 import { CommandKeys } from './api/client';
 import type { TreeAction } from './shell/Tree';
@@ -99,17 +100,20 @@ export function useResourceActions(
           View deletion status
         </Button>
       ) : null,
-    overlay:
-      deletion === undefined ? null : (
-        <DeletionDialog
-          key={deletion.request.key}
-          client={client}
-          viewerId={viewerId}
-          initial={deletion.request}
-          restored={deletion.restored}
-          onChanged={onChanged}
-          onClose={() => setDeletion(undefined)}
-        />
-      ),
+    overlay: (
+      <Presence>
+        {deletion === undefined ? null : (
+          <DeletionDialog
+            key={deletion.request.key}
+            client={client}
+            viewerId={viewerId}
+            initial={deletion.request}
+            restored={deletion.restored}
+            onChanged={onChanged}
+            onClose={() => setDeletion(undefined)}
+          />
+        )}
+      </Presence>
+    ),
   };
 }

@@ -1,3 +1,4 @@
+import { Presence } from '../ui/Presence';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { LandingCharacter } from './LandingCharacter';
 import { Button } from '../ui/Button';
@@ -38,12 +39,14 @@ export function SignInLanding({ onSignIn }: { readonly onSignIn: () => Promise<v
       <div className="brand-home">
         <LandingCharacter key={String(failed)} onActivate={activate} />
         <h1>ChronoAI Managed Agent</h1>
-        {failed ? (
-          <div role="alert">
-            <p>Sign-in could not be started.</p>
-            <Button onClick={activate}>Try again</Button>
-          </div>
-        ) : null}
+        <Presence>
+          {failed ? (
+            <div role="alert">
+              <p>Sign-in could not be started.</p>
+              <Button onClick={activate}>Try again</Button>
+            </div>
+          ) : null}
+        </Presence>
       </div>
     </main>
   );

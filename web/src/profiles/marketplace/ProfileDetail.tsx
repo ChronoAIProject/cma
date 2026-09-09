@@ -1,3 +1,4 @@
+import { Presence } from '../../ui/Presence';
 import { useEffect, useRef, useState } from 'react';
 import { CommandKeys } from '../../api/client';
 import type { AppRoute, ProfileKind } from '../../routing/routes';
@@ -168,16 +169,18 @@ function Detail({
           before confirming sandbox creation.
         </p>
       ) : null}
-      {failure === undefined ? null : (
-        <div role="alert">
-          <p>{failure.message}</p>
-          {failure.uncertain ? (
-            <Button disabled={pending} onClick={() => void fork()}>
-              Retry fork
-            </Button>
-          ) : null}
-        </div>
-      )}
+      <Presence>
+        {failure === undefined ? null : (
+          <div role="alert">
+            <p>{failure.message}</p>
+            {failure.uncertain ? (
+              <Button disabled={pending} onClick={() => void fork()}>
+                Retry fork
+              </Button>
+            ) : null}
+          </div>
+        )}
+      </Presence>
       <footer className="profile-editor__actions">
         <Button
           variant="primary"

@@ -1,3 +1,4 @@
+import { Presence } from '../ui/Presence';
 import { useEffect, useRef, useState } from 'react';
 import {
   ApiError,
@@ -247,11 +248,13 @@ export function ReviewCard({
               return <p key={index}>{needNames[need.type]}</p>;
           }
         })}
-        {error === undefined ? null : (
-          <p className="public-error" role="alert">
-            {error}
-          </p>
-        )}
+        <Presence>
+          {error === undefined ? null : (
+            <p className="public-error" role="alert">
+              {error}
+            </p>
+          )}
+        </Presence>
         {needsSignIn ? (
           <SandboxCredentialSetup
             returnTo={credentialReturnTo}

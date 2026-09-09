@@ -1,3 +1,4 @@
+import { Presence } from '../ui/Presence';
 import { useState } from 'react';
 import type { CmaWebClient } from '../api/client';
 import type { WorkspaceDetail } from '../api/types';
@@ -116,11 +117,13 @@ export function NewWorkspaceCard({
             disabled={command.locked}
           />
         )}
-        {command.failure === undefined ? null : (
-          <p className="create-error" role="alert">
-            {command.failure.message}
-          </p>
-        )}
+        <Presence>
+          {command.failure === undefined ? null : (
+            <p className="create-error" role="alert">
+              {command.failure.message}
+            </p>
+          )}
+        </Presence>
       </div>
     </Modal>
   );

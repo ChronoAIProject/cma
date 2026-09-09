@@ -1,3 +1,4 @@
+import { Presence } from '../ui/Presence';
 import { useEffect, useState } from 'react';
 import type { TriggerDocument, TriggerEmbed, TriggerStatistics } from '@chronoai/cma-sdk';
 import { Button } from '../ui/Button';
@@ -101,26 +102,31 @@ export function EmbedPanel({
               ))}
             </select>
           </div>
-          {failure === undefined ? (
-            descriptor === undefined ? (
-              <p role="status">Loading embed</p>
-            ) : (
-              <>
-                <BadgePreview url={descriptor.badge_url} label={descriptor.label_text} />
-                <SnippetTabs descriptor={descriptor} />
-              </>
-            )
-          ) : (
-            <div role="alert">
-              <p>{failure}</p>
-              <Button
-                icon={<IconRefreshOutline16 />}
-                onClick={() => setReload((value) => value + 1)}
-              >
-                Try again
-              </Button>
-            </div>
-          )}
+          <>
+            {failure === undefined ? (
+              descriptor === undefined ? (
+                <p role="status">Loading embed</p>
+              ) : (
+                <>
+                  <BadgePreview url={descriptor.badge_url} label={descriptor.label_text} />
+                  <SnippetTabs descriptor={descriptor} />
+                </>
+              )
+            ) : null}
+            <Presence>
+              {failure === undefined ? null : (
+                <div role="alert">
+                  <p>{failure}</p>
+                  <Button
+                    icon={<IconRefreshOutline16 />}
+                    onClick={() => setReload((value) => value + 1)}
+                  >
+                    Try again
+                  </Button>
+                </div>
+              )}
+            </Presence>
+          </>
         </>
       )}
       <dl className="trigger-stats" aria-label="Trigger statistics">

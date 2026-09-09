@@ -48,7 +48,12 @@ it('shows authorized history while later pages load and preserves the editable d
   expect(screen.getByRole('button', { name: 'Send message' })).toBeDisabled();
   await act(async () => finish({ items: [] }));
   await waitFor(() => expect(screen.getByRole('button', { name: 'Send message' })).toBeEnabled());
-  expect(screen.queryByText('Loading conversation activity.')).not.toBeInTheDocument();
+  expect(
+    screen.getByText('Loading conversation activity.').closest('[role="status"]'),
+  ).toHaveAttribute('inert');
+  await waitFor(() =>
+    expect(screen.queryByText('Loading conversation activity.')).not.toBeInTheDocument(),
+  );
   expect(screen.getByRole('textbox', { name: 'Message' })).toBe(draft);
   expect(draft).toHaveValue('Keep this draft');
   expect(screen.getAllByText('The repository is ready.')).toHaveLength(1);
@@ -97,6 +102,13 @@ it('preserves a draft and visible history while incomplete event activity retrie
     expect(screen.getByRole('button', { name: 'Send message' })).toBeDisabled();
     unavailable = false;
     await act(() => vi.advanceTimersByTimeAsync(5000));
+    expect(
+      screen
+        .getByText('Conversation activity is unavailable. Reconnecting.')
+        .closest('[role="status"]'),
+    ).toHaveAttribute('inert');
+    expect(screen.getByRole('button', { name: 'Send message' })).toBeEnabled();
+    await act(() => vi.advanceTimersByTimeAsync(200));
     expect(
       screen.queryByText('Conversation activity is unavailable. Reconnecting.'),
     ).not.toBeInTheDocument();

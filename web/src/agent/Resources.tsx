@@ -1,3 +1,4 @@
+import { Presence } from '../ui/Presence';
 import { useEffect, useMemo, useState } from 'react';
 import { ApiError, type AgentResources } from '@chronoai/cma-sdk';
 import { useCmaClient } from '../api/context';
@@ -270,11 +271,13 @@ export function Resources({
           </span>
         </div>
       </div>
-      {notice === undefined ? null : (
-        <p className="resources__status" role="status">
-          {notice}
-        </p>
-      )}
+      <Presence>
+        {notice === undefined ? null : (
+          <p className="resources__status" role="status">
+            {notice}
+          </p>
+        )}
+      </Presence>
     </section>
   );
 }

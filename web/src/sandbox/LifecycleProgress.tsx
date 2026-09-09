@@ -1,3 +1,4 @@
+import { Presence } from '../ui/Presence';
 import { useEffect, useState } from 'react';
 import type { SandboxDetail } from '../api/types';
 import type { CmaWebClient } from '../api/client';
@@ -101,7 +102,7 @@ export function LifecycleProgress({
           </span>
         )}
       </div>
-      {stale ? <p role="status">{copy.disconnected}</p> : null}
+      <Presence>{stale ? <p role="status">{copy.disconnected}</p> : null}</Presence>
       <p>{copy.background}</p>
       <SandboxActivity client={client} sandboxId={sandbox.id} />
       <details>
