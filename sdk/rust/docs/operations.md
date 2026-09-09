@@ -7,6 +7,13 @@ caller. `admin()` uses public capability-gated routes for Sandbox and profile
 inventory, durable events, runtime inventory, activity, and platform settings.
 The SDK has no private operator channel.
 
+Sandbox and Profile inventory rows include `owner_name`, and Sandbox detail
+includes `owner_name` beside `sandbox`. Activity includes `actor_name` and a
+`target_name` for user targets. These public names are `Option<String>`; a missing
+name must not be replaced by an owner or actor subject identifier. The ordinary
+Sandbox read also includes immutable `owner` and its current `owner_name`, with
+absence supported for older servers. Names never grant resource authority.
+
 ```rust,no_run
 use cma_sdk::{Client, admin::{ActivityListOptions, SandboxListOptions}};
 # async fn run(client: Client) -> Result<(), Box<dyn std::error::Error>> {

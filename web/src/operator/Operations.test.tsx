@@ -6,6 +6,58 @@ import { Operations, canOpenOperations } from './Operations';
 import { detail, now, operatorClient, profileRow, sandboxRow } from './testFixtures';
 
 describe('operator capabilities and record views', () => {
+  it("shows people by name and keeps another owner's Agents under the right Workspace", async () => {
+    const client = operatorClient();
+    const user = userEvent.setup();
+    client.admin.readSandbox.mockResolvedValue({
+      ...detail,
+      workspaces: [
+        ...detail.workspaces,
+        { ...detail.workspaces[0]!, id: 'wks-2', name: 'Other Workspace' },
+      ],
+      agents: [
+        ...detail.agents,
+        { ...detail.agents[0]!, id: 'agt-2', workspace_id: 'wks-2', title: 'Review assistant' },
+      ],
+    });
+    render(<Operations client={client} capabilities={['read_all_sandboxes']} />);
+    expect(await screen.findByText('Owner Alex Chen')).toBeInTheDocument();
+    expect(screen.queryByText('owner-1')).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Details for Research Sandbox' }));
+    const drawer = screen.getByRole('dialog');
+    const workspace = (await within(drawer).findByText('Research Workspace: ready')).closest('li')!;
+    expect(within(workspace).getByText('Research assistant: ready')).toBeInTheDocument();
+    expect(within(workspace).queryByText('Review assistant: ready')).not.toBeInTheDocument();
+    expect(within(drawer).getByText('Alex Chen')).toBeInTheDocument();
+    expect(within(drawer).queryByText('owner-1')).not.toBeInTheDocument();
+    expect(client.admin.retireSandbox).not.toHaveBeenCalled();
+  });
+
+  it('uses explicit unavailable names for unknown Activity users without exposing their IDs', async () => {
+    const client = operatorClient();
+    client.admin.listActivity.mockResolvedValue({
+      items: [
+        {
+          id: 'act-test',
+          at: now,
+          actor: 'unknown-person-id',
+          actor_name: null,
+          action: 'read',
+          target: { kind: 'subject', id: 'unknown-target-id' },
+          target_name: null,
+          outcome: { status: 'succeeded' },
+          detail: {},
+        },
+      ],
+      next: null,
+    });
+    render(<Operations client={client} capabilities={['read_activity_log']} />);
+    expect(await screen.findByText('Actor Name unavailable')).toBeInTheDocument();
+    expect(screen.getByText('User Name unavailable')).toBeInTheDocument();
+    expect(screen.queryByText('unknown-person-id')).not.toBeInTheDocument();
+    expect(screen.queryByText('unknown-target-id')).not.toBeInTheDocument();
+  });
+
   it('removes a destructive confirmation when control permission is revoked', async () => {
     const client = operatorClient();
     const user = userEvent.setup();
@@ -47,7 +99,7 @@ describe('operator capabilities and record views', () => {
     expect(screen.getByRole('tab', { name: 'Profiles' })).toHaveFocus();
     await screen.findByText('Research Agent');
     rerender(<Operations client={client} capabilities={['read_activity_log']} />);
-    await screen.findByText('operator-1');
+    await screen.findByText('Actor Morgan Park');
     expect(screen.getAllByRole('tab')).toHaveLength(1);
     expect(client.admin.readSettings).not.toHaveBeenCalled();
     expect(screen.queryByText('must not render')).not.toBeInTheDocument();
@@ -221,7 +273,7 @@ describe('operator capabilities and record views', () => {
     render(<Operations client={client} capabilities={['read_activity_log']} />);
     await screen.findByText('No records match these filters.');
     await user.click(screen.getByRole('button', { name: 'Next page' }));
-    await screen.findByText('operator-1');
+    await screen.findByText('Actor Morgan Park');
     expect(client.admin.listActivity).toHaveBeenLastCalledWith(
       expect.objectContaining({ cursor: 'page-2' }),
     );

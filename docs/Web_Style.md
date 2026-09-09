@@ -1230,12 +1230,16 @@ page. Do not retain the retired Chat hosts or Chat settings views.
 Use unframed compact record lists with hairline row separators, no zebra stripes,
 and no decorative section cards. A timestamp uses tabular numbers; the primary
 line uses `--text-body`, and metadata uses `--text-meta`. Identifiers use mono
-text that wraps without widening the viewport. Name and email identify a person
-when available; otherwise show the public subject identifier without guessing.
+text that wraps without widening the viewport. People are identified by their
+retained public display names. Missing names say “Name unavailable”; subject IDs
+are never a fallback for a person's name. This applies to Sandbox and Profile
+owners, Activity actors, and Activity targets that are users. The ordinary Sandbox
+information page also shows its immutable creator under Owner.
 
 Sandboxes rows show owner, name, written status, runtime version, Agent count, and
 last activity. Owner, status, and version filters retain their values during reads.
-A named details command opens a drawer with the Workspace/Agent hierarchy and
+A named details command opens a drawer with Agents grouped beneath their named
+Workspaces, pinned Profile references, and
 the durable Sandbox event timeline. No row-wide destructive target exists.
 Unknown counts or unavailable runtime observations remain explicitly unknown.
 
@@ -1713,3 +1717,4 @@ Append-only. Never edit or delete an entry.
 | 2026-09-09 | Bounded the quick-message row independently from chat after mobile stress verification; portalled descriptions through the existing viewport-clamped menu placement and hover-exit delay so long descriptions remain readable. |
 | 2026-09-09 | Kept Connect available during pending NyxID setup, reused current hosted links on reopen, and made Verify an immediate check with explicit still-not-connected feedback. Preserved popup blocking, same-tab recovery and credential-free storage. |
 | 2026-09-09 | Named connection-only dialogs Connect required accounts with Verify connections as the combined check, keeping permission setup distinct from publisher-required review. |
+| 2026-09-09 | Show retained public names for Operations owners, activity actors and user targets, with explicit unavailable names instead of subject IDs. Added Owner to the ordinary Sandbox information page and grouped the admin Agent inventory under its named Workspaces. |

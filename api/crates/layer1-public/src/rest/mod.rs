@@ -56,6 +56,7 @@ mod instances_tests;
 mod launch_events;
 mod launch_quota;
 mod launches;
+mod public_names;
 mod sandboxes;
 mod service_connections;
 mod trigger_entry;

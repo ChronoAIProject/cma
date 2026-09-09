@@ -661,3 +661,27 @@ image identity and measured results for each behavior, with unknowns left explic
 - Final frontend run passes all 1,182 tests across 108 files. The final Rust
   doc-test gate also passes. These commits are source/test evidence only;
   production API, web and runtime images have not changed during this turn.
+
+## Urgent admin owner visibility — 2026-09-09
+
+- Implemented retained public creator names on authorized admin Sandbox/Profile
+  inventory and Sandbox detail, actor and user-target names on Activity, and
+  immutable creator identity plus Owner name on the ordinary Sandbox page.
+  Resource authorization precedes name resolution. Mongo resolves a bounded
+  page in one projected query; missing names remain explicitly unavailable.
+  Operations groups named Agents beneath their Workspaces with profile links.
+  Original ownership and conversation authority are unchanged.
+- Local validation: 177 Layer 1 tests, 29 focused frontend tests, both SDK suites,
+  six Mongo integration tests, Clippy, web typecheck/lint/build, and desktop/mobile
+  browser proof pass. Browser evidence: cma-operator-browser-uOkAow (eleven
+  screenshots, keyboard navigation, no browser errors). Disposable Mongo was
+  removed without persistent volumes.
+- Production read-only check at 07:30 UTC confirms Shining's admin account sees
+  another owner's Sandboxes. Two foreign Sandboxes are Live. Shining's original
+  Sandbox is Paused at revision 741 with its Workspace and two Agents retained.
+  No owner message, Launch, pause, deletion or runtime mutation was sent.
+- Deployment is pending: Google Cloud explicitly requires interactive
+  reauthentication (`gcloud auth login`). The existing all-owner rollout guard
+  must also confirm there are no owner runtimes before an API rollout. No image
+  was pushed or deployed in this admin-fix batch. The earlier service-grant WIP
+  remains parked in its named stash; the full acceptance register remains open.

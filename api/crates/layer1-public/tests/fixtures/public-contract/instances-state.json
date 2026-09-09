@@ -754,6 +754,8 @@
         },
         "body": {
           "id": "sbx_route",
+          "owner": "owner-a",
+          "owner_name": null,
           "name": "research",
           "status": "retiring",
           "profile": {

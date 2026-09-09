@@ -53,6 +53,7 @@ pub(crate) struct ProfileSummaryView {
     kind: ProfileKind,
     id: String,
     owner: String,
+    owner_name: Option<String>,
     name: String,
     #[schema(value_type = String)]
     visibility: ProfileVisibility,
@@ -66,6 +67,7 @@ impl From<ProfileAdminSummary> for ProfileSummaryView {
             kind: value.kind,
             id: value.id,
             owner: value.owner.0,
+            owner_name: None,
             name: value.name,
             visibility: value.visibility,
             updated_at: value.updated_at,
@@ -109,8 +111,18 @@ pub(crate) async fn list(
         .0
         .into_query()?;
     let page = state.sandboxes.list_profiles(&caller, &query).await?;
+    let subjects: Vec<_> = page.items.iter().map(|row| row.owner.clone()).collect();
+    let names = super::super::public_names::resolve(&state.users, &subjects).await;
     Ok(Json(ProfilePageView {
-        items: page.items.into_iter().map(Into::into).collect(),
+        items: page
+            .items
+            .into_iter()
+            .map(|row| {
+                let mut view = ProfileSummaryView::from(row);
+                view.owner_name = names.get(&view.owner).cloned();
+                view
+            })
+            .collect(),
         next: page.next,
     }))
 }

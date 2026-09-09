@@ -22,6 +22,7 @@ export function adminPage<T>(parse: Parser<T>) {
 export const adminSandboxSummary = object({
   id: text,
   owner: text,
+  owner_name: optional(nullable(text)),
   name: text,
   status: sandboxStatus,
   runtime_version: nullable(text),
@@ -66,6 +67,7 @@ const adminAgent = object({
   updated_at: text,
 });
 export const adminSandboxDetail = object({
+  owner_name: optional(nullable(text)),
   sandbox: adminSandbox,
   workspaces: array(adminWorkspace),
   agents: array(adminAgent),
@@ -76,6 +78,7 @@ export const adminProfileSummary = object({
   kind: profileKind,
   id: text,
   owner: text,
+  owner_name: optional(nullable(text)),
   name: text,
   visibility: profileVisibility,
   updated_at: text,
@@ -109,6 +112,8 @@ export const activityRecord = object({
   id: text,
   at: text,
   actor: nullable(text),
+  actor_name: optional(nullable(text)),
+  target_name: optional(nullable(text)),
   action: activityAction,
   target: nullable(activityTarget),
   outcome: activityOutcome,

@@ -19,6 +19,8 @@
           "items": [
             {
               "id": "sbx_route",
+              "owner": "owner-a",
+              "owner_name": "Alex Chen",
               "name": "research",
               "status": "active",
               "profile": {
@@ -69,6 +71,8 @@
         },
         "body": {
           "id": "sbx_route",
+          "owner": "owner-a",
+          "owner_name": "Alex Chen",
           "name": "research",
           "status": "active",
           "profile": {
@@ -360,6 +364,8 @@
         },
         "body": {
           "id": "sbx_11111111111111111111111111111111",
+          "owner": "owner-a",
+          "owner_name": null,
           "name": "contract-created",
           "status": "provisioning",
           "profile": {
@@ -563,6 +569,8 @@
         },
         "body": {
           "id": "sbx_11111111111111111111111111111111",
+          "owner": "owner-a",
+          "owner_name": null,
           "name": "contract-created",
           "status": "retiring",
           "profile": {
@@ -612,6 +620,8 @@
         },
         "body": {
           "id": "sbx_route",
+          "owner": "owner-a",
+          "owner_name": null,
           "name": "research",
           "status": "pausing",
           "profile": {

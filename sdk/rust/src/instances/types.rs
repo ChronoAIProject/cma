@@ -49,6 +49,10 @@ pub struct SandboxLimits {
 pub struct Sandbox {
     /// Sandbox identifier.
     pub id: String,
+    /// Immutable creator identity; absent on older servers.
+    pub owner: Option<String>,
+    /// Creator's retained public name, when available.
+    pub owner_name: Option<String>,
     /// Display name.
     pub name: String,
     /// Current lifecycle status.

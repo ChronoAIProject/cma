@@ -44,6 +44,27 @@ const savingSandbox = (phase: 'capture' | 'resume_writers'): SandboxDetail => ({
   },
 });
 
+it.each(['active', 'paused'] as const)(
+  'shows the creator name on the %s Sandbox page without opening Advanced',
+  async (status) => {
+    lifecyclePage(async () => ({
+      ...sandboxFixture(),
+      status,
+      owner: 'creator-private-subject',
+      ownerName: 'Sam Lee',
+    }));
+    const owner = await screen.findByText('Owner');
+    expect(owner.parentElement?.querySelector('dd')).toHaveTextContent('Sam Lee');
+    expect(screen.queryByText('creator-private-subject')).not.toBeInTheDocument();
+  },
+);
+
+it('does not replace a missing creator name with their subject ID', async () => {
+  lifecyclePage(async () => ({ ...sandboxFixture(), owner: 'creator-private-subject' }));
+  expect(await screen.findByText('Name unavailable')).toBeInTheDocument();
+  expect(screen.queryByText('creator-private-subject')).not.toBeInTheDocument();
+});
+
 it('keeps the latest completed snapshot timestamp and real download link in Advanced during a save', async () => {
   const sandbox = savingSandbox('capture');
   lifecyclePage(async () => ({

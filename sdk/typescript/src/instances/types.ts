@@ -6,6 +6,7 @@ import {
   boolean,
   enumeration,
   integer,
+  nullable,
   object,
   optional,
   positiveInteger,
@@ -49,6 +50,8 @@ export type Failure = Output<typeof failure>;
 
 const sandboxFields = {
   id: text,
+  owner: optional(text),
+  owner_name: optional(nullable(text)),
   name: text,
   status: sandboxStatus,
   profile: profileReference,

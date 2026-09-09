@@ -21,6 +21,12 @@ operator's declared commit as verified live runtime provenance.
 
 `listSandboxes`, `readSandbox`, `sandboxEvents`, `listProfiles` and `listActivity`
 provide cross-owner inspection according to the caller's capabilities.
+Sandbox and Profile inventory rows include `owner_name`; Sandbox detail includes
+the creator's `owner_name` beside `sandbox`. Activity includes `actor_name` and,
+for user targets, `target_name`. These retained public names are nullable and
+optional on older servers. Display an unavailable name explicitly; never use the
+`owner`, `actor`, or target subject identifier as a person's name. The ordinary
+Sandbox read also includes immutable `owner` and its current `owner_name`.
 `retireSandbox` and `retireProfile` are explicit operator commands; they do not
 change the semantics of owner-scoped deletion helpers.
 
