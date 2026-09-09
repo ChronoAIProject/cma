@@ -204,8 +204,9 @@ impl SandboxCheckpointMaintenance {
                 .await
                 .map_err(provider_error)?
             {
-                if entry.request.home.request.sandbox_id == request.snapshot.home.request.sandbox_id
-                    && entry.request.capture_id != request.snapshot.capture_id
+                if entry.request.home.request.sandbox_id
+                    == job.export.snapshot.home.request.sandbox_id
+                    && entry.request.capture_id != job.export.snapshot.capture_id
                 {
                     dependencies
                         .homes
