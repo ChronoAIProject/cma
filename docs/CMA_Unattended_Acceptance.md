@@ -1570,3 +1570,38 @@ image identity and measured results for each behavior, with unknowns left explic
   build/manifest digest and retained Git source commits were checked first.
   They total 811,852,288 bytes and are reproducible build artifacts; their
   metadata/evidence, current candidate archive and deployed runtime archive remain.
+
+## Original Sandbox restore hotfix — 2026-09-10
+
+- Runtime source e8db57e7 falls back to verified streaming copy when successful
+  hard links report incompatible device/inode identity on the production
+  filesystem. Five checkpoint-copy unit tests pass. The initial local image
+  accidentally contained a host ARM64 executable and failed with Exec format
+  error. It was superseded by a verified Linux x86-64 binary and runtime digest
+  9e0281826070abd4e3b65e053737f12184d1adbc08cb8d9582d933069ce1a983.
+  The API ConfigMap and Deployment template now use this corrected runtime pin.
+- The original Sandbox had already entered terminal restore_failed. A narrowly
+  scoped operator repair, guarded by revision 915 and the exact failure class,
+  returned it to Paused, cleared the failed runtime binding, and synchronized
+  its aggregate and query fields. A local preimage was retained with mode 0600.
+  An initial repair timestamp/denormalized-field mismatch briefly caused reads
+  to return 503; it was corrected and the public API confirmed Paused revision
+  916 with revive allowed before verification began. No Workspace, Agent,
+  conversation, transcript or checkpoint record was deleted or replaced.
+- Named README Launch lch_b301a148c8474e98a5851795c9fb6e47 subsequently reached
+  Ready with the original Sandbox, Workspace, Agent and Worktree. The original
+  two transcript hashes remained unchanged; first prompt replay was absent.
+  Desktop/mobile restored history, enabled chat and no horizontal overflow
+  assertions passed. Home restore took approximately 225 seconds; Sandbox
+  activation occurred 377 seconds after revival began. Source evidence is
+  current-readme-repeat-YYmNn8 in the retained scratch directory.
+- The full harness result remains failed: its Live activity advancement check
+  sampled the restore screen just before the next poll and saw the same last
+  entry. Subsequent API inspection confirms events advanced from sequence 679
+  through 697, including runtime preparation, Agent readiness and activation.
+  Continuous activity visibility needs a synchronized browser observation;
+  the post-revival snapshot timing stage was not reached by this harness.
+  Nonblocking consistent snapshots and all other open acceptance items remain.
+- Readback found API/web, the original replacement runtime and five pool
+  runtimes Running/Ready. The temporary Mongo diagnostic Pod was removed. Host
+  disk has approximately 52 GiB free.
