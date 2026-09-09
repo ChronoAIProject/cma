@@ -1645,3 +1645,30 @@ image identity and measured results for each behavior, with unknowns left explic
   deployed images. The latest host disk check has approximately 46 GiB free.
   Persistent production recovery and consistent nonblocking snapshots remain
   unfinished; this configuration work is a prerequisite, not acceptance of them.
+
+## Background storage snapshot operations — 2026-09-10
+
+- Added typed disk-snapshot requests, receipts and observations beneath the
+  persistent-home adapter. Each request binds the capture ID, epoch, original
+  home allocation and PVC UID, and snapshot class. Allocation returns while the
+  copy is pending; observation distinguishes the provider's capture timestamp
+  from completed-copy readiness. These operations never call a runtime writer
+  hold, Pod exec or process pause.
+- Kubernetes resolves a source PVC name asynchronously. The adapter therefore
+  verifies its original UID until and including the first observed capture
+  timestamp. Once that boundary is verified and recorded, later observations can
+  survive source-home cleanup. Snapshot UID replacement, missing snapshots,
+  changed capture timestamps and regressing readiness fail without recapturing.
+- Scoped paginated inventory includes failed, pending and deleting snapshots so
+  durable cleanup can find them. Deletion uses both snapshot UID and resource
+  version and waits for finalizers; a replacement is preserved. Provider error
+  details are not forwarded. Ten new regressions cover these lifecycle races,
+  status validation, ambiguous creation, identity refusal and cleanup. All 148
+  adapter tests pass, with none skipped; the adapter source secret scan and
+  all-workspace/all-target/all-feature Clippy pass.
+- This is an unconnected storage primitive, not an enabled save implementation.
+  The control plane still needs durable capture/publication/cleanup work, an
+  immutable-view exporter, conversation metadata from that same view, handling
+  of user changes after capture, and actual concurrent production verification.
+  Deployment permissions for creating/listing/deleting snapshots will belong
+  to that later integration; the prepared home-activation Role remains unchanged.

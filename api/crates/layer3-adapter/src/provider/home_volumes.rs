@@ -10,6 +10,9 @@ use crate::{
 #[path = "home_volume_identity.rs"]
 mod identity;
 
+#[path = "home_snapshots.rs"]
+mod snapshots;
+
 /// Namespaced disk allocation and cleanup beneath recorded Sandbox home authority.
 #[derive(Clone)]
 pub struct PersistentHomeVolumes {

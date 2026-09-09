@@ -7,7 +7,7 @@ use tokio::io::AsyncWriteExt;
 use super::*;
 use crate::provider::tests::read_request;
 
-fn request() -> HomeVolumeRequest {
+pub(super) fn request() -> HomeVolumeRequest {
     HomeVolumeRequest {
         volume_id: "home-fixture".into(),
         sandbox_id: "sandbox-fixture".into(),
@@ -20,7 +20,7 @@ fn request() -> HomeVolumeRequest {
     }
 }
 
-fn template() -> (u16, Value) {
+pub(super) fn template() -> (u16, Value) {
     (
         200,
         json!({
@@ -31,18 +31,18 @@ fn template() -> (u16, Value) {
     )
 }
 
-fn claim(version: &str, uid: &str) -> PersistentVolumeClaim {
+pub(super) fn claim(version: &str, uid: &str) -> PersistentVolumeClaim {
     let mut claim = identity::desired_claim("cma-test", "deployment", &request()).unwrap();
     claim.metadata.uid = Some(uid.into());
     claim.metadata.resource_version = Some(version.into());
     claim
 }
 
-fn row(claim: PersistentVolumeClaim) -> (u16, Value) {
+pub(super) fn row(claim: PersistentVolumeClaim) -> (u16, Value) {
     (200, serde_json::to_value(claim).unwrap())
 }
 
-fn status(code: u16) -> (u16, Value) {
+pub(super) fn status(code: u16) -> (u16, Value) {
     (
         code,
         json!({"apiVersion":"v1","kind":"Status","status":if code < 400 {"Success"} else {"Failure"},"reason":if code==404 {"NotFound"} else {"Conflict"},"message":"fixture","code":code}),
@@ -88,14 +88,14 @@ async fn inventory_is_scoped_complete_and_rejects_invalid_later_pages() {
     }
 }
 
-struct Fixture {
-    store: PersistentHomeVolumes,
+pub(super) struct Fixture {
+    pub(super) store: PersistentHomeVolumes,
     requests: Arc<Mutex<Vec<String>>>,
     task: tokio::task::JoinHandle<()>,
 }
 
 impl Fixture {
-    async fn finish(mut self) -> Vec<String> {
+    pub(super) async fn finish(mut self) -> Vec<String> {
         tokio::time::timeout(Duration::from_secs(2), &mut self.task)
             .await
             .unwrap()
@@ -110,7 +110,7 @@ impl Drop for Fixture {
     }
 }
 
-async fn serve(replies: Vec<(u16, Value)>) -> Fixture {
+pub(super) async fn serve(replies: Vec<(u16, Value)>) -> Fixture {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
     let requests = Arc::new(Mutex::new(Vec::new()));
