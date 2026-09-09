@@ -55,7 +55,10 @@ impl ControlPlaneComposition {
                 &config.auth_encryption_key,
                 config.activity_retention,
                 checkpoint_storage,
-                &config.runtime.sandbox_image,
+                (
+                    &config.runtime.sandbox_image,
+                    config.runtime.home_policy.as_ref(),
+                ),
             )
             .await
             .map_err(|error| format!("durable stores are not usable: {error}"))?,
@@ -206,7 +209,7 @@ impl ControlPlaneComposition {
                 skills: agent_skills,
             },
             SandboxLifecycleConfig {
-                home_policy: None,
+                home_policy: config.runtime.home_policy.clone(),
                 execution: config.execution,
                 holder: worker_holder.clone(),
                 deployment_id: config.deployment_id.clone(),
@@ -318,11 +321,25 @@ async fn production_adapter(
     deployment
         .contract()
         .map_err(|error| format!("hosted runtime image is not usable: {error}"))?;
-    Ok(Arc::new(CodexAdapter::with_backend(
+    let mut adapter = CodexAdapter::with_backend(
         backend,
         CodexSandboxSpec {
             deployment,
             ..CodexSandboxSpec::default()
         },
-    )))
+    );
+    if let Some(policy) = &config.runtime.home_policy {
+        let homes = layer3_adapter::provider::PersistentHomeVolumes::infer_namespaced(
+            &config.runtime.sandbox_namespace,
+            &config.deployment_id,
+        )
+        .await
+        .map_err(|error| format!("durable home authority is not usable: {error}"))?;
+        homes
+            .preflight(policy)
+            .await
+            .map_err(|error| format!("durable home seed is not usable: {error}"))?;
+        adapter = adapter.with_home_volumes(Arc::new(homes));
+    }
+    Ok(Arc::new(adapter))
 }

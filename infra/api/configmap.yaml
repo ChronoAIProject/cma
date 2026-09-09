@@ -58,6 +58,12 @@ data:
   # In-cluster provider authority and the namespace granted by its scoped Role.
   CHRONO_SANDBOX_BASE_URL: "http://opensandbox-server.opensandbox-system.svc.cluster.local"
   CHRONO_SANDBOX_NAMESPACE: "chrono-bot"
+  # Seed UID is captured only after the credential-free initializer succeeds.
+  # Existing live ephemeral runtimes keep their binding until normal revival.
+  CHRONO_SANDBOX_HOME_STORAGE_CLASS: "cma-home-v1"
+  CHRONO_SANDBOX_HOME_CAPACITY_GIB: "64"
+  CHRONO_SANDBOX_HOME_TEMPLATE: "cma-home-seed-v1"
+  CHRONO_SANDBOX_HOME_TEMPLATE_UID: "e50503f6-9498-4105-a81a-5d9c34ffa810"
   # Persist untouched Agent conversations before Ready. Update only in a verified
   # runtime-absent window; this pin must never silently rotate an active Sandbox.
   # Build/contract checks do not replace production pause/restore verification.

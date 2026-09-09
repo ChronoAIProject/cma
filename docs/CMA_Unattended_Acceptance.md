@@ -1605,3 +1605,43 @@ image identity and measured results for each behavior, with unknowns left explic
 - Readback found API/web, the original replacement runtime and five pool
   runtimes Running/Ready. The temporary Mongo diagnostic Pod was removed. Host
   disk has approximately 52 GiB free.
+
+## Production durable-home configuration — 2026-09-10
+
+- Production assembly now accepts an optional complete four-key home policy,
+  preflights its pinned initialized snapshot and namespaced storage authority,
+  and supplies the home store to the runtime adapter and lifecycle workers.
+  Missing all four keys preserves existing volume-free operation; partial,
+  blank, ambiguous or out-of-range configuration fails startup. Existing live
+  owner runtimes retain their binding; migration occurs on a later revival.
+- Warm admission now requires the configured home policy as well as the exact
+  runtime image and public Profile revision. Reconciliation retires mismatched
+  unowned environments and waits for their cleanup before replacement. The
+  activation regression proves an old diskless Ready runtime cannot be claimed
+  even before reconciliation notices the configuration change.
+- All seven MongoDB replica-set warmup tests pass, including concurrent bounded
+  allocation, replay, private-copy isolation, atomic home transfer, stale-worker
+  refusal and storage activation. All sixteen adapter home tests pass. Config
+  tests, all-target/all-feature Clippy for CMA and the adapter, formatting and
+  both configuration/documentation checks pass. The initial test filter omitted
+  ignored integration tests; these seven results use the explicit warmup module
+  and --run-ignored all against the disposable local replica set.
+- The subsequent full backend suite passes all 1,699 runnable tests, with 188
+  excluded/ignored by the ordinary run. CMA and adapter source secret scans pass.
+- Source manifests initialize cma-home-v1 storage and the credential-free
+  cma-home-seed-v1 template from the corrected runtime image. The production
+  seed Pod completed successfully; snapshot UID
+  e50503f6-9498-4105-a81a-5d9c34ffa810 is ready to use. The seed contains only
+  image-provided home files and empty runtime/transfer directories. The snapshot
+  stays retained as the allocation template; its completed source Pod/PVC can
+  be removed after successful allocation verification.
+- Activation is not deployed. Kubernetes rejected updating the existing storage
+  Role because shining.wang@aelf.io lacks container.roles.update; read-only
+  authorization checks also refuse Role and RoleBinding creation. The concrete
+  infra/api/serviceaccount.yaml change is prepared for an authorized cluster
+  administrator. No privileged identity was substituted, and the four home
+  configuration keys have not been enabled in the live ConfigMap.
+- API/web and all seven existing runtimes remain Running/Ready at the recorded
+  deployed images. The latest host disk check has approximately 46 GiB free.
+  Persistent production recovery and consistent nonblocking snapshots remain
+  unfinished; this configuration work is a prerequisite, not acceptance of them.

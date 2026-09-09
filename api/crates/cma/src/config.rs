@@ -13,6 +13,7 @@ use layer2_core::ServiceId;
 use crate::{auth::AuthMode, store::AuthEncryptionKey};
 
 mod execution;
+mod home;
 mod profiles;
 mod runtime;
 mod storage;
@@ -483,3 +484,7 @@ fn validate_mongodb_uri(value: &str) -> Result<(), String> {
 #[cfg(test)]
 #[path = "config_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "config/home_tests.rs"]
+mod home_tests;

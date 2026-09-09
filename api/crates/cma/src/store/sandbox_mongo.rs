@@ -83,6 +83,7 @@ pub struct MongoSandboxStore {
     pub(super) sandbox_profile_revisions: Collection<Document>,
     pub(super) warm_sandboxes: Collection<Document>,
     pub(super) warm_runtime_version: Option<String>,
+    pub(super) warm_home_policy: Option<layer3_adapter::HomeVolumePolicy>,
     pub(crate) warmup_changed: std::sync::Arc<tokio::sync::Notify>,
 }
 
@@ -118,6 +119,7 @@ impl MongoSandboxStore {
             sandbox_profile_revisions: majority_collection(&database, SANDBOX_PROFILE_REVISIONS),
             warm_sandboxes: majority_collection(&database, WARM_SANDBOXES),
             warm_runtime_version: None,
+            warm_home_policy: None,
             warmup_changed: std::sync::Arc::new(tokio::sync::Notify::new()),
         };
         super::sandboxes::ensure_indexes(&store.sandboxes).await?;
