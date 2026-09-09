@@ -133,7 +133,7 @@ it('authors linked research profiles through routed public SDK clients and forks
   await screen.findByRole('heading', { name: 'trureturing sandbox', level: 1 });
   expect(screen.getByText('mkdir -p /home/cma/tools')).toBeInTheDocument();
   expect(screen.getByText('npm ci')).toBeInTheDocument();
-  await user.click(screen.getByRole('button', { name: 'Fork to my profiles' }));
+  await user.click(screen.getByRole('button', { name: 'Customize a private copy' }));
   await waitFor(() =>
     expect(window.location.pathname).toBe(`/profiles/sandbox-profiles/${FORK_ID}`),
   );

@@ -17,6 +17,7 @@ fn bounds() -> ProfileCapacityBounds {
 
 fn profile(visibility: ProfileVisibility) -> SandboxProfile {
     SandboxProfile {
+        availability: Default::default(),
         id: SandboxProfileId("sbp_values".into()),
         owner: SubjectId("owner".into()),
         name: "Values".into(),

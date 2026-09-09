@@ -5,6 +5,8 @@ use crate::ids::{
 
 const NOW: &str = "2026-09-05T00:00:00Z";
 
+#[path = "availability_tests.rs"]
+mod availability_tests;
 #[path = "reference_tests.rs"]
 mod reference_tests;
 
@@ -58,6 +60,7 @@ fn workspace_profile(id: &str, owner: &str, agent: AgentProfileRef) -> Workspace
 
 fn sandbox_profile(id: &str, owner: &str, workspace: WorkspaceProfileRef) -> SandboxProfile {
     SandboxProfile {
+        availability: Default::default(),
         id: SandboxProfileId(id.into()),
         owner: SubjectId(owner.into()),
         name: "Lean research".into(),

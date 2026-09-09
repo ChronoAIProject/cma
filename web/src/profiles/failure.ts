@@ -12,6 +12,8 @@ function record(value: unknown): Record<string, unknown> {
 }
 
 const FIELD_NAMES: Readonly<Record<string, string>> = {
+  'availability.warmup_count': 'warmupCount',
+  'availability.warmup_enabled': 'warmupEnabled',
   name: 'name',
   description: 'description',
   model: 'model',
@@ -35,6 +37,9 @@ const FIELD_NAMES: Readonly<Record<string, string>> = {
 };
 
 const REASONS: Readonly<Record<string, string>> = {
+  invalid_warmup_count: 'Choose a whole number from 1 to 5.',
+  warmup_requires_public_profile: 'Make this profile public before enabling warm up.',
+  warmup_requires_published_profile: 'Publish this profile before enabling warm up.',
   invalid_name: 'Enter a nonempty profile name no longer than 80 bytes.',
   description_too_long: 'Shorten the description to fit 2,000 bytes of text.',
   invalid_model: 'Enter a model or leave it empty for the deployment default.',

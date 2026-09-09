@@ -1191,6 +1191,18 @@ one-time install commands and environment name/value rows. Size conversion
 honors deployment bounds. Installs run as the Sandbox user, before credentials,
 under `/home/cma`. Environment values are never secrets.
 
+Sandbox Profiles also have an Availability band using the existing labelled
+checkbox rows and bounded numeric field: Enable warm up, Warm sandboxes (1–5),
+and Always keep alive. Warmup is enabled only after the Profile is published and
+public; unavailable controls explain those steps. Saving applies availability
+to the Profile's existing and future Sandboxes without changing their pinned
+environment. Explain that manual pause remains available. No ready-instance
+count is inferred from the configured target.
+
+Marketplace detail offers Customize a private copy beside Use. Explain that
+the shared original is read-only and the new private copy is editable. Sandbox
+copies start fresh and do not use the original Profile's warm instances.
+
 ### Drafts, publication and trust
 
 Save draft and Publish revision are separate commands; publication confirms
@@ -1738,3 +1750,4 @@ Append-only. Never edit or delete an entry.
 | 2026-09-09 | Read effective NyxID services from the Sandbox's public service list, including explicit owner grants, while preserving Agent lineage as an older-server fallback and the existing named service links. |
 | 2026-09-09 | Keep the signed-out ChronoAI Managed Agent title on one responsive line. Widen the landing lockup, enlarge the cloud invitation to 264px by 88px, and use matching bold Shrikhand at 24px inside it, preserving the existing activation and signed-in character behavior. |
 | 2026-09-09 | Add shared showing and dismissal fades for notification messages and dialogs, retaining only an inert exit frame, releasing focus immediately, cancelling stale dismissal on reopen, and honoring reduced motion without changing message semantics or geometry. |
+| 2026-09-09 | Add the Sandbox Profile Availability band with public-only warmup, a one-to-five target and Always keep alive, using existing fields and checkbox rows. Clarify the editable private-copy Marketplace action and its fresh Sandbox provisioning behavior. |

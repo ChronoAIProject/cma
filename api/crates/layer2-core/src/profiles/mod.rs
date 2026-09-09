@@ -3,12 +3,14 @@
 mod admin;
 mod agent;
 pub mod authoring;
+mod availability;
 mod common;
 mod digest;
 mod marketplace;
 mod public_values;
 pub mod references;
 mod sandbox;
+pub use availability::SandboxProfileAvailability;
 mod validation;
 mod workspace;
 

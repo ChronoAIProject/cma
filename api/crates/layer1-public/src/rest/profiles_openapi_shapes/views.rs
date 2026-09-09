@@ -181,6 +181,7 @@ impl WorkspaceProfileView {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
 pub struct SandboxProfileView {
+    pub availability: super::SandboxProfileAvailabilityBody,
     pub id: String,
     pub owner: String,
     pub name: String,
@@ -205,6 +206,7 @@ impl SandboxProfileView {
         latest_revision: Option<ProfileRevisionSummary>,
     ) -> Self {
         Self {
+            availability: profile.availability.into(),
             id: profile.id.to_string(),
             owner: profile.owner.to_string(),
             name: profile.name,

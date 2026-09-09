@@ -1830,6 +1830,7 @@ async fn publish_sandbox(
     workspace_nested: bool,
 ) -> SandboxProfileRef {
     let profile = SandboxProfile {
+        availability: Default::default(),
         id: crate::SandboxProfileId("sbp_launch_sandbox".into()),
         owner: SubjectId::new(owner),
         name: "Launch Sandbox".into(),

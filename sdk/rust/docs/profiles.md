@@ -14,7 +14,7 @@ use cma_sdk::profiles::{AgentProfileContent, MarketplaceListOptions, UpdateProfi
 let owned = client.agent_profiles().list(&PageOptions::default()).await?;
 let id = std::env::var("CMA_AGENT_PROFILE_ID")?;
 let current = client.agent_profiles().read(&id).await?;
-let save = UpdateProfile { draft_version: current.draft_version, name: None,
+let save = UpdateProfile { availability: None, draft_version: current.draft_version, name: None,
     description: None, content: current.draft };
 let key = IdempotencyKey::new(std::env::var("CMA_PROFILE_SAVE_KEY")?)?;
 let updated = client.agent_profiles().save(&id, &save, &key).await?;

@@ -661,6 +661,7 @@ async fn seed_sandbox_profile(
     let id = SandboxProfileId("sbp_worker".into());
     profiles
         .create_sandbox_profile(SandboxProfile {
+            availability: Default::default(),
             id: id.clone(),
             owner: SubjectId::new("owner"),
             name: "Worker sandbox".into(),

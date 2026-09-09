@@ -84,6 +84,7 @@ async fn create_sandbox_fork(
     now: String,
 ) -> Result<ForkedProfile, MarketplaceError> {
     let profile = SandboxProfile {
+        availability: Default::default(),
         id: SandboxProfileId::generate(),
         owner: owner.clone(),
         name: fork_name(&source.name),

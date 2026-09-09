@@ -21,6 +21,8 @@ use tower::ServiceExt;
 use super::{profiles_router, ProfileRoutePolicy, ProfilesState};
 use crate::AuthenticatedSubject;
 
+#[path = "profiles_availability_tests.rs"]
+mod availability_tests;
 #[path = "defaults_tests.rs"]
 mod defaults_tests;
 #[path = "public_revision_tests.rs"]

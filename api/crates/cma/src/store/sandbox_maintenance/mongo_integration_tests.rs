@@ -30,6 +30,9 @@ use crate::store::sandbox_mongo_integration_tests::sandbox;
 const IDLE_AT: &str = "2026-09-05T00:00:00Z";
 const LATER: &str = "2026-09-05T00:30:00Z";
 
+#[path = "availability_integration_tests.rs"]
+mod availability;
+
 pub(in crate::store) async fn database() -> (Client, String, MongoSandboxStore) {
     let uri = std::env::var("CHRONO_TEST_MONGODB_URI")
         .expect("CHRONO_TEST_MONGODB_URI must name a MongoDB replica set");

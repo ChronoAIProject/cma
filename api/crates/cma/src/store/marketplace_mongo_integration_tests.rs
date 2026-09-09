@@ -173,6 +173,7 @@ fn workspace_profile(id: &str, agent: AgentProfileRef) -> WorkspaceProfile {
 
 fn sandbox_profile(id: &str, workspaces: Vec<WorkspaceProfileRef>) -> SandboxProfile {
     SandboxProfile {
+        availability: Default::default(),
         id: SandboxProfileId(id.into()),
         owner: SubjectId("publisher".into()),
         name: "Gamma sandbox".into(),

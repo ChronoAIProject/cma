@@ -132,9 +132,23 @@ pub struct SandboxProfileContent {
     pub environment_variables: Vec<EnvironmentVariable>,
 }
 
+/// Mutable Sandbox scheduling policy, independent of pinned environment content.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SandboxProfileAvailability {
+    /// Pre-provision credential-free runtimes for this published public Profile.
+    pub warmup_enabled: bool,
+    /// Desired ready runtime count, from one through five.
+    pub warmup_count: u8,
+    /// Prevent inactivity pause, while allowing explicit manual pause.
+    pub always_keep_alive: bool,
+}
+
 /// Metadata and content used to create an owned draft.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProfileDraft<C> {
+    /// Sandbox Profiles only; defaults to no warmup and normal inactivity pause.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub availability: Option<SandboxProfileAvailability>,
     /// Profile display name.
     pub name: String,
     /// Profile description.
@@ -147,6 +161,9 @@ pub struct ProfileDraft<C> {
 /// Optimistic draft replacement; omitted metadata retains its current value.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UpdateProfile<C> {
+    /// Sandbox Profiles only; omission preserves the current policy.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub availability: Option<SandboxProfileAvailability>,
     /// Positive version of the draft being replaced.
     pub draft_version: u64,
     /// Optional replacement display name.
@@ -174,6 +191,9 @@ pub struct ProfileRevisionSummary {
 /// Owner-facing profile, including its mutable draft.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct ProfileDocument<C> {
+    /// Mutable scheduling policy, present for Sandbox Profiles.
+    #[serde(default)]
+    pub availability: Option<SandboxProfileAvailability>,
     /// Profile identifier.
     pub id: String,
     /// Owning subject identifier.

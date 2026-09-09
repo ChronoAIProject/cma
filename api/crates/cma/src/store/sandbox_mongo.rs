@@ -77,6 +77,7 @@ pub struct MongoSandboxStore {
     pub(super) sandbox_events: Collection<Document>,
     pub(super) sandbox_admissions: Collection<Document>,
     pub(super) checkpoints: Collection<Document>,
+    pub(super) sandbox_profiles: Collection<Document>,
 }
 
 impl MongoSandboxStore {
@@ -107,6 +108,7 @@ impl MongoSandboxStore {
             sandbox_events: majority_collection(&database, SANDBOX_EVENTS),
             sandbox_admissions: majority_collection(&database, SANDBOX_ADMISSIONS),
             checkpoints: majority_collection(&database, CHECKPOINTS),
+            sandbox_profiles: majority_collection(&database, SANDBOX_PROFILES),
         };
         super::sandboxes::ensure_indexes(&store.sandboxes).await?;
         super::workspaces::ensure_indexes(&store.workspaces).await?;

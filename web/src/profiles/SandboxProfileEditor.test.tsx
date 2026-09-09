@@ -11,6 +11,66 @@ import {
 } from '../test/profiles';
 import { SandboxProfileEditor } from './SandboxProfileEditor';
 
+it('enables warmup only for public published profiles and keeps manual availability editable', async () => {
+  const actor = userEvent.setup();
+  render(
+    <SandboxProfileEditor
+      client={documentClient(SANDBOX_PROFILE)}
+      profileId={SANDBOX_PROFILE.id}
+      profiles={OWN_PROFILES}
+      marketplace={marketplaceClient()}
+      bounds={PROFILE_BOUNDS}
+    />,
+  );
+  expect(await screen.findByRole('checkbox', { name: /Enable warm up/ })).toBeDisabled();
+  expect(screen.getByLabelText('Warm sandboxes')).toBeDisabled();
+  const keepAlive = screen.getByRole('checkbox', { name: /Always keep alive/ });
+  expect(keepAlive).toBeEnabled();
+  await actor.click(keepAlive);
+  expect(keepAlive).toBeChecked();
+});
+
+it('saves a five-sandbox warmup policy, validates the bound and retains it through later edits', async () => {
+  const actor = userEvent.setup();
+  const availability = { warmupEnabled: true, warmupCount: 5, alwaysKeepAlive: true };
+  const record = {
+    ...SANDBOX_PROFILE,
+    visibility: 'public' as const,
+    availability: { warmupEnabled: false, warmupCount: 1, alwaysKeepAlive: false },
+  };
+  const saveProfile = vi.fn().mockResolvedValue({ ...record, availability, draftVersion: 4 });
+  render(
+    <SandboxProfileEditor
+      client={documentClient(record, { saveProfile })}
+      profileId={record.id}
+      profiles={OWN_PROFILES}
+      marketplace={marketplaceClient()}
+      bounds={PROFILE_BOUNDS}
+    />,
+  );
+  await actor.click(await screen.findByRole('checkbox', { name: /Enable warm up/ }));
+  const count = screen.getByLabelText('Warm sandboxes');
+  expect(count).toBeEnabled();
+  fireEvent.change(count, { target: { value: '6' } });
+  await actor.click(screen.getByRole('button', { name: 'Save draft' }));
+  expect(saveProfile).not.toHaveBeenCalled();
+  expect(count).toHaveAttribute('aria-invalid', 'true');
+  fireEvent.change(count, { target: { value: '5' } });
+  await actor.click(screen.getByRole('checkbox', { name: /Always keep alive/ }));
+  await actor.click(screen.getByRole('button', { name: 'Save draft' }));
+  await screen.findByText('Draft saved.');
+  expect(saveProfile.mock.calls[0]?.[1]).toMatchObject({
+    availability,
+    draftVersion: 3,
+    content: record.draft,
+  });
+  expect(screen.getByRole('checkbox', { name: /Enable warm up/ })).toBeChecked();
+  fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'New display name' } });
+  await actor.click(screen.getByRole('button', { name: 'Save draft' }));
+  await screen.findByText('Draft saved.');
+  expect(saveProfile.mock.calls[1]?.[1]).toMatchObject({ availability, draftVersion: 4 });
+});
+
 it('converts custom cores and GiB, selects services, and saves environment and ordered workspace settings', async () => {
   const actor = userEvent.setup();
   const createProfile = vi.fn(documentClient(SANDBOX_PROFILE).createProfile);

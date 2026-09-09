@@ -698,6 +698,7 @@ async fn publish_profiles(
     let sandbox_id = SandboxProfileId("sbp_route_sandbox".into());
     profiles
         .create_sandbox_profile(SandboxProfile {
+            availability: Default::default(),
             id: sandbox_id.clone(),
             owner: SubjectId::new(OWNER),
             name: "Route Sandbox".into(),

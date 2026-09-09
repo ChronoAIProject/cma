@@ -124,6 +124,7 @@ pub(super) async fn create(
         move |body| async move {
             let now = layer2_core::now_rfc3339();
             let profile = SandboxProfile {
+                availability: body.availability.map(Into::into).unwrap_or_default(),
                 id: layer2_core::SandboxProfileId::generate(),
                 owner: owner.clone(),
                 name: body.name,
@@ -234,6 +235,9 @@ pub(super) async fn update(
         body,
         move |body| async move {
             let mut profile = owned(&command_state, &owner, &id).await?;
+            if let Some(availability) = body.availability {
+                profile.availability = availability.into();
+            }
             profile.draft_version = body
                 .draft_version
                 .checked_add(1)

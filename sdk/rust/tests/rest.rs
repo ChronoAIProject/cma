@@ -624,6 +624,7 @@ async fn rejects_invalid_requests_before_sending() {
         Err(Error::Validation { .. })
     ));
     let update = UpdateProfile {
+        availability: None,
         draft_version: 0,
         name: None,
         description: None,
@@ -685,6 +686,7 @@ async fn rejects_invalid_requests_before_sending() {
         serde_json::from_value(content(ProfileKind::Workspace)).unwrap();
     workspace_content.agent_profiles.push(reference.clone());
     let workspace = ProfileDraft {
+        availability: None,
         name: "Project".into(),
         description: String::new(),
         content: workspace_content,
@@ -701,6 +703,7 @@ async fn rejects_invalid_requests_before_sending() {
         serde_json::from_value(content(ProfileKind::Sandbox)).unwrap();
     sandbox_content.workspace_profiles.push(reference);
     let mut sandbox = ProfileDraft {
+        availability: None,
         name: "Project".into(),
         description: String::new(),
         content: sandbox_content,

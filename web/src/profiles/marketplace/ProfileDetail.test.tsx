@@ -70,11 +70,11 @@ it.each(['network', 'idempotency_in_flight', 'idempotency_recovery_required'])(
       />,
     );
     await screen.findByRole('heading', { name: 'Research sandbox' });
-    await actor.click(screen.getByRole('button', { name: 'Fork to my profiles' }));
-    await screen.findByRole('button', { name: 'Retry fork' });
+    await actor.click(screen.getByRole('button', { name: 'Customize a private copy' }));
+    await screen.findByRole('button', { name: 'Retry private copy' });
     expect(screen.getByRole('button', { name: 'Use' })).toBeDisabled();
-    expect(screen.getByRole('button', { name: 'Fork to my profiles' })).toBeDisabled();
-    await actor.click(screen.getByRole('button', { name: 'Retry fork' }));
+    expect(screen.getByRole('button', { name: 'Customize a private copy' })).toBeDisabled();
+    await actor.click(screen.getByRole('button', { name: 'Retry private copy' }));
     expect(forkProfile.mock.calls[0]?.slice(0, 3)).toEqual([
       'sandbox',
       MARKETPLACE_SANDBOX.summary.id,
@@ -105,6 +105,8 @@ it('does not offer management actions without the owner capability or a creation
     />,
   );
   await screen.findByRole('heading', { name: 'Research sandbox' });
-  expect(screen.queryByRole('button', { name: 'Fork to my profiles' })).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole('button', { name: 'Customize a private copy' }),
+  ).not.toBeInTheDocument();
   expect(screen.getByRole('button', { name: 'Use' })).toBeDisabled();
 });

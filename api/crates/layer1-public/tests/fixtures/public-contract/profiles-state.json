@@ -572,6 +572,11 @@
           "content-type": "application/json"
         },
         "body": {
+          "availability": {
+            "warmup_enabled": false,
+            "warmup_count": 1,
+            "always_keep_alive": false
+          },
           "id": "sbp_11111111111111111111111111111111",
           "owner": "contract-owner",
           "name": "Contract sandbox",
@@ -895,16 +900,26 @@
           "name": "Unpublished workspace",
           "description": "Shared contract",
           "content": {
-            "location": { "type": "directory", "name": "contract" },
+            "location": {
+              "type": "directory",
+              "name": "contract"
+            },
             "name": "contract",
             "setup_commands": [],
-            "agent_profiles": [{ "id": "$agent_profile_id", "revision": 1 }]
+            "agent_profiles": [
+              {
+                "id": "$agent_profile_id",
+                "revision": 1
+              }
+            ]
           }
         }
       },
       "response": {
         "status": 201,
-        "headers": { "content-type": "application/json" },
+        "headers": {
+          "content-type": "application/json"
+        },
         "body": {
           "id": "wkp_22222222222222222222222222222222",
           "owner": "contract-owner",
@@ -913,11 +928,17 @@
           "visibility": "private",
           "uses_count": 0,
           "draft": {
-            "location": { "type": "directory", "name": "contract" },
+            "location": {
+              "type": "directory",
+              "name": "contract"
+            },
             "name": "contract",
             "setup_commands": [],
             "agent_profiles": [
-              { "id": "agp_11111111111111111111111111111111", "revision": 1 }
+              {
+                "id": "agp_11111111111111111111111111111111",
+                "revision": 1
+              }
             ]
           },
           "draft_version": 1,
@@ -927,8 +948,8 @@
         "bodyKind": "json"
       },
       "captures": {
-        "unpublished_workspace_profile_id": "/id",
         "unpublished_workspace_created": "/created_at",
+        "unpublished_workspace_profile_id": "/id",
         "unpublished_workspace_updated": "/updated_at"
       }
     },
@@ -955,7 +976,10 @@
             "max_workspaces": 4,
             "max_agents_per_workspace": 4,
             "workspace_profiles": [
-              { "id": "$workspace_profile_id", "revision": 1 }
+              {
+                "id": "$workspace_profile_id",
+                "revision": 1
+              }
             ],
             "software_install_commands": [],
             "environment_variables": []
@@ -964,8 +988,15 @@
       },
       "response": {
         "status": 201,
-        "headers": { "content-type": "application/json" },
+        "headers": {
+          "content-type": "application/json"
+        },
         "body": {
+          "availability": {
+            "warmup_enabled": false,
+            "warmup_count": 1,
+            "always_keep_alive": false
+          },
           "id": "sbp_22222222222222222222222222222222",
           "owner": "contract-owner",
           "name": "Unpublished sandbox",
@@ -981,7 +1012,10 @@
             "max_workspaces": 4,
             "max_agents_per_workspace": 4,
             "workspace_profiles": [
-              { "id": "wkp_11111111111111111111111111111111", "revision": 1 }
+              {
+                "id": "wkp_11111111111111111111111111111111",
+                "revision": 1
+              }
             ],
             "software_install_commands": [],
             "environment_variables": []
@@ -993,8 +1027,8 @@
         "bodyKind": "json"
       },
       "captures": {
-        "unpublished_sandbox_profile_id": "/id",
         "unpublished_sandbox_created": "/created_at",
+        "unpublished_sandbox_profile_id": "/id",
         "unpublished_sandbox_updated": "/updated_at"
       }
     },
@@ -1365,6 +1399,11 @@
           "content-type": "application/json"
         },
         "body": {
+          "availability": {
+            "warmup_enabled": false,
+            "warmup_count": 1,
+            "always_keep_alive": false
+          },
           "id": "sbp_11111111111111111111111111111111",
           "owner": "contract-owner",
           "name": "Contract sandbox",
@@ -1504,6 +1543,11 @@
           "content-type": "application/json"
         },
         "body": {
+          "availability": {
+            "warmup_enabled": false,
+            "warmup_count": 1,
+            "always_keep_alive": false
+          },
           "id": "sbp_11111111111111111111111111111111",
           "owner": "contract-owner",
           "name": "Contract sandbox",
@@ -1599,6 +1643,11 @@
           "content-type": "application/json"
         },
         "body": {
+          "availability": {
+            "warmup_enabled": false,
+            "warmup_count": 1,
+            "always_keep_alive": false
+          },
           "id": "sbp_11111111111111111111111111111111",
           "owner": "contract-owner",
           "name": "Contract sandbox",

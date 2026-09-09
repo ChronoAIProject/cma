@@ -99,6 +99,7 @@ impl DefaultProfileSpec {
             .publish(DEFAULT_PROFILE_REVISION, SEEDED_AT.into())
             .map_err(profile_invalid)?;
         let sandbox = SandboxProfile {
+            availability: Default::default(),
             id: SandboxProfileId(DEFAULT_SANDBOX_PROFILE_ID.into()),
             owner,
             name: "Default sandbox".into(),

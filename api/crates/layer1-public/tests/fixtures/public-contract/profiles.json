@@ -1323,6 +1323,11 @@
           "content-type": "application/json"
         },
         "body": {
+          "availability": {
+            "warmup_enabled": false,
+            "warmup_count": 1,
+            "always_keep_alive": false
+          },
           "id": "sbp_11111111111111111111111111111111",
           "owner": "contract-owner",
           "name": "Contract sandbox",
@@ -1370,6 +1375,11 @@
         "body": {
           "items": [
             {
+              "availability": {
+                "warmup_enabled": false,
+                "warmup_count": 1,
+                "always_keep_alive": false
+              },
               "id": "sbp_11111111111111111111111111111111",
               "owner": "contract-owner",
               "name": "Contract sandbox",
@@ -1413,6 +1423,11 @@
           "content-type": "application/json"
         },
         "body": {
+          "availability": {
+            "warmup_enabled": false,
+            "warmup_count": 1,
+            "always_keep_alive": false
+          },
           "id": "sbp_11111111111111111111111111111111",
           "owner": "contract-owner",
           "name": "Contract sandbox",
@@ -1473,6 +1488,11 @@
           "content-type": "application/json"
         },
         "body": {
+          "availability": {
+            "warmup_enabled": false,
+            "warmup_count": 1,
+            "always_keep_alive": false
+          },
           "id": "sbp_11111111111111111111111111111111",
           "owner": "contract-owner",
           "name": "Revised sandbox",
@@ -1717,6 +1737,11 @@
           "content-type": "application/json"
         },
         "body": {
+          "availability": {
+            "warmup_enabled": false,
+            "warmup_count": 1,
+            "always_keep_alive": false
+          },
           "id": "sbp_11111111111111111111111111111111",
           "owner": "contract-owner",
           "name": "Revised sandbox",
@@ -1857,6 +1882,11 @@
           "content-type": "application/json"
         },
         "body": {
+          "availability": {
+            "warmup_enabled": false,
+            "warmup_count": 1,
+            "always_keep_alive": false
+          },
           "id": "sbp_22222222222222222222222222222222",
           "owner": "contract-owner",
           "name": "Revised sandbox copy",
@@ -1908,6 +1938,11 @@
           "content-type": "application/json"
         },
         "body": {
+          "availability": {
+            "warmup_enabled": false,
+            "warmup_count": 1,
+            "always_keep_alive": false
+          },
           "id": "sbp_11111111111111111111111111111111",
           "owner": "contract-owner",
           "name": "Revised sandbox",

@@ -1,6 +1,7 @@
 # Unattended Production Acceptance
 
-Scope: the owner's 21 requirements dated 2026-09-08. Build from
+Scope: the owner's 21 requirements dated 2026-09-08, updated by the public
+Sandbox Profile warmup and availability requirements dated 2026-09-09. Build from
 `feat/trureturing-trigger-loop-20260907` and deploy directly; do not merge to
 `develop` or `main`. A passing local test is not production acceptance.
 
@@ -10,6 +11,27 @@ another disposable Trigger. Never record credentials, private logs or tokens.
 Monitor disk usage and inspect exact targets before removing stale artifacts.
 
 ## Acceptance Register
+
+### Current priority: public Profile warmup and availability
+
+- Implement owner-controlled Enable warm up and a target count from one to five,
+  exclusively for published public Sandbox Profiles.
+- Prepare the runtime and credential-free environment before a visitor arrives;
+  atomically assign one ready runtime, then bind that visitor's ownership and
+  scoped credentials. Concurrent claims, retries and controller restarts must
+  never assign one runtime to two users or expose another user's credentials.
+- Immediately replenish claimed slots to the configured count. Reconcile pool
+  records and provider inventory durably, including stale Profile/image revisions.
+- Public Agent, Workspace and Sandbox Profiles remain usable but not editable
+  by other users. Provide an explicit editable private-copy path; private copies
+  use fresh provisioning and never consume their source Profile's pool.
+- Add Always keep alive to Sandbox Profiles, including their existing Sandboxes;
+  disable inactivity pause while preserving explicit manual pause.
+- Configure the existing Truretruing Sandbox Profile with warmup enabled, five
+  ready instances and Always keep alive enabled, then prove the behavior in prod.
+
+These new requirements are not yet deployed or accepted. Terminal synchronization
+is explicitly deferred by the owner; the other earlier requirements remain.
 
 | # | Required behavior | Current evidence and remaining work |
 |---|---|---|
@@ -31,7 +53,7 @@ Monitor disk usage and inspect exact targets before removing stale artifacts.
 | 16 | IME confirmation Enter never sends; ordinary Enter sends | Deployed in web 40300b5e. Production desktop/mobile synthetic composition, keyCode 229, Shift+Enter and ordinary Enter checks pass; draft retained. Ordinary-send requests intercepted before reaching the Agent. Native OS IME selection still requires a real keyboard check, not claimed by browser-generated events. |
 | 17 | Agent header and sidebar show consistent resource state | Production desktop/mobile Ready -> Working -> Ready -> Stopped transitions passed with zero MutationObserver mismatches, including reload. Evidence: agent-status-sync-oU399d/result.json. Normal-stop notice correction in web 57f793aa also passed actual live transitions: agent-status-sync-uzRQlH/result.json. |
 | 18 | Notifications animate on showing and dismissal | Shared fades deployed in web 5d840795 across creation/deletion, Agent notices, profiles, operator settings, Trigger messages and dialogs. All 1,194 frontend tests pass. Production notification-motion-anY733 verifies real opacity changes, inert dismissal, immediate focus/scroll release, quick reopen and reduced-motion removal at 1440/390/320px. Retry errors are injected read failures; zero resource mutations forwarded. |
-| 19 | Real native terminal and chat share one conversation, all CLI features, matching theme and reliable sizing | Pending pinned-engine feasibility and implementation. An independent second conversation or imitation terminal is not acceptance. |
+| 19 | Real native terminal and chat share one conversation, all CLI features, matching theme and reliable sizing | Explicitly deferred by the owner on 2026-09-09 in favor of public Profile warmup and availability. |
 | 20 | gh through NyxID GitHub OAuth; identity per user; three-service Connect/Verify flow | API 7c913fa6, web 5d840795 and runtime 7630fb16 deployed. The owner explicitly received api-github access with original pins preserved. Shared Sandbox Profile revision 2 and named Trigger revision 3 require all three services. Actual runtime gh 2.100.0 REST and GraphQL calls through NyxID identify chronoai-shining; connected-owner README admission, named service links and the no-artifacts contribution message pass production checks. Positive ready-artifact PR publication and missing-connection/fresh-sign-in production verification remain pending. |
 | 21 | Agent, Workspace and Sandbox deletion completes correctly | Durable live-child Workspace cascade deployed in 565f6286. Production zero/one/two-child deletion passed in 1,933 / 14,971 / 16,887 ms; desktop/mobile dialogs, reload recovery, page closure, Deleted Agents and removed Worktrees verified. Test Sandbox retirement completed. Same-Sandbox snapshot concurrency remains blocked by #4; do not call the full requirement complete. |
 
@@ -135,7 +157,7 @@ image identity and measured results for each behavior, with unknowns left explic
   Standalone live-child Workspace deletion now passes production acceptance.
 - Continue the complete register above, especially consistent nonblocking
   snapshots, storage cleanup, Trigger quick messages/provenance, GitHub proxy
-  authority and the genuine synchronized terminal. These remain unsatisfied.
+  authority. Terminal synchronization is deferred under the updated scope.
 
 ## Latest Deployment Evidence
 

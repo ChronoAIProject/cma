@@ -212,6 +212,7 @@ pub(super) async fn publish_sandbox_profile(
     let id = SandboxProfileId(id.into());
     profiles
         .create_sandbox_profile(SandboxProfile {
+            availability: Default::default(),
             id: id.clone(),
             owner: SubjectId::new(owner),
             name: format!("Sandbox {id}"),

@@ -97,6 +97,39 @@ describe.each(['agent', 'workspace', 'sandbox'] as const)('%s profiles', (kind) 
 });
 
 describe('profile response boundaries', () => {
+  it('preserves Sandbox availability in reads, creates and saves and validates the pool bound', async () => {
+    const test = transport();
+    const availability = { warmup_enabled: true, warmup_count: 5, always_keep_alive: true };
+    const document = { ...profile('sandbox'), availability };
+    test.answer(document);
+    expect((await test.client.sandboxProfiles.read(document.id)).availability).toEqual(
+      availability,
+    );
+    const update = { content: contents.sandbox, draft_version: 1, availability };
+    await test.client.sandboxProfiles.save(document.id, update, command);
+    expect(JSON.parse(String(test.calls.at(-1)?.init.body)).availability).toEqual(availability);
+    test.answer(document, 201);
+    await test.client.sandboxProfiles.create(
+      {
+        name: 'Profile',
+        content: contents.sandbox,
+        availability: { ...availability, warmup_enabled: false },
+      },
+      command,
+    );
+    expect(JSON.parse(String(test.calls.at(-1)?.init.body)).availability.always_keep_alive).toBe(
+      true,
+    );
+    for (const warmup_count of [0, 6, 1.5]) {
+      expect(() =>
+        test.client.sandboxProfiles.save(
+          document.id,
+          { ...update, availability: { ...availability, warmup_count } },
+          command,
+        ),
+      ).toThrow(ValidationError);
+    }
+  });
   it('allows omitted create descriptions and presence-aware update metadata', async () => {
     const test = transport();
     const document = profile('agent');

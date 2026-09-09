@@ -109,6 +109,7 @@ pub(super) async fn seeded(prefix: &str) -> Seeded {
         .await
         .unwrap();
     let sandbox = SandboxProfile {
+        availability: Default::default(),
         id: sandbox_id.clone(),
         owner: owner.clone(),
         name: "Trigger sandbox".into(),
