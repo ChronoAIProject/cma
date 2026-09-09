@@ -1,12 +1,14 @@
 //! Hosted sandbox provider lifecycle client.
 
 mod client;
+mod home_volumes;
 mod metadata;
 mod model;
 mod reclaimer;
 mod volumes;
 
 pub use client::SandboxClient;
+pub use home_volumes::PersistentHomeVolumes;
 pub use model::{
     Pagination, ProviderEndpoint, ProviderError, ProviderImage, ProviderSandbox,
     ProviderSandboxRequest, ProviderSandboxStatus,

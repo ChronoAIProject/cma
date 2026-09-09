@@ -19,6 +19,11 @@ pub trait SandboxAdapter: Send + Sync {
     /// Abilities proved for the admitted runtime contract.
     fn capabilities(&self) -> AdapterCapabilities;
 
+    /// Optional durable storage authority; absence must never fall back to an empty home.
+    fn home_volumes(&self) -> Option<&dyn crate::HomeVolumeStore> {
+        None
+    }
+
     async fn provision(&self, spec: &SandboxSpec) -> Result<RuntimeHandle>;
 
     /// Provision an exact non-zero runtime generation.

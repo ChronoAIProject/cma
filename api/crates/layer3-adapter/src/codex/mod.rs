@@ -92,12 +92,21 @@ impl CodexAdapter {
     pub fn hosted(&self) -> &HostedAdapter {
         &self.hosted
     }
+
+    pub fn with_home_volumes(mut self, store: Arc<dyn crate::HomeVolumeStore>) -> Self {
+        self.hosted = self.hosted.with_home_volumes(store);
+        self
+    }
 }
 
 #[async_trait::async_trait]
 impl SandboxAdapter for CodexAdapter {
     fn capabilities(&self) -> AdapterCapabilities {
         self.hosted.capabilities()
+    }
+
+    fn home_volumes(&self) -> Option<&dyn crate::HomeVolumeStore> {
+        self.hosted.home_volumes()
     }
 
     async fn provision(&self, spec: &SandboxSpec) -> crate::Result<RuntimeHandle> {

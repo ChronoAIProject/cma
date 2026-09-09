@@ -38,6 +38,7 @@ struct RuntimeState {
     own_credential: bool,
     home_directory: String,
     provision: super::deployment::ProviderIdentity,
+    home_volume: Option<Box<crate::HomeVolumeAttachment>>,
 }
 
 /// Shared hosted implementation of the complete sandbox lifecycle.
@@ -45,6 +46,7 @@ pub struct HostedAdapter {
     backend: Arc<dyn HostedBackend>,
     runtime: Arc<dyn HostedAgentRuntime>,
     deployment: HostedDeployment,
+    home_volumes: Option<Arc<dyn crate::HomeVolumeStore>>,
     states: Mutex<BTreeMap<RuntimeHandle, RuntimeState>>,
 }
 
@@ -58,12 +60,18 @@ impl HostedAdapter {
             backend,
             runtime,
             deployment,
+            home_volumes: None,
             states: Mutex::new(BTreeMap::new()),
         }
     }
 
     pub fn deployment(&self) -> &HostedDeployment {
         &self.deployment
+    }
+
+    pub fn with_home_volumes(mut self, store: Arc<dyn crate::HomeVolumeStore>) -> Self {
+        self.home_volumes = Some(store);
+        self
     }
 
     async fn known_state(&self, handle: &RuntimeHandle) -> crate::Result<RuntimeState> {
@@ -168,6 +176,10 @@ impl SandboxAdapter for HostedAdapter {
         self.deployment.capabilities()
     }
 
+    fn home_volumes(&self) -> Option<&dyn crate::HomeVolumeStore> {
+        self.home_volumes.as_deref()
+    }
+
     async fn provision(&self, spec: &SandboxSpec) -> crate::Result<RuntimeHandle> {
         self.provision_exact(spec, 1).await
     }
@@ -252,7 +264,7 @@ impl SandboxAdapter for HostedAdapter {
                 "credential operation id, value, and non-zero generation are required".into(),
             ));
         }
-        self.known_state(handle).await?;
+        self.verify_bound_home(handle).await?;
         let operation_id = frame.operation_id.clone();
         match self.exchange(handle, RequestFrame::Credential(frame)).await {
             Ok(ResponseFrame::Credential(CredentialReceipt {
