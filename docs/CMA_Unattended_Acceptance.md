@@ -446,3 +446,18 @@ image identity and measured results for each behavior, with unknowns left explic
   reply after 824,980 ms. This is delivery acceptance, not acceptable latency.
   Screenshots were reviewed. The main Agent now has one authorized additional
   turn; future preservation baselines must include it.
+- Snapshot restore sources 81ccc3b9/2c287473 replace sequential archive-part
+  downloads with four ordered requests. A shared semaphore caps all concurrent
+  multipart downloads at four 32 MiB buffers, including verified parts waiting
+  for an earlier part or a slow reader. Every part and the entire archive retain
+  exact size and SHA-256 checks; consumer cancellation drops pending requests
+  and returns the shared permits. All 1,603 isolated backend tests pass, including
+  six new ordering, integrity, backpressure, cancellation and shared-budget tests.
+  Clippy, formatting, dependency policy and tracked-change secret scans pass;
+  175 environment-gated tests remain skipped by the isolated invocation.
+- The repository file-size gate reports 13 pre-existing oversized source files,
+  unrelated to this snapshot change. No limit was weakened or exception added.
+  The intermediate 81ccc3b9 local build was cancelled after the shared memory
+  budget refinement; only the final 2c287473 image is a deployment candidate.
+  Host disk remains at 41 GiB free, with no Docker restart or pruning needed.
+  Production latency acceptance follows deployment; #4 remains unsatisfied.
