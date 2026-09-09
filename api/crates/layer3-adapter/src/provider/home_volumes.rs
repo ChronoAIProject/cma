@@ -13,6 +13,9 @@ mod identity;
 #[path = "home_snapshots.rs"]
 mod snapshots;
 
+#[path = "home_snapshot_views.rs"]
+mod snapshot_views;
+
 /// Namespaced disk allocation and cleanup beneath recorded Sandbox home authority.
 #[derive(Clone)]
 pub struct PersistentHomeVolumes {
