@@ -9,6 +9,9 @@ use layer3_adapter::{
 
 use super::{Phase, RuntimeConfig, Supervisor, SupervisorBoundary};
 
+#[path = "supervisor_process_generation_tests.rs"]
+mod process_generation;
+
 struct Fixture {
     root: PathBuf,
     config: RuntimeConfig,

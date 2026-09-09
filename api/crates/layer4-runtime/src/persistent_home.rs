@@ -16,6 +16,7 @@ pub(crate) struct Binding {
     version: u8,
     sandbox_id: String,
     home_identity: String,
+    runtime_generation: u64,
     restore: Option<RestoreMarker>,
 }
 
@@ -40,9 +41,10 @@ impl Binding {
             .validate()
             .map_err(|_| invalid("home identity is invalid"))?;
         Ok(Self {
-            version: 1,
+            version: 2,
             sandbox_id: request.sandbox_id,
             home_identity: request.home_identity,
+            runtime_generation: config.generation,
             restore: None,
         })
     }
@@ -52,6 +54,7 @@ impl Binding {
         if self.version != expected.version
             || self.sandbox_id != expected.sandbox_id
             || self.home_identity != expected.home_identity
+            || self.runtime_generation == 0
             || self.restore.as_ref().is_some_and(|restore| {
                 restore.request_sha256.len() != 64
                     || !restore
@@ -102,7 +105,7 @@ pub(crate) fn initialize(config: &RuntimeConfig) -> Result<Option<Binding>> {
         return Ok(None);
     }
     let existing = io::read(config)?;
-    let binding = match existing {
+    let mut binding = match existing {
         Some(binding) => binding,
         None => {
             if crate::install_state::inspect(config)?.is_some() || !io::uninitialized(config)? {
@@ -116,6 +119,17 @@ pub(crate) fn initialize(config: &RuntimeConfig) -> Result<Option<Binding>> {
         }
     };
     binding.validate(config)?;
+    if config.generation < binding.runtime_generation {
+        return Err(invalid(
+            "an older runtime generation cannot reclaim this home",
+        ));
+    }
+    if config.generation > binding.runtime_generation {
+        // Provider replacement has exclusive access to the same recorded disk.
+        // Advance authority before journal recovery or credential delivery.
+        binding.runtime_generation = config.generation;
+        io::publish(config, &binding, false)?;
+    }
     io::clean_temporary(config)?;
     Ok(Some(binding))
 }
@@ -129,6 +143,11 @@ pub(crate) fn verify(config: &RuntimeConfig) -> Result<Option<Binding>> {
     }
     let binding = io::read(config)?.ok_or_else(|| invalid("persistent home binding is missing"))?;
     binding.validate(config)?;
+    if binding.runtime_generation != config.generation {
+        return Err(invalid(
+            "this runtime generation no longer owns the persistent home",
+        ));
+    }
     Ok(Some(binding))
 }
 

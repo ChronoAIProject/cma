@@ -17,6 +17,7 @@ pub(crate) async fn dispatch(
 ) -> Result<ResponseFrame> {
     tokio::spawn(async move {
         let _operation = gate.lock().await;
+        crate::persistent_home::verify(&config)?;
         if held_checkpoint.lock().await.is_some() {
             return Err(RuntimeError::rejected(
                 "checkpoint_writers_held",

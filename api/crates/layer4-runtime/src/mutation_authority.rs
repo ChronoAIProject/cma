@@ -34,6 +34,8 @@ pub(super) enum Disposition {
 pub(super) struct Record {
     version: u32,
     sandbox_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    runtime_generation: Option<u64>,
     pub(super) authority_fence: u64,
     pub(super) resource: ResourceKey,
     pub(super) disposition: Disposition,
@@ -49,6 +51,7 @@ impl Record {
         Self {
             version: AUTHORITY_VERSION,
             sandbox_id: config.sandbox_id.clone(),
+            runtime_generation: crate::mutation_scope::generation(config, &operation.subject),
             authority_fence,
             resource,
             disposition,
@@ -105,7 +108,10 @@ fn admit_once(
             "runtime mutation authority contains too many records",
         ));
     }
-    match io::persist_new(&config.state_root, &incoming) {
+    match io::persist_new(
+        &crate::mutation_scope::root(config, &operation.subject),
+        &incoming,
+    ) {
         Ok(()) => Ok(()),
         Err(error) if retry_race && error.code == "mutation_authority_raced" => {
             admit_once(config, authority_fence, operation, false)
@@ -180,7 +186,15 @@ fn current<'a>(records: impl Iterator<Item = &'a Record>) -> Option<&'a Record> 
 }
 
 fn records(config: &RuntimeConfig) -> Result<Vec<Record>> {
-    let files = io::scan(&config.state_root)?;
+    let mut files = Vec::new();
+    for root in crate::mutation_scope::roots(config)? {
+        files.extend(io::scan(&root)?);
+        if files.len() > MAX_AUTHORITY_RECORDS {
+            return Err(corrupt(
+                "runtime mutation authority contains too many records",
+            ));
+        }
+    }
     let mut grouped = BTreeMap::<ResourceKey, Vec<&Record>>::new();
     for file in &files {
         validate_record(&file.record, config, &file.path)?;
@@ -200,11 +214,16 @@ fn validate_record(record: &Record, config: &RuntimeConfig, path: &Path) -> Resu
     let (resource, disposition) = resource_operation(&operation);
     if record.version != AUTHORITY_VERSION
         || record.sandbox_id != config.sandbox_id
+        || record.runtime_generation != crate::mutation_scope::generation(config, &record.subject)
         || record.authority_fence == 0
         || record.resource != resource
         || record.disposition != disposition
         || mutation_journal::validate_operation(config, &operation).is_err()
-        || path != io::record_path(&config.state_root, record)
+        || path
+            != io::record_path(
+                &crate::mutation_scope::root(config, &record.subject),
+                record,
+            )
     {
         return Err(corrupt("runtime mutation authority record is invalid"));
     }

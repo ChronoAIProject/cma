@@ -1470,3 +1470,31 @@ image identity and measured results for each behavior, with unknowns left explic
   16, with no runtime or checkpoint and its completed reply still readable.
   API and web remain 1/1 Ready. This batch made no production mutation or rollout.
   Host free disk space is approximately 12 GiB; no additional cleanup was needed.
+
+## Persistent Agent process generations — 2026-09-09
+
+- Persistent home binding format 2 records the highest admitted runtime
+  generation. Startup advances it before journal recovery or credentials;
+  startup and subsequent mutations from an older generation are refused.
+  The detached Workspace dispatcher rechecks this authority after taking its
+  operation gate. Production has not enabled persistent homes, so there is no
+  deployed format-1 home binding to migrate.
+- Agent Open/Close receipts and their mutation authority now belong to the
+  admitted runtime generation. Filesystem mutation receipts, Worktree/Agent-home
+  deletion tombstones and Workspace journals remain shared across generations.
+  Cleanup dominance within one process generation remains unchanged. Records
+  carry their process generation as well as their storage path; copied records
+  and symlinked generation directories cannot authorize a replacement process.
+- Six new regressions use real shell child processes and Git Worktrees. They
+  prove re-opening after normal close and abrupt process exit in a new runtime,
+  refusal of same-generation duplicate opens and stale closes, preservation of
+  filesystem receipts/deletion tombstones, and refusal of older home authority,
+  copied journals and aliased directories. They are process lifecycle evidence,
+  not native Codex conversation-resume or production acceptance.
+- The first targeted parallel run passed 15 tests with two nextest leaky-process
+  observations. A serial investigation passed all 15 without leakage, followed
+  by the complete runtime suite: 196 runnable tests passed, two existing ignored
+  tests skipped, no leak reported. All-target/all-feature runtime Clippy,
+  formatting and source secret scanning pass. The next step is the pinned Linux
+  image and native conversation verification, then durable control-plane source
+  selection and production activation. Nonblocking snapshot work remains active.
