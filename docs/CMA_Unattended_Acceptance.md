@@ -32,7 +32,7 @@ Monitor disk usage and inspect exact targets before removing stale artifacts.
 | 17 | Agent header and sidebar show consistent resource state | Production desktop/mobile Ready -> Working -> Ready -> Stopped transitions passed with zero MutationObserver mismatches, including reload. Evidence: agent-status-sync-oU399d/result.json. Normal-stop notice correction in web 57f793aa also passed actual live transitions: agent-status-sync-uzRQlH/result.json. |
 | 18 | Notifications animate on showing and dismissal | Pending shared notification audit, implementation and reduced-motion checks. |
 | 19 | Real native terminal and chat share one conversation, all CLI features, matching theme and reliable sizing | Pending pinned-engine feasibility and implementation. An independent second conversation or imitation terminal is not acceptance. |
-| 20 | gh through NyxID GitHub OAuth; identity per user; three-service Connect/Verify flow | Pending runtime/proxy implementation and connection-flow verification. Do not hardcode author identity in shared profiles. |
+| 20 | gh through NyxID GitHub OAuth; identity per user; three-service Connect/Verify flow | Runtime proxy implemented in 41f068fa; candidate d052e746 builds upstream gh 2.100.0 with a security dependency refresh. Local genuine CLI and Linux image REST/GraphQL checks pass, including host and credential boundaries. Image scan passes. Registry upload is blocked by Google interactive reauthentication; production runtime and Sandbox grant are unchanged. Explicit durable api-github grant, full contribution and three-service connection-flow verification remain pending. |
 | 21 | Agent, Workspace and Sandbox deletion completes correctly | Durable live-child Workspace cascade deployed in 565f6286. Production zero/one/two-child deletion passed in 1,933 / 14,971 / 16,887 ms; desktop/mobile dialogs, reload recovery, page closure, Deleted Agents and removed Worktrees verified. Test Sandbox retirement completed. Same-Sandbox snapshot concurrency remains blocked by #4; do not call the full requirement complete. |
 
 ## Baseline
@@ -512,3 +512,53 @@ image identity and measured results for each behavior, with unknowns left explic
   transition, which are not settled visual acceptance evidence. Owner Sandbox
   and both Agents remain available after revival; no API/runtime rollout is
   permitted while any owner runtime remains. Host disk has 41 GiB free.
+- Runtime GitHub transport source 41f068fa enables the genuine CLI only for
+  the exact api-github Sandbox grant. Configuration and the private Unix socket
+  live outside the snapshotted home. Scoped NyxID credentials stay in the
+  supervisor, rotate through existing custody generations and are never given
+  to gh. Foreign hosts, ambiguous destinations and credential-bearing responses
+  are refused. Local tests cover exact REST/GraphQL requests, credential renewal,
+  missing authority, private permissions, stale-socket recovery and active-socket
+  protection. The genuine local CLI test passed for 2.89.0 and then 2.100.0.
+- All 1,608 isolated backend tests, workspace Clippy, formatting, doc-test gate,
+  dependency policy, configuration parity/docs and changed-source secret scans
+  pass. Nextest skipped 176 environment-gated tests; the new genuine CLI test
+  was run explicitly. All nine image-evidence regressions pass. The same 13
+  pre-existing file-size violations remain; no gate was weakened.
+- Candidate 41f068fa passed its full Linux runtime/proxy campaign but failed
+  the fixed HIGH/CRITICAL scan because upstream gh 2.89.0 contained vulnerable
+  dependencies. It was not pushed or deployed. The latest upstream 2.100.0
+  binary still contained golang.org/x/mod 0.39.0 with CVE-2026-56864/56865.
+  Sources de17fcae/d052e746 instead build the exact upstream release commit
+  45437bc7eeeb3359bbfddd1742f79de7652fd3e2 with pinned Go 1.26.8 and x/mod 0.40.0.
+  CLI source is unchanged, module checksums remain verified and the final build
+  uses readonly module resolution. The first source build caught an absent
+  indirect-module checksum; d052e746 explicitly downloads that module before
+  the readonly build. Neither failed candidate was deployed.
+- Runtime d052e746 Linux/amd64 build and final image scan pass at
+  sha256:5c5e15c03701b81bbeaf0f214f75f4cb9ed064b185022ac5586c734fbd6ada33.
+  Evidence: runtime-d052e746-contract.json, runtime-d052e746-trivy.json and the
+  corresponding build/archive records in the verification scratch directory.
+  All 18 real image checks pass with networking disabled, including installed
+  gh REST/GraphQL through the actual supervisor proxy, foreign-host refusal,
+  writer fencing, complete home restore and exact temporary-container/volume
+  cleanup. Installed gh SHA-256 is
+  9032e3045268a1fa9b594f50a4627f33d8575a11d258a4c1e62a82bf70ef89e8.
+- Registry upload is not complete: gcloud credential refresh first returned
+  internal_failure, then explicitly required interactive reauthentication.
+  The refusal also occurred with the installed Python 3.14 interpreter; no
+  credential was printed. A fresh gcloud auth login is required before upload
+  and guarded deployment. No production manifest pin changed in this batch.
+- All-owner deployment guard FGmWgv refused a still-existing runtime. A new
+  runtime fd9736c0-f1e8-47e2-acc1-40eade65e3e5-0 subsequently appeared; the owner
+  Sandbox was observed reviving from 05:46:24 UTC. This continuation admitted
+  no owner Launch, message, pause or runtime rotation. The earlier Paused read
+  preserved both full histories at five turns and one turn. Do not roll the
+  API or runtime while any owner runtime remains; refresh history baselines
+  before deployment because the owner is using production concurrently.
+- Disk remained at 35 GiB free after both builds and recovered to 37 GiB after
+  cleanup. Docker has 45 running local
+  containers, so it was not restarted or broadly pruned. The rejected 41f068fa
+  image had no referencing containers; only its redundant local image, OCI
+  archive and extracted layout were removed. Source
+  commits and verification reports remain available to reproduce it.
