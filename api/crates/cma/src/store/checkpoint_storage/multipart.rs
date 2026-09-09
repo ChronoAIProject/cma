@@ -1,4 +1,4 @@
-use futures_util::{stream::FuturesOrdered, StreamExt};
+use futures_util::{stream, stream::FuturesOrdered, StreamExt};
 use layer3_adapter::hosted::{
     CheckpointArchiveDownload, CheckpointArchiveUpload, MAX_CHECKPOINT_ARCHIVE_BYTES,
 };
@@ -10,6 +10,7 @@ use super::{part_transfer, rejected, transfer, unavailable, ChronoStorage, Resul
 
 pub(super) const PART_BYTES: usize = 32 * 1024 * 1024;
 pub(super) const UPLOAD_CONCURRENCY: usize = 4;
+pub(super) const DOWNLOAD_CONCURRENCY: usize = 4;
 const MANIFEST_BYTES: usize = 64 * 1024;
 const SCHEMA: &str = "cma-checkpoint-parts-v1";
 
@@ -173,8 +174,13 @@ pub(super) async fn download(
     let store = store.clone();
     let key = key.to_owned();
     tokio::spawn(async move {
-        if let Err(error) = download_parts(&store, &key, manifest, &sender).await {
-            let _ = sender.send(Err(error)).await;
+        tokio::select! {
+            _ = sender.closed() => {}
+            result = download_parts(&store, &key, manifest, &sender) => {
+                if let Err(error) = result {
+                    let _ = sender.send(Err(error)).await;
+                }
+            }
         }
     });
     Ok(CheckpointArchiveDownload {
@@ -192,15 +198,20 @@ async fn download_parts(
     sender: &mpsc::Sender<Result<Vec<u8>>>,
 ) -> Result<()> {
     let mut digest = Sha256::new();
-    for (index, sha) in manifest.parts.iter().enumerate() {
-        let part_size =
-            (manifest.size_bytes - index as u64 * PART_BYTES as u64).min(PART_BYTES as u64);
-        let mut download =
-            transfer::download(store, &part_key(key, index as u64), "part", sha, part_size).await?;
-        while let Some(chunk) = download.chunks.recv().await {
-            let chunk = chunk?;
-            digest.update(&chunk);
-            if sender.send(Ok(chunk)).await.is_err() {
+    // Ordered buffering holds at most four verified 32 MiB parts, including the
+    // part being delivered. No next window is polled while the consumer is full.
+    let mut parts = stream::iter(manifest.parts.into_iter().enumerate())
+        .map(|(index, sha)| {
+            let part_size =
+                (manifest.size_bytes - index as u64 * PART_BYTES as u64).min(PART_BYTES as u64);
+            download_part(store, part_key(key, index as u64), sha, part_size)
+        })
+        .buffered(DOWNLOAD_CONCURRENCY);
+    while let Some(part) = parts.next().await {
+        let part = part?;
+        digest.update(&part);
+        for chunk in part.chunks(transfer::CHUNK_BYTES) {
+            if sender.send(Ok(chunk.to_vec())).await.is_err() {
                 return Ok(());
             }
         }
@@ -211,4 +222,33 @@ async fn download_parts(
         ));
     }
     Ok(())
+}
+
+async fn download_part(
+    store: &ChronoStorage,
+    key: String,
+    sha: String,
+    size: u64,
+) -> Result<Vec<u8>> {
+    let response = transfer::download_response(store, &key, size).await?;
+    let mut stream = response.bytes_stream();
+    let mut bytes = Vec::with_capacity(size as usize);
+    let mut digest = Sha256::new();
+    // Keep the body in this future so cancellation drops the entire window.
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|_| unavailable("checkpoint part download stream failed"))?;
+        if bytes.len().saturating_add(chunk.len()) as u64 > size {
+            return Err(rejected(
+                "checkpoint part download exceeds its declared size",
+            ));
+        }
+        digest.update(&chunk);
+        bytes.extend_from_slice(&chunk);
+    }
+    if bytes.len() as u64 != size || format!("{:x}", digest.finalize()) != sha {
+        return Err(rejected(
+            "checkpoint part download failed integrity verification",
+        ));
+    }
+    Ok(bytes)
 }

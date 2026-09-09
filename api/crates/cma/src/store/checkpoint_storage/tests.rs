@@ -17,6 +17,7 @@ use tokio::sync::{mpsc, Notify, Semaphore};
 
 use super::*;
 
+mod part_download;
 mod part_recovery;
 
 const OBJECTS: &str = "/api/v1/proxy/s/chrono-storage-service/api/buckets/checkpoint-test/objects";
