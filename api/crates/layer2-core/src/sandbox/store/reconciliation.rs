@@ -56,6 +56,17 @@ pub enum SandboxRuntimeLossApplication {
 
 #[async_trait]
 pub trait SandboxReconciliationStore: Send + Sync {
+    /// Read this before the owned Sandbox authority. A claim commits both records
+    /// atomically, so an observed Claimed reservation must precede that fresh read.
+    async fn unowned_runtime_authority(
+        &self,
+        _id: &SandboxId,
+        _generation: u64,
+        _runtime_id: &str,
+    ) -> Result<bool, SandboxStoreError> {
+        Ok(false)
+    }
+
     /// Page every Sandbox, regardless of owner or lifecycle state, by stable ID.
     /// Cursors are exclusive. Runtime reclaim requires reaching the end of this scan.
     async fn sandbox_runtime_authority(

@@ -55,6 +55,7 @@ impl ControlPlaneComposition {
                 &config.auth_encryption_key,
                 config.activity_retention,
                 checkpoint_storage,
+                &config.runtime.sandbox_image,
             )
             .await
             .map_err(|error| format!("durable stores are not usable: {error}"))?,

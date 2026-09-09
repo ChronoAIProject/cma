@@ -41,6 +41,7 @@ pub(super) const WORKSPACE_PROFILES: &str = "workspace_profiles";
 pub(super) const WORKSPACE_PROFILE_REVISIONS: &str = "workspace_profile_revisions";
 pub(super) const SANDBOX_PROFILES: &str = "sandbox_profiles";
 pub(super) const SANDBOX_PROFILE_REVISIONS: &str = "sandbox_profile_revisions";
+pub(super) const WARM_SANDBOXES: &str = "warm_sandboxes";
 
 const SANDBOX_COLLECTIONS: &[&str] = &[
     SANDBOXES,
@@ -52,6 +53,7 @@ const SANDBOX_COLLECTIONS: &[&str] = &[
     SANDBOX_EVENTS,
     SANDBOX_ADMISSIONS,
     CHECKPOINTS,
+    WARM_SANDBOXES,
 ];
 const PROFILE_COLLECTIONS: &[&str] = &[
     AGENT_PROFILES,
@@ -78,6 +80,10 @@ pub struct MongoSandboxStore {
     pub(super) sandbox_admissions: Collection<Document>,
     pub(super) checkpoints: Collection<Document>,
     pub(super) sandbox_profiles: Collection<Document>,
+    pub(super) sandbox_profile_revisions: Collection<Document>,
+    pub(super) warm_sandboxes: Collection<Document>,
+    pub(super) warm_runtime_version: Option<String>,
+    pub(crate) warmup_changed: std::sync::Arc<tokio::sync::Notify>,
 }
 
 impl MongoSandboxStore {
@@ -109,6 +115,10 @@ impl MongoSandboxStore {
             sandbox_admissions: majority_collection(&database, SANDBOX_ADMISSIONS),
             checkpoints: majority_collection(&database, CHECKPOINTS),
             sandbox_profiles: majority_collection(&database, SANDBOX_PROFILES),
+            sandbox_profile_revisions: majority_collection(&database, SANDBOX_PROFILE_REVISIONS),
+            warm_sandboxes: majority_collection(&database, WARM_SANDBOXES),
+            warm_runtime_version: None,
+            warmup_changed: std::sync::Arc::new(tokio::sync::Notify::new()),
         };
         super::sandboxes::ensure_indexes(&store.sandboxes).await?;
         super::workspaces::ensure_indexes(&store.workspaces).await?;
@@ -117,6 +127,7 @@ impl MongoSandboxStore {
         super::agent_log::ensure_indexes(&store.agent_log).await?;
         super::sandbox_events::ensure_indexes(&store.sandbox_events).await?;
         super::checkpoints::ensure_indexes(&store.checkpoints).await?;
+        super::warm_sandboxes::ensure_indexes(&store.warm_sandboxes).await?;
         tracing::info!(database = name, "sandbox-model Mongo store ready");
         Ok(store)
     }

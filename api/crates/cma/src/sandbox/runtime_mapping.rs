@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use layer2_core::profiles::{ModelAccess, PermissionLevel, ThinkingEffort};
+use layer2_core::profiles::{ModelAccess, PermissionLevel, SandboxProfileSnapshot, ThinkingEffort};
 use layer2_core::sandbox::{Agent, Sandbox, Worktree};
 use layer2_core::{RuntimeCapabilities, RuntimeCapability};
 use layer3_adapter::{
@@ -49,26 +49,34 @@ pub(crate) fn runtime_capabilities(capabilities: AdapterCapabilities) -> Runtime
 }
 
 pub(super) fn sandbox_spec(sandbox: &Sandbox, deployment_id: &str) -> SandboxSpec {
+    environment_spec(
+        &sandbox.id,
+        &sandbox.profile,
+        &sandbox.credential.effective_reaches(),
+        deployment_id,
+    )
+}
+
+pub(super) fn environment_spec(
+    id: &layer2_core::SandboxId,
+    profile: &SandboxProfileSnapshot,
+    reaches: &[layer2_core::ServiceId],
+    deployment_id: &str,
+) -> SandboxSpec {
     SandboxSpec {
-        sandbox_id: sandbox.id.to_string(),
+        sandbox_id: id.to_string(),
         capacity: SandboxCapacity {
-            cpu_millis: sandbox.profile.content.cpu_millis,
-            memory_mib: sandbox.profile.content.memory_mib,
+            cpu_millis: profile.content.cpu_millis,
+            memory_mib: profile.content.memory_mib,
         },
-        environment: sandbox
-            .profile
+        environment: profile
             .content
             .environment_variables
             .iter()
             .map(|variable| (variable.name.clone(), variable.value.clone()))
             .collect::<BTreeMap<_, _>>(),
-        reaches: sandbox
-            .credential
-            .effective_reaches()
-            .iter()
-            .map(ToString::to_string)
-            .collect(),
-        own_credential: sandbox.profile.content.model_access == ModelAccess::OwnCredentials,
+        reaches: reaches.iter().map(ToString::to_string).collect(),
+        own_credential: profile.content.model_access == ModelAccess::OwnCredentials,
         created_by: Some(deployment_id.into()),
         ..SandboxSpec::default()
     }

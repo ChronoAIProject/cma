@@ -42,13 +42,15 @@ impl MongoStores {
         auth_encryption_key: &AuthEncryptionKey,
         activity_retention: Duration,
         checkpoint_storage: Arc<dyn super::CheckpointBlobStore>,
+        runtime_version: &str,
     ) -> Result<Self, StoreError> {
         let client = Client::with_uri_str(uri)
             .await
             .map_err(|error| StoreError::Unavailable(format!("connect to MongoDB: {error}")))?;
-        let sandbox_model = Arc::new(
-            MongoSandboxStore::open_with_storage(&client, database, checkpoint_storage).await?,
-        );
+        let mut sandbox_model =
+            MongoSandboxStore::open_with_storage(&client, database, checkpoint_storage).await?;
+        sandbox_model.warm_runtime_version = Some(runtime_version.to_owned());
+        let sandbox_model = Arc::new(sandbox_model);
         let checkpoint_objects = Arc::new(sandbox_model.checkpoint_objects.clone());
         let sandbox_profiles = Arc::new(MongoProfileStore::open(&client, database).await?);
         let sandbox_credentials = Arc::new(

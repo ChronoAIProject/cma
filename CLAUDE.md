@@ -221,6 +221,16 @@ of one through five unowned runtimes. Private forks have their own default polic
 and provision fresh. Changing this policy never rewrites pinned environments,
 ownership or conversations.
 
+Warm runtime authority lives in `warm_sandboxes`, separately from owned Sandbox
+records. Reservations pin the public revision, service floor, execution policy
+and runtime image. A ready reservation and its owned Sandbox are transferred in
+one admission transaction under the existing owner quota/name/Trigger fences.
+The reserved Sandbox ID and installation receipt survive the transfer; user
+credentials are minted only afterward. Reconciliation reads unowned authority
+before owned authority, and never reclaims a preparing or ready reservation as
+an orphan. Failed/stale runtimes must finish teardown before their capacity is
+reallocated. Claimed runtimes are controlled exclusively by their owned Sandbox.
+
 #### Capabilities must be proved
 
 "This can never do that" and "that just failed" are separate typed facts.

@@ -64,10 +64,12 @@ mod title;
 mod title_sanitize;
 mod title_service;
 mod title_store;
+mod warmup;
 mod workspace;
 mod workspace_service;
 mod workspace_work;
 mod worktree;
+pub use warmup::{WarmSandbox, WarmSandboxPlan, WarmSandboxState};
 
 pub use admin::{
     AgentAdminSummary, OperatorError, SandboxAdminQuery, SandboxAdminStore, SandboxAdminSummary,

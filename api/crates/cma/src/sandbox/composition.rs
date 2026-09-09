@@ -54,6 +54,7 @@ pub(crate) struct SandboxLifecycleConfig {
 }
 
 pub(crate) struct SandboxLifecycleComposition {
+    warmup: super::warmup::WarmSandboxWorker,
     reconciliation: SandboxReconciler,
     sandbox: SandboxScheduler,
     workspace: SandboxScheduler,
@@ -69,6 +70,14 @@ impl SandboxLifecycleComposition {
         dependencies: SandboxLifecycleDependencies,
         config: SandboxLifecycleConfig,
     ) -> Self {
+        let warmup = super::warmup::WarmSandboxWorker {
+            store: dependencies.store.clone(),
+            adapter: dependencies.adapter.clone(),
+            policy: dependencies.policy.clone(),
+            execution: config.execution,
+            deployment_id: config.deployment_id.clone(),
+            runtime_version: config.runtime_version.clone(),
+        };
         let reconciliation = SandboxReconciler::new(
             dependencies.store.clone(),
             Arc::clone(&dependencies.adapter),
@@ -151,6 +160,7 @@ impl SandboxLifecycleComposition {
         );
 
         Self {
+            warmup,
             checkpoint_cleanup: SandboxScheduler::for_checkpoint_cleanup(
                 dependencies.checkpoint_objects,
             ),
@@ -176,6 +186,7 @@ impl SandboxLifecycleComposition {
     }
 
     pub(crate) fn spawn(self, shutdown: &mut ShutdownCoordinator) {
+        shutdown.push(self.warmup.spawn(shutdown.subscribe()));
         let signal = shutdown.subscribe();
         shutdown.push(self.reconciliation.spawn(signal));
         shutdown.push(self.agent.spawn(shutdown.subscribe()));

@@ -9,6 +9,18 @@ use super::{
 impl Sandbox {
     /// Unbound provisioning/recovery steps are intentional and are not runtime loss.
     pub fn requires_runtime_loss_recovery(&self) -> bool {
+        // A just-assigned warm runtime has not delivered user credentials or
+        // started child creation. Its provisioning worker reserves a replacement
+        // generation; checkpoint-based recovery would incorrectly fail it.
+        if self.status == SandboxStatus::Provisioning
+            && self.work.step == super::SandboxWorkStep::ProvisionRuntime
+            && self.credential.key_generation == 0
+            && !self.credential.delivered
+            && self.credential.current.is_none()
+            && self.credential.pending.is_none()
+        {
+            return false;
+        }
         self.status == SandboxStatus::Active
             || (self.runtime.is_some()
                 && matches!(

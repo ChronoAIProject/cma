@@ -53,6 +53,7 @@ mod pause_cancellation_tests;
 mod reconciliation_tests;
 mod retirement_checkpoint_tests;
 mod runtime_attachment_tests;
+mod warmup_tests;
 
 const PROFILE_TIME: &str = "2026-09-05T00:00:00Z";
 
