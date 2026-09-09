@@ -25,7 +25,7 @@ Monitor disk usage and inspect exact targets before removing stale artifacts.
 | 10 | Profiles and Marketplace use CMA-styled Ornn-inspired cards/details | Shared cards deployed in web 7c01741f and author names in API 7e7d458e. Production 18-case verification passes all three profile kinds in both directories at 1440/390/320px, light/dark, full-card detail navigation and Marketplace Use availability. Screenshots inspected. Evidence: profile-cards-64FpRT/result.json. |
 | 11 | Separate collapsible Live and Paused Sandbox groups | Deployed in web 40300b5e. Production desktop/mobile checks pass for both groups and persisted collapse on reload. Live transition cases additionally covered by local tests. |
 | 12 | Only the named Trureturing Trigger is used for Trigger testing | Active constraint. Older disposable-Trigger harnesses must not be reused unchanged. |
-| 13 | Persist Trigger/manual provenance and owner-defined quick messages | API/SDK source 20e580fb and web 623cba22 implement published quick messages and original creation attribution. Local browser checks pass at 1440/390/320px, both themes, including eight long messages, descriptions, draft-preserving intercepted clicks and authoring. Production deployment, named Trigger publication and actual delivery remain pending. |
+| 13 | Persist Trigger/manual provenance and owner-defined quick messages | API 20e580fb/web 623cba22 deployed; named Trigger revision 2 publishes both requested messages. Production browser checks HVxuxo and avwGVx pass at 1440/390/320px, both themes, for source attribution, exact intercepted clicks, descriptions, draft preservation and authoring. Actual introduction delivery is being observed in live-introduction-shortcut-kZHSEl. GitHub contribution execution remains dependent on #20. |
 | 14 | No unavailable Sandbox/Workspace expansion controls or children | Sandbox gating retained; preparing/deleting/failed Workspaces now also hide children and expansion controls. Local tests pass; production verification pending. |
 | 15 | Standard Sandbox states; deleted hidden; deletion dialog explains removal | Resource-specific labels implemented; snapshots no longer replace Live/Pausing. Explicit Needs attention remains for genuine failures. Production coverage pending. |
 | 16 | IME confirmation Enter never sends; ordinary Enter sends | Deployed in web 40300b5e. Production desktop/mobile synthetic composition, keyCode 229, Shift+Enter and ordinary Enter checks pass; draft retained. Ordinary-send requests intercepted before reaching the Agent. Native OS IME selection still requires a real keyboard check, not claimed by browser-generated events. |
@@ -409,3 +409,31 @@ image identity and measured results for each behavior, with unknowns left explic
   for the public database download completed it in 18 seconds without changing
   saved credentials, restarting Docker or weakening scan policy. Host disk has
   42 GiB free. Runtime 14c05f26 stays unchanged; deployment acceptance follows.
+- API 20e580fb and web 623cba22 deployed at digests
+  37abdce9b17aad7c80763fb1b6fb06fc06a94f8f6c52de7938a65714fc675655 and
+  e52e4c5863d75e65c8901a91894f1d40f34b7cde5102e0d128044dc4559fdb13.
+  Evidence: lifecycle-api-rollout-7TVXXp, unattended-web-rollout-oDkMTt and
+  lifecycle-api-postflight-q2a3a4. Fresh all-owner runtime-absence guard passed;
+  both complete owner histories, runtime pin and thirty-minute checkpoint
+  interval were preserved. Both deployments are healthy, no helper Pods and
+  no container restarts. Server-side manifest validation passed.
+- configure-trigger-messages-mAVfRO performed exactly one draft-version-guarded
+  save and one publication on Truretruing Formalize and Contribute Trigger.
+  Revision 2 contains Contribute to Github source and Introduce Truretruing.
+  All other content, original first message, profile references, reuse policy,
+  placements and both histories were preserved. No new Trigger was created.
+- Production trigger-quick-messages-HVxuxo and quick-message-authoring-avwGVx
+  pass actual deployed browser views at 1440/390/320px and both themes. Exact
+  shortcut clicks were intercepted before reaching the model; hover, navigation,
+  reload and publication did not send. These runs do not prove completed model
+  delivery. A subsequent actual UI introduction click was admitted once from
+  Paused in live-introduction-shortcut-kZHSEl; its result remains unclaimed until
+  the durable completed turn and unchanged historical prefix are verified.
+- GitHub transport feasibility: /tmp/cma-gh-socket-proof.jexgnI/result.json
+  proves the genuine gh 2.89.0 executable supports its upstream http_unix_socket
+  setting for REST and GraphQL. It sends only an inert placeholder credential;
+  a foreign-host request was refused by the local socket fixture. No production
+  request, TLS interception or patched gh executable was used. The owner's
+  current Sandbox grant still contains only chrono-llm and ornn-api. Runtime
+  proxy implementation and an explicit durable api-github grant remain required;
+  neither is implied by the owner's separate NyxID service connection.
