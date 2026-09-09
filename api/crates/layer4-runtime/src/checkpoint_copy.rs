@@ -4,6 +4,9 @@ use std::path::{Path, PathBuf};
 use crate::failure::{Result, RuntimeError};
 
 pub(crate) fn replace_home(home: &Path, staged: &Path, scratch: &Path) -> Result<()> {
+    // The supervisor holds its operation gate and all home writers throughout
+    // replacement. Files can share storage with the temporary rollback/staging
+    // trees until those trees are removed, before writers are resumed.
     validate_home(home)?;
     let backup = scratch.join(format!(
         ".restore-backup-{}-{}",
@@ -84,16 +87,18 @@ fn copy_contents(source: &Path, destination: &Path) -> Result<()> {
 }
 
 fn copy_file(source: &Path, destination: &Path, mode: u32) -> Result<()> {
-    let mut source = open_source(source).map_err(copy_io("open copied file"))?;
-    if !source
+    let mut opened = open_source(source).map_err(copy_io("open copied file"))?;
+    let metadata = opened
         .metadata()
-        .map_err(copy_io("inspect opened copied file"))?
-        .is_file()
-    {
+        .map_err(copy_io("inspect opened copied file"))?;
+    if !metadata.is_file() {
         return Err(RuntimeError::rejected(
             "restore_entry_unsupported",
             "home file changed to an unsupported filesystem entry",
         ));
+    }
+    if link_quiet_file(source, destination, &opened, &metadata, mode)? {
+        return Ok(());
     }
     let mut output = std::fs::OpenOptions::new()
         .create_new(true)
@@ -102,7 +107,7 @@ fn copy_file(source: &Path, destination: &Path, mode: u32) -> Result<()> {
         .map_err(copy_io("create copied file"))?;
     let mut buffer = [0_u8; 64 * 1024];
     loop {
-        let read = source
+        let read = opened
             .read(&mut buffer)
             .map_err(copy_io("read copied file"))?;
         if read == 0 {
@@ -115,6 +120,66 @@ fn copy_file(source: &Path, destination: &Path, mode: u32) -> Result<()> {
     set_mode(&output, mode)?;
     output.sync_all().map_err(copy_io("sync copied file"))?;
     crate::fs_durability::sync_parent(destination).map_err(copy_io("sync copied file parent"))
+}
+
+#[cfg(unix)]
+fn link_quiet_file(
+    source: &Path,
+    destination: &Path,
+    opened: &std::fs::File,
+    metadata: &std::fs::Metadata,
+    mode: u32,
+) -> Result<bool> {
+    use std::os::unix::fs::MetadataExt as _;
+
+    // Copy when sanitising special permission bits, without changing the
+    // source inode. Mounts that cannot link retain the streaming copy path.
+    if metadata.mode() & 0o7777 != mode {
+        return Ok(false);
+    }
+    match std::fs::hard_link(source, destination) {
+        Ok(()) => {}
+        Err(error)
+            if matches!(
+                error.raw_os_error(),
+                Some(libc::EXDEV | libc::EOPNOTSUPP | libc::EMLINK)
+            ) =>
+        {
+            return Ok(false);
+        }
+        Err(error) => return Err(copy_io("link restored file")(error)),
+    }
+    let linked =
+        std::fs::symlink_metadata(destination).map_err(copy_io("inspect linked restored file"))?;
+    if !linked.is_file()
+        || linked.file_type().is_symlink()
+        || linked.dev() != metadata.dev()
+        || linked.ino() != metadata.ino()
+    {
+        crate::fs_durability::remove_file(destination)
+            .map_err(copy_io("remove changed restore source link"))?;
+        return Err(RuntimeError::rejected(
+            "restore_entry_changed",
+            "restore source changed while linking its file",
+        ));
+    }
+    opened
+        .sync_all()
+        .map_err(copy_io("sync linked restored file"))?;
+    crate::fs_durability::sync_parent(destination)
+        .map_err(copy_io("sync linked restored file parent"))?;
+    Ok(true)
+}
+
+#[cfg(not(unix))]
+fn link_quiet_file(
+    _source: &Path,
+    _destination: &Path,
+    _opened: &std::fs::File,
+    _metadata: &std::fs::Metadata,
+    _mode: u32,
+) -> Result<bool> {
+    Ok(false)
 }
 
 fn open_source(path: &Path) -> std::io::Result<std::fs::File> {
@@ -260,3 +325,7 @@ impl Drop for Cleanup {
         let _ = self.remove_now();
     }
 }
+
+#[cfg(all(test, unix))]
+#[path = "checkpoint_copy_tests.rs"]
+mod tests;

@@ -1236,3 +1236,34 @@ image identity and measured results for each behavior, with unknowns left explic
   memory, improved large-save timing or uninterrupted snapshots. Those remain
   active implementation and acceptance work, together with clean continuous
   keepalive, fresh-sign-in/missing-service admission and the remaining register.
+
+## Restore storage reuse and continued runtime acceptance — 2026-09-09
+
+- fresh-warm-readme-LhjEWU passed the existing README Trigger on runtime
+  d730d6ae. The Sandbox reached Active in 37,057 ms, Launch Ready in 98,093 ms,
+  and its single welcome response completed in 272,672 ms. Replenishment started
+  after 5,471 ms and five credential-free installed warm runtimes were verified.
+  Per-user GitHub identity, desktop/mobile conversation views, reload and both
+  original user histories passed. The named Trigger's original reuse policies
+  were restored immediately after admission, in revision 13. This is the same
+  authenticated account and GitHub-rendered README journey, not fresh sign-in.
+- The new test Sandbox is retained for an independent quiet keepalive boundary
+  and its first thirty-minute periodic save. Its ID is
+  sbx_3b222900f13c48f89b04cd3a078e0a11, runtime bound at 13:13:09 UTC. Observers
+  warm-keepalive-vLg3TD and warm-periodic-boundary-Ni07X8 are running; neither
+  boundary is claimed complete yet. No original Sandbox is being mutated.
+- Restore now reuses regular-file storage between its staged tree, live home
+  and temporary rollback tree when the filesystem supports hard links. The
+  supervisor keeps all home writers and mutations fenced until replacement and
+  scratch cleanup finish, so no live write can change the retained source.
+  The linked inode is checked against the opened regular file; special modes
+  use a streamed copy without modifying the source. Cross-device, unsupported
+  link and link-count limits retain the streamed copy fallback. Existing
+  destinations and symlink sources remain refused.
+- Four new tests prove inode reuse with exact data and mode preservation,
+  original-inode rollback after a failed replacement, permission sanitization
+  without source mutation, and collision/symlink refusal. All 180 runnable
+  runtime tests and package Clippy pass; two existing explicit ignored tests
+  remain skipped. Source scanning and formatting pass. The new restore change
+  has not yet been built or deployed. It reduces restore duplication and does
+  not implement a consistent live snapshot or prove peak memory safety.
