@@ -858,3 +858,29 @@ image identity and measured results for each behavior, with unknowns left explic
   cloud-landing-Xytl4Q passes all six production cases, including one-line title,
   larger cloud and matching Shrikhand text, real sign-in handover and no overflow.
   Desktop/mobile screenshots were inspected. Disk still has 25 GiB available.
+
+## Restore optimization deployment — 2026-09-09
+
+- Owner Sandbox completed its normal pause with a snapshot saved at 09:30:39 UTC.
+  No additional owner pause was requested. Runtime 7630fb16 was configured after
+  all 35 Sandbox records were Paused or Deleted and no runtime/operation/lease
+  remained. API application source stays 7c913fa6 and web stays 5d840795.
+  Manifest server dry run and API rollout pass with runtime digest
+  sha256:481dff74bcc87cef36ed29ac0d94465ae9fdc94d6dc97b0e3e717437f7be22ba.
+- Rollout preflight initially rejected one passive old-key revocation record
+  left by the explicit service-access grant. Source and existing recovery tests
+  show that this record remains until rotation or retirement; it is not active
+  work. The guard now accepts it only for a fully Paused Sandbox with no work,
+  runtime or lease, and only when it differs from current/pending credentials.
+  It does not delete or alter the debt. Full-record postflight comparison proves
+  its preservation alongside the rest of the hierarchy.
+- service-access-api-rollout-cyJeBD and service-access-api-postflight-jlKXAD pass:
+  all 35 exact Sandbox records, Workspaces, Agents and both owner histories are
+  preserved. Main Agent has nine turns with SHA-256
+  7904c24cdd76addc8f9832caf5beafdfe3750fe319b81fe161ca411d8d0e41c7;
+  second Agent has one turn with its existing hash.
+- Read-only physical object listing checkpoint-storage-audit-avJWl4 finds
+  exactly one archive per remaining Sandbox: 52, 55 and 3 chunks, respectively,
+  with no unmatched objects. Deleted Sandboxes have no archives. This is current
+  object-list evidence only; provider version history and runtime scratch
+  retention remain open. Disk has 24 GiB free.
