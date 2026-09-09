@@ -25,7 +25,7 @@ pub(crate) struct SealedArchive {
 #[derive(Debug)]
 pub(crate) struct InspectedArchive {
     pub manifest: Manifest,
-    pub payload_start: u64,
+    payload_bytes: u64,
 }
 
 pub(crate) fn seal(root: &Path, store: &Path, exclusions: &[String]) -> Result<SealedArchive> {
@@ -109,6 +109,18 @@ pub(crate) fn seal(root: &Path, store: &Path, exclusions: &[String]) -> Result<S
 }
 
 pub(crate) fn inspect(path: &Path, expected_sha256: &str, home: &Path) -> Result<InspectedArchive> {
+    let (inspected, mut archive) = open_validated_manifest(path, expected_sha256, home)?;
+    if archive.is_compressed() {
+        archive.verify_payload(inspected.payload_bytes)?;
+    }
+    Ok(inspected)
+}
+
+fn open_validated_manifest(
+    path: &Path,
+    expected_sha256: &str,
+    home: &Path,
+) -> Result<(InspectedArchive, reader::ArchiveReader)> {
     crate::checkpoint_manifest::require_sha256(expected_sha256)?;
     let metadata =
         std::fs::symlink_metadata(path).map_err(archive_io("inspect checkpoint archive"))?;
@@ -171,23 +183,26 @@ pub(crate) fn inspect(path: &Path, expected_sha256: &str, home: &Path) -> Result
         length - payload_start
     };
     crate::checkpoint_manifest::validate(&manifest, home, payload_bytes)?;
-    if archive.is_compressed() {
-        archive.verify_payload(payload_bytes)?;
-    }
-    Ok(InspectedArchive {
-        manifest,
-        payload_start,
-    })
+    Ok((
+        InspectedArchive {
+            manifest,
+            payload_bytes,
+        },
+        archive,
+    ))
 }
 
 pub(crate) fn extract(
     archive_path: &Path,
-    inspected: &InspectedArchive,
+    expected_sha256: &str,
+    home: &Path,
     destination: &Path,
 ) -> Result<()> {
+    // Validate identity and every path before staging. Verify file digests and the
+    // compression trailer while extracting, before the caller may replace home.
+    // Continuing this reader avoids decompressing the entire payload twice.
+    let (inspected, mut archive) = open_validated_manifest(archive_path, expected_sha256, home)?;
     std::fs::create_dir(destination).map_err(archive_io("create restore staging directory"))?;
-    let mut archive = reader::ArchiveReader::open(archive_path)?;
-    archive.skip_exact(inspected.payload_start)?;
     let mut directories = Vec::new();
     for entry in &inspected.manifest.entries {
         let path = destination.join(&entry.path);

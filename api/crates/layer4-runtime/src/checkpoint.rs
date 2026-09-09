@@ -140,7 +140,6 @@ impl CheckpointStore {
 }
 
 fn restore_archive(archive: &Path, expected: &str, home: &Path, scratch: &Path) -> Result<()> {
-    let inspected = crate::checkpoint_archive::inspect(archive, expected, home)?;
     crate::fs_durability::create_dir_all(scratch)
         .map_err(checkpoint_io("create restore scratch directory"))?;
     let staged = scratch.join(format!(
@@ -149,7 +148,7 @@ fn restore_archive(archive: &Path, expected: &str, home: &Path, scratch: &Path) 
         stamp()
     ));
     let mut cleanup = Cleanup(Some(staged.clone()));
-    crate::checkpoint_archive::extract(archive, &inspected, &staged)?;
+    crate::checkpoint_archive::extract(archive, expected, home, &staged)?;
     crate::checkpoint_copy::replace_home(home, &staged, scratch)?;
     cleanup.remove_now();
     Ok(())

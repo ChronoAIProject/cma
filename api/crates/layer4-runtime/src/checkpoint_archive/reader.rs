@@ -45,15 +45,6 @@ impl ArchiveReader {
         matches!(self, Self::Gzip(_))
     }
 
-    pub(super) fn skip_exact(&mut self, bytes: u64) -> Result<()> {
-        let copied = std::io::copy(&mut self.take(bytes), &mut std::io::sink())
-            .map_err(|_| invalid("checkpoint archive is truncated or corrupt"))?;
-        if copied != bytes {
-            return Err(invalid("checkpoint archive is truncated"));
-        }
-        Ok(())
-    }
-
     pub(super) fn verify_payload(&mut self, bytes: u64) -> Result<()> {
         let copied = std::io::copy(&mut (&mut *self).take(bytes + 1), &mut std::io::sink())
             .map_err(|_| invalid("compressed checkpoint payload is truncated or corrupt"))?;
