@@ -27,6 +27,9 @@
                 "id": "sbp_route",
                 "revision": 3
               },
+              "nyxid_services": [
+                "api-github"
+              ],
               "limits": {
                 "max_workspaces": 4,
                 "max_agents_per_workspace": 4
@@ -79,6 +82,9 @@
             "id": "sbp_route",
             "revision": 3
           },
+          "nyxid_services": [
+            "api-github"
+          ],
           "limits": {
             "max_workspaces": 4,
             "max_agents_per_workspace": 4
@@ -372,6 +378,7 @@
             "id": "sbp_contract",
             "revision": 1
           },
+          "nyxid_services": [],
           "limits": {
             "max_workspaces": 4,
             "max_agents_per_workspace": 4
@@ -577,6 +584,7 @@
             "id": "sbp_contract",
             "revision": 1
           },
+          "nyxid_services": [],
           "limits": {
             "max_workspaces": 4,
             "max_agents_per_workspace": 4
@@ -628,6 +636,9 @@
             "id": "sbp_route",
             "revision": 3
           },
+          "nyxid_services": [
+            "api-github"
+          ],
           "limits": {
             "max_workspaces": 4,
             "max_agents_per_workspace": 4

@@ -4,6 +4,7 @@ import type { SandboxDetail } from '../api/types';
 import type { TreePermissions } from '../shell/Tree';
 import { agentClient } from '../test/agent';
 import { sandboxFixture } from '../test/hierarchy';
+import { NamedReferences } from '../test/references';
 import { SandboxPage } from './SandboxPage';
 
 const permissions: TreePermissions = {
@@ -63,6 +64,41 @@ it('does not replace a missing creator name with their subject ID', async () => 
   lifecyclePage(async () => ({ ...sandboxFixture(), owner: 'creator-private-subject' }));
   expect(await screen.findByText('Name unavailable')).toBeInTheDocument();
   expect(screen.queryByText('creator-private-subject')).not.toBeInTheDocument();
+});
+
+it('shows granted service names for a paused Sandbox without relying on Agent reads', async () => {
+  render(
+    <NamedReferences>
+      <SandboxPage
+        client={agentClient({
+          readSandbox: async () => ({
+            ...sandboxFixture('paused'),
+            nyxidServices: ['github', 'storage'],
+            workspaces: [],
+          }),
+          readAgent: async () => {
+            throw new Error('Agent unavailable');
+          },
+        })}
+        sandboxId="sbx_1"
+        revision={0}
+        permissions={permissions}
+        busy={false}
+        onAction={vi.fn()}
+        onNavigate={vi.fn()}
+      />
+    </NamedReferences>,
+  );
+  expect(await screen.findByRole('link', { name: 'Chrono Storage' })).toHaveAttribute(
+    'href',
+    'https://nyx.chrono-ai.fun/services/catalog-storage',
+  );
+  expect(screen.getByRole('link', { name: 'GitHub' })).toHaveAttribute(
+    'href',
+    'https://nyx.chrono-ai.fun/services/catalog-github',
+  );
+  expect(screen.queryByText('Access not yet confirmed')).not.toBeInTheDocument();
+  expect(screen.queryByText('Requested services')).not.toBeInTheDocument();
 });
 
 it('keeps the latest completed snapshot timestamp and real download link in Advanced during a save', async () => {

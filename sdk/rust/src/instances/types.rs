@@ -59,6 +59,8 @@ pub struct Sandbox {
     pub status: SandboxStatus,
     /// Immutable source profile.
     pub profile: ProfileReference,
+    /// Effective creation and explicitly granted services; absent on older servers.
+    pub nyxid_services: Option<Vec<String>>,
     /// Captured admission limits.
     pub limits: SandboxLimits,
     /// Authoritative lifecycle eligibility and recorded progress; absent on older servers.
@@ -256,4 +258,11 @@ pub struct CreateWorkspaceRequest {
     /// Digest shown to the caller before trust confirmation.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub commands_digest: Option<String>,
+}
+
+/// Explicit owner authorization for additional services on a fully paused Sandbox.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GrantSandboxServiceAccessRequest {
+    /// Exact NyxID service identifiers. Existing access is an idempotent no-op.
+    pub services: Vec<String>,
 }

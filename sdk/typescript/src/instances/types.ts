@@ -55,6 +55,7 @@ const sandboxFields = {
   name: text,
   status: sandboxStatus,
   profile: profileReference,
+  nyxid_services: optional(array(text)),
   limits: object({ max_workspaces: positiveInteger, max_agents_per_workspace: positiveInteger }),
   lifecycle: optional(sandboxLifecycle),
   runtime_version: optional(text),
@@ -148,6 +149,8 @@ export const createSandboxRequest = object({
   commands_digest: optional(text),
 });
 export type CreateSandboxRequest = Output<typeof createSandboxRequest>;
+export const grantSandboxServiceAccessRequest = object({ services: array(text) });
+export type GrantSandboxServiceAccessRequest = Output<typeof grantSandboxServiceAccessRequest>;
 export const createWorkspaceRequest = object({
   workspace_profile: profileReference,
   trust_confirmed: optional(boolean),

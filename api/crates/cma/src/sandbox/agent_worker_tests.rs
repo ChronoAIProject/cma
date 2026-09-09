@@ -287,6 +287,7 @@ fn sandbox(id: &SandboxId, owner: SubjectId, stamp: &str) -> Sandbox {
         failure: None,
         runtime: None,
         credential: SandboxCredentialState {
+            service_grants: Vec::new(),
             reaches: vec![ServiceId::new("ornn-api")],
             key_generation: 3,
             delivered: true,

@@ -13,6 +13,17 @@ pub enum Classification {
 // Exact backend-invalid cases not claimed as typed HTTP replay. Each is checked
 // against its source shape or the SDK's real preflight, then its shared error is decoded.
 pub const LOCAL_CASES: &[(&str, Classification)] = &[
+    ("sandbox-service-access-missing-key", Classification::Local),
+    ("sandbox-service-access-invalid-key", Classification::Local),
+    (
+        "sandbox-service-access-invalid-json",
+        Classification::RawJson,
+    ),
+    (
+        "sandbox-service-access-content-type",
+        Classification::MediaType,
+    ),
+    ("sandbox-service-access-oversize", Classification::BodySize),
     ("authoring-skills-limit-zero", Classification::Local),
     (
         "authoring-skills-limit-overflow",

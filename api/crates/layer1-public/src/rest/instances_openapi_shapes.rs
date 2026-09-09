@@ -36,6 +36,13 @@ pub struct CreateSandboxRequest {
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
+pub struct GrantSandboxServiceAccessRequest {
+    /// Exact NyxID service identifiers authorized by the Sandbox owner.
+    pub services: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
 pub struct CreateWorkspaceRequest {
     pub workspace_profile: ProfileReferenceView,
     #[serde(default)]
@@ -76,6 +83,8 @@ pub struct SandboxView {
     #[schema(value_type = String)]
     pub status: SandboxStatus,
     pub profile: ProfileReferenceView,
+    /// Creation scope plus explicitly authorized instance services.
+    pub nyxid_services: Vec<String>,
     pub limits: SandboxLimitsView,
     pub lifecycle: SandboxLifecycleView,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -102,6 +111,12 @@ impl From<&Sandbox> for SandboxView {
                 id: value.profile.id.to_string(),
                 revision: value.profile.revision,
             },
+            nyxid_services: value
+                .credential
+                .effective_reaches()
+                .iter()
+                .map(ToString::to_string)
+                .collect(),
             limits: SandboxLimitsView {
                 max_workspaces: value.limits.max_workspaces,
                 max_agents_per_workspace: value.limits.max_agents_per_workspace,

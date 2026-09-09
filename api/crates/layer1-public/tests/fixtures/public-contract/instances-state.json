@@ -762,6 +762,9 @@
             "id": "sbp_route",
             "revision": 3
           },
+          "nyxid_services": [
+            "api-github"
+          ],
           "limits": {
             "max_workspaces": 4,
             "max_agents_per_workspace": 4
@@ -877,9 +880,14 @@
           "sandbox_id": "sbx_route",
           "name": "contract-project",
           "path": "/home/cma/contract-project",
-          "source": { "type": "empty" },
+          "source": {
+            "type": "empty"
+          },
           "status": "preparing",
-          "profile": { "id": "wkp_contract", "revision": 1 },
+          "profile": {
+            "id": "wkp_contract",
+            "revision": 1
+          },
           "created_at": "2026-09-05T00:00:00Z",
           "revision": 1
         },

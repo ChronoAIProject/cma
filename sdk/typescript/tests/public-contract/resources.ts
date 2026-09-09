@@ -13,6 +13,8 @@ export const resourceDispatch: Record<string, Dispatch> = {
     client.sandboxes.pause(param('id'), command),
   'POST /api/v1/sandboxes/{id}/revive': ({ client, param, command }) =>
     client.sandboxes.revive(param('id'), command),
+  'POST /api/v1/sandboxes/{id}/service-access': ({ client, param, body, command }) =>
+    client.sandboxes.grantServiceAccess(param('id'), body, command),
   'GET /api/v1/sandboxes/{id}/events': ({ client, param, options }) =>
     client.sandboxes.events(param('id'), options),
   'GET /api/v1/sandboxes/{id}/workspaces': ({ client, param, options }) =>

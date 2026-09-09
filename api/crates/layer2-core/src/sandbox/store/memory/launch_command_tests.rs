@@ -284,7 +284,9 @@ async fn admit_paused(store: &InMemorySandboxStore, suffix: &str, launch_id: &st
     admit(store, fresh.clone()).await;
     let mut paused = fresh;
     paused.status = SandboxStatus::Paused;
+    let reaches = paused.credential.reaches.clone();
     paused.credential = sandbox().credential;
+    paused.credential.reaches = reaches;
     paused.work = SandboxWorkState::new(SandboxWorkStep::None, COMMAND_AT.into());
     paused.lifecycle.checkpoints.latest = Some(checkpoint(1, BOUND_AT));
     paused.updated_at = COMMAND_AT.into();

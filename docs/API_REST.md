@@ -526,6 +526,7 @@ above applies even when an operation annotates only its principal responses.
 | `GET /api/v1/sandboxes/{id}/events` | - | after, limit | 200 array<SandboxEventView> |
 | `POST /api/v1/sandboxes/{id}/pause` | -; key | - | 202 SandboxView |
 | `POST /api/v1/sandboxes/{id}/revive` | -; key | - | 202 SandboxView |
+| `POST /api/v1/sandboxes/{id}/service-access` | GrantSandboxServiceAccessRequest; key | - | 200 SandboxView; new grants require fully Paused, existing grants replay without change |
 
 ### Workspaces
 

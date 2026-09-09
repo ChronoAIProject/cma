@@ -16,6 +16,16 @@ A Sandbox pins an immutable Sandbox Profile when provisioned. Workspaces and
 Agents belong to that Sandbox; profile edits do not change existing instances.
 The client reads only the caller's resources unless an operator helper is used.
 
+`grantServiceAccess(id, { services }, { idempotencyKey })` records explicit owner
+authorization for additional NyxID services on a fully paused Sandbox. Original
+profile pins and creation scope remain unchanged. `nyxid_services` returns the
+effective service list, including these grants. Revival obtains a new scoped
+credential before delivering it to the runtime; the owner's connected accounts
+must still authorize every service. A new grant while Live returns HTTP 409
+`sandbox_service_access_requires_pause`. Repeating an existing grant is a no-op,
+including after revival. This operation only adds services; it does not revoke
+existing access.
+
 ```ts
 import { createClient } from '@chronoai/cma-sdk';
 

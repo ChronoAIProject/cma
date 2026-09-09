@@ -93,6 +93,7 @@ fn sandbox(id: &str, owner: &str, status: SandboxStatus, runtime_version: &str) 
             bound_at: NOW.into(),
         }),
         credential: super::super::SandboxCredentialState {
+            service_grants: Vec::new(),
             reaches: vec![],
             key_generation: 0,
             delivered: false,

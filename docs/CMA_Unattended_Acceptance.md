@@ -32,7 +32,7 @@ Monitor disk usage and inspect exact targets before removing stale artifacts.
 | 17 | Agent header and sidebar show consistent resource state | Production desktop/mobile Ready -> Working -> Ready -> Stopped transitions passed with zero MutationObserver mismatches, including reload. Evidence: agent-status-sync-oU399d/result.json. Normal-stop notice correction in web 57f793aa also passed actual live transitions: agent-status-sync-uzRQlH/result.json. |
 | 18 | Notifications animate on showing and dismissal | Pending shared notification audit, implementation and reduced-motion checks. |
 | 19 | Real native terminal and chat share one conversation, all CLI features, matching theme and reliable sizing | Pending pinned-engine feasibility and implementation. An independent second conversation or imitation terminal is not acceptance. |
-| 20 | gh through NyxID GitHub OAuth; identity per user; three-service Connect/Verify flow | Runtime proxy implemented in 41f068fa; candidate d052e746 builds upstream gh 2.100.0 with a security dependency refresh. Local genuine CLI and Linux image REST/GraphQL checks pass, including host and credential boundaries. Image scan passes. Registry upload is blocked by Google interactive reauthentication; production runtime and Sandbox grant are unchanged. Explicit durable api-github grant, full contribution and three-service connection-flow verification remain pending. |
+| 20 | gh through NyxID GitHub OAuth; identity per user; three-service Connect/Verify flow | Runtime d052e746 with upstream gh 2.100.0 passed Linux CLI/proxy checks and image scan, and is uploaded with its digest verified. Explicit durable instance service grants, renewal before revival, both SDKs and the effective-service UI pass local checks. Production runtime deployment, the owner's api-github grant, full contribution and three-service connection-flow verification remain pending. |
 | 21 | Agent, Workspace and Sandbox deletion completes correctly | Durable live-child Workspace cascade deployed in 565f6286. Production zero/one/two-child deletion passed in 1,933 / 14,971 / 16,887 ms; desktop/mobile dialogs, reload recovery, page closure, Deleted Agents and removed Worktrees verified. Test Sandbox retirement completed. Same-Sandbox snapshot concurrency remains blocked by #4; do not call the full requirement complete. |
 
 ## Baseline
@@ -710,3 +710,30 @@ image identity and measured results for each behavior, with unknowns left explic
   mobile Owner screenshots were inspected.
   The full acceptance register remains open, including service grants and
   nonblocking snapshots. Host disk has 28 GiB free; no cleanup was needed.
+
+## Resumed service-access work — 2026-09-09
+
+- Restored the named service-grant WIP after admin production acceptance, retaining
+  the hotfix's public-name module and both SDK owner fields. A grant appends
+  explicit owner authority while fully Paused, preserves original profile and
+  creation scope, skips pre-grant credential generations and obtains replacement
+  authority before revival delivery. Replay after revival is a no-op.
+- All 1,629 isolated backend tests pass. Three older pause fixtures were corrected
+  to retain their admitted service scope when replacing test credentials; the
+  production guard against implicit scope rewrites remains enforced. Mongo
+  service-access integration verifies atomic publication, rejected forged grants,
+  restart durability and immutable original scope; its disposable container was
+  removed without persistent volumes.
+- Shared public contract capture and both SDK replays pass. The TypeScript suite
+  has 1,765 tests, including the new grant event. Rust SDK tests and documentation
+  pass. The new oversized-body case retains HTTP 413 and the existing hierarchy
+  body's invalid_json code; only its draft expectation and new inventory entry
+  were aligned. Unrelated fixture formatting changes were removed.
+- The Sandbox page reads the effective public service list, including owner
+  grants, with Agent lineage retained for older servers. Thirty-eight focused UI
+  and transport tests, web typecheck, lint and production build pass. The paused
+  page resolves named service links even when Agent details are unavailable.
+- Runtime d052e746 is now uploaded and its remote Linux/amd64 digest is verified:
+  sha256:5c5e15c03701b81bbeaf0f214f75f4cb9ed064b185022ac5586c734fbd6ada33.
+  This is registry evidence only; production still uses runtime 14c05f26 and no
+  instance grant has been dispatched. Disk remains at 27 GiB free.

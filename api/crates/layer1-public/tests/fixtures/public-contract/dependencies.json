@@ -1168,6 +1168,7 @@
             "id": "sbp_stored",
             "revision": 1
           },
+          "nyxid_services": [],
           "limits": {
             "max_workspaces": 4,
             "max_agents_per_workspace": 4

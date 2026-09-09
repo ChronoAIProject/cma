@@ -103,6 +103,7 @@ export interface WorkspaceSummary {
 }
 
 export interface SandboxDetail extends SandboxSummary {
+  readonly nyxidServices?: readonly string[];
   readonly limits: {
     readonly maxWorkspaces: number;
     readonly maxAgentsPerWorkspace: number;

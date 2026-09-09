@@ -79,6 +79,7 @@ fn sandbox() -> Sandbox {
         failure: None,
         runtime: None,
         credential: SandboxCredentialState {
+            service_grants: Vec::new(),
             reaches: vec![],
             key_generation: 1,
             delivered: true,

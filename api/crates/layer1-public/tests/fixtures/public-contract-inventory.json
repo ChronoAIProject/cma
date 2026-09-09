@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "openapi_operations": 118,
+  "openapi_operations": 119,
   "operations": {
     "GET /api/v1/profile-authoring/bounds": {
       "classification": "openapi",
@@ -1336,6 +1336,17 @@
         "request_too_large": "api/crates/layer1-public/src/rest/sandboxes.rs# This bodyless command has no RequestBody or Json extractor and calls execute_empty_command; request bytes and Content-Type are not decoded or subject to an extractor body limit.",
         "idempotency_key_reused": "api/crates/layer1-public/src/rest/idempotency.rs# required_empty_command always fingerprints SHA256(empty). Current operation scopes isolate fixed command names and opaque resource IDs, so same-subject/key/scope requests cannot disagree on body fingerprint; pending, recovery and storage failures remain reachable."
       }
+    },
+    "POST /api/v1/sandboxes/{id}/service-access": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/sandbox_service_access.rs# Owner-only service access uses the shared durable command admission and typed refusals.",
+      "required_problems": [
+        "forbidden", "hierarchy_service_unavailable", "idempotency_in_flight",
+        "idempotency_key_reused", "idempotency_recovery_required", "invalid_idempotency_key",
+        "invalid_json", "invalid_sandbox_service_access", "json_content_type_required",
+        "missing_idempotency_key", "not_authenticated",
+        "sandbox_not_found", "sandbox_service_access_requires_pause", "store_failed"
+      ]
     },
     "POST /api/v1/sandboxes/{id}/workspaces": {
       "classification": "openapi",

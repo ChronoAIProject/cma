@@ -218,6 +218,7 @@ impl TitleAuthority {
             && self.sandbox.runtime == other.sandbox.runtime
             && self.sandbox.credential.current == other.sandbox.credential.current
             && self.sandbox.credential.reaches == other.sandbox.credential.reaches
+            && self.sandbox.credential.service_grants == other.sandbox.credential.service_grants
     }
 }
 

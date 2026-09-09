@@ -57,6 +57,7 @@ fn sandbox(id: &str, launch_id: &str) -> Sandbox {
         failure: None,
         runtime: None,
         credential: SandboxCredentialState {
+            service_grants: Vec::new(),
             reaches: vec![ServiceId::new("profile-service")],
             key_generation: 0,
             delivered: false,

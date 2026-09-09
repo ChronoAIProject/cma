@@ -48,6 +48,12 @@ impl HierarchyProblem {
             SandboxServiceError::SandboxOriginConflict => Self::Conflict("sandbox_origin_conflict"),
             SandboxServiceError::InvalidOrigin => Self::Invalid("invalid_sandbox_origin"),
             SandboxServiceError::InvalidState => Self::Conflict("sandbox_invalid_state"),
+            SandboxServiceError::InvalidServiceAccess => {
+                Self::Invalid("invalid_sandbox_service_access")
+            }
+            SandboxServiceError::ServiceAccessRequiresPause => {
+                Self::Conflict("sandbox_service_access_requires_pause")
+            }
             SandboxServiceError::Corrupt(_) | SandboxServiceError::Unavailable(_) => {
                 Self::Unavailable
             }

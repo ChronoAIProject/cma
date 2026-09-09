@@ -201,6 +201,7 @@ fn image() -> String {
 }
 
 mod creation_revival;
+mod service_access;
 
 pub(super) async fn restarted_worker(harness: &Harness, now: SystemTime) -> Arc<SandboxWorker> {
     let adapter: Arc<dyn SandboxAdapter> = Arc::new(CodexAdapter::with_backend(

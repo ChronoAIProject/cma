@@ -260,6 +260,7 @@ fn sandbox(status: SandboxStatus, limit: u8) -> Sandbox {
         failure: None,
         runtime: None,
         credential: SandboxCredentialState {
+            service_grants: Vec::new(),
             reaches: vec![],
             key_generation: 0,
             delivered: false,

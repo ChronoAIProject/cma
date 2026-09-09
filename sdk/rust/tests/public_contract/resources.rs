@@ -54,6 +54,12 @@ pub async fn dispatch(c: &Context<'_>) -> Result<()> {
         "POST /api/v1/sandboxes/{id}/revive" => {
             c.check(client.sandboxes().revive(c.param("id"), &c.key()?).await)
         }
+        "POST /api/v1/sandboxes/{id}/service-access" => c.check(
+            client
+                .sandboxes()
+                .grant_service_access(c.param("id"), &c.body()?, &c.key()?)
+                .await,
+        ),
         "GET /api/v1/sandboxes/{id}/workspaces" => {
             c.check(client.workspaces().list(c.param("id")).await)
         }

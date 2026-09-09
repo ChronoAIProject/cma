@@ -17,6 +17,16 @@ and environment at admission. It contains Workspaces, each with allocated
 Worktrees and Agents. A successful create response records work; it does not
 assert that the runtime or any nested Agent is ready.
 
+`sandboxes().grant_service_access(id, &GrantSandboxServiceAccessRequest, &key)`
+records explicit owner authorization for additional NyxID services while fully
+paused. Original profile pins and creation scope remain unchanged. The optional
+`nyxid_services` field reports effective scope, including these grants. Revival
+obtains a new scoped credential before delivering it; the owner's connected
+accounts must authorize every service. New grants while Live return HTTP 409
+`sandbox_service_access_requires_pause`. Repeating existing grants is a no-op,
+including after revival. This operation only adds services; it does not revoke
+existing access.
+
 ```rust,no_run
 use cma_sdk::{Client, EventOptions, IdempotencyKey};
 use cma_sdk::instances::{SandboxListOptions, CreateWorkspaceRequest};

@@ -1092,8 +1092,10 @@ The Sandbox page serves the ordinary owner: current state and permitted actions,
 named profile, agent provider, own versus ChronoAI-managed model access, effective
 NyxID service scope, then Workspaces and each Agent's model, Guarded or Autonomous
 permission, profile and skills. Profile settings come from the exact pinned
-revision. Effective reach comes from public Agent lineage, never from requested
-profile scope; unconfirmed access is explicitly unconfirmed. Optional metadata
+revision. Effective reach comes from the public Sandbox service list, including
+explicit owner grants, with public Agent lineage as an older-server fallback.
+Requested profile scope never substitutes for effective reach; unconfirmed
+access is explicitly unconfirmed. Optional metadata
 failures preserve the main status and actions and offer retry.
 
 An Advanced icon-and-text command opens the shared wide Modal. Runtime version,
@@ -1718,3 +1720,4 @@ Append-only. Never edit or delete an entry.
 | 2026-09-09 | Kept Connect available during pending NyxID setup, reused current hosted links on reopen, and made Verify an immediate check with explicit still-not-connected feedback. Preserved popup blocking, same-tab recovery and credential-free storage. |
 | 2026-09-09 | Named connection-only dialogs Connect required accounts with Verify connections as the combined check, keeping permission setup distinct from publisher-required review. |
 | 2026-09-09 | Show retained public names for Operations owners, activity actors and user targets, with explicit unavailable names instead of subject IDs. Added Owner to the ordinary Sandbox information page and grouped the admin Agent inventory under its named Workspaces. |
+| 2026-09-09 | Read effective NyxID services from the Sandbox's public service list, including explicit owner grants, while preserving Agent lineage as an older-server fallback and the existing named service links. |
