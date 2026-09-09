@@ -4,9 +4,9 @@ use crate::seconds_from_rfc3339;
 use super::launch_message_evidence::validate_persisted_message_evidence;
 use super::requirements::valid_digest;
 use super::{
-    Launch, LaunchBlockedReason, LaunchEffectState, LaunchFailure, LaunchState, LaunchStep,
-    LaunchStepKey, LaunchStepStatus, LaunchWorkStep, TriggerError, MAX_LAUNCH_RETRY_DELAY_SECONDS,
-    MAX_LAUNCH_WORK_ATTEMPTS,
+    Launch, LaunchBlockedReason, LaunchConsentSurface, LaunchEffectState, LaunchFailure,
+    LaunchState, LaunchStep, LaunchStepKey, LaunchStepStatus, LaunchWorkStep, ReviewNeed,
+    TriggerError, MAX_LAUNCH_RETRY_DELAY_SECONDS, MAX_LAUNCH_WORK_ATTEMPTS,
 };
 
 const MAX_SAFE_DETAIL_BYTES: usize = 512;
@@ -79,10 +79,19 @@ impl Launch {
         let was_ready = matches!(self.state, LaunchState::Ready | LaunchState::Completed);
         if (self.state == LaunchState::Draft && self.started_at.is_some())
             || (requires_start && self.started_at.is_none())
-            || (self.started_at.is_some() == self.confirmations.is_empty())
+            || (self.started_at.is_some() && self.confirmations.is_empty())
             || self.confirmations.len() > 1
-            || (self.started_at.is_none()
+            || (self.confirmations.is_empty()
                 && self.review.trust_digest() != self.trust.confirmation_digest.as_deref())
+            || (self.started_at.is_none()
+                && !self.confirmations.is_empty()
+                && (self.confirmations[0].surface != LaunchConsentSurface::Landing
+                    || self
+                        .review
+                        .needs
+                        .iter()
+                        .any(|need| !matches!(need, ReviewNeed::Connection { .. }))
+                    || self.work.step.is_pending()))
             || self.confirmations.iter().any(|confirmation| {
                 confirmation.trust_confirmed_digest.as_deref()
                     != self.trust.confirmation_digest.as_deref()

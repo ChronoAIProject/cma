@@ -3,9 +3,9 @@ use crate::seconds_from_rfc3339;
 
 use super::requirements::valid_digest;
 use super::{
-    Launch, LaunchBlockedReason, LaunchConfirmation, LaunchSeed, LaunchState, LaunchStep,
-    LaunchStepKey, LaunchStepStatus, LaunchWorkState, LaunchWorkStep, RequirementsSnapshot,
-    ResolvedResource, ReviewRequirements, TriggerError,
+    Launch, LaunchBlockedReason, LaunchConfirmation, LaunchConsentSurface, LaunchSeed, LaunchState,
+    LaunchStep, LaunchStepKey, LaunchStepStatus, LaunchWorkState, LaunchWorkStep,
+    RequirementsSnapshot, ResolvedResource, ReviewNeed, ReviewRequirements, TriggerError,
 };
 
 impl Launch {
@@ -50,12 +50,57 @@ impl Launch {
     }
 
     pub fn start(&mut self, confirmation: LaunchConfirmation) -> Result<(), TriggerError> {
-        if self.state != LaunchState::Draft || !self.review.can_start_now {
+        if self.state != LaunchState::Draft
+            || !self.review.can_start_now
+            || !self.confirmations.is_empty()
+        {
             return Err(TriggerError::new("launch_not_startable", "state"));
         }
         confirmation.validate()?;
         let at = confirmation.confirmed_at.clone();
         self.confirmations.push(confirmation);
+        self.begin_start(at)
+    }
+
+    pub fn confirm_landing_start(
+        &mut self,
+        confirmation: LaunchConfirmation,
+    ) -> Result<(), TriggerError> {
+        self.validate()?;
+        confirmation.validate()?;
+        if self.state != LaunchState::Draft
+            || !self.confirmations.is_empty()
+            || confirmation.surface != LaunchConsentSurface::Landing
+            || confirmation.trust_confirmed_digest != self.trust.confirmation_digest
+            || self.review.needs.iter().any(|need| {
+                matches!(
+                    need,
+                    ReviewNeed::OwnerRequiresReview | ReviewNeed::RepeatChoice
+                )
+            })
+        {
+            return Err(TriggerError::new(
+                "invalid_launch_confirmation",
+                "confirmation",
+            ));
+        }
+        self.review = ReviewRequirements::build(&self.requirements, None, false, false)?;
+        self.updated_at = confirmation.confirmed_at.clone();
+        self.confirmations.push(confirmation);
+        self.validate()
+    }
+
+    pub fn start_confirmed(&mut self, at: String) -> Result<(), TriggerError> {
+        if self.state != LaunchState::Draft
+            || !self.review.can_start_now
+            || !matches!(self.confirmations.as_slice(), [confirmation] if confirmation.surface == LaunchConsentSurface::Landing)
+        {
+            return Err(TriggerError::new("launch_not_startable", "state"));
+        }
+        self.begin_start(at)
+    }
+
+    fn begin_start(&mut self, at: String) -> Result<(), TriggerError> {
         self.transition(LaunchState::Resolving, at.clone())?;
         self.started_at = Some(at.clone());
         self.work = LaunchWorkState::new(LaunchWorkStep::ResolveSandbox, at);

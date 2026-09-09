@@ -366,6 +366,12 @@ fn validate_admission(admission: &LaunchAdmission) -> Result<(), LaunchStoreErro
     {
         return Err(LaunchStoreError::TriggerUnavailable);
     }
+    if admission.trigger.revision.content.consent.always_review
+        && admission.launch.started_at.is_none()
+        && !admission.launch.confirmations.is_empty()
+    {
+        return Err(corrupt("publisher-required review cannot be preconfirmed"));
+    }
     if admission.events.is_empty()
         || !matches!(admission.events.first(), Some(LaunchEventKind::Created))
     {
@@ -384,6 +390,7 @@ fn validate_immutable(current: &Launch, changed: &Launch) -> Result<(), LaunchSt
         || current.placement_id != changed.placement_id
         || current.referrer_origin != changed.referrer_origin
         || current.trust != changed.trust
+        || !changed.confirmations.starts_with(&current.confirmations)
         || current.command_key_hash != changed.command_key_hash
         || current.command_fingerprint != changed.command_fingerprint
         || current.created_at != changed.created_at
