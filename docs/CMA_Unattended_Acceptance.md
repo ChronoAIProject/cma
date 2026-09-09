@@ -17,7 +17,7 @@ Monitor disk usage and inspect exact targets before removing stale artifacts.
 | 2 | Live Sandbox creates Workspace with one Agent Profile | Production mobile UI and public API pass: Workspace and one correctly pinned Agent/Worktree Ready in 24,396 ms, with no first prompt sent. Same creation evidence as #1. |
 | 3 | Live Sandbox creates Workspace with multiple Agent Profiles | Production UI and public API pass: Workspace and two distinct correctly pinned Agent/Worktree pairs Ready in 15,009 ms, with no first prompts sent. Same creation evidence as #1. |
 | 4 | Snapshots never interrupt creation, deletion or Agent interaction | Not satisfied: deployed whole-home capture holds writers. Requires a consistent point-in-time copy without a capture-duration writer lock, then concurrent production checks. |
-| 5 | Storage physically retains only the latest snapshot | Completed publication prunes the previous generation. Runtime audit found two sealed local archives of 1,804,395,715 and 1,804,436,309 bytes. Runtime scratch and orphan cleanup remain unsatisfied; do not equate metadata pruning with physical retention acceptance. |
+| 5 | Storage physically retains only the latest snapshot | Latest physical audit checkpoint-storage-audit-avJWl4 finds one archive per remaining Sandbox, 110 objects and no unmatched objects. Latest restored runtime has one sealed archive and no staging files. Runtime scratch retention across repeated captures and provider version history remain unverified; do not equate current inventory with full retention acceptance. |
 | 6 | Terminated Sandbox snapshots are deleted | API 8a6cac05 deployed. Fresh production pause/resume and deletion test zosocG confirms zero snapshot objects and HTTP 404 for the previously readable file while the conversation record remains. Read-only observer pEIoAc verifies all 691 legacy objects across 18 Deleted Sandboxes removed (20.407 GiB), with exact owner snapshot keys, both histories and retained Sandbox records preserved. Provider version-history and unclassified orphan audits remain separate. |
 | 7 | All lifecycle screens show secret-free bounded live logs and sync time | Live activity deployed, with latest 100 allowlisted entries, bounded scroll, sync time and reconnect/access-loss handling. Production Sandbox/Agent pause/resume and all three deletion dialogs pass. Named README Launch/Sandbox restore displays pass at desktop/mobile, followed by restored chat. Some lifecycle rows remain generic completed-stage entries; every transition and creation surface is not yet comprehensively proved. |
 | 8 | New Agent fields are understandable, profiles have anchored hover details, deleted choices are excluded | Initial batch df6e58e3; production creation exposed mobile hover previews intercepting Create workspace. Corrected and deployed in fa3f6850: previews leave dialog header/footer reachable, selection dismisses pending/open preview. Real clicks and geometry pass at 1440x900, 390x900 and 390x600, both appearances; 1,131 frontend tests pass. |
@@ -32,7 +32,7 @@ Monitor disk usage and inspect exact targets before removing stale artifacts.
 | 17 | Agent header and sidebar show consistent resource state | Production desktop/mobile Ready -> Working -> Ready -> Stopped transitions passed with zero MutationObserver mismatches, including reload. Evidence: agent-status-sync-oU399d/result.json. Normal-stop notice correction in web 57f793aa also passed actual live transitions: agent-status-sync-uzRQlH/result.json. |
 | 18 | Notifications animate on showing and dismissal | Shared fades deployed in web 5d840795 across creation/deletion, Agent notices, profiles, operator settings, Trigger messages and dialogs. All 1,194 frontend tests pass. Production notification-motion-anY733 verifies real opacity changes, inert dismissal, immediate focus/scroll release, quick reopen and reduced-motion removal at 1440/390/320px. Retry errors are injected read failures; zero resource mutations forwarded. |
 | 19 | Real native terminal and chat share one conversation, all CLI features, matching theme and reliable sizing | Pending pinned-engine feasibility and implementation. An independent second conversation or imitation terminal is not acceptance. |
-| 20 | gh through NyxID GitHub OAuth; identity per user; three-service Connect/Verify flow | API/web 7c913fa6 and runtime d052e746 deployed. The owner explicitly received api-github access with original pins preserved. Shared Sandbox Profile revision 2 and named Trigger revision 3 require all three services. Actual runtime gh 2.100.0 REST and GraphQL calls through NyxID identify chronoai-shining; connected-owner README admission and named service links pass production checks. Contribution execution and missing-connection/fresh-sign-in production verification remain pending. |
+| 20 | gh through NyxID GitHub OAuth; identity per user; three-service Connect/Verify flow | API 7c913fa6, web 5d840795 and runtime 7630fb16 deployed. The owner explicitly received api-github access with original pins preserved. Shared Sandbox Profile revision 2 and named Trigger revision 3 require all three services. Actual runtime gh 2.100.0 REST and GraphQL calls through NyxID identify chronoai-shining; connected-owner README admission, named service links and the no-artifacts contribution message pass production checks. Positive ready-artifact PR publication and missing-connection/fresh-sign-in production verification remain pending. |
 | 21 | Agent, Workspace and Sandbox deletion completes correctly | Durable live-child Workspace cascade deployed in 565f6286. Production zero/one/two-child deletion passed in 1,933 / 14,971 / 16,887 ms; desktop/mobile dialogs, reload recovery, page closure, Deleted Agents and removed Worktrees verified. Test Sandbox retirement completed. Same-Sandbox snapshot concurrency remains blocked by #4; do not call the full requirement complete. |
 
 ## Baseline
@@ -905,3 +905,27 @@ image identity and measured results for each behavior, with unknowns left explic
   no horizontal document overflow and zero forwarded mutations. Mobile screenshot
   inspected. The original immediate-resize screenshot captured the grid midway
   through its transition; the settled viewport checks verify the completed layout.
+
+## Pause transfer and revival settlement fixes — 2026-09-09
+
+- Source 6587dd72 separates already-published checkpoint hold validation from
+  capture/export. The production control transport retains authentication,
+  request/receipt correlation and writer-recovery behavior while avoiding a
+  repeated full archive transfer. Core still compares the epoch, object identity,
+  digest and writer token with the pinned checkpoint. Initial capture retains
+  complete export and independent archive validation; no runtime wire change.
+- Source a0e306c6 bounds internal post-restore Agent/metadata settlement retries
+  to five seconds or the configured shorter delay. External failures and
+  ambiguous-dispatch grace remain unchanged. Conflict handling still preserves
+  concurrent input, parent revisions and replacement worker leases.
+- All 1,634 tests in the default isolated backend suite pass (178 excluded by
+  the existing profile), including three new authenticated transport tests and
+  a settlement test for both one- and sixty-second configured retry delays.
+  Existing dispatch recovery now verifies the full sixty-second backoff.
+  Formatting, Clippy, doc-test gate, dependency policy and source scans pass.
+  The Linux/amd64 API image build is in progress; these two changes are not yet
+  deployed or accepted for production latency. Snapshot capture still blocks
+  writers, and the native synchronized terminal remains unimplemented.
+- Read-only observation finds the owner's Sandbox naturally Pausing at
+  10:08:43 UTC, in pause_agents after successful checkpoint publication.
+  No additional pause was admitted. Disk has 23 GiB free.
