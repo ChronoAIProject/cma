@@ -85,6 +85,31 @@ fn captures_are_compressed_deterministic_and_replay_the_exact_object() {
 }
 
 #[test]
+fn sealed_digest_covers_multiple_buffers_and_the_final_compression_trailer() {
+    let fixture = Fixture::new("buffered-capture");
+    let mut state = 7_u64;
+    let bytes = (0..ARCHIVE_BUFFER_BYTES * 5 + 113)
+        .map(|_| {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            state as u8
+        })
+        .collect::<Vec<_>>();
+    std::fs::write(fixture.home.join("binary"), &bytes).unwrap();
+    std::fs::write(fixture.home.join("empty"), []).unwrap();
+    let sealed = seal(&fixture.home, &fixture.store, &[]).unwrap();
+    let encoded = std::fs::read(&sealed.path).unwrap();
+    assert!(encoded.len() > ARCHIVE_BUFFER_BYTES * 4);
+    assert_eq!(sealed.sha256, hex(&Sha256::digest(&encoded)));
+    assert_eq!(sealed.reference, format!("home-{}.cma", sealed.sha256));
+    let restored = fixture.root.join("restored");
+    extract(&sealed.path, &sealed.sha256, &fixture.home, &restored).unwrap();
+    assert_eq!(std::fs::read(restored.join("binary")).unwrap(), bytes);
+    assert_eq!(std::fs::metadata(restored.join("empty")).unwrap().len(), 0);
+}
+
+#[test]
 fn legacy_uncompressed_archives_still_restore_with_exact_manifest_offsets() {
     let fixture = Fixture::new("legacy-restore");
     std::fs::write(fixture.home.join("a"), b"first").unwrap();
@@ -282,9 +307,11 @@ fn compressed_output_writer_and_stored_input_keep_the_physical_archive_bound() {
     let mut writer = ArchiveWriter {
         file: BufWriter::new(file),
         size: MAX_ARCHIVE_BYTES - 1,
+        digest: Sha256::new(),
     };
     assert!(writer.write_all(&[0, 1]).is_err());
     assert_eq!(writer.size, MAX_ARCHIVE_BYTES - 1);
+    assert_eq!(writer.digest.clone().finalize(), Sha256::digest([]));
     writer
         .file
         .get_ref()
