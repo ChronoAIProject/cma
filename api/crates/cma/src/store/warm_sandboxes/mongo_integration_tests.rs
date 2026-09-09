@@ -413,3 +413,69 @@ async fn claimed_reservation_transfers_reclaim_authority_to_owned_sandbox() {
     assert_eq!(store.get_sandbox(&id).await.unwrap(), Some(created));
     client.database(&name).drop().await.unwrap();
 }
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn claimed_home_transfers_atomically_and_refuses_the_previous_warm_worker() {
+    let (client, name, store, _, profile) = fixture(1).await;
+    reconcile(&store, &profile).await;
+    let preparing = store.claim_warmup_work(NOW, LATER).await.unwrap().unwrap();
+    let mut next = preparing.record.clone();
+    let mut home = layer2_core::sandbox::SandboxHome::reserve(
+        &next.id,
+        layer3_adapter::HomeVolumePolicy {
+            storage_class: "storage".into(),
+            capacity_gib: 64,
+            template_name: "seed".into(),
+            template_generation: "seed-generation".into(),
+        },
+    )
+    .unwrap();
+    home.bind(layer3_adapter::HomeVolumeReceipt {
+        volume_id: home.request.volume_id.clone(),
+        request_sha256: home.request.computed_sha256(),
+        storage_reference: "fixture-home".into(),
+        storage_generation: "original-disk".into(),
+    })
+    .unwrap();
+    next.home = Some(Box::new(home.clone()));
+    next.runtime = Some(RuntimeBinding {
+        runtime_id: format!("runtime-{}", next.id),
+        runtime_version: IMAGE.into(),
+        provision_generation: Some(1),
+        bound_at: NOW.into(),
+    });
+    next.installed_request_sha256 = Some("a".repeat(64));
+    next.state = WarmSandboxState::Ready;
+    store
+        .finish_warmup_work(&preparing, next, NOW, NOW)
+        .await
+        .unwrap();
+    assert!(store.unowned_home_authority(&home.request).await.unwrap());
+    let expired_at = "2026-09-05T00:00:10Z";
+    let stale = store
+        .claim_warmup_work(NOW, expired_at)
+        .await
+        .unwrap()
+        .unwrap();
+    let mut request = admission("sbx_cold", "launch-home-handoff", 1);
+    request.event_at = expired_at.into();
+    let SandboxAdmissionResult::Created(created) = store.admit_sandbox(request).await.unwrap()
+    else {
+        panic!("created")
+    };
+    assert_eq!(created.id, preparing.record.id);
+    assert_eq!(created.lifecycle.home.as_deref(), Some(&home));
+    assert!(!created.credential.delivered);
+    assert!(created.credential.current.is_none());
+    assert!(!store.unowned_home_authority(&home.request).await.unwrap());
+    let durable = store.get_sandbox(&created.id).await.unwrap().unwrap();
+    assert_eq!(durable.lifecycle.home.as_deref(), Some(&home));
+    assert!(matches!(
+        store
+            .finish_warmup_work(&stale, stale.record.clone(), expired_at, expired_at)
+            .await,
+        Err(SandboxStoreError::Conflict)
+    ));
+    client.database(&name).drop().await.unwrap();
+}

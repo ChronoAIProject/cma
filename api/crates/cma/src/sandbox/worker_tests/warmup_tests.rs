@@ -15,11 +15,11 @@ async fn prepare(harness: &Harness, candidate: &Sandbox) -> WarmSandbox {
         layer2_core::now_rfc3339(),
     )
     .unwrap();
-    let installing = prepare_environment(harness.adapter.as_ref(), "test", &record)
+    let installing = prepare_environment(harness.adapter.as_ref(), "test", &record, None)
         .await
         .unwrap();
     assert_eq!(installing.state, WarmSandboxState::Installing);
-    let ready = prepare_environment(harness.adapter.as_ref(), "test", &installing)
+    let ready = prepare_environment(harness.adapter.as_ref(), "test", &installing, None)
         .await
         .unwrap();
     ready.validate().unwrap();
@@ -155,12 +155,12 @@ async fn installation_failure_never_becomes_ready_or_obtains_a_user_key() {
         layer2_core::now_rfc3339(),
     )
     .unwrap();
-    let installing = prepare_environment(harness.adapter.as_ref(), "test", &record)
+    let installing = prepare_environment(harness.adapter.as_ref(), "test", &record, None)
         .await
         .unwrap();
     harness.backend.corrupt_next_install_receipt();
     assert!(
-        prepare_environment(harness.adapter.as_ref(), "test", &installing)
+        prepare_environment(harness.adapter.as_ref(), "test", &installing, None)
             .await
             .is_err()
     );

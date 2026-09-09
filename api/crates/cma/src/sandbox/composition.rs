@@ -46,6 +46,7 @@ pub(crate) struct SandboxLifecycleDependencies {
 }
 
 pub(crate) struct SandboxLifecycleConfig {
+    pub home_policy: Option<layer3_adapter::HomeVolumePolicy>,
     pub execution: layer2_core::sandbox::ProvisioningExecution,
     pub holder: String,
     pub deployment_id: String,
@@ -71,6 +72,7 @@ impl SandboxLifecycleComposition {
         config: SandboxLifecycleConfig,
     ) -> Self {
         let warmup = super::warmup::WarmSandboxWorker {
+            home_policy: config.home_policy.clone(),
             store: dependencies.store.clone(),
             adapter: dependencies.adapter.clone(),
             policy: dependencies.policy.clone(),
@@ -156,7 +158,8 @@ impl SandboxLifecycleComposition {
                 config.runtime_version,
                 dependencies.policy,
             )
-            .with_execution(config.execution),
+            .with_execution(config.execution)
+            .with_home_policy(config.home_policy),
         );
 
         Self {

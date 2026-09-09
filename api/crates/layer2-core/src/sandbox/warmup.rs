@@ -82,6 +82,8 @@ pub struct WarmSandbox {
     pub plan: WarmSandboxPlan,
     pub state: WarmSandboxState,
     pub runtime: Option<RuntimeBinding>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub home: Option<Box<super::SandboxHome>>,
     /// Only a validated complete install receipt may populate this field.
     pub installed_request_sha256: Option<String>,
     pub revision: u64,
@@ -96,6 +98,7 @@ impl WarmSandbox {
             plan,
             state: WarmSandboxState::Preparing,
             runtime: None,
+            home: None,
             installed_request_sha256: None,
             revision: 1,
             created_at: at.clone(),
@@ -107,6 +110,22 @@ impl WarmSandbox {
 
     pub fn validate(&self) -> Result<(), SandboxStoreError> {
         self.plan.validate()?;
+        if let Some(home) = &self.home {
+            home.validate(&self.id)
+                .map_err(|error| corrupt(&error.to_string()))?;
+            if (self.runtime.is_some()
+                && self.state != WarmSandboxState::Retired
+                && home.attachment().is_none())
+                || (home.released
+                    && !matches!(
+                        self.state,
+                        WarmSandboxState::Retiring | WarmSandboxState::Retired
+                    ))
+                || (self.state == WarmSandboxState::Retired && !home.released)
+            {
+                return Err(corrupt("invalid home authority"));
+            }
+        }
         if self.revision == 0
             || self.id.as_str().is_empty()
             || seconds_from_rfc3339(&self.created_at).is_none()
@@ -147,6 +166,7 @@ impl WarmSandbox {
             || !self.plan.matches(sandbox, runtime_version)
             || sandbox.revision != 1
             || sandbox.runtime.is_some()
+            || sandbox.lifecycle.home.is_some()
             || sandbox.status != SandboxStatus::Provisioning
             || sandbox.work.step != SandboxWorkStep::ProvisionRuntime
             || sandbox.credential.key_generation != 0
@@ -162,6 +182,7 @@ impl WarmSandbox {
         let mut next = sandbox.clone();
         next.id = self.id.clone();
         next.runtime = self.runtime.clone();
+        next.lifecycle.home = self.home.clone();
         next.runtime
             .as_mut()
             .expect("ready runtime was validated")

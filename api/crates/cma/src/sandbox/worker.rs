@@ -15,6 +15,7 @@ use super::live_agents::LiveAgentRegistry;
 #[cfg(test)]
 use layer2_core::sandbox::SandboxPolicy;
 
+mod home;
 mod lifecycle;
 mod provisioning;
 mod retirement;
@@ -83,6 +84,7 @@ pub(crate) struct SandboxWorkerDependencies {
 
 #[derive(Clone)]
 pub(crate) struct SandboxWorkerConfig {
+    pub home_policy: Option<layer3_adapter::HomeVolumePolicy>,
     pub execution: layer2_core::sandbox::ProvisioningExecution,
     pub holder: String,
     pub deployment_id: String,
@@ -110,6 +112,7 @@ impl SandboxWorkerConfig {
         policy: Arc<dyn SandboxPolicySource>,
     ) -> Self {
         Self {
+            home_policy: None,
             execution: Default::default(),
             holder: holder.into(),
             deployment_id: deployment_id.into(),
@@ -128,6 +131,11 @@ impl SandboxWorkerConfig {
         self.lease_duration = self.lease_duration.max(Duration::from_secs(
             layer3_adapter::DEFAULT_TOTAL_TIMEOUT_SECONDS + 60,
         ));
+        self
+    }
+
+    pub fn with_home_policy(mut self, policy: Option<layer3_adapter::HomeVolumePolicy>) -> Self {
+        self.home_policy = policy;
         self
     }
 }

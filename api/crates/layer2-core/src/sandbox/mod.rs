@@ -31,6 +31,7 @@ mod first_message;
 mod first_message_dispatch;
 mod first_message_service;
 mod hierarchy;
+mod home;
 mod inactivity;
 mod launch_recovery;
 mod launch_service;
@@ -144,6 +145,7 @@ pub use hierarchy::{
     WorkspaceHierarchyRecord, WorkspaceHierarchySummary, WorkspaceHierarchyView,
     WorktreeHierarchySummary,
 };
+pub use home::SandboxHome;
 pub use inactivity::{
     inactivity_pause_notice, is_inactivity_pause_candidate, SandboxAgentActivity,
     SandboxAgentLogActivity,

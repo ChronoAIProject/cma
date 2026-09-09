@@ -56,6 +56,14 @@ pub enum SandboxRuntimeLossApplication {
 
 #[async_trait]
 pub trait SandboxReconciliationStore: Send + Sync {
+    /// Read unowned home authority before owned authority, across atomic warm claims.
+    async fn unowned_home_authority(
+        &self,
+        _request: &layer3_adapter::HomeVolumeRequest,
+    ) -> Result<bool, SandboxStoreError> {
+        Ok(false)
+    }
+
     /// Read this before the owned Sandbox authority. A claim commits both records
     /// atomically, so an observed Claimed reservation must precede that fresh read.
     async fn unowned_runtime_authority(
