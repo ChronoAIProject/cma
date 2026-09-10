@@ -8,7 +8,9 @@ use super::common::{
     validate_metadata, AgentProfileRef, ProfileError, ProfileVisibility, WorkspaceProfileRef,
 };
 use super::content_digest;
-use super::validation::{validate_commands, validate_workspace_name};
+use super::validation::{validate_command, validate_workspace_name, MAX_COMMAND_BYTES};
+
+const AFTER_CREDENTIALS: &str = "# cma:after-credentials\n";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
@@ -85,6 +87,24 @@ pub struct WorkspaceProfileContent {
 }
 
 impl WorkspaceProfileContent {
+    /// Credential-dependent hooks are explicitly marked by the profile author.
+    /// All ordinary setup work can finish before a warm environment is assigned.
+    pub fn preparation_commands(&self) -> Vec<String> {
+        self.setup_commands
+            .iter()
+            .filter(|command| !command.starts_with(AFTER_CREDENTIALS))
+            .cloned()
+            .collect()
+    }
+
+    pub fn credential_commands(&self) -> Vec<String> {
+        self.setup_commands
+            .iter()
+            .filter(|command| command.starts_with(AFTER_CREDENTIALS))
+            .cloned()
+            .collect()
+    }
+
     pub fn validate(&self) -> Result<(), ProfileError> {
         self.location.validate()?;
         if !self.name.is_empty() {
@@ -92,7 +112,15 @@ impl WorkspaceProfileContent {
         } else if !matches!(self.location, WorkspaceLocation::GitRepository { .. }) {
             return Err(ProfileError::new("invalid_workspace_name", "name"));
         }
-        validate_commands(&self.setup_commands, 16)?;
+        if self.setup_commands.len() > 16 {
+            return Err(ProfileError::new("too_many_commands", "commands"));
+        }
+        for command in &self.setup_commands {
+            if command.len() > MAX_COMMAND_BYTES {
+                return Err(ProfileError::new("invalid_command", "commands"));
+            }
+            validate_command(command.strip_prefix(AFTER_CREDENTIALS).unwrap_or(command))?;
+        }
         if self.agent_profiles.len() > 8 {
             return Err(ProfileError::new(
                 "too_many_agent_profiles",

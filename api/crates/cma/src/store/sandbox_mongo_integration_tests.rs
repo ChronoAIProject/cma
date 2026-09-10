@@ -625,6 +625,7 @@ mod sandbox_lifecycle_tests;
 mod service_access_tests;
 mod skill_material_tests;
 mod transaction_reconciliation_tests;
+mod warm_hierarchy_tests;
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
 async fn fresh_database_initializes_every_schema_v1_collection_and_index() {

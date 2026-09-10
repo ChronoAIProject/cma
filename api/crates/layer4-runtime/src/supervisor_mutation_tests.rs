@@ -18,6 +18,9 @@ use sha2::{Digest, Sha256};
 use super::*;
 use crate::mutation_journal::{self, Begin, Operation};
 
+#[path = "supervisor_warmup_tests.rs"]
+mod warmup_tests;
+
 fn add_worktree_request(request: WorktreeRequest) -> RequestFrame {
     RequestFrame::AddWorktree(FencedRequest::new(1, request))
 }

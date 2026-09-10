@@ -1,7 +1,29 @@
 use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
+
+/// Immutable public profile material, fetched by the control plane. No credentials.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SkillArchive {
+    pub sha256: String,
+    pub bytes: Vec<u8>,
+}
 use sha2::{Digest, Sha256};
+
+impl SkillArchive {
+    pub fn validate(&self) -> crate::Result<()> {
+        if self.bytes.is_empty()
+            || self.bytes.len() > 64 * 1024 * 1024
+            || self.sha256 != format!("{:x}", Sha256::digest(&self.bytes))
+        {
+            return Err(crate::AdapterError::Rejected(
+                "skill archive size or digest is invalid".into(),
+            ));
+        }
+        Ok(())
+    }
+}
 
 /// Stable slot identity. It is always the owning agent's identifier.
 #[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]

@@ -21,6 +21,7 @@ pub(super) fn expect_ack(response: ResponseFrame) -> crate::Result<()> {
 
 pub(super) fn response_operation(response: &ResponseFrame) -> WireOperation {
     match response {
+        ResponseFrame::CacheSkillArchive { .. } => WireOperation::CacheSkillArchive,
         ResponseFrame::RuntimeStatus(_) => WireOperation::RuntimeStatus,
         ResponseFrame::Install(_) => WireOperation::Install,
         ResponseFrame::BootstrapRestore(_) => WireOperation::BootstrapRestore,
@@ -57,6 +58,7 @@ pub(super) fn failure_error(failure: WireFailure) -> AdapterError {
 
 pub(super) const fn operation_name(operation: WireOperation) -> &'static str {
     match operation {
+        WireOperation::CacheSkillArchive => "cache skill archive",
         WireOperation::RuntimeStatus => "runtime status",
         WireOperation::Install => "install",
         WireOperation::BootstrapRestore => "restore bootstrap",

@@ -218,6 +218,13 @@ impl HostedBackend for InMemoryHostedBackend {
             return refused(operation, "checkpoint_writers_held");
         }
         let response = match request {
+            RequestFrame::CacheSkillArchive(archive) => {
+                require_credential(runtime, operation)?;
+                archive.validate()?;
+                Ok(ResponseFrame::CacheSkillArchive {
+                    sha256: archive.sha256,
+                })
+            }
             RequestFrame::Install(request) => {
                 bootstrap::install(runtime, &self.corrupt_install_receipt, request, operation)
             }

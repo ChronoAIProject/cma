@@ -21,6 +21,57 @@ fn zip_bytes() -> Vec<u8> {
     bytes.into_inner()
 }
 
+#[tokio::test]
+async fn warm_skill_archive_installs_without_credentials_or_network_and_refuses_tampering() {
+    let root = std::env::temp_dir().join(format!("cma-warm-skill-{}", std::process::id()));
+    let config = crate::config::RuntimeConfig::for_test(root.clone());
+    let bytes = zip_bytes();
+    let archive = layer3_adapter::SkillArchive {
+        sha256: hex(&Sha256::digest(&bytes)),
+        bytes,
+    };
+    cache_archive(&config, &archive).unwrap();
+    cache_archive(&config, &archive).unwrap();
+    let skill = AgentSkill {
+        id: "review".into(),
+        name: None,
+        version: Some("1".into()),
+        archive_sha256: archive.sha256.clone(),
+        source_url: "https://unreachable.invalid/skill".into(),
+    };
+    std::fs::create_dir_all(&root).unwrap();
+    assert!(config.nyxid_url.is_none());
+    install_prepared(
+        &config,
+        &reqwest::Client::new(),
+        &skill,
+        &root.join("review"),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        std::fs::read(root.join("review/SKILL.md")).unwrap(),
+        b"# Verified\n"
+    );
+    std::fs::write(
+        config.state_root.join("warm-skills").join(&archive.sha256),
+        b"modified",
+    )
+    .unwrap();
+    let error = install_prepared(
+        &config,
+        &reqwest::Client::new(),
+        &skill,
+        &root.join("invalid"),
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(error.code, "skill_checksum_mismatch");
+    assert!(!root.join("invalid").exists());
+    std::fs::remove_dir_all(root).unwrap();
+    std::fs::remove_dir_all(config.state_root).unwrap();
+}
+
 async fn server(bytes: Vec<u8>) -> (String, tokio::task::JoinHandle<()>) {
     let app = axum::Router::new().route(
         "/api/v1/proxy/s/ornn-api/api/v1/skills/review/versions/1/download",

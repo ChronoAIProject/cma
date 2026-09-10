@@ -134,6 +134,12 @@ async fn plan(
                 .into_iter()
                 .collect();
             let plan = WarmSandboxPlan {
+                workspaces: super::hierarchy::resolve(
+                    store,
+                    &revision.content.workspace_profiles,
+                    session,
+                )
+                .await?,
                 profile: SandboxProfileSnapshot::from(&revision),
                 reaches,
                 runtime_version: runtime_version.into(),

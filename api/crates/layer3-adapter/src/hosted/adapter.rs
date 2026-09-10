@@ -32,6 +32,8 @@ mod install;
 mod runtime_lifecycle;
 #[path = "adapter_workspace.rs"]
 mod workspace;
+#[path = "adapter_writer_hold.rs"]
+mod writer_hold;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct RuntimeState {
@@ -122,51 +124,6 @@ impl HostedAdapter {
             ));
         }
         Ok(())
-    }
-
-    async fn resume_checkpoint_writer_hold(
-        &self,
-        handle: &RuntimeHandle,
-        request: &CheckpointWriterResumeRequest,
-    ) -> crate::Result<CheckpointWriterResumeReceipt> {
-        match self
-            .exchange(
-                handle,
-                RequestFrame::ResumeCheckpointWriters(request.clone()),
-            )
-            .await?
-        {
-            ResponseFrame::ResumeCheckpointWriters(receipt)
-                if receipt.writers_resumed
-                    && crate::writer_resume_tokens_match(
-                        &receipt.writer_resume_token,
-                        &request.writer_resume_token,
-                    ) =>
-            {
-                Ok(receipt)
-            }
-            ResponseFrame::ResumeCheckpointWriters(_) => Err(AdapterError::Rejected(
-                "runtime did not acknowledge the exact checkpoint writer resume".into(),
-            )),
-            _ => unreachable!("exchange verifies response operation"),
-        }
-    }
-
-    async fn recover_checkpoint_writer_hold(
-        &self,
-        handle: &RuntimeHandle,
-        writer_resume_token: &str,
-        original: AdapterError,
-    ) -> AdapterError {
-        let resume = CheckpointWriterResumeRequest {
-            writer_resume_token: writer_resume_token.into(),
-        };
-        match self.resume_checkpoint_writer_hold(handle, &resume).await {
-            Ok(_) => original,
-            Err(recovery) => AdapterError::Unavailable(format!(
-                "checkpoint writer recovery could not be verified after {original}; recovery failed: {recovery}"
-            )),
-        }
     }
 }
 
@@ -289,6 +246,23 @@ impl SandboxAdapter for HostedAdapter {
         request: &WorkspaceRequest,
     ) -> crate::Result<WorkspaceReceipt> {
         workspace::prepare(self, handle, request).await
+    }
+
+    async fn cache_skill_archive(
+        &self,
+        handle: &RuntimeHandle,
+        archive: &crate::SkillArchive,
+    ) -> crate::Result<()> {
+        archive.validate()?;
+        match self
+            .exchange(handle, RequestFrame::CacheSkillArchive(archive.clone()))
+            .await?
+        {
+            ResponseFrame::CacheSkillArchive { sha256 } if sha256 == archive.sha256 => Ok(()),
+            _ => Err(AdapterError::Rejected(
+                "skill cache receipt changed its digest".into(),
+            )),
+        }
     }
 
     async fn run_workspace_setup(

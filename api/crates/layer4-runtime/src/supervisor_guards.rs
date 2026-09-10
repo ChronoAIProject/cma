@@ -5,6 +5,39 @@ use crate::failure::{Result, RuntimeError};
 use crate::paths::safe_component;
 
 impl Supervisor {
+    /// Public preparation may run after installation without any user credential.
+    pub(super) async fn require_preparation(&self) -> Result<()> {
+        if self.allow_unowned_preparation && *self.phase.read().await == Phase::Installed {
+            Ok(())
+        } else {
+            self.require_credentialed().await
+        }
+    }
+
+    pub(super) async fn authorize_preparation(
+        &self,
+        request: &layer3_adapter::wire::RequestFrame,
+    ) -> Result<()> {
+        use layer3_adapter::wire::RequestFrame;
+        if matches!(request, RequestFrame::WorkspaceSetup(setup)
+            if setup.operation_id.ends_with(":credential-setup:v1"))
+        {
+            return self.require_credentialed().await;
+        }
+        if matches!(
+            request,
+            RequestFrame::PrepareWorkspace(_)
+                | RequestFrame::WorkspaceSetup(_)
+                | RequestFrame::AddWorktree(_)
+                | RequestFrame::MaterializeAgentHome(_)
+                | RequestFrame::OpenAgent(_)
+                | RequestFrame::CacheSkillArchive(_)
+        ) {
+            self.require_preparation().await
+        } else {
+            self.require_credentialed().await
+        }
+    }
     pub(super) async fn ensure_workspace_idle(&self, workspace: &str) -> Result<()> {
         safe_component(workspace, "workspace name")?;
         let root = self.config.home.join(workspace);

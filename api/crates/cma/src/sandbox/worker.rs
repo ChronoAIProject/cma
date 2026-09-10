@@ -163,7 +163,7 @@ impl SandboxWorker {
         let mut completed = 0;
         let mut first_error = None;
         for id in due {
-            match self.run_one(&id, now).await {
+            match self.run_scheduled(&id, now).await {
                 Ok(true) => completed += 1,
                 Ok(false) => {}
                 Err(error) => {
@@ -190,6 +190,38 @@ impl SandboxWorker {
             return Ok(false);
         };
         Box::pin(self.execute(sandbox, now)).await?;
+        Ok(true)
+    }
+
+    async fn run_scheduled(
+        &self,
+        id: &SandboxId,
+        now: SystemTime,
+    ) -> Result<bool, SandboxStoreError> {
+        let started = tokio::time::Instant::now();
+        let progressed = self.run_one(id, now).await?;
+        if !progressed {
+            return Ok(false);
+        }
+        // Installation and credential binding need no polling delay between
+        // committed steps. Each step still acquires its own current lease.
+        for _ in 0..16 {
+            let Some(sandbox) = self.dependencies.store.get_sandbox(id).await? else {
+                break;
+            };
+            if !matches!(
+                sandbox.status,
+                layer2_core::sandbox::SandboxStatus::Provisioning
+                    | layer2_core::sandbox::SandboxStatus::Installing
+            ) || sandbox.runtime.is_none()
+                || !sandbox.work.is_due(&rfc3339_at(now + started.elapsed()))
+            {
+                break;
+            }
+            if !self.run_one(id, now + started.elapsed()).await? {
+                break;
+            }
+        }
         Ok(true)
     }
 

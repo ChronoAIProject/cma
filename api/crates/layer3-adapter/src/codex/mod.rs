@@ -221,6 +221,14 @@ impl SandboxAdapter for CodexAdapter {
             .await
     }
 
+    async fn cache_skill_archive(
+        &self,
+        handle: &RuntimeHandle,
+        archive: &crate::SkillArchive,
+    ) -> crate::Result<()> {
+        self.hosted.cache_skill_archive(handle, archive).await
+    }
+
     async fn remove_agent_home(
         &self,
         handle: &RuntimeHandle,

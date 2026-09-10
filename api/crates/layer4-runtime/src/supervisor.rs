@@ -60,6 +60,9 @@ pub(crate) struct Supervisor {
     config: RuntimeConfig,
     boot_id: String,
     phase: RwLock<Phase>,
+    // Only a fresh runtime may prepare unowned work. Recovered homes require
+    // renewed owner credentials even when their installation receipt survives.
+    allow_unowned_preparation: bool,
     restore_bootstrap: RwLock<Option<RestoreBootstrapReceipt>>,
     operation_gate: Arc<Mutex<()>>,
     credential: CredentialHolder,
@@ -123,6 +126,7 @@ impl Supervisor {
             config,
             boot_id: uuid::Uuid::new_v4().simple().to_string(),
             phase: RwLock::new(phase),
+            allow_unowned_preparation: phase == Phase::Provisioned,
             restore_bootstrap: RwLock::new(restore_bootstrap),
             operation_gate: Arc::new(Mutex::new(())),
             credential: CredentialHolder::new(),
@@ -163,7 +167,7 @@ impl Supervisor {
             if let Err(error) = self.recover_journals().await {
                 return error.response(operation);
             }
-            if let Err(error) = self.require_credentialed().await {
+            if let Err(error) = self.authorize_preparation(&request).await {
                 return error.response(operation);
             }
             if let RequestFrame::RemoveWorkspace(reference) = &request {
@@ -223,9 +227,15 @@ impl Supervisor {
                 | RequestFrame::ResumeCheckpointWriters(_)
                 | RequestFrame::Resources
         ) {
-            self.require_credentialed().await?;
+            self.authorize_preparation(&request).await?;
         }
         match request {
+            RequestFrame::CacheSkillArchive(archive) => {
+                crate::skills::cache_archive(&self.config, &archive)?;
+                Ok(ResponseFrame::CacheSkillArchive {
+                    sha256: archive.sha256,
+                })
+            }
             RequestFrame::Install(request) => self.install(request).await,
             RequestFrame::BootstrapRestore(request) => self.bootstrap_restore(request).await,
             RequestFrame::Credential(frame) => self.credential(frame).await,
@@ -337,7 +347,7 @@ impl Supervisor {
         let Some((authority_fence, operation)) = fenced else {
             return Ok(());
         };
-        self.require_credentialed().await?;
+        self.authorize_preparation(request).await?;
         crate::mutation_authority::admit(&self.config, authority_fence, &operation)
     }
 

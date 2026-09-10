@@ -55,7 +55,7 @@ impl RuntimeStatus {
                 .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
             || (self.installation_ready && self.restore_pending)
             || (self.credential_ready && !self.installation_ready && !self.restore_pending)
-            || (self.agent_processes != 0 && (!self.credential_ready || !self.installation_ready))
+            || (self.agent_processes != 0 && !self.installation_ready)
             || self.agent_processes > 16
         {
             return Err(AdapterError::Rejected(

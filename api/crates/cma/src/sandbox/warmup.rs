@@ -16,7 +16,12 @@ use tokio::time::MissedTickBehavior;
 use super::runtime_mapping::environment_spec;
 use crate::store::{MongoSandboxStore, WarmSandboxClaim};
 
+mod hierarchy;
+#[cfg(test)]
+pub(super) use hierarchy::prepare_step as prepare_hierarchy_step;
+
 pub(crate) struct WarmSandboxWorker {
+    pub skills: Arc<dyn super::agent_skills::AgentSkillResolver>,
     pub home_policy: Option<layer3_adapter::HomeVolumePolicy>,
     pub store: Arc<MongoSandboxStore>,
     pub adapter: Arc<dyn SandboxAdapter>,
@@ -102,12 +107,35 @@ impl WarmSandboxWorker {
     }
 
     async fn run_claim(&self, claim: WarmSandboxClaim) -> Result<(), SandboxStoreError> {
-        let operation = prepare_environment(
-            self.adapter.as_ref(),
-            &self.deployment_id,
-            &claim.record,
-            self.home_policy.as_ref(),
-        );
+        let operation = async {
+            let mut next = prepare_environment(
+                self.adapter.as_ref(),
+                &self.deployment_id,
+                &claim.record,
+                self.home_policy.as_ref(),
+            )
+            .await?;
+            if next.state == WarmSandboxState::Installing && next.installed_request_sha256.is_some()
+            {
+                let owner = self
+                    .store
+                    .warm_profile_owner(&next.plan.profile.id)
+                    .await
+                    .map_err(|_| {
+                        layer3_adapter::AdapterError::Unavailable(
+                            "warm Profile owner is unavailable".into(),
+                        )
+                    })?;
+                hierarchy::prepare_step(
+                    self.adapter.as_ref(),
+                    self.skills.as_ref(),
+                    &owner,
+                    &mut next,
+                )
+                .await?;
+            }
+            Ok::<_, layer3_adapter::AdapterError>(next)
+        };
         tokio::pin!(operation);
         let mut heartbeat = tokio::time::interval(Duration::from_secs(20));
         heartbeat.set_missed_tick_behavior(MissedTickBehavior::Skip);
@@ -199,7 +227,13 @@ pub(super) async fn prepare_environment(
             {
                 if runtime.boot_id.as_ref() != Some(&status.boot_id)
                     || status.credential_ready
-                    || status.agent_processes != 0
+                    || usize::from(status.agent_processes)
+                        != record
+                            .workspaces
+                            .iter()
+                            .flat_map(|workspace| &workspace.agents)
+                            .filter(|agent| agent.conversation_id.is_some())
+                            .count()
                     || status.restore_pending
                 {
                     next.state = WarmSandboxState::Retiring;
@@ -232,7 +266,12 @@ pub(super) async fn prepare_environment(
                 ));
             }
             next.installed_request_sha256 = Some(receipt.request_sha256);
-            next.state = WarmSandboxState::Ready;
+            if record.workspaces.is_empty() {
+                next.state = WarmSandboxState::Ready;
+            }
+            if next.state == WarmSandboxState::Ready {
+                hierarchy::verify_sessions(adapter, &next).await?;
+            }
         }
         WarmSandboxState::Retiring => {
             for observation in adapter.runtime_inventory().await? {

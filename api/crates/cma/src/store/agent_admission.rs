@@ -269,9 +269,10 @@ async fn apply_admission(
         }));
     }
 
-    let creation = admission
-        .materialize(&workspace)
-        .map_err(ApplyError::Domain)?;
+    let creation =
+        super::warm_sandboxes::adopt_agent(store, &sandbox, &workspace, admission, session)
+            .await
+            .map_err(ApplyError::Domain)?;
     let log_summary =
         scan_complete_log_with_session(store, &creation.agent.id, 0, session, |_| Ok(())).await?;
     ensure_append_capacity(

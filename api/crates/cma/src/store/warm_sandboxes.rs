@@ -12,6 +12,9 @@ use super::sandbox_mongo::{
 };
 
 mod admission;
+mod adoption;
+mod hierarchy;
+pub(super) use adoption::{adopt_agent, adopt_workspace};
 mod planning;
 mod work;
 pub(super) use admission::claim_ready;
@@ -34,7 +37,7 @@ pub(super) async fn ensure_indexes(
         .map_err(|error| layer2_core::StoreError::Unavailable(error.to_string()))
 }
 
-fn document(record: &WarmSandbox) -> Result<Document, SandboxStoreError> {
+pub(super) fn document(record: &WarmSandbox) -> Result<Document, SandboxStoreError> {
     record.validate()?;
     Ok(doc! {
         "_id": record.id.as_str(),
@@ -70,6 +73,20 @@ fn unavailable(error: mongodb::error::Error) -> SandboxStoreError {
 }
 
 impl MongoSandboxStore {
+    pub(crate) async fn warm_profile_owner(
+        &self,
+        id: &SandboxProfileId,
+    ) -> Result<layer2_core::SubjectId, SandboxStoreError> {
+        let document = self
+            .sandbox_profiles
+            .find_one(doc! { "_id": id.as_str() })
+            .await
+            .map_err(unavailable)?
+            .ok_or(SandboxStoreError::NotFound)?;
+        crate::store::sandbox_profiles::read_profile(&document)
+            .map(|profile| profile.owner)
+            .map_err(|error| SandboxStoreError::Corrupt(error.to_string()))
+    }
     pub(crate) async fn warm_sandbox(
         &self,
         id: &SandboxId,

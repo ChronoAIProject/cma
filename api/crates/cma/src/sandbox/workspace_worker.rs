@@ -19,6 +19,7 @@ use self::support::{
 mod execution;
 mod profile;
 mod removal;
+mod setup;
 mod support;
 pub(crate) use profile::DurableProfileWorkspaceProvisioner;
 
@@ -210,42 +211,6 @@ impl WorkspaceWorker {
                         .await;
                 }
                 self.advance(next, WorkspaceWorkStep::Setup, now).await
-            }
-            Ok(_) => {
-                self.handle_failure(workspace, WorkerFailure::invalid_receipt(), now)
-                    .await
-            }
-            Err(error) => self.handle_failure(workspace, failure(error), now).await,
-        }
-    }
-
-    async fn setup(&self, workspace: Workspace, now: SystemTime) -> Result<(), SandboxStoreError> {
-        let workspace = self.pin_execution(workspace).await?;
-        let (_, runtime) = match self.runtime(&workspace).await {
-            Ok(value) => value,
-            Err(failure) => return self.handle_failure(workspace, failure, now).await,
-        };
-        let execution = workspace
-            .work
-            .execution
-            .expect("execution policy was persisted");
-        let request = WorkspaceSetupRequest::with_timeouts(
-            workspace.operation_id(WorkspaceWorkStep::Setup),
-            workspace.id.to_string(),
-            workspace.name.clone(),
-            workspace.profile.content.setup_commands.clone(),
-            execution.command_timeout_seconds,
-            execution.total_timeout_seconds,
-            layer3_adapter::DEFAULT_COMMAND_OUTPUT_LIMIT_BYTES,
-        );
-        match self
-            .dependencies
-            .adapter
-            .run_workspace_setup(&runtime, &request)
-            .await
-        {
-            Ok(receipt) if valid_setup_receipt(&request, &receipt) => {
-                self.mark_ready(workspace, now).await
             }
             Ok(_) => {
                 self.handle_failure(workspace, WorkerFailure::invalid_receipt(), now)

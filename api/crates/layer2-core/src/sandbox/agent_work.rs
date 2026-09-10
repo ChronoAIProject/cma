@@ -117,6 +117,8 @@ pub struct AgentCleanupDebt {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AgentWorkState {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub warm_conversation_id: Option<String>,
     pub step: AgentWorkStep,
     pub ready_at: String,
     pub next_fence: u64,
@@ -136,6 +138,7 @@ pub struct AgentWorkState {
 impl AgentWorkState {
     pub fn new(step: AgentWorkStep, ready_at: String) -> Self {
         Self {
+            warm_conversation_id: None,
             step,
             ready_at,
             next_fence: 1,
@@ -152,6 +155,16 @@ impl AgentWorkState {
         &self,
         references: &[SkillRef],
     ) -> Result<(), SandboxModelError> {
+        if self.warm_conversation_id.as_ref().is_some_and(|id| {
+            id.trim().is_empty()
+                || id.len() > 512
+                || id.trim() != id
+                || id.chars().any(char::is_control)
+        }) {
+            return Err(SandboxModelError::invalid_value(
+                "agent.work.warm_conversation_id",
+            ));
+        }
         let Some(material) = &self.resolved_skills else {
             return Ok(());
         };

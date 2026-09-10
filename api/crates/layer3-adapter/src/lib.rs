@@ -30,7 +30,7 @@ pub use adapter::SandboxAdapter;
 pub use agent::{
     AgentCloseRequest, AgentHomePlan, AgentHomeRemoveRequest, AgentHomeRequest, AgentLaunch,
     AgentOpenRequest, AgentSkill, AgentSlot, ConversationSnapshot, HomeFile, HomeSymlink,
-    PermissionLevel, ReasoningEffort, RuntimeOptions, ThinkingEffort,
+    PermissionLevel, ReasoningEffort, RuntimeOptions, SkillArchive, ThinkingEffort,
 };
 pub use agent_provider::AgentProvider;
 pub use capabilities::{

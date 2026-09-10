@@ -349,7 +349,9 @@ fn validate_identity(
     request_sha256: &str,
 ) -> Result<()> {
     let expected = format!("workspace:{workspace_id}:{kind}:v1");
-    if operation_id != expected
+    let credential_setup =
+        kind == "setup" && operation_id == format!("workspace:{workspace_id}:credential-setup:v1");
+    if (operation_id != expected && !credential_setup)
         || workspace_id.is_empty()
         || workspace_id.len() > 128
         || !workspace_id
