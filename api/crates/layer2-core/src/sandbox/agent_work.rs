@@ -238,10 +238,10 @@ impl AgentWorkState {
             return Err(SandboxModelError::invalid_value("agent.work.fence"));
         }
         let ready_at = match (self.step, next, self.cleanup_not_before.as_ref()) {
-            (AgentWorkStep::FenceInteraction, AgentWorkStep::CloseProcess, Some(not_before))
-                if not_before > &ready_at =>
-            {
-                not_before.clone()
+            (AgentWorkStep::FenceInteraction, AgentWorkStep::CloseProcess, Some(not_before)) => {
+                // A delayed/restarted worker may fence after the old lease expires.
+                // That satisfies the wait; it must not make cleanup permanently invalid.
+                not_before.max(&ready_at).clone()
             }
             (_, _, Some(_)) => {
                 return Err(SandboxModelError::invalid_value(
