@@ -8,6 +8,33 @@ use layer2_core::Capability;
 use super::fixtures_tests::{frozen_inputs, Harness};
 
 #[tokio::test]
+async fn scheduled_launch_follows_ready_resources_without_waiting_between_stages() {
+    let harness = Harness::pending();
+    let now = super::fixtures_tests::time(1);
+    assert_eq!(harness.worker.run_due(now).await.unwrap(), 1);
+    let pending = harness.launch();
+    assert_eq!(pending.state, LaunchState::MessagePending);
+    assert_eq!(harness.driver.resource_counts(), (1, 1, 1));
+    // The first prompt is still queued: the scheduler must respect its
+    // deferred timestamp and must not spin or repeat resource effects.
+    assert_eq!(harness.worker.run_due(now).await.unwrap(), 0);
+    assert_eq!(harness.driver.calls().len(), 3);
+    harness
+        .driver
+        .complete_first_message(pending.resolution.agent.id().unwrap(), 2);
+    assert_eq!(
+        harness
+            .worker
+            .run_due(super::fixtures_tests::time(2))
+            .await
+            .unwrap(),
+        1
+    );
+    assert_eq!(harness.launch().state, LaunchState::Ready);
+    assert_eq!(harness.driver.calls().len(), 3);
+}
+
+#[tokio::test]
 async fn nothing_existing_reaches_ready_and_completes_only_after_the_agent_stops() {
     let harness = Harness::pending();
     for minute in 1..=6 {

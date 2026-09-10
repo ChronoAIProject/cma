@@ -25,7 +25,7 @@ pub(crate) use driver::{
 use support::FrozenLaunchContext;
 
 const DEFAULT_LEASE: Duration = Duration::from_secs(15 * 60);
-const DEFAULT_POLL: Duration = Duration::from_secs(5);
+const DEFAULT_POLL: Duration = Duration::from_secs(1);
 const DEFAULT_RETRY: Duration = Duration::from_secs(5);
 const WORK_BATCH_SIZE: u16 = 50;
 
@@ -91,7 +91,7 @@ impl LaunchWorker {
         let mut completed = 0;
         let mut first_error = None;
         for id in due {
-            match self.run_one(&id, now).await {
+            match self.run_scheduled(&id, now).await {
                 Ok(true) => completed += 1,
                 Ok(false) => {}
                 Err(error) => {
@@ -122,6 +122,24 @@ impl LaunchWorker {
         };
         self.execute(claimed, now).await?;
         Ok(true)
+    }
+
+    async fn run_scheduled(
+        &self,
+        id: &LaunchId,
+        now: SystemTime,
+    ) -> Result<bool, LaunchWorkerError> {
+        let started = tokio::time::Instant::now();
+        let mut progressed = false;
+        // Follow committed transitions immediately. A new durable claim on
+        // every step preserves cancellation, retry times and exclusive work.
+        for _ in 0..16 {
+            if !self.run_one(id, now + started.elapsed()).await? {
+                break;
+            }
+            progressed = true;
+        }
+        Ok(progressed)
     }
 
     async fn execute(&self, launch: Launch, now: SystemTime) -> Result<(), LaunchWorkerError> {

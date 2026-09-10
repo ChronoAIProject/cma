@@ -389,7 +389,11 @@ async fn reuse_profile_agent(
 ) -> Result<Option<layer2_core::sandbox::store::AgentCreation>, ApplyError> {
     use super::agents::{agent_replacement_fields, read_agent};
     use super::worktrees::read_worktree;
-    if !reuse_existing && !matches!(admission.origin, AgentOrigin::WorkspaceProfile { .. }) {
+    let prepared_only = !reuse_existing && matches!(admission.origin, AgentOrigin::Trigger { .. });
+    if !reuse_existing
+        && !prepared_only
+        && !matches!(admission.origin, AgentOrigin::WorkspaceProfile { .. })
+    {
         return Ok(None);
     }
     let mut query = doc! {
@@ -400,7 +404,14 @@ async fn reuse_profile_agent(
         "status": { "$in": LIVE_STATUSES },
         "record.requested_stop_reason": { "$exists": false },
     };
-    if !reuse_existing {
+    if prepared_only {
+        query.insert("record.origin.type", "workspace_profile");
+        query.insert("record.work.warm_conversation_id", doc! { "$exists": true });
+        query.insert(
+            "record.conversation.first_message",
+            doc! { "$exists": false },
+        );
+    } else if !reuse_existing {
         query.insert("record.origin.type", "trigger");
         query.insert("creation_key", doc! { "$regex": "^trigger-profile:" });
         query.remove("status");
@@ -418,6 +429,17 @@ async fn reuse_profile_agent(
     };
     let mut agent = read_agent(&document).map_err(ApplyError::Domain)?;
     if !admission.can_reuse(&agent, workspace, reuse_existing) {
+        return Ok(None);
+    }
+    if prepared_only
+        && store
+            .agent_reuse_bindings
+            .find_one(doc! { "agent_id": agent.id.as_str() })
+            .session(&mut *session)
+            .await
+            .map_err(ApplyError::Driver)?
+            .is_some()
+    {
         return Ok(None);
     }
     admission
@@ -442,6 +464,9 @@ async fn reuse_profile_agent(
         },
     )
     .await?;
+    if prepared_only && has_input {
+        return Ok(None);
+    }
     let prior_revision = agent.revision;
     let kind = admission
         .initialize_reused_agent(&mut agent, has_input)
@@ -475,7 +500,7 @@ async fn reuse_profile_agent(
     }
     // Explicit reuse participates in the same parent fences as creation, including a race
     // against automatic profile children and inactivity pause.
-    if reuse_existing {
+    if reuse_existing || prepared_only {
         store.agent_reuse_bindings.insert_one(doc! {
             "_id": super::agent_admission_records::binding_id(admission).map_err(ApplyError::Domain)?,
             "document_schema_version": DOCUMENT_SCHEMA_VERSION,

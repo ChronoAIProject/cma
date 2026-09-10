@@ -61,7 +61,10 @@ impl AgentWorker {
         let expected = agent.revision;
         let fence = claimed_fence(&agent, &self.config.holder)?;
         if let Some(material) = resolved_skills {
-            if agent.work.resolved_skills.is_some() {
+            if agent.work.resolved_skills.is_some()
+                && (agent.work.warm_conversation_id.is_none()
+                    || agent.work.resolved_skills.as_ref() != Some(&material))
+            {
                 return Err(SandboxStoreError::Corrupt(
                     "agent skill selection has no home intent".into(),
                 ));
