@@ -63,6 +63,22 @@ export const sandboxLifecycle = object({
   pause: eligibility,
   revive: eligibility,
   checkpoint: optional(checkpoint),
+  background_save: optional(
+    object({
+      phase: enumeration(
+        'capturing',
+        'preparing_export',
+        'exporting',
+        'uploading',
+        'finishing',
+        'saved',
+        'cancelled',
+      ),
+      started_at: text,
+      captured_at: optional(text),
+      epoch: positiveInteger,
+    }),
+  ),
   latest_snapshot: optional(object({ epoch: positiveInteger, saved_at: text, download_url: text })),
   operation: optional(operation),
 });

@@ -8,9 +8,23 @@ pub(super) fn checkpoint_sandbox_advanced(
     next: &Sandbox,
     checkpoint: &SandboxCheckpointRef,
     appended_at: &str,
+    nonblocking: bool,
 ) -> bool {
     let mut expected = current.clone();
-    let result = if let Some(capture) = current.lifecycle.checkpoint_capture.as_ref() {
+    let result = if nonblocking {
+        let Some(capture) = current.lifecycle.background_checkpoint.as_ref() else {
+            return false;
+        };
+        let Some(lease) = capture.work.lease.as_ref() else {
+            return false;
+        };
+        expected.publish_background_checkpoint(
+            checkpoint.clone(),
+            &lease.holder,
+            lease.fence,
+            appended_at.into(),
+        )
+    } else if let Some(capture) = current.lifecycle.checkpoint_capture.as_ref() {
         let Some(lease) = capture.work.lease.as_ref() else {
             return false;
         };

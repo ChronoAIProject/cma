@@ -177,6 +177,10 @@ pub struct SandboxLifecycleState {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub checkpoint_capture: Option<SandboxCheckpointCapture>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub background_checkpoint: Option<Box<super::SandboxBackgroundCheckpoint>>,
+    #[serde(default, skip_serializing_if = "checkpoint_epoch_is_unreserved")]
+    pub checkpoint_epoch_high_water: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub checkpoint_capture_completed_at: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub operation: Option<SandboxLifecycleOperation>,
@@ -188,6 +192,10 @@ pub struct SandboxLifecycleState {
     pub rotation: SandboxRotationAccounting,
 }
 
+fn checkpoint_epoch_is_unreserved(epoch: &u64) -> bool {
+    *epoch == 0
+}
+
 impl Default for SandboxLifecycleState {
     fn default() -> Self {
         Self {
@@ -197,6 +205,8 @@ impl Default for SandboxLifecycleState {
             runtime_generation_high_water: 0,
             runtime_provision: None,
             checkpoint_capture: None,
+            background_checkpoint: None,
+            checkpoint_epoch_high_water: 0,
             checkpoint_capture_completed_at: None,
             operation: None,
             checkpoints: SandboxCheckpointHistory::default(),
@@ -208,6 +218,9 @@ impl Default for SandboxLifecycleState {
 
 impl SandboxLifecycleState {
     pub fn validate(&self, sandbox: &Sandbox) -> Result<(), SandboxModelError> {
+        if let Some(capture) = &self.background_checkpoint {
+            capture.validate(sandbox)?;
+        }
         if let Some(recovery) = &self.home_recovery {
             recovery.validate_for(sandbox)?;
             if !matches!(

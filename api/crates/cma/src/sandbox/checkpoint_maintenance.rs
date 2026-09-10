@@ -1,3 +1,4 @@
+use futures_util::{stream, StreamExt};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
@@ -45,9 +46,22 @@ pub(crate) struct SandboxCheckpointMaintenance {
 
 #[derive(Clone)]
 pub(crate) struct ExportDependencies {
-    pub homes: Arc<layer3_adapter::provider::PersistentHomeVolumes>,
-    pub objects: Arc<crate::store::MongoCheckpointObjectStore>,
+    pub homes: Arc<dyn SnapshotExportStore>,
+    pub objects: Arc<dyn layer3_adapter::hosted::CheckpointArchiveStoreFactory>,
     pub image: String,
+}
+
+pub(crate) trait SnapshotExportStore:
+    layer3_adapter::HomeSnapshotStore
+    + layer3_adapter::HomeSnapshotViewStore
+    + layer3_adapter::HomeSnapshotExportJobStore
+{
+}
+impl<T> SnapshotExportStore for T where
+    T: layer3_adapter::HomeSnapshotStore
+        + layer3_adapter::HomeSnapshotViewStore
+        + layer3_adapter::HomeSnapshotExportJobStore
+{
 }
 
 impl SandboxCheckpointMaintenance {
@@ -115,8 +129,21 @@ impl SandboxCheckpointMaintenance {
                         .map_err(|_| SandboxStoreError::InvalidPage)?,
                 )
                 .await?;
-            for sandbox in page.items {
-                match self.process(sandbox, &clock).await {
+            let (background, held): (Vec<_>, Vec<_>) =
+                page.items.into_iter().partition(|sandbox| {
+                    self.export.is_some()
+                        && (sandbox.lifecycle.background_checkpoint.is_some()
+                            || (sandbox.lifecycle.checkpoint_capture.is_none()
+                                && sandbox.lifecycle.home.is_some()))
+                });
+            let background = stream::iter(background)
+                .map(|sandbox| self.process(sandbox, &clock))
+                .buffer_unordered(4);
+            let held = stream::iter(held).then(|sandbox| self.process(sandbox, &clock));
+            let results = background.chain(held);
+            tokio::pin!(results);
+            while let Some(result) = results.next().await {
+                match result {
                     Ok(changed) => progressed += usize::from(changed),
                     Err(SandboxStoreError::Conflict | SandboxStoreError::NotFound) => {}
                     Err(error) => {
@@ -137,6 +164,9 @@ impl SandboxCheckpointMaintenance {
     ) -> Result<bool, SandboxStoreError> {
         let now = clock.now();
         let stamp = rfc3339_at(now);
+        if sandbox.lifecycle.background_checkpoint.is_some() {
+            return self.process_export(&sandbox, clock).await;
+        }
         let Some(capture) = sandbox.lifecycle.checkpoint_capture.as_ref() else {
             let policy = self
                 .policy
@@ -150,11 +180,6 @@ impl SandboxCheckpointMaintenance {
             ) {
                 return Ok(false);
             }
-            let agents = self.agents(&sandbox).await?;
-            let workspaces = self.workspaces(&sandbox).await?;
-            if validate_checkpoint_capture_work(&sandbox, &agents, &workspaces).is_err() {
-                return Ok(false);
-            }
             if self.export.is_some()
                 && sandbox
                     .lifecycle
@@ -162,8 +187,13 @@ impl SandboxCheckpointMaintenance {
                     .as_ref()
                     .is_some_and(|home| home.attachment().is_some())
             {
-                self.capture_and_publish_export(&sandbox, clock).await?;
+                self.begin_export(&sandbox, clock).await?;
                 return Ok(true);
+            }
+            let agents = self.agents(&sandbox).await?;
+            let workspaces = self.workspaces(&sandbox).await?;
+            if validate_checkpoint_capture_work(&sandbox, &agents, &workspaces).is_err() {
+                return Ok(false);
             }
             let mut next = sandbox.clone();
             let stamp = rfc3339_at(clock.now());

@@ -30,7 +30,11 @@ impl SandboxLifecycleExecutionStore for InMemorySandboxStore {
             .sandboxes
             .get(&mutation.guard.sandbox_id)
             .ok_or(SandboxStoreError::NotFound)?;
-        let agents = sandbox_agent_log_rows(&state, &current.id);
+        let agents = if mutation.nonblocking {
+            Vec::new()
+        } else {
+            sandbox_agent_log_rows(&state, &current.id)
+        };
         for (agent, _) in agents.iter().filter(|(agent, _)| agent.status.is_live()) {
             let logs = state
                 .agent_logs

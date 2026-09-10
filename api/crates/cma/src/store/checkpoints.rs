@@ -159,7 +159,8 @@ pub(super) async fn publish_checkpoint(
             Ok(receipt) => receipt,
             Err(PublishError::Domain(error)) => {
                 let _ = session.abort_transaction().await;
-                if error == SandboxStoreError::Duplicate
+                if (error == SandboxStoreError::Duplicate
+                    || (mutation.nonblocking && error == SandboxStoreError::Conflict))
                     && reconcile_publication(store, &mutation).await?
                 {
                     return Ok(());

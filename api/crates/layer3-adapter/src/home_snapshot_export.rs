@@ -47,16 +47,21 @@ impl HomeSnapshotExportRequest {
         let _: k8s_openapi::apimachinery::pkg::apis::meta::v1::Time =
             serde_json::from_value(serde_json::Value::String(stamp.clone()))
                 .map_err(|_| invalid())?;
-        if !self.observation.ready
-            || self.runtime_generation == 0
-            || self.conversations.len() > MAX_SNAPSHOT_EXPORT_CONVERSATIONS
-        {
+        if !self.observation.ready || self.runtime_generation == 0 {
+            return Err(invalid());
+        }
+        Self::validate_conversations(&self.conversations)
+    }
+
+    /// Validate the identity set before the immutable snapshot is allocated.
+    pub fn validate_conversations(identities: &[HomeSnapshotConversationIdentity]) -> Result<()> {
+        if identities.len() > MAX_SNAPSHOT_EXPORT_CONVERSATIONS {
             return Err(invalid());
         }
         let mut agents = BTreeSet::new();
         let mut conversations = BTreeSet::new();
         let mut previous = None;
-        for identity in &self.conversations {
+        for identity in identities {
             if identity.agent_id.is_empty()
                 || identity.agent_id.len() > 64
                 || identity.agent_id.starts_with('.')

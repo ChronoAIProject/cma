@@ -69,6 +69,19 @@ export interface SandboxLifecycle {
     readonly savedAt: string;
     readonly downloadUrl: string;
   };
+  readonly backgroundSave?: {
+    readonly phase:
+      | 'capturing'
+      | 'preparing_export'
+      | 'exporting'
+      | 'uploading'
+      | 'finishing'
+      | 'saved'
+      | 'cancelled';
+    readonly startedAt: string;
+    readonly capturedAt?: string;
+    readonly epoch: number;
+  };
   readonly operation?: {
     readonly purpose: 'pause' | 'revive' | 'image_rotation';
     readonly phase: string;

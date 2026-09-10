@@ -118,6 +118,30 @@ impl PersistentHomeVolumes {
 
 #[async_trait::async_trait]
 impl HomeVolumeStore for PersistentHomeVolumes {
+    async fn remove_captures(&self, attachment: &HomeVolumeAttachment) -> Result<()> {
+        use crate::{HomeSnapshotExportJobStore, HomeSnapshotStore, HomeSnapshotViewStore};
+        attachment.receipt.validate_for(&attachment.request)?;
+        for entry in self.export_job_inventory().await? {
+            if entry.request.export.snapshot.home == *attachment {
+                self.remove_export_job(&entry.request, Some(&entry.receipt))
+                    .await?;
+            }
+        }
+        for entry in self.view_inventory().await? {
+            if entry.request.snapshot.home == *attachment {
+                self.remove_view(&entry.request, Some(&entry.receipt))
+                    .await?;
+            }
+        }
+        for entry in self.snapshot_inventory().await? {
+            if entry.request.home == *attachment {
+                self.remove_snapshot(&entry.request, Some(&entry.receipt))
+                    .await?;
+            }
+        }
+        Ok(())
+    }
+
     async fn inventory(&self) -> Result<Vec<HomeVolumeAttachment>> {
         let mut params = ListParams::default()
             .labels(&format!("cma/home-managed-by={}", self.controller))

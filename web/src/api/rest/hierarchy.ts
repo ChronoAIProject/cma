@@ -22,6 +22,15 @@ export function sandboxSummary(value: Wire.SandboxSummary): SandboxSummary {
         : {
             pause: value.lifecycle.pause,
             revive: value.lifecycle.revive,
+            backgroundSave:
+              value.lifecycle.background_save === undefined
+                ? undefined
+                : {
+                    phase: value.lifecycle.background_save.phase,
+                    startedAt: value.lifecycle.background_save.started_at,
+                    capturedAt: value.lifecycle.background_save.captured_at,
+                    epoch: value.lifecycle.background_save.epoch,
+                  },
             latestSnapshot:
               value.lifecycle.latest_snapshot === undefined
                 ? undefined

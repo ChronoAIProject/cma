@@ -44,13 +44,13 @@ pub(super) async fn release_home(
     home: &mut SandboxHome,
 ) -> Result<(), AdapterError> {
     if !home.released {
-        adapter
-            .home_volumes()
-            .ok_or_else(|| {
-                AdapterError::Unsupported("durable home storage is not configured".into())
-            })?
-            .remove(&home.request, home.receipt.as_ref())
-            .await?;
+        let store = adapter.home_volumes().ok_or_else(|| {
+            AdapterError::Unsupported("durable home storage is not configured".into())
+        })?;
+        if let Some(attachment) = home.attachment() {
+            store.remove_captures(&attachment).await?;
+        }
+        store.remove(&home.request, home.receipt.as_ref()).await?;
         home.released = true;
     }
     Ok(())

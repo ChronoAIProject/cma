@@ -85,7 +85,7 @@ impl SandboxScheduler {
     pub(crate) fn for_checkpoints(worker: Arc<SandboxCheckpointMaintenance>) -> Self {
         Self {
             worker,
-            sweep_interval: Duration::from_secs(15),
+            sweep_interval: Duration::from_secs(2),
             concurrent_sweeps: 1,
         }
     }

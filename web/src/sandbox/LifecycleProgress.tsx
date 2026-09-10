@@ -38,9 +38,11 @@ export function LifecycleProgress({
   const client = suppliedClient ?? contextClient;
   const operation = sandbox.lifecycle?.operation;
   const hasOperation = operation !== undefined;
+  const background = sandbox.lifecycle?.backgroundSave;
+  const hasProgress = hasOperation || background !== undefined;
   const [now, setNow] = useState(Date.now);
   useEffect(() => {
-    if (!hasOperation) return;
+    if (!hasProgress) return;
     const tick = () => {
       if (!document.hidden) setNow(Date.now());
     };
@@ -51,7 +53,36 @@ export function LifecycleProgress({
       clearInterval(timer);
       document.removeEventListener('visibilitychange', tick);
     };
-  }, [hasOperation]);
+  }, [hasProgress]);
+  if (operation === undefined && background !== undefined && sandbox.status === 'active') {
+    const labels = {
+      capturing: 'Preparing a snapshot',
+      preparing_export: 'Preparing to save',
+      exporting: 'Saving progress in the background',
+      uploading: 'Uploading saved progress',
+      finishing: 'Finishing save',
+      saved: 'Progress saved',
+      cancelled: 'Save will retry when the sandbox is ready',
+    };
+    const elapsed = elapsedDuration(background.startedAt, now);
+    return (
+      <section className="lifecycle-progress" aria-label="Sandbox progress">
+        <p className="lifecycle-progress__stage" aria-live="polite">
+          {labels[background.phase]}
+        </p>
+        <p>You can keep working and sending messages while progress is saved.</p>
+        {background.capturedAt === undefined ? null : (
+          <p>
+            This save includes work up to {new Date(background.capturedAt).toLocaleTimeString()}.
+            Later changes will be included in the next save.
+          </p>
+        )}
+        {elapsed === undefined || ['saved', 'cancelled'].includes(background.phase) ? null : (
+          <p>Elapsed: {elapsed}</p>
+        )}
+      </section>
+    );
+  }
   if (operation === undefined) {
     const capture = sandbox.lifecycle?.checkpoint;
     if (sandbox.status === 'active' && capture === undefined) return null;

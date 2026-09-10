@@ -3,6 +3,7 @@ use serde_json::{json, Value};
 use super::super::tests::{claim, request as home_request, row, serve, status, template};
 use super::*;
 use crate::HomeVolumeAttachment;
+use crate::HomeVolumeStore;
 
 fn request() -> HomeSnapshotRequest {
     let home = home_request();
@@ -50,6 +51,53 @@ fn pending() -> HomeSnapshotObservation {
         receipt: receipt(),
         captured_at: None,
         ready: false,
+    }
+}
+
+#[tokio::test]
+async fn home_retirement_removes_only_captures_of_the_exact_original_disk() {
+    for original in [false, true] {
+        let mut expected = request().home;
+        if !original {
+            expected.receipt.storage_generation = "replacement-home-uid".into();
+        }
+        let mut replies = vec![
+            (
+                200,
+                json!({"apiVersion":"v1","kind":"PodList","metadata":{},"items":[]}),
+            ),
+            (
+                200,
+                json!({"apiVersion":"v1","kind":"PersistentVolumeClaimList","metadata":{},"items":[]}),
+            ),
+            (
+                200,
+                json!({"apiVersion":"snapshot.storage.k8s.io/v1","kind":"VolumeSnapshotList","metadata":{},"items":[snapshot("snapshot-one")]}),
+            ),
+        ];
+        if original {
+            replies.extend([
+                snapshot_row(snapshot("snapshot-one")),
+                status(200),
+                status(404),
+            ]);
+        }
+        let fixture = serve(replies).await;
+        fixture.store.remove_captures(&expected).await.unwrap();
+        let requests = fixture.finish().await;
+        assert!(requests[0].contains("/pods?"));
+        assert!(requests[1].contains("/persistentvolumeclaims?"));
+        assert_eq!(
+            requests
+                .iter()
+                .filter(|request| request.starts_with("DELETE "))
+                .count(),
+            usize::from(original)
+        );
+        if original {
+            assert!(requests[4].contains("snapshot-one"));
+            assert!(requests[4].contains("resourceVersion"));
+        }
     }
 }
 

@@ -68,6 +68,7 @@ export function sandboxLifecycleLabel(sandbox: SandboxSummary): string {
 
 export function sandboxRefreshDelay(sandbox: SandboxSummary): number {
   return sandbox.lifecycle?.checkpoint !== undefined ||
+    sandbox.lifecycle?.backgroundSave !== undefined ||
     sandbox.lifecycle?.operation !== undefined ||
     [
       'provisioning',

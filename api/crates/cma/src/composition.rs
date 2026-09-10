@@ -107,7 +107,7 @@ impl ControlPlaneComposition {
             .map_err(|error| format!("checkpoint export authority is not usable: {error}"))?;
             Some(crate::sandbox::ExportDependencies {
                 homes: Arc::new(homes),
-                objects: Arc::clone(&stores.checkpoint_objects),
+                objects: stores.checkpoint_objects.clone(),
                 image: config.runtime.sandbox_image.clone(),
             })
         } else {

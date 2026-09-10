@@ -38,6 +38,15 @@ pub struct SandboxCompletedSnapshotView {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
+pub struct SandboxBackgroundSaveView {
+    pub phase: String,
+    pub started_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub captured_at: Option<String>,
+    pub epoch: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
 #[serde(tag = "purpose", rename_all = "snake_case")]
 pub enum SandboxLifecycleOperationView {
     Pause {
@@ -84,6 +93,8 @@ pub struct SandboxLifecycleView {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub checkpoint: Option<SandboxCheckpointView>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub background_save: Option<SandboxBackgroundSaveView>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub latest_snapshot: Option<SandboxCompletedSnapshotView>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub operation: Option<SandboxLifecycleOperationView>,
@@ -94,6 +105,22 @@ impl From<&Sandbox> for SandboxLifecycleView {
         Self {
             pause: value.pause_eligibility().into(),
             revive: value.revive_eligibility().into(),
+            background_save: value
+                .lifecycle
+                .background_checkpoint
+                .as_ref()
+                .map(|capture| {
+                    let progress = &capture.progress;
+                    SandboxBackgroundSaveView {
+                        phase: capture.public_phase().into(),
+                        started_at: capture.started_at.clone(),
+                        captured_at: progress
+                            .snapshot
+                            .as_ref()
+                            .and_then(|snapshot| snapshot.captured_at.clone()),
+                        epoch: capture.plan.snapshot.epoch,
+                    }
+                }),
             latest_snapshot: value
                 .lifecycle
                 .checkpoints

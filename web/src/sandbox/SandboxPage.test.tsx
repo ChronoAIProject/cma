@@ -45,6 +45,30 @@ const savingSandbox = (phase: 'capture' | 'resume_writers'): SandboxDetail => ({
   },
 });
 
+it('shows background save progress while workspace, pause and delete actions remain usable', async () => {
+  lifecyclePage(async () => ({
+    ...sandboxFixture(),
+    lifecycle: {
+      pause: { allowed: true },
+      revive: { allowed: false, reason: 'not_paused' },
+      backgroundSave: {
+        phase: 'exporting',
+        startedAt: '2026-09-10T00:00:00Z',
+        capturedAt: '2026-09-10T00:00:02Z',
+        epoch: 8,
+      },
+    },
+  }));
+  expect(await screen.findByText('Saving progress in the background')).toBeInTheDocument();
+  expect(
+    screen.getByText('You can keep working and sending messages while progress is saved.'),
+  ).toBeInTheDocument();
+  expect(screen.getByText(/Later changes will be included in the next save/)).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'New workspace' })).toBeEnabled();
+  expect(screen.getByRole('button', { name: 'Pause' })).toBeEnabled();
+  expect(screen.getByRole('button', { name: 'Delete' })).toBeEnabled();
+});
+
 it.each(['active', 'paused'] as const)(
   'shows the creator name on the %s Sandbox page without opening Advanced',
   async (status) => {

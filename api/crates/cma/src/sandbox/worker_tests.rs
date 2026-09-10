@@ -41,6 +41,7 @@ use super::worker::{
     CREDENTIAL_ROTATION_AGE,
 };
 
+mod background_checkpoint_tests;
 mod checkpoint_consistency_tests;
 mod checkpoint_lease_tests;
 mod checkpoint_maintenance_tests;

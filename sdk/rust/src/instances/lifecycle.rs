@@ -54,6 +54,20 @@ pub struct SandboxCheckpoint {
 
 /// Latest completed whole-home snapshot.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct SandboxBackgroundSave {
+    /// Safe background save stage; live user actions remain available.
+    pub phase: String,
+    /// Original save request time.
+    pub started_at: String,
+    /// Actual provider capture boundary, once observed.
+    pub captured_at: Option<String>,
+    /// Reserved checkpoint epoch.
+    #[serde(deserialize_with = "crate::resources::deserialize_positive")]
+    pub epoch: u64,
+}
+
+/// Latest completed whole-home snapshot.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct SandboxCompletedSnapshot {
     /// Monotonic checkpoint epoch.
     #[serde(deserialize_with = "crate::resources::deserialize_positive")]
@@ -100,6 +114,8 @@ pub struct SandboxLifecycle {
     pub revive: SandboxLifecycleEligibility,
     /// Active checkpoint, when present.
     pub checkpoint: Option<SandboxCheckpoint>,
+    /// Offline export progress, independent of live writer availability.
+    pub background_save: Option<SandboxBackgroundSave>,
     /// Latest completed snapshot, absent before the first successful save.
     pub latest_snapshot: Option<SandboxCompletedSnapshot>,
     /// Admitted lifecycle operation, when present.
