@@ -48,7 +48,7 @@ export function AgentSourceLabel({ source }: { readonly source: SourceState }) {
     );
   if (source.value.origin.type === 'manual')
     return <p className="agent-header__source">Created manually</p>;
-  if (source.value.origin.type === 'workspace_profile')
+  if (source.value.origin.type === 'workspace_profile' && source.value.trigger === undefined)
     return <p className="agent-header__source">Created from Workspace Profile</p>;
   return (
     <p className="agent-header__source">

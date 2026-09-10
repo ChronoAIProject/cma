@@ -413,7 +413,13 @@ async fn reuse_profile_agent(
         );
     } else if !reuse_existing {
         query.insert("record.origin.type", "trigger");
-        query.insert("creation_key", doc! { "$regex": "^trigger-profile:" });
+        query.insert(
+            "$or",
+            mongodb::bson::bson!([
+                { "creation_key": { "$regex": "^trigger-profile:" } },
+                { "record.work.warm_conversation_id": { "$exists": true } },
+            ]),
+        );
         query.remove("status");
         query.remove("record.requested_stop_reason");
     }

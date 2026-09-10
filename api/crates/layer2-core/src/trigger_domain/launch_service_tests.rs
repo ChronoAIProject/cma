@@ -26,6 +26,7 @@ use super::*;
 
 mod credential_prerequisite;
 mod no_review_consent;
+mod prepared_reuse;
 mod request_validation;
 mod reused_connections;
 mod trust;
@@ -49,6 +50,7 @@ struct ContextState {
     sandbox: Option<Sandbox>,
     workspace: Option<Workspace>,
     agent: Option<Agent>,
+    prepared_agents: std::collections::BTreeMap<AgentId, Agent>,
     sandbox_reads: usize,
     workspace_reads: usize,
     agent_reads: usize,
@@ -87,6 +89,21 @@ impl StubContextReader {
 
 #[async_trait]
 impl LaunchContextReader for StubContextReader {
+    async fn owned_agent(
+        &self,
+        owner: &SubjectId,
+        id: &AgentId,
+    ) -> Result<Option<Agent>, LaunchResolutionError> {
+        Ok(self
+            .state
+            .lock()
+            .unwrap()
+            .prepared_agents
+            .get(id)
+            .filter(|agent| agent.owner == *owner)
+            .cloned())
+    }
+
     async fn newest_matching_sandbox(
         &self,
         _owner: &SubjectId,

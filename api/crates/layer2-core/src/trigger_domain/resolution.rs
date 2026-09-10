@@ -98,6 +98,14 @@ pub enum LaunchResolutionError {
 
 #[async_trait]
 pub trait LaunchContextReader: Send + Sync {
+    async fn owned_agent(
+        &self,
+        _owner: &SubjectId,
+        _agent_id: &crate::AgentId,
+    ) -> Result<Option<Agent>, LaunchResolutionError> {
+        Ok(None)
+    }
+
     async fn newest_matching_sandbox(
         &self,
         owner: &SubjectId,

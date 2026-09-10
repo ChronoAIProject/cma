@@ -34,6 +34,19 @@ async fn scheduled_launch_follows_ready_resources_without_waiting_between_stages
     );
     assert_eq!(harness.launch().state, LaunchState::Ready);
     assert_eq!(harness.driver.calls().len(), 3);
+    let event_head = harness.launch().event_head;
+    for minute in 3..10 {
+        harness
+            .worker
+            .run_due(super::fixtures_tests::time(minute))
+            .await
+            .unwrap();
+    }
+    assert_eq!(
+        harness.launch().event_head,
+        event_head,
+        "unchanged Ready monitoring must not grow Launch history"
+    );
 }
 
 #[tokio::test]

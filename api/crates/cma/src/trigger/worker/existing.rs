@@ -33,19 +33,33 @@ impl LaunchWorker {
             .agent(agent_id)
             .await?
             .ok_or_else(|| missing_resource("agent"))?;
-        let AgentOrigin::Trigger {
-            trigger_id,
-            launch_id,
-        } = &agent.origin
-        else {
-            return Ok(None);
+        let origin_matches = match &agent.origin {
+            AgentOrigin::Trigger {
+                trigger_id,
+                launch_id,
+            } => trigger_id == launch.trigger_id.as_str() && valid_origin_id(launch_id),
+            AgentOrigin::WorkspaceProfile { .. } if agent.work.warm_conversation_id.is_some() => {
+                self.launches
+                    .source_launch(&launch.owner, &agent.id, Some(&launch.trigger_id))
+                    .await
+                    .map_err(|_| {
+                        LaunchResourceError::retryable(
+                            "launch_source_unavailable",
+                            "The existing conversation source could not be read",
+                        )
+                    })?
+                    .is_some_and(|source| {
+                        source.trigger_id == launch.trigger_id
+                            && source.resolved_agent_matches(&agent)
+                    })
+            }
+            _ => return Ok(None),
         };
         if agent.owner != launch.owner
             || agent.id != *agent_id
             || agent.sandbox_id != *sandbox_id
             || agent.workspace_id != *workspace_id
-            || trigger_id != launch.trigger_id.as_str()
-            || !valid_origin_id(launch_id)
+            || !origin_matches
             || !valid_creation_key(&agent)
             || agent.validate_conversation().is_err()
         {

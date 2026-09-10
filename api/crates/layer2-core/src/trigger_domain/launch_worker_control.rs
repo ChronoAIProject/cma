@@ -91,7 +91,13 @@ impl Launch {
                 .defer(holder, fence, retry_at.clone())
                 .map_err(|_| progress_error())?;
             finish_in_place(self, at)?;
-            Ok(vec![LaunchEventKind::Deferred { retry_at }])
+            // Monitoring a ready conversation is scheduling metadata. Repeated
+            // unchanged observations must not grow the user's event history.
+            Ok(if self.state == LaunchState::Ready {
+                Vec::new()
+            } else {
+                vec![LaunchEventKind::Deferred { retry_at }]
+            })
         })();
         settle_worker_command(self, original, &command_at, result)
     }

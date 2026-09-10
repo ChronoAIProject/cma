@@ -198,7 +198,7 @@ impl LaunchWorker {
         let fence = self.fence(&launch)?;
         let at = rfc3339_at(now);
         let delay = if launch.state == LaunchState::Ready {
-            self.config.poll_delay.max(Duration::from_secs(5))
+            self.config.poll_delay.max(Duration::from_secs(30))
         } else {
             self.config.poll_delay
         };

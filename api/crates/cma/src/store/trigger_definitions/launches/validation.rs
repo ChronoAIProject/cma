@@ -5,6 +5,33 @@ use layer2_core::trigger_domain::{
 
 use super::corrupt;
 
+pub(super) fn is_ready_observation(
+    current: &Launch,
+    commit: &layer2_core::trigger_domain::LaunchCommit,
+) -> bool {
+    use layer2_core::trigger_domain::{LaunchState, LaunchWorkStep};
+    if current.state != LaunchState::Ready
+        || current.work.step != LaunchWorkStep::Finish
+        || commit.expected_revision != current.revision
+        || !commit.events.is_empty()
+    {
+        return false;
+    }
+    let Some(lease) = &current.work.lease else {
+        return false;
+    };
+    let mut expected = current.clone();
+    expected
+        .defer_worker_launch(
+            &lease.holder,
+            lease.fence,
+            commit.launch.work.ready_at.clone(),
+            commit.event_at.clone(),
+        )
+        .is_ok_and(|events| events.is_empty())
+        && expected == commit.launch
+}
+
 pub(super) fn admission(admission: &LaunchAdmission) -> Result<(), LaunchStoreError> {
     admission.launch.validate()?;
     if admission.trigger.availability != TriggerAvailability::Published {

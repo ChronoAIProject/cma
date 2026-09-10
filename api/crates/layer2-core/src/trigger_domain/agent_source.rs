@@ -24,34 +24,52 @@ impl TriggerService {
         if agent.owner != caller.subject {
             return Err(TriggerServiceError::NotFound);
         }
-        let AgentOrigin::Trigger {
-            trigger_id,
-            launch_id,
-        } = &agent.origin
-        else {
-            return Ok(None);
+        let launch = match &agent.origin {
+            AgentOrigin::Trigger {
+                trigger_id,
+                launch_id,
+            } => {
+                let Some(launch) = self
+                    .launches
+                    .launch(&LaunchId(launch_id.clone()), &caller.subject)
+                    .await
+                    .map_err(super::trigger_service::launch_store_error)?
+                else {
+                    return Ok(None);
+                };
+                if launch.id.as_str() != launch_id
+                    || launch.owner != caller.subject
+                    || launch.trigger_id.as_str() != trigger_id
+                    || launch
+                        .resolution
+                        .agent
+                        .id()
+                        .is_some_and(|id| id != &agent.id)
+                {
+                    return Err(TriggerServiceError::Corrupt(
+                        "Agent source does not match its Launch".into(),
+                    ));
+                }
+                launch
+            }
+            AgentOrigin::WorkspaceProfile { .. } if agent.work.warm_conversation_id.is_some() => {
+                let Some(launch) = self
+                    .launches
+                    .source_launch(&caller.subject, &agent.id, None)
+                    .await
+                    .map_err(super::trigger_service::launch_store_error)?
+                else {
+                    return Ok(None);
+                };
+                if !launch.resolved_agent_matches(agent) {
+                    return Err(TriggerServiceError::Corrupt(
+                        "Prepared Agent source does not match its Launch".into(),
+                    ));
+                }
+                launch
+            }
+            _ => return Ok(None),
         };
-        let Some(launch) = self
-            .launches
-            .launch(&LaunchId(launch_id.clone()), &caller.subject)
-            .await
-            .map_err(super::trigger_service::launch_store_error)?
-        else {
-            return Ok(None);
-        };
-        if launch.id.as_str() != launch_id
-            || launch.owner != caller.subject
-            || launch.trigger_id.as_str() != trigger_id
-            || launch
-                .resolution
-                .agent
-                .id()
-                .is_some_and(|id| id != &agent.id)
-        {
-            return Err(TriggerServiceError::Corrupt(
-                "Agent source does not match its Launch".into(),
-            ));
-        }
         let Some(public) = self
             .definitions
             .trigger_by_public_id(&launch.public_id)
@@ -79,5 +97,15 @@ impl TriggerService {
                 Vec::new()
             },
         }))
+    }
+}
+
+impl super::Launch {
+    /// A durable resolution binds the complete hierarchy, not just an Agent ID.
+    pub fn resolved_agent_matches(&self, agent: &Agent) -> bool {
+        self.owner == agent.owner
+            && self.resolution.sandbox.id() == Some(&agent.sandbox_id)
+            && self.resolution.workspace.id() == Some(&agent.workspace_id)
+            && self.resolution.agent.id() == Some(&agent.id)
     }
 }

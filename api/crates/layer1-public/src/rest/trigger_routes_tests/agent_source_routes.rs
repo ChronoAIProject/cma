@@ -9,6 +9,89 @@ use super::support_tests::*;
 use crate::rest::agents_tests as agents;
 
 #[tokio::test]
+async fn prepared_profile_agent_keeps_origin_and_exposes_its_adopting_trigger() {
+    use layer2_core::trigger_domain::{
+        LaunchCommit, LaunchResolution, LaunchStore, ResolvedResource,
+    };
+    use layer2_core::LaunchId;
+    let app = TestApp::new().await;
+    let fixture = agents::fixture().await;
+    let trigger = create_trigger(&app, "always_new", "prepared-source").await;
+    let public = publish_trigger(&app, trigger["id"].as_str().unwrap(), "prepared-publish").await;
+    let path = format!(
+        "/api/v1/triggers/public/{}/launches",
+        public["public_id"].as_str().unwrap()
+    );
+    let (status, created) = json_response(
+        &app.router,
+        request(
+            Method::POST,
+            &path,
+            Some(launch_body(false)),
+            Some(("owner-a", visitor_authority())),
+            Some("prepared-launch"),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    let mut agent = agents::seeded_agent("agt_prepared_source", AgentStatus::Ready, 2, None);
+    agent.origin = AgentOrigin::WorkspaceProfile { index: 0 };
+    agent.work.warm_conversation_id = agent.conversation.conversation_id.clone();
+    let agent = agents::insert_agent(&fixture.store, agent, vec![]).await;
+    let mut launch = app
+        .launches
+        .launch(
+            &LaunchId(created["id"].as_str().unwrap().into()),
+            &agent.owner,
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    let expected_revision = launch.revision;
+    launch.revision += 1;
+    launch.resolution = LaunchResolution {
+        sandbox: ResolvedResource::Reused(agent.sandbox_id.clone()),
+        workspace: ResolvedResource::Reused(agent.workspace_id.clone()),
+        agent: ResolvedResource::Reused(agent.id.clone()),
+        choice_required: false,
+    };
+    app.launches
+        .commit_launch(LaunchCommit {
+            expected_revision,
+            event_at: launch.updated_at.clone(),
+            launch,
+            events: vec![],
+        })
+        .await
+        .unwrap();
+    let reads = AgentReadService::new(fixture.store, Arc::new(agents::TestResources));
+    let router = crate::rest::agent_source_router(reads.clone(), app.source_service.clone());
+    let (status, source) = json_response(
+        &router,
+        agents::request(
+            Method::GET,
+            "/api/v1/agents/agt_prepared_source/source",
+            "owner-a",
+            None,
+            None,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{source}");
+    assert_eq!(source["origin"]["type"], "workspace_profile");
+    assert_eq!(source["trigger"]["public_id"], public["public_id"]);
+    assert_eq!(
+        source["trigger"]["title"],
+        public["content"]["presentation"]["title"]
+    );
+    let caller = Caller::new(
+        agent.owner.clone(),
+        Authorization::new([Capability::UseOwnSandboxes]),
+    );
+    assert_eq!(reads.read(&caller, &agent.id).await.unwrap(), agent);
+}
+
+#[tokio::test]
 async fn source_retains_provenance_and_uses_only_published_shortcuts_without_mutating_agent() {
     let app = TestApp::new().await;
     let fixture = agents::fixture().await;
