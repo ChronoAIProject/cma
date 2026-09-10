@@ -118,7 +118,15 @@ impl AgentWorker {
                 break;
             };
             if agent.work.warm_conversation_id.is_none()
-                || agent.status != layer2_core::sandbox::AgentStatus::Starting
+                || !matches!(
+                    agent.work.step,
+                    AgentWorkStep::AddWorktree
+                        | AgentWorkStep::MaterializeHome
+                        | AgentWorkStep::OpenConversation
+                        | AgentWorkStep::PublishReady
+                        | AgentWorkStep::PublishConnection
+                        | AgentWorkStep::DispatchFirstMessage
+                )
                 || !agent.work.is_due(&rfc3339_at(now + started.elapsed()))
             {
                 break;

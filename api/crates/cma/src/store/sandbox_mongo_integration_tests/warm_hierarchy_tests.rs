@@ -100,6 +100,61 @@ async fn activate(store: &MongoSandboxStore, id: &SandboxId) {
 
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn warm_automatic_agent_is_claimed_once_by_a_new_conversation_trigger() {
+    let (client, name, store, _, candidate, warm) = fixture().await;
+    let workspace = admit_workspace(&store, candidate).await;
+    activate(&store, &workspace.sandbox_id).await;
+    let mut automatic = agent_admission(&workspace, "unused", "automatic");
+    automatic.profile = warm.plan.workspaces[0].agents[0].clone();
+    automatic.origin = layer2_core::sandbox::AgentOrigin::WorkspaceProfile { index: 0 };
+    automatic.creation_key = format!("workspace-profile:{}:0", workspace.id);
+    automatic.first_message = None;
+    automatic.title = None;
+    let prepared = store
+        .admit_agent(automatic)
+        .await
+        .unwrap()
+        .creation()
+        .agent
+        .clone();
+    assert_eq!(prepared.id, warm.workspaces[0].agents[0].id);
+    let mut trigger = agent_admission(&workspace, "new-conversation", "trigger");
+    trigger.profile = prepared.profile.clone();
+    trigger.origin = layer2_core::sandbox::AgentOrigin::Trigger {
+        trigger_id: "trg_warm".into(),
+        launch_id: "lch_warm".into(),
+    };
+    // An empty first prompt still needs an exclusive durable claim.
+    trigger.first_message = None;
+    let (left, right) = tokio::join!(
+        store.admit_agent(trigger.clone()),
+        store.admit_agent(trigger.clone())
+    );
+    for admitted in [left.unwrap(), right.unwrap()] {
+        assert_eq!(admitted.creation().agent.id, prepared.id);
+        assert_eq!(admitted.creation().agent.worktree_id, prepared.worktree_id);
+    }
+    let reopened = MongoSandboxStore::open(&client, &name).await.unwrap();
+    assert_eq!(
+        reopened
+            .admit_agent(trigger.clone())
+            .await
+            .unwrap()
+            .creation()
+            .agent
+            .id,
+        prepared.id
+    );
+    trigger.creation_key = "next-conversation".into();
+    trigger.agent_id = AgentId::generate();
+    trigger.worktree_id = WorktreeId::generate();
+    let next = reopened.admit_agent(trigger).await.unwrap();
+    assert_ne!(next.creation().agent.id, prepared.id);
+    client.database(&name).drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
 async fn warm_hierarchy_adopts_once_replays_and_reserves_worktree_numbers() {
     let (client, name, store, _, candidate, warm) = fixture().await;
     let workspace = admit_workspace(&store, candidate.clone()).await;

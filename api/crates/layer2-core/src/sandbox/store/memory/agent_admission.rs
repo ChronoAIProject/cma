@@ -103,6 +103,19 @@ impl InMemorySandboxStore {
             .agents
             .values()
             .filter(|agent| admission.can_reuse(agent, &workspace, reuse_existing))
+            .filter(|agent| {
+                reuse_existing
+                    || !admission.claims_unused_prepared_agent(agent)
+                    || (!state
+                        .agent_reuse_bindings
+                        .values()
+                        .any(|(id, _)| id == &agent.id)
+                        && state.agent_logs.get(&agent.id).is_some_and(|logs| {
+                            !logs.iter().any(|entry| {
+                                matches!(entry.kind, AgentLogKind::OwnerMessage { .. })
+                            })
+                        }))
+            })
             .max_by(|a, b| (&a.created_at, &a.id).cmp(&(&b.created_at, &b.id)))
             .cloned()
         {
@@ -131,7 +144,7 @@ impl InMemorySandboxStore {
                     });
                 candidate.agents.insert(agent.id.clone(), agent.clone());
             }
-            if reuse_existing {
+            if matches!(admission.origin, AgentOrigin::Trigger { .. }) {
                 candidate.agent_reuse_bindings.insert(
                     (admission.owner.clone(), admission.creation_key.clone()),
                     (agent.id.clone(), admission.fingerprint()?),

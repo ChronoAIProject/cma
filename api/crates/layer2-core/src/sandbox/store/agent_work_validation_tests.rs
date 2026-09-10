@@ -20,6 +20,40 @@ mod retired_runtime_tests;
 mod sign_in_tests;
 
 #[test]
+fn warm_home_intent_preserves_the_prepared_skill_selection_and_session() {
+    let (mut current, worktree) = claimed(
+        AgentWorkStep::MaterializeHome,
+        AgentStatus::Starting,
+        WorktreeStatus::Creating,
+    );
+    current
+        .work
+        .receipts
+        .push(receipt(&current, AgentWorkStep::AddWorktree));
+    current.work.warm_conversation_id = Some("prepared-session".into());
+    current.work.resolved_skills = Some(vec![]);
+    let mut next = current.clone();
+    next.work
+        .cleanup_debt
+        .push(debt(&current, AgentWorkStep::MaterializeHome));
+    let intent = publication(&current, next, vec![], None, None);
+    assert_valid(&current, &worktree, &intent);
+    let mut erased = intent.clone();
+    erased.agent.work.resolved_skills = None;
+    assert_conflict(&current, &worktree, &erased);
+    for conversation in [None, Some("different-session".into())] {
+        let mut changed = intent.clone();
+        changed.agent.work.warm_conversation_id = conversation;
+        assert_conflict(&current, &worktree, &changed);
+    }
+    let mut unwarmed = current.clone();
+    unwarmed.work.warm_conversation_id = None;
+    let mut forged = intent;
+    forged.agent.work.warm_conversation_id = None;
+    assert_conflict(&unwarmed, &worktree, &forged);
+}
+
+#[test]
 fn skill_material_is_committed_once_with_the_first_home_intent() {
     let (mut current, worktree) = claimed(
         AgentWorkStep::MaterializeHome,

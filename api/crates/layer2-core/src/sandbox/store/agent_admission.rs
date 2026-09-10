@@ -27,6 +27,18 @@ pub struct AgentAdmission {
 }
 
 impl AgentAdmission {
+    /// A pre-created profile session without user activity is a fresh session
+    /// for the Trigger, including when the Trigger requests a new conversation.
+    pub fn claims_unused_prepared_agent(&self, agent: &Agent) -> bool {
+        matches!(self.origin, AgentOrigin::Trigger { .. })
+            && matches!(agent.origin, AgentOrigin::WorkspaceProfile { .. })
+            && agent.work.warm_conversation_id.is_some()
+            && agent.conversation.first_message.is_none()
+            && agent.conversation.active_turn.is_none()
+            && agent.conversation.operation.is_none()
+            && agent.conversation.queued_messages.is_empty()
+    }
+
     pub fn can_reuse(&self, agent: &Agent, workspace: &Workspace, reuse_existing: bool) -> bool {
         let explicit_reuse = reuse_existing && matches!(self.origin, AgentOrigin::Trigger { .. });
         let automatic_slot = match self.origin {
@@ -46,7 +58,7 @@ impl AgentAdmission {
             }
             _ => false,
         };
-        (explicit_reuse || automatic_slot)
+        (explicit_reuse || automatic_slot || self.claims_unused_prepared_agent(agent))
             && agent.owner == self.owner
             && workspace.owner == self.owner
             && agent.workspace_id == workspace.id

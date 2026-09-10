@@ -136,11 +136,16 @@ impl LaunchWorker {
         let expected = launch.revision;
         let fence = self.fence(&launch)?;
         let at = rfc3339_at(now);
+        let delay = if launch.state == LaunchState::Ready {
+            self.config.poll_delay.max(Duration::from_secs(5))
+        } else {
+            self.config.poll_delay
+        };
         let events = launch
             .defer_worker_launch(
                 &self.config.holder,
                 fence,
-                rfc3339_at(now + self.config.poll_delay),
+                rfc3339_at(now + delay),
                 at.clone(),
             )
             .map_err(domain_error)?;

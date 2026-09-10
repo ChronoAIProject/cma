@@ -47,8 +47,8 @@ async fn due_sweep_continues_after_one_launch_returns_a_store_error() {
 
     assert!(worker.run_due(time(1)).await.is_err());
     assert_eq!(store.stored(&bad_id).state, LaunchState::Resolving);
-    assert_eq!(store.stored(&good_id).state, LaunchState::SandboxPending);
-    assert_eq!(driver.calls().len(), 1);
+    assert_eq!(store.stored(&good_id).state, LaunchState::MessagePending);
+    assert_eq!(driver.calls().len(), 3);
 }
 
 #[tokio::test]

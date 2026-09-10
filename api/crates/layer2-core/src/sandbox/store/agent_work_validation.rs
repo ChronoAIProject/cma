@@ -210,11 +210,18 @@ fn validate_work_delta(
     kind: PublicationKind,
     retired_process_absent: bool,
 ) -> Result<(), SandboxStoreError> {
-    if next.work.next_fence != current.work.next_fence {
+    if next.work.next_fence != current.work.next_fence
+        || next.work.warm_conversation_id != current.work.warm_conversation_id
+    {
         return Err(SandboxStoreError::Conflict);
     }
     if kind == PublicationKind::Intent && current.work.step == AgentWorkStep::MaterializeHome {
-        if current.work.resolved_skills.is_some() || next.work.resolved_skills.is_none() {
+        let warm_selection = current.work.warm_conversation_id.is_some()
+            && current.work.resolved_skills.is_some()
+            && current.work.resolved_skills == next.work.resolved_skills;
+        if !warm_selection
+            && (current.work.resolved_skills.is_some() || next.work.resolved_skills.is_none())
+        {
             return Err(SandboxStoreError::Conflict);
         }
     } else if next.work.resolved_skills != current.work.resolved_skills {
