@@ -21,9 +21,15 @@ pub struct HomeSnapshotExportJobRequest {
 impl HomeSnapshotExportJobRequest {
     pub fn validate(&self) -> Result<()> {
         self.view.validate_for(&self.export)?;
-        let (repository, digest) = self.image.split_once("@sha256:").ok_or_else(invalid)?;
-        if self.attempt == 0
-            || repository.is_empty()
+        if self.attempt == 0 {
+            return Err(invalid());
+        }
+        Self::validate_image(&self.image)
+    }
+
+    pub fn validate_image(image: &str) -> Result<()> {
+        let (repository, digest) = image.split_once("@sha256:").ok_or_else(invalid)?;
+        if repository.is_empty()
             || repository.len() > 512
             || !repository
                 .bytes()

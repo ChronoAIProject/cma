@@ -33,6 +33,65 @@ fn assert_public_lifecycle(value: &Value) {
     }
 }
 
+#[tokio::test]
+async fn background_snapshot_progress_keeps_actions_available_and_hides_provider_authority() {
+    let fixture = fixture(10);
+    let mut value = capturing_sandbox();
+    value.lifecycle.checkpoint_capture = None;
+    let mut home = layer2_core::sandbox::SandboxHome::reserve(
+        &value.id,
+        serde_json::from_value(json!({
+            "storage_class": "cma-home-v1", "capacity_gib": 64,
+            "template_name": "seed", "template_generation": "seed-uid"
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    home.bind(
+        serde_json::from_value(json!({
+            "volume_id":home.request.volume_id, "request_sha256":home.request.computed_sha256(),
+            "storage_reference":"private-home-pvc", "storage_generation":"private-home-uid"
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    value.lifecycle.home = Some(Box::new(home));
+    let plan = layer2_core::sandbox::SandboxBackgroundCheckpointPlan {
+        snapshot: serde_json::from_value(json!({
+            "capture_id":format!("{}-checkpoint-1", value.id), "epoch":1,
+            "home":value.lifecycle.home.as_ref().unwrap().attachment().unwrap(), "snapshot_class":"cma-home-v1"
+        })).unwrap(),
+        runtime: value.runtime.clone().unwrap(), conversations: vec![],
+        image: format!("private-registry/runtime@sha256:{}", "a".repeat(64)),
+    };
+    value.begin_background_checkpoint(plan, NOW.into()).unwrap();
+    value.revision = 1;
+    fixture.store.create_sandbox(value).await.unwrap();
+    let (status, body) = json_response(
+        &fixture.router,
+        authenticated(Method::GET, "/api/v1/sandboxes/sbx_capturing", None, None),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["status"], "active");
+    assert_eq!(body["lifecycle"]["pause"], json!({"allowed": true}));
+    assert!(body["lifecycle"].get("checkpoint").is_none());
+    assert_eq!(
+        body["lifecycle"]["background_save"],
+        json!({"phase":"capturing", "started_at":NOW, "epoch":1})
+    );
+    assert_public_lifecycle(&body);
+    let text = serde_json::to_string(&body).unwrap();
+    for private in [
+        "private-home-pvc",
+        "private-home-uid",
+        "private-registry",
+        "capture_id",
+    ] {
+        assert!(!text.contains(private));
+    }
+}
+
 fn claim_capture(value: &mut Sandbox) -> u64 {
     value
         .claim_checkpoint_capture(

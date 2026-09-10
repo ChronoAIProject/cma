@@ -19,7 +19,9 @@ impl Sandbox {
             .checkpoints
             .latest
             .as_ref()
-            .map_or(Some(1), |checkpoint| checkpoint.epoch.checked_add(1))
+            .map_or(0, |checkpoint| checkpoint.epoch)
+            .max(self.lifecycle.checkpoint_epoch_high_water)
+            .checked_add(1)
             .ok_or_else(invalid_execution)
     }
 
@@ -51,6 +53,7 @@ impl Sandbox {
         if self.status != SandboxStatus::Active
             || self.runtime.is_none()
             || self.lifecycle.operation.is_some()
+            || self.lifecycle.background_checkpoint.is_some()
             || self.work.lease.is_some()
             || checkpoint.epoch != self.next_checkpoint_epoch()?
             || crate::seconds_from_rfc3339(&at).is_none()

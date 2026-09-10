@@ -305,6 +305,7 @@ use super::trigger_openapi_shapes::*;
         super::instances_openapi_shapes::SandboxLifecycleView,
         super::instances_openapi_shapes::SandboxLifecycleEligibilityView,
         super::instances_openapi_shapes::SandboxCheckpointView,
+        super::instances_openapi_shapes::SandboxBackgroundSaveView,
         super::instances_openapi_shapes::SandboxCompletedSnapshotView,
         super::instances_openapi_shapes::SandboxLifecycleOperationView,
         SandboxView,

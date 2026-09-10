@@ -53,6 +53,12 @@ impl Sandbox {
         &self,
         next: &Sandbox,
     ) -> Result<(), SandboxModelError> {
+        if self.lifecycle.background_checkpoint != next.lifecycle.background_checkpoint
+            || self.lifecycle.checkpoint_epoch_high_water
+                != next.lifecycle.checkpoint_epoch_high_water
+        {
+            return Err(invalid_capture());
+        }
         if self.lifecycle.checkpoint_capture == next.lifecycle.checkpoint_capture
             && self.lifecycle.checkpoint_capture_completed_at
                 == next.lifecycle.checkpoint_capture_completed_at
@@ -124,6 +130,7 @@ impl Sandbox {
             || self.status != SandboxStatus::Active
             || self.lifecycle.operation.is_some()
             || self.lifecycle.checkpoint_capture.is_some()
+            || self.lifecycle.background_checkpoint.is_some()
             || self.work.lease.is_some()
             || !matches!(
                 self.work.step,

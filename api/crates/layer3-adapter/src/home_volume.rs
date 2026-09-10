@@ -121,6 +121,11 @@ pub trait HomeVolumeStore: Send + Sync {
     async fn inventory(&self) -> Result<Vec<HomeVolumeAttachment>>;
     async fn prepare(&self, request: &HomeVolumeRequest) -> Result<HomeVolumeReceipt>;
     async fn verify(&self, attachment: &HomeVolumeAttachment) -> Result<()>;
+    /// Release snapshot/export resources after all capture workers have stopped.
+    /// Providers without disk snapshot support have no dependent resources.
+    async fn remove_captures(&self, attachment: &HomeVolumeAttachment) -> Result<()> {
+        attachment.receipt.validate_for(&attachment.request)
+    }
     async fn remove(
         &self,
         request: &HomeVolumeRequest,

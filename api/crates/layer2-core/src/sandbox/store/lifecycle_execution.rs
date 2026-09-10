@@ -33,6 +33,8 @@ pub struct SandboxMutationGuard {
     pub operation: Option<SandboxLifecycleOperation>,
     pub runtime: Option<RuntimeBinding>,
     pub checkpoint_capture: Option<crate::sandbox::SandboxCheckpointCapture>,
+    pub background_checkpoint: Option<Box<crate::sandbox::SandboxBackgroundCheckpoint>>,
+    pub checkpoint_epoch_high_water: u64,
 }
 
 impl SandboxMutationGuard {
@@ -47,6 +49,8 @@ impl SandboxMutationGuard {
             operation: sandbox.lifecycle.operation.clone(),
             runtime: sandbox.runtime.clone(),
             checkpoint_capture: sandbox.lifecycle.checkpoint_capture.clone(),
+            background_checkpoint: sandbox.lifecycle.background_checkpoint.clone(),
+            checkpoint_epoch_high_water: sandbox.lifecycle.checkpoint_epoch_high_water,
         }
     }
 
@@ -60,6 +64,8 @@ impl SandboxMutationGuard {
             && self.operation == sandbox.lifecycle.operation
             && self.runtime == sandbox.runtime
             && self.checkpoint_capture == sandbox.lifecycle.checkpoint_capture
+            && self.background_checkpoint == sandbox.lifecycle.background_checkpoint
+            && self.checkpoint_epoch_high_water == sandbox.lifecycle.checkpoint_epoch_high_water
     }
 }
 
@@ -211,7 +217,15 @@ pub fn validate_checkpoint_mutation(
         }) {
             return Err(SandboxStoreError::SequenceConflict);
         }
-    } else if !mutation.agents.is_empty() {
+    } else if !mutation.agents.is_empty()
+        || current
+            .lifecycle
+            .background_checkpoint
+            .as_ref()
+            .is_none_or(|capture| {
+                capture.progress.uploaded.is_none() || capture.work.lease.is_none()
+            })
+    {
         return Err(SandboxStoreError::Conflict);
     }
     if !mutation.nonblocking {
@@ -227,6 +241,7 @@ pub fn validate_checkpoint_mutation(
         &mutation.sandbox,
         &mutation.checkpoint,
         &mutation.appended_at,
+        mutation.nonblocking,
     ) {
         return Err(invalid(
             "checkpoint publication changed unrelated sandbox state",
@@ -242,6 +257,12 @@ pub fn validate_lifecycle_mutation(
     mutation: &SandboxLifecycleMutation,
 ) -> Result<(), SandboxStoreError> {
     validate_guard(current, &mutation.guard)?;
+    if current.lifecycle.background_checkpoint != mutation.sandbox.lifecycle.background_checkpoint
+        || current.lifecycle.checkpoint_epoch_high_water
+            != mutation.sandbox.lifecycle.checkpoint_epoch_high_water
+    {
+        return super::background_checkpoint::validate_background_mutation(current, mutation);
+    }
     if current.lifecycle.checkpoint_capture.is_some()
         || mutation.sandbox.lifecycle.checkpoint_capture.is_some()
     {

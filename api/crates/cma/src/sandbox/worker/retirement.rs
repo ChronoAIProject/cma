@@ -182,6 +182,15 @@ impl SandboxWorker {
         mut sandbox: Sandbox,
         now: SystemTime,
     ) -> Result<(), SandboxStoreError> {
+        if sandbox.lifecycle.background_checkpoint.is_some() {
+            return self
+                .retry_failure(
+                    sandbox,
+                    WorkerFailure::retryable("finishing background snapshot cleanup"),
+                    now,
+                )
+                .await;
+        }
         if let Some(home) = &mut sandbox.lifecycle.home {
             if sandbox.runtime.is_some() {
                 return Err(SandboxStoreError::Corrupt(

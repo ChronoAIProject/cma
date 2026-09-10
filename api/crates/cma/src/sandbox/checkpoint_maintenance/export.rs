@@ -1,28 +1,19 @@
-//! Nonblocking persistent-home checkpoint publication.
-//!
-//! The provider snapshot is taken while the live runtime remains writable. The
-//! export job then reads a separate CSI-derived view, so user actions continue
-//! while the archive is being produced. Provider allocations are deterministic
-//! and durable; a controller restart can repeat this method and observe the
-//! same snapshot/view/job records.
+//! Each provider allocation/observation is persisted before the next side effect.
 
 use std::time::Duration;
 
 use layer2_core::sandbox::store::{SandboxCheckpointMutation, SandboxMutationGuard};
-use layer2_core::sandbox::{Sandbox, SandboxCheckpointRef};
-use layer3_adapter::{
-    HomeSnapshotExportJobRequest, HomeSnapshotExportJobStore, HomeSnapshotExportRequest,
-    HomeSnapshotRequest, HomeSnapshotStore, HomeSnapshotViewStore,
-};
+use layer2_core::sandbox::{Sandbox, SandboxBackgroundCheckpointPlan, SandboxCheckpointRef};
+use layer3_adapter::{HomeSnapshotExportJobPhase, HomeSnapshotRequest};
 
-use super::SandboxStoreError;
-use super::{model_error, CaptureClock, SandboxCheckpointMaintenance};
+use super::{model_error, CaptureClock, SandboxCheckpointMaintenance, SandboxStoreError};
 
-const PROVIDER_POLL: Duration = Duration::from_secs(2);
-const EXPORT_DEADLINE: Duration = Duration::from_secs(15 * 60);
+const PROVIDER_POLL: Duration = Duration::from_secs(5);
+const PROVIDER_TIMEOUT: Duration = Duration::from_secs(4 * 60);
+const EXPORT_DEADLINE_SECONDS: u64 = 15 * 60;
 
 impl SandboxCheckpointMaintenance {
-    pub(super) async fn capture_and_publish_export(
+    pub(super) async fn begin_export(
         &self,
         sandbox: &Sandbox,
         clock: &CaptureClock,
@@ -34,109 +25,354 @@ impl SandboxCheckpointMaintenance {
             .as_ref()
             .and_then(|home| home.attachment())
             .ok_or(SandboxStoreError::Conflict)?;
-        let epoch = sandbox
-            .lifecycle
-            .checkpoints
-            .latest
-            .as_ref()
-            .map_or(1, |checkpoint| checkpoint.epoch.saturating_add(1));
-        if epoch == 0 {
-            return Err(SandboxStoreError::Conflict);
-        }
-        let agents = self.agents(sandbox).await?;
-        let mut conversations = agents
-            .iter()
+        let epoch = sandbox.next_checkpoint_epoch().map_err(model_error)?;
+        let mut conversations = self
+            .agents(sandbox)
+            .await?
+            .into_iter()
             .filter(|agent| agent.status.is_live())
             .filter_map(|agent| {
-                agent
-                    .conversation
-                    .conversation_id
-                    .clone()
-                    .map(
-                        |conversation_id| layer3_adapter::HomeSnapshotConversationIdentity {
-                            agent_id: agent.id.to_string(),
-                            conversation_id,
-                        },
-                    )
+                agent.conversation.conversation_id.map(|conversation_id| {
+                    layer3_adapter::HomeSnapshotConversationIdentity {
+                        agent_id: agent.id.to_string(),
+                        conversation_id,
+                    }
+                })
             })
             .collect::<Vec<_>>();
         conversations.sort();
-        let snapshot = HomeSnapshotRequest {
-            capture_id: format!("{}-checkpoint-{}", sandbox.id, epoch),
-            epoch,
-            home,
-            snapshot_class: "cma-home-v1".into(),
+        let plan = SandboxBackgroundCheckpointPlan {
+            snapshot: HomeSnapshotRequest {
+                capture_id: format!("{}-checkpoint-{}", sandbox.id, epoch),
+                epoch,
+                home,
+                snapshot_class: "cma-home-v1".into(),
+            },
+            runtime: sandbox.runtime.clone().ok_or(SandboxStoreError::Conflict)?,
+            conversations,
+            image: dependencies.image.clone(),
         };
-        let result = tokio::time::timeout(EXPORT_DEADLINE, async {
-            let mut observation = dependencies
-                .homes
-                .prepare_snapshot(&snapshot)
-                .await
-                .map_err(provider_error)?;
-            while !observation.ready {
-                tokio::time::sleep(PROVIDER_POLL).await;
-                observation = dependencies
-                    .homes
-                    .observe_snapshot(&snapshot, &observation)
-                    .await
-                    .map_err(provider_error)?;
-            }
-            let request = HomeSnapshotExportRequest {
-                snapshot,
-                observation,
-                runtime_generation: sandbox
-                    .runtime
+        let mut next = sandbox.clone();
+        let stamp = layer2_core::rfc3339_at(clock.now());
+        next.begin_background_checkpoint(plan, stamp.clone())
+            .map_err(model_error)?;
+        self.commit(sandbox, next, stamp).await
+    }
+
+    pub(super) async fn process_export(
+        &self,
+        sandbox: &Sandbox,
+        clock: &CaptureClock,
+    ) -> Result<bool, SandboxStoreError> {
+        let capture = sandbox
+            .lifecycle
+            .background_checkpoint
+            .as_ref()
+            .ok_or(SandboxStoreError::Conflict)?;
+        let now = clock.now();
+        let stamp = layer2_core::rfc3339_at(now);
+        if !capture.work.is_due(&stamp) {
+            return Ok(false);
+        }
+        let mut claimed = sandbox.clone();
+        claimed
+            .claim_background_checkpoint(
+                self.holder.clone(),
+                stamp.clone(),
+                layer2_core::rfc3339_at(now + super::CLAIM_DURATION),
+            )
+            .map_err(model_error)?;
+        self.commit(sandbox, claimed.clone(), stamp).await?;
+        let result =
+            tokio::time::timeout(PROVIDER_TIMEOUT, self.export_step(&claimed, clock)).await;
+        match result {
+            Ok(Ok(())) => Ok(true),
+            result => {
+                // Release a bounded failed step; retain every recorded receipt.
+                let current = self.current_export_claim(&claimed).await?;
+                let capture = current
+                    .lifecycle
+                    .background_checkpoint
                     .as_ref()
-                    .and_then(|runtime| runtime.provision_generation)
-                    .unwrap_or(1),
-                conversations,
-            };
-            // A controller restart may rediscover the same capture after Agent
-            // rows have advanced. Retire only older derived attempts for this
-            // deterministic capture identity before creating the new view/job.
-            for entry in dependencies
-                .homes
-                .view_inventory()
-                .await
-                .map_err(provider_error)?
-            {
-                if entry.request.snapshot.capture_id == request.snapshot.capture_id
-                    && entry.request != request
-                {
-                    dependencies
-                        .homes
-                        .remove_view(&entry.request, Some(&entry.receipt))
-                        .await
-                        .map_err(provider_error)?;
+                    .ok_or(SandboxStoreError::Conflict)?;
+                let lease = capture
+                    .work
+                    .lease
+                    .as_ref()
+                    .ok_or(SandboxStoreError::Conflict)?;
+                let mut next = current.clone();
+                let now = clock.now();
+                let stamp = layer2_core::rfc3339_at(now);
+                next.advance_background_checkpoint(
+                    capture.progress.clone(),
+                    &lease.holder,
+                    lease.fence,
+                    stamp.clone(),
+                    layer2_core::rfc3339_at(now + super::RETRY_DELAY),
+                )
+                .map_err(model_error)?;
+                self.commit(&current, next, stamp).await?;
+                match result {
+                    Ok(Err(error)) => Err(error),
+                    _ => Err(SandboxStoreError::Unavailable(
+                        "snapshot provider step exceeded its deadline".into(),
+                    )),
                 }
             }
-            let mut view = dependencies
+        }
+    }
+
+    async fn export_step(
+        &self,
+        claimed: &Sandbox,
+        clock: &CaptureClock,
+    ) -> Result<(), SandboxStoreError> {
+        let dependencies = self.export.as_ref().ok_or(SandboxStoreError::Conflict)?;
+        let capture = claimed
+            .lifecycle
+            .background_checkpoint
+            .as_ref()
+            .ok_or(SandboxStoreError::Conflict)?;
+        let mut progress = capture.progress.clone();
+        let started = layer2_core::seconds_from_rfc3339(&capture.started_at)
+            .ok_or(SandboxStoreError::Conflict)?;
+        let now = layer2_core::seconds_from_rfc3339(&layer2_core::rfc3339_at(clock.now()))
+            .ok_or(SandboxStoreError::Conflict)?;
+        let expired = now.saturating_sub(started) >= EXPORT_DEADLINE_SECONDS;
+        if progress.published || progress.cancelled {
+            self.cleanup_export(claimed).await?;
+            let current = self.current_export_claim(claimed).await?;
+            let lease = current
+                .lifecycle
+                .background_checkpoint
+                .as_ref()
+                .and_then(|capture| capture.work.lease.as_ref())
+                .ok_or(SandboxStoreError::Conflict)?;
+            let stamp = layer2_core::rfc3339_at(clock.now());
+            let mut next = current.clone();
+            next.complete_background_checkpoint_cleanup(&lease.holder, lease.fence, stamp.clone())
+                .map_err(model_error)?;
+            return self.commit(&current, next, stamp).await;
+        } else if expired || !capture.source_is_current(claimed) {
+            progress.cancelled = true;
+        } else if let Some(receipt) = &progress.uploaded {
+            let checkpoint = SandboxCheckpointRef::seal_export(
+                &capture.export_request().map_err(model_error)?,
+                receipt,
+            )
+            .map_err(model_error)?;
+            let current = self.current_export_claim(claimed).await?;
+            let lease = current
+                .lifecycle
+                .background_checkpoint
+                .as_ref()
+                .and_then(|capture| capture.work.lease.as_ref())
+                .ok_or(SandboxStoreError::Conflict)?;
+            let stamp = layer2_core::rfc3339_at(clock.now());
+            let mut next = current.clone();
+            next.publish_background_checkpoint(
+                checkpoint.clone(),
+                &lease.holder,
+                lease.fence,
+                stamp.clone(),
+            )
+            .map_err(model_error)?;
+            return self
+                .store
+                .publish_sandbox_checkpoint(SandboxCheckpointMutation {
+                    guard: SandboxMutationGuard::capture(&current),
+                    agents: Vec::new(),
+                    nonblocking: true,
+                    checkpoint,
+                    sandbox: next,
+                    appended_at: stamp,
+                })
+                .await;
+        } else if let Some(job) = &progress.job {
+            let request = capture.job_request().map_err(model_error)?;
+            match job.phase {
+                HomeSnapshotExportJobPhase::Failed => progress.cancelled = true,
+                HomeSnapshotExportJobPhase::Ready => {
+                    let archive = dependencies
+                        .objects
+                        .for_sandbox(claimed.id.as_str())
+                        .map_err(provider_error)?;
+                    progress.uploaded = Some(
+                        dependencies
+                            .homes
+                            .upload_export(&request, job, archive.as_ref())
+                            .await
+                            .map_err(provider_error)?,
+                    );
+                }
+                _ => {
+                    progress.job = Some(
+                        dependencies
+                            .homes
+                            .observe_export_job(&request, job)
+                            .await
+                            .map_err(provider_error)?,
+                    )
+                }
+            }
+        } else if progress.view.is_some() {
+            // WaitForFirstConsumer volumes need this Pod before they can bind.
+            progress.job = Some(
+                dependencies
+                    .homes
+                    .prepare_export_job(&capture.job_request().map_err(model_error)?)
+                    .await
+                    .map_err(provider_error)?,
+            );
+        } else if progress
+            .snapshot
+            .as_ref()
+            .is_some_and(|snapshot| snapshot.ready)
+        {
+            progress.view = Some(
+                dependencies
+                    .homes
+                    .prepare_view(&capture.export_request().map_err(model_error)?)
+                    .await
+                    .map_err(provider_error)?,
+            );
+        } else if let Some(snapshot) = &progress.snapshot {
+            progress.snapshot = Some(
+                dependencies
+                    .homes
+                    .observe_snapshot(&capture.plan.snapshot, snapshot)
+                    .await
+                    .map_err(provider_error)?,
+            );
+        } else if capture
+            .work
+            .lease
+            .as_ref()
+            .is_some_and(|lease| lease.fence == 1)
+        {
+            progress.snapshot = Some(
+                dependencies
+                    .homes
+                    .prepare_snapshot(&capture.plan.snapshot)
+                    .await
+                    .map_err(provider_error)?,
+            );
+        } else {
+            // An abandoned first claim may already have allocated its disk
+            // snapshot. Recover that exact receipt; an absent resource aborts
+            // this epoch, so a restart can never move its capture boundary.
+            let existing = dependencies
                 .homes
-                .prepare_view(&request)
+                .snapshot_inventory()
+                .await
+                .map_err(provider_error)?
+                .into_iter()
+                .find(|entry| entry.request == capture.plan.snapshot);
+            if let Some(entry) = existing {
+                progress.snapshot = Some(layer3_adapter::HomeSnapshotObservation {
+                    receipt: entry.receipt,
+                    captured_at: None,
+                    ready: false,
+                });
+            } else {
+                progress.cancelled = true;
+            }
+        }
+        let current = self.current_export_claim(claimed).await?;
+        let lease = current
+            .lifecycle
+            .background_checkpoint
+            .as_ref()
+            .and_then(|capture| capture.work.lease.as_ref())
+            .ok_or(SandboxStoreError::Conflict)?;
+        let now = clock.now();
+        let stamp = layer2_core::rfc3339_at(now);
+        let delay = if progress == capture.progress {
+            PROVIDER_POLL
+        } else {
+            Duration::ZERO
+        };
+        let mut next = current.clone();
+        next.advance_background_checkpoint(
+            progress,
+            &lease.holder,
+            lease.fence,
+            stamp.clone(),
+            layer2_core::rfc3339_at(now + delay),
+        )
+        .map_err(model_error)?;
+        self.commit(&current, next, stamp).await
+    }
+
+    async fn current_export_claim(&self, claimed: &Sandbox) -> Result<Sandbox, SandboxStoreError> {
+        let current = self
+            .store
+            .get_sandbox(&claimed.id)
+            .await?
+            .ok_or(SandboxStoreError::NotFound)?;
+        if current.lifecycle.background_checkpoint != claimed.lifecycle.background_checkpoint {
+            return Err(SandboxStoreError::Conflict);
+        }
+        Ok(current)
+    }
+
+    async fn cleanup_export(&self, claimed: &Sandbox) -> Result<(), SandboxStoreError> {
+        let dependencies = self.export.as_ref().ok_or(SandboxStoreError::Conflict)?;
+        let capture = claimed
+            .lifecycle
+            .background_checkpoint
+            .as_ref()
+            .ok_or(SandboxStoreError::Conflict)?;
+        if capture.progress.view.is_some() {
+            dependencies
+                .homes
+                .remove_export_job(
+                    &capture.job_request().map_err(model_error)?,
+                    capture.progress.job.as_ref().map(|job| &job.receipt),
+                )
                 .await
                 .map_err(provider_error)?;
-            while view.bound_volume.is_none() {
-                tokio::time::sleep(PROVIDER_POLL).await;
-                view = dependencies
-                    .homes
-                    .observe_view(&request, &view)
-                    .await
-                    .map_err(provider_error)?;
-            }
-            let job = HomeSnapshotExportJobRequest {
-                export: request,
-                view: view.receipt.clone(),
-                attempt: 1,
-                image: dependencies.image.clone(),
-            };
+        }
+        if capture
+            .progress
+            .snapshot
+            .as_ref()
+            .is_some_and(|snapshot| snapshot.ready)
+        {
+            dependencies
+                .homes
+                .remove_view(
+                    &capture.export_request().map_err(model_error)?,
+                    capture.progress.view.as_ref().map(|view| &view.receipt),
+                )
+                .await
+                .map_err(provider_error)?;
+        }
+        if capture.progress.cancelled {
+            dependencies
+                .homes
+                .remove_snapshot(
+                    &capture.plan.snapshot,
+                    capture
+                        .progress
+                        .snapshot
+                        .as_ref()
+                        .map(|snapshot| &snapshot.receipt),
+                )
+                .await
+                .map_err(provider_error)?;
+        }
+        let current = self.current_export_claim(claimed).await?;
+        if let Some(latest) = &current.lifecycle.checkpoints.latest {
+            // Strictly older epochs only; retire consumers before their disks.
             for entry in dependencies
                 .homes
                 .export_job_inventory()
                 .await
                 .map_err(provider_error)?
             {
-                if entry.request.export.snapshot.capture_id == job.export.snapshot.capture_id
-                    && entry.request != job
+                if entry.request.export.snapshot.home.request.sandbox_id == claimed.id.as_str()
+                    && entry.request.export.snapshot.epoch < latest.epoch
                 {
                     dependencies
                         .homes
@@ -145,68 +381,30 @@ impl SandboxCheckpointMaintenance {
                         .map_err(provider_error)?;
                 }
             }
-            let mut observed = dependencies
+            for entry in dependencies
                 .homes
-                .prepare_export_job(&job)
+                .view_inventory()
                 .await
-                .map_err(provider_error)?;
-            while matches!(
-                observed.phase,
-                layer3_adapter::HomeSnapshotExportJobPhase::Pending
-                    | layer3_adapter::HomeSnapshotExportJobPhase::Exporting
-            ) {
-                tokio::time::sleep(PROVIDER_POLL).await;
-                observed = dependencies
-                    .homes
-                    .observe_export_job(&job, &observed)
-                    .await
-                    .map_err(provider_error)?;
+                .map_err(provider_error)?
+            {
+                if entry.request.snapshot.home.request.sandbox_id == claimed.id.as_str()
+                    && entry.request.snapshot.epoch < latest.epoch
+                {
+                    dependencies
+                        .homes
+                        .remove_view(&entry.request, Some(&entry.receipt))
+                        .await
+                        .map_err(provider_error)?;
+                }
             }
-            if observed.phase != layer3_adapter::HomeSnapshotExportJobPhase::Ready {
-                return Err(SandboxStoreError::Unavailable(
-                    "snapshot export job failed".into(),
-                ));
-            }
-            let archive = dependencies
-                .objects
-                .for_sandbox(sandbox.id.as_str())
-                .map_err(provider_error)?;
-            let receipt = dependencies
-                .homes
-                .upload_export(&job, &observed, archive.as_ref())
-                .await
-                .map_err(provider_error)?;
-            let checkpoint =
-                SandboxCheckpointRef::seal_export(&job.export, &receipt).map_err(model_error)?;
-            let current = self
-                .store
-                .get_sandbox(&sandbox.id)
-                .await?
-                .ok_or(SandboxStoreError::NotFound)?;
-            self.store
-                .publish_sandbox_checkpoint(SandboxCheckpointMutation {
-                    guard: SandboxMutationGuard::capture(&current),
-                    agents: Vec::new(),
-                    nonblocking: true,
-                    checkpoint,
-                    sandbox: current,
-                    appended_at: layer2_core::rfc3339_at(clock.now()),
-                })
-                .await?;
-            // Keep one physical recovery point per Sandbox.  The newly
-            // published capture is now authoritative, so older captures (and
-            // any abandoned retry from a prior epoch) can be released with
-            // their exact provider receipts.  Cleanup is receipt guarded by
-            // the provider and is safe to repeat after a controller restart.
             for entry in dependencies
                 .homes
                 .snapshot_inventory()
                 .await
                 .map_err(provider_error)?
             {
-                if entry.request.home.request.sandbox_id
-                    == job.export.snapshot.home.request.sandbox_id
-                    && entry.request.capture_id != job.export.snapshot.capture_id
+                if entry.request.home.request.sandbox_id == claimed.id.as_str()
+                    && entry.request.epoch < latest.epoch
                 {
                     dependencies
                         .homes
@@ -215,28 +413,8 @@ impl SandboxCheckpointMaintenance {
                         .map_err(provider_error)?;
                 }
             }
-            // The immutable source snapshot remains as the Sandbox's latest
-            // physical recovery point. Export Pods and derived writable views
-            // are staging resources and can be retired after publication.
-            dependencies
-                .homes
-                .remove_export_job(&job, Some(&observed.receipt))
-                .await
-                .map_err(provider_error)?;
-            dependencies
-                .homes
-                .remove_view(&job.export, Some(&job.view))
-                .await
-                .map_err(provider_error)?;
-            Ok::<(), SandboxStoreError>(())
-        })
-        .await;
-        match result {
-            Ok(result) => result,
-            Err(_) => Err(SandboxStoreError::Unavailable(
-                "snapshot export exceeded its bounded deadline".into(),
-            )),
         }
+        Ok(())
     }
 }
 

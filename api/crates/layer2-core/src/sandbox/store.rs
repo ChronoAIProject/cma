@@ -11,6 +11,7 @@ use super::{
 };
 
 mod agent_control;
+mod background_checkpoint;
 pub use agent_control::{
     AgentControlResult, AgentControlStore, AgentControlStoreError, AgentControlTarget,
     AgentDeleteRequest, AgentStopRequest,

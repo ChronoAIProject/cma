@@ -16,6 +16,11 @@ pub(super) async fn validate_and_fence(
     mutation: &SandboxCheckpointMutation,
     session: &mut mongodb::ClientSession,
 ) -> Result<(), PublishError> {
+    if mutation.nonblocking {
+        // The model requires the exact durable capture, lease and verified
+        // export receipt. Current live logs belong to the next snapshot.
+        return validate_checkpoint_mutation(current, &[], mutation).map_err(PublishError::Domain);
+    }
     let agents = load_sandbox_agents(store, &current.id, session).await?;
     let mut rows = Vec::with_capacity(agents.len());
     for agent in agents {

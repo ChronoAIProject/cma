@@ -14,6 +14,7 @@ mod agent_reads_fold;
 mod agent_runtime;
 mod agent_service;
 mod agent_work;
+mod background_checkpoint;
 mod checkpoint;
 mod checkpoint_capture;
 mod checkpoint_writer_recovery;
@@ -110,6 +111,10 @@ pub use agent_service::{AgentService, AgentServiceError, CreateAgent};
 pub use agent_work::{
     AgentCleanupDebt, AgentWorkLease, AgentWorkReceipt, AgentWorkState, AgentWorkStep,
     ResolvedAgentSkill,
+};
+pub use background_checkpoint::{
+    SandboxBackgroundCheckpoint, SandboxBackgroundCheckpointPlan,
+    SandboxBackgroundCheckpointProgress,
 };
 pub use checkpoint::{
     sandbox_checkpoint_due, sandbox_checkpoint_due_with_interval, SandboxCheckpointConversation,

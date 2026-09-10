@@ -50,7 +50,7 @@ export function SandboxAdvanced({
       .catch(() => {});
     return () => abort.abort();
   }, [client, sandbox, retry]);
-  const save = sandbox.lifecycle?.checkpoint;
+  const save = sandbox.lifecycle?.backgroundSave ?? sandbox.lifecycle?.checkpoint;
   const latest = sandbox.lifecycle?.latestSnapshot;
   const downloadUrl =
     latest !== undefined &&
