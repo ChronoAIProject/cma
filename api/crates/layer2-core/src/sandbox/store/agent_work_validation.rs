@@ -337,10 +337,12 @@ fn advance_ready_at(
         mutation.agent.work.step,
         current.work.cleanup_not_before.as_ref(),
     ) {
-        (AgentWorkStep::FenceInteraction, AgentWorkStep::CloseProcess, Some(not_before))
-            if stamp(not_before)? > stamp(&mutation.appended_at)? =>
-        {
-            Ok(not_before.clone())
+        (AgentWorkStep::FenceInteraction, AgentWorkStep::CloseProcess, Some(not_before)) => {
+            if stamp(not_before)? > stamp(&mutation.appended_at)? {
+                Ok(not_before.clone())
+            } else {
+                Ok(mutation.appended_at.clone())
+            }
         }
         (_, _, Some(_)) => Err(SandboxStoreError::Conflict),
         _ => Ok(mutation.appended_at.clone()),

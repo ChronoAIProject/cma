@@ -523,6 +523,40 @@ fn cleanup_advance_settles_only_the_required_compensation() {
 }
 
 #[test]
+fn elapsed_cleanup_delay_allows_fenced_agent_shutdown_to_continue() {
+    for deadline in [NOW, AT] {
+        let (mut current, worktree) = claimed(
+            AgentWorkStep::FenceInteraction,
+            AgentStatus::Ready,
+            WorktreeStatus::Ready,
+        );
+        current.work.cleanup_not_before = Some(deadline.into());
+        let mut next = current.clone();
+        next.work
+            .advance(
+                "worker",
+                fence(&current),
+                AgentWorkStep::CloseProcess,
+                AT.into(),
+            )
+            .unwrap();
+        assert_eq!(next.work.ready_at, AT);
+        assert!(next.work.cleanup_not_before.is_none());
+        let mutation = publication(
+            &current,
+            next,
+            vec![completed(AgentWorkStep::FenceInteraction)],
+            None,
+            None,
+        );
+        assert_valid(&current, &worktree, &mutation);
+        let mut premature = mutation.clone();
+        premature.agent.work.ready_at = NOW.into();
+        assert_conflict(&current, &worktree, &premature);
+    }
+}
+
+#[test]
 fn immutable_fields_histories_and_delayed_readiness_are_enforced() {
     let (current, worktree) = claimed(
         AgentWorkStep::FenceInteraction,
