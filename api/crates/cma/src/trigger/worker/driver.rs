@@ -198,14 +198,28 @@ impl LaunchResourceDriver for ServiceLaunchResourceDriver {
         &self,
         target: &TriggerTarget,
     ) -> Result<ResolvedTriggerProfiles, LaunchResourceError> {
-        let sandbox = self
-            .profiles
-            .sandbox_profile_revision(&target.sandbox_profile.id, target.sandbox_profile.revision)
-            .await
-            .map_err(profile_error)?
-            .ok_or_else(missing_frozen_profile)?;
+        let (sandbox, workspace, agent) = tokio::try_join!(
+            self.profiles.sandbox_profile_revision(
+                &target.sandbox_profile.id,
+                target.sandbox_profile.revision,
+            ),
+            self.profiles.workspace_profile_revision(
+                &target.workspace_profile.id,
+                target.workspace_profile.revision,
+            ),
+            self.profiles
+                .agent_profile_revision(&target.agent_profile.id, target.agent_profile.revision,),
+        )
+        .map_err(profile_error)?;
+        let sandbox = sandbox.ok_or_else(missing_frozen_profile)?;
+        let workspace = workspace.ok_or_else(missing_frozen_profile)?;
+        let agent = agent.ok_or_else(missing_frozen_profile)?;
         let mut sandbox_workspaces = Vec::with_capacity(sandbox.content.workspace_profiles.len());
         for reference in &sandbox.content.workspace_profiles {
+            if reference.id == workspace.profile_id && reference.revision == workspace.revision {
+                sandbox_workspaces.push(workspace.clone());
+                continue;
+            }
             sandbox_workspaces.push(
                 self.profiles
                     .workspace_profile_revision(&reference.id, reference.revision)
@@ -214,21 +228,6 @@ impl LaunchResourceDriver for ServiceLaunchResourceDriver {
                     .ok_or_else(missing_frozen_profile)?,
             );
         }
-        let workspace = self
-            .profiles
-            .workspace_profile_revision(
-                &target.workspace_profile.id,
-                target.workspace_profile.revision,
-            )
-            .await
-            .map_err(profile_error)?
-            .ok_or_else(missing_frozen_profile)?;
-        let agent = self
-            .profiles
-            .agent_profile_revision(&target.agent_profile.id, target.agent_profile.revision)
-            .await
-            .map_err(profile_error)?
-            .ok_or_else(missing_frozen_profile)?;
         validate_profile_digests(&sandbox, &sandbox_workspaces, &workspace, &agent)?;
         Ok(ResolvedTriggerProfiles {
             sandbox,
