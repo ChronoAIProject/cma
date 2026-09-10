@@ -1,9 +1,10 @@
+use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
 use layer2_core::profiles::content_digest;
 use layer2_core::trigger_domain::{
-    Launch, LaunchCommit, LaunchEffectState, LaunchEventKind, LaunchState, ResolvedTriggerProfiles,
-    TriggerRevision, TriggerTarget, MAX_LAUNCH_RETRY_DELAY_SECONDS,
+    Launch, LaunchCommit, LaunchEffectState, LaunchEventKind, LaunchState, ResolvedResource,
+    ResolvedTriggerProfiles, TriggerRevision, TriggerTarget, MAX_LAUNCH_RETRY_DELAY_SECONDS,
 };
 use layer2_core::{rfc3339_at, AgentId, Authorization, Caller, Capability, SandboxId, WorkspaceId};
 
@@ -13,6 +14,42 @@ use super::{LaunchWorker, LaunchWorkerError};
 pub(super) struct FrozenLaunchContext {
     pub(super) revision: TriggerRevision,
     pub(super) profiles: ResolvedTriggerProfiles,
+}
+
+#[derive(Default)]
+pub(super) struct FrozenContextCache {
+    value: Option<(FrozenContextKey, Arc<FrozenLaunchContext>)>,
+}
+
+#[derive(PartialEq, Eq)]
+struct FrozenContextKey {
+    launch_id: layer2_core::LaunchId,
+    revision_digest: String,
+    existing: Option<(SandboxId, WorkspaceId, AgentId)>,
+}
+
+impl FrozenContextKey {
+    fn for_launch(launch: &Launch) -> Self {
+        let existing = match (
+            &launch.resolution.sandbox,
+            &launch.resolution.workspace,
+            &launch.resolution.agent,
+            launch.first_message,
+        ) {
+            (
+                ResolvedResource::Reused(sandbox),
+                ResolvedResource::Reused(workspace),
+                ResolvedResource::Reused(agent),
+                layer2_core::sandbox::FirstMessageDelivery::Completed,
+            ) => Some((sandbox.clone(), workspace.clone(), agent.clone())),
+            _ => None,
+        };
+        Self {
+            launch_id: launch.id.clone(),
+            revision_digest: launch.revision_digest.clone(),
+            existing,
+        }
+    }
 }
 
 impl FrozenLaunchContext {
@@ -57,6 +94,30 @@ impl FrozenLaunchContext {
 }
 
 impl LaunchWorker {
+    pub(super) async fn cached_frozen_context(
+        &self,
+        launch: Launch,
+        now: SystemTime,
+        cache: &mut FrozenContextCache,
+    ) -> Result<Option<(Launch, Arc<FrozenLaunchContext>)>, LaunchWorkerError> {
+        let key = FrozenContextKey::for_launch(&launch);
+        if let Some((cached_key, context)) = &cache.value {
+            if *cached_key == key {
+                return Ok(Some((launch, Arc::clone(context))));
+            }
+        }
+        // Cache only immutable, validated inputs for this scheduled run. Control,
+        // cancellation and resource readiness are checked anew at every durable claim.
+        // Switching to an existing conversation invalidates the cache to retain its pins.
+        cache.value = None;
+        let Some((launch, context)) = self.load_frozen_context(launch, now).await? else {
+            return Ok(None);
+        };
+        let context = Arc::new(context);
+        cache.value = Some((key, Arc::clone(&context)));
+        Ok(Some((launch, context)))
+    }
+
     pub(super) async fn load_frozen_context(
         &self,
         launch: Launch,

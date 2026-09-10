@@ -15,6 +15,8 @@ async fn scheduled_launch_follows_ready_resources_without_waiting_between_stages
     let pending = harness.launch();
     assert_eq!(pending.state, LaunchState::MessagePending);
     assert_eq!(harness.driver.resource_counts(), (1, 1, 1));
+    assert_eq!(harness.driver.profile_queries().len(), 1);
+    assert_eq!(harness.driver.trigger_queries().len(), 1);
     // The first prompt is still queued: the scheduler must respect its
     // deferred timestamp and must not spin or repeat resource effects.
     assert_eq!(harness.worker.run_due(now).await.unwrap(), 0);

@@ -1,0 +1,172 @@
+use std::collections::BTreeMap;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::Mutex;
+
+use tokio::sync::Notify;
+
+use super::*;
+
+#[derive(Clone)]
+enum Behavior {
+    Complete,
+    Wait(Arc<Notify>),
+    Fail,
+    Panic,
+}
+
+#[derive(Default)]
+struct Probe {
+    jobs: Mutex<BTreeMap<LaunchId, Behavior>>,
+    calls: Mutex<Vec<LaunchId>>,
+    active: AtomicUsize,
+    peak: AtomicUsize,
+    fail_poll: AtomicBool,
+}
+
+impl Probe {
+    fn put(&self, name: &str, behavior: Behavior) -> LaunchId {
+        let id = LaunchId(name.into());
+        self.jobs.lock().unwrap().insert(id.clone(), behavior);
+        id
+    }
+
+    fn count(&self, id: &LaunchId) -> usize {
+        self.calls
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|called| *called == id)
+            .count()
+    }
+
+    fn scheduler(self: &Arc<Self>, concurrency: usize) -> LaunchScheduler {
+        LaunchScheduler {
+            worker: self.clone(),
+            sweep_interval: Duration::from_secs(1),
+            concurrency,
+            drain_timeout: Duration::from_secs(5),
+        }
+    }
+}
+
+struct ActiveCall<'a>(&'a Probe);
+
+impl Drop for ActiveCall<'_> {
+    fn drop(&mut self) {
+        self.0.active.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
+#[async_trait::async_trait]
+impl LaunchScheduleWork for Probe {
+    async fn due(&self, _now: SystemTime) -> Result<Vec<LaunchId>, LaunchWorkerError> {
+        if self.fail_poll.swap(false, Ordering::SeqCst) {
+            return Err(LaunchWorkerError::Corrupt(
+                "simulated discovery failure".into(),
+            ));
+        }
+        Ok(self.jobs.lock().unwrap().keys().cloned().collect())
+    }
+
+    async fn run_one(&self, id: &LaunchId, _now: SystemTime) -> Result<bool, LaunchWorkerError> {
+        self.calls.lock().unwrap().push(id.clone());
+        let Some(behavior) = self.jobs.lock().unwrap().get(id).cloned() else {
+            return Ok(false);
+        };
+        let active = self.active.fetch_add(1, Ordering::SeqCst) + 1;
+        self.peak.fetch_max(active, Ordering::SeqCst);
+        let _active = ActiveCall(self);
+        match behavior {
+            Behavior::Complete => {}
+            Behavior::Wait(release) => release.notified().await,
+            Behavior::Fail => {
+                return Err(LaunchWorkerError::Corrupt("simulated work failure".into()))
+            }
+            Behavior::Panic => panic!("simulated worker panic"),
+        }
+        self.jobs.lock().unwrap().remove(id);
+        Ok(true)
+    }
+}
+
+async fn settle() {
+    for _ in 0..30 {
+        tokio::task::yield_now().await;
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn slow_launch_does_not_block_new_visitors_or_run_twice() {
+    let probe = Arc::new(Probe::default());
+    let release = Arc::new(Notify::new());
+    let slow = probe.put("lch_a", Behavior::Wait(release.clone()));
+    let (shutdown, signal) = watch::channel(false);
+    let scheduler = probe.scheduler(2).spawn(signal);
+    settle().await;
+    assert_eq!(probe.count(&slow), 1);
+    let visitor = probe.put("lch_b", Behavior::Complete);
+    tokio::time::advance(Duration::from_secs(1)).await;
+    settle().await;
+    assert_eq!(probe.count(&visitor), 1);
+    assert!(!probe.jobs.lock().unwrap().contains_key(&visitor));
+    assert_eq!(probe.count(&slow), 1);
+    shutdown.send(true).unwrap();
+    release.notify_one();
+    scheduler.await.unwrap();
+}
+
+#[tokio::test(start_paused = true)]
+async fn freed_slots_start_queued_launches_without_waiting_for_other_work() {
+    let probe = Arc::new(Probe::default());
+    let release_a = Arc::new(Notify::new());
+    let release_b = Arc::new(Notify::new());
+    probe.put("lch_a", Behavior::Wait(release_a.clone()));
+    probe.put("lch_b", Behavior::Wait(release_b.clone()));
+    let queued = probe.put("lch_c", Behavior::Complete);
+    let (shutdown, signal) = watch::channel(false);
+    let scheduler = probe.scheduler(2).spawn(signal);
+    settle().await;
+    assert_eq!(probe.count(&queued), 0);
+    release_b.notify_one();
+    settle().await;
+    assert_eq!(probe.count(&queued), 1);
+    assert_eq!(probe.peak.load(Ordering::SeqCst), 2);
+    shutdown.send(true).unwrap();
+    release_a.notify_one();
+    scheduler.await.unwrap();
+}
+
+#[tokio::test(start_paused = true)]
+async fn discovery_errors_and_failed_or_panicked_launches_do_not_stop_scheduling() {
+    let probe = Arc::new(Probe::default());
+    probe.fail_poll.store(true, Ordering::SeqCst);
+    probe.put("lch_a", Behavior::Fail);
+    probe.put("lch_b", Behavior::Panic);
+    let visitor = probe.put("lch_c", Behavior::Complete);
+    let (shutdown, signal) = watch::channel(false);
+    let scheduler = probe.scheduler(2).spawn(signal);
+    settle().await;
+    assert_eq!(probe.count(&visitor), 0);
+    tokio::time::advance(Duration::from_secs(1)).await;
+    settle().await;
+    assert_eq!(probe.count(&visitor), 1);
+    assert!(!scheduler.is_finished());
+    shutdown.send(true).unwrap();
+    scheduler.await.unwrap();
+}
+
+#[tokio::test(start_paused = true)]
+async fn shutdown_drains_for_a_bounded_time_without_starting_queued_work() {
+    let probe = Arc::new(Probe::default());
+    probe.put("lch_a", Behavior::Wait(Arc::new(Notify::new())));
+    let queued = probe.put("lch_b", Behavior::Complete);
+    let (shutdown, signal) = watch::channel(false);
+    let scheduler = probe.scheduler(1).spawn(signal);
+    settle().await;
+    shutdown.send(true).unwrap();
+    settle().await;
+    tokio::time::advance(Duration::from_secs(5)).await;
+    scheduler.await.unwrap();
+    assert_eq!(probe.count(&queued), 0);
+    assert_eq!(probe.active.load(Ordering::SeqCst), 0);
+}
