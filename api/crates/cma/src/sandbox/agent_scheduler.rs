@@ -41,7 +41,7 @@ impl AgentScheduleWork for AgentWorker {
     }
 
     async fn run_one(&self, id: &AgentId, now: SystemTime) -> Result<bool, SandboxStoreError> {
-        AgentWorker::run_one(self, id, now).await
+        AgentWorker::run_scheduled(self, id, now).await
     }
 }
 

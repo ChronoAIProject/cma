@@ -8,10 +8,15 @@ use crate::{seconds_from_rfc3339, SandboxId, ServiceId};
 use super::store::SandboxStoreError;
 use super::{ProvisioningExecution, RuntimeBinding, Sandbox, SandboxStatus, SandboxWorkStep};
 
+mod hierarchy;
+pub use hierarchy::{WarmAgent, WarmWorkspace, WarmWorkspacePlan};
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct WarmSandboxPlan {
     pub profile: SandboxProfileSnapshot,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub workspaces: Vec<WarmWorkspacePlan>,
     pub reaches: Vec<ServiceId>,
     pub runtime_version: String,
     pub execution: ProvisioningExecution,
@@ -22,6 +27,7 @@ impl WarmSandboxPlan {
         self.execution
             .validate()
             .map_err(|error| corrupt(&error.to_string()))?;
+        self.validate_hierarchy()?;
         if self.profile.revision == 0
             || self.profile.digest
                 != content_digest(&self.profile.content)
@@ -84,6 +90,8 @@ pub struct WarmSandbox {
     pub runtime: Option<RuntimeBinding>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub home: Option<Box<super::SandboxHome>>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub workspaces: Vec<WarmWorkspace>,
     /// Only a validated complete install receipt may populate this field.
     pub installed_request_sha256: Option<String>,
     pub revision: u64,
@@ -95,6 +103,7 @@ impl WarmSandbox {
     pub fn new(plan: WarmSandboxPlan, at: String) -> Result<Self, SandboxStoreError> {
         let record = Self {
             id: SandboxId::generate(),
+            workspaces: plan.workspaces.iter().map(WarmWorkspace::new).collect(),
             plan,
             state: WarmSandboxState::Preparing,
             runtime: None,
@@ -110,6 +119,7 @@ impl WarmSandbox {
 
     pub fn validate(&self) -> Result<(), SandboxStoreError> {
         self.plan.validate()?;
+        self.validate_hierarchy()?;
         if let Some(home) = &self.home {
             home.validate(&self.id)
                 .map_err(|error| corrupt(&error.to_string()))?;
@@ -170,6 +180,7 @@ impl WarmSandbox {
     ) -> Result<(), SandboxStoreError> {
         self.validate()?;
         if self.state != WarmSandboxState::Ready
+            || !self.plan.has_complete_hierarchy()
             || !self.plan.matches(sandbox, runtime_version)
             || sandbox.revision != 1
             || sandbox.runtime.is_some()

@@ -73,7 +73,9 @@ mod workspace_service;
 mod workspace_work;
 mod worktree;
 pub use home_recovery::{SandboxHomeRecovery, SandboxRecoveryPause};
-pub use warmup::{WarmSandbox, WarmSandboxPlan, WarmSandboxState};
+pub use warmup::{
+    WarmAgent, WarmSandbox, WarmSandboxPlan, WarmSandboxState, WarmWorkspace, WarmWorkspacePlan,
+};
 
 pub use admin::{
     AgentAdminSummary, OperatorError, SandboxAdminQuery, SandboxAdminStore, SandboxAdminSummary,

@@ -2,6 +2,140 @@ use super::*;
 use crate::sandbox::warmup::prepare_environment;
 use layer2_core::sandbox::{ProvisioningExecution, WarmSandbox, WarmSandboxPlan, WarmSandboxState};
 
+#[tokio::test]
+async fn full_warm_environment_has_workspace_worktree_home_and_idle_session_before_credentials() {
+    use crate::sandbox::agent_skills::EmptyAgentSkillResolver;
+    use crate::sandbox::warmup::prepare_hierarchy_step;
+    use layer2_core::profiles::{
+        content_digest, AgentProfileRef, WorkspaceLocation, WorkspaceProfileContent,
+        WorkspaceProfileRef, WorkspaceProfileSnapshot,
+    };
+    use layer2_core::sandbox::WarmWorkspacePlan;
+    let harness = Harness::new(vec![], 0, Duration::from_secs(60)).await;
+    let mut candidate = harness.create().await;
+    let mut agent = lifecycle_queue_tests::ready_agent(&candidate, SystemTime::now()).profile;
+    agent.digest = content_digest(&agent.content).unwrap();
+    let content = WorkspaceProfileContent {
+        name: "warm-research".into(),
+        location: WorkspaceLocation::Directory {
+            name: "warm-research".into(),
+        },
+        setup_commands: vec![
+            "prepare public dependencies".into(),
+            "# cma:after-credentials\nconfigure owner identity".into(),
+        ],
+        agent_profiles: vec![AgentProfileRef {
+            id: agent.id.clone(),
+            revision: agent.revision,
+        }],
+    };
+    let workspace = WorkspaceProfileSnapshot {
+        id: layer2_core::WorkspaceProfileId::generate(),
+        revision: 1,
+        digest: content_digest(&content).unwrap(),
+        content,
+    };
+    candidate.profile.content.workspace_profiles = vec![WorkspaceProfileRef {
+        id: workspace.id.clone(),
+        revision: 1,
+    }];
+    candidate.profile.digest = content_digest(&candidate.profile.content).unwrap();
+    let mut reaches = candidate.credential.reaches.clone();
+    reaches.sort();
+    let mut record = WarmSandbox::new(
+        WarmSandboxPlan {
+            profile: candidate.profile.clone(),
+            workspaces: vec![WarmWorkspacePlan {
+                profile: workspace,
+                agents: vec![agent],
+            }],
+            reaches,
+            runtime_version: runtime_image(),
+            execution: ProvisioningExecution::default(),
+        },
+        layer2_core::now_rfc3339(),
+    )
+    .unwrap();
+    let identities = (
+        record.workspaces[0].id.clone(),
+        record.workspaces[0].agents[0].id.clone(),
+    );
+    for _ in 0..10 {
+        record = prepare_environment(harness.adapter.as_ref(), "test", &record, None)
+            .await
+            .unwrap();
+        if record.state == WarmSandboxState::Installing && record.installed_request_sha256.is_some()
+        {
+            prepare_hierarchy_step(
+                harness.adapter.as_ref(),
+                &EmptyAgentSkillResolver,
+                &candidate.owner,
+                &mut record,
+            )
+            .await
+            .unwrap();
+        }
+        record.validate().unwrap();
+        // Exercise the exact durable serialization used after every worker step.
+        record = serde_json::from_slice(&serde_json::to_vec(&record).unwrap()).unwrap();
+        if record.state == WarmSandboxState::Ready {
+            break;
+        }
+    }
+    assert_eq!(record.state, WarmSandboxState::Ready);
+    assert_eq!(
+        (&record.workspaces[0].id, &record.workspaces[0].agents[0].id),
+        (&identities.0, &identities.1)
+    );
+    let handle = RuntimeHandle::new(&record.runtime.as_ref().unwrap().runtime_id);
+    let prepared = harness.backend.snapshot(&handle).await.unwrap();
+    assert!(!prepared.credential_delivered);
+    assert_eq!(prepared.workspaces.len(), 1);
+    assert_eq!(prepared.worktrees.len(), 1);
+    assert_eq!(prepared.homes.len(), 1);
+    assert_eq!(prepared.agents.len(), 1);
+    assert!(record.workspaces[0].agents[0].conversation_id.is_some());
+    assert!(harness.actions.snapshot().is_empty());
+    let requests = harness.backend.requests().await;
+    let setup = requests
+        .iter()
+        .find_map(|(_, request)| match request {
+            RequestFrame::WorkspaceSetup(request) => Some(request),
+            _ => None,
+        })
+        .unwrap();
+    assert_eq!(setup.commands, ["prepare public dependencies"]);
+    let mut incomplete = record.clone();
+    incomplete.workspaces[0].agents[0].conversation_id = None;
+    assert!(incomplete
+        .claim(
+            &mut candidate.clone(),
+            &runtime_image(),
+            &layer2_core::now_rfc3339()
+        )
+        .is_err());
+    record
+        .claim(
+            &mut candidate,
+            &runtime_image(),
+            &layer2_core::now_rfc3339(),
+        )
+        .unwrap();
+    assert_eq!(candidate.id, record.id);
+    assert_eq!(
+        candidate.runtime.as_ref().unwrap().runtime_id,
+        handle.as_str()
+    );
+    assert_eq!(record.state, WarmSandboxState::Claimed);
+    assert!(record
+        .claim(
+            &mut candidate.clone(),
+            &runtime_image(),
+            &layer2_core::now_rfc3339()
+        )
+        .is_err());
+}
+
 struct WarmHome(layer3_adapter::HomeVolumeAttachment);
 
 #[async_trait::async_trait]
@@ -38,6 +172,7 @@ async fn persistent_warm(harness: &Harness) -> (Arc<dyn SandboxAdapter>, WarmSan
     let mut record = WarmSandbox::new(
         WarmSandboxPlan {
             profile: candidate.profile.clone(),
+            workspaces: Vec::new(),
             reaches,
             runtime_version: runtime_image(),
             execution: ProvisioningExecution::default(),
@@ -141,6 +276,7 @@ async fn prepare(harness: &Harness, candidate: &Sandbox) -> WarmSandbox {
     let record = WarmSandbox::new(
         WarmSandboxPlan {
             profile: candidate.profile.clone(),
+            workspaces: Vec::new(),
             reaches,
             runtime_version: runtime_image(),
             execution: ProvisioningExecution::default(),
@@ -280,6 +416,7 @@ async fn installation_failure_never_becomes_ready_or_obtains_a_user_key() {
     reaches.sort();
     let record = WarmSandbox::new(
         WarmSandboxPlan {
+            workspaces: Vec::new(),
             profile: candidate.profile.clone(),
             reaches,
             runtime_version: runtime_image(),

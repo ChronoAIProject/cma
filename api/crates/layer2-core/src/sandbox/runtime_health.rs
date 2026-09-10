@@ -23,6 +23,10 @@ impl Sandbox {
         observed: &RuntimeStatus,
     ) -> Result<bool, SandboxModelError> {
         self.validate()?;
+        if self.credential.delivered && !observed.credential_ready && observed.agent_processes != 0
+        {
+            return Err(invalid());
+        }
         let binding = self.runtime.as_ref().ok_or_else(invalid)?;
         let home = self
             .lifecycle

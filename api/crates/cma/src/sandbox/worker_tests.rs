@@ -1136,7 +1136,7 @@ async fn due_sweep_continues_after_one_sandbox_returns_a_store_error() {
     assert_eq!(sweep.await.unwrap(), Err(SandboxStoreError::Conflict));
     assert_eq!(
         harness.stored(&following.id).await.status,
-        SandboxStatus::Installing
+        SandboxStatus::Active
     );
 }
 

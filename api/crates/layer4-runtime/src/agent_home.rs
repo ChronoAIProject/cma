@@ -53,7 +53,7 @@ pub(crate) async fn materialize(
     for skill in &plan.skills {
         let destination = staging.join("skills").join(&skill.id);
         ensure_parents(&staging, destination.parent().unwrap())?;
-        crate::skills::install(client, config.nyxid_url.as_deref(), skill, &destination).await?;
+        crate::skills::install_prepared(config, client, skill, &destination).await?;
     }
     for link in &plan.symlinks {
         write_symlink(&staging, &target, &config.home, link)?;

@@ -135,6 +135,17 @@ pub trait SandboxAdapter: Send + Sync {
         request: &AgentHomeRequest,
     ) -> Result<()>;
 
+    /// Stage verified public skill bytes before user credential binding.
+    async fn cache_skill_archive(
+        &self,
+        _handle: &RuntimeHandle,
+        _archive: &crate::SkillArchive,
+    ) -> Result<()> {
+        Err(crate::AdapterError::Unsupported(
+            "skill archive preparation is unavailable".into(),
+        ))
+    }
+
     async fn remove_agent_home(
         &self,
         handle: &RuntimeHandle,

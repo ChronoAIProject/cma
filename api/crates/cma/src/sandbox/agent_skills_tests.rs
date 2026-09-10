@@ -11,6 +11,8 @@ use serde_json::json;
 use super::*;
 #[path = "agent_skills_tests/authority_tests.rs"]
 mod authority_tests;
+#[path = "agent_skills_tests/warmup_tests.rs"]
+mod warmup_tests;
 use authority_tests::{sandbox, CredentialReply, TestCredentials};
 
 const TOKEN: &str = "admitted-sandbox-key";
@@ -132,6 +134,7 @@ fn resolver(
     credentials: Option<Arc<TestCredentials>>,
 ) -> OrnnAgentSkillResolver {
     OrnnAgentSkillResolver {
+        warmup_tokens: None,
         http: reqwest::Client::builder()
             .timeout(REQUEST_TIMEOUT)
             .redirect(reqwest::redirect::Policy::none())

@@ -102,6 +102,34 @@ impl AgentWorker {
         Ok(true)
     }
 
+    /// Follow already-prepared startup steps immediately, keeping each durable claim.
+    pub(crate) async fn run_scheduled(
+        &self,
+        id: &AgentId,
+        now: SystemTime,
+    ) -> Result<bool, SandboxStoreError> {
+        let started = tokio::time::Instant::now();
+        let progressed = self.run_one(id, now).await?;
+        if !progressed {
+            return Ok(false);
+        }
+        for _ in 0..6 {
+            let Some(agent) = self.dependencies.store.get_agent(id).await? else {
+                break;
+            };
+            if agent.work.warm_conversation_id.is_none()
+                || agent.status != layer2_core::sandbox::AgentStatus::Starting
+                || !agent.work.is_due(&rfc3339_at(now + started.elapsed()))
+            {
+                break;
+            }
+            if !self.run_one(id, now + started.elapsed()).await? {
+                break;
+            }
+        }
+        Ok(true)
+    }
+
     async fn execute(&self, agent: Agent, now: SystemTime) -> Result<(), SandboxStoreError> {
         match agent.work.step {
             AgentWorkStep::AddWorktree => self.add_worktree(agent, now).await,

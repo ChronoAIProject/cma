@@ -19,6 +19,9 @@ const REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
 const RESOLUTION_TIMEOUT: Duration = Duration::from_secs(30);
 
 mod authority;
+mod http;
+use http::{bounded_body, classify_status};
+mod warmup;
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub(crate) enum AgentSkillResolutionError {
@@ -33,6 +36,30 @@ pub(crate) enum AgentSkillResolutionError {
 /// Resolves profile references to immutable archives before home materialization.
 #[async_trait::async_trait]
 pub(crate) trait AgentSkillResolver: Send + Sync {
+    async fn resolve_warm(
+        &self,
+        _owner: &layer2_core::SubjectId,
+        references: &[SkillRef],
+    ) -> Result<Vec<ResolvedAgentSkill>, AgentSkillResolutionError> {
+        if references.is_empty() {
+            Ok(Vec::new())
+        } else {
+            Err(unavailable("public warm skill source is not composed"))
+        }
+    }
+
+    async fn warm_archives(
+        &self,
+        _owner: &layer2_core::SubjectId,
+        material: &[ResolvedAgentSkill],
+    ) -> Result<Vec<layer3_adapter::SkillArchive>, AgentSkillResolutionError> {
+        if material.is_empty() {
+            Ok(Vec::new())
+        } else {
+            Err(unavailable("public warm skill source is not composed"))
+        }
+    }
+
     async fn resolve(
         &self,
         sandbox: &Sandbox,
@@ -84,6 +111,7 @@ pub(crate) struct OrnnAgentSkillResolver {
     request_origin: reqwest::Url,
     locator_origin: reqwest::Url,
     credentials: Option<Arc<dyn SandboxCredentialController>>,
+    warmup_tokens: Option<Arc<dyn super::credential::OwnerTokenSource>>,
 }
 
 impl OrnnAgentSkillResolver {
@@ -113,6 +141,7 @@ impl OrnnAgentSkillResolver {
             request_origin: origin.clone(),
             locator_origin: origin,
             credentials,
+            warmup_tokens: None,
         })
     }
 
@@ -121,6 +150,7 @@ impl OrnnAgentSkillResolver {
         index: usize,
         reference: &SkillRef,
         bearer: Option<&str>,
+        public_only: bool,
     ) -> Result<ResolvedAgentSkill, AgentSkillResolutionError> {
         let version = requested_version(reference, index)?;
         let url = skill_detail_url(&self.request_origin, reference.id.as_str(), version)
@@ -143,6 +173,12 @@ impl OrnnAgentSkillResolver {
         let material = envelope
             .data
             .ok_or_else(|| invalid(index, "Ornn success response has no data"))?;
+        if public_only && material.is_private != Some(false) {
+            return Err(invalid(
+                index,
+                "only explicitly public skills may be prepared for shared warm environments",
+            ));
+        }
         if material.guid != reference.id.as_str() {
             return Err(invalid(index, "Ornn response changed the skill identity"));
         }
@@ -171,6 +207,21 @@ impl OrnnAgentSkillResolver {
 
 #[async_trait::async_trait]
 impl AgentSkillResolver for OrnnAgentSkillResolver {
+    async fn resolve_warm(
+        &self,
+        owner: &layer2_core::SubjectId,
+        references: &[SkillRef],
+    ) -> Result<Vec<ResolvedAgentSkill>, AgentSkillResolutionError> {
+        self.resolve_public_material(owner, references).await
+    }
+
+    async fn warm_archives(
+        &self,
+        owner: &layer2_core::SubjectId,
+        material: &[ResolvedAgentSkill],
+    ) -> Result<Vec<layer3_adapter::SkillArchive>, AgentSkillResolutionError> {
+        self.download_public_material(owner, material).await
+    }
     async fn resolve(
         &self,
         sandbox: &Sandbox,
@@ -197,7 +248,7 @@ impl AgentSkillResolver for OrnnAgentSkillResolver {
             let requests = references
                 .iter()
                 .enumerate()
-                .map(|(index, reference)| self.resolve_one(index, reference, bearer))
+                .map(|(index, reference)| self.resolve_one(index, reference, bearer, false))
                 .collect::<Vec<_>>();
             futures_util::stream::iter(requests)
                 .buffered(LOOKUP_CONCURRENCY)
@@ -247,66 +298,8 @@ struct OrnnMaterial {
     version: String,
     #[serde(rename = "skillHash")]
     skill_hash: String,
-}
-
-async fn bounded_body(
-    response: reqwest::Response,
-    index: usize,
-) -> Result<Vec<u8>, AgentSkillResolutionError> {
-    if response
-        .content_length()
-        .is_some_and(|length| length > MAX_RESPONSE_BYTES as u64)
-    {
-        return Err(invalid(index, "Ornn response exceeds the byte limit"));
-    }
-    let mut body = Vec::with_capacity(
-        response
-            .content_length()
-            .and_then(|length| usize::try_from(length).ok())
-            .unwrap_or_default()
-            .min(MAX_RESPONSE_BYTES),
-    );
-    let mut chunks = response.bytes_stream();
-    while let Some(chunk) = chunks.next().await {
-        let chunk = chunk.map_err(|_| unavailable_at(index, "Ornn response read failed"))?;
-        if body
-            .len()
-            .checked_add(chunk.len())
-            .is_none_or(|length| length > MAX_RESPONSE_BYTES)
-        {
-            return Err(invalid(index, "Ornn response exceeds the byte limit"));
-        }
-        body.extend_from_slice(&chunk);
-    }
-    Ok(body)
-}
-
-fn classify_status(
-    index: usize,
-    status: reqwest::StatusCode,
-) -> Result<(), AgentSkillResolutionError> {
-    if status.is_success() {
-        return Ok(());
-    }
-    match status {
-        reqwest::StatusCode::FORBIDDEN | reqwest::StatusCode::NOT_FOUND => {
-            Err(AgentSkillResolutionError::NotFound(format!(
-                "skill reference {index} is absent or inaccessible"
-            )))
-        }
-        reqwest::StatusCode::UNAUTHORIZED
-        | reqwest::StatusCode::REQUEST_TIMEOUT
-        | reqwest::StatusCode::TOO_MANY_REQUESTS
-        | reqwest::StatusCode::BAD_GATEWAY
-        | reqwest::StatusCode::SERVICE_UNAVAILABLE
-        | reqwest::StatusCode::GATEWAY_TIMEOUT => {
-            Err(unavailable_at(index, "Ornn is temporarily unavailable"))
-        }
-        status if status.is_server_error() => {
-            Err(unavailable_at(index, "Ornn is temporarily unavailable"))
-        }
-        _ => Err(invalid(index, "Ornn refused the exact pinned reference")),
-    }
+    #[serde(default, rename = "isPrivate")]
+    is_private: Option<bool>,
 }
 
 fn requested_version(

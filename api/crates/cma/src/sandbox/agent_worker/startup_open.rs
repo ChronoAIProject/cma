@@ -30,12 +30,26 @@ impl AgentWorker {
         } else {
             self.config.open_timeout
         };
-        let opening = self.dependencies.adapter.open_agent(
-            &context.runtime,
-            authority_fence,
-            request,
-            updates,
-        );
+        let warm_conversation = agent.work.warm_conversation_id.clone();
+        let opening = async {
+            if let Some(conversation_id) = warm_conversation.as_deref() {
+                self.dependencies
+                    .adapter
+                    .reconnect_agent(
+                        &context.runtime,
+                        authority_fence,
+                        request,
+                        conversation_id,
+                        updates,
+                    )
+                    .await
+            } else {
+                self.dependencies
+                    .adapter
+                    .open_agent(&context.runtime, authority_fence, request, updates)
+                    .await
+            }
+        };
         self.await_startup_open(agent, &context.sandbox, receiver, opening, budget, now)
             .await
     }

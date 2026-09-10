@@ -89,6 +89,20 @@ pub(super) fn require_credential(
     runtime: &MemoryRuntime,
     operation: WireOperation,
 ) -> crate::Result<()> {
+    if runtime.install.is_some()
+        && runtime.restore_bootstrap.is_none()
+        && matches!(
+            operation,
+            WireOperation::PrepareWorkspace
+                | WireOperation::WorkspaceSetup
+                | WireOperation::AddWorktree
+                | WireOperation::MaterializeAgentHome
+                | WireOperation::OpenAgent
+                | WireOperation::CacheSkillArchive
+        )
+    {
+        return Ok(());
+    }
     if runtime.credential_delivered
         && (runtime.restore_bootstrap.is_none() || runtime.restored_object.is_some())
     {

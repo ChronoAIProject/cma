@@ -73,6 +73,7 @@ impl SandboxLifecycleComposition {
         config: SandboxLifecycleConfig,
     ) -> Self {
         let warmup = super::warmup::WarmSandboxWorker {
+            skills: dependencies.skills.clone(),
             home_policy: config.home_policy.clone(),
             store: dependencies.store.clone(),
             adapter: dependencies.adapter.clone(),

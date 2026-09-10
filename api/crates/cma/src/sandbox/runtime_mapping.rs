@@ -12,23 +12,37 @@ pub(super) fn runtime_options(
     sandbox: &Sandbox,
     worktree: &Worktree,
 ) -> RuntimeOptions {
+    profile_runtime_options(
+        &agent.profile.content,
+        &sandbox.profile.content,
+        &agent.id,
+        &worktree.path,
+    )
+}
+
+pub(super) fn profile_runtime_options(
+    agent: &layer2_core::profiles::AgentProfileContent,
+    sandbox: &layer2_core::profiles::SandboxProfileContent,
+    agent_id: &layer2_core::AgentId,
+    worktree_path: &str,
+) -> RuntimeOptions {
     RuntimeOptions {
-        model: agent.profile.content.model.clone(),
-        reasoning_effort: match agent.profile.content.thinking_effort {
+        model: agent.model.clone(),
+        reasoning_effort: match agent.thinking_effort {
             ThinkingEffort::Minimal => layer3_adapter::ReasoningEffort::Minimal,
             ThinkingEffort::Low => layer3_adapter::ReasoningEffort::Low,
             ThinkingEffort::Medium => layer3_adapter::ReasoningEffort::Medium,
             ThinkingEffort::High => layer3_adapter::ReasoningEffort::High,
             ThinkingEffort::XHigh => layer3_adapter::ReasoningEffort::XHigh,
         },
-        permission: match agent.profile.content.permission_level {
+        permission: match agent.permission_level {
             PermissionLevel::Guarded => layer3_adapter::PermissionLevel::Guarded,
             PermissionLevel::Autonomous => layer3_adapter::PermissionLevel::Autonomous,
         },
-        own_credential: sandbox.profile.content.model_access == ModelAccess::OwnCredentials,
-        working_directory: worktree.path.clone(),
-        home_directory: format!("/home/cma/.cma/agents/{}/home", agent.id),
-        slot: AgentSlot::new(agent.id.to_string()),
+        own_credential: sandbox.model_access == ModelAccess::OwnCredentials,
+        working_directory: worktree_path.into(),
+        home_directory: format!("/home/cma/.cma/agents/{agent_id}/home"),
+        slot: AgentSlot::new(agent_id.to_string()),
     }
 }
 

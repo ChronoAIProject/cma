@@ -191,7 +191,8 @@ impl ControlPlaneComposition {
             AuthMode::Provider { .. } => OrnnAgentSkillResolver::scoped(
                 &config.runtime.platform_base_url,
                 Arc::clone(&sandbox_credentials),
-            )?,
+            )?
+            .with_warmup_tokens(auth.clone()),
             AuthMode::Trusted { .. } => {
                 OrnnAgentSkillResolver::anonymous(&config.runtime.platform_base_url)?
             }
