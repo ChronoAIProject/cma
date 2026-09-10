@@ -85,6 +85,15 @@ impl LaunchStore for MongoTriggerDefinitionStore {
         queries::list_owner(self, owner, page).await
     }
 
+    async fn source_launch(
+        &self,
+        owner: &SubjectId,
+        agent_id: &layer2_core::AgentId,
+        trigger: Option<&layer2_core::ids::TriggerId>,
+    ) -> Result<Option<Launch>, LaunchStoreError> {
+        queries::source_launch(self, owner, agent_id, trigger).await
+    }
+
     async fn placement_stats(
         &self,
         trigger_id: &layer2_core::trigger_domain::TriggerId,

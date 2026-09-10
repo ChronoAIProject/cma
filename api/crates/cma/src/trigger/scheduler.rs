@@ -12,7 +12,7 @@ use tokio::time::MissedTickBehavior;
 use super::worker::{LaunchWorker, LaunchWorkerError};
 
 const SWEEP_INTERVAL: Duration = Duration::from_secs(1);
-const MAX_CONCURRENT_LAUNCHES: usize = 32;
+const MAX_CONCURRENT_LAUNCHES: usize = 8;
 const WORK_BATCH_SIZE: u16 = 50;
 const DRAIN_TIMEOUT: Duration = Duration::from_secs(25);
 

@@ -174,6 +174,10 @@ async fn warm_hierarchy_adopts_once_replays_and_reserves_worktree_numbers() {
     activate(&store, &workspace.sandbox_id).await;
     let mut request = agent_admission(&workspace, "trigger-claim", "first");
     request.profile = warm.plan.workspaces[0].agents[0].clone();
+    request.origin = layer2_core::sandbox::AgentOrigin::Trigger {
+        trigger_id: "trg_warm".into(),
+        launch_id: "lch_warm_first".into(),
+    };
     let (left, right) = tokio::join!(
         store.admit_agent(request.clone()),
         store.admit_agent(request.clone())
@@ -197,6 +201,17 @@ async fn warm_hierarchy_adopts_once_replays_and_reserves_worktree_numbers() {
     );
     assert_eq!(created.worktree.name, "wt-1");
     assert_eq!(created.agent.work.next_fence, 2);
+    // Faster Trigger scheduling can win the race with automatic reconciliation.
+    // The automatic child must recognize the prepared slot already adopted by it.
+    let mut automatic = agent_admission(&workspace, "automatic", "automatic");
+    automatic.profile = created.agent.profile.clone();
+    automatic.origin = layer2_core::sandbox::AgentOrigin::WorkspaceProfile { index: 0 };
+    automatic.creation_key = format!("workspace-profile:{}:0", workspace.id);
+    automatic.first_message = None;
+    automatic.title = None;
+    let reconciled = store.admit_agent(automatic).await.unwrap();
+    assert!(matches!(&reconciled, AgentAdmissionResult::Existing(_)));
+    assert_eq!(reconciled.creation().agent.id, created.agent.id);
     request.creation_key = "another-user-action".into();
     request.agent_id = AgentId::generate();
     request.worktree_id = WorktreeId::generate();

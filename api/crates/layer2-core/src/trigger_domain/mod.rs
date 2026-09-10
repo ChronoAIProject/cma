@@ -19,6 +19,7 @@ mod launch_validation;
 mod launch_worker_control;
 mod launch_worker_replacement;
 mod placement;
+mod prepared_agent_reuse;
 mod preview;
 mod reference;
 mod requirements;

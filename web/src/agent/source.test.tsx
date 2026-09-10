@@ -41,6 +41,19 @@ it('shows original source names and native links, never internal IDs as labels',
     />,
   );
   expect(screen.getByText('Created from Workspace Profile')).toBeVisible();
+  rerender(
+    <AgentSourceLabel
+      source={{
+        status: 'ready',
+        agentId: 'agt_one',
+        value: { ...value, origin: { type: 'workspace_profile' } },
+      }}
+    />,
+  );
+  expect(screen.getByRole('link', { name: 'Project introduction' })).toHaveAttribute(
+    'href',
+    '/t/pub_one',
+  );
 });
 
 it('does not leak an earlier Agent source while the selected Agent is changing', async () => {

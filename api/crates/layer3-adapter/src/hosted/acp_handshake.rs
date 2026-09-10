@@ -23,6 +23,11 @@ impl Bridge {
                 "clientCapabilities": {
                     "fs": { "readTextFile": false, "writeTextFile": false },
                     "elicitation": { "url": {} },
+                    // Codex ACP otherwise emits provider failures as assistant text
+                    // followed by end_turn. Negotiate its structured failure result.
+                    "_meta": {
+                        "jetbrains": { "air": { "version": 1, "capabilities": ["sessionFailure"] } }
+                    },
                 },
             }))
             .await?;

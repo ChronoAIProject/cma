@@ -24,14 +24,17 @@ impl LaunchService {
         let existing_agent = if policy.agent == AgentReusePolicy::AlwaysNew {
             None
         } else {
-            self.contexts
+            let original = self
+                .contexts
                 .newest_live_trigger_agent(&caller.subject, &trigger.trigger_id)
                 .await
-                .map_err(resolution_error)?
+                .map_err(resolution_error)?;
+            if let Some(agent) = original.as_ref() {
+                validate_agent(agent, caller, trigger)?;
+            }
+            self.newest_prepared_trigger_agent(caller, trigger, original)
+                .await?
         };
-        if let Some(agent) = existing_agent.as_ref() {
-            validate_agent(agent, caller, trigger)?;
-        }
         match (policy.agent, choice, existing_agent) {
             (AgentReusePolicy::ResumeExisting, None, Some(agent))
             | (AgentReusePolicy::Ask, Some(RepeatChoice::Resume), Some(agent)) => {

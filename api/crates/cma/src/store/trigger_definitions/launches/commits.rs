@@ -100,9 +100,14 @@ async fn commit_once(
         .await
         .map_err(AttemptError::from)?
         .ok_or(AttemptError::Domain(LaunchStoreError::NotFound))?;
-    event_log::verify_in_session(store, &current.launch, session)
-        .await
-        .map_err(AttemptError::from)?;
+    // Like lease claims, an exact ready-monitor deferral changes only work
+    // metadata. It neither appends history nor authorizes a resource effect.
+    // Every other transition retains complete event-log validation.
+    if !validation::is_ready_observation(&current.launch, commit) {
+        event_log::verify_in_session(store, &current.launch, session)
+            .await
+            .map_err(AttemptError::from)?;
+    }
     if current.launch.revision != commit.expected_revision {
         return Err(AttemptError::Domain(LaunchStoreError::Conflict {
             expected: commit.expected_revision,

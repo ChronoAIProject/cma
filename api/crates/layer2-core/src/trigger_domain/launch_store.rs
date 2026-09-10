@@ -239,6 +239,45 @@ pub trait LaunchStore: Send + Sync {
         owner: &SubjectId,
     ) -> Result<Option<Launch>, LaunchStoreError>;
 
+    /// The earliest durable Launch that resolved this owned Agent. This also
+    /// records Trigger provenance when an automatic prepared Agent was adopted.
+    async fn source_launch(
+        &self,
+        owner: &SubjectId,
+        agent_id: &crate::AgentId,
+        trigger: Option<&TriggerId>,
+    ) -> Result<Option<Launch>, LaunchStoreError> {
+        let mut page = LaunchPageRequest {
+            limit: MAX_LAUNCH_PAGE_SIZE,
+            trigger: trigger.cloned(),
+            ..Default::default()
+        };
+        let mut oldest = None;
+        let mut seen = std::collections::BTreeSet::new();
+        loop {
+            let rows = self.list_launches(owner, &page).await?;
+            for launch in rows.items {
+                if launch.owner != *owner {
+                    return Err(LaunchStoreError::Corrupt(
+                        "Agent source crossed its owner boundary".into(),
+                    ));
+                }
+                if launch.resolution.agent.id() == Some(agent_id) {
+                    oldest = Some(launch);
+                }
+            }
+            let Some(next) = rows.next else {
+                return Ok(oldest);
+            };
+            if !seen.insert(next.clone()) {
+                return Err(LaunchStoreError::Corrupt(
+                    "Agent source pagination did not advance".into(),
+                ));
+            }
+            page.cursor = Some(next);
+        }
+    }
+
     async fn list_launches(
         &self,
         owner: &SubjectId,

@@ -44,7 +44,8 @@ impl AgentAdmission {
         let automatic_slot = match self.origin {
             AgentOrigin::WorkspaceProfile { index } => {
                 matches!(agent.origin, AgentOrigin::Trigger { .. })
-                    && agent.creation_key.starts_with("trigger-profile:")
+                    && (agent.creation_key.starts_with("trigger-profile:")
+                        || agent.work.warm_conversation_id.is_some())
                     && workspace
                         .profile
                         .content
