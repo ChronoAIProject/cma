@@ -146,6 +146,64 @@ fn public_discovery_and_auth_keep_network_scoped_budgets() {
     }
 }
 
+#[tokio::test]
+async fn connection_polling_keeps_creation_available_and_users_have_separate_login_budgets() {
+    use axum::{http::StatusCode, middleware, routing::post, Router};
+    use tower::ServiceExt as _;
+
+    let quota = |n| Quota::per_hour(NonZeroU32::new(n).unwrap());
+    let limiters = Arc::new(RateLimiters::from_quotas(
+        quota(100),
+        quota(100),
+        quota(40),
+        quota(1),
+        quota(100),
+        TrustedProxyConfig::sample(),
+    ));
+    let app = Router::new()
+        .route("/auth/connections/check", post(|| async { StatusCode::OK }))
+        .route("/auth/connections/start", post(|| async { StatusCode::OK }))
+        .layer(middleware::from_fn_with_state(limiters, enforce));
+    let call = |path: &str, owner: &str| {
+        let mut r = request(Method::POST, path);
+        r.extensions_mut()
+            .insert(AuthenticatedSubject(SubjectId::new(owner)));
+        app.clone().oneshot(r)
+    };
+    // A full minute of the browser's two-second polling must leave its login
+    // creation available, even with a deliberately tiny creation allowance.
+    for _ in 0..30 {
+        assert_eq!(
+            call("/auth/connections/check", "one")
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::OK
+        );
+    }
+    assert_eq!(
+        call("/auth/connections/start", "one")
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::OK
+    );
+    assert_eq!(
+        call("/auth/connections/start", "one")
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::TOO_MANY_REQUESTS
+    );
+    assert_eq!(
+        call("/auth/connections/start", "two")
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::OK
+    );
+}
+
 #[test]
 fn ipv6_privacy_addresses_share_a_prefix_budget() {
     let first = "2001:db8:1234:5678::1".parse().unwrap();

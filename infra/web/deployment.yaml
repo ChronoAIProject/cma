@@ -35,7 +35,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: web
-          image: us-central1-docker.pkg.dev/aelf-shared-k8s-prod/aelf-prod-registry/cma-web@sha256:88133b58ae882ef6507123cfff4ff3d3b9d41c396d75d03303419dacb4d3764f
+          image: us-central1-docker.pkg.dev/aelf-shared-k8s-prod/aelf-prod-registry/cma-web@sha256:812174585e1cec37d55e2313c28f8523295a9e7b903a3e025eda33777aa725b0
           imagePullPolicy: IfNotPresent
           ports:
             - name: http
