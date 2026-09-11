@@ -2259,3 +2259,66 @@ detects records with no usable credential material. This release checks its
 connection state without requiring separate NyxID assistant tool grants.
 Users still complete their own personal service authorization in NyxID.
 This hotfix does not close the outstanding snapshot acceptance work.
+
+## 2026-09-11 Public Chrono LLM service switch
+
+Implementation `c6f68c955c5aba42dc9efb7ee7b51fbe9aa9d4ff` changes the managed
+Codex default and production baseline to `chrono-llm-public`. Runtime rendering
+selects the public or legacy Chrono LLM route from each Sandbox's pinned service
+scope, including revival. Existing Sandbox grants, custom model endpoints and
+own-account access are preserved.
+
+The truretruing Sandbox Profile was published as revision 5 and its existing
+public Trigger as revision 30. Their selected services are exactly
+`chrono-llm-public`, `ornn-api`, and `api-github` (GitHub OAuth). The public
+Trigger ID, Workspace/Agent profiles, reuse behavior and first prompt are
+unchanged. Always keep alive remains enabled, with a target of three warm
+Sandboxes. Evidence is under
+`/tmp/cma-trureturing-loop.LvTezb/public-llm-switch-C6unQf/`:
+
+- `result.json` records publication and the public preview's exact service set.
+- `profile-ui.json` and `profile-service-selection.png` verify the live editor
+  selects the three intended services and deselects the legacy Chrono LLM
+  service, with always keep alive and three warm Sandboxes still configured.
+  The browser check made no server mutations.
+
+A direct request through the owner's NyxID credential to the public service's
+`/models` endpoint returned 200 and included `gpt-5.6-sol`. A `/responses`
+request completed with the requested model and exact expected reply in 25,130ms.
+This model request used the owner's credential; it is not a fresh Sandbox
+assignment or a latency measurement using a newly issued AgentKey.
+
+Production pool replacement exposed a retirement-validation bug: after a
+persistent warm runtime and its home were removed, the historical boot identity
+still required an attached home, rejecting the final Retired record and leaving
+pool capacity occupied. Follow-up implementation
+`d239e15c0db4a403accafe8ad64464539eaef65d` permits that historical identity after
+retirement. A regression reproduced the exact `warm Sandbox invalid reservation`
+failure before the fix, then passed with the fix, including serialization,
+repeated cleanup and refusal to reuse released homes. All eight warm worker
+tests passed; the original routing change passed eight deployment tests and
+thirteen configuration tests.
+
+The final API image is
+`sha256:9bded56f42095c97602dc9cdc6977a2d4fbe03b1874ba031070bb6a7be76f312`.
+Both routing and retirement images passed their release scans with no fixable
+High or Critical findings. The final Deployment completed its rollout with one
+available replica, and `final.json` passed at 08:52:06 UTC. The resource-version
+guarded rollout changed only the API image; its two observed user Sandbox pods
+retained their identities. No user Sandbox lifecycle command was issued.
+
+`warm-pool.json` verifies exactly three replacement environments with the public
+LLM endpoint and the intended three-service scope. Each has a Bound persistent
+home, prepared repository Workspace, Worktree, configured Agent home, skills,
+one native session and zero user prompts before credential assignment. The
+runtime readiness phase remains `installed`, before user credentials are bound.
+No old-scope warm pods remain. This confirms replacement pool preparation; it
+does not measure a fresh Trigger assignment or model inference using a newly
+issued AgentKey.
+
+The first observer stopped on the expected 503 during the API replacement;
+the post-readiness observer passed. Pool creation also waited for cluster
+autoscaling, new-node storage registration and image pulls before preparation
+completed. These are observations of replenishing the empty pool, not a claim
+that fresh pool construction meets the 5–10-second warm-assignment target.
+This change does not close the outstanding snapshot acceptance work.
