@@ -22,7 +22,7 @@ import { refusalSentence } from '../vocabulary/errors';
 import { connectionCopy } from '../vocabulary/connect';
 import type { PublicClient } from './client';
 import { isUnsettledCommand } from './admission';
-import { ConnectAssistant } from './ConnectAssistant';
+import { ConnectAssistant, secureSetupUrl } from './ConnectAssistant';
 import { Details, SoftwareDetails } from './Details';
 import {
   clearDraftRecovery,
@@ -198,15 +198,25 @@ export function ReviewCard({
               .filter(
                 (service) => service.state === 'satisfied' || connected.includes(service.service),
               )
-              .map((service) => (
-                <div className="public-service-verified" key={service.service}>
-                  <span aria-hidden="true">
-                    <LandingCharacter compact state="completed" />
-                  </span>
-                  <span>{service.display_name ?? connectionCopy.unknown}</span>
-                  <span>{connectionCopy.connected}</span>
-                </div>
-              ))}
+              .map((service) => {
+                const url = secureSetupUrl(service.setup_url ?? '');
+                const name = service.display_name ?? connectionCopy.unknown;
+                return (
+                  <div className="public-service-verified" key={service.service}>
+                    <span aria-hidden="true">
+                      <LandingCharacter compact state="completed" />
+                    </span>
+                    {url === undefined ? (
+                      <span>{name}</span>
+                    ) : (
+                      <a href={url} target="_blank" rel="noopener noreferrer">
+                        {name}
+                      </a>
+                    )}
+                    <span>{connectionCopy.connected}</span>
+                  </div>
+                );
+              })}
           </section>
         ) : null}
         {needs.map((need, index) => {
