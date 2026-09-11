@@ -53,7 +53,7 @@ data:
   # Canonical platform origin for machine token minting and storage proxying.
   CHRONO_PLATFORM_BASE_URL: "https://nyx-api.chrono-ai.fun"
   # Agent model calls use the scoped AgentKey through this platform proxy.
-  CHRONO_UPSTREAM_BASE_URL: "https://nyx-api.chrono-ai.fun/api/v1/proxy/s/chrono-llm"
+  CHRONO_UPSTREAM_BASE_URL: "https://nyx-api.chrono-ai.fun/api/v1/proxy/s/chrono-llm-public"
   CHRONO_UPSTREAM_WIRE_API: "responses"
   # In-cluster provider authority and the namespace granted by its scoped Role.
   CHRONO_SANDBOX_BASE_URL: "http://opensandbox-server.opensandbox-system.svc.cluster.local"
@@ -84,5 +84,5 @@ data:
   # untagged or foreign runtime resources are never adopted or deleted.
   CHRONO_DEPLOYMENT_ID: "chrono-bot-prod"
   # AgentKey service floor. Public skill material is served by ornn-api.
-  CHRONO_BASELINE_SERVICES: "chrono-llm,ornn-api"
+  CHRONO_BASELINE_SERVICES: "chrono-llm-public,ornn-api"
   RUST_LOG: "info,cma::sandbox::checkpoint_maintenance=debug"

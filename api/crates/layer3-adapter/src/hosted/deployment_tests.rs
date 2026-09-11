@@ -25,6 +25,74 @@ fn request() -> ProviderSandboxRequest {
 }
 
 #[test]
+fn managed_llm_route_follows_pinned_service_scope_during_creation_and_revival() {
+    for configured_service in ["chrono-llm", "chrono-llm-public"] {
+        let deployment = HostedDeployment {
+            upstream_base_url: format!("https://nyx.example/api/v1/proxy/s/{configured_service}"),
+            platform_base_url: "https://nyx.example".into(),
+            ..HostedDeployment::default()
+        };
+        for (services, expected) in [
+            (vec!["chrono-llm", "ornn-api", "api-github"], "chrono-llm"),
+            (
+                vec!["chrono-llm-public", "ornn-api", "api-github"],
+                "chrono-llm-public",
+            ),
+            (vec!["chrono-llm", "chrono-llm-public"], "chrono-llm-public"),
+        ] {
+            let spec = SandboxSpec {
+                sandbox_id: "sandbox-model-scope".into(),
+                reaches: services.into_iter().map(str::to_owned).collect(),
+                ..SandboxSpec::default()
+            };
+            for generation in [1, 2] {
+                let rendered = deployment.render_runtime(&spec, generation).unwrap();
+                assert_eq!(
+                    rendered.env["CHRONO_UPSTREAM_BASE_URL"],
+                    format!("https://nyx.example/api/v1/proxy/s/{expected}")
+                );
+                assert_eq!(
+                    rendered.env["CHRONO_SANDBOX_REACHES"],
+                    spec.reaches.join(",")
+                );
+            }
+            let own = SandboxSpec {
+                own_credential: true,
+                ..spec
+            };
+            assert_eq!(
+                deployment.render(&own).unwrap().env["CHRONO_UPSTREAM_BASE_URL"],
+                ""
+            );
+        }
+    }
+}
+
+#[test]
+fn public_llm_selection_preserves_custom_upstreams() {
+    let spec = SandboxSpec {
+        sandbox_id: "sandbox-model-scope".into(),
+        reaches: vec!["chrono-llm-public".into()],
+        ..SandboxSpec::default()
+    };
+    for upstream in [
+        "https://models.example/v1",
+        "https://other.example/api/v1/proxy/s/chrono-llm",
+        "https://nyx.example/api/v1/proxy/s/custom-model",
+    ] {
+        let deployment = HostedDeployment {
+            upstream_base_url: upstream.into(),
+            platform_base_url: "https://nyx.example".into(),
+            ..HostedDeployment::default()
+        };
+        assert_eq!(
+            deployment.render(&spec).unwrap().env["CHRONO_UPSTREAM_BASE_URL"],
+            upstream
+        );
+    }
+}
+
+#[test]
 fn provider_fingerprint_has_a_stable_golden_encoding() {
     assert_eq!(
         provider_request_fingerprint(&request()).unwrap(),

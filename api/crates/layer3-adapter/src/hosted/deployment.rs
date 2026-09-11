@@ -110,7 +110,7 @@ impl HostedDeployment {
                 if spec.own_credential {
                     String::new()
                 } else {
-                    self.upstream_base_url.clone()
+                    self.scoped_model_base_url(spec)
                 },
             ),
             (
@@ -195,6 +195,40 @@ impl HostedDeployment {
             provider_request_fingerprint(&request)?,
         );
         Ok(request)
+    }
+
+    fn scoped_model_base_url(&self, spec: &SandboxSpec) -> String {
+        let configured = self.upstream_base_url.clone();
+        let (Ok(mut upstream), Ok(platform)) = (
+            reqwest::Url::parse(&configured),
+            reqwest::Url::parse(&self.platform_base_url),
+        ) else {
+            return configured;
+        };
+        if upstream.origin() != platform.origin()
+            || !matches!(
+                upstream.path(),
+                "/api/v1/proxy/s/chrono-llm" | "/api/v1/proxy/s/chrono-llm-public"
+            )
+        {
+            return configured;
+        }
+        // Service scope is pinned with a Sandbox's credential. Older homes
+        // must still revive with their original LLM route after the deployment
+        // default switches to the public service. Prefer public for new scopes.
+        let service = if spec
+            .reaches
+            .iter()
+            .any(|service| service == "chrono-llm-public")
+        {
+            "chrono-llm-public"
+        } else if spec.reaches.iter().any(|service| service == "chrono-llm") {
+            "chrono-llm"
+        } else {
+            return configured;
+        };
+        upstream.set_path(&format!("/api/v1/proxy/s/{service}"));
+        upstream.to_string()
     }
 }
 

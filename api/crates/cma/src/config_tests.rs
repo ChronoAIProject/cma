@@ -154,7 +154,7 @@ fn retained_defaults_and_runtime_values_form_a_complete_configuration() {
             .iter()
             .map(ServiceId::as_str)
             .collect::<Vec<_>>(),
-        ["chrono-llm", "ornn-api"]
+        ["chrono-llm-public", "ornn-api"]
     );
     assert_eq!(config.auth_mode_name(), "trusted");
     assert_eq!(config.runtime.sandbox_base_url, "http://sandbox.example");
