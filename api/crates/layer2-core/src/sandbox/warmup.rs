@@ -144,6 +144,7 @@ impl WarmSandbox {
             || self.runtime.as_ref().is_some_and(|binding| {
                 !binding.valid_boot_id()
                     || (binding.boot_id.is_some()
+                        && self.state != WarmSandboxState::Retired
                         && self
                             .home
                             .as_ref()
