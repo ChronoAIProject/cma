@@ -1,7 +1,7 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, expect, it, vi } from 'vitest';
-import { ApiError, type Launch, type ServiceConnectionStatus } from '@chronoai/cma-sdk';
+import { ApiError, type Launch } from '@chronoai/cma-sdk';
 import { AuthContextProvider } from './context';
 import type { AuthProvider } from './types';
 import { needsSandboxCredentialSetup } from './credentialSetup';
@@ -9,7 +9,7 @@ import { NewSandboxCard } from '../create/NewSandboxCard';
 import { PublicJourney } from '../public/PublicJourney';
 import { ReviewCard } from '../public/ReviewCard';
 import { createIntent, readIntent } from '../public/intent';
-import { rememberConnectionReturn } from '../public/connectionReturn';
+import { connectionClient } from '../connections/client';
 import { readDraftRecovery } from '../public/draftRecovery';
 import { agentClient } from '../test/agent';
 import { creationClient, CREATION_SANDBOX } from '../test/creation';
@@ -326,17 +326,6 @@ it.each(['same-tab', 'reload'] as const)(
       ],
       checked_at: record.created_at,
     });
-    let satisfy: ((value: ServiceConnectionStatus) => void) | undefined;
-    vi.mocked(client.requests.readConnection).mockImplementation(
-      () =>
-        new Promise((resolve) => {
-          satisfy = resolve;
-        }),
-    );
-    rememberConnectionReturn(record.id, 'code', {
-      handoff_id: 'handoff-one',
-      expires_at: new Date(Date.now() + 300_000).toISOString(),
-    });
     const test = await setup('review', [refusal()], {
       record,
       client,
@@ -358,17 +347,7 @@ it.each(['same-tab', 'reload'] as const)(
     }
     await test.actor.click(screen.getByRole('button', { name: 'Sign in to CMA' }));
     await test.actor.click(screen.getByRole('button', { name: 'Check signed-in account' }));
-    await waitFor(() => expect(satisfy).toBeDefined(), { timeout: 2500 });
-    await act(async () =>
-      satisfy!({
-        handoff_id: 'handoff-one',
-        launch_id: record.id,
-        service_id: 'code',
-        state: 'satisfied',
-        expires_at: new Date(Date.now() + 300_000).toISOString(),
-        updated_at: record.updated_at,
-      }),
-    );
+    await waitFor(() => expect(connectionClient.check).toHaveBeenCalled());
     expect(screen.queryByRole('region', { name: 'Connect Code host' })).not.toBeInTheDocument();
     expect(test.command).toHaveBeenCalledOnce();
     expect(test.completed).not.toHaveBeenCalled();
@@ -451,3 +430,4 @@ it('only recognizes the typed, definitive 409 credential refusal', () => {
   ])
     expect(needsSandboxCredentialSetup(error)).toBe(false);
 });
+import '../test/connectedAccounts';

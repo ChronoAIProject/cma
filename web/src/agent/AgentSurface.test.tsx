@@ -341,3 +341,4 @@ it('removes completed preparation while preserving active and failed preparation
     'Preparation failed',
   );
 });
+import '../test/connectedAccounts';

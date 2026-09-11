@@ -214,6 +214,9 @@ impl AgentContextService {
         mut sandbox: Sandbox,
         checkpoint: CheckpointReadiness,
     ) -> Result<Sandbox, AgentContextError> {
+        self.sandboxes
+            .require_connections(caller, &sandbox.id)
+            .await?;
         loop {
             if matches!(checkpoint, CheckpointReadiness::Refuse)
                 && sandbox.lifecycle.checkpoint_capture.is_some()

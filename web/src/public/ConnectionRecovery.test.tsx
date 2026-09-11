@@ -5,6 +5,7 @@ import { PUBLIC_RECORD, PUBLIC_TRUST, publicClient } from '../test/public';
 import { ConnectAssistant } from './ConnectAssistant';
 import { rememberConnectionReturn } from './connectionReturn';
 import { ReviewCard } from './ReviewCard';
+import { connectionClient } from '../connections/client';
 
 const service = {
   service: 'code',
@@ -176,29 +177,26 @@ it.each([false, true])(
         needs: services.map((service) => ({ type: 'connection' as const, service })),
       },
     };
-    for (const service of services)
-      rememberConnectionReturn(record.id, service, {
-        handoff_id: service,
-        expires_at: pending.expires_at,
-      });
-    vi.mocked(client.requests.requirements).mockResolvedValue({
+    const connected = new Set<string>();
+    vi.spyOn(connectionClient, 'check').mockImplementation(async () => ({
+      owner: 'owner',
+      ready: connected.size === services.length,
       checked_at: record.created_at,
       services: services.map((service) => ({
         service,
-        state: 'missing',
         display_name: service,
+        kind: service === 'chrono-llm' ? 'codex' : 'nyxid',
+        state: connected.has(service) ? 'satisfied' : 'missing',
         connection_mode: 'hosted',
       })),
-    });
-    const settlements: (() => void)[] = [];
-    vi.mocked(client.requests.readConnection).mockImplementation(
-      (id) =>
-        new Promise((resolve) => {
-          settlements.push(() =>
-            resolve({ ...pending, handoff_id: id, service_id: id, state: 'satisfied' }),
-          );
-        }),
-    );
+    }));
+    vi.spyOn(connectionClient, 'start').mockImplementation(async (_target, active) => ({
+      ...active,
+      owner: 'owner',
+      hosted_url: 'https://identity.example.test/connect',
+      expires_at: pending.expires_at,
+    }));
+    vi.spyOn(window, 'open').mockReturnValue(null);
     render(<ReviewCard client={client} record={record} onChanged={vi.fn()} onClose={vi.fn()} />);
     await act(async () => undefined);
     expect(
@@ -206,22 +204,16 @@ it.each([false, true])(
     ).toBeInTheDocument();
     expect(screen.queryByRole('checkbox')).not.toBeInTheDocument();
     expect(screen.queryByRole('dialog', { name: 'Review and continue' })).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Verify connections' })).toBeEnabled();
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(1500);
-    });
-    expect(settlements).toHaveLength(3);
-    await act(async () => {
-      settlements.forEach((settle) => settle());
-    });
+    expect(screen.getByRole('button', { name: 'Verify connections' })).toBeDisabled();
     expect(client.requests.start).not.toHaveBeenCalled();
-    screen
-      .getAllByRole('button', { name: 'Verify' })
-      .forEach((button) => fireEvent.click(button));
+    fireEvent.click(screen.getByRole('button', { name: 'Connect all' }));
     await act(async () => undefined);
-    await act(async () => {
-      settlements.slice(3).forEach((settle) => settle());
-    });
+    for (const service of services) {
+      connected.add(service);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2000);
+      });
+    }
     expect(client.requests.start).toHaveBeenCalledOnce();
     expect(client.requests.start).toHaveBeenCalledWith(
       record.id,

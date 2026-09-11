@@ -83,3 +83,4 @@ it('does not offer Sandbox creation without its distinct capability', async () =
   await screen.findByRole('heading', { name: 'Welcome to CMA' });
   expect(screen.queryByRole('button', { name: 'New sandbox' })).not.toBeInTheDocument();
 });
+import './test/connectedAccounts';

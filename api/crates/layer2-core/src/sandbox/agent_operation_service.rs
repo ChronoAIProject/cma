@@ -47,6 +47,8 @@ pub enum AgentMessageOutcome {
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum AgentOperationError {
+    #[error(transparent)]
+    Connection(#[from] super::SandboxCredentialPrerequisiteError),
     #[error("forbidden")]
     Forbidden,
     #[error("agent not found")]
@@ -97,6 +99,7 @@ pub enum AgentOperationError {
 impl AgentOperationError {
     pub const fn code(&self) -> &'static str {
         match self {
+            Self::Connection(error) => error.code(),
             Self::Forbidden => "forbidden",
             Self::NotFound => "agent_not_found",
             Self::StatusConflict { .. } => "agent_status_conflict",
@@ -123,6 +126,7 @@ impl AgentOperationError {
 }
 
 pub struct AgentOperationService {
+    pub(super) connections: Arc<dyn super::SandboxCredentialPrerequisite>,
     pub(super) store: Arc<dyn AgentOperationStore>,
     pub(super) runtimes: Arc<dyn AgentRuntimeRegistry>,
 }
@@ -133,7 +137,37 @@ impl AgentOperationService {
         S: AgentOperationStore + 'static,
         R: AgentRuntimeRegistry + 'static,
     {
-        Arc::new(Self { store, runtimes })
+        Arc::new(Self {
+            store,
+            runtimes,
+            connections: Arc::new(super::FixedSandboxCredentialPrerequisite::Ready),
+        })
+    }
+
+    pub fn with_connections(
+        &self,
+        connections: Arc<dyn super::SandboxCredentialPrerequisite>,
+    ) -> Arc<Self> {
+        Arc::new(Self {
+            connections,
+            store: self.store.clone(),
+            runtimes: self.runtimes.clone(),
+        })
+    }
+
+    pub(super) async fn require_agent_connections(
+        &self,
+        agent: &Agent,
+    ) -> Result<(), AgentOperationError> {
+        let sandbox = SandboxStore::get_sandbox(self.store.as_ref(), &agent.sandbox_id)
+            .await
+            .map_err(operation_store_error)?
+            .filter(|sandbox| sandbox.owner == agent.owner)
+            .ok_or_else(|| {
+                AgentOperationError::Corrupt("agent sandbox ownership is inconsistent".into())
+            })?;
+        self.connections.check_sandbox(&sandbox).await?;
+        Ok(())
     }
 
     pub async fn send_message(
@@ -154,6 +188,7 @@ impl AgentOperationService {
                     status: current.status,
                 });
             }
+            self.require_agent_connections(&current).await?;
             let (parent, queues) = self.parent_admission(&current).await?;
             match current.status {
                 AgentStatus::Ready if queues => {

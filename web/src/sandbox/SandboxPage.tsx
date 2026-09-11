@@ -25,6 +25,7 @@ import { SandboxOverview } from './SandboxOverview';
 import { SandboxAdvanced } from './SandboxAdvanced';
 import { LifecycleProgress } from './LifecycleProgress';
 import './SandboxPage.css';
+import { ConnectionWizard } from '../connections/ConnectionWizard';
 
 type State =
   | { status: 'loading' }
@@ -39,6 +40,7 @@ export function SandboxPage({
   busy,
   onAction,
   onNavigate,
+  viewerId,
 }: {
   readonly client: CmaWebClient;
   readonly sandboxId: string;
@@ -47,11 +49,13 @@ export function SandboxPage({
   readonly busy: boolean;
   readonly onAction: (action: TreeAction) => void;
   readonly onNavigate: (route: AppRoute) => void;
+  readonly viewerId?: string;
 }) {
   const [state, setState] = useState<State>({ status: 'loading' });
   const [retry, setRetry] = useState(0);
   const [pollError, setPollError] = useState(false);
   const [advanced, setAdvanced] = useState(false);
+  const [connectionsReady, setConnectionsReady] = useState(false);
   const lifecycleReasonId = useId();
   const heading = useRef<HTMLHeadingElement>(null);
   const documentTitle = state.status === 'ready' ? state.sandbox.name : 'Sandbox';
@@ -132,6 +136,8 @@ export function SandboxPage({
       </section>
     );
   const { sandbox } = state;
+  const needsConnections =
+    viewerId !== undefined && sandbox.owner === viewerId && !connectionsReady;
   const lifecycleAction = sandboxLifecycleAction(sandbox, pollError);
   const childrenAvailable = sandboxChildrenAvailable(sandbox);
   const notice = sandboxUnavailableNotice(sandbox);
@@ -148,7 +154,7 @@ export function SandboxPage({
           {permissions.createWorkspace ? (
             <Button
               icon={<IconPlusOutline16 />}
-              disabled={busy || !childrenAvailable}
+              disabled={busy || needsConnections || !childrenAvailable}
               onClick={() => onAction({ kind: 'new_workspace', sandboxId })}
             >
               New workspace
@@ -163,7 +169,11 @@ export function SandboxPage({
                   <IconPauseOutline16 />
                 )
               }
-              disabled={busy || !lifecycleAction.allowed}
+              disabled={
+                busy ||
+                !lifecycleAction.allowed ||
+                (needsConnections && lifecycleAction.kind === 'revive_sandbox')
+              }
               aria-describedby={
                 lifecycleAction.reason === undefined ? undefined : lifecycleReasonId
               }
@@ -193,6 +203,13 @@ export function SandboxPage({
           </Button>
         </div>
       </header>
+      {needsConnections ? (
+        <ConnectionWizard
+          target={{ type: 'sandbox', id: sandboxId }}
+          onReady={() => setConnectionsReady(true)}
+          onCancel={() => onNavigate({ kind: 'home' })}
+        />
+      ) : null}
       {notice === undefined ? null : <p>{notice}</p>}
       {permissions.pauseSandbox && lifecycleAction.reason !== undefined ? (
         <p id={lifecycleReasonId}>{lifecycleAction.reason}</p>

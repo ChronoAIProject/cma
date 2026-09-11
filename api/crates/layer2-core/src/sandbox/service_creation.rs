@@ -1,5 +1,3 @@
-use std::collections::BTreeSet;
-
 use crate::profiles::{
     MarketplaceLocator, ModelAccess, ProfileVisibility, SandboxProfileRevision,
     SandboxProfileSnapshot,
@@ -168,28 +166,31 @@ impl SandboxService {
         policy: SandboxPolicy,
     ) -> Result<Sandbox, SandboxServiceError> {
         let name = requested_name(request.name, &profile.name)?;
+        let reaches = profile
+            .revision
+            .content
+            .credential_services(&policy.baseline_services);
         self.credentials
-            .check(&caller.subject)
+            .check_services(
+                &caller.subject,
+                &profile
+                    .revision
+                    .content
+                    .connection_services_for_grants(&reaches),
+            )
             .await
             .map_err(|error| match error {
                 super::SandboxCredentialPrerequisiteError::SetupRequired => {
                     SandboxServiceError::CredentialSetupRequired
+                }
+                super::SandboxCredentialPrerequisiteError::ConnectionsRequired { services } => {
+                    SandboxServiceError::ConnectionsRequired { services }
                 }
                 super::SandboxCredentialPrerequisiteError::Unavailable(detail) => {
                     SandboxServiceError::Unavailable(detail)
                 }
             })?;
         let now = now_rfc3339();
-        let reaches = profile
-            .revision
-            .content
-            .nyxid_services
-            .iter()
-            .chain(&policy.baseline_services)
-            .cloned()
-            .collect::<BTreeSet<_>>()
-            .into_iter()
-            .collect();
         let sign_in = match profile.revision.content.model_access {
             ModelAccess::ChronoaiManaged => SandboxSignInState::NotRequired,
             ModelAccess::OwnCredentials => SandboxSignInState::Required,

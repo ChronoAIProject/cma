@@ -17,6 +17,10 @@ pub enum SandboxLifecycleCommandError {
     Forbidden,
     #[error("sandbox not found")]
     NotFound,
+    #[error("renewable sandbox credential setup is required")]
+    CredentialSetupRequired,
+    #[error("required connections have not been verified")]
+    ConnectionsRequired { services: Vec<crate::ServiceId> },
     #[error("sandbox is not active (current status: {status:?})")]
     SandboxNotActive { status: SandboxStatus },
     #[error("sandbox is not paused (current status: {status:?})")]
@@ -37,6 +41,8 @@ impl SandboxLifecycleCommandError {
         match self {
             Self::Forbidden => "forbidden",
             Self::NotFound => "sandbox_not_found",
+            Self::CredentialSetupRequired => "sandbox_credential_setup_required",
+            Self::ConnectionsRequired { .. } => "connections_required",
             Self::SandboxNotActive { .. } => "sandbox_not_active",
             Self::SandboxNotPaused { .. } => "sandbox_not_paused",
             Self::SandboxBusy { .. } => "sandbox_lifecycle_busy",
@@ -64,6 +70,20 @@ impl SandboxService {
         id: &SandboxId,
     ) -> Result<SandboxLifecycleCommandOutcome, SandboxLifecycleCommandError> {
         require_owner_authority(caller)?;
+        self.require_connections(caller, id)
+            .await
+            .map_err(|error| match error {
+                super::SandboxServiceError::NotFound => SandboxLifecycleCommandError::NotFound,
+                super::SandboxServiceError::ConnectionsRequired { services } => {
+                    SandboxLifecycleCommandError::ConnectionsRequired { services }
+                }
+                super::SandboxServiceError::CredentialSetupRequired => {
+                    SandboxLifecycleCommandError::CredentialSetupRequired
+                }
+                _ => SandboxLifecycleCommandError::Unavailable(
+                    "connection verification is unavailable".into(),
+                ),
+            })?;
         let command = SandboxLifecycleCommand::revive(
             id.clone(),
             caller.subject.clone(),
@@ -71,6 +91,42 @@ impl SandboxService {
             SandboxReviveCause::ExplicitRequest,
         );
         self.schedule_owner_lifecycle(command).await
+    }
+
+    pub async fn require_connections(
+        &self,
+        caller: &Caller,
+        id: &SandboxId,
+    ) -> Result<(), super::SandboxServiceError> {
+        let sandbox = self
+            .store
+            .get_sandbox(id)
+            .await
+            .map_err(super::service::store_error)?
+            .filter(|sandbox| {
+                sandbox.owner == caller.subject && sandbox.status != SandboxStatus::Retired
+            })
+            .ok_or(super::SandboxServiceError::NotFound)?;
+        self.credentials
+            .check_services(
+                &caller.subject,
+                &sandbox
+                    .profile
+                    .content
+                    .connection_services_for_grants(&sandbox.credential.effective_reaches()),
+            )
+            .await
+            .map_err(|error| match error {
+                super::SandboxCredentialPrerequisiteError::SetupRequired => {
+                    super::SandboxServiceError::CredentialSetupRequired
+                }
+                super::SandboxCredentialPrerequisiteError::ConnectionsRequired { services } => {
+                    super::SandboxServiceError::ConnectionsRequired { services }
+                }
+                super::SandboxCredentialPrerequisiteError::Unavailable(detail) => {
+                    super::SandboxServiceError::Unavailable(detail)
+                }
+            })
     }
 
     async fn schedule_owner_lifecycle(

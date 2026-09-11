@@ -1,7 +1,7 @@
 use super::*;
 
 fn services() -> Vec<ServiceId> {
-    ["chrono-llm", "ornn-api", "api-github"]
+    ["ornn-api", "api-github", "chrono-llm"]
         .into_iter()
         .map(ServiceId::new)
         .collect()
@@ -9,9 +9,9 @@ fn services() -> Vec<ServiceId> {
 
 fn requirements(state: ServiceRequirementState) -> Vec<ServiceRequirement> {
     vec![
-        requirement("chrono-llm", ServiceRequirementState::Satisfied),
         requirement("ornn-api", ServiceRequirementState::Satisfied),
         requirement("api-github", state),
+        requirement("chrono-llm", ServiceRequirementState::Satisfied),
     ]
 }
 

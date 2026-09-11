@@ -100,3 +100,4 @@ it.each([
     expect(runAgent).not.toHaveBeenCalled();
   },
 );
+import './test/connectedAccounts';

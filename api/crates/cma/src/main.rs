@@ -4,6 +4,7 @@ mod activity;
 mod auth;
 mod composition;
 mod config;
+mod connections;
 mod health;
 mod permissions;
 mod profile_authoring;

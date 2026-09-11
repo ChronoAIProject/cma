@@ -75,3 +75,4 @@ it('keeps header and selected sidebar status together across stream and navigati
   expect(row()).toHaveTextContent('Stopped');
   expect(screen.getByText('The repository is ready.')).toBeInTheDocument();
 });
+import './test/connectedAccounts';

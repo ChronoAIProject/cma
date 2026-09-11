@@ -124,15 +124,7 @@ async fn plan(
                 })?;
             let revision = crate::store::sandbox_profiles::read_revision(&revision_doc)
                 .map_err(|error| SandboxStoreError::Corrupt(error.to_string()))?;
-            let reaches = revision
-                .content
-                .nyxid_services
-                .iter()
-                .chain(baseline)
-                .cloned()
-                .collect::<std::collections::BTreeSet<_>>()
-                .into_iter()
-                .collect();
+            let reaches = revision.content.credential_services(baseline);
             let plan = WarmSandboxPlan {
                 workspaces: super::hierarchy::resolve(
                     store,

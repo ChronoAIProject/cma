@@ -52,10 +52,13 @@ impl LaunchService {
         if launch.resolution.sandbox.is_pending() {
             self.require_sandbox_credentials(&caller.subject).await?;
         }
+        let required_services = self
+            .required_services(&caller.subject, &launch.resolution, &profiles)
+            .await?;
         let requirements = RequirementsSnapshot {
             services: self
                 .connections
-                .requirements(&caller.subject, &profiles.sandbox.content.nyxid_services)
+                .requirements(&caller.subject, &required_services)
                 .await
                 .map_err(connection_error)?,
             checked_at: now_rfc3339(),
@@ -63,7 +66,7 @@ impl LaunchService {
         requirements
             .validate()
             .map_err(|error| LaunchServiceError::Corrupt(error.to_string()))?;
-        validate_requirement_identity(&profiles.sandbox.content.nyxid_services, &requirements)?;
+        validate_requirement_identity(&required_services, &requirements)?;
         let changed_events = changed_requirement_events(&launch.requirements, &requirements);
         let missing = requirements
             .services

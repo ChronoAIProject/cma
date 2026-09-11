@@ -10,6 +10,7 @@ use layer2_core::RuntimeCapability;
 use super::{problem_document, problem_response};
 
 pub(crate) enum InstanceProblem {
+    Connection(layer2_core::sandbox::SandboxCredentialPrerequisiteError),
     Forbidden,
     AgentNotFound,
     WorkspaceNotFound,
@@ -33,6 +34,7 @@ pub(crate) enum InstanceProblem {
 impl InstanceProblem {
     pub(crate) fn from_create(error: AgentServiceError) -> Self {
         match error {
+            AgentServiceError::Connection(error) => Self::Connection(error),
             AgentServiceError::Forbidden => Self::Forbidden,
             AgentServiceError::ProfileNotFound => Self::AgentProfileNotFound,
             AgentServiceError::WorkspaceNotFound => Self::WorkspaceNotFound,
@@ -101,6 +103,7 @@ impl From<AgentReadError> for InstanceProblem {
 impl From<AgentOperationError> for InstanceProblem {
     fn from(error: AgentOperationError) -> Self {
         match error {
+            AgentOperationError::Connection(error) => Self::Connection(error),
             AgentOperationError::Forbidden => Self::Forbidden,
             AgentOperationError::NotFound => Self::AgentNotFound,
             AgentOperationError::StatusConflict { .. }
@@ -135,6 +138,7 @@ impl From<AgentOperationError> for InstanceProblem {
 impl IntoResponse for InstanceProblem {
     fn into_response(self) -> Response {
         let (status, slug, detail, code) = match &self {
+            Self::Connection(error) => return super::instances_problem::HierarchyProblem::connection(error.clone()).into_response(),
             Self::Forbidden => (
                 StatusCode::FORBIDDEN,
                 "sandbox-use-forbidden",

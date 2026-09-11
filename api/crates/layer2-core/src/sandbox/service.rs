@@ -93,6 +93,8 @@ impl Default for SandboxPolicy {
 pub enum SandboxServiceError {
     #[error("renewable Sandbox credential setup is required")]
     CredentialSetupRequired,
+    #[error("required connections have not been verified")]
+    ConnectionsRequired { services: Vec<ServiceId> },
     #[error("forbidden")]
     Forbidden,
     #[error("sandbox profile not found")]
@@ -127,6 +129,7 @@ impl SandboxServiceError {
     pub const fn code(&self) -> &'static str {
         match self {
             Self::CredentialSetupRequired => "sandbox_credential_setup_required",
+            Self::ConnectionsRequired { .. } => "connections_required",
             Self::Forbidden => "forbidden",
             Self::ProfileNotFound => "sandbox_profile_not_found",
             Self::NotFound => "sandbox_not_found",

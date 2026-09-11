@@ -110,6 +110,7 @@ export function Console({
       <AgentSurface
         key={route.agentId}
         agentId={route.agentId}
+        viewerId={user.id}
         controller={agent}
         detailsOpen={detailsOpen}
         onDetailsOpenChange={setDetailsOpen}
@@ -120,6 +121,7 @@ export function Console({
         key={route.sandboxId}
         client={client}
         sandboxId={route.sandboxId}
+        viewerId={user.id}
         revision={revision}
         permissions={permissions}
         busy={actions.pending}

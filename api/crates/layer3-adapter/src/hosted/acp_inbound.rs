@@ -44,6 +44,7 @@ impl Bridge {
         }
 
         match frame.get("method").and_then(serde_json::Value::as_str) {
+            Some("cma/codex/credentials") => self.subscription_credential(&frame).await,
             Some("session/update") => self.session_update(&frame, updates).await,
             Some("session/request_permission") => self.blocked_on(frame, updates).await,
             Some("elicitation/create") => self.sign_in(&frame, updates).await,
@@ -64,6 +65,25 @@ impl Bridge {
             }
             None => {}
         }
+    }
+
+    async fn subscription_credential(&self, frame: &serde_json::Value) {
+        let Some(id) = frame.get("id").filter(|id| valid_call(id)) else {
+            return;
+        };
+        let answer = match (&self.subscription, frame.get("params")) {
+            (Some(binding), Some(params)) if params.is_object() => binding.credential(params).await,
+            _ => Err(crate::AdapterError::Rejected(
+                "subscription authority is not bound".into(),
+            )),
+        };
+        let frame = match answer {
+            Ok(result) => serde_json::json!({"jsonrpc":"2.0", "id":id, "result":result}),
+            Err(_) => serde_json::json!({"jsonrpc":"2.0", "id":id, "error":{
+                "code":-32001, "message":"Re-login with Codex subscription to continue"
+            }}),
+        };
+        let _ = self.send(&frame).await;
     }
 
     async fn session_update(&self, frame: &serde_json::Value, updates: &UpdateRelay) {

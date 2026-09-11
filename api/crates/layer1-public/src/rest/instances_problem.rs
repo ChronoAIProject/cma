@@ -8,6 +8,7 @@ use super::{problem_document, problem_response};
 
 pub(crate) enum HierarchyProblem {
     CredentialSetupRequired,
+    ConnectionsRequired(Vec<layer2_core::ServiceId>),
     Forbidden,
     SandboxNotFound,
     WorkspaceNotFound,
@@ -29,9 +30,22 @@ pub(crate) enum HierarchyProblem {
 }
 
 impl HierarchyProblem {
+    pub(crate) fn connection(
+        error: layer2_core::sandbox::SandboxCredentialPrerequisiteError,
+    ) -> Self {
+        use layer2_core::sandbox::SandboxCredentialPrerequisiteError as Error;
+        match error {
+            Error::SetupRequired => Self::CredentialSetupRequired,
+            Error::ConnectionsRequired { services } => Self::ConnectionsRequired(services),
+            Error::Unavailable(_) => Self::Unavailable,
+        }
+    }
     pub(crate) fn sandbox(error: SandboxServiceError) -> Self {
         match error {
             SandboxServiceError::CredentialSetupRequired => Self::CredentialSetupRequired,
+            SandboxServiceError::ConnectionsRequired { services } => {
+                Self::ConnectionsRequired(services)
+            }
             SandboxServiceError::Forbidden => Self::Forbidden,
             SandboxServiceError::ProfileNotFound => Self::ProfileNotFound("sandbox"),
             SandboxServiceError::NotFound => Self::SandboxNotFound,
@@ -62,6 +76,7 @@ impl HierarchyProblem {
 
     pub(crate) fn workspace(error: WorkspaceServiceError) -> Self {
         match error {
+            WorkspaceServiceError::Connection(error) => Self::connection(error),
             WorkspaceServiceError::Forbidden => Self::Forbidden,
             WorkspaceServiceError::ProfileNotFound => Self::ProfileNotFound("workspace"),
             WorkspaceServiceError::NotFound => Self::WorkspaceNotFound,
@@ -89,6 +104,10 @@ impl HierarchyProblem {
         match error {
             SandboxLifecycleCommandError::Forbidden => Self::Forbidden,
             SandboxLifecycleCommandError::NotFound => Self::SandboxNotFound,
+            SandboxLifecycleCommandError::CredentialSetupRequired => Self::CredentialSetupRequired,
+            SandboxLifecycleCommandError::ConnectionsRequired { services } => {
+                Self::ConnectionsRequired(services)
+            }
             SandboxLifecycleCommandError::SandboxNotActive { .. } => {
                 Self::Conflict("sandbox_not_active")
             }
@@ -134,6 +153,13 @@ impl HierarchyProblem {
 impl IntoResponse for HierarchyProblem {
     fn into_response(self) -> Response {
         let (status, slug, detail, code, fields) = match self {
+            Self::ConnectionsRequired(services) => (
+                StatusCode::CONFLICT,
+                "connections-required",
+                "Connect and verify the required services before opening this sandbox.",
+                "connections_required".to_owned(),
+                vec![("services", serde_json::json!(services))],
+            ),
             Self::CredentialSetupRequired => (
                 StatusCode::CONFLICT,
                 "sandbox-credential-setup-required",

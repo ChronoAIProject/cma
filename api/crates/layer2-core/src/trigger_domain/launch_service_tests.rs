@@ -89,6 +89,20 @@ impl StubContextReader {
 
 #[async_trait]
 impl LaunchContextReader for StubContextReader {
+    async fn owned_sandbox(
+        &self,
+        owner: &SubjectId,
+        id: &SandboxId,
+    ) -> Result<Option<Sandbox>, LaunchResolutionError> {
+        Ok(self
+            .state
+            .lock()
+            .unwrap()
+            .sandbox
+            .as_ref()
+            .filter(|sandbox| sandbox.owner == *owner && sandbox.id == *id)
+            .cloned())
+    }
     async fn owned_agent(
         &self,
         owner: &SubjectId,
@@ -167,14 +181,28 @@ impl ServiceConnectionBroker for StubBroker {
     async fn requirements(
         &self,
         _owner: &SubjectId,
-        _services: &[ServiceId],
+        services: &[ServiceId],
     ) -> Result<Vec<ServiceRequirement>, ServiceConnectionError> {
         let mut state = self.state.lock().unwrap();
         state.calls += 1;
         if state.unavailable {
             return Err(ServiceConnectionError::Unavailable("offline".into()));
         }
-        Ok(state.requirements.clone())
+        let mut requirements = state.requirements.clone();
+        let public = ServiceId::new(crate::profiles::PUBLIC_CODEX_SERVICE);
+        // These fixtures have an already-connected managed model provider.
+        // Individual tests can override it explicitly with a missing state.
+        if services.contains(&public)
+            && !requirements
+                .iter()
+                .any(|requirement| requirement.service == public)
+        {
+            requirements.push(ServiceRequirement {
+                service: public,
+                state: ServiceRequirementState::Satisfied,
+            });
+        }
+        Ok(requirements)
     }
 
     async fn create_handoff(
@@ -452,7 +480,10 @@ async fn nested_resolution_queries_only_applicable_context_and_requirements() {
         .launch;
     assert_eq!(
         launch.requirements.services,
-        vec![requirement("github", ServiceRequirementState::Satisfied)]
+        vec![
+            requirement("github", ServiceRequirementState::Satisfied),
+            requirement("chrono-llm-public", ServiceRequirementState::Satisfied)
+        ]
     );
     assert_eq!(reused.contexts.reads(), (1, 1, 1));
     assert_eq!(reused.broker.calls(), 1);
@@ -1001,7 +1032,11 @@ async fn reuse_matches_parent_profile_ids_and_global_trigger_origin_across_revis
     old_agent.profile.revision = 41;
     old_agent.sandbox_id = SandboxId("sbx_previous_launch".into());
     old_agent.workspace_id = WorkspaceId("wks_previous_launch".into());
-    agent_fixture.contexts.replace(None, None, Some(old_agent));
+    let mut old_parent = sandbox(&agent_fixture.resolved_profiles, SandboxStatus::Active);
+    old_parent.id = old_agent.sandbox_id.clone();
+    agent_fixture
+        .contexts
+        .replace(Some(old_parent), None, Some(old_agent));
     let mut request = agent_fixture.request("global-agent");
     request.start_if_ready = true;
     let resumed = agent_fixture
@@ -1913,7 +1948,7 @@ fn sandbox(profiles: &ResolvedTriggerProfiles, status: SandboxStatus) -> Sandbox
         runtime: None,
         credential: SandboxCredentialState {
             service_grants: Vec::new(),
-            reaches: vec![],
+            reaches: profiles.sandbox.content.nyxid_services.clone(),
             key_generation: 0,
             delivered: false,
             current: None,

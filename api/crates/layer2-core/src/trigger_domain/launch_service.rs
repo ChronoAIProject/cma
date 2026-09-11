@@ -195,6 +195,9 @@ impl LaunchService {
                 SandboxCredentialPrerequisiteError::SetupRequired => {
                     LaunchServiceError::CredentialSetupRequired
                 }
+                SandboxCredentialPrerequisiteError::ConnectionsRequired { services } => {
+                    LaunchServiceError::RequirementsNotMet { services }
+                }
                 SandboxCredentialPrerequisiteError::Unavailable(detail) => {
                     LaunchServiceError::Unavailable(detail)
                 }
@@ -251,10 +254,13 @@ impl LaunchService {
                 self.require_sandbox_credentials(&caller.subject).await?;
             }
             let checked_at = now_rfc3339();
+            let required_services = self
+                .required_services(&caller.subject, &resolved.resolution, &profiles)
+                .await?;
             let requirements = RequirementsSnapshot {
                 services: self
                     .connections
-                    .requirements(&caller.subject, &profiles.sandbox.content.nyxid_services)
+                    .requirements(&caller.subject, &required_services)
                     .await
                     .map_err(connection_error)?,
                 checked_at,
@@ -262,7 +268,7 @@ impl LaunchService {
             requirements
                 .validate()
                 .map_err(|error| LaunchServiceError::Corrupt(error.to_string()))?;
-            validate_requirement_identity(&profiles.sandbox.content.nyxid_services, &requirements)?;
+            validate_requirement_identity(&required_services, &requirements)?;
             let review = ReviewRequirements::build(
                 &requirements,
                 trust.confirmation_digest.clone(),

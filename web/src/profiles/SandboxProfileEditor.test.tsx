@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { expect, it, vi } from 'vitest';
 import {
@@ -10,6 +10,48 @@ import {
   SERVICE_CATALOG,
 } from '../test/profiles';
 import { SandboxProfileEditor } from './SandboxProfileEditor';
+
+it('separates the Codex provider from NyxID integrations and removes old model grants when switching', async () => {
+  const actor = userEvent.setup();
+  const record = {
+    ...SANDBOX_PROFILE,
+    draft: {
+      ...SANDBOX_PROFILE.draft,
+      modelAccess: 'chronoai_managed' as const,
+      nyxidServices: ['chrono-llm', 'chrono-llm-public', 'api-github', 'ornn-api'],
+    },
+  };
+  const saveProfile = vi.fn().mockResolvedValue({ ...record, draftVersion: 4 });
+  const services = {
+    listServices: vi.fn().mockResolvedValue([
+      { id: 'chrono-llm', name: 'Chrono LLM' },
+      { id: 'chrono-llm-public', name: 'Chrono LLM (public)' },
+      { id: 'api-github', name: 'GitHub OAuth' },
+      { id: 'ornn-api', name: 'Ornn API' },
+    ]),
+  };
+  render(
+    <SandboxProfileEditor
+      client={documentClient(record, { saveProfile })}
+      profileId={record.id}
+      profiles={OWN_PROFILES}
+      marketplace={marketplaceClient()}
+      bounds={PROFILE_BOUNDS}
+      services={services}
+    />,
+  );
+  const provider = await screen.findByRole('radiogroup', { name: 'Codex provider' });
+  expect(within(provider).getByRole('radio', { name: 'Chrono LLM (public)' })).toBeChecked();
+  expect(await screen.findByRole('checkbox', { name: /GitHub OAuth/ })).toBeChecked();
+  expect(screen.getByRole('checkbox', { name: /Ornn API/ })).toBeChecked();
+  expect(screen.queryByRole('checkbox', { name: /Chrono LLM/ })).not.toBeInTheDocument();
+  await actor.click(within(provider).getByRole('radio', { name: 'My Codex subscription' }));
+  await actor.click(screen.getByRole('button', { name: 'Save draft' }));
+  await screen.findByText('Draft saved.');
+  expect(saveProfile.mock.calls[0]?.[1]).toMatchObject({
+    content: { modelAccess: 'own_credentials', nyxidServices: ['api-github', 'ornn-api'] },
+  });
+});
 
 it('enables warmup only for public published profiles and keeps manual availability editable', async () => {
   const actor = userEvent.setup();
@@ -88,7 +130,7 @@ it('converts custom cores and GiB, selects services, and saves environment and o
   fireEvent.change(screen.getByLabelText('CPU cores'), { target: { value: '1.5' } });
   fireEvent.change(screen.getByLabelText('Memory (GiB)'), { target: { value: '2.25' } });
   await actor.click(await screen.findByRole('checkbox', { name: /Storage/ }));
-  await actor.click(screen.getByRole('radio', { name: 'Your own account' }));
+  await actor.click(screen.getByRole('radio', { name: 'My Codex subscription' }));
   await actor.click(await screen.findByRole('button', { name: 'Add Research workspace' }));
   await actor.click(screen.getByRole('button', { name: 'Add variable' }));
   fireEvent.change(screen.getByLabelText('Variable 1 name'), { target: { value: 'RUN_MODE' } });

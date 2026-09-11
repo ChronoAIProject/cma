@@ -37,7 +37,7 @@ impl WarmSandboxPlan {
             || self
                 .profile
                 .content
-                .nyxid_services
+                .nyxid_connection_services()
                 .iter()
                 .any(|id| !self.reaches.contains(id))
         {

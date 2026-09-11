@@ -64,3 +64,4 @@ it('adopts a title generated after the completed first turn without reloading or
   expect(runAgent).not.toHaveBeenCalled();
   unmount();
 });
+import './test/connectedAccounts';

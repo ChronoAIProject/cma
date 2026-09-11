@@ -1961,6 +1961,10 @@
               {
                 "service": "github",
                 "state": "missing"
+              },
+              {
+                "service": "chrono-llm-public",
+                "state": "missing"
               }
             ],
             "checked_at": "2026-09-07T00:00:00Z"
@@ -1970,6 +1974,10 @@
               {
                 "type": "connection",
                 "service": "github"
+              },
+              {
+                "type": "connection",
+                "service": "chrono-llm-public"
               }
             ],
             "can_start_now": false
@@ -2530,6 +2538,10 @@
               {
                 "service": "github",
                 "state": "missing"
+              },
+              {
+                "service": "chrono-llm-public",
+                "state": "missing"
               }
             ],
             "checked_at": "2026-09-07T00:00:00Z"
@@ -2539,6 +2551,10 @@
               {
                 "type": "connection",
                 "service": "github"
+              },
+              {
+                "type": "connection",
+                "service": "chrono-llm-public"
               }
             ],
             "can_start_now": false
@@ -3099,6 +3115,10 @@
               {
                 "service": "github",
                 "state": "missing"
+              },
+              {
+                "service": "chrono-llm-public",
+                "state": "missing"
               }
             ],
             "checked_at": "2026-09-07T00:00:00Z"
@@ -3108,6 +3128,10 @@
               {
                 "type": "connection",
                 "service": "github"
+              },
+              {
+                "type": "connection",
+                "service": "chrono-llm-public"
               }
             ],
             "can_start_now": false
@@ -3334,6 +3358,10 @@
               {
                 "service": "github",
                 "state": "missing"
+              },
+              {
+                "service": "chrono-llm-public",
+                "state": "missing"
               }
             ],
             "checked_at": "2026-09-07T00:00:00Z"
@@ -3343,6 +3371,10 @@
               {
                 "type": "connection",
                 "service": "github"
+              },
+              {
+                "type": "connection",
+                "service": "chrono-llm-public"
               }
             ],
             "can_start_now": false
@@ -3626,6 +3658,10 @@
               {
                 "service": "github",
                 "state": "missing"
+              },
+              {
+                "service": "chrono-llm-public",
+                "state": "missing"
               }
             ],
             "checked_at": "2026-09-07T00:00:00Z"
@@ -3635,6 +3671,10 @@
               {
                 "type": "connection",
                 "service": "github"
+              },
+              {
+                "type": "connection",
+                "service": "chrono-llm-public"
               }
             ],
             "can_start_now": false
@@ -3918,6 +3958,10 @@
               {
                 "service": "github",
                 "state": "missing"
+              },
+              {
+                "service": "chrono-llm-public",
+                "state": "missing"
               }
             ],
             "checked_at": "2026-09-07T00:00:00Z"
@@ -3927,6 +3971,10 @@
               {
                 "type": "connection",
                 "service": "github"
+              },
+              {
+                "type": "connection",
+                "service": "chrono-llm-public"
               }
             ],
             "can_start_now": false
@@ -4093,6 +4141,10 @@
               {
                 "service": "github",
                 "state": "missing"
+              },
+              {
+                "service": "chrono-llm-public",
+                "state": "missing"
               }
             ],
             "checked_at": "2026-09-07T00:00:00Z"
@@ -4102,6 +4154,10 @@
               {
                 "type": "connection",
                 "service": "github"
+              },
+              {
+                "type": "connection",
+                "service": "chrono-llm-public"
               }
             ],
             "can_start_now": false
@@ -4268,6 +4324,10 @@
               {
                 "service": "github",
                 "state": "missing"
+              },
+              {
+                "service": "chrono-llm-public",
+                "state": "missing"
               }
             ],
             "checked_at": "2026-09-07T00:00:00Z"
@@ -4277,6 +4337,10 @@
               {
                 "type": "connection",
                 "service": "github"
+              },
+              {
+                "type": "connection",
+                "service": "chrono-llm-public"
               }
             ],
             "can_start_now": false
@@ -4414,6 +4478,10 @@
               {
                 "service": "github",
                 "state": "missing"
+              },
+              {
+                "service": "chrono-llm-public",
+                "state": "missing"
               }
             ],
             "checked_at": "2026-09-07T00:00:00Z"
@@ -4423,6 +4491,10 @@
               {
                 "type": "connection",
                 "service": "github"
+              },
+              {
+                "type": "connection",
+                "service": "chrono-llm-public"
               }
             ],
             "can_start_now": false
@@ -4566,6 +4638,10 @@
             "services": [
               {
                 "service": "github",
+                "state": "satisfied"
+              },
+              {
+                "service": "chrono-llm-public",
                 "state": "satisfied"
               }
             ],
@@ -4734,6 +4810,10 @@
               {
                 "service": "github",
                 "state": "missing"
+              },
+              {
+                "service": "chrono-llm-public",
+                "state": "missing"
               }
             ],
             "checked_at": "2026-09-07T00:00:00Z"
@@ -4743,6 +4823,10 @@
               {
                 "type": "connection",
                 "service": "github"
+              },
+              {
+                "type": "connection",
+                "service": "chrono-llm-public"
               }
             ],
             "can_start_now": false
@@ -4908,6 +4992,10 @@
               {
                 "service": "github",
                 "state": "missing"
+              },
+              {
+                "service": "chrono-llm-public",
+                "state": "missing"
               }
             ],
             "checked_at": "2026-09-07T00:00:00Z"
@@ -4917,6 +5005,10 @@
               {
                 "type": "connection",
                 "service": "github"
+              },
+              {
+                "type": "connection",
+                "service": "chrono-llm-public"
               }
             ],
             "can_start_now": false

@@ -97,7 +97,17 @@ impl ControlPlaneComposition {
             Arc::clone(&settings),
             config.baseline_services.clone(),
         ));
-        let adapter = production_adapter(config, Arc::clone(&stores.checkpoint_objects)).await?;
+        let subscriptions =
+            crate::connections::CodexSubscriptions::new(stores.codex_subscriptions.clone());
+        let adapter = production_adapter(
+            config,
+            Arc::clone(&stores.checkpoint_objects),
+            crate::connections::RuntimeSubscriptions::new(
+                stores.sandbox_model.clone(),
+                subscriptions.clone(),
+            ),
+        )
+        .await?;
         let checkpoint_export = if config.runtime.home_policy.is_some() {
             let homes = layer3_adapter::provider::PersistentHomeVolumes::infer_namespaced(
                 &config.runtime.sandbox_namespace,
@@ -122,16 +132,37 @@ impl ControlPlaneComposition {
             stores.auth.clone(),
             config.nyxid_public_url.clone(),
         );
+        let broker = Arc::new(
+            CmaServiceConnectionBroker::from_auth_config(
+                &config.auth_mode,
+                config.nyxid_public_url.as_deref(),
+                Arc::clone(&auth),
+            )
+            .map_err(|error| format!("service connection broker is not usable: {error}"))?
+            .with_subscriptions(subscriptions.clone()),
+        );
+        let connection_prerequisite = crate::connections::ConnectionPrerequisite::new(
+            auth.clone(),
+            broker.clone(),
+            sandbox_policy.clone(),
+        );
+        let browser_connections = crate::connections::BrowserConnections::new(
+            stores.clone(),
+            sandbox_policy.clone(),
+            broker.clone(),
+            subscriptions,
+        );
         let sandbox_service = SandboxService::with_policy_source(
             stores.sandbox_model.clone(),
             stores.sandbox_profiles.clone(),
             sandbox_policy.clone(),
-            auth.clone(),
+            connection_prerequisite.clone(),
         );
         let workspace_service = WorkspaceService::new(
             stores.sandbox_model.clone(),
             stores.sandbox_profiles.clone(),
-        );
+        )
+        .with_connections(connection_prerequisite.clone());
         let live_agents = Arc::new(LiveAgentRegistry::default());
         let projections = AgentProjectionServices::new(
             stores.sandbox_model.clone(),
@@ -139,7 +170,8 @@ impl ControlPlaneComposition {
             Arc::clone(&live_agents),
             Arc::new(AdapterSandboxResources::new(Arc::clone(&adapter))),
             runtime_capabilities(adapter.capabilities()),
-        );
+        )
+        .with_connections(connection_prerequisite.clone());
         let hierarchy = HierarchyReadService::new(stores.sandbox_model.clone());
         let admin = layer1_public::rest::admin::AdminState::new(
             Arc::clone(&settings),
@@ -234,17 +266,9 @@ impl ControlPlaneComposition {
                 checkpoint_export,
             },
         );
-        let broker = Arc::new(
-            CmaServiceConnectionBroker::from_auth_config(
-                &config.auth_mode,
-                config.nyxid_public_url.as_deref(),
-                Arc::clone(&auth),
-            )
-            .map_err(|error| format!("service connection broker is not usable: {error}"))?,
-        );
         let trigger = TriggerComposition::new(TriggerCompositionDependencies {
             agent_reads: projections.reads(),
-            credentials: auth.clone(),
+            credentials: connection_prerequisite,
             stores: Arc::clone(&stores),
             directory: users,
             settings: Arc::clone(&settings),
@@ -273,6 +297,7 @@ impl ControlPlaneComposition {
             .merge(trigger_routes)
             .merge(layer1_public::rest::admin::router(admin));
         let public = super::rest_router(resource_routes)
+            .merge(crate::connections::router(browser_connections))
             .merge(crate::auth::router(Arc::clone(&auth)))
             .layer(axum::middleware::from_fn_with_state(
                 recorder,
@@ -306,10 +331,12 @@ impl ControlPlaneComposition {
 async fn production_adapter(
     config: &Config,
     checkpoint_objects: Arc<crate::store::MongoCheckpointObjectStore>,
+    subscriptions: Arc<dyn layer3_adapter::hosted::HostedSubscriptionSource>,
 ) -> Result<Arc<dyn layer3_adapter::SandboxAdapter>, String> {
     use layer3_adapter::codex::{CodexAdapter, CodexSandboxSpec};
     use layer3_adapter::hosted::{
         CheckpointArchiveStoreFactory, HostedDeployment, ProviderHostedBackend,
+        ProviderHostedControlTransport,
     };
     use layer3_adapter::provider::{BatchSandboxReclaimer, SandboxClient};
 
@@ -328,8 +355,10 @@ async fn production_adapter(
     )
     .with_reclaimer(reclaimer);
     let archive_factory: Arc<dyn CheckpointArchiveStoreFactory> = checkpoint_objects;
-    let backend = ProviderHostedBackend::production(client, archive_factory)
-        .map_err(|error| format!("hosted runtime transport is not usable: {error}"))?;
+    let transport = ProviderHostedControlTransport::new(client.clone(), archive_factory)
+        .map_err(|error| format!("hosted runtime transport is not usable: {error}"))?
+        .with_subscriptions(subscriptions);
+    let backend = ProviderHostedBackend::new(client, Arc::new(transport));
     let mut deployment = HostedDeployment::default();
     deployment.image.uri = config.runtime.sandbox_image.clone();
     deployment.upstream_base_url = config.runtime.upstream_base_url.clone();

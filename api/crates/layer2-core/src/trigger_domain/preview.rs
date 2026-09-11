@@ -111,7 +111,7 @@ impl TriggerPreview {
                     cpu_millis: profiles.sandbox.content.cpu_millis,
                     memory_mib: profiles.sandbox.content.memory_mib,
                 },
-                services: profiles.sandbox.content.nyxid_services.clone(),
+                services: profiles.sandbox.content.connection_services(),
             },
             first_message: content
                 .first_message
