@@ -104,7 +104,81 @@ Subscription agents expose Re-login with Codex subscription.
 - Native synthetic subscription contract passes with the pinned binaries.
   Linux API authentication image builds and verifies the native binary digest.
 - Removed 31 stale Cargo cache directories/test binaries, reclaiming about
-  5.5 GiB. Retained source can regenerate them. No production state was deleted.
+  5.5 GiB. A later cleanup removed another 11 idle incremental caches, about
+  3 GB. Retained source can regenerate these artifacts.
 
-Production rollout and real subscription OAuth/inference acceptance remain
-pending; local and synthetic checks do not establish those outcomes.
+## Production verification on 2026-09-11
+
+The unified API and runtime from `1120f745` were deployed successfully. The
+browser journey exposed an over-wide polling/cancellation request: it sent the
+whole returned handoff to an API that accepts only the service and intent IDs.
+Web revision `20c24796` fixes that boundary. Its production browser recovery
+reuses the original pending login and receives HTTP 200 for the exact active
+intent. All eight connection tests, TypeScript checking and lint pass.
+
+The real GitHub README links to the named Truretruing trigger through its
+`/api/v1/triggers/public/.../open/...` entry endpoint. Verification used GitHub's
+rendered README and real badge/entry requests without modifying the README.
+
+| Production observation | Result |
+| --- | --- |
+| Truretruing provider and required integrations | Chrono LLM (public), GitHub OAuth and Ornn; all server checks satisfied for the test owner. |
+| Availability configuration | Three warm sandboxes; always keep alive enabled. |
+| Preparation before the click | Three ready, unassigned environments, each with workspace, worktree, skills and an idle native conversation; no owner credentials. |
+| README launch | `lch_55dc259f0c3b4011a53f18d92a8127b5`; sandbox `sbx_2dce2a5e65a54eed84bb083e9024ee11`. |
+| Message box usable | 9,054 ms after clicking the README badge. |
+| Launch readiness observation | 10,718 ms; the prepared workspace and native conversation were preserved. |
+| Configured first task | Exactly one first prompt, real model output and tool execution, completed in 224,879 ms. This is task execution time, separate from sandbox availability. |
+| Owner binding | GitHub login `chronoai-shining`; matching Git author identity in workspace and worktree. |
+| Browser errors during managed journey | None. |
+| Missing subscription gate | HTTP 409 `connections_required`; zero sandbox assignments. |
+| Production subscription button | Opens native OpenAI device OAuth; server keeps the launch unassigned while login is pending. |
+| Native model compatibility | Pinned native model catalog includes `gpt-5.6-sol` as its default. |
+| Global snapshot interval | 1,800 seconds. |
+| Stale resource cleanup | Two failed/stale owned sandboxes retired, plus superseded unowned warm runtimes. Calvin's paused `test2` and its sealed snapshot were preserved. Retirement history remains in CMA. |
+
+Sustained OAuth polling also exposed the generic POST creation rate limit.
+Revision `d176d5c0` classifies connection checks as reads and gives the three
+authenticated connection routes per-owner operation budgets. An actual
+middleware test sends 30 polls, verifies login creation remains available,
+enforces its creation limit, and proves a second owner retains an independent
+login allowance. All 11 rate-limit tests pass. Its API rollout is healthy.
+
+The final deployed image pins are:
+
+| Component | Source revision | Image digest |
+| --- | --- | --- |
+| API | `d176d5c0` | `sha256:8eba12c107b5823573b129b4fb00b99114da731141ebb116078e47acf0c48d87` |
+| Web | `20c24796` | `sha256:812174585e1cec37d55e2313c28f8523295a9e7b903a3e025eda33777aa725b0` |
+| Runtime | `1120f745` | `sha256:5541f5a711d90c61824fe6a55b4c762d21a37cb2a63574f552390520eabf5ee4` |
+
+All images were scanned with zero fixable HIGH/CRITICAL vulnerabilities and
+their immutable remote digests were checked before deployment. The managed
+test's pause sealed a snapshot at `2026-09-11T11:02:43Z`, preserving its exact
+conversation, and the warm pool replenished to three fully prepared entries.
+
+After the API correction, all 35 connection checks over 94 seconds returned
+HTTP 200; a NyxID sign-in handoff and cancellation then both returned HTTP 200.
+No external service connection was changed by that read/handoff check.
+The same Truretruing sandbox was revived through the trigger in 66,154 ms,
+returning to the original workspace and agent with the exact saved transcript
+and no replayed first prompt. Its browser connection check succeeded and no
+page errors occurred. This measured revival is distinct from the 9-second
+fresh warm assignment.
+
+Another 12 superseded local OCI archives were removed, reclaiming 1.65 GB.
+Their verified images remain in the registry. Current release archives,
+source, and evidence were retained; local free space was about 10 GiB.
+
+Real subscription OAuth completion, subscription inference and renewable-token
+acceptance still require the owner's OpenAI sign-in. No existing local OpenAI
+credential was copied into production. Missing-service sequencing has automated
+coverage; a real new user's disconnected NyxID services have not been connected
+in this verification. These pending checks must not be reported as completed.
+
+Detailed local evidence is retained in
+`/tmp/cma-provider-connections.h1FNhc/`, including `managed-result.json`,
+`managed-pool-before.json`, `subscription-test.json`, and
+`subscription-poll-recovery.json`, plus `managed-revival.json`,
+`poll-rate-result.json`, and `final-evidence.json`. Do not publish the temporary OAuth handoff
+or authenticated browser files.
