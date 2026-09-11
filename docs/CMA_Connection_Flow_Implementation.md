@@ -170,6 +170,21 @@ Another 12 superseded local OCI archives were removed, reclaiming 1.65 GB.
 Their verified images remain in the registry. Current release archives,
 source, and evidence were retained; local free space was about 10 GiB.
 
+An additional isolated production check prepared a subscription-mode warm
+sandbox with a directory workspace, worktree and idle native conversation.
+The runtime remained in `installed` (unassigned) phase, had no agent `auth.json`,
+no managed model-provider configuration, and zero user prompts. Its only NyxID
+grant requirement was Ornn. A create request while the owner's subscription
+was missing returned HTTP 409 `connections_required`; the warm sandbox remained
+absent from the owned sandbox API, with the same pod UID and unchanged prepared
+conversation. Evidence: `subscription-warm-result.json`. This proves native
+subscription preparation before credentials in production; it does not prove
+authenticated subscription assignment or inference.
+The temporary runtime and its home PVC were then removed through normal warm
+pool retirement, and its disposable profiles/trigger were retired. The original
+subscription login test remains available. Evidence:
+`subscription-warm-cleanup.json`.
+
 Real subscription OAuth completion, subscription inference and renewable-token
 acceptance still require the owner's OpenAI sign-in. No existing local OpenAI
 credential was copied into production. Missing-service sequencing has automated
