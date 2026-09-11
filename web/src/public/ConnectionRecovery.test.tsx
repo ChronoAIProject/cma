@@ -201,7 +201,9 @@ it.each([false, true])(
     );
     render(<ReviewCard client={client} record={record} onChanged={vi.fn()} onClose={vi.fn()} />);
     await act(async () => undefined);
-    expect(screen.getByRole('dialog', { name: 'Connect required accounts' })).toBeInTheDocument();
+    expect(
+      screen.getByRole('dialog', { name: 'NyxID Service Connection Verification' }),
+    ).toBeInTheDocument();
     expect(screen.queryByRole('checkbox')).not.toBeInTheDocument();
     expect(screen.queryByRole('dialog', { name: 'Review and continue' })).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Verify connections' })).toBeEnabled();
@@ -211,6 +213,14 @@ it.each([false, true])(
     expect(settlements).toHaveLength(3);
     await act(async () => {
       settlements.forEach((settle) => settle());
+    });
+    expect(client.requests.start).not.toHaveBeenCalled();
+    screen
+      .getAllByRole('button', { name: 'Verify' })
+      .forEach((button) => fireEvent.click(button));
+    await act(async () => undefined);
+    await act(async () => {
+      settlements.slice(3).forEach((settle) => settle());
     });
     expect(client.requests.start).toHaveBeenCalledOnce();
     expect(client.requests.start).toHaveBeenCalledWith(

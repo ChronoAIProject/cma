@@ -309,6 +309,21 @@ prerequisites; CMA does not change them.
 Absent metadata is omitted, not null. Enrichment belongs to this current GET
 projection only; stored Launch snapshots and history are unchanged.
 
+The UI labels this step **NyxID Service Connection Verification**, before
+Sandbox assignment or revival, Workspace preparation, and Agent provisioning.
+Every required service must be satisfied, including launches reusing prepared
+warm environments or existing conversations. An active routing row alone is
+insufficient: CMA reads the exact user's key connection state, credential
+presence, access and node availability. For GitHub, NyxID's readiness projection
+also detects an existing credential row with no credential material; assistant
+tool grants are independent of this connection check.
+
+Existing bindings link directly to their NyxID `/keys/{id}` page for repair.
+Each disconnected service offers Connect and Verify. Users finish setup in
+NyxID, return to the same CMA Launch, and explicitly Verify; background polling
+does not start a Sandbox. Partial completion keeps that Launch in draft and
+retains its consent. Start freshly verifies all services before any launch work.
+
 Do not infer connection modes from a slug or interpret unknown/inactive as
 satisfied. Hosted setup creates an owner-scoped handoff:
 

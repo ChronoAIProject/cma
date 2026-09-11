@@ -1,4 +1,5 @@
 import { Presence } from '../ui/Presence';
+import { LandingCharacter } from '../landing/LandingCharacter';
 import { useEffect, useRef, useState } from 'react';
 import {
   ApiError,
@@ -190,6 +191,24 @@ export function ReviewCard({
       }
     >
       <div className="public-review">
+        {metadata.length > 0 ? (
+          <section aria-label={connectionCopy.required}>
+            <p>{connectionCopy.explanation}</p>
+            {metadata
+              .filter(
+                (service) => service.state === 'satisfied' || connected.includes(service.service),
+              )
+              .map((service) => (
+                <div className="public-service-verified" key={service.service}>
+                  <span aria-hidden="true">
+                    <LandingCharacter compact state="completed" />
+                  </span>
+                  <span>{service.display_name ?? connectionCopy.unknown}</span>
+                  <span>{connectionCopy.connected}</span>
+                </div>
+              ))}
+          </section>
+        ) : null}
         {needs.map((need, index) => {
           switch (need.type) {
             case 'trust_confirmation':

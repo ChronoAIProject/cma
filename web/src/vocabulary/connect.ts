@@ -8,7 +8,10 @@ export const connectionStates = {
   failed: 'The account could not be connected. Try again.',
 } satisfies Record<ServiceConnectionState, string>;
 export const connectionCopy = {
-  required: 'Connect required accounts',
+  required: 'NyxID Service Connection Verification',
+  explanation:
+    'Connect every required service before CMA assigns your sandbox. Return to this page and select Verify after connecting in NyxID.',
+  connected: 'Connected',
   verifyAll: 'Verify connections',
   title: (name: string) => `Connect ${name}`,
   connect: 'Connect',
@@ -17,7 +20,7 @@ export const connectionCopy = {
   checklist: [
     'A NyxID window opened. Follow the steps there.',
     'Return here and select Verify after connecting.',
-    "We'll continue automatically.",
+    'CMA will continue once every required service is verified.',
   ],
   blocked: 'Your browser blocked the NyxID window. Continue in this tab, then return here.',
   sameTab: 'Continue in NyxID',
