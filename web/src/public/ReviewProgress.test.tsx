@@ -37,6 +37,9 @@ describe('minimal review', () => {
     await act(async () => {
       await vi.advanceTimersByTimeAsync(1500);
     });
+    expect(client.requests.start).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Verify' }));
+    await act(async () => undefined);
     expect(client.requests.start).toHaveBeenCalledOnce();
     expect(client.requests.start).toHaveBeenCalledWith(
       record.id,
@@ -183,7 +186,9 @@ describe('durable progress', () => {
     render(<Progress client={client} id={waiting.id} onNavigate={vi.fn()} />);
     await screen.findByText('Connect required accounts to continue');
     await waitFor(() => expect(stream).toBeDefined());
-    const row = screen.getByRole('heading', { name: "Checking what's needed" }).closest('li');
+    const row = screen
+      .getByRole('heading', { name: 'NyxID Service Connection Verification' })
+      .closest('li');
     expect(row).toHaveTextContent('Needs you');
     expect(row).not.toHaveTextContent('Done');
     const checked: Launch = {

@@ -66,10 +66,13 @@ struct ProviderState {
     link_reply: Mutex<Reply>,
     services_reply: Mutex<Reply>,
     catalog_reply: Mutex<Reply>,
+    credential_replies: Mutex<std::collections::HashMap<String, Reply>>,
     creates: Mutex<Vec<CreateRequest>>,
     link_reads: Mutex<Vec<(String, Option<String>)>>,
     service_reads: Mutex<Vec<Option<String>>>,
     catalog_reads: Mutex<Vec<Option<String>>>,
+    credential_reads: Mutex<Vec<Option<String>>>,
+    readiness_reply: Mutex<Reply>,
 }
 
 impl ProviderState {
@@ -83,10 +86,15 @@ impl ProviderState {
             link_reply: Mutex::new(link_reply("pending")),
             services_reply: Mutex::new(Reply::json(json!({ "services": [] }))),
             catalog_reply: Mutex::new(Reply::json(json!({ "services": [] }))),
+            credential_replies: Mutex::new(std::collections::HashMap::new()),
             creates: Mutex::new(Vec::new()),
             link_reads: Mutex::new(Vec::new()),
             service_reads: Mutex::new(Vec::new()),
             catalog_reads: Mutex::new(Vec::new()),
+            credential_reads: Mutex::new(Vec::new()),
+            readiness_reply: Mutex::new(Reply::json(
+                json!({"revision":"nyxid-assistant-readiness.v1","capabilities":[{"capabilityId":"api-github","connectionState":"connected","grantState":"missing"}]}),
+            )),
         }
     }
 
@@ -117,6 +125,8 @@ impl Provider {
             .route("/api/v1/connect-links/{id}", get(read_link))
             .route("/api/v1/user-services", get(read_services))
             .route("/api/v1/services", get(read_catalog))
+            .route("/api/v1/keys/{id}", get(read_credential))
+            .route("/api/v1/assistant/readiness", get(read_readiness))
             .with_state(Arc::clone(&state));
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
@@ -197,6 +207,42 @@ async fn read_catalog(State(state): State<Arc<ProviderState>>, headers: HeaderMa
         .unwrap()
         .push(authorization(&headers));
     state.catalog_reply.lock().unwrap().response()
+}
+
+async fn read_credential(
+    State(state): State<Arc<ProviderState>>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+) -> Response {
+    assert_eq!(
+        authorization(&headers),
+        Some(format!("Bearer {VISITOR_TOKEN}"))
+    );
+    state
+        .credential_reads
+        .lock()
+        .unwrap()
+        .push(authorization(&headers));
+    if let Some(reply) = state.credential_replies.lock().unwrap().get(&id) {
+        return reply.response();
+    }
+    let listing: Value = serde_json::from_str(&state.services_reply.lock().unwrap().body).unwrap();
+    let rows = listing
+        .as_array()
+        .or_else(|| listing.get("services").and_then(Value::as_array));
+    let row = rows.and_then(|rows| rows.iter().find(|row| row["id"] == id));
+    match row {
+        Some(row) => Reply::json(json!({"id":id,"slug":row["slug"],"is_active":true,"status":"active","connected":true,"credential_missing":false})).response(),
+        None => Reply::error(StatusCode::NOT_FOUND, "missing").response(),
+    }
+}
+
+async fn read_readiness(State(state): State<Arc<ProviderState>>, headers: HeaderMap) -> Response {
+    assert_eq!(
+        authorization(&headers),
+        Some(format!("Bearer {VISITOR_TOKEN}"))
+    );
+    state.readiness_reply.lock().unwrap().response()
 }
 
 fn authorization(headers: &HeaderMap) -> Option<String> {
@@ -322,7 +368,7 @@ async fn catalog_metadata_uses_exact_owner_visible_types_and_configured_setup_or
     assert_eq!(metadata[1].connection_mode, ServiceConnectionMode::Manual);
     assert_eq!(
         metadata[1].setup_url.as_deref(),
-        Some("https://nyx.example/services")
+        Some("https://nyx.example/keys")
     );
     for item in &metadata[2..] {
         assert_eq!(item.connection_mode, ServiceConnectionMode::Unknown);
@@ -335,7 +381,7 @@ async fn catalog_metadata_uses_exact_owner_visible_types_and_configured_setup_or
         *provider.state.catalog_reads.lock().unwrap(),
         vec![Some(format!("Bearer {VISITOR_TOKEN}"))]
     );
-    assert!(provider.state.service_reads.lock().unwrap().is_empty());
+    assert_eq!(provider.state.service_reads.lock().unwrap().len(), 1);
     assert!(provider.state.creates.lock().unwrap().is_empty());
     let printed = format!("{metadata:?}");
     for secret in [
@@ -346,6 +392,80 @@ async fn catalog_metadata_uses_exact_owner_visible_types_and_configured_setup_or
     ] {
         assert!(!printed.contains(secret));
     }
+}
+
+#[tokio::test]
+async fn existing_connections_link_to_the_exact_nyxid_repair_page() {
+    let provider = Provider::start().await;
+    *provider.state.catalog_reply.lock().unwrap() = Reply::json(json!({"services":[
+        {"slug":"api-github","name":"GitHub","service_type":"http","is_active":true}
+    ]}));
+    provider
+        .state
+        .set_services_reply(Reply::json(json!({"services":[
+            {"id":"github-existing","slug":"api-github","is_active":true}
+        ]})));
+    let metadata = broker(&provider, Tokens::available())
+        .describe_services(
+            &SubjectId::new("visitor-one"),
+            &[
+                ServiceId::new("api-github"),
+                ServiceId::new("github-existing"),
+            ],
+        )
+        .await
+        .unwrap();
+    for service in metadata {
+        assert_eq!(service.display_name.as_deref(), Some("GitHub"));
+        assert_eq!(service.connection_mode, ServiceConnectionMode::Manual);
+        assert_eq!(
+            service.setup_url.as_deref(),
+            Some("https://nyx.example/keys/github-existing")
+        );
+    }
+    assert!(provider.state.creates.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn active_github_credential_rows_without_material_stay_blocked() {
+    let provider = Provider::start().await;
+    provider
+        .state
+        .set_services_reply(Reply::json(json!({"services":[
+            {"id":"github-existing","slug":"api-github","is_active":true}
+        ]})));
+    let broker = broker(&provider, Tokens::available());
+    for (connection, expected) in [
+        ("verifying", ServiceRequirementState::Missing),
+        ("connecting", ServiceRequirementState::Missing),
+        ("unknown", ServiceRequirementState::Unknown),
+        ("connected", ServiceRequirementState::Satisfied),
+    ] {
+        *provider.state.readiness_reply.lock().unwrap() = Reply::json(json!({
+            "revision":"nyxid-assistant-readiness.v1",
+            "capabilities":[{"capabilityId":"api-github","connectionState":connection,"grantState":"missing"}]
+        }));
+        let requirements = broker
+            .requirements(
+                &SubjectId::new("visitor-one"),
+                &[ServiceId::new("api-github")],
+            )
+            .await
+            .unwrap();
+        assert_eq!(requirements[0].state, expected);
+    }
+    *provider.state.readiness_reply.lock().unwrap() =
+        Reply::json(json!({"revision":"future","capabilities":[]}));
+    assert_eq!(
+        broker
+            .requirements(
+                &SubjectId::new("visitor-one"),
+                &[ServiceId::new("api-github")]
+            )
+            .await
+            .unwrap_err(),
+        malformed_error()
+    );
 }
 
 #[tokio::test]
@@ -511,6 +631,235 @@ async fn legacy_bare_listing_maps_inactive_and_missing_activity_to_closed_states
             ServiceRequirementState::Unknown,
             ServiceRequirementState::Missing,
         ]
+    );
+}
+
+#[tokio::test]
+async fn active_routing_rows_require_present_credentials_by_slug_and_id() {
+    let provider = Provider::start().await;
+    provider
+        .state
+        .set_services_reply(Reply::json(json!({ "services": [
+        {"id":"github-routing-row","slug":"api-github","is_active":true},
+        {"id":"ornn-row","slug":"ornn-api","is_active":true}
+    ] })));
+    let broker = broker(&provider, Tokens::available());
+    let owner = SubjectId::new("visitor-one");
+    let services = ["api-github", "github-routing-row", "ornn-api"].map(ServiceId::new);
+    for (reply, expected) in [
+        (
+            Reply::json(
+                json!({"id":"github-routing-row","slug":"api-github","is_active":true,"status":"active","connected":true,"credential_missing":true}),
+            ),
+            ServiceRequirementState::Missing,
+        ),
+        (
+            Reply::error(StatusCode::NOT_FOUND, "private provider detail"),
+            ServiceRequirementState::Missing,
+        ),
+        (
+            Reply::json(
+                json!({"id":"github-routing-row","slug":"api-github","is_active":true,"status":"active","connected":true,"credential_missing":false}),
+            ),
+            ServiceRequirementState::Satisfied,
+        ),
+    ] {
+        provider
+            .state
+            .credential_replies
+            .lock()
+            .unwrap()
+            .insert("github-routing-row".into(), reply);
+        let requirements = broker.requirements(&owner, &services).await.unwrap();
+        assert_eq!(
+            requirements.iter().map(|r| r.state).collect::<Vec<_>>(),
+            vec![expected, expected, ServiceRequirementState::Satisfied]
+        );
+    }
+    assert_eq!(
+        *provider.state.credential_reads.lock().unwrap(),
+        vec![Some(format!("Bearer {VISITOR_TOKEN}")); 9]
+    );
+}
+
+#[tokio::test]
+async fn credential_metadata_failures_never_look_like_satisfied_connections() {
+    let provider = Provider::start().await;
+    provider
+        .state
+        .set_services_reply(Reply::json(json!({ "services": [
+        {"id":"github-row","slug":"api-github","is_active":true}
+    ] })));
+    let broker = broker(&provider, Tokens::available());
+    for reply in [
+        Reply::error(StatusCode::TOO_MANY_REQUESTS, "private provider response"),
+        Reply::error(StatusCode::SERVICE_UNAVAILABLE, "private provider response"),
+        Reply::json(
+            json!({"id":"another-user-service","slug":"api-github","is_active":true,"status":"active","connected":true,"credential_missing":false}),
+        ),
+        Reply::json(
+            json!({"id":"github-row","slug":"api-github","is_active":true,"status":"active","connected":true}),
+        ),
+    ] {
+        provider
+            .state
+            .credential_replies
+            .lock()
+            .unwrap()
+            .insert("github-row".into(), reply);
+        let error = broker
+            .requirements(
+                &SubjectId::new("visitor-one"),
+                &[ServiceId::new("api-github")],
+            )
+            .await
+            .unwrap_err();
+        assert!(matches!(
+            error,
+            ServiceConnectionError::Unavailable(_) | ServiceConnectionError::Malformed(_)
+        ));
+        assert!(!error.to_string().contains("private provider"));
+    }
+    provider.state.set_services_reply(Reply::json(json!({ "services": [
+        {"id":"github-row","slug":"api-github","is_active":true,"credential_source":{"type":"org","allowed":false}}
+    ] })));
+    let requirements = broker
+        .requirements(
+            &SubjectId::new("visitor-one"),
+            &[ServiceId::new("api-github")],
+        )
+        .await
+        .unwrap();
+    assert_eq!(requirements[0].state, ServiceRequirementState::Unknown);
+    assert_eq!(
+        provider.state.credential_reads.lock().unwrap().len(),
+        4,
+        "denied organization credentials must not be probed"
+    );
+}
+
+#[tokio::test]
+async fn completed_handoff_still_requires_present_credentials() {
+    let provider = Provider::start().await;
+    provider.state.set_link_reply(Reply::json(json!({
+        "id":"link-one","status":"completed","service_slug":"api-github",
+        "expires_at":PROVIDER_EXPIRES_AT,
+        "connected_service":{"id":"github-row","slug":"api-github"}
+    })));
+    provider
+        .state
+        .set_services_reply(Reply::json(json!({ "services": [
+        {"id":"github-row","slug":"api-github","is_active":true}
+    ] })));
+    let broker = broker(&provider, Tokens::available());
+    provider.state.credential_replies.lock().unwrap().insert("github-row".into(),
+        Reply::json(json!({"id":"github-row","slug":"api-github","is_active":true,"status":"active","connected":true,"credential_missing":true})));
+    assert_eq!(
+        broker
+            .handoff_state(
+                &SubjectId::new("visitor-one"),
+                "link-one",
+                &ServiceId::new("api-github")
+            )
+            .await
+            .unwrap(),
+        BrokerHandoffState::Failed
+    );
+    provider
+        .state
+        .credential_replies
+        .lock()
+        .unwrap()
+        .remove("github-row");
+    assert_eq!(
+        broker
+            .handoff_state(
+                &SubjectId::new("visitor-one"),
+                "link-one",
+                &ServiceId::new("api-github")
+            )
+            .await
+            .unwrap(),
+        BrokerHandoffState::Satisfied
+    );
+}
+
+#[tokio::test]
+async fn every_required_service_checks_credential_state_before_becoming_satisfied() {
+    let provider = Provider::start().await;
+    let cases = [
+        (
+            "pending",
+            json!({"status":"pending_auth"}),
+            ServiceRequirementState::Missing,
+        ),
+        (
+            "expired",
+            json!({"connection_status":"expired"}),
+            ServiceRequirementState::Missing,
+        ),
+        (
+            "empty",
+            json!({"credential_missing":true}),
+            ServiceRequirementState::Missing,
+        ),
+        (
+            "disconnected",
+            json!({"connected":false}),
+            ServiceRequirementState::Missing,
+        ),
+        (
+            "disabled",
+            json!({"is_active":false}),
+            ServiceRequirementState::Inactive,
+        ),
+        (
+            "unknown",
+            json!({"status":"future"}),
+            ServiceRequirementState::Unknown,
+        ),
+        (
+            "internal",
+            json!({"auth_method":"none","credential_missing":false}),
+            ServiceRequirementState::Satisfied,
+        ),
+        (
+            "node",
+            json!({"node_id":"node-one","node_status":"offline"}),
+            ServiceRequirementState::Inactive,
+        ),
+        ("active", json!({}), ServiceRequirementState::Satisfied),
+    ];
+    let rows = cases
+        .iter()
+        .map(|(id, _, _)| json!({"id":id,"slug":id,"is_active":true}))
+        .collect::<Vec<_>>();
+    provider
+        .state
+        .set_services_reply(Reply::json(json!({"services":rows})));
+    for (id, fields, _) in &cases {
+        let mut key = json!({"id":id,"slug":id,"is_active":true,"status":"active","connected":true,"credential_missing":false});
+        key.as_object_mut()
+            .unwrap()
+            .extend(fields.as_object().unwrap().clone());
+        provider
+            .state
+            .credential_replies
+            .lock()
+            .unwrap()
+            .insert(id.to_string(), Reply::json(key));
+    }
+    let services = cases
+        .iter()
+        .map(|(id, _, _)| ServiceId::new(*id))
+        .collect::<Vec<_>>();
+    let requirements = broker(&provider, Tokens::available())
+        .requirements(&SubjectId::new("visitor-one"), &services)
+        .await
+        .unwrap();
+    assert_eq!(
+        requirements.iter().map(|r| r.state).collect::<Vec<_>>(),
+        cases.iter().map(|(_, _, state)| *state).collect::<Vec<_>>()
     );
 }
 

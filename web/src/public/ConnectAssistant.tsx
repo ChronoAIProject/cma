@@ -108,6 +108,12 @@ export function ConnectAssistant({
         if (status.state === 'satisfied') {
           setNotConnected(false);
           clearTimeout(deadline);
+          if (!explicitCheck) {
+            // Returning from NyxID never assigns a sandbox until the user
+            // explicitly verifies on this same launch page.
+            setState('pending');
+            return;
+          }
           clearConnectionReturn(requestId, service.service);
           popup.current?.close();
           satisfied.current(service.service);
@@ -229,11 +235,11 @@ export function ConnectAssistant({
           <p>{connectionCopy.manual}</p>
           {manualUrl === undefined ? null : (
             <a href={manualUrl} target="_blank" rel="noopener noreferrer">
-              {connectionCopy.open}
+              {connectionCopy.connect}
             </a>
           )}
           <Button disabled={disabled} onClick={onRecheck}>
-            {publicCopy.checkAgain}
+            {connectionCopy.verify}
           </Button>
         </>
       ) : service.connection_mode !== 'hosted' ? (
