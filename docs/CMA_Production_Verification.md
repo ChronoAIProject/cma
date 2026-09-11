@@ -2218,3 +2218,44 @@ There is still no measured large-Sandbox restore acceleration, no demonstrated
 atomic point-in-time capture, and no complete runtime-scratch/unpublished-upload
 cleanup proof. Shared provider/storage configuration changes still require
 explicit authority. This rollout is not 100% acceptance of those requirements.
+
+## 2026-09-11 NyxID connection verification hotfix
+
+API implementation `e96c8039a02955885959f6caeb9ce6de64a5e301` and web
+implementation `9cf35db77b3c90142caef766ab7afa93905a23cd` implement the separate
+NyxID Service Connection Verification step before Trigger Sandbox assignment.
+The manifests pin the resulting immutable images. No Sandbox lifecycle
+commands were issued by this rollout.
+
+The following evidence is under `/tmp/cma-trureturing-loop.LvTezb/`:
+
+- `connection-verification-prod-Q1AE8Z/result.json`: a real production Launch
+  requiring the three truretruing services plus unconnected Notion displayed
+  all four names and connection states. Connect opened NyxID. Explicit Verify,
+  reload, and another Verify kept the same Launch in draft. Verify connections
+  returned HTTP 409; Sandbox, Workspace, Agent and first-message steps stayed
+  pending with no resource assignment. Consent remained unchanged. No NyxID
+  service credential was created or changed.
+- `connection-verification-fixture-uLvGuV/cleanup.json`: the test Launch was
+  cancelled and its temporary Trigger and Sandbox Profile retired. No Sandbox
+  was deleted.
+- `connection-readme-prod-QXqvPV/result.json`: the real truretruing README
+  Trigger reached the existing Agent with input enabled in 4,416 milliseconds;
+  all three connections verified and prior completed conversation turns were
+  preserved. No first prompt was resent. The authenticated GitHub-rendered
+  README/source-origin harness limitation above applies.
+
+Local validation passed 19 NyxID adapter tests, 37 launch-service tests, and
+47 browser component tests, plus web typecheck, lint and build. The subsequent
+linked-name change passed its typecheck/lint and 19 relevant component tests.
+Both images passed the release vulnerability scan with no fixable High or
+Critical findings. The 4,416ms observation is an existing-session repeat, not
+a new fresh-warm-assignment or paused-revival latency measurement.
+
+Existing broken service bindings open their exact NyxID key detail page so
+users can repair the required binding. NyxID's `credential_missing` flag only
+detects missing credential records; GitHub's readiness projection additionally
+detects records with no usable credential material. This release checks its
+connection state without requiring separate NyxID assistant tool grants.
+Users still complete their own personal service authorization in NyxID.
+This hotfix does not close the outstanding snapshot acceptance work.
