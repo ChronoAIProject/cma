@@ -45,7 +45,7 @@ function fixture() {
     checked_at: new Date().toISOString(),
     services: services.map((service, index) => ({
       service,
-      display_name: names[index],
+      display_name: names[index] ?? service,
       kind: index === 2 ? 'codex' : 'nyxid',
       state: connected.has(service) ? 'satisfied' : 'missing',
       connection_mode: 'hosted',
@@ -136,8 +136,8 @@ it('restores an owner-matched pending login without issuing another start', asyn
   render(<ConnectionWizard target={target} client={client} onReady={vi.fn()} />);
   await flush();
   await poll();
-  expect(vi.mocked(client.check).mock.calls[0][1]).toBeUndefined();
-  expect(vi.mocked(client.check).mock.calls[1][1]).toEqual(active);
+  expect(vi.mocked(client.check).mock.calls[0]?.[1]).toBeUndefined();
+  expect(vi.mocked(client.check).mock.calls[1]?.[1]).toEqual(active);
   expect(screen.getByText('ABCD-1234')).toBeInTheDocument();
   expect(client.start).not.toHaveBeenCalled();
 });
@@ -158,7 +158,7 @@ it('cancels a late start response without navigating or continuing', async () =>
   fireEvent.click(screen.getByRole('button', { name: 'Connect all' }));
   fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
   const started = {
-    ...vi.mocked(client.start).mock.calls[0][1],
+    ...vi.mocked(client.start).mock.calls[0]![1],
     owner: 'owner',
     hosted_url: 'https://identity.example.test/connect',
     expires_at: new Date(Date.now() + 60000).toISOString(),
@@ -225,7 +225,7 @@ it('fences pending starts when the selected sandbox changes', async () => {
   );
   await flush();
   const started = {
-    ...vi.mocked(client.start).mock.calls[0][1],
+    ...vi.mocked(client.start).mock.calls[0]![1],
     owner: 'owner',
     hosted_url: 'https://identity.example.test/connect',
     expires_at: new Date(Date.now() + 60000).toISOString(),

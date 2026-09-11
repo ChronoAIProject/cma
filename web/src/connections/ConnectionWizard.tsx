@@ -372,7 +372,7 @@ function ConnectionSequence({
                 ? 'Open sign-in window'
                 : forceSubscription
                   ? 'Re-login with Codex subscription'
-                  : missing.length === 1 && missing[0].service === subscriptionService
+                  : missing.length === 1 && missing[0]?.service === subscriptionService
                     ? 'Sign in with Codex subscription'
                     : 'Connect all'}
           </Button>

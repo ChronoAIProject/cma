@@ -85,12 +85,20 @@ async function post<T>(action: string, body: unknown, signal?: AbortSignal): Pro
 }
 
 export const connectionClient: ConnectionClient = {
-  check: (target, active, signal) => post('check', { target, active }, signal),
-  start: (target, active, force, signal) => post('start', { target, ...active, force }, signal),
+  check: (target, active, signal) =>
+    post('check', { target, active: active === undefined ? undefined : intent(active) }, signal),
+  start: (target, active, force, signal) =>
+    post('start', { target, ...intent(active), force }, signal),
   cancel: async (target, active) => {
-    await post('cancel', { target, active });
+    await post('cancel', { target, active: intent(active) });
   },
 };
+
+// A started handoff also carries browser-only fields. The server accepts only
+// the exact service/intent identity when polling or cancelling that handoff.
+function intent(active: ActiveConnection): ActiveConnection {
+  return { service_id: active.service_id, intent_id: active.intent_id };
+}
 
 export function connectionUrl(raw: string): string | undefined {
   try {
