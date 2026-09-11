@@ -71,7 +71,7 @@ ARG CODEX_NATIVE_SHA256_ARM64=e23d0be344d2496986c985cd3db61e6f649b1ddd900e6afc1b
 ARG CODEX_LAUNCHER_SHA256=134063e133f0b4244fa3b251acf973d4fe4b4aeeacbdc135211bf480f59f1477
 ARG CODEX_ACP_VERSION=1.4.0
 ARG CODEX_ACP_UPSTREAM_SHA256=ba74f54f7c89ba61858e544eb3afefbb0c1b90f2b23a136664828816a8430dbf
-ARG CODEX_ACP_SHA256=c3cb7e54fb6a48f3091b97bed9f5243eaf7c3f3293fbd1b021e0faf41067cd2c
+ARG CODEX_ACP_SHA256=d43c6cbda951f3f8f08a1ef1063803e703bf20c4167b2b2cd876c6f5a5a4cb0a
 
 # Node is downloaded from upstream and verified against digests recorded here.
 # Both Codex packages are JavaScript launchers for pinned native/runtime code.
@@ -233,8 +233,9 @@ COPY --from=build /out/layer4-runtime /usr/local/bin/layer4-runtime
 # This exact-source patch and restart proof use no credential or model request.
 RUN --mount=type=bind,source=api/crates/layer3-adapter/src/codex,target=/tmp/cma-codex-source,readonly \
     node /tmp/cma-codex-source/persist_conversations.cjs \
+    && node /tmp/cma-codex-source/subscription_auth.cjs \
     && echo "${CODEX_ACP_SHA256}  /usr/local/lib/node_modules/@agentclientprotocol/codex-acp/dist/index.js" | sha256sum -c - \
-    && node --test /tmp/cma-codex-source/persist_conversations.test.cjs
+    && node --test /tmp/cma-codex-source/persist_conversations.test.cjs /tmp/cma-codex-source/subscription_auth.test.cjs
 
 # Refresh the final filesystem after expensive dependency layers are cached.
 # CI and release builds vary this value so cached OS packages cannot hide a

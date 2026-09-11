@@ -1,3 +1,4 @@
+import '../test/connectedAccounts';
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
 import { ApiError } from '@chronoai/cma-sdk';

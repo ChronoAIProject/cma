@@ -9,6 +9,42 @@ use super::{
 };
 
 impl LaunchService {
+    pub(super) async fn required_services(
+        &self,
+        owner: &crate::SubjectId,
+        resolution: &LaunchResolution,
+        profiles: &ResolvedTriggerProfiles,
+    ) -> Result<Vec<crate::ServiceId>, LaunchServiceError> {
+        match &resolution.sandbox {
+            ResolvedResource::Reused(id) | ResolvedResource::Created(id) => {
+                let sandbox = self
+                    .contexts
+                    .owned_sandbox(owner, id)
+                    .await
+                    .map_err(resolution_error)?
+                    .filter(|sandbox| {
+                        sandbox.id == *id
+                            && sandbox.owner == *owner
+                            && sandbox.status != SandboxStatus::Retired
+                    })
+                    .ok_or(LaunchServiceError::NotFound)?;
+                Ok(sandbox
+                    .profile
+                    .content
+                    .connection_services_for_grants(&sandbox.credential.effective_reaches()))
+            }
+            ResolvedResource::Pending => self
+                .credentials
+                .connection_services(&profiles.sandbox.content)
+                .await
+                .map_err(|_| {
+                    LaunchServiceError::Unavailable(
+                        "sandbox connection policy is unavailable".into(),
+                    )
+                }),
+        }
+    }
+
     pub(super) async fn resolve(
         &self,
         caller: &Caller,

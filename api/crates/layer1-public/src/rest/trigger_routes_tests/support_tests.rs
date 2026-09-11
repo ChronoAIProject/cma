@@ -131,6 +131,7 @@ impl UserDirectoryStore for EmptyDirectory {
 #[derive(Clone, Default)]
 pub struct StubContext {
     agent: Arc<Mutex<Option<Agent>>>,
+    sandbox: Arc<Mutex<Option<Sandbox>>>,
 }
 
 impl StubContext {
@@ -141,6 +142,18 @@ impl StubContext {
 
 #[async_trait]
 impl LaunchContextReader for StubContext {
+    async fn owned_sandbox(
+        &self,
+        owner: &SubjectId,
+        id: &SandboxId,
+    ) -> Result<Option<Sandbox>, LaunchResolutionError> {
+        Ok(self
+            .sandbox
+            .lock()
+            .unwrap()
+            .clone()
+            .filter(|sandbox| sandbox.owner == *owner && sandbox.id == *id))
+    }
     async fn newest_matching_sandbox(
         &self,
         _owner: &SubjectId,
@@ -367,7 +380,7 @@ impl TestApp {
         prerequisite: Arc<dyn SandboxCredentialPrerequisite>,
     ) -> Self {
         let profiles = Arc::new(InMemoryProfileStore::default());
-        let (agent, _workspace, _sandbox) = publish_profiles(&profiles, private_profiles).await;
+        let (agent, _workspace, sandbox) = publish_profiles(&profiles, private_profiles).await;
         let resolver: Arc<dyn TriggerProfileResolver> = profiles.clone();
         let memory_definitions = Arc::new(InMemoryTriggerStore::new(resolver));
         let launches = Arc::new(FaultLaunchStore::new(Arc::new(InMemoryLaunchStore::new(
@@ -376,6 +389,49 @@ impl TestApp {
         let definitions = Arc::new(FaultTriggerStore::new(memory_definitions));
         let policy = Arc::new(FaultPolicy::default());
         let contexts = Arc::new(StubContext::default());
+        let revision = profiles
+            .sandbox_profile_revision(&sandbox.id, sandbox.revision)
+            .await
+            .unwrap()
+            .unwrap();
+        {
+            use layer2_core::sandbox::{
+                SandboxCredentialState, SandboxLimits, SandboxOrigin, SandboxSignInState,
+                SandboxStatus, SandboxWorkState, SandboxWorkStep,
+            };
+            *contexts.sandbox.lock().unwrap() = Some(Sandbox {
+                id: SandboxId("sbx_existing".into()),
+                owner: SubjectId::new(VISITOR),
+                name: "Existing Sandbox".into(),
+                origin: SandboxOrigin::Manual,
+                profile: layer2_core::profiles::SandboxProfileSnapshot::from(&revision),
+                status: SandboxStatus::Active,
+                failure: None,
+                runtime: None,
+                credential: SandboxCredentialState {
+                    reaches: revision.content.credential_services(&[]),
+                    service_grants: Vec::new(),
+                    key_generation: 0,
+                    delivered: false,
+                    current: None,
+                    pending: None,
+                    revoke_debt: Vec::new(),
+                    sign_in: SandboxSignInState::NotRequired,
+                },
+                work: SandboxWorkState::new(SandboxWorkStep::None, NOW.into()),
+                limits: SandboxLimits {
+                    max_workspaces: 4,
+                    max_agents_per_workspace: 4,
+                },
+                lifecycle: Default::default(),
+                last_activity_at: NOW.into(),
+                created_at: NOW.into(),
+                updated_at: NOW.into(),
+                retired_at: None,
+                purge_after: None,
+                revision: 1,
+            });
+        }
         let broker = Arc::new(StubBroker::default());
         broker.set_requirement(ServiceRequirementState::Missing);
         let trigger_service = TriggerService::new(

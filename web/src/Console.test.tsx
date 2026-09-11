@@ -94,3 +94,4 @@ it('hides creation controls for visitors while retaining their trigger-created h
   expect(screen.queryByRole('button', { name: 'New agent' })).not.toBeInTheDocument();
   expect(screen.getByRole('heading', { name: 'Welcome to CMA' })).toBeInTheDocument();
 });
+import './test/connectedAccounts';

@@ -5,6 +5,7 @@ import { Input } from '../../ui/Input';
 import { IconSearchOutline16 } from '../../ui/icons';
 import type { ServiceCatalogClient, ServiceCatalogEntry } from '../client';
 import { ReferenceLink } from '../ReferenceLink';
+import { isCodexConnection } from '../modelProvider';
 
 export function ServicePicker({
   catalog,
@@ -41,7 +42,8 @@ export function ServicePicker({
   return (
     <div className="profile-field">
       <p id="profile-services-help" className="profile-field__help">
-        Select the connected services this sandbox may reach; access is granted only when it starts.
+        Choose the services this sandbox needs. We’ll help each user connect any missing services
+        before opening their sandbox.
       </p>
       <label className="sr-only" htmlFor="profile-service-search">
         Search services
@@ -61,6 +63,7 @@ export function ServicePicker({
             .filter((id) => !state.entries.some((entry) => entry.id === id))
             .map((id) => ({ id, name: 'Service unavailable', catalogId: undefined })),
         ]
+          .filter((entry) => !isCodexConnection(entry.id))
           .filter((entry) => entry.name.toLocaleLowerCase().includes(query.toLocaleLowerCase()))
           .map((entry) => (
             <li key={entry.id}>

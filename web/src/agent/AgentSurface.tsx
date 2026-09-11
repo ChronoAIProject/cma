@@ -1,5 +1,8 @@
 import { Presence } from '../ui/Presence';
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { ConnectionWizard } from '../connections/ConnectionWizard';
+import { useConnectionGate } from '../connections/useConnectionGate';
+import { subscriptionService, type ConnectionReport } from '../connections/client';
 import type { AgentStatus } from '../api/types';
 import type { AppRoute } from '../routing/routes';
 import { routePath } from '../routing/routes';
@@ -19,6 +22,7 @@ import { LifecycleProgress } from '../sandbox/LifecycleProgress';
 import { AgentSourceLabel, useAgentSource } from './source';
 
 interface AgentSurfaceProps {
+  readonly viewerId?: string;
   readonly agentId: string;
   readonly controller: AgentController;
   readonly detailsOpen: boolean;
@@ -64,8 +68,11 @@ export function AgentSurface({
   detailsOpen,
   onDetailsOpenChange,
   onNavigate,
+  viewerId,
 }: AgentSurfaceProps) {
   const headingRef = useRef<HTMLHeadingElement>(null);
+  const [verified, setVerified] = useState<ConnectionReport>();
+  const connections = useConnectionGate();
   const state: AgentResourceState =
     controller.state.status === 'ready' && controller.state.detail.id !== agentId
       ? { status: 'loading' }
@@ -73,6 +80,9 @@ export function AgentSurface({
   const documentTitle =
     state.status === 'ready' ? `${state.detail.title ?? 'Untitled agent'} · CMA` : undefined;
   const source = useAgentSource(agentId, state.status === 'ready');
+  const sandboxOwner = controller.progressObservation?.sandbox.owner;
+  const readOnly =
+    viewerId !== undefined && sandboxOwner !== undefined && viewerId !== sandboxOwner;
 
   useEffect(() => {
     if (state.status !== 'ready') headingRef.current?.focus();
@@ -140,6 +150,7 @@ export function AgentSurface({
 
   return (
     <section className="agent-surface">
+      {connections.dialog}
       <header className="agent-header">
         <nav className="agent-header__lineage" aria-label="Agent location">
           <SandboxLink id={detail.sandbox.id} name={detail.sandbox.name} onNavigate={onNavigate} />
@@ -169,6 +180,22 @@ export function AgentSurface({
           />
         </div>
         <AgentSourceLabel source={source} />
+        {verified?.services.some((service) => service.service === subscriptionService) ? (
+          <Button
+            onClick={() =>
+              connections.run(
+                { type: 'agent', id: agentId },
+                () => {
+                  controller.clearActionError();
+                  controller.reload();
+                },
+                true,
+              )
+            }
+          >
+            Re-login with Codex subscription
+          </Button>
+        ) : null}
       </header>
 
       <Presence>
@@ -214,13 +241,39 @@ export function AgentSurface({
         pausedNotice={pausedNotice}
         running={running}
         starting={starting}
-        inputAvailability={controller.inputAvailability}
+        inputAvailability={
+          readOnly
+            ? {
+                ...controller.inputAvailability,
+                allowed: false,
+                notice: 'Only the owner can send messages to this agent.',
+              }
+            : verified === undefined
+              ? {
+                  ...controller.inputAvailability,
+                  allowed: false,
+                  notice: 'Verify the required connections to continue.',
+                }
+              : controller.inputAvailability
+        }
         busy={
           historyIncomplete || (controller.pending !== undefined && controller.pending !== 'send')
         }
-        onSend={controller.send}
+        onSend={async (content, onAccepted) => {
+          connections.run(
+            { type: 'agent', id: agentId },
+            () => void controller.send(content, onAccepted),
+          );
+        }}
         onStop={controller.interrupt}
       />
+      {verified === undefined && !readOnly ? (
+        <ConnectionWizard
+          target={{ type: 'agent', id: agentId }}
+          onReady={setVerified}
+          onCancel={() => onNavigate({ kind: 'home' })}
+        />
+      ) : null}
       <Resources
         key={agentId}
         agentId={agentId}

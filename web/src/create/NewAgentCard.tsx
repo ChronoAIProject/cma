@@ -11,6 +11,7 @@ import { NewWorkspaceCard } from './NewWorkspaceCard';
 import { ProfilePicker } from './ProfilePicker';
 import { WherePicker, type LocationChoice } from './WherePicker';
 import { useCreationCommand } from './transaction';
+import { useConnectionGate } from '../connections/useConnectionGate';
 import '../profiles/Profiles.css';
 import './Create.css';
 
@@ -41,6 +42,7 @@ export function NewAgentCard({
   const [title, setTitle] = useState('');
   const [firstMessage, setFirstMessage] = useState('');
   const command = useCreationCommand(onCreated);
+  const connections = useConnectionGate();
   const titleInvalid =
     [...title.trim()].length > 64 ||
     [...title].some(
@@ -58,8 +60,12 @@ export function NewAgentCard({
       title: title.trim() || undefined,
       firstMessage: firstMessage.trim() === '' ? undefined : firstMessage,
     };
-    void command.submit((options) => client.createAgent(id, input, options));
+    connections.run(
+      { type: 'workspace', id },
+      () => void command.submit((options) => client.createAgent(id, input, options)),
+    );
   };
+  if (connections.pending) return connections.dialog;
   if (inline === 'sandbox')
     return (
       <NewSandboxCard

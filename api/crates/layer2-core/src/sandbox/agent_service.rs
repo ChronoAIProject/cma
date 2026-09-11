@@ -41,6 +41,8 @@ pub struct CreateAgent {
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum AgentServiceError {
+    #[error(transparent)]
+    Connection(#[from] super::SandboxCredentialPrerequisiteError),
     #[error("forbidden")]
     Forbidden,
     #[error("agent profile not found")]
@@ -80,6 +82,7 @@ pub enum AgentServiceError {
 impl AgentServiceError {
     pub const fn code(&self) -> &'static str {
         match self {
+            Self::Connection(error) => error.code(),
             Self::Forbidden => "forbidden",
             Self::ProfileNotFound => "agent_profile_not_found",
             Self::WorkspaceNotFound => "workspace_not_found",
@@ -102,6 +105,7 @@ impl AgentServiceError {
 }
 
 pub struct AgentService {
+    connections: Arc<dyn super::SandboxCredentialPrerequisite>,
     store: Arc<dyn AgentServiceStore>,
     profiles: Arc<dyn AgentProfileStore>,
     profile_uses: Arc<dyn ProfileUseRecorder>,
@@ -144,11 +148,26 @@ impl AgentService {
         R: AgentRuntimeRegistry + 'static,
     {
         Arc::new(Self {
+            connections: Arc::new(super::FixedSandboxCredentialPrerequisite::Ready),
             store,
             profiles,
             profile_uses,
             runtimes,
             runtime_capabilities,
+        })
+    }
+
+    pub fn with_connections(
+        &self,
+        connections: Arc<dyn super::SandboxCredentialPrerequisite>,
+    ) -> Arc<Self> {
+        Arc::new(Self {
+            connections,
+            store: self.store.clone(),
+            profiles: self.profiles.clone(),
+            profile_uses: self.profile_uses.clone(),
+            runtimes: self.runtimes.clone(),
+            runtime_capabilities: self.runtime_capabilities.clone(),
         })
     }
 
@@ -214,6 +233,7 @@ impl AgentService {
             return Err(AgentServiceError::WorkspaceNotReady);
         }
         let sandbox = self.parent_sandbox(caller, &workspace).await?;
+        self.connections.check_sandbox(&sandbox).await?;
         if !sandbox.accepts_creation_admission() {
             return Err(AgentServiceError::SandboxNotReady);
         }

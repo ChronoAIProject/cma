@@ -32,7 +32,13 @@ impl Bridge {
             }))
             .await?;
 
-        if settings.own_credential && resume.is_none() && matches!(greeting, Greeting::Fresh(_)) {
+        if settings.own_credential && self.subscription.is_some() {
+            self.call("cma/codex/authenticate", serde_json::json!({}))
+                .await?;
+        } else if settings.own_credential
+            && resume.is_none()
+            && matches!(greeting, Greeting::Fresh(_))
+        {
             let Greeting::Fresh(hello) = &greeting else {
                 unreachable!("fresh greeting was matched")
             };

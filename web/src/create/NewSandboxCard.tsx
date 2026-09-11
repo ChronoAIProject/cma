@@ -15,6 +15,7 @@ import type { CreationClient, CreationProfile } from './client';
 import { ProfilePicker } from './ProfilePicker';
 import { TrustConfirmation } from './TrustConfirmation';
 import { useCreationCommand } from './transaction';
+import { useConnectionGate } from '../connections/useConnectionGate';
 import '../profiles/Profiles.css';
 import './Create.css';
 
@@ -35,6 +36,7 @@ export function NewSandboxCard({
   const [confirmed, setConfirmed] = useState(false);
   const [name, setName] = useState('');
   const command = useCreationCommand(onCreated);
+  const connections = useConnectionGate();
   const credentialOwner = useRef<string | undefined>(undefined);
   const [expectedSubject, setExpectedSubject] = useState<string>();
   const [accountChecked, setAccountChecked] = useState(false);
@@ -51,17 +53,22 @@ export function NewSandboxCard({
       trustConfirmed: profile.requiresConfirmation ? confirmed : undefined,
       commandsDigest: profile.requiresConfirmation ? profile.revision.digest : undefined,
     };
-    void command.submit(async (options) => {
-      try {
-        await checkCredentialRecoveryOwner(credentialOwner.current, options.signal);
-        return await client.createSandbox(input, options);
-      } catch (cause) {
-        if (needsSandboxCredentialSetup(cause) || cause instanceof CredentialAccountError)
-          setAccountChecked(false);
-        throw cause;
-      }
-    });
+    connections.run(
+      { type: 'sandbox_profile', profile: input.sandboxProfile },
+      () =>
+        void command.submit(async (options) => {
+          try {
+            await checkCredentialRecoveryOwner(credentialOwner.current, options.signal);
+            return await client.createSandbox(input, options);
+          } catch (cause) {
+            if (needsSandboxCredentialSetup(cause) || cause instanceof CredentialAccountError)
+              setAccountChecked(false);
+            throw cause;
+          }
+        }),
+    );
   };
+  if (connections.pending) return connections.dialog;
   return (
     <Modal
       open

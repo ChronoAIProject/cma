@@ -6,6 +6,7 @@ import { PUBLIC_PREVIEW, PUBLIC_RECORD, PUBLIC_TRUST, publicClient } from '../te
 import { ReviewCard } from './ReviewCard';
 import { Progress } from './Progress';
 import { readIntent } from './intent';
+import { connectionClient } from '../connections/client';
 
 afterEach(() => {
   vi.useRealTimers();
@@ -30,16 +31,39 @@ describe('minimal review', () => {
       checked_at: record.created_at,
     });
     const changed = vi.fn();
+    let connected = false;
+    vi.mocked(connectionClient.check).mockImplementation(async () => ({
+      owner: 'owner',
+      ready: connected,
+      checked_at: record.created_at,
+      services: [
+        {
+          service: 'code',
+          display_name: 'Code host',
+          kind: 'nyxid',
+          state: connected ? 'satisfied' : 'missing',
+          connection_mode: 'hosted',
+        },
+      ],
+    }));
+    vi.spyOn(connectionClient, 'start').mockImplementation(async (_target, active) => ({
+      ...active,
+      owner: 'owner',
+      hosted_url: 'https://identity.example.test/connect',
+      expires_at: new Date(Date.now() + 600000).toISOString(),
+    }));
     render(<ReviewCard client={client} record={record} onChanged={changed} onClose={vi.fn()} />);
     await act(async () => undefined);
-    fireEvent.click(screen.getByRole('button', { name: 'Connect' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Connect all' }));
     await act(async () => undefined);
     await act(async () => {
       await vi.advanceTimersByTimeAsync(1500);
     });
     expect(client.requests.start).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole('button', { name: 'Verify' }));
-    await act(async () => undefined);
+    connected = true;
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2000);
+    });
     expect(client.requests.start).toHaveBeenCalledOnce();
     expect(client.requests.start).toHaveBeenCalledWith(
       record.id,
@@ -145,14 +169,11 @@ describe('minimal review', () => {
         onClose={vi.fn()}
       />,
     );
-    await screen.findByRole('heading', { name: 'Connect Code host' });
+    await screen.findByRole('heading', { name: 'NyxID services' });
     const headings = screen.getAllByRole('heading', { level: 3 }).map((node) => node.textContent);
-    expect(headings.indexOf('Install software')).toBeLessThan(
-      headings.indexOf('Connect Code host'),
-    );
-    expect(headings.indexOf('Connect Code host')).toBeLessThan(
-      headings.indexOf('Review before continuing'),
-    );
+    expect(headings).toContain('Install software');
+    expect(headings).toContain('Codex provider');
+    expect(headings).toContain('Review before continuing');
     await actor.click(screen.getByRole('checkbox'));
     await actor.click(screen.getByRole('button', { name: 'Continue' }));
     expect(await screen.findByText('Connect the accounts below to continue.')).toBeInTheDocument();
@@ -330,3 +351,4 @@ describe('durable progress', () => {
     });
   });
 });
+import '../test/connectedAccounts';

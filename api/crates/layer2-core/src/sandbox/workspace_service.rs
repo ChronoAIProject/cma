@@ -30,6 +30,8 @@ pub struct CreateWorkspace {
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum WorkspaceServiceError {
+    #[error(transparent)]
+    Connection(#[from] super::SandboxCredentialPrerequisiteError),
     #[error("forbidden")]
     Forbidden,
     #[error("workspace profile not found")]
@@ -61,6 +63,7 @@ pub enum WorkspaceServiceError {
 impl WorkspaceServiceError {
     pub const fn code(&self) -> &'static str {
         match self {
+            Self::Connection(error) => error.code(),
             Self::Forbidden => "forbidden",
             Self::ProfileNotFound => "workspace_profile_not_found",
             Self::NotFound => "workspace_not_found",
@@ -79,6 +82,7 @@ impl WorkspaceServiceError {
 }
 
 pub struct WorkspaceService {
+    connections: Arc<dyn super::SandboxCredentialPrerequisite>,
     store: Arc<dyn WorkspaceServiceStore>,
     profiles: Arc<dyn WorkspaceProfileStore>,
     profile_uses: Arc<dyn ProfileUseRecorder>,
@@ -104,9 +108,22 @@ impl WorkspaceService {
         S: WorkspaceServiceStore + 'static,
     {
         Arc::new(Self {
+            connections: Arc::new(super::FixedSandboxCredentialPrerequisite::Ready),
             store,
             profiles,
             profile_uses,
+        })
+    }
+
+    pub fn with_connections(
+        &self,
+        connections: Arc<dyn super::SandboxCredentialPrerequisite>,
+    ) -> Arc<Self> {
+        Arc::new(Self {
+            connections,
+            store: self.store.clone(),
+            profiles: self.profiles.clone(),
+            profile_uses: self.profile_uses.clone(),
         })
     }
 
@@ -118,6 +135,7 @@ impl WorkspaceService {
     ) -> Result<Workspace, WorkspaceServiceError> {
         require(caller)?;
         let sandbox = self.owned_sandbox(caller, sandbox_id).await?;
+        self.connections.check_sandbox(&sandbox).await?;
         if !sandbox.accepts_creation_admission() {
             return Err(WorkspaceServiceError::SandboxNotReady);
         }
@@ -167,6 +185,7 @@ impl WorkspaceService {
             return Err(WorkspaceServiceError::SandboxNotReady);
         }
         let (owner, revision) = self.read_frozen_revision(&request.profile).await?;
+        self.connections.check_sandbox(&sandbox).await?;
         require_trust_confirmation(
             &owner,
             &caller.subject,

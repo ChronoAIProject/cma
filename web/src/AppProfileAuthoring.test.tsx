@@ -84,7 +84,7 @@ it('authors linked research profiles through routed public SDK clients and forks
   fireEvent.change(screen.getByLabelText('CPU cores'), { target: { value: '3' } });
   fireEvent.change(screen.getByLabelText('Memory (GiB)'), { target: { value: '6' } });
   await user.click(await screen.findByRole('checkbox', { name: 'GitHub' }));
-  await user.click(screen.getByRole('radio', { name: 'Your own account' }));
+  await user.click(screen.getByRole('radio', { name: 'My Codex subscription' }));
   fireEvent.change(screen.getByLabelText('Maximum workspaces'), { target: { value: '2' } });
   fireEvent.change(screen.getByLabelText('Maximum agents per workspace'), {
     target: { value: '3' },
@@ -177,3 +177,4 @@ it('authors linked research profiles through routed public SDK clients and forks
   expect(test.writes().at(-1)?.body).toEqual({ revision: 1 });
   expect(test.unexpected).toEqual([]);
 }, 20_000);
+import './test/connectedAccounts';

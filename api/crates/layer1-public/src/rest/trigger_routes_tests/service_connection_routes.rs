@@ -200,7 +200,7 @@ async fn requirement_metadata_is_owner_only_and_does_not_rewrite_launch_projecti
     assert_eq!(status, StatusCode::OK, "{requirements}");
     assert_eq!(
         requirements["services"],
-        json!([{"service":"github","state":"missing","display_name":"GitHub","connection_mode":"manual","setup_url":"https://nyx.example/services"}])
+        json!([{"service":"github","state":"missing","display_name":"GitHub","connection_mode":"manual","setup_url":"https://nyx.example/services"}, {"service":"chrono-llm-public", "state":"missing"}])
     );
     assert_eq!(
         requirements["checked_at"],

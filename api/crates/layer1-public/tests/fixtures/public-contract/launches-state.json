@@ -85,6 +85,10 @@
               {
                 "service": "github",
                 "state": "missing"
+              },
+              {
+                "service": "chrono-llm-public",
+                "state": "missing"
               }
             ],
             "checked_at": "2026-09-07T00:00:00Z"
@@ -94,6 +98,10 @@
               {
                 "type": "connection",
                 "service": "github"
+              },
+              {
+                "type": "connection",
+                "service": "chrono-llm-public"
               }
             ],
             "can_start_now": false
@@ -249,6 +257,10 @@
               {
                 "service": "github",
                 "state": "missing"
+              },
+              {
+                "service": "chrono-llm-public",
+                "state": "missing"
               }
             ],
             "checked_at": "2026-09-07T00:00:00Z"
@@ -258,6 +270,10 @@
               {
                 "type": "connection",
                 "service": "github"
+              },
+              {
+                "type": "connection",
+                "service": "chrono-llm-public"
               }
             ],
             "can_start_now": false
@@ -282,15 +298,15 @@
         "bodyKind": "json"
       },
       "captures": {
-        "resume_launch_id": "/id",
-        "resume_steps_0_started_at": "/steps/0/started_at",
-        "resume_steps_0_completed_at": "/steps/0/completed_at",
-        "resume_steps_1_started_at": "/steps/1/started_at",
-        "resume_steps_5_started_at": "/steps/5/started_at",
-        "resume_steps_5_completed_at": "/steps/5/completed_at",
-        "resume_requirements_checked_at": "/requirements/checked_at",
         "resume_confirmations_0_confirmed_at": "/confirmations/0/confirmed_at",
         "resume_created_at": "/created_at",
+        "resume_launch_id": "/id",
+        "resume_requirements_checked_at": "/requirements/checked_at",
+        "resume_steps_0_completed_at": "/steps/0/completed_at",
+        "resume_steps_0_started_at": "/steps/0/started_at",
+        "resume_steps_1_started_at": "/steps/1/started_at",
+        "resume_steps_5_completed_at": "/steps/5/completed_at",
+        "resume_steps_5_started_at": "/steps/5/started_at",
         "resume_updated_at": "/updated_at"
       }
     }

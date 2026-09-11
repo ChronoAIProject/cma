@@ -14,6 +14,7 @@ import { IconPlusOutline16 } from '../ui/icons';
 import { ReferenceLink } from '../profiles/ReferenceLink';
 import { sandboxChildrenAvailable } from './lifecycle';
 import { statusLabel } from '../vocabulary/status';
+import { codexProviderName, isCodexConnection } from '../profiles/modelProvider';
 
 export function SandboxOverview({
   client,
@@ -117,7 +118,9 @@ export function SandboxOverview({
     })();
     return () => abort.abort();
   }, [client, sandbox, retry]);
-  const reach = sandbox.nyxidServices ?? contents?.agents[0]?.reach;
+  const reach = (sandbox.nyxidServices ?? contents?.agents[0]?.reach)?.filter(
+    (id) => !isCodexConnection(id),
+  );
   const available = sandboxChildrenAvailable(sandbox);
   return (
     <>
@@ -131,15 +134,13 @@ export function SandboxOverview({
             </dd>
           </div>
           <div>
-            <dt>Model access</dt>
+            <dt>Codex provider</dt>
             <dd>
               {settings === undefined
                 ? settingsLoaded
                   ? 'Unavailable'
                   : 'Loading'
-                : settings.modelAccess === 'own_credentials'
-                  ? 'Your own credentials'
-                  : 'ChronoAI-managed LLM'}
+                : codexProviderName(settings.modelAccess)}
             </dd>
           </div>
           <div>
@@ -164,11 +165,13 @@ export function SandboxOverview({
                 <>
                   <p>Requested services</p>
                   <ul className="sandbox-page__references">
-                    {settings.nyxidServices.map((id) => (
-                      <li key={id}>
-                        <ReferenceLink kind="service" id={id} />
-                      </li>
-                    ))}
+                    {settings.nyxidServices
+                      .filter((id) => !isCodexConnection(id))
+                      .map((id) => (
+                        <li key={id}>
+                          <ReferenceLink kind="service" id={id} />
+                        </li>
+                      ))}
                   </ul>
                 </>
               ) : null}

@@ -7,6 +7,8 @@ const NOW: &str = "2026-09-05T00:00:00Z";
 
 #[path = "availability_tests.rs"]
 mod availability_tests;
+#[path = "connection_tests.rs"]
+mod connection_tests;
 #[path = "reference_tests.rs"]
 mod reference_tests;
 

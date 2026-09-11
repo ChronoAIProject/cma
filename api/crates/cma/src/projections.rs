@@ -21,6 +21,15 @@ pub(crate) struct AgentProjectionServices {
 }
 
 impl AgentProjectionServices {
+    pub(crate) fn with_connections(
+        mut self,
+        connections: Arc<dyn layer2_core::sandbox::SandboxCredentialPrerequisite>,
+    ) -> Self {
+        self.agents = self.agents.with_connections(connections.clone());
+        self.operations = self.operations.with_connections(connections);
+        self
+    }
+
     pub(crate) fn new<S, P, R, Q>(
         store: Arc<S>,
         profiles: Arc<P>,

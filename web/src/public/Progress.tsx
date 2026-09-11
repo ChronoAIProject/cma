@@ -1,6 +1,6 @@
 import { Presence } from '../ui/Presence';
 import { useEffect, useState } from 'react';
-import type { Launch, ServiceConnectionMetadata, TriggerPreview } from '@chronoai/cma-sdk';
+import type { Launch, TriggerPreview } from '@chronoai/cma-sdk';
 import { Button } from '../ui/Button';
 import { IconCopyOutline16 } from '../ui/icons';
 import { BrandLoading, LandingCharacter } from '../landing/LandingCharacter';
@@ -11,7 +11,8 @@ import { publicCopy } from '../vocabulary/needs';
 import { type AppRouter } from '../routing/routes';
 import type { PublicClient } from './client';
 import { ReviewCard } from './ReviewCard';
-import { ConnectAssistant } from './ConnectAssistant';
+import { ConnectionWizard } from '../connections/ConnectionWizard';
+import type { ConnectionTarget } from '../connections/client';
 import { useRecordedProgress } from './useRecordedProgress';
 import { createIntent } from './intent';
 import { LaunchSandboxProgress } from '../sandbox/LaunchSandboxProgress';
@@ -30,7 +31,6 @@ export function Progress({
   const progress = useRecordedProgress(client, id);
   const record = progress.record;
   const [preview, setPreview] = useState<TriggerPreview>();
-  const [services, setServices] = useState<readonly ServiceConnectionMetadata[]>([]);
   const [copyStatus, setCopyStatus] = useState<string>();
   useEffect(() => {
     document.title = publicCopy.pageTitle(publicCopy.title);
@@ -57,17 +57,6 @@ export function Progress({
     );
     return () => controller.abort();
   }, [client, publicId, draft]);
-  useEffect(() => {
-    if (blocked?.type !== 'connection_required') return;
-    const controller = new AbortController();
-    void client.requests.requirements(id, { signal: controller.signal }).then(
-      (value) => {
-        if (!controller.signal.aborted) setServices(value.services);
-      },
-      () => undefined,
-    );
-    return () => controller.abort();
-  }, [client, id, blocked]);
   const back = (value: Launch) =>
     onNavigate({
       kind: 'public_trigger',
@@ -104,6 +93,7 @@ export function Progress({
       </>
     );
   const summary = blocked === undefined ? requestStates[record.state] : blockedStates[blocked.type];
+  const connectionTarget: ConnectionTarget = { type: 'launch', id: record.id };
   const copy = async () => {
     try {
       await navigator.clipboard.writeText(record.id);
@@ -181,17 +171,10 @@ export function Progress({
         )}
       </Presence>
       {blocked?.type === 'connection_required' ? (
-        <ConnectAssistant
-          client={client}
-          requestId={record.id}
-          service={
-            services.find((item) => item.service === blocked.service) ?? {
-              service: blocked.service,
-              state: 'unknown',
-            }
-          }
-          onSatisfied={progress.refresh}
-          onRecheck={progress.refresh}
+        <ConnectionWizard
+          target={connectionTarget}
+          onReady={progress.refresh}
+          onCancel={() => back(record)}
         />
       ) : null}
       <Presence>

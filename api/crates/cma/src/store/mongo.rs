@@ -26,6 +26,7 @@ pub struct MongoStores {
     #[allow(dead_code)] // Opened and validated here; #824 composes the public routes.
     pub trigger_definitions: Arc<MongoTriggerDefinitionStore>,
     pub auth: Arc<MongoAuthStore>,
+    pub(crate) codex_subscriptions: Arc<super::MongoSubscriptionStore>,
     pub activity: Arc<MongoActivityStore>,
     pub users: Arc<MongoUserDirectoryStore>,
     pub settings: Arc<MongoPlatformSettingsStore>,
@@ -65,6 +66,10 @@ impl MongoStores {
         let auth = Arc::new(
             MongoAuthStore::open(&client, database, deployment, auth_encryption_key).await?,
         );
+        let codex_subscriptions = Arc::new(
+            super::MongoSubscriptionStore::open(&client, database, deployment, auth_encryption_key)
+                .await?,
+        );
         let activity =
             Arc::new(MongoActivityStore::open(&client, database, activity_retention).await?);
         let users = Arc::new(MongoUserDirectoryStore::open(&client, database).await?);
@@ -77,6 +82,7 @@ impl MongoStores {
             checkpoint_objects,
             trigger_definitions,
             auth,
+            codex_subscriptions,
             activity,
             users,
             settings,

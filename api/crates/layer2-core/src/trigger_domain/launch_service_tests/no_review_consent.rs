@@ -1,7 +1,7 @@
 use super::*;
 
 fn services() -> Vec<ServiceId> {
-    ["chrono-llm", "ornn-api", "api-github"]
+    ["ornn-api", "api-github", "chrono-llm-public"]
         .into_iter()
         .map(ServiceId::new)
         .collect()

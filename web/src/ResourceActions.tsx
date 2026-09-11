@@ -5,6 +5,7 @@ import { CommandKeys } from './api/client';
 import type { TreeAction } from './shell/Tree';
 import { DeletionDialog } from './DeletionDialog';
 import { Button } from './ui/Button';
+import { useConnectionGate } from './connections/useConnectionGate';
 import { restoreDeletion, type DeleteAction, type DeletionRequest } from './deletion';
 
 export type CreateAction =
@@ -29,6 +30,7 @@ export function useResourceActions(
   const [error, setError] = useState<string>();
   const keys = useRef(new CommandKeys());
   const inFlight = useRef(false);
+  const connections = useConnectionGate();
   const execute = async (action: LifecycleAction) => {
     if (inFlight.current) return;
     inFlight.current = true;
@@ -85,6 +87,8 @@ export function useResourceActions(
             }
           : { request: retained, restored: true },
       );
+    } else if (action.kind === 'revive_sandbox') {
+      connections.run({ type: 'sandbox', id: action.sandboxId }, () => void execute(action));
     } else {
       void execute(action);
     }
@@ -92,7 +96,7 @@ export function useResourceActions(
   const retained = restoreDeletion(viewerId);
   return {
     select,
-    pending: pending || deletion !== undefined,
+    pending: pending || deletion !== undefined || connections.pending,
     error,
     notice:
       deletion === undefined && retained !== undefined ? (
@@ -101,19 +105,22 @@ export function useResourceActions(
         </Button>
       ) : null,
     overlay: (
-      <Presence>
-        {deletion === undefined ? null : (
-          <DeletionDialog
-            key={deletion.request.key}
-            client={client}
-            viewerId={viewerId}
-            initial={deletion.request}
-            restored={deletion.restored}
-            onChanged={onChanged}
-            onClose={() => setDeletion(undefined)}
-          />
-        )}
-      </Presence>
+      <>
+        {connections.dialog}
+        <Presence>
+          {deletion === undefined ? null : (
+            <DeletionDialog
+              key={deletion.request.key}
+              client={client}
+              viewerId={viewerId}
+              initial={deletion.request}
+              restored={deletion.restored}
+              onChanged={onChanged}
+              onClose={() => setDeletion(undefined)}
+            />
+          )}
+        </Presence>
+      </>
     ),
   };
 }

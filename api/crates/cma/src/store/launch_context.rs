@@ -20,6 +20,18 @@ struct Ranked<T> {
 
 #[async_trait::async_trait]
 impl LaunchContextReader for MongoSandboxStore {
+    async fn owned_sandbox(
+        &self,
+        owner: &SubjectId,
+        id: &SandboxId,
+    ) -> Result<Option<Sandbox>, LaunchResolutionError> {
+        let sandbox = SandboxStore::get_sandbox(self, id)
+            .await
+            .map_err(|error| query_error("read owned Launch Sandbox", error))?;
+        Ok(sandbox
+            .filter(|sandbox| sandbox.owner == *owner && sandbox.status != SandboxStatus::Retired))
+    }
+
     async fn owned_agent(
         &self,
         owner: &SubjectId,

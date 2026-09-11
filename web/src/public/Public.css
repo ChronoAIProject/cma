@@ -207,5 +207,5 @@
 
 .public-service-verified > span:last-child {
   margin-left: auto;
-  color: var(--color-success, #29b86b);
+  color: var(--live);
 }

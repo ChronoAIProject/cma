@@ -98,6 +98,14 @@ pub enum LaunchResolutionError {
 
 #[async_trait]
 pub trait LaunchContextReader: Send + Sync {
+    async fn owned_sandbox(
+        &self,
+        _owner: &SubjectId,
+        _id: &SandboxId,
+    ) -> Result<Option<Sandbox>, LaunchResolutionError> {
+        Ok(None)
+    }
+
     async fn owned_agent(
         &self,
         _owner: &SubjectId,

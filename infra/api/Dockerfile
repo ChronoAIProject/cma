@@ -62,6 +62,26 @@ COPY --from=secret-scanner-build /usr/local/bin/gitleaks /usr/local/bin/gitleaks
 COPY --from=secret-scanner-build /usr/local/share/gitleaks /usr/local/share/gitleaks
 RUN --network=none test "$(/usr/local/bin/gitleaks version)" = '8.30.1'
 
+# Native Codex owns hosted subscription OAuth and refresh. Keep this version
+# identical to the runtime's tested authentication protocol.
+FROM alpine:3.22 AS codex-auth
+ARG TARGETARCH
+ARG CODEX_VERSION=0.147.0
+ARG CODEX_NATIVE_SHA256_AMD64=cb0a15567e9a60a5820d54b0f6ae86d504dc3805c1eab21a47f70e3eb7b73a40
+ARG CODEX_NATIVE_SHA256_ARM64=e23d0be344d2496986c985cd3db61e6f649b1ddd900e6afc1b5aaabbffcbb4e2
+RUN apk add --no-cache curl ca-certificates
+RUN set -eu; \
+    case "${TARGETARCH}" in \
+      amd64) platform=x64; triple=x86_64-unknown-linux-musl; want="${CODEX_NATIVE_SHA256_AMD64}" ;; \
+      arm64) platform=arm64; triple=aarch64-unknown-linux-musl; want="${CODEX_NATIVE_SHA256_ARM64}" ;; \
+      *) exit 1 ;; \
+    esac; \
+    curl -fsSL -o /tmp/codex.tgz "https://registry.npmjs.org/@openai/codex/-/codex-${CODEX_VERSION}-linux-${platform}.tgz"; \
+    tar -xzf /tmp/codex.tgz -C /tmp "package/vendor/${triple}/bin/codex"; \
+    cp "/tmp/package/vendor/${triple}/bin/codex" /usr/local/bin/codex-native; \
+    echo "${want}  /usr/local/bin/codex-native" | sha256sum -c -; \
+    test "$(/usr/local/bin/codex-native --version)" = "codex-cli ${CODEX_VERSION}"
+
 FROM rust:1.96.1-alpine AS build
 RUN apk add --no-cache musl-dev
 WORKDIR /build
@@ -95,6 +115,7 @@ RUN test -n "${OS_SECURITY_REFRESH}" \
     && adduser -D -u 10001 chrono
 USER 10001:10001
 COPY --from=build /out/cma /usr/local/bin/cma
+COPY --from=codex-auth /usr/local/bin/codex-native /usr/local/bin/codex-native
 COPY --from=secret-scanner /usr/local/bin/gitleaks /usr/local/bin/gitleaks
 COPY --from=secret-scanner /usr/local/share/gitleaks /usr/local/share/gitleaks
 EXPOSE 8080

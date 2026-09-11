@@ -26,6 +26,7 @@ pub struct ProviderHostedControlTransport {
     http: reqwest::Client,
     archive_factory: Arc<dyn CheckpointArchiveStoreFactory>,
     state: Arc<Mutex<TransportState>>,
+    subscriptions: Option<Arc<dyn super::HostedSubscriptionSource>>,
 }
 
 #[derive(Default)]
@@ -79,7 +80,13 @@ impl ProviderHostedControlTransport {
             http,
             archive_factory,
             state: Arc::new(Mutex::new(TransportState::default())),
+            subscriptions: None,
         })
+    }
+
+    pub fn with_subscriptions(mut self, source: Arc<dyn super::HostedSubscriptionSource>) -> Self {
+        self.subscriptions = Some(source);
+        self
     }
 
     async fn endpoint(&self, handle: &RuntimeHandle) -> crate::Result<RuntimeEndpoint> {
@@ -421,11 +428,24 @@ impl super::HostedControlTransport for ProviderHostedControlTransport {
             _ => unreachable!("control correlation verifies open response operation"),
         };
         let socket = self.connect(&endpoint, &launch.request.agent_id).await?;
-        let opened = Bridge::open(
+        let subscription = if settings.own_credential {
+            match &self.subscriptions {
+                Some(source) => Some(super::subscriptions::HostedSubscriptionBinding {
+                    source: source.clone(),
+                    sandbox_id: self.archive(handle).await?.sandbox_id,
+                    runtime: handle.clone(),
+                    agent: launch.request.agent_id.clone(),
+                }),
+                None => None,
+            }
+        } else {
+            None
+        };
+        let opened = Bridge::open_with_subscription(
             socket,
             launch.request.agent_id.as_str(),
             launch.request.cwd.clone(),
-            settings,
+            (settings, subscription),
             resume_conversation,
             updates,
         )
