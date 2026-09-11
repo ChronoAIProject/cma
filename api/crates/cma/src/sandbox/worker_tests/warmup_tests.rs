@@ -158,10 +158,12 @@ impl layer3_adapter::HomeVolumeStore for WarmHome {
     }
     async fn remove(
         &self,
-        _: &layer3_adapter::HomeVolumeRequest,
-        _: Option<&layer3_adapter::HomeVolumeReceipt>,
+        request: &layer3_adapter::HomeVolumeRequest,
+        receipt: Option<&layer3_adapter::HomeVolumeReceipt>,
     ) -> layer3_adapter::Result<()> {
-        panic!("this campaign observes retirement admission only")
+        assert_eq!(request, &self.0.request);
+        assert_eq!(receipt, Some(&self.0.receipt));
+        Ok(())
     }
 }
 
@@ -214,6 +216,49 @@ async fn persistent_warm(harness: &Harness) -> (Arc<dyn SandboxAdapter>, WarmSan
     ready.validate().unwrap();
     assert_eq!(ready.state, WarmSandboxState::Ready);
     (adapter, ready)
+}
+
+#[tokio::test]
+async fn persistent_warm_retirement_releases_capacity_with_historical_boot_identity() {
+    let harness = Harness::new(vec![], 0, Duration::from_secs(60)).await;
+    let (adapter, mut record) = persistent_warm(&harness).await;
+    let original_runtime = record.runtime.clone();
+    assert!(original_runtime.as_ref().unwrap().boot_id.is_some());
+    record.state = WarmSandboxState::Retiring;
+    record.validate().unwrap();
+
+    let retired = prepare_environment(adapter.as_ref(), "test", &record, None)
+        .await
+        .unwrap();
+    assert_eq!(retired.state, WarmSandboxState::Retired);
+    assert!(adapter.runtime_inventory().await.unwrap().is_empty());
+    assert!(retired.home.as_ref().unwrap().released);
+    assert!(retired.home.as_ref().unwrap().attachment().is_none());
+    assert_eq!(retired.runtime, original_runtime);
+    retired.validate().unwrap();
+    let restored: WarmSandbox =
+        serde_json::from_slice(&serde_json::to_vec(&retired).unwrap()).unwrap();
+    restored.validate().unwrap();
+    assert!(!restored.state.owns_runtime());
+    assert!(!restored.state.counts_toward_target());
+
+    // Repeated cleanup remains valid, but a released home can never be
+    // republished or claimed as a usable runtime.
+    let repeated = prepare_environment(adapter.as_ref(), "test", &restored, None)
+        .await
+        .unwrap();
+    assert_eq!(repeated, restored);
+    for state in [
+        WarmSandboxState::Preparing,
+        WarmSandboxState::Installing,
+        WarmSandboxState::Ready,
+        WarmSandboxState::Claimed,
+        WarmSandboxState::Retiring,
+    ] {
+        let mut invalid = restored.clone();
+        invalid.state = state;
+        assert!(invalid.validate().is_err(), "{state:?}");
+    }
 }
 
 #[tokio::test]
