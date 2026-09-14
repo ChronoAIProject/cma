@@ -202,7 +202,7 @@ impl AgentReadService {
         Ok(usage)
     }
 
-    async fn authorized(
+    pub(super) async fn authorized(
         &self,
         context: &CallerContext,
         credential: Option<&str>,
@@ -236,7 +236,7 @@ impl AgentReadService {
             .await
             .map_err(access_error)
     }
-    async fn finish_read(
+    pub(super) async fn finish_read(
         &self,
         authorized: &AuthorizedResource,
         id: &AgentId,
@@ -259,7 +259,7 @@ impl AgentReadService {
     }
 }
 
-fn is_personal(authorized: &AuthorizedResource, context: &CallerContext) -> bool {
+pub(super) fn is_personal(authorized: &AuthorizedResource, context: &CallerContext) -> bool {
     match &authorized.snapshot.policy {
         Some(policy) => {
             matches!(&policy.owner, ResourceOwner::Person { subject } if subject == &context.caller.subject)

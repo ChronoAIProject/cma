@@ -5,7 +5,7 @@ use axum::{
     http::{Request, StatusCode},
 };
 use layer2_core::resource_access::*;
-use layer2_core::sandbox::{AgentLogKind, AgentStatus, TypedFailure};
+use layer2_core::sandbox::{AgentLogKind, AgentOrigin, AgentStatus, TypedFailure};
 use layer2_core::{AgentId, Caller, SubjectId};
 use serde_json::json;
 use std::{
@@ -78,9 +78,22 @@ pub(super) async fn fixture(
     Arc<Authority>,
     ResourceShare,
 ) {
+    fixture_with_origin(reply, AgentOrigin::Manual).await
+}
+
+pub(super) async fn fixture_with_origin(
+    reply: Reply,
+    origin: AgentOrigin,
+) -> (
+    agents_tests::Fixture,
+    Arc<ResourceAccessService>,
+    Arc<Authority>,
+    ResourceShare,
+) {
     let authority = Arc::new(Authority(Mutex::new(Reply::Member)));
     let fixture = agents_tests::fixture_with_resource_access(authority.clone()).await;
     let mut agent = agents_tests::seeded_agent("agt_shared_read", AgentStatus::Ready, 9, None);
+    agent.origin = origin;
     agent.conversation.conversation_id = Some("private-native-id".into());
     agents_tests::insert_agent(
         &fixture.store,
