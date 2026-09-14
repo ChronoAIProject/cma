@@ -88,3 +88,59 @@ impl<'de> Deserialize<'de> for AccessibleAgentSummary {
         result.map_err(serde::de::Error::custom)
     }
 }
+
+/// Creation category without private Launch/Trigger IDs or profile indexes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum SharedAgentOrigin {
+    /// Direct creation.
+    Manual,
+    /// Created as a configured Workspace child.
+    WorkspaceProfile,
+    /// Created through a Trigger Launch.
+    Trigger,
+}
+
+/// Safe shared source; publication and private launch data are withheld.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct SharedAgentSource {
+    /// Explicit shared projection marker.
+    pub access: SharedAgentAccess,
+    /// CMA Agent identifier.
+    pub agent_id: String,
+    /// Original creation category.
+    pub origin: SharedAgentOrigin,
+}
+
+/// Personal source details or the safe shared creation category.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AccessibleAgentSource {
+    /// Personal provenance and current published Trigger shortcuts.
+    Personal(super::AgentSource),
+    /// Agent-only category for other readers.
+    Shared(SharedAgentSource),
+}
+impl AccessibleAgentSource {
+    /// CMA Agent identifier in either projection.
+    pub fn agent_id(&self) -> &str {
+        match self {
+            Self::Personal(value) => &value.agent_id,
+            Self::Shared(value) => &value.agent_id,
+        }
+    }
+}
+impl<'de> Deserialize<'de> for AccessibleAgentSource {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let value = serde_json::Value::deserialize(deserializer)?;
+        let result = match value.get("access") {
+            None => serde_json::from_value(value).map(Self::Personal),
+            Some(marker) if marker == "shared" => serde_json::from_value(value).map(Self::Shared),
+            Some(_) => {
+                return Err(serde::de::Error::custom(
+                    "unknown Agent source access discriminator",
+                ));
+            }
+        };
+        result.map_err(serde::de::Error::custom)
+    }
+}

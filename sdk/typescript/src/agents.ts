@@ -18,7 +18,6 @@ import { agentStatus, type AgentStatus } from './instances/types.js';
 import {
   agent,
   agentResources,
-  agentSource,
   agentSummary,
   agentTextRequest,
   agentTranscript,
@@ -32,7 +31,7 @@ import {
   type StopAgentRequest,
 } from './agents/types.js';
 import { agentEvent } from './agents/events.js';
-import { accessibleAgent, accessibleAgentSummary } from './agents/shared.js';
+import { accessibleAgent, accessibleAgentSource, accessibleAgentSummary } from './agents/shared.js';
 import { requireRefusal } from './unsupported.js';
 
 export interface AgentListOptions extends PageOptions {
@@ -169,8 +168,16 @@ export class Agents {
     return this.readProjection(id, 'resources', agentResources, options);
   }
 
-  source(id: string, options: OperationOptions = {}) {
-    return this.readProjection(id, 'source', agentSource, options);
+  async source(id: string, options: OperationOptions = {}) {
+    const value = await this.sourceAccessible(id, options);
+    if (value.access === 'shared')
+      throw new ProtocolError('shared Agent source requires sourceAccessible');
+    return value;
+  }
+
+  /** Personal provenance or a shared creation category, under current access. */
+  sourceAccessible(id: string, options: OperationOptions = {}) {
+    return this.readProjection(id, 'source', accessibleAgentSource, options);
   }
 
   /** Preserve the named terminal capability refusal; no attachment is available. */

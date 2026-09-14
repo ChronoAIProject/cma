@@ -1,7 +1,23 @@
 import { ProtocolError } from '../errors.js';
 import { agentStatus } from '../instances/types.js';
-import { enumeration, object, optional, record, text, type Output } from '../schema.js';
-import { agent, agentSummary, type Agent, type AgentSummary } from './types.js';
+import {
+  enumeration,
+  object,
+  optional,
+  record,
+  tagged,
+  text,
+  variant,
+  type Output,
+} from '../schema.js';
+import {
+  agent,
+  agentSource,
+  agentSummary,
+  type Agent,
+  type AgentSource,
+  type AgentSummary,
+} from './types.js';
 
 /** Safe detail for a reader whose authority does not include personal ownership. */
 export const sharedAgent = object({
@@ -32,4 +48,23 @@ export function accessibleAgentSummary(value: unknown): AccessibleAgentSummary {
   if (source.access === undefined) return agentSummary(value);
   if (source.access === 'shared') return sharedAgent(value);
   throw new ProtocolError('unknown Agent access discriminator');
+}
+
+/** Creation category without private Launch/Trigger identities or shortcuts. */
+export const sharedAgentSource = object({
+  access: enumeration('shared'),
+  agent_id: text,
+  origin: tagged({
+    manual: variant('manual', {}),
+    workspace_profile: variant('workspace_profile', {}),
+    trigger: variant('trigger', {}),
+  }),
+});
+export type SharedAgentSource = Output<typeof sharedAgentSource>;
+export type AccessibleAgentSource = (AgentSource & { readonly access?: never }) | SharedAgentSource;
+export function accessibleAgentSource(value: unknown): AccessibleAgentSource {
+  const source = record(value);
+  if (source.access === undefined) return agentSource(value);
+  if (source.access === 'shared') return sharedAgentSource(value);
+  throw new ProtocolError('unknown Agent source access discriminator');
 }

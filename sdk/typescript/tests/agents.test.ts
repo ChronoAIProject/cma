@@ -12,6 +12,34 @@ import {
 } from './resource-fixtures.js';
 
 describe('Agent resource commands', () => {
+  it('reads safe source categories and rejects mismatched, unknown or personal-only projections', async () => {
+    const test = transport();
+    for (const kind of ['manual', 'workspace_profile', 'trigger']) {
+      const shared = { access: 'shared', agent_id: agent.id, origin: { type: kind } };
+      test.answer(shared);
+      expect(await test.client.agents.sourceAccessible(agent.id)).toEqual(shared);
+      test.answer(shared);
+      await expect(test.client.agents.source(agent.id)).rejects.toBeInstanceOf(ProtocolError);
+    }
+    const personal = {
+      agent_id: agent.id,
+      origin: { type: 'trigger', trigger_id: 'trg_one', launch_id: 'lch_one' },
+    };
+    test.answer(personal);
+    expect(await test.client.agents.source(agent.id)).toEqual(personal);
+    for (const malformed of [
+      { access: 'shared', agent_id: 'other', origin: { type: 'manual' } },
+      { access: 'future', agent_id: agent.id, origin: { type: 'manual' } },
+      { access: 'shared', agent_id: agent.id, origin: { type: 'future' } },
+      { agent_id: agent.id, origin: { type: 'trigger' } },
+    ]) {
+      test.answer(malformed);
+      await expect(test.client.agents.sourceAccessible(agent.id)).rejects.toBeInstanceOf(
+        ProtocolError,
+      );
+    }
+  });
+
   it('lists organization scopes and typed shared summaries with encoded filters', async () => {
     const test = transport();
     const shared = {

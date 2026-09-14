@@ -2,6 +2,8 @@ mod support;
 
 #[path = "rest/lifecycle.rs"]
 mod lifecycle;
+#[path = "rest/source.rs"]
+mod source;
 
 use cma_sdk::{
     Error, EventOptions, IdempotencyKey, PageOptions, agents::*, instances::*, profiles::*,

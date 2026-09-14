@@ -153,8 +153,8 @@ return 403; inaccessible resources return 404. Closed JSON bodies reject owner,
 actor, membership and policy-fence fields using the existing 422 contract.
 Effective permissions describe policy; lifecycle, runtime support and each
 operation's authorization still apply. Agent REST detail/history/usage readers
-now enforce these permissions. Organization Agent inventory is also composed.
-Shared hierarchy views, streams,
+now enforce these permissions. Organization Agent inventory and safe source
+categories are also composed. Shared hierarchy views, streams,
 artifacts and interactions remain required across the rest of the product.
 
 OpenAPI and repository TypeScript/Rust SDKs expose all six operations. The SDKs
@@ -165,7 +165,7 @@ No SDK package publication, UI workflow or production rollout is claimed here.
 ## Agent REST read projections
 
 Production composes one ResourceAccessService for management and Agent detail,
-transcript, event, usage and resource reads. The authenticated request context
+transcript, event, source, usage and resource reads. The authenticated request context
 must match the existing Caller. A missing context supports older compositions;
 a present invalid context is a 401 and never falls back to personal authority.
 
@@ -194,6 +194,17 @@ after a changed fence or expired membership. Checks do not extend evidence or
 retry effects. Membership outages retain the actionable
 `organization_authority_unavailable` response, and inaccessible Agents remain
 404 `agent_not_found`. Existing-user state has not been mutated for verification.
+
+The Agent source route returns a separately defined safe shared projection:
+Agent ID, explicit shared marker and immutable creation category only. Its
+`manual`, `workspace_profile` and `trigger` variants have no private Launch or
+Trigger IDs, profile indexes or publication shortcuts. Shared reads never
+consult another owner's Launch or Trigger records. Personal source retains the
+established full provenance and current publication behavior. Layer 2 fences
+both successful results and dependency errors after IO; membership expiry or a
+policy change refuses the buffered result. Legacy source composition also reads
+the explicit owner kind and cannot reinterpret an organization as a person.
+This does not implement channel provenance or channel-usage history.
 
 ## Organization inventory
 

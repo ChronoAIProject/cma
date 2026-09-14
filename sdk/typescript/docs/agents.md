@@ -124,7 +124,9 @@ export async function inspectOrganization(organization: string) {
   const cma = createClient();
   const choices = await cma.resourceAccess.organizations();
   const agents = await cma.agents.listAccessible({ organization, limit: 20 });
-  return { choices: choices.items, agents: agents.items, next: agents.next };
+  const first = agents.items[0];
+  const source = first ? await cma.agents.sourceAccessible(first.id) : undefined;
+  return { choices: choices.items, agents: agents.items, next: agents.next, source };
 }
 ```
 
@@ -132,3 +134,11 @@ A changed buffered page, including its hidden lookahead, is refused with
 `resource_access_changed`. Restart the read under current access. Provider
 outages return `organization_authority_unavailable`; an unavailable resource
 store returns `resource_access_unavailable`. No partial page is returned.
+
+`agents.sourceAccessible(id)` returns `AccessibleAgentSource`. Personal owners
+retain full creation provenance and resolvable published Trigger shortcuts.
+A shared response has `access: 'shared'`, `agent_id` and `origin.type` only:
+`manual`, `workspace_profile` or `trigger`. It withholds private Launch/Trigger
+IDs and shortcuts and rechecks access after IO. The existing `agents.source(id)`
+method keeps its personal return type and rejects shared responses; choose the
+accessible method when inspecting shared Agents.

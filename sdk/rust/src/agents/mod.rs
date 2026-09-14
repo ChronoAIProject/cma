@@ -87,8 +87,17 @@ impl Agents<'_> {
     }
     /// Read creation provenance and current published Trigger shortcuts.
     pub async fn source(&self, id: &str) -> Result<AgentSource> {
-        let value: AgentSource = self.client.get(&["agents", id, "source"], &[]).await?;
-        identity(&value.agent_id, id)?;
+        match self.source_accessible(id).await? {
+            AccessibleAgentSource::Personal(value) => Ok(value),
+            AccessibleAgentSource::Shared(_) => Err(crate::Error::protocol(
+                "shared Agent source requires source_accessible",
+            )),
+        }
+    }
+    /// Read personal source details or a safe shared creation category.
+    pub async fn source_accessible(&self, id: &str) -> Result<AccessibleAgentSource> {
+        let value: AccessibleAgentSource = self.client.get(&["agents", id, "source"], &[]).await?;
+        identity(value.agent_id(), id)?;
         Ok(value)
     }
     /// Read the named unsupported-terminal refusal; this release has no terminal plane.

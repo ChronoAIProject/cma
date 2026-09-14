@@ -100,6 +100,14 @@ let page = client.agents().list_accessible(&AccessibleAgentListOptions {
     organization: Some(organization),
     ..Default::default()
 }).await?;
+if let Some(first) = page.items.first() {
+    let id = match first {
+        cma_sdk::agents::AccessibleAgentSummary::Personal(agent) => &agent.id,
+        cma_sdk::agents::AccessibleAgentSummary::Shared(agent) => &agent.id,
+    };
+    let source = client.agents().source_accessible(id).await?;
+    assert_eq!(source.agent_id(), id);
+}
 # let _ = (choices, page);
 # Ok(())
 # }
@@ -110,3 +118,10 @@ only authorized rows determine `next`. Parent filters require independent parent
 access. A changed buffered page, including its hidden lookahead, returns
 `resource_access_changed`; store outages return `resource_access_unavailable`.
 The caller receives no partial page or unfiltered count.
+
+`agents().source_accessible(id)` returns `AccessibleAgentSource::Personal` with
+the existing creation provenance and published Trigger shortcuts, or `Shared`
+with Agent ID and creation category only. Shared source has no private Launch
+or Trigger IDs, profile index or shortcuts. Its access is rechecked after IO.
+The existing `source(id)` method keeps its personal return type and rejects a
+shared response, including manual/workspace categories.
