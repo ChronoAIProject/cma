@@ -21,7 +21,7 @@ import './Menu.css';
  * **The list always goes on the body, positioned from the anchor's box.** It
  * used to be a choice, defaulting to rendering in place, and every caller that
  * took the default was placed wrongly: a picker inside a dialog was cut off by
- * the dialog's scrollport, and the session list's own options menu opened 53px
+ * the dialog's scrollport, and a resource list's own options menu opened 53px
  * to the left of the window. A trigger cannot know what encloses it or how
  * near an edge it sits, so the in-place default asked each caller a question
  * none of them could answer. On the body, `placeMenu` reads the anchor and the
@@ -34,6 +34,7 @@ export interface MenuItem {
   readonly id: string;
   readonly label: ReactNode;
   readonly disabled?: boolean;
+  readonly reason?: string;
   /** A leading 16px glyph. */
   readonly icon?: ReactNode;
   /** Destructive: error-coloured, with its own hover fill. */
@@ -344,6 +345,7 @@ function MenuRow({
        */
       role={choosing ? 'menuitemradio' : 'menuitem'}
       data-id={entry.id}
+      data-has-reason={entry.reason === undefined ? undefined : ''}
       className={['menu__item', entry.danger === true ? 'menu__item--danger' : '']
         .filter(Boolean)
         .join(' ')}
@@ -367,7 +369,16 @@ function MenuRow({
           {entry.icon}
         </span>
       )}
-      <span className="menu__itemlabel">{entry.label}</span>
+      <span className="menu__itemlabel">
+        {entry.reason === undefined ? (
+          entry.label
+        ) : (
+          <>
+            <span className="menu__labeltext">{entry.label}</span>{' '}
+            <span className="menu__reason">{entry.reason}</span>
+          </>
+        )}
+      </span>
       {selected ? <IconCheckOutline16 className="menu__check" /> : null}
     </button>
   );

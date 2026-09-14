@@ -65,6 +65,10 @@ body {
 }
 
 body {
+  --dsw-alias-preview-light-bg: var(--dsw-static-paper-0);
+  --dsw-alias-preview-light-label: var(--dsw-static-ink-950);
+  --dsw-alias-preview-dark-bg: var(--dsw-static-coal-900);
+  --dsw-alias-preview-dark-label: var(--dsw-static-coal-50);
   --dsw-alias-bg-base: var(--dsw-static-paper-50);
   --dsw-alias-bg-layer-1: var(--dsw-static-paper-0);
   --dsw-alias-bg-layer-2: var(--dsw-static-paper-100);

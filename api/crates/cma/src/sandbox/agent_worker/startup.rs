@@ -1,0 +1,396 @@
+use std::time::SystemTime;
+
+use layer2_core::rfc3339_at;
+use layer2_core::sandbox::store::{AgentWorkMutation, SandboxStoreError, VersionedWorktree};
+use layer2_core::sandbox::{
+    Agent, AgentLogKind, AgentStatus, AgentWorkStep, SandboxEventKind, WorktreeStatus,
+};
+use layer3_adapter::{AgentHomeRequest, AgentOpenRequest, ConversationChannel, WorktreeRequest};
+use tokio::sync::mpsc;
+
+use super::startup_support::{
+    live_target, registry_failure, valid_conversation_id, valid_worktree_receipt,
+};
+use super::support::{
+    adapter_failure, bump_log_sequence, claimed_fence, request_evidence, runtime_capabilities,
+    runtime_options, skill_failure, validate_runtime_skills, validate_skills, AgentContext,
+    WorkerFailure,
+};
+use super::AgentWorker;
+use crate::sandbox::live_agents::{LiveAgentAttachment, LiveAgentTarget};
+
+const UPDATE_BUFFER: usize = 256;
+
+#[path = "startup_attachment.rs"]
+mod attachment;
+
+impl AgentWorker {
+    pub(super) async fn add_worktree(
+        &self,
+        agent: Agent,
+        now: SystemTime,
+    ) -> Result<(), SandboxStoreError> {
+        let started = tokio::time::Instant::now();
+        let context = match self.startup_context(&agent).await {
+            Ok(context) => context,
+            Err(failure) => return self.handle_failure(agent, failure, now).await,
+        };
+        let request = WorktreeRequest::new(
+            format!(
+                "worktree:{}:{}:add:v1",
+                context.workspace.name, context.worktree.name
+            ),
+            context.workspace.name.clone(),
+            context.worktree.name.clone(),
+            context.worktree.base_commit.clone(),
+        );
+        let evidence = request_evidence(
+            AgentWorkStep::AddWorktree,
+            &request.operation_id,
+            &request.request_sha256,
+        );
+        let agent = self
+            .prepare_side_effect(
+                agent,
+                &evidence,
+                None,
+                &context.sandbox,
+                now + started.elapsed(),
+            )
+            .await?;
+        let authority_fence = claimed_fence(&agent, &self.config.holder)?;
+        let result = self
+            .dependencies
+            .adapter
+            .add_worktree(&context.runtime, authority_fence, &request)
+            .await;
+        let now = now + started.elapsed();
+        match result {
+            Ok(receipt) if valid_worktree_receipt(&context, &request, &receipt) => {
+                self.startup_progress(
+                    agent,
+                    AgentWorkStep::MaterializeHome,
+                    now,
+                    evidence,
+                    None,
+                    &context.sandbox,
+                )
+                .await
+            }
+            Ok(_) => {
+                self.handle_failure(
+                    agent,
+                    WorkerFailure::terminal(
+                        "agent_runtime_receipt_invalid",
+                        "runtime returned invalid worktree evidence",
+                    ),
+                    now,
+                )
+                .await
+            }
+            Err(error) => {
+                self.handle_failure(agent, adapter_failure(error), now)
+                    .await
+            }
+        }
+    }
+
+    pub(super) async fn materialize_home(
+        &self,
+        agent: Agent,
+        now: SystemTime,
+    ) -> Result<(), SandboxStoreError> {
+        let started = tokio::time::Instant::now();
+        let context = match self.startup_context(&agent).await {
+            Ok(context) => context,
+            Err(failure) => return self.handle_failure(agent, failure, now).await,
+        };
+        let material = match &agent.work.resolved_skills {
+            Some(material) => material.clone(),
+            None if agent
+                .work
+                .cleanup_debt
+                .iter()
+                .any(|debt| debt.step == AgentWorkStep::MaterializeHome)
+                || agent
+                    .work
+                    .receipts
+                    .iter()
+                    .any(|receipt| receipt.step == AgentWorkStep::MaterializeHome) =>
+            {
+                return self
+                    .handle_failure(
+                        agent,
+                        WorkerFailure::terminal(
+                            "agent_skill_material_missing",
+                            "durable home intent has no immutable skill selection",
+                        ),
+                        now,
+                    )
+                    .await;
+            }
+            None => match self
+                .dependencies
+                .skills
+                .resolve(&context.sandbox, &agent.profile.content.skills)
+                .await
+            {
+                Ok(material) => material,
+                Err(error) => return self.handle_failure(agent, skill_failure(error), now).await,
+            },
+        };
+        if let Err(failure) = validate_skills(&agent.profile.content.skills, &material) {
+            return self.handle_failure(agent, failure, now).await;
+        }
+        let skills = match self.dependencies.skills.runtime_skills(&material) {
+            Ok(skills) => skills,
+            Err(error) => return self.handle_failure(agent, skill_failure(error), now).await,
+        };
+        if let Err(failure) = validate_runtime_skills(&material, &skills) {
+            return self.handle_failure(agent, failure, now).await;
+        }
+        let request = AgentHomeRequest::new(
+            format!("agent:{}:home:create:v1", agent.id),
+            runtime_options(&agent, &context.sandbox, &context.worktree),
+            agent.profile.content.system_prompt.clone(),
+            skills,
+        );
+        let evidence = request_evidence(
+            AgentWorkStep::MaterializeHome,
+            &request.operation_id,
+            &request.request_sha256,
+        );
+        let agent = self
+            .prepare_side_effect(
+                agent,
+                &evidence,
+                Some(material),
+                &context.sandbox,
+                now + started.elapsed(),
+            )
+            .await?;
+        let authority_fence = claimed_fence(&agent, &self.config.holder)?;
+        let result = self
+            .dependencies
+            .adapter
+            .materialize_agent_home(&context.runtime, authority_fence, &request)
+            .await;
+        let now = now + started.elapsed();
+        match result {
+            Ok(()) => {
+                self.startup_progress(
+                    agent,
+                    AgentWorkStep::OpenConversation,
+                    now,
+                    evidence,
+                    None,
+                    &context.sandbox,
+                )
+                .await
+            }
+            Err(error) => {
+                self.handle_failure(agent, adapter_failure(error), now)
+                    .await
+            }
+        }
+    }
+
+    pub(super) async fn open_conversation(
+        &self,
+        agent: Agent,
+        now: SystemTime,
+    ) -> Result<(), SandboxStoreError> {
+        let started = tokio::time::Instant::now();
+        let context = match self.startup_context(&agent).await {
+            Ok(context) => context,
+            Err(failure) => return self.handle_failure(agent, failure, now).await,
+        };
+        if agent.conversation.conversation_id.is_some()
+            || agent.conversation.runtime_generation.is_some()
+        {
+            return self
+                .handle_failure(
+                    agent,
+                    WorkerFailure::terminal(
+                        "agent_conversation_state_invalid",
+                        "an unopened starting agent already has runtime identity",
+                    ),
+                    now,
+                )
+                .await;
+        }
+        let request = AgentOpenRequest::new(
+            format!("agent:{}:open:v1", agent.id),
+            runtime_options(&agent, &context.sandbox, &context.worktree),
+            None,
+        );
+        let evidence = request_evidence(
+            AgentWorkStep::OpenConversation,
+            &request.operation_id,
+            &request.request_sha256,
+        );
+        let mut agent = self
+            .prepare_side_effect(
+                agent,
+                &evidence,
+                None,
+                &context.sandbox,
+                now + started.elapsed(),
+            )
+            .await?;
+        let authority_fence = claimed_fence(&agent, &self.config.holder)?;
+        let opened = self
+            .open_starting(
+                &mut agent,
+                &context,
+                authority_fence,
+                &request,
+                now + started.elapsed(),
+            )
+            .await;
+        let now = now + started.elapsed();
+        let (channel, updates) = match opened {
+            Ok(opened) => opened,
+            Err(failure) => return self.handle_failure(agent, failure, now).await,
+        };
+        let conversation_id = match valid_conversation_id(channel.conversation_id) {
+            Ok(id) => id,
+            Err(failure) => return self.handle_failure(agent, failure, now).await,
+        };
+        let generation = 1;
+        let attachment = match self.attach(
+            &agent,
+            conversation_id.clone(),
+            generation,
+            channel.input,
+            updates,
+        ) {
+            Ok(attachment) => attachment,
+            Err(failure) => return self.handle_failure(agent, failure, now).await,
+        };
+        let result = self
+            .startup_progress(
+                agent,
+                AgentWorkStep::PublishReady,
+                now,
+                evidence,
+                Some((conversation_id, generation)),
+                &context.sandbox,
+            )
+            .await;
+        match result {
+            Ok(()) => Ok(()),
+            Err(error) => {
+                self.dependencies.registry.rollback(&attachment);
+                Err(error)
+            }
+        }
+    }
+
+    pub(super) async fn publish_ready(
+        &self,
+        agent: Agent,
+        now: SystemTime,
+    ) -> Result<(), SandboxStoreError> {
+        let started = tokio::time::Instant::now();
+        let context = match self.startup_context(&agent).await {
+            Ok(context) => context,
+            Err(failure) => return self.handle_failure(agent, failure, now).await,
+        };
+        let target = match live_target(&agent) {
+            Ok(target) => target,
+            Err(failure) => return self.handle_failure(agent, failure, now).await,
+        };
+        let authority_fence = claimed_fence(&agent, &self.config.holder)?;
+        let attachment = match self
+            .dependencies
+            .registry
+            .attachment(&target, authority_fence)
+        {
+            Ok(Some(attachment)) => attachment,
+            Ok(None) => match self.reattach(&agent, &context, &target).await {
+                Ok(attachment) => attachment,
+                Err(failure) => return self.handle_failure(agent, failure, now).await,
+            },
+            Err(error) => {
+                return self
+                    .handle_failure(agent, registry_failure(error), now)
+                    .await;
+            }
+        };
+        let result = self
+            .retry_startup_publication(
+                agent,
+                &context.sandbox,
+                now + started.elapsed(),
+                |current, at| self.publish_ready_once(current, &context, &target, at),
+            )
+            .await;
+        if result.is_err() {
+            self.dependencies.registry.rollback(&attachment);
+        }
+        result
+    }
+
+    async fn publish_ready_once(
+        &self,
+        mut agent: Agent,
+        context: &AgentContext,
+        target: &LiveAgentTarget,
+        now: SystemTime,
+    ) -> Result<(), SandboxStoreError> {
+        let expected = agent.revision;
+        let fence = claimed_fence(&agent, &self.config.holder)?;
+        let stamp = rfc3339_at(now);
+        agent
+            .work
+            .advance(
+                &self.config.holder,
+                fence,
+                AgentWorkStep::PublishConnection,
+                stamp.clone(),
+            )
+            .map_err(|_| SandboxStoreError::Conflict)?;
+        agent
+            .transition(AgentStatus::Ready, stamp.clone(), None)
+            .map_err(|error| SandboxStoreError::Corrupt(error.to_string()))?;
+        let conversation_id = target.conversation_id.clone();
+        let runtime_generation = target.runtime_generation;
+        let logs = vec![
+            AgentLogKind::ConversationOpened {
+                conversation_id,
+                runtime_generation,
+            },
+            AgentLogKind::StatusChanged {
+                from: AgentStatus::Starting,
+                to: AgentStatus::Ready,
+            },
+        ];
+        bump_log_sequence(&mut agent, logs.len())?;
+        let mut worktree = context.worktree.clone();
+        let expected_worktree_revision = worktree.revision;
+        worktree
+            .transition(WorktreeStatus::Ready)
+            .map_err(|error| SandboxStoreError::Corrupt(error.to_string()))?;
+        self.dependencies
+            .store
+            .commit_agent_work(AgentWorkMutation {
+                expected_agent_revision: expected,
+                holder: self.config.holder.clone(),
+                fence,
+                agent: agent.clone(),
+                worktree: Some(VersionedWorktree {
+                    expected_revision: expected_worktree_revision,
+                    worktree,
+                }),
+                appended_at: stamp,
+                sandbox_event: Some(SandboxEventKind::AgentStatusChanged {
+                    agent_id: agent.id.clone(),
+                    from: AgentStatus::Starting,
+                    to: AgentStatus::Ready,
+                }),
+                agent_logs: logs,
+            })
+            .await
+    }
+}

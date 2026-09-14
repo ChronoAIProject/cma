@@ -1,0 +1,1208 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "dependency-delete-api-v1-agents-id",
+      "operation": "DELETE /api/v1/agents/{id}",
+      "scenario": "instances_dependency_unavailable",
+      "request": {
+        "method": "DELETE",
+        "path": "/api/v1/agents/agt_contract",
+        "headers": {
+          "idempotency-key": "dependency-delete-api-v1-agents-id"
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/instance-service-unavailable",
+          "title": "instance service unavailable",
+          "status": 503,
+          "detail": "An instance dependency could not complete this request.",
+          "code": "instance_service_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "dependency-delete-api-v1-sandboxes-id",
+      "operation": "DELETE /api/v1/sandboxes/{id}",
+      "scenario": "instances_dependency_unavailable",
+      "request": {
+        "method": "DELETE",
+        "path": "/api/v1/sandboxes/contract-target",
+        "headers": {
+          "idempotency-key": "dependency-delete-api-v1-sandboxes-id"
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/hierarchy-service-unavailable",
+          "title": "hierarchy service unavailable",
+          "status": 503,
+          "detail": "The resource service could not complete this operation.",
+          "code": "hierarchy_service_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "dependency-delete-api-v1-workspaces-id",
+      "operation": "DELETE /api/v1/workspaces/{id}",
+      "scenario": "instances_dependency_unavailable",
+      "request": {
+        "method": "DELETE",
+        "path": "/api/v1/workspaces/contract-target",
+        "headers": {
+          "idempotency-key": "dependency-delete-api-v1-workspaces-id"
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/hierarchy-service-unavailable",
+          "title": "hierarchy service unavailable",
+          "status": 503,
+          "detail": "The resource service could not complete this operation.",
+          "code": "hierarchy_service_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "dependency-get-api-v1-admin-activity",
+      "operation": "GET /api/v1/admin/activity",
+      "scenario": "settings_dependency_unavailable",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/admin/activity?actor=unrelated-actor&limit=10",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/operator-service-unavailable",
+          "title": "operator service unavailable",
+          "status": 503,
+          "detail": "An operator dependency could not complete this request.",
+          "code": "operator_service_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "dependency-get-api-v1-admin-profiles",
+      "operation": "GET /api/v1/admin/profiles",
+      "scenario": "settings_dependency_unavailable",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/admin/profiles?kind=agent&visibility=public&owner=owner-a",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/operator-service-unavailable",
+          "title": "operator service unavailable",
+          "status": 503,
+          "detail": "An operator dependency could not complete this request.",
+          "code": "operator_service_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "dependency-get-api-v1-admin-sandboxes",
+      "operation": "GET /api/v1/admin/sandboxes",
+      "scenario": "settings_dependency_unavailable",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/admin/sandboxes?owner=owner-a&status=active&runtime_version=runtime-v1",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/operator-service-unavailable",
+          "title": "operator service unavailable",
+          "status": 503,
+          "detail": "An operator dependency could not complete this request.",
+          "code": "operator_service_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "dependency-get-api-v1-admin-sandboxes-id",
+      "operation": "GET /api/v1/admin/sandboxes/{id}",
+      "scenario": "settings_dependency_unavailable",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/admin/sandboxes/sbx_contract",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/operator-service-unavailable",
+          "title": "operator service unavailable",
+          "status": 503,
+          "detail": "An operator dependency could not complete this request.",
+          "code": "operator_service_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "dependency-get-api-v1-admin-sandboxes-id-events",
+      "operation": "GET /api/v1/admin/sandboxes/{id}/events",
+      "scenario": "settings_dependency_unavailable",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/admin/sandboxes/sbx_contract/events?after=0&limit=10",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/operator-service-unavailable",
+          "title": "operator service unavailable",
+          "status": 503,
+          "detail": "An operator dependency could not complete this request.",
+          "code": "operator_service_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "dependency-get-api-v1-admin-settings",
+      "operation": "GET /api/v1/admin/settings",
+      "scenario": "settings_dependency_unavailable",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/admin/settings",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/settings-unavailable",
+          "title": "settings unavailable",
+          "status": 503,
+          "detail": "Platform settings could not be read or changed.",
+          "code": "settings_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "dependency-get-api-v1-agents",
+      "operation": "GET /api/v1/agents",
+      "scenario": "instances_dependency_unavailable",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/instance-service-unavailable",
+          "title": "instance service unavailable",
+          "status": 503,
+          "detail": "An instance dependency could not complete this request.",
+          "code": "instance_service_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "dependency-get-api-v1-agents-id",
+      "operation": "GET /api/v1/agents/{id}",
+      "scenario": "instances_dependency_unavailable",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_contract",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/instance-service-unavailable",
+          "title": "instance service unavailable",
+          "status": 503,
+          "detail": "An instance dependency could not complete this request.",
+          "code": "instance_service_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "dependency-get-api-v1-agents-id-events",
+      "operation": "GET /api/v1/agents/{id}/events",
+      "scenario": "instances_dependency_unavailable",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_contract/events?after=0",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/instance-service-unavailable",
+          "title": "instance service unavailable",
+          "status": 503,
+          "detail": "An instance dependency could not complete this request.",
+          "code": "instance_service_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "dependency-get-api-v1-agents-id-resources",
+      "operation": "GET /api/v1/agents/{id}/resources",
+      "scenario": "instances_dependency_unavailable",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_contract/resources",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/instance-service-unavailable",
+          "title": "instance service unavailable",
+          "status": 503,
+          "detail": "An instance dependency could not complete this request.",
+          "code": "instance_service_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "dependency-get-api-v1-agents-id-transcript",
+      "operation": "GET /api/v1/agents/{id}/transcript",
+      "scenario": "instances_dependency_unavailable",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_contract/transcript",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/instance-service-unavailable",
+          "title": "instance service unavailable",
+          "status": 503,
+          "detail": "An instance dependency could not complete this request.",
+          "code": "instance_service_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "dependency-get-api-v1-agents-id-usage",
+      "operation": "GET /api/v1/agents/{id}/usage",
+      "scenario": "instances_dependency_unavailable",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_contract/usage",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/instance-service-unavailable",
+          "title": "instance service unavailable",
+          "status": 503,
+          "detail": "An instance dependency could not complete this request.",
+          "code": "instance_service_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "dependency-get-api-v1-defaults",
+      "operation": "GET /api/v1/defaults",
+      "scenario": "settings_dependency_unavailable",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/defaults",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/defaults-unavailable",
+          "title": "defaults unavailable",
+          "status": 503,
+          "detail": "The current deployment defaults are unavailable.",
+          "code": "defaults_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "dependency-get-api-v1-sandboxes",
+      "operation": "GET /api/v1/sandboxes",
+      "scenario": "instances_dependency_unavailable",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/sandboxes",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/hierarchy-service-unavailable",
+          "title": "hierarchy service unavailable",
+          "status": 503,
+          "detail": "The resource service could not complete this operation.",
+          "code": "hierarchy_service_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "dependency-get-api-v1-sandboxes-id",
+      "operation": "GET /api/v1/sandboxes/{id}",
+      "scenario": "instances_dependency_unavailable",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/sandboxes/sbx_route",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/hierarchy-service-unavailable",
+          "title": "hierarchy service unavailable",
+          "status": 503,
+          "detail": "The resource service could not complete this operation.",
+          "code": "hierarchy_service_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "dependency-get-api-v1-sandboxes-id-events",
+      "operation": "GET /api/v1/sandboxes/{id}/events",
+      "scenario": "instances_dependency_unavailable",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/sandboxes/sbx_route/events?after=0&limit=10",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/hierarchy-service-unavailable",
+          "title": "hierarchy service unavailable",
+          "status": 503,
+          "detail": "The resource service could not complete this operation.",
+          "code": "hierarchy_service_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "dependency-get-api-v1-sandboxes-id-workspaces",
+      "operation": "GET /api/v1/sandboxes/{id}/workspaces",
+      "scenario": "instances_dependency_unavailable",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/sandboxes/sbx_route/workspaces",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/hierarchy-service-unavailable",
+          "title": "hierarchy service unavailable",
+          "status": 503,
+          "detail": "The resource service could not complete this operation.",
+          "code": "hierarchy_service_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "dependency-get-api-v1-workspaces-id",
+      "operation": "GET /api/v1/workspaces/{id}",
+      "scenario": "instances_dependency_unavailable",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/workspaces/wks_route",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/hierarchy-service-unavailable",
+          "title": "hierarchy service unavailable",
+          "status": 503,
+          "detail": "The resource service could not complete this operation.",
+          "code": "hierarchy_service_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "dependency-get-api-v1-workspaces-id-worktrees",
+      "operation": "GET /api/v1/workspaces/{id}/worktrees",
+      "scenario": "instances_dependency_unavailable",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/workspaces/wks_route/worktrees",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/hierarchy-service-unavailable",
+          "title": "hierarchy service unavailable",
+          "status": 503,
+          "detail": "The resource service could not complete this operation.",
+          "code": "hierarchy_service_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "dependency-get-api-v1-worktrees-id",
+      "operation": "GET /api/v1/worktrees/{id}",
+      "scenario": "instances_dependency_unavailable",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/worktrees/wkt_agt_contract",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/hierarchy-service-unavailable",
+          "title": "hierarchy service unavailable",
+          "status": 503,
+          "detail": "The resource service could not complete this operation.",
+          "code": "hierarchy_service_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "dependency-patch-api-v1-admin-settings",
+      "operation": "PATCH /api/v1/admin/settings",
+      "scenario": "settings_dependency_unavailable",
+      "request": {
+        "method": "PATCH",
+        "path": "/api/v1/admin/settings",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "expected_revision": 0,
+          "marketplace": {
+            "enabled": false
+          }
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/settings-unavailable",
+          "title": "settings unavailable",
+          "status": 503,
+          "detail": "Platform settings could not be read or changed.",
+          "code": "settings_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "dependency-post-api-v1-admin-profiles-kind-id-retire",
+      "operation": "POST /api/v1/admin/profiles/{kind}/{id}/retire",
+      "scenario": "settings_dependency_unavailable",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/profiles/agent/agp_contract/retire",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/operator-service-unavailable",
+          "title": "operator service unavailable",
+          "status": 503,
+          "detail": "An operator dependency could not complete this request.",
+          "code": "operator_service_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "dependency-post-api-v1-admin-sandboxes-id-retire",
+      "operation": "POST /api/v1/admin/sandboxes/{id}/retire",
+      "scenario": "settings_dependency_unavailable",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/sandboxes/sbx_contract/retire",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/operator-service-unavailable",
+          "title": "operator service unavailable",
+          "status": 503,
+          "detail": "An operator dependency could not complete this request.",
+          "code": "operator_service_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "dependency-post-api-v1-admin-settings-reset",
+      "operation": "POST /api/v1/admin/settings/reset",
+      "scenario": "settings_dependency_unavailable",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/settings/reset",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "expected_revision": 2
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/settings-unavailable",
+          "title": "settings unavailable",
+          "status": 503,
+          "detail": "Platform settings could not be read or changed.",
+          "code": "settings_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "dependency-post-api-v1-admin-triggers-pause",
+      "operation": "POST /api/v1/admin/triggers/pause",
+      "scenario": "settings_dependency_unavailable",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/triggers/pause",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/operator-service-unavailable",
+          "title": "operator service unavailable",
+          "status": 503,
+          "detail": "An operator dependency could not complete this request.",
+          "code": "operator_service_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "dependency-post-api-v1-admin-triggers-resume",
+      "operation": "POST /api/v1/admin/triggers/resume",
+      "scenario": "settings_dependency_unavailable",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/triggers/resume",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/operator-service-unavailable",
+          "title": "operator service unavailable",
+          "status": 503,
+          "detail": "An operator dependency could not complete this request.",
+          "code": "operator_service_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "dependency-post-api-v1-agents-id-approvals-request-id",
+      "operation": "POST /api/v1/agents/{id}/approvals/{request_id}",
+      "scenario": "instances_dependency_unavailable",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_contract/approvals/approval_contract",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "dependency-post-api-v1-agents-id-approvals-request-id"
+        },
+        "body": {
+          "decision": "allow"
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/instance-service-unavailable",
+          "title": "instance service unavailable",
+          "status": 503,
+          "detail": "An instance dependency could not complete this request.",
+          "code": "instance_service_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "dependency-post-api-v1-agents-id-interrupt",
+      "operation": "POST /api/v1/agents/{id}/interrupt",
+      "scenario": "instances_dependency_unavailable",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_contract/interrupt",
+        "headers": {
+          "idempotency-key": "dependency-post-api-v1-agents-id-interrupt"
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/instance-service-unavailable",
+          "title": "instance service unavailable",
+          "status": 503,
+          "detail": "An instance dependency could not complete this request.",
+          "code": "instance_service_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "dependency-post-api-v1-agents-id-steer",
+      "operation": "POST /api/v1/agents/{id}/steer",
+      "scenario": "instances_dependency_unavailable",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_contract/steer",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "dependency-post-api-v1-agents-id-steer"
+        },
+        "body": {
+          "text": "Focus on evidence"
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/instance-service-unavailable",
+          "title": "instance service unavailable",
+          "status": 503,
+          "detail": "An instance dependency could not complete this request.",
+          "code": "instance_service_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "dependency-post-api-v1-agents-id-stop",
+      "operation": "POST /api/v1/agents/{id}/stop",
+      "scenario": "instances_dependency_unavailable",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/contract-target/stop",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "dependency-post-api-v1-agents-id-stop"
+        },
+        "body": {
+          "reason": "owner"
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/instance-service-unavailable",
+          "title": "instance service unavailable",
+          "status": 503,
+          "detail": "An instance dependency could not complete this request.",
+          "code": "instance_service_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "dependency-post-api-v1-sandboxes",
+      "operation": "POST /api/v1/sandboxes",
+      "scenario": "instances_dependency_unavailable",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/sandboxes",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "dependency-post-api-v1-sandboxes"
+        },
+        "body": {
+          "sandbox_profile": {
+            "id": "sbp_contract",
+            "revision": 1
+          },
+          "name": "contract-created"
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/hierarchy-service-unavailable",
+          "title": "hierarchy service unavailable",
+          "status": 503,
+          "detail": "The resource service could not complete this operation.",
+          "code": "hierarchy_service_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "dependency-post-api-v1-sandboxes-id-pause",
+      "operation": "POST /api/v1/sandboxes/{id}/pause",
+      "scenario": "instances_dependency_unavailable",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/sandboxes/sbx_route/pause",
+        "headers": {
+          "idempotency-key": "dependency-post-api-v1-sandboxes-id-pause"
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/sandbox-lifecycle-unavailable",
+          "title": "sandbox lifecycle unavailable",
+          "status": 503,
+          "detail": "The Sandbox lifecycle service could not complete this operation.",
+          "code": "sandbox_lifecycle_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "dependency-post-api-v1-sandboxes-id-revive",
+      "operation": "POST /api/v1/sandboxes/{id}/revive",
+      "scenario": "instances_dependency_unavailable",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/sandboxes/sbx_route/revive",
+        "headers": {
+          "idempotency-key": "dependency-post-api-v1-sandboxes-id-revive"
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/sandbox-lifecycle-unavailable",
+          "title": "sandbox lifecycle unavailable",
+          "status": 503,
+          "detail": "The Sandbox lifecycle service could not complete this operation.",
+          "code": "sandbox_lifecycle_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "dependency-post-api-v1-sandboxes-id-workspaces",
+      "operation": "POST /api/v1/sandboxes/{id}/workspaces",
+      "scenario": "instances_dependency_unavailable",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/sandboxes/sbx_route/workspaces",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "dependency-post-api-v1-sandboxes-id-workspaces"
+        },
+        "body": {
+          "workspace_profile": {
+            "id": "wkp_contract",
+            "revision": 1
+          }
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/hierarchy-service-unavailable",
+          "title": "hierarchy service unavailable",
+          "status": 503,
+          "detail": "The resource service could not complete this operation.",
+          "code": "hierarchy_service_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "dependency-post-api-v1-workspaces-id-agents",
+      "operation": "POST /api/v1/workspaces/{id}/agents",
+      "scenario": "instances_dependency_unavailable",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/workspaces/wks_route/agents",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "dependency-post-api-v1-workspaces-id-agents"
+        },
+        "body": {
+          "agent_profile": {
+            "id": "agp_route",
+            "revision": 1
+          },
+          "title": "Contract agent"
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/instance-service-unavailable",
+          "title": "instance service unavailable",
+          "status": 503,
+          "detail": "An instance dependency could not complete this request.",
+          "code": "instance_service_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "dependency-put-api-v1-admin-settings",
+      "operation": "PUT /api/v1/admin/settings",
+      "scenario": "settings_dependency_unavailable",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/admin/settings",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "expected_revision": 1,
+          "settings": {
+            "defaults": {
+              "sandbox_profile": {
+                "id": "sbp_default",
+                "revision": 1
+              },
+              "workspace_profile": {
+                "id": "wkp_default",
+                "revision": 1
+              },
+              "agent_profile": {
+                "id": "agp_default",
+                "revision": 1
+              }
+            },
+            "inactivity": {
+              "pause_after_seconds": 900
+            },
+            "retention": {
+              "checkpoint_grace_days": 7,
+              "agent_log_days": 90
+            },
+            "limits": {
+              "max_sandboxes_per_user": 9,
+              "visitor_max_sandboxes": 1,
+              "visitor_max_launches_per_day": 5
+            },
+            "triggers": {
+              "enabled": false,
+              "orchestration_paused": false
+            },
+            "marketplace": {
+              "enabled": false
+            }
+          }
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/settings-unavailable",
+          "title": "settings unavailable",
+          "status": 503,
+          "detail": "Platform settings could not be read or changed.",
+          "code": "settings_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-pause-stored-corrupt",
+      "operation": "POST /api/v1/sandboxes/{id}/pause",
+      "scenario": "instances_corrupt",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/sandboxes/sbx_route/pause",
+        "headers": {
+          "idempotency-key": "sandbox-pause-stored-corrupt"
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/sandbox-lifecycle-unavailable",
+          "title": "sandbox lifecycle unavailable",
+          "status": 503,
+          "detail": "The Sandbox lifecycle service could not complete this operation.",
+          "code": "stored_sandbox_corrupt"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-revive-stored-corrupt",
+      "operation": "POST /api/v1/sandboxes/{id}/revive",
+      "scenario": "instances_corrupt",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/sandboxes/sbx_route/revive",
+        "headers": {
+          "idempotency-key": "sandbox-revive-stored-corrupt"
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/sandbox-lifecycle-unavailable",
+          "title": "sandbox lifecycle unavailable",
+          "status": 503,
+          "detail": "The Sandbox lifecycle service could not complete this operation.",
+          "code": "stored_sandbox_corrupt"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-revive-accepted",
+      "operation": "POST /api/v1/sandboxes/{id}/revive",
+      "scenario": "instances_paused",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/sandboxes/sbx_route/revive",
+        "headers": {
+          "idempotency-key": "sandbox-revive-accepted"
+        }
+      },
+      "response": {
+        "status": 202,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "id": "sbx_route",
+          "owner": "owner-a",
+          "owner_name": null,
+          "name": "sandbox-sbx_route",
+          "status": "reviving",
+          "profile": {
+            "id": "sbp_stored",
+            "revision": 1
+          },
+          "nyxid_services": [],
+          "limits": {
+            "max_workspaces": 4,
+            "max_agents_per_workspace": 4
+          },
+          "lifecycle": {
+            "pause": {
+              "allowed": false,
+              "reason": "not_active"
+            },
+            "revive": {
+              "allowed": false,
+              "reason": "not_paused"
+            },
+            "latest_snapshot": {
+              "epoch": 1,
+              "saved_at": "2026-09-05T00:29:00Z",
+              "download_url": "/api/v1/sandboxes/sbx_route/snapshots/1/download"
+            },
+            "operation": {
+              "purpose": "revive",
+              "phase": "checkpoint_verification",
+              "started_at": "2026-09-05T00:00:00Z"
+            }
+          },
+          "last_activity_at": "2026-09-05T00:00:00Z",
+          "created_at": "2026-09-05T00:00:00Z",
+          "updated_at": "2026-09-05T00:00:00Z",
+          "revision": 2
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "sandbox_pausing_updated": "/updated_at"
+      }
+    }
+  ]
+}

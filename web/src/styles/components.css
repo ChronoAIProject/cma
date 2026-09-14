@@ -88,7 +88,7 @@
 
 /*
  * One rule, here, where the class is declared. A second `.field__label` in
- * `EnvironmentProfiles.css` used to win by load order, so every field in the
+ * A feature sheet used to win by load order, so every field in the
  * product took its uppercase treatment while `font-family` leaked through from
  * this one — a label inheriting a face from a file that knew nothing about it.
  * What is written here is what everything was already getting.
@@ -197,7 +197,7 @@
 /*
  * A failed action — §12. Inside the surface's own column, above what it shows
  * and never in place of it, and dismissible: it reports one attempt about one
- * session, and the surface beneath it may hold a dozen live terminals.
+ * resource, and the surface beneath it may hold other live work.
  */
 .notice {
   display: flex;
@@ -239,7 +239,7 @@
 
 /* ── Semantic tone helpers, §2 ───────────────────────────────────────────
  *
- * Session and system state. Never decorative, never the only carrier.
+ * Resource and system state. Never decorative, never the only carrier.
  */
 
 .tone-ink-live {

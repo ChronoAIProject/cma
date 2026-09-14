@@ -1,0 +1,306 @@
+//! Strict Responses adapter for automatic agent titles through one sandbox proxy.
+
+use std::fmt;
+use std::time::Duration;
+
+use async_trait::async_trait;
+use futures_util::StreamExt as _;
+use layer2_core::sandbox::{
+    AgentTitleGenerationError, AgentTitleGenerationRequest, AgentTitleGenerationResponse,
+    AgentTitleGenerator, AGENT_TITLE_CALL_TIMEOUT_SECONDS,
+};
+use layer3_adapter::provider::ProviderEndpoint;
+use reqwest::header::{
+    HeaderMap, HeaderValue, ACCEPT, ACCEPT_ENCODING, AUTHORIZATION, CONTENT_ENCODING, CONTENT_TYPE,
+};
+use reqwest::{StatusCode, Url};
+use serde::Serialize;
+
+const RESPONSES_PATH: &str = "/v1/responses";
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(3);
+const MAX_REQUEST_BYTES: usize = 16 * 1024;
+const MAX_RESPONSE_BYTES: usize = 16 * 1024;
+const MAX_OUTPUT_TOKENS: u32 = 32;
+
+/// One HTTP client bound to the model-proxy endpoint of a single sandbox.
+#[derive(Clone)]
+pub(crate) struct HttpAgentTitleGenerator {
+    endpoint: Url,
+    deployment_model: String,
+    client: reqwest::Client,
+    maximum_response_body: usize,
+    proxy_authorization: Option<HeaderValue>,
+}
+
+impl fmt::Debug for HttpAgentTitleGenerator {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("HttpAgentTitleGenerator")
+            .field("endpoint", &self.endpoint)
+            .field("deployment_model", &self.deployment_model)
+            .field("maximum_response_body", &self.maximum_response_body)
+            .finish_non_exhaustive()
+    }
+}
+
+impl HttpAgentTitleGenerator {
+    /// Bind generation to the proxy URL resolved for the agent's durable sandbox.
+    pub(crate) fn new(sandbox_proxy: &ProviderEndpoint, deployment_model: &str) -> Option<Self> {
+        let sandbox_proxy_base_url = provider_endpoint_url(&sandbox_proxy.endpoint)?;
+        Self::build(
+            sandbox_proxy_base_url.as_str(),
+            deployment_model,
+            Duration::from_secs(AGENT_TITLE_CALL_TIMEOUT_SECONDS),
+            MAX_RESPONSE_BYTES,
+        )
+    }
+
+    fn build(
+        sandbox_proxy_base_url: &str,
+        deployment_model: &str,
+        request_timeout: Duration,
+        maximum_response_body: usize,
+    ) -> Option<Self> {
+        let endpoint = title_endpoint(sandbox_proxy_base_url)?;
+        let deployment_model = nonempty(deployment_model)?.to_owned();
+        if request_timeout.is_zero() || maximum_response_body == 0 {
+            return None;
+        }
+        let client = reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .connect_timeout(CONNECT_TIMEOUT.min(request_timeout))
+            .timeout(request_timeout)
+            .build()
+            .ok()?;
+        Some(Self {
+            endpoint,
+            deployment_model,
+            client,
+            maximum_response_body,
+            proxy_authorization: None,
+        })
+    }
+
+    pub(super) fn with_proxy_authorization(mut self, value: &str) -> Option<Self> {
+        let mut value = HeaderValue::from_str(nonempty(value)?).ok()?;
+        value.set_sensitive(true);
+        self.proxy_authorization = Some(value);
+        Some(self)
+    }
+
+    #[cfg(test)]
+    fn fixture(
+        sandbox_proxy_base_url: &str,
+        deployment_model: &str,
+        timeout: Duration,
+        maximum_response_body: usize,
+    ) -> Self {
+        Self::build(
+            sandbox_proxy_base_url,
+            deployment_model,
+            timeout,
+            maximum_response_body,
+        )
+        .expect("the title-generator fixture configuration is valid")
+    }
+
+    async fn send(
+        &self,
+        request: &AgentTitleGenerationRequest,
+    ) -> Result<AgentTitleGenerationResponse, AgentTitleGenerationError> {
+        if nonempty(request.model()) != Some(self.deployment_model.as_str()) {
+            return Err(AgentTitleGenerationError::unavailable());
+        }
+        let body = serde_json::to_vec(&ResponsesRequest {
+            model: &self.deployment_model,
+            instructions: request.system_prompt(),
+            input: [
+                ResponsesInput {
+                    role: "user",
+                    content: request.owner_message(),
+                },
+                ResponsesInput {
+                    role: "assistant",
+                    content: request.assistant_message(),
+                },
+            ],
+            stream: false,
+            store: false,
+            max_output_tokens: MAX_OUTPUT_TOKENS,
+        })
+        .map_err(|_| AgentTitleGenerationError::unavailable())?;
+        if body.len() > MAX_REQUEST_BYTES {
+            return Err(AgentTitleGenerationError::unavailable());
+        }
+
+        let mut authorization = HeaderValue::from_str(&format!("Bearer {}", request.bearer()))
+            .map_err(|_| AgentTitleGenerationError::unavailable())?;
+        authorization.set_sensitive(true);
+        let mut headers = HeaderMap::new();
+        headers.insert(AUTHORIZATION, authorization);
+        if let Some(value) = &self.proxy_authorization {
+            headers.insert("open-sandbox-api-key", value.clone());
+        }
+        headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+        headers.insert(ACCEPT, HeaderValue::from_static("application/json"));
+        headers.insert(ACCEPT_ENCODING, HeaderValue::from_static("identity"));
+
+        let response = self
+            .client
+            .post(self.endpoint.clone())
+            .headers(headers)
+            .body(body)
+            .send()
+            .await
+            .map_err(|_| AgentTitleGenerationError::unavailable())?;
+        if response.status() != StatusCode::OK
+            || response.headers().get_all(CONTENT_TYPE).iter().count() != 1
+            || response
+                .headers()
+                .get(CONTENT_TYPE)
+                .is_none_or(|value| value.as_bytes() != b"application/json")
+            || response.headers().contains_key(CONTENT_ENCODING)
+            || headers_contain(response.headers(), request.bearer().as_bytes())
+            || self
+                .proxy_authorization
+                .as_ref()
+                .is_some_and(|value| headers_contain(response.headers(), value.as_bytes()))
+        {
+            return Err(AgentTitleGenerationError::unavailable());
+        }
+
+        let mut body = Vec::new();
+        let mut stream = response.bytes_stream();
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk.map_err(|_| AgentTitleGenerationError::unavailable())?;
+            let size = body
+                .len()
+                .checked_add(chunk.len())
+                .ok_or_else(AgentTitleGenerationError::unavailable)?;
+            if size > self.maximum_response_body {
+                return Err(AgentTitleGenerationError::unavailable());
+            }
+            body.extend_from_slice(&chunk);
+        }
+        if contains_bytes(&body, request.bearer().as_bytes())
+            || self
+                .proxy_authorization
+                .as_ref()
+                .is_some_and(|value| contains_bytes(&body, value.as_bytes()))
+        {
+            return Err(AgentTitleGenerationError::unavailable());
+        }
+        let title = response_title(&body).ok_or_else(AgentTitleGenerationError::unavailable)?;
+        if contains_bytes(title.as_bytes(), request.bearer().as_bytes())
+            || self
+                .proxy_authorization
+                .as_ref()
+                .is_some_and(|value| contains_bytes(title.as_bytes(), value.as_bytes()))
+        {
+            return Err(AgentTitleGenerationError::unavailable());
+        }
+        Ok(AgentTitleGenerationResponse::new(title))
+    }
+}
+
+#[async_trait]
+impl AgentTitleGenerator for HttpAgentTitleGenerator {
+    async fn generate(
+        &self,
+        request: AgentTitleGenerationRequest,
+    ) -> Result<AgentTitleGenerationResponse, AgentTitleGenerationError> {
+        self.send(&request).await
+    }
+}
+
+#[derive(Serialize)]
+struct ResponsesRequest<'a> {
+    model: &'a str,
+    instructions: &'static str,
+    input: [ResponsesInput<'a>; 2],
+    stream: bool,
+    store: bool,
+    max_output_tokens: u32,
+}
+
+#[derive(Serialize)]
+struct ResponsesInput<'a> {
+    role: &'static str,
+    content: &'a str,
+}
+
+fn provider_endpoint_url(value: &str) -> Option<Url> {
+    let value = value.trim().trim_end_matches('/');
+    if value.is_empty() || value.starts_with('/') {
+        return None;
+    }
+    let candidate = if value.contains("://") {
+        value.to_owned()
+    } else {
+        format!("https://{value}")
+    };
+    let endpoint = Url::parse(&candidate).ok()?;
+    title_endpoint(endpoint.as_str()).map(|_| endpoint)
+}
+
+fn title_endpoint(base_url: &str) -> Option<Url> {
+    let base = Url::parse(base_url.trim_end_matches('/')).ok()?;
+    if !matches!(base.scheme(), "http" | "https")
+        || base.host_str().is_none()
+        || !base.username().is_empty()
+        || base.password().is_some()
+        || base.query().is_some()
+        || base.fragment().is_some()
+    {
+        return None;
+    }
+    Url::parse(&format!(
+        "{}{RESPONSES_PATH}",
+        base.as_str().trim_end_matches('/')
+    ))
+    .ok()
+}
+
+fn nonempty(value: &str) -> Option<&str> {
+    let value = value.trim();
+    (!value.is_empty()).then_some(value)
+}
+
+fn response_title(body: &[u8]) -> Option<String> {
+    let response: serde_json::Value = serde_json::from_slice(body).ok()?;
+    if let Some(title) = response.get("output_text").and_then(|value| value.as_str()) {
+        return Some(title.to_owned());
+    }
+    response
+        .get("output")?
+        .as_array()?
+        .iter()
+        .filter(|item| item.get("type").and_then(|value| value.as_str()) == Some("message"))
+        .filter_map(|item| item.get("content").and_then(|value| value.as_array()))
+        .flatten()
+        .find(|content| {
+            content.get("type").and_then(|value| value.as_str()) == Some("output_text")
+        })?
+        .get("text")?
+        .as_str()
+        .map(str::to_owned)
+}
+
+fn headers_contain(headers: &HeaderMap, protected: &[u8]) -> bool {
+    headers.iter().any(|(name, value)| {
+        contains_bytes(name.as_str().as_bytes(), protected)
+            || contains_bytes(value.as_bytes(), protected)
+    })
+}
+
+fn contains_bytes(haystack: &[u8], needle: &[u8]) -> bool {
+    !needle.is_empty()
+        && haystack.len() >= needle.len()
+        && haystack
+            .windows(needle.len())
+            .any(|window| window == needle)
+}
+
+#[cfg(test)]
+#[path = "titles_tests.rs"]
+mod tests;

@@ -12,7 +12,7 @@
  * 2. the details column shrinks toward its minimum;
  * 3. the details column closes, and the centre absorbs whatever is left.
  *
- * **The sidebar never concedes.** It is the way to every other session, so a
+ * **The sidebar never concedes.** It is the way to every other resource, so a
  * layout that took it away to make room would be one where the fix for "this
  * is too narrow" is unreachable.
  *

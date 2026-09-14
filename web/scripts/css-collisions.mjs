@@ -26,37 +26,11 @@ const ROOT = 'src';
  */
 const SHARED = new Map([
   [
-    'terminal',
-    'SessionCanvas removes the surface frame for a node — documented at SessionCanvas.css',
-  ],
-  [
     'button',
     'components.css gives every interactive control one transition; ui/Button.css owns the rest',
   ],
   ['pill', 'as .button — the shared transition rule'],
-  ['row-item', 'as .button — the shared transition rule'],
   ['input', 'as .button — the shared transition rule'],
-  ['menu__item', 'CommandBar sets its own row height inside the command plate'],
-  [
-    'control-reason',
-    'Trigger action rows refine the shared disabled-reason component inside their named containers',
-  ],
-  [
-    'field__input',
-    'ContributionSurface changes only the shared textarea height inside a pull-request proposal',
-  ],
-  [
-    'launch-facts',
-    'ContributionSurface changes the LaunchSurface fact grid only inside a pull-request proposal',
-  ],
-  [
-    'notice',
-    'ContributionSurface refines the shared notice component only inside a pull-request proposal',
-  ],
-  [
-    'trigger-workflow__head',
-    'ContributionSurface styles only its back link inside the shared Trigger workflow header',
-  ],
 ]);
 
 /** Every .css file under src/. */

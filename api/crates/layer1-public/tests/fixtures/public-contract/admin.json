@@ -1,0 +1,1113 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "admin-settings-read",
+      "operation": "GET /api/v1/admin/settings",
+      "scenario": "admin_operator",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/admin/settings",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "revision": 0,
+          "settings": {
+            "defaults": {
+              "sandbox_profile": {
+                "id": "sbp_default",
+                "revision": 1
+              },
+              "workspace_profile": {
+                "id": "wkp_default",
+                "revision": 1
+              },
+              "agent_profile": {
+                "id": "agp_default",
+                "revision": 1
+              }
+            },
+            "inactivity": {
+              "pause_after_seconds": 900
+            },
+            "checkpoints": {
+              "interval_seconds": 1800
+            },
+            "retention": {
+              "checkpoint_grace_days": 7,
+              "agent_log_days": 90
+            },
+            "limits": {
+              "max_sandboxes_per_user": 3,
+              "visitor_max_sandboxes": 1,
+              "visitor_max_launches_per_day": 5
+            },
+            "triggers": {
+              "enabled": false,
+              "orchestration_paused": false
+            },
+            "marketplace": {
+              "enabled": true
+            }
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "admin-settings-patch",
+      "operation": "PATCH /api/v1/admin/settings",
+      "scenario": "admin_operator",
+      "request": {
+        "method": "PATCH",
+        "path": "/api/v1/admin/settings",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "expected_revision": 0,
+          "marketplace": {
+            "enabled": false
+          }
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "revision": 1,
+          "settings": {
+            "defaults": {
+              "sandbox_profile": {
+                "id": "sbp_default",
+                "revision": 1
+              },
+              "workspace_profile": {
+                "id": "wkp_default",
+                "revision": 1
+              },
+              "agent_profile": {
+                "id": "agp_default",
+                "revision": 1
+              }
+            },
+            "inactivity": {
+              "pause_after_seconds": 900
+            },
+            "checkpoints": {
+              "interval_seconds": 1800
+            },
+            "retention": {
+              "checkpoint_grace_days": 7,
+              "agent_log_days": 90
+            },
+            "limits": {
+              "max_sandboxes_per_user": 3,
+              "visitor_max_sandboxes": 1,
+              "visitor_max_launches_per_day": 5
+            },
+            "triggers": {
+              "enabled": false,
+              "orchestration_paused": false
+            },
+            "marketplace": {
+              "enabled": false
+            }
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "admin-settings-conflict",
+      "operation": "PATCH /api/v1/admin/settings",
+      "scenario": "admin_operator",
+      "request": {
+        "method": "PATCH",
+        "path": "/api/v1/admin/settings",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "expected_revision": 0,
+          "marketplace": {
+            "enabled": true
+          }
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/settings-conflict",
+          "title": "settings conflict",
+          "status": 409,
+          "detail": "Platform settings changed before this operation completed.",
+          "code": "settings_conflict"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "admin-settings-replace",
+      "operation": "PUT /api/v1/admin/settings",
+      "scenario": "admin_operator",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/admin/settings",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "expected_revision": 1,
+          "settings": {
+            "defaults": {
+              "sandbox_profile": {
+                "id": "sbp_default",
+                "revision": 1
+              },
+              "workspace_profile": {
+                "id": "wkp_default",
+                "revision": 1
+              },
+              "agent_profile": {
+                "id": "agp_default",
+                "revision": 1
+              }
+            },
+            "inactivity": {
+              "pause_after_seconds": 900
+            },
+            "retention": {
+              "checkpoint_grace_days": 7,
+              "agent_log_days": 90
+            },
+            "limits": {
+              "max_sandboxes_per_user": 9,
+              "visitor_max_sandboxes": 1,
+              "visitor_max_launches_per_day": 5
+            },
+            "triggers": {
+              "enabled": false,
+              "orchestration_paused": false
+            },
+            "marketplace": {
+              "enabled": false
+            }
+          }
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "revision": 2,
+          "settings": {
+            "defaults": {
+              "sandbox_profile": {
+                "id": "sbp_default",
+                "revision": 1
+              },
+              "workspace_profile": {
+                "id": "wkp_default",
+                "revision": 1
+              },
+              "agent_profile": {
+                "id": "agp_default",
+                "revision": 1
+              }
+            },
+            "inactivity": {
+              "pause_after_seconds": 900
+            },
+            "checkpoints": {
+              "interval_seconds": 1800
+            },
+            "retention": {
+              "checkpoint_grace_days": 7,
+              "agent_log_days": 90
+            },
+            "limits": {
+              "max_sandboxes_per_user": 9,
+              "visitor_max_sandboxes": 1,
+              "visitor_max_launches_per_day": 5
+            },
+            "triggers": {
+              "enabled": false,
+              "orchestration_paused": false
+            },
+            "marketplace": {
+              "enabled": false
+            }
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "admin-settings-reset",
+      "operation": "POST /api/v1/admin/settings/reset",
+      "scenario": "admin_operator",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/settings/reset",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "expected_revision": 2
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "revision": 3,
+          "settings": {
+            "defaults": {
+              "sandbox_profile": {
+                "id": "sbp_default",
+                "revision": 1
+              },
+              "workspace_profile": {
+                "id": "wkp_default",
+                "revision": 1
+              },
+              "agent_profile": {
+                "id": "agp_default",
+                "revision": 1
+              }
+            },
+            "inactivity": {
+              "pause_after_seconds": 900
+            },
+            "checkpoints": {
+              "interval_seconds": 1800
+            },
+            "retention": {
+              "checkpoint_grace_days": 7,
+              "agent_log_days": 90
+            },
+            "limits": {
+              "max_sandboxes_per_user": 3,
+              "visitor_max_sandboxes": 1,
+              "visitor_max_launches_per_day": 5
+            },
+            "triggers": {
+              "enabled": false,
+              "orchestration_paused": false
+            },
+            "marketplace": {
+              "enabled": true
+            }
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "admin-settings-unknown-field",
+      "operation": "PATCH /api/v1/admin/settings",
+      "scenario": "admin_operator",
+      "request": {
+        "method": "PATCH",
+        "path": "/api/v1/admin/settings",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "expected_revision": 3,
+          "marketplace": {
+            "enabled": true,
+            "private_token": "must-not-return"
+          }
+        }
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-request",
+          "title": "invalid request",
+          "status": 422,
+          "detail": "The JSON body does not match the platform settings contract.",
+          "code": "invalid_request",
+          "field": "private_token",
+          "path": "marketplace.private_token"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "admin-settings-invalid",
+      "operation": "PATCH /api/v1/admin/settings",
+      "scenario": "admin_operator",
+      "request": {
+        "method": "PATCH",
+        "path": "/api/v1/admin/settings",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "expected_revision": 3,
+          "inactivity": {
+            "pause_after_seconds": 59
+          }
+        }
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-request",
+          "title": "invalid request",
+          "status": 422,
+          "detail": "The JSON body does not match the platform settings contract.",
+          "code": "invalid_request"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "admin-trigger-pause",
+      "operation": "POST /api/v1/admin/triggers/pause",
+      "scenario": "admin_operator",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/triggers/pause",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "revision": 4,
+          "settings": {
+            "defaults": {
+              "sandbox_profile": {
+                "id": "sbp_default",
+                "revision": 1
+              },
+              "workspace_profile": {
+                "id": "wkp_default",
+                "revision": 1
+              },
+              "agent_profile": {
+                "id": "agp_default",
+                "revision": 1
+              }
+            },
+            "inactivity": {
+              "pause_after_seconds": 900
+            },
+            "checkpoints": {
+              "interval_seconds": 1800
+            },
+            "retention": {
+              "checkpoint_grace_days": 7,
+              "agent_log_days": 90
+            },
+            "limits": {
+              "max_sandboxes_per_user": 3,
+              "visitor_max_sandboxes": 1,
+              "visitor_max_launches_per_day": 5
+            },
+            "triggers": {
+              "enabled": false,
+              "orchestration_paused": true
+            },
+            "marketplace": {
+              "enabled": true
+            }
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "admin-trigger-resume",
+      "operation": "POST /api/v1/admin/triggers/resume",
+      "scenario": "admin_operator",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/triggers/resume",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "revision": 5,
+          "settings": {
+            "defaults": {
+              "sandbox_profile": {
+                "id": "sbp_default",
+                "revision": 1
+              },
+              "workspace_profile": {
+                "id": "wkp_default",
+                "revision": 1
+              },
+              "agent_profile": {
+                "id": "agp_default",
+                "revision": 1
+              }
+            },
+            "inactivity": {
+              "pause_after_seconds": 900
+            },
+            "checkpoints": {
+              "interval_seconds": 1800
+            },
+            "retention": {
+              "checkpoint_grace_days": 7,
+              "agent_log_days": 90
+            },
+            "limits": {
+              "max_sandboxes_per_user": 3,
+              "visitor_max_sandboxes": 1,
+              "visitor_max_launches_per_day": 5
+            },
+            "triggers": {
+              "enabled": false,
+              "orchestration_paused": false
+            },
+            "marketplace": {
+              "enabled": true
+            }
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "admin-sandbox-list",
+      "operation": "GET /api/v1/admin/sandboxes",
+      "scenario": "admin_operator",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/admin/sandboxes?owner=owner-a&status=active&runtime_version=runtime-v1",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "items": [
+            {
+              "id": "sbx_contract",
+              "owner": "owner-a",
+              "owner_name": "Alex Chen",
+              "name": "Sandbox sbx_contract",
+              "status": "active",
+              "runtime_version": "runtime-v1",
+              "agent_count": 0,
+              "last_activity_at": "2026-09-05T00:00:00Z",
+              "retired_at": null
+            }
+          ],
+          "next": null
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "admin-sandbox-read",
+      "operation": "GET /api/v1/admin/sandboxes/{id}",
+      "scenario": "admin_operator",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/admin/sandboxes/sbx_contract",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "owner_name": "Alex Chen",
+          "sandbox": {
+            "id": "sbx_contract",
+            "owner": "owner-a",
+            "name": "Sandbox sbx_contract",
+            "origin": {
+              "type": "manual"
+            },
+            "profile": {
+              "id": "sbp_test",
+              "revision": 1,
+              "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "content": {
+                "cpu_millis": 1000,
+                "memory_mib": 2048,
+                "nyxid_services": [],
+                "agent_provider": "codex",
+                "model_access": "chronoai_managed",
+                "max_workspaces": 4,
+                "max_agents_per_workspace": 4,
+                "workspace_profiles": [],
+                "software_install_commands": [],
+                "environment_variables": []
+              }
+            },
+            "status": "active",
+            "runtime": {
+              "runtime_id": "runtime-sbx_contract",
+              "runtime_version": "runtime-v1",
+              "provision_generation": 1,
+              "bound_at": "2026-09-05T00:00:00Z"
+            },
+            "credential": {
+              "reaches": [],
+              "key_generation": 0,
+              "delivered": false,
+              "revoke_debt": [],
+              "sign_in": "not_required"
+            },
+            "work": {
+              "step": {
+                "kind": "wait_for_credential_rotation"
+              },
+              "ready_at": "2026-09-05T00:00:00Z",
+              "next_fence": 1,
+              "attempts": 0
+            },
+            "limits": {
+              "max_workspaces": 4,
+              "max_agents_per_workspace": 4
+            },
+            "lifecycle": {
+              "next_authority": 1,
+              "runtime_generation_high_water": 1,
+              "checkpoints": {
+                "latest": null,
+                "previous": null
+              },
+              "rotation": {
+                "rotations": 0
+              }
+            },
+            "last_activity_at": "2026-09-05T00:00:00Z",
+            "created_at": "2026-09-05T00:00:00Z",
+            "updated_at": "2026-09-05T00:00:00Z",
+            "revision": 1
+          },
+          "workspaces": [],
+          "agents": []
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "admin-sandbox-events",
+      "operation": "GET /api/v1/admin/sandboxes/{id}/events",
+      "scenario": "admin_operator",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/admin/sandboxes/sbx_contract/events?after=0&limit=10",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": [],
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "admin-sandbox-retire-missing",
+      "operation": "POST /api/v1/admin/sandboxes/{id}/retire",
+      "scenario": "admin_operator",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/sandboxes/sbx_missing/retire",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/sandbox-not-found",
+          "title": "sandbox not found",
+          "status": 404,
+          "detail": "No sandbox matches this request.",
+          "code": "sandbox_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "admin-profile-list",
+      "operation": "GET /api/v1/admin/profiles",
+      "scenario": "admin_operator",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/admin/profiles?kind=agent&visibility=public&owner=owner-a",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "items": [
+            {
+              "kind": "agent",
+              "id": "agp_contract",
+              "owner": "owner-a",
+              "owner_name": "Alex Chen",
+              "name": "Agent agp_contract",
+              "visibility": "public",
+              "updated_at": "2026-09-05T00:00:00Z",
+              "retired_at": null
+            },
+            {
+              "kind": "agent",
+              "id": "agp_default",
+              "owner": "owner-a",
+              "owner_name": "Alex Chen",
+              "name": "Agent agp_default",
+              "visibility": "public",
+              "updated_at": "2026-09-05T00:00:00Z",
+              "retired_at": null
+            }
+          ],
+          "next": null
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "admin-profile-retire",
+      "operation": "POST /api/v1/admin/profiles/{kind}/{id}/retire",
+      "scenario": "admin_operator",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/profiles/agent/agp_contract/retire",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "kind": "agent",
+          "id": "agp_contract",
+          "owner": "owner-a",
+          "owner_name": null,
+          "name": "Agent agp_contract",
+          "visibility": "public",
+          "updated_at": "2026-09-05T00:00:00Z",
+          "retired_at": "2026-09-05T00:00:00Z"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "admin_profile_retired": "/retired_at",
+        "admin_profile_updated": "/updated_at"
+      }
+    },
+    {
+      "id": "admin-profile-protected",
+      "operation": "POST /api/v1/admin/profiles/{kind}/{id}/retire",
+      "scenario": "admin_operator",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/profiles/agent/agp_default/retire",
+        "headers": {}
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/profile-protected",
+          "title": "profile protected",
+          "status": 409,
+          "detail": "Deployment-owned profiles cannot be retired.",
+          "code": "profile_protected"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "admin-profile-missing",
+      "operation": "POST /api/v1/admin/profiles/{kind}/{id}/retire",
+      "scenario": "admin_operator",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/profiles/agent/agp_missing/retire",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/profile-not-found",
+          "title": "profile not found",
+          "status": 404,
+          "detail": "No profile matches this request.",
+          "code": "profile_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "admin-runtime-inventory",
+      "operation": "GET /api/v1/admin/runtime-inventory",
+      "scenario": "admin_operator",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/admin/runtime-inventory",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "observed_at": "2026-09-05T00:00:00Z",
+          "runtimes": [
+            {
+              "runtime_id": "runtime-a",
+              "generation": 3,
+              "owner_reference": "sbx_a",
+              "status": "ready"
+            }
+          ]
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "admin-runtime-unavailable",
+      "operation": "GET /api/v1/admin/runtime-inventory",
+      "scenario": "admin_no_inventory",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/admin/runtime-inventory",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/operator-service-unavailable",
+          "title": "operator service unavailable",
+          "status": 503,
+          "detail": "An operator dependency could not complete this request.",
+          "code": "operator_service_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "admin-activity-empty-filter",
+      "operation": "GET /api/v1/admin/activity",
+      "scenario": "admin_operator",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/admin/activity?actor=unrelated-actor&limit=10",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "items": [],
+          "next": null
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "admin-invalid-query",
+      "operation": "GET /api/v1/admin/sandboxes",
+      "scenario": "admin_operator",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/admin/sandboxes?limit=0",
+        "headers": {}
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-admin-request",
+          "title": "invalid admin request",
+          "status": 400,
+          "detail": "The operator request parameters are not valid.",
+          "code": "invalid_admin_request"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "admin-forbidden",
+      "operation": "GET /api/v1/admin/settings",
+      "scenario": "admin_forbidden",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/admin/settings",
+        "headers": {}
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-an-operator",
+          "title": "not an operator",
+          "status": 403,
+          "detail": "This operation requires an operator capability this caller does not hold.",
+          "code": "forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "admin-identifier-hidden",
+      "operation": "GET /api/v1/admin/sandboxes/{id}",
+      "scenario": "admin_forbidden",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/admin/sandboxes/sbx_contract",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/sandbox-not-found",
+          "title": "sandbox not found",
+          "status": 404,
+          "detail": "No sandbox matches this request.",
+          "code": "sandbox_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "admin-unauthenticated",
+      "operation": "GET /api/v1/admin/settings",
+      "scenario": "admin_anonymous",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/admin/settings",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "admin-sandbox-retire-success",
+      "operation": "POST /api/v1/admin/sandboxes/{id}/retire",
+      "scenario": "admin_operator",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/sandboxes/sbx_contract/retire",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "id": "sbx_contract",
+          "owner": "owner-a",
+          "name": "Sandbox sbx_contract",
+          "origin": {
+            "type": "manual"
+          },
+          "profile": {
+            "id": "sbp_test",
+            "revision": 1,
+            "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "content": {
+              "cpu_millis": 1000,
+              "memory_mib": 2048,
+              "nyxid_services": [],
+              "agent_provider": "codex",
+              "model_access": "chronoai_managed",
+              "max_workspaces": 4,
+              "max_agents_per_workspace": 4,
+              "workspace_profiles": [],
+              "software_install_commands": [],
+              "environment_variables": []
+            }
+          },
+          "status": "retiring",
+          "runtime": {
+            "runtime_id": "runtime-sbx_contract",
+            "runtime_version": "runtime-v1",
+            "provision_generation": 1,
+            "bound_at": "2026-09-05T00:00:00Z"
+          },
+          "credential": {
+            "reaches": [],
+            "key_generation": 0,
+            "delivered": false,
+            "revoke_debt": [],
+            "sign_in": "not_required"
+          },
+          "work": {
+            "step": {
+              "kind": "stop_agents"
+            },
+            "ready_at": "2026-09-05T00:00:00Z",
+            "next_fence": 1,
+            "attempts": 0
+          },
+          "limits": {
+            "max_workspaces": 4,
+            "max_agents_per_workspace": 4
+          },
+          "lifecycle": {
+            "next_authority": 1,
+            "runtime_generation_high_water": 1,
+            "checkpoints": {
+              "latest": null,
+              "previous": null
+            },
+            "rotation": {
+              "rotations": 0
+            }
+          },
+          "last_activity_at": "2026-09-05T00:00:00Z",
+          "created_at": "2026-09-05T00:00:00Z",
+          "updated_at": "2026-09-05T00:00:00Z",
+          "revision": 2
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "admin_retire_ready": "/work/ready_at",
+        "admin_retire_updated": "/updated_at"
+      }
+    },
+    {
+      "id": "admin-activity-configure",
+      "operation": "GET /api/v1/admin/activity",
+      "scenario": "admin_operator",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/admin/activity?actor=operator-a&action=configure&limit=1",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "items": [
+            {
+              "id": "activity_contract",
+              "at": "2026-09-05T00:00:00Z",
+              "actor": "operator-a",
+              "actor_name": "Morgan Park",
+              "target_name": null,
+              "action": "configure",
+              "target": {
+                "kind": "resource",
+                "id": "platform_settings"
+              },
+              "outcome": {
+                "status": "succeeded"
+              },
+              "detail": {
+                "setting": "platform_settings",
+                "revision": "1"
+              }
+            }
+          ],
+          "next": null
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "admin_activity_at": "/items/0/at",
+        "admin_activity_id": "/items/0/id"
+      }
+    }
+  ]
+}

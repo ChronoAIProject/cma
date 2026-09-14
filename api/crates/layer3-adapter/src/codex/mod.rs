@@ -1,311 +1,340 @@
-//! Adapter driving the Codex kernel inside a provisioned sandbox.
-//!
-//! What is left here after the second kernel arrived: what this kernel's
-//! sandbox is shaped like, what its agent needs in its environment, what it can
-//! actually do, and the words its bridge uses that no other bridge does.
-//! Everything else — bringing a sandbox up, the link back, the credential that
-//! rides on it, the protocol client — is shared machinery in `hosted`, because
-//! none of it changes with the agent inside.
+//! Codex-specific configuration, home layout, and bridge launch.
 
 mod config;
-mod environment;
-mod permission;
+mod connections;
+mod home;
 
-pub use environment::CodexSandboxSpec;
+use std::sync::Arc;
 
-use crate::hosted::{AcpConversationBinding, HostedKernel};
-use crate::sandbox::SandboxClient;
-use crate::ConversationUpdate;
-use crate::{
-    AdapterError, ConversationChannel, KernelAdapter, KernelCapabilities, ResourceSample,
-    RuntimeHandle, RuntimeIdentity, RuntimeListing, RuntimeMode, RuntimeOptions,
-    RuntimeReservationIdentity, RuntimeSpec, TerminalChannel, WorkspaceCheckpointPackage,
-    WorkspaceCheckpointRequest,
-};
 use tokio::sync::mpsc;
 
-/// Drives Codex inside a provider-managed sandbox.
+pub use config::{render_config, CodexConfig};
+pub use connections::{CODEX_SUBSCRIPTION_CONNECTION, CONNECTION_SERVICES, PUBLIC_CODEX_SERVICE};
+pub(crate) use home::RESERVED_ENVIRONMENT_NAMES;
+pub use home::{
+    checkpoint_exclusions, render_agent_home, render_launch, AGENT_HOME_ROOT, BRIDGE_PROGRAM,
+    SHARED_AUTH_PATH,
+};
+
+use crate::hosted::{
+    HostedAdapter, HostedAgentOpenSettings, HostedAgentRuntime, HostedBackend, HostedDeployment,
+    InMemoryHostedBackend,
+};
+use crate::{
+    AdapterCapabilities, AgentCloseRequest, AgentHomePlan, AgentHomeRemoveRequest,
+    AgentHomeRequest, AgentLaunch, AgentOpenRequest, AgentSlot, CheckpointHoldReceipt,
+    CheckpointHoldRequest, CheckpointReceipt, CheckpointRequest, CheckpointWriterResumeReceipt,
+    CheckpointWriterResumeRequest, ConversationChannel, ConversationSnapshot, ConversationUpdate,
+    CredentialFrame, InstallReceipt, InstallRequest, ResourceReading, RestoreBootstrapReceipt,
+    RestoreBootstrapRequest, RestoreRequest, RuntimeAdoptionRequest, RuntimeHandle,
+    RuntimeObservation, RuntimeProvisionRequest, SandboxAdapter, SandboxSpec, SetupReceipt,
+    WorkspaceReceipt, WorkspaceRemoveRequest, WorkspaceRequest, WorkspaceSetupRequest,
+    WorktreeReceipt, WorktreeRef, WorktreeRequest,
+};
+
+/// Configuration for Codex inside a hosted sandbox.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct CodexSandboxSpec {
+    pub deployment: HostedDeployment,
+    pub config: CodexConfig,
+}
+
+struct CodexRuntime {
+    config: CodexConfig,
+}
+
+impl HostedAgentRuntime for CodexRuntime {
+    fn home_plan(&self, request: &AgentHomeRequest) -> crate::Result<AgentHomePlan> {
+        render_agent_home(request, &self.config)
+    }
+
+    fn launch(&self, request: &AgentOpenRequest) -> crate::Result<AgentLaunch> {
+        render_launch(request)
+    }
+
+    fn open_settings(&self, request: &AgentOpenRequest) -> crate::Result<HostedAgentOpenSettings> {
+        let permission_mode = match request.options.permission {
+            crate::PermissionLevel::Guarded => "read-only",
+            crate::PermissionLevel::Autonomous => "agent-full-access",
+        };
+        Ok(HostedAgentOpenSettings {
+            permission_mode: Some(permission_mode.into()),
+            own_credential: request.options.own_credential,
+        })
+    }
+}
+
+/// Complete Codex sandbox adapter.
 pub struct CodexAdapter {
-    kernel: &'static str,
-    hosted: HostedKernel,
-    spec: CodexSandboxSpec,
+    hosted: HostedAdapter,
 }
 
 impl CodexAdapter {
-    /// Build an adapter over a sandbox provider.
-    pub fn new(client: SandboxClient, spec: CodexSandboxSpec) -> Self {
+    pub fn new(backend: Arc<dyn HostedBackend>, spec: CodexSandboxSpec) -> Self {
+        let runtime = Arc::new(CodexRuntime {
+            config: spec.config,
+        });
         Self {
-            kernel: "codex",
-            hosted: HostedKernel::new(
-                client,
-                spec.deployment.shape.clone(),
-                "codex",
-                spec.deployment.skills_root.clone(),
-                spec.deployment.agent_notes.clone(),
-            ),
-            spec,
+            hosted: HostedAdapter::new(backend, runtime, spec.deployment),
         }
     }
 
-    /// Build a Codex adapter under a deployment-owned opaque kernel name.
-    ///
-    /// A distinct name lets one deployment route a closed session profile to
-    /// a dedicated provider lane while preserving Codex's implementation and
-    /// keeping the selection provider-neutral above this layer.
-    pub fn named(kernel: &'static str, client: SandboxClient, spec: CodexSandboxSpec) -> Self {
-        Self {
-            kernel,
-            hosted: HostedKernel::new_strict(
-                client,
-                spec.deployment.shape.clone(),
-                kernel,
-                spec.deployment.skills_root.clone(),
-                spec.deployment.agent_notes.clone(),
-            ),
-            spec,
-        }
+    pub fn with_backend<B>(backend: B, spec: CodexSandboxSpec) -> Self
+    where
+        B: HostedBackend + 'static,
+    {
+        Self::new(Arc::new(backend), spec)
     }
 
-    /// Bind Codex-specific permission vocabulary to shared hosted ACP.
-    fn conversation_binding(&self, options: &RuntimeOptions) -> AcpConversationBinding {
-        AcpConversationBinding::new(
-            Some(
-                permission::mode_for(options.permission, options.restricted_service_gateway)
-                    .to_string(),
-            ),
-            options.resume_conversation.clone(),
-            options.own_credential,
-            options.working_directory.clone(),
-            options.conversation_slot.clone(),
-        )
+    /// Build the adapter and retain an inspectable hosted test double.
+    pub fn in_memory(spec: CodexSandboxSpec) -> (Self, InMemoryHostedBackend) {
+        let backend = InMemoryHostedBackend::default();
+        (Self::with_backend(backend.clone(), spec), backend)
+    }
+
+    pub fn hosted(&self) -> &HostedAdapter {
+        &self.hosted
+    }
+
+    pub fn with_home_volumes(mut self, store: Arc<dyn crate::HomeVolumeStore>) -> Self {
+        self.hosted = self.hosted.with_home_volumes(store);
+        self
     }
 }
 
 #[async_trait::async_trait]
-impl KernelAdapter for CodexAdapter {
-    fn kernel_name(&self) -> &'static str {
-        self.kernel
+impl SandboxAdapter for CodexAdapter {
+    fn capabilities(&self) -> AdapterCapabilities {
+        self.hosted.capabilities()
     }
 
-    fn capabilities(&self) -> KernelCapabilities {
-        // Every one of these was proven against the pinned kernel version
-        // before it was claimed here, rather than assumed from its
-        // documentation — see the spike recorded on issue #76.
-        KernelCapabilities {
-            conversation: true,
-            terminal: true,
-            // A rollout carried into a fresh home resumes by identifier, which
-            // is what makes a session survive its runtime being replaced.
-            snapshot: true,
-            // The kernel accepts input mid-turn and continues the same turn
-            // rather than needing it cancelled and restarted.
-            steer: true,
-            interrupt: true,
-            // Reported per turn, with the context window alongside.
-            usage: true,
-            resources: true,
-        }
+    fn home_volumes(&self) -> Option<&dyn crate::HomeVolumeStore> {
+        self.hosted.home_volumes()
     }
 
-    async fn provision(&self, spec: &RuntimeSpec) -> Result<RuntimeHandle, AdapterError> {
-        // An own-account session is provisioned now rather than refused. The
-        // refusal that stood here was right for as long as nothing signed the
-        // agent in — a session accepted and then run on the delegated
-        // credential would spend the platform's budget while its owner
-        // believed otherwise. What changed is that the kernel can now sign
-        // itself in inside the sandbox, and its configuration names no proxy,
-        // so an own-account session either spends the owner's account or
-        // cannot reach a model at all. Neither outcome is the quiet
-        // substitution the refusal existed to prevent.
-
-        // Refused for the same reason, and it is the same defect: a caller
-        // asked for something, was told nothing, and got a session without it.
-        self.spec
-            .deployment
-            .refuse_undeliverable(&spec.environment)?;
-        self.spec.deployment.refuse_missing_policy_verifier(spec)?;
-
-        self.hosted
-            .provision(spec, self.environment_for(spec))
-            .await
+    async fn provision(&self, spec: &SandboxSpec) -> crate::Result<RuntimeHandle> {
+        self.hosted.provision(spec).await
     }
 
-    async fn snapshot(&self, handle: &RuntimeHandle) -> Result<Option<Vec<u8>>, AdapterError> {
-        self.hosted.snapshot(handle).await
+    async fn runtime_status(&self, handle: &RuntimeHandle) -> crate::Result<crate::RuntimeStatus> {
+        self.hosted.runtime_status(handle).await
     }
 
-    async fn snapshot_conversation(
+    async fn provision_runtime(
+        &self,
+        request: &RuntimeProvisionRequest,
+    ) -> crate::Result<RuntimeHandle> {
+        self.hosted.provision_runtime(request).await
+    }
+
+    async fn runtime_inventory(&self) -> crate::Result<Vec<RuntimeObservation>> {
+        self.hosted.runtime_inventory().await
+    }
+
+    async fn adopt_runtime(
+        &self,
+        request: &RuntimeAdoptionRequest,
+    ) -> crate::Result<Option<RuntimeObservation>> {
+        self.hosted.adopt_runtime(request).await
+    }
+
+    async fn reclaim_runtime(&self, observation: &RuntimeObservation) -> crate::Result<()> {
+        self.hosted.reclaim_runtime(observation).await
+    }
+
+    async fn run_install(
         &self,
         handle: &RuntimeHandle,
-        conversation_id: &str,
-    ) -> Result<Option<Vec<u8>>, AdapterError> {
-        self.hosted
-            .snapshot_conversation(handle, conversation_id)
-            .await
+        request: &InstallRequest,
+    ) -> crate::Result<InstallReceipt> {
+        self.hosted.run_install(handle, request).await
     }
 
-    async fn restore_conversation(
+    async fn bootstrap_restore(
         &self,
         handle: &RuntimeHandle,
-        conversation_slot: &str,
-        snapshot: &[u8],
-    ) -> Result<(), AdapterError> {
-        self.hosted
-            .restore_conversation(handle, conversation_slot, snapshot)
-            .await
+        request: &RestoreBootstrapRequest,
+    ) -> crate::Result<RestoreBootstrapReceipt> {
+        self.hosted.bootstrap_restore(handle, request).await
     }
 
-    async fn prepare_workspace_source(
+    async fn deliver_credential(
         &self,
         handle: &RuntimeHandle,
-        request: &crate::WorkspaceSourceRequest,
-    ) -> Result<crate::WorkspaceSourceReceipt, AdapterError> {
-        self.hosted.prepare_workspace_source(handle, request).await
+        frame: CredentialFrame,
+    ) -> crate::Result<()> {
+        self.hosted.deliver_credential(handle, frame).await
     }
 
-    async fn add_workspace_tree(
+    async fn prepare_workspace(
         &self,
         handle: &RuntimeHandle,
-        request: &crate::WorkspaceTreeRequest,
-    ) -> Result<crate::WorkspaceTreeReceipt, AdapterError> {
-        self.hosted.add_workspace_tree(handle, request).await
-    }
-
-    async fn remove_workspace_tree(
-        &self,
-        handle: &RuntimeHandle,
-        name: &str,
-    ) -> Result<(), AdapterError> {
-        self.hosted.remove_workspace_tree(handle, name).await
+        request: &WorkspaceRequest,
+    ) -> crate::Result<WorkspaceReceipt> {
+        self.hosted.prepare_workspace(handle, request).await
     }
 
     async fn run_workspace_setup(
         &self,
         handle: &RuntimeHandle,
-        commands: &[String],
-    ) -> Result<crate::WorkspaceSetupReceipt, AdapterError> {
-        self.hosted.run_workspace_setup(handle, commands).await
+        request: &WorkspaceSetupRequest,
+    ) -> crate::Result<SetupReceipt> {
+        self.hosted.run_workspace_setup(handle, request).await
     }
 
-    async fn checkpoint_workspace(
+    async fn remove_workspace(
         &self,
         handle: &RuntimeHandle,
-        request: &WorkspaceCheckpointRequest,
-    ) -> Result<WorkspaceCheckpointPackage, AdapterError> {
-        self.hosted.checkpoint_workspace(handle, request).await
+        request: &WorkspaceRemoveRequest,
+    ) -> crate::Result<()> {
+        self.hosted.remove_workspace(handle, request).await
     }
 
-    async fn resume_workspace_writers(
+    async fn add_worktree(
         &self,
         handle: &RuntimeHandle,
-        resume_token: &str,
-    ) -> Result<(), AdapterError> {
+        authority_fence: u64,
+        request: &WorktreeRequest,
+    ) -> crate::Result<WorktreeReceipt> {
         self.hosted
-            .resume_workspace_writers(handle, resume_token)
+            .add_worktree(handle, authority_fence, request)
             .await
     }
 
-    async fn attach_terminal(
+    async fn remove_worktree(
         &self,
         handle: &RuntimeHandle,
-    ) -> Result<TerminalChannel, AdapterError> {
-        self.hosted.attach_terminal(handle).await
+        authority_fence: u64,
+        request: &WorktreeRef,
+    ) -> crate::Result<()> {
+        self.hosted
+            .remove_worktree(handle, authority_fence, request)
+            .await
     }
 
-    async fn open_conversation(
+    async fn materialize_agent_home(
         &self,
         handle: &RuntimeHandle,
-        options: &RuntimeOptions,
+        authority_fence: u64,
+        request: &AgentHomeRequest,
+    ) -> crate::Result<()> {
+        self.hosted
+            .materialize_agent_home(handle, authority_fence, request)
+            .await
+    }
+
+    async fn cache_skill_archive(
+        &self,
+        handle: &RuntimeHandle,
+        archive: &crate::SkillArchive,
+    ) -> crate::Result<()> {
+        self.hosted.cache_skill_archive(handle, archive).await
+    }
+
+    async fn remove_agent_home(
+        &self,
+        handle: &RuntimeHandle,
+        authority_fence: u64,
+        request: &AgentHomeRemoveRequest,
+    ) -> crate::Result<()> {
+        self.hosted
+            .remove_agent_home(handle, authority_fence, request)
+            .await
+    }
+
+    async fn open_agent(
+        &self,
+        handle: &RuntimeHandle,
+        authority_fence: u64,
+        request: &AgentOpenRequest,
         updates: mpsc::Sender<ConversationUpdate>,
-    ) -> Result<ConversationChannel, AdapterError> {
+    ) -> crate::Result<ConversationChannel> {
         self.hosted
-            .open_acp_conversation(handle, self.conversation_binding(options), updates)
+            .open_agent(handle, authority_fence, request, updates)
             .await
     }
 
-    async fn refresh_credential(
+    async fn reconnect_agent(
         &self,
         handle: &RuntimeHandle,
-        credential: &crate::RuntimeCredential,
-    ) -> Result<(), AdapterError> {
-        self.hosted.refresh_credential(handle, credential).await
-    }
-
-    async fn install_runtime_policy(
-        &self,
-        handle: &RuntimeHandle,
-        envelope: &str,
-    ) -> Result<crate::RuntimePolicyReceipt, AdapterError> {
-        self.hosted.install_runtime_policy(handle, envelope).await
-    }
-
-    async fn install_sponsored_model_authority(
-        &self,
-        handle: &RuntimeHandle,
-        authority: &crate::SponsoredModelRuntimeAuthority,
-    ) -> Result<crate::SponsoredModelAuthorityReceipt, AdapterError> {
+        authority_fence: u64,
+        request: &AgentOpenRequest,
+        conversation_id: &str,
+        updates: mpsc::Sender<ConversationUpdate>,
+    ) -> crate::Result<ConversationChannel> {
         self.hosted
-            .install_sponsored_model_authority(handle, authority)
+            .reconnect_agent(handle, authority_fence, request, conversation_id, updates)
             .await
     }
 
-    async fn observe_runtime_policy(
+    async fn close_agent(
         &self,
         handle: &RuntimeHandle,
-    ) -> Result<crate::RuntimePolicyObservation, AdapterError> {
-        self.hosted.observe_runtime_policy(handle).await
+        authority_fence: u64,
+        request: &AgentCloseRequest,
+    ) -> crate::Result<()> {
+        self.hosted
+            .close_agent(handle, authority_fence, request)
+            .await
     }
 
-    async fn probe_runtime_gateway(
+    async fn capture_agent(
         &self,
         handle: &RuntimeHandle,
-        request: &crate::RuntimeGatewayProbeRequest,
-    ) -> Result<crate::RuntimeGatewayProbeReceipt, AdapterError> {
-        self.hosted.probe_runtime_gateway(handle, request).await
+        agent: &AgentSlot,
+    ) -> crate::Result<ConversationSnapshot> {
+        self.hosted.capture_agent(handle, agent).await
     }
 
-    async fn switch_plane(
+    fn checkpoint_exclusions(&self, agents: &[AgentSlot]) -> crate::Result<Vec<String>> {
+        home::checkpoint_exclusions(agents)
+    }
+
+    async fn checkpoint(
         &self,
         handle: &RuntimeHandle,
-        mode: RuntimeMode,
-    ) -> Result<(), AdapterError> {
-        // The command for each front-end, in this kernel's own vocabulary.
-        // The supervisor refuses a command it was not told at boot it may run.
-        let command = match mode {
-            RuntimeMode::Terminal => "codex".to_string(),
-            RuntimeMode::Conversation => self.spec.deployment.bridge_command.clone(),
-        };
-        self.hosted.switch_plane(handle, &command).await
+        request: &CheckpointRequest,
+    ) -> crate::Result<CheckpointReceipt> {
+        self.hosted.checkpoint(handle, request).await
     }
 
-    async fn list_runtimes(&self) -> Result<Vec<RuntimeListing>, AdapterError> {
-        self.hosted.list_runtimes().await
-    }
-
-    async fn watch_resources(
+    async fn checkpoint_for_teardown(
         &self,
         handle: &RuntimeHandle,
-        readings: mpsc::Sender<ResourceSample>,
-    ) -> Result<(), AdapterError> {
-        self.hosted.watch_resources(handle, readings).await
+        request: &CheckpointHoldRequest,
+    ) -> crate::Result<CheckpointHoldReceipt> {
+        self.hosted.checkpoint_for_teardown(handle, request).await
     }
 
-    async fn terminate(&self, handle: &RuntimeHandle) -> Result<(), AdapterError> {
-        self.hosted.terminate(handle).await
-    }
-
-    async fn terminate_if_identity(&self, identity: &RuntimeIdentity) -> Result<(), AdapterError> {
-        self.hosted.terminate_if_identity(identity).await
-    }
-
-    async fn discover_runtime_candidates(
+    async fn verify_checkpoint_hold(
         &self,
-        reservation: &RuntimeReservationIdentity,
-    ) -> Result<Vec<RuntimeHandle>, AdapterError> {
-        self.hosted.discover_runtime_candidates(reservation).await
+        handle: &RuntimeHandle,
+        request: &CheckpointHoldRequest,
+    ) -> crate::Result<CheckpointHoldReceipt> {
+        self.hosted.verify_checkpoint_hold(handle, request).await
+    }
+
+    async fn resume_checkpoint_writers(
+        &self,
+        handle: &RuntimeHandle,
+        request: &CheckpointWriterResumeRequest,
+    ) -> crate::Result<CheckpointWriterResumeReceipt> {
+        self.hosted.resume_checkpoint_writers(handle, request).await
+    }
+
+    async fn restore(&self, handle: &RuntimeHandle, request: &RestoreRequest) -> crate::Result<()> {
+        self.hosted.restore(handle, request).await
+    }
+
+    async fn resources(&self, handle: &RuntimeHandle) -> crate::Result<ResourceReading> {
+        self.hosted.resources(handle).await
+    }
+
+    async fn teardown(&self, handle: &RuntimeHandle) -> crate::Result<()> {
+        self.hosted.teardown(handle).await
     }
 }
 
 #[cfg(test)]
-#[path = "tests.rs"]
+#[path = "golden_tests.rs"]
 mod tests;
