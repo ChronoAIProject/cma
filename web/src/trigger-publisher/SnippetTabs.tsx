@@ -1,4 +1,5 @@
 import { useId, useRef, useState } from 'react';
+import { Presence } from '../ui/Presence';
 import type { TriggerEmbed } from '@chronoai/cma-sdk';
 import { Button } from '../ui/Button';
 import { IconCopyOutline16 } from '../ui/icons';
@@ -35,9 +36,13 @@ export function CopyCode({ text, label }: { readonly text: string; readonly labe
     <div className="trigger-code">
       <div className="trigger-code__header">
         <span>{label}</span>
-        <span className="trigger-copy-feedback" role="status">
-          {feedback}
-        </span>
+        <Presence>
+          {feedback === '' ? null : (
+            <span className="trigger-copy-feedback" role="status">
+              {feedback}
+            </span>
+          )}
+        </Presence>
         <Button
           size="sm"
           icon={<IconCopyOutline16 />}

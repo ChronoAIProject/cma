@@ -5,14 +5,45 @@ use crate::hosted::deployment::{provider_request_identity, ProviderIdentity};
 use crate::{AdapterError, RuntimeAdoptionRequest, RuntimeHandle, RuntimeObservation, SandboxSpec};
 
 impl HostedAdapter {
+    pub(super) async fn inspect_runtime_status(
+        &self,
+        handle: &RuntimeHandle,
+    ) -> crate::Result<crate::RuntimeStatus> {
+        let state = self.known_state(handle).await?;
+        let home = state
+            .home_volume
+            .as_ref()
+            .ok_or_else(|| AdapterError::Unsupported("runtime has no persistent home".into()))?;
+        self.verify_home(home).await?;
+        let request = crate::RuntimeStatusRequest {
+            sandbox_id: state.provision.sandbox_id,
+            generation: state.provision.generation,
+            home_identity: home.identity()?,
+        };
+        let response = self
+            .exchange(
+                handle,
+                crate::wire::RequestFrame::RuntimeStatus(request.clone()),
+            )
+            .await?;
+        let crate::wire::ResponseFrame::RuntimeStatus(status) = response else {
+            return Err(AdapterError::unexpected_reply("runtime status"));
+        };
+        status.validate_for(&request)?;
+        self.verify_home(home).await?;
+        Ok(status)
+    }
+
     pub(super) async fn provision_exact(
         &self,
         spec: &SandboxSpec,
         generation: u64,
     ) -> crate::Result<RuntimeHandle> {
         let request = self.deployment.render_runtime(spec, generation)?;
+        self.verify_spec_home(spec).await?;
         let identity = provider_request_identity(&request)?;
         let handle = self.backend.provision(request).await?;
+        self.verify_spec_home(spec).await?;
         self.attach_state(handle, spec, identity).await
     }
 
@@ -43,6 +74,7 @@ impl HostedAdapter {
             deployment.image.uri = image.clone();
         }
         let request = deployment.render_runtime(&adoption.spec, adoption.generation)?;
+        self.verify_spec_home(&adoption.spec).await?;
         let expected = provider_request_identity(&request)?;
         let Some(observation) = self.backend.adopt(&adoption.handle, &request).await? else {
             return Ok(None);
@@ -62,6 +94,7 @@ impl HostedAdapter {
         }
         self.attach_state(adoption.handle.clone(), &adoption.spec, expected)
             .await?;
+        self.verify_spec_home(&adoption.spec).await?;
         Ok(Some(observation))
     }
 
@@ -90,6 +123,7 @@ impl HostedAdapter {
             own_credential: spec.own_credential,
             home_directory: spec.home_directory.clone(),
             provision,
+            home_volume: spec.home_volume.clone(),
         };
         let mut states = self.states.lock().await;
         if let Some(state) = states.get(&handle) {
@@ -103,6 +137,32 @@ impl HostedAdapter {
         }
         states.insert(handle.clone(), candidate);
         Ok(handle)
+    }
+
+    async fn verify_spec_home(&self, spec: &SandboxSpec) -> crate::Result<()> {
+        if let Some(home) = &spec.home_volume {
+            home.validate_for(&spec.sandbox_id)?;
+            self.verify_home(home).await?;
+        }
+        Ok(())
+    }
+
+    pub(super) async fn verify_bound_home(&self, handle: &RuntimeHandle) -> crate::Result<()> {
+        let state = self.known_state(handle).await?;
+        if let Some(home) = &state.home_volume {
+            self.verify_home(home).await?;
+        }
+        Ok(())
+    }
+
+    async fn verify_home(&self, home: &crate::HomeVolumeAttachment) -> crate::Result<()> {
+        self.home_volumes
+            .as_ref()
+            .ok_or_else(|| {
+                AdapterError::Unsupported("durable home storage is not configured".into())
+            })?
+            .verify(home)
+            .await
     }
 }
 

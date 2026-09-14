@@ -1,15 +1,75 @@
 //! Request-local cookie authority, fenced against concurrent token replacement.
 
+use std::collections::HashMap;
+use std::sync::{Arc, Weak};
 use std::time::{Duration, SystemTime};
 
 use layer2_core::{Authorization, StoreError, SubjectId};
+use tokio::sync::{Mutex, OnceCell};
 
 use super::{
-    identity, permissions::PermissionEvidence, persistence::SubjectAuthState, AuthState,
-    RequestAuth,
+    identity,
+    permissions::PermissionEvidence,
+    persistence::{DurableSubjectTokens, SecretDigest, SubjectAuthState},
+    AuthState, RequestAuth,
 };
 
 const PROVIDER_VERIFICATION_TIMEOUT: Duration = Duration::from_secs(15);
+const MAX_VERIFICATION_FLIGHTS: usize = 256;
+type VerificationFlight = OnceCell<Result<Arc<identity::VerifiedSubject>, ()>>;
+
+#[derive(Clone, PartialEq, Eq, Hash)]
+struct VerificationKey {
+    subject: SubjectId,
+    incarnation: String,
+    generation: u64,
+    access: SecretDigest,
+    expires_at: SystemTime,
+}
+
+impl VerificationKey {
+    fn new(state: &SubjectAuthState, tokens: &DurableSubjectTokens) -> Self {
+        Self {
+            subject: state.subject.clone(),
+            incarnation: state.incarnation.clone(),
+            generation: state.token_generation,
+            access: SecretDigest::identify("cookie-verification", tokens.access_token.expose()),
+            expires_at: tokens.expires_at,
+        }
+    }
+}
+
+#[derive(Default)]
+pub(super) struct VerificationFlights {
+    entries: Mutex<HashMap<VerificationKey, Weak<VerificationFlight>>>,
+}
+
+impl VerificationFlights {
+    async fn acquire(&self, key: &VerificationKey) -> Arc<VerificationFlight> {
+        let mut entries = self.entries.lock().await;
+        entries.retain(|_, flight| flight.strong_count() > 0);
+        if let Some(flight) = entries.get(key).and_then(Weak::upgrade) {
+            if !flight.initialized() {
+                return flight;
+            }
+        }
+        let flight = Arc::new(OnceCell::new());
+        if entries.len() < MAX_VERIFICATION_FLIGHTS || entries.contains_key(key) {
+            entries.insert(key.clone(), Arc::downgrade(&flight));
+        }
+        flight
+    }
+
+    async fn release(&self, key: &VerificationKey, flight: &Arc<VerificationFlight>) {
+        let mut entries = self.entries.lock().await;
+        if entries
+            .get(key)
+            .is_some_and(|current| current.ptr_eq(&Arc::downgrade(flight)))
+        {
+            entries.remove(key);
+        }
+    }
+}
 
 pub(super) async fn request_for_cookie(
     auth: &AuthState,
@@ -38,13 +98,34 @@ async fn request_with_timeout(
             delegated_credential: None,
         });
     };
-    let verified = tokio::time::timeout(timeout, async {
-        let metadata = auth.metadata().await?;
-        identity::verify_subject(auth, &metadata, tokens.access_token.expose()).await
-    })
+    let key = VerificationKey::new(&state, tokens);
+    let flight = auth.cookie_verifications.acquire(&key).await;
+    // Only overlapping requests share provider work. No completed evidence is cached,
+    // and dropping every caller cancels the provider future rather than detaching it.
+    let verified = match tokio::time::timeout(
+        timeout,
+        flight.get_or_init(|| async {
+            async {
+                let metadata = auth.metadata().await?;
+                identity::verify_subject(auth, &metadata, tokens.access_token.expose()).await
+            }
+            .await
+            .map(Arc::new)
+            .map_err(|_: String| ())
+        }),
+    )
     .await
-    .map_err(|_| unavailable())?
-    .map_err(|_| unavailable())?;
+    {
+        Ok(result) => result.clone(),
+        Err(_) => {
+            identity::verification_failure("cookie", "deadline", None);
+            Err(())
+        }
+    };
+    if flight.initialized() {
+        auth.cookie_verifications.release(&key, &flight).await;
+    }
+    let verified = verified.map_err(|_| unavailable())?;
     if &verified.subject != owner {
         return Err(unavailable());
     }
@@ -59,19 +140,20 @@ async fn request_with_timeout(
                 && current_tokens.expires_at > SystemTime::now()
         });
     if !unchanged {
+        identity::verification_failure("cookie", "authority_changed", None);
         return Err(unavailable());
     }
-    let (authorization, delegated_credential) = match verified.permissions {
+    let (authorization, delegated_credential) = match &verified.permissions {
         PermissionEvidence::Active(permissions) => (
-            crate::permissions::capabilities_from_permissions(permissions),
+            crate::permissions::capabilities_from_permissions(permissions.iter().cloned()),
             Some(tokens.access_token.expose().to_owned()),
         ),
         PermissionEvidence::Inactive => (Authorization::none(), None),
     };
     Ok(RequestAuth {
-        subject: verified.subject,
+        subject: verified.subject.clone(),
         authorization,
-        profile: verified.profile,
+        profile: verified.profile.clone(),
         delegated_credential,
     })
 }

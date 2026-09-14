@@ -161,6 +161,87 @@ async fn exact_replay_is_idempotent_and_changed_bytes_do_not_replace_authority()
 
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable real MongoDB"]
+async fn cleanup_respects_extended_and_legacy_recorded_upload_deadlines() {
+    let (client, store, database) = test_store("upload_deadline").await;
+    let archive = b"staged upload with a retained deadline";
+    let (reference, sha256) = sealed(archive);
+    let identity = ArchiveIdentity::from_input(reference, sha256, archive.len() as u64).unwrap();
+    let now = DateTime::now();
+    let current = ManifestDoc::new("sbx_upload_deadline", &identity, now);
+    let mut legacy = ManifestDoc::new("sbx_upload_deadline", &identity, now);
+    legacy.cleanup_after = DateTime::from_millis(now.timestamp_millis() + 600_000);
+    assert_eq!(
+        current.cleanup_after.timestamp_millis() - now.timestamp_millis(),
+        1_200_000
+    );
+    for stage in [&legacy, &current] {
+        super::publication::admit(&store, stage).await.unwrap();
+        store
+            .objects
+            .upload(&stage.object_key, upload(archive.to_vec()))
+            .await
+            .unwrap();
+    }
+    drop(store);
+    let store = MongoCheckpointObjectStore::open(&client, &database)
+        .await
+        .unwrap();
+    for stage in [&legacy, &current] {
+        let recorded = store
+            .manifests
+            .find_one(doc! { "_id": &stage.id })
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(super::model::read_manifest(recorded).unwrap(), *stage);
+    }
+
+    for elapsed in [599_u64, 600, 1_199, 1_200] {
+        store
+            .cleanup_due(now.to_system_time() + std::time::Duration::from_secs(elapsed))
+            .await
+            .unwrap();
+        for (stage, deadline) in [(&legacy, 600), (&current, 1_200)] {
+            let recorded = store
+                .manifests
+                .find_one(doc! { "_id": &stage.id })
+                .await
+                .unwrap();
+            let downloaded = store
+                .objects
+                .download(
+                    &stage.object_key,
+                    &identity.object_reference,
+                    &identity.sha256,
+                    identity.size_bytes,
+                )
+                .await;
+            if elapsed < deadline {
+                assert_eq!(
+                    super::model::read_manifest(recorded.unwrap()).unwrap(),
+                    *stage
+                );
+                assert_eq!(bytes(downloaded.unwrap()).await.unwrap(), archive);
+            } else {
+                assert!(recorded.is_none());
+                assert!(downloaded.is_err());
+                assert!(store
+                    .tombstones
+                    .find_one(doc! { "_id": &stage.id, "object_key": &stage.object_key })
+                    .await
+                    .unwrap()
+                    .is_some());
+                assert!(super::publication::publish(&store, stage, &identity)
+                    .await
+                    .is_err());
+            }
+        }
+    }
+    client.database(&database).drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable real MongoDB"]
 async fn ownership_is_sandbox_confined_and_purge_does_not_cross_scope() {
     let (client, store, database) = test_store("ownership").await;
     let archive = b"same independently owned archive".to_vec();
@@ -528,7 +609,7 @@ async fn archive_larger_than_bson_document_limit_uses_external_objects() {
 
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
-async fn publication_keeps_two_archives_and_prunes_all_parts_of_the_evicted_one() {
+async fn publication_keeps_latest_archive_and_prunes_all_parts_of_evicted_generations() {
     let (client, _, database) = test_store("retention").await;
     let store = MongoSandboxStore::open(&client, &database).await.unwrap();
     let mut current = active_sandbox("sbx_checkpoint_retention");
@@ -542,18 +623,32 @@ async fn publication_keeps_two_archives_and_prunes_all_parts_of_the_evicted_one(
     let shared_key = object_key(&store, &current, &first.object_reference).await;
 
     let third = stored_checkpoint(&store, &current, 3, b"third generation").await;
+    let third_key = object_key(&store, &current, &third.object_reference).await;
     publish(&store, &mut current, third.clone()).await;
-    assert_archive_present(&store, &current, &first.object_reference).await;
+    assert_archive_present(&store, &current, &third.object_reference).await;
 
     let fourth = stored_checkpoint(&store, &current, 4, b"fourth generation").await;
     publish(&store, &mut current, fourth.clone()).await;
+    let mut download = layer2_core::sandbox::HierarchyReadStore::read_snapshot_archive(
+        &store,
+        &current.id,
+        &fourth,
+    )
+    .await
+    .unwrap();
+    assert_eq!(download.size_bytes, b"fourth generation".len() as u64);
+    let mut downloaded = Vec::new();
+    while let Some(chunk) = download.chunks.recv().await {
+        downloaded.extend(chunk.unwrap());
+    }
+    assert_eq!(downloaded, b"fourth generation");
     store
         .checkpoint_objects
         .cleanup_due(std::time::SystemTime::now())
         .await
         .unwrap();
     assert_archive_absent(&store, &current, &first.object_reference, &shared_key).await;
-    assert_archive_present(&store, &current, &third.object_reference).await;
+    assert_archive_absent(&store, &current, &third.object_reference, &third_key).await;
     assert_archive_present(&store, &current, &fourth.object_reference).await;
     assert_eq!(
         store
@@ -562,7 +657,7 @@ async fn publication_keeps_two_archives_and_prunes_all_parts_of_the_evicted_one(
             .count_documents(doc! { "sandbox_id": current.id.as_str() })
             .await
             .unwrap(),
-        2
+        1
     );
     client.database(&database).drop().await.unwrap();
 }
@@ -585,9 +680,10 @@ async fn ambiguous_publication_reconciles_without_losing_the_new_archive() {
 
     let first = stored_checkpoint(&store, &current, 1, b"first generation").await;
     publish(&store, &mut current, first.clone()).await;
+    let first_key = object_key(&store, &current, &first.object_reference).await;
     let second = stored_checkpoint(&store, &current, 2, b"second generation").await;
     publish(&store, &mut current, second.clone()).await;
-    let first_key = object_key(&store, &current, &first.object_reference).await;
+    let second_key = object_key(&store, &current, &second.object_reference).await;
     let third = stored_checkpoint(&store, &current, 3, b"just published generation").await;
 
     configure_commit_ambiguity(&admin, &app_name).await;
@@ -601,10 +697,10 @@ async fn ambiguous_publication_reconciles_without_losing_the_new_archive() {
         .await
         .unwrap();
     assert_archive_absent(&store, &current, &first.object_reference, &first_key).await;
-    assert_archive_present(&store, &current, &second.object_reference).await;
+    assert_archive_absent(&store, &current, &second.object_reference, &second_key).await;
     assert_archive_present(&store, &current, &third.object_reference).await;
     assert_eq!(current.lifecycle.checkpoints.latest, Some(third));
-    assert_eq!(current.lifecycle.checkpoints.previous, Some(second));
+    assert!(current.lifecycle.checkpoints.previous.is_none());
     client.database(&database).drop().await.unwrap();
 }
 
@@ -684,6 +780,7 @@ async fn ambiguous_external_stage_admission_and_publication_reconcile_exactly() 
 fn active_sandbox(id: &str) -> Sandbox {
     let mut value = sandbox(id);
     value.runtime = Some(RuntimeBinding {
+        boot_id: None,
         runtime_id: format!("runtime-{id}"),
         runtime_version: "image-v1".into(),
         provision_generation: Some(1),
@@ -692,6 +789,115 @@ fn active_sandbox(id: &str) -> Sandbox {
     value.lifecycle.runtime_generation_high_water = 1;
     value.work = SandboxWorkState::new(SandboxWorkStep::None, "2026-09-05T00:00:00Z".into());
     value
+}
+
+fn retired_sandbox(id: &str) -> Sandbox {
+    let mut value = sandbox(id);
+    value.status = layer2_core::sandbox::SandboxStatus::Retired;
+    value.runtime = None;
+    value.credential.current = None;
+    value.credential.delivered = false;
+    value.retired_at = Some("2026-09-05T00:00:00Z".into());
+    value.purge_after = Some("2026-10-05T00:00:00Z".into());
+    value.work =
+        SandboxWorkState::new(SandboxWorkStep::WaitForPurge, "2026-10-05T00:00:00Z".into());
+    value
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn cleanup_reclaims_legacy_deleted_snapshots_without_purging_retained_records() {
+    let (client, _, database) = test_store("backfill").await;
+    let store = MongoSandboxStore::open(&client, &database).await.unwrap();
+    let retired = retired_sandbox("sbx_legacy_deleted");
+    let active = active_sandbox("sbx_keep_live");
+    store.create_sandbox(retired.clone()).await.unwrap();
+    store.create_sandbox(active.clone()).await.unwrap();
+    let first = stored_checkpoint(&store, &retired, 1, b"old snapshot").await;
+    let second = stored_checkpoint(&store, &retired, 2, b"latest deleted snapshot").await;
+    let live = stored_checkpoint(&store, &active, 1, b"live snapshot").await;
+    let old_key = object_key(&store, &retired, &first.object_reference).await;
+    let latest_key = object_key(&store, &retired, &second.object_reference).await;
+    round_trip(
+        &store.checkpoint_objects,
+        "sbx_missing_parent",
+        b"unclassified archive",
+    )
+    .await;
+    let now = std::time::SystemTime::now();
+    assert_eq!(store.checkpoint_objects.cleanup_due(now).await.unwrap(), 3);
+    assert_archive_absent(&store, &retired, &first.object_reference, &old_key).await;
+    assert_archive_absent(&store, &retired, &second.object_reference, &latest_key).await;
+    assert_archive_present(&store, &active, &live.object_reference).await;
+    assert_eq!(
+        store.get_sandbox(&retired.id).await.unwrap(),
+        Some(retired.clone())
+    );
+    assert_eq!(store.get_sandbox(&active.id).await.unwrap(), Some(active));
+    assert!(store
+        .checkpoint_objects
+        .gates
+        .find_one(doc! { "_id": retired.id.as_str(), "retired": true })
+        .await
+        .unwrap()
+        .is_some());
+    assert!(store
+        .checkpoint_objects
+        .gates
+        .find_one(doc! { "_id": "sbx_missing_parent", "retired": true })
+        .await
+        .unwrap()
+        .is_none());
+    assert_eq!(
+        round_trip(
+            &store.checkpoint_objects,
+            "sbx_missing_parent",
+            b"unclassified archive"
+        )
+        .await,
+        b"unclassified archive"
+    );
+    assert!(store
+        .checkpoint_objects
+        .for_sandbox(retired.id.as_str())
+        .unwrap()
+        .upload(upload(b"late publication".to_vec()))
+        .await
+        .is_err());
+    assert_eq!(store.checkpoint_objects.cleanup_due(now).await.unwrap(), 0);
+    client.database(&database).drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn legacy_snapshot_cleanup_refuses_inconsistent_retired_authority() {
+    let (client, _, database) = test_store("retired_corrupt").await;
+    let store = MongoSandboxStore::open(&client, &database).await.unwrap();
+    let retired = retired_sandbox("sbx_invalid_retired");
+    store.create_sandbox(retired.clone()).await.unwrap();
+    let checkpoint = stored_checkpoint(&store, &retired, 1, b"preserve on corrupt authority").await;
+    store
+        .sandboxes
+        .update_one(
+            doc! { "_id": retired.id.as_str() },
+            doc! { "$set": { "name": "mismatched name" } },
+        )
+        .await
+        .unwrap();
+    assert!(store
+        .checkpoint_objects
+        .cleanup_due(std::time::SystemTime::now())
+        .await
+        .is_err());
+    assert_archive_present(&store, &retired, &checkpoint.object_reference).await;
+    assert!(store
+        .checkpoint_objects
+        .gates
+        .find_one(doc! { "_id": retired.id.as_str(), "retired": true })
+        .await
+        .unwrap()
+        .is_none());
+    client.database(&database).drop().await.unwrap();
 }
 
 async fn stored_checkpoint(
@@ -740,6 +946,7 @@ async fn publish_result(
         .publish_sandbox_checkpoint(SandboxCheckpointMutation {
             guard: SandboxMutationGuard::capture(current),
             agents: Vec::new(),
+            nonblocking: false,
             checkpoint,
             sandbox: next.clone(),
             appended_at: "2026-09-05T00:00:00Z".into(),

@@ -5,6 +5,12 @@ use crate::{AdapterError, CommandReceipt, WriterState};
 
 pub(super) fn validate(request: &RequestFrame, response: &ResponseFrame) -> crate::Result<()> {
     let correlated = match (request, response) {
+        (RequestFrame::CacheSkillArchive(request), ResponseFrame::CacheSkillArchive { sha256 }) => {
+            sha256 == &request.sha256
+        }
+        (RequestFrame::RuntimeStatus(request), ResponseFrame::RuntimeStatus(receipt)) => {
+            receipt.validate_for(request).is_ok()
+        }
         (RequestFrame::Install(request), ResponseFrame::Install(receipt)) => {
             receipt.operation_id == request.operation_id
                 && receipt.request_sha256 == request.request_sha256

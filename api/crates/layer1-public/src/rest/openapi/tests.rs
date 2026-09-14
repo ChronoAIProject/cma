@@ -348,6 +348,8 @@ fn only_public_discovery_and_previews_are_anonymous() {
             "get /api/v1/conformance".to_owned(),
             "get /api/v1/triggers/public/{public_id}".to_owned(),
             "get /api/v1/triggers/public/{public_id}/badge.svg".to_owned(),
+            "get /api/v1/triggers/public/{public_id}/open/{placement_id}".to_owned(),
+            "post /api/v1/triggers/public/{public_id}/entry-intent".to_owned(),
             "get /auth/signup-options".to_owned(),
         ])
     );

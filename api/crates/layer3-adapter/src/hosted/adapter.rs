@@ -24,18 +24,23 @@ use crate::{
 
 #[path = "adapter_agent.rs"]
 mod agent;
+#[path = "adapter_checkpoint.rs"]
+mod checkpoint;
 #[path = "adapter_install.rs"]
 mod install;
 #[path = "adapter_runtime.rs"]
 mod runtime_lifecycle;
 #[path = "adapter_workspace.rs"]
 mod workspace;
+#[path = "adapter_writer_hold.rs"]
+mod writer_hold;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct RuntimeState {
     own_credential: bool,
     home_directory: String,
     provision: super::deployment::ProviderIdentity,
+    home_volume: Option<Box<crate::HomeVolumeAttachment>>,
 }
 
 /// Shared hosted implementation of the complete sandbox lifecycle.
@@ -43,6 +48,7 @@ pub struct HostedAdapter {
     backend: Arc<dyn HostedBackend>,
     runtime: Arc<dyn HostedAgentRuntime>,
     deployment: HostedDeployment,
+    home_volumes: Option<Arc<dyn crate::HomeVolumeStore>>,
     states: Mutex<BTreeMap<RuntimeHandle, RuntimeState>>,
 }
 
@@ -56,12 +62,18 @@ impl HostedAdapter {
             backend,
             runtime,
             deployment,
+            home_volumes: None,
             states: Mutex::new(BTreeMap::new()),
         }
     }
 
     pub fn deployment(&self) -> &HostedDeployment {
         &self.deployment
+    }
+
+    pub fn with_home_volumes(mut self, store: Arc<dyn crate::HomeVolumeStore>) -> Self {
+        self.home_volumes = Some(store);
+        self
     }
 
     async fn known_state(&self, handle: &RuntimeHandle) -> crate::Result<RuntimeState> {
@@ -113,51 +125,6 @@ impl HostedAdapter {
         }
         Ok(())
     }
-
-    async fn resume_checkpoint_writer_hold(
-        &self,
-        handle: &RuntimeHandle,
-        request: &CheckpointWriterResumeRequest,
-    ) -> crate::Result<CheckpointWriterResumeReceipt> {
-        match self
-            .exchange(
-                handle,
-                RequestFrame::ResumeCheckpointWriters(request.clone()),
-            )
-            .await?
-        {
-            ResponseFrame::ResumeCheckpointWriters(receipt)
-                if receipt.writers_resumed
-                    && crate::writer_resume_tokens_match(
-                        &receipt.writer_resume_token,
-                        &request.writer_resume_token,
-                    ) =>
-            {
-                Ok(receipt)
-            }
-            ResponseFrame::ResumeCheckpointWriters(_) => Err(AdapterError::Rejected(
-                "runtime did not acknowledge the exact checkpoint writer resume".into(),
-            )),
-            _ => unreachable!("exchange verifies response operation"),
-        }
-    }
-
-    async fn recover_checkpoint_writer_hold(
-        &self,
-        handle: &RuntimeHandle,
-        writer_resume_token: &str,
-        original: AdapterError,
-    ) -> AdapterError {
-        let resume = CheckpointWriterResumeRequest {
-            writer_resume_token: writer_resume_token.into(),
-        };
-        match self.resume_checkpoint_writer_hold(handle, &resume).await {
-            Ok(_) => original,
-            Err(recovery) => AdapterError::Unavailable(format!(
-                "checkpoint writer recovery could not be verified after {original}; recovery failed: {recovery}"
-            )),
-        }
-    }
 }
 
 #[async_trait::async_trait]
@@ -166,8 +133,16 @@ impl SandboxAdapter for HostedAdapter {
         self.deployment.capabilities()
     }
 
+    fn home_volumes(&self) -> Option<&dyn crate::HomeVolumeStore> {
+        self.home_volumes.as_deref()
+    }
+
     async fn provision(&self, spec: &SandboxSpec) -> crate::Result<RuntimeHandle> {
         self.provision_exact(spec, 1).await
+    }
+
+    async fn runtime_status(&self, handle: &RuntimeHandle) -> crate::Result<crate::RuntimeStatus> {
+        self.inspect_runtime_status(handle).await
     }
 
     async fn provision_runtime(
@@ -250,7 +225,7 @@ impl SandboxAdapter for HostedAdapter {
                 "credential operation id, value, and non-zero generation are required".into(),
             ));
         }
-        self.known_state(handle).await?;
+        self.verify_bound_home(handle).await?;
         let operation_id = frame.operation_id.clone();
         match self.exchange(handle, RequestFrame::Credential(frame)).await {
             Ok(ResponseFrame::Credential(CredentialReceipt {
@@ -271,6 +246,23 @@ impl SandboxAdapter for HostedAdapter {
         request: &WorkspaceRequest,
     ) -> crate::Result<WorkspaceReceipt> {
         workspace::prepare(self, handle, request).await
+    }
+
+    async fn cache_skill_archive(
+        &self,
+        handle: &RuntimeHandle,
+        archive: &crate::SkillArchive,
+    ) -> crate::Result<()> {
+        archive.validate()?;
+        match self
+            .exchange(handle, RequestFrame::CacheSkillArchive(archive.clone()))
+            .await?
+        {
+            ResponseFrame::CacheSkillArchive { sha256 } if sha256 == archive.sha256 => Ok(()),
+            _ => Err(AdapterError::Rejected(
+                "skill cache receipt changed its digest".into(),
+            )),
+        }
     }
 
     async fn run_workspace_setup(
@@ -332,7 +324,26 @@ impl SandboxAdapter for HostedAdapter {
         request: &AgentOpenRequest,
         updates: mpsc::Sender<ConversationUpdate>,
     ) -> crate::Result<ConversationChannel> {
-        agent::open_agent(self, handle, authority_fence, request, updates).await
+        agent::open_agent(self, handle, authority_fence, request, None, updates).await
+    }
+
+    async fn reconnect_agent(
+        &self,
+        handle: &RuntimeHandle,
+        authority_fence: u64,
+        request: &AgentOpenRequest,
+        conversation_id: &str,
+        updates: mpsc::Sender<ConversationUpdate>,
+    ) -> crate::Result<ConversationChannel> {
+        agent::reconnect_agent(
+            self,
+            handle,
+            authority_fence,
+            request,
+            conversation_id,
+            updates,
+        )
+        .await
     }
 
     async fn close_agent(
@@ -403,53 +414,17 @@ impl SandboxAdapter for HostedAdapter {
         handle: &RuntimeHandle,
         request: &CheckpointHoldRequest,
     ) -> crate::Result<CheckpointHoldReceipt> {
-        self.known_state(handle).await?;
-        if !request.has_valid_writer_resume_token() {
-            return Err(AdapterError::Rejected(
-                "checkpoint writer resume token must be 64 lowercase hexadecimal characters".into(),
-            ));
-        }
-
-        let operation = crate::wire::WireOperation::CheckpointForTeardown;
-        let response = match self
-            .backend
-            .exchange(handle, RequestFrame::CheckpointForTeardown(request.clone()))
+        self.checkpoint_hold(handle, request, checkpoint::HoldPurpose::Capture)
             .await
-        {
-            Ok(ResponseFrame::Failure(failure)) if failure.operation == operation => {
-                return Err(failure_error(failure));
-            }
-            Ok(response) if response_operation(&response) == operation => Ok(response),
-            Ok(_) => Err(AdapterError::unexpected_reply(operation_name(operation))),
-            Err(error) if !error.is_runtime_loss() => return Err(error),
-            Err(error) => Err(error),
-        };
+    }
 
-        let result = match response {
-            Ok(ResponseFrame::CheckpointForTeardown(receipt))
-                if receipt.checkpoint.epoch == request.checkpoint.epoch
-                    && valid_checkpoint_reference(
-                        &receipt.checkpoint.object_reference,
-                        &receipt.checkpoint.sha256,
-                    )
-                    && receipt.checkpoint.writers == WriterState::Held
-                    && crate::writer_resume_tokens_match(
-                        &receipt.writer_resume_token,
-                        &request.writer_resume_token,
-                    ) =>
-            {
-                return Ok(receipt);
-            }
-            Ok(ResponseFrame::CheckpointForTeardown(_)) => {
-                AdapterError::Rejected("runtime returned an invalid held checkpoint receipt".into())
-            }
-            Ok(_) => unreachable!("response operation was verified"),
-            Err(error) => error,
-        };
-
-        Err(self
-            .recover_checkpoint_writer_hold(handle, &request.writer_resume_token, result)
-            .await)
+    async fn verify_checkpoint_hold(
+        &self,
+        handle: &RuntimeHandle,
+        request: &CheckpointHoldRequest,
+    ) -> crate::Result<CheckpointHoldReceipt> {
+        self.checkpoint_hold(handle, request, checkpoint::HoldPurpose::VerifyPublished)
+            .await
     }
 
     async fn resume_checkpoint_writers(

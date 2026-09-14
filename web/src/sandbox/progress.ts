@@ -1,9 +1,9 @@
 import type { AgentDetail, SandboxDetail, SandboxEvent, WorkspaceDetail } from '../api/types';
-import type { HumanStatus } from '../vocabulary/status';
+import type { StepStatusLabel } from '../vocabulary/status';
 
 export interface ProvisioningStep {
   readonly label: string;
-  readonly status: HumanStatus;
+  readonly status: StepStatusLabel;
   readonly detail?: string;
 }
 

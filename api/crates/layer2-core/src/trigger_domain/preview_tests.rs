@@ -123,6 +123,7 @@ fn fixture(
                 agent: AgentReusePolicy::AlwaysNew,
             },
             first_message: FULL_FIRST_MESSAGE.into(),
+            quick_messages: Vec::new(),
             consent: TriggerConsent {
                 always_review: false,
             },

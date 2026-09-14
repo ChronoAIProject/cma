@@ -18,6 +18,9 @@ use sha2::{Digest, Sha256};
 use super::*;
 use crate::mutation_journal::{self, Begin, Operation};
 
+#[path = "supervisor_warmup_tests.rs"]
+mod warmup_tests;
+
 fn add_worktree_request(request: WorktreeRequest) -> RequestFrame {
     RequestFrame::AddWorktree(FencedRequest::new(1, request))
 }
@@ -322,6 +325,107 @@ fn launch(config: &RuntimeConfig, worktree: &WorktreeReceipt, script: &str) -> A
         args: vec!["-c".into(), script.into()],
         env: Default::default(),
     }
+}
+
+#[tokio::test]
+async fn restored_open_identity_refusal_does_not_consume_the_reconnect_fence_or_replace_process() {
+    let config = RuntimeConfig::for_test(root("restored-open-reconnect"));
+    let supervisor = provision(&config).await;
+    let workspace = prepare_workspace(&supervisor).await;
+    let (_, worktree) = add_worktree(&supervisor, workspace.resolved_commit).await;
+    assert!(matches!(
+        supervisor
+            .dispatch(materialize_home_request(home_plan("agent-1", b"profile")))
+            .await,
+        ResponseFrame::MaterializeAgentHome(_)
+    ));
+    let mut restored_launch = launch(&config, &worktree, "while IFS= read -r line; do :; done");
+    let options = layer3_adapter::RuntimeOptions {
+        working_directory: restored_launch.cwd.clone(),
+        home_directory: restored_launch.home.clone(),
+        slot: restored_launch.agent_id.clone(),
+        ..Default::default()
+    };
+    let original = layer3_adapter::AgentOpenRequest::new(
+        restored_launch.operation_id.clone(),
+        options.clone(),
+        None,
+    );
+    let restored = layer3_adapter::AgentOpenRequest::new(
+        restored_launch.operation_id.clone(),
+        options,
+        Some("recorded-conversation".into()),
+    );
+    assert_ne!(original.request_sha256, restored.request_sha256);
+    restored_launch.request_sha256 = restored.request_sha256.clone();
+    let opened = supervisor
+        .dispatch(RequestFrame::OpenAgent(FencedRequest::new(
+            2,
+            restored_launch.clone(),
+        )))
+        .await;
+    assert!(matches!(opened, ResponseFrame::OpenAgent(_)), "{opened:?}");
+    let bridge = supervisor
+        .agents
+        .read()
+        .await
+        .get(&restored_launch.agent_id)
+        .unwrap()
+        .bridge
+        .clone();
+    let mut original_launch = restored_launch.clone();
+    original_launch.request_sha256 = original.request_sha256;
+    let refused = failure(
+        supervisor
+            .dispatch(RequestFrame::OpenAgent(FencedRequest::new(
+                3,
+                original_launch,
+            )))
+            .await,
+    );
+    assert_eq!(refused.code, "mutation_authority_conflict");
+    assert!(!refused.retryable);
+    let replayed = supervisor
+        .dispatch(RequestFrame::OpenAgent(FencedRequest::new(
+            3,
+            restored_launch.clone(),
+        )))
+        .await;
+    let ResponseFrame::OpenAgent(receipt) = replayed else {
+        panic!("{replayed:?}")
+    };
+    assert_eq!(receipt.authority_fence, 3);
+    assert_eq!(receipt.receipt.request_sha256, restored.request_sha256);
+    assert!(Arc::ptr_eq(
+        &bridge,
+        &supervisor
+            .agents
+            .read()
+            .await
+            .get(&restored_launch.agent_id)
+            .unwrap()
+            .bridge
+    ));
+    assert!(matches!(
+        mutation_journal::begin::<AgentOpenReceipt>(
+            &config,
+            &Operation::open_agent(&restored_launch)
+        )
+        .unwrap(),
+        Begin::Completed(_)
+    ));
+    assert!(matches!(
+        supervisor
+            .dispatch(RequestFrame::CloseAgent(FencedRequest::new(
+                4,
+                AgentCloseRequest::new("agent:agent-1:close:v1", restored_launch.agent_id)
+            )))
+            .await,
+        ResponseFrame::CloseAgent(_)
+    ));
+    drop(bridge);
+    drop(supervisor);
+    cleanup(&config);
 }
 
 #[tokio::test]

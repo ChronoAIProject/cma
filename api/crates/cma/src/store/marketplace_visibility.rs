@@ -124,6 +124,28 @@ pub(super) async fn set_profile_visibility(
         let current_visibility =
             record_bson(&profile.visibility()).map_err(MarketplaceError::Corrupt)?;
         let next_visibility = record_bson(&visibility).map_err(MarketplaceError::Corrupt)?;
+        let mut changed = doc! {
+            "visibility": next_visibility.clone(),
+            "record.visibility": next_visibility,
+            "updated_at": &updated_at,
+            "record.updated_at": &updated_at,
+        };
+        if matches!(locator, MarketplaceLocator::Sandbox(_))
+            && visibility != ProfileVisibility::Public
+        {
+            changed.insert("record.availability.warmup_enabled", false);
+            // Older Profiles have no policy object; materialize all defaults.
+            if let super::marketplace_support::StoredProfile::Sandbox(profile) = &profile {
+                changed.insert(
+                    "record.availability.warmup_count",
+                    i32::from(profile.availability.warmup_count),
+                );
+                changed.insert(
+                    "record.availability.always_keep_alive",
+                    profile.availability.always_keep_alive,
+                );
+            }
+        }
         let result = target
             .profiles
             .update_one(
@@ -134,15 +156,9 @@ pub(super) async fn set_profile_visibility(
                     "last_revision": i64::from(publication.revision),
                     "visibility": current_visibility.clone(),
                     "record.visibility": current_visibility,
+                    "draft_version": document.get_i64("draft_version").map_err(|error| MarketplaceError::Corrupt(error.to_string()))?,
                 },
-                doc! {
-                    "$set": {
-                        "visibility": next_visibility.clone(),
-                        "record.visibility": next_visibility,
-                        "updated_at": &updated_at,
-                        "record.updated_at": &updated_at,
-                    }
-                },
+                doc! { "$set": changed },
             )
             .await
             .map_err(driver_error)?;

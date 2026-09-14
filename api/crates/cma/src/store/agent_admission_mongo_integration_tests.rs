@@ -33,8 +33,180 @@ use super::super::sandbox_mongo::{start_transaction, MongoSandboxStore};
 
 const NOW: &str = "2026-09-05T00:00:00Z";
 
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn trigger_profile_reuse_is_atomic_and_replays_the_same_agent_after_newer_creation() {
+    let (client, database, store, parent, mut workspace, mut automatic) =
+        fixture("trigger_profile_reuse").await;
+    workspace.profile.content.agent_profiles = vec![layer2_core::profiles::AgentProfileRef::new(
+        automatic.profile.id.clone(),
+        automatic.profile.revision,
+    )];
+    workspace.profile.digest =
+        layer2_core::profiles::content_digest(&workspace.profile.content).unwrap();
+    let revision = workspace.revision;
+    workspace.revision += 1;
+    store
+        .save_workspace(revision, workspace.clone())
+        .await
+        .unwrap();
+    automatic.origin = AgentOrigin::WorkspaceProfile { index: 0 };
+    automatic.creation_key = format!("workspace-profile:{}:0", workspace.id);
+    let mut trigger = automatic.clone();
+    trigger.agent_id = AgentId::generate();
+    trigger.worktree_id = WorktreeId::generate();
+    trigger.origin = AgentOrigin::Trigger {
+        trigger_id: "trg_profile_reuse".into(),
+        launch_id: "lch_profile_reuse".into(),
+    };
+    trigger.creation_key = format!(
+        "trigger-profile:{}",
+        layer2_core::profiles::content_digest(&trigger.origin).unwrap()
+    );
+    trigger.first_message = Some(
+        layer2_core::sandbox::FirstMessageRecord::new(
+            trigger.creation_key.clone(),
+            "Introduce the repository.",
+            NOW,
+        )
+        .unwrap(),
+    );
+    let mut tasks = tokio::task::JoinSet::new();
+    for index in 0..8 {
+        let store = store.clone();
+        let automatic = automatic.clone();
+        let trigger = trigger.clone();
+        tasks.spawn(async move {
+            if index % 2 == 0 {
+                store.admit_agent(automatic).await
+            } else {
+                store.admit_agent_reusing_profile(trigger).await
+            }
+        });
+    }
+    let mut ids = std::collections::BTreeSet::new();
+    while let Some(result) = tasks.join_next().await {
+        ids.insert(result.unwrap().unwrap().creation().agent.id.clone());
+    }
+    assert_eq!(ids.len(), 1);
+    assert_eq!(
+        store
+            .agents
+            .count_documents(doc! { "sandbox_id": parent.id.as_str() })
+            .await
+            .unwrap(),
+        1
+    );
+    assert_eq!(
+        store
+            .worktrees
+            .count_documents(doc! { "sandbox_id": parent.id.as_str() })
+            .await
+            .unwrap(),
+        1
+    );
+    let agent_id = ids.pop_first().unwrap();
+    let first = store.get_agent(&agent_id).await.unwrap().unwrap();
+    assert_eq!(
+        first.conversation.first_message.as_ref().unwrap().text,
+        "Introduce the repository."
+    );
+    let mut newer = trigger.clone();
+    newer.agent_id = AgentId::generate();
+    newer.worktree_id = WorktreeId::generate();
+    newer.origin = AgentOrigin::Manual;
+    newer.creation_key = "manual-newer-agent".into();
+    newer.first_message = None;
+    newer.event_at = "2026-09-05T00:01:00Z".into();
+    store.admit_agent(newer).await.unwrap();
+    let reopened = MongoSandboxStore::open(&client, &database).await.unwrap();
+    let replay = reopened
+        .admit_agent_reusing_profile(trigger.clone())
+        .await
+        .unwrap();
+    assert_eq!(replay.creation().agent.id, agent_id);
+    assert_eq!(
+        replay.creation().agent.conversation.first_message,
+        first.conversation.first_message
+    );
+    trigger.first_message = Some(
+        layer2_core::sandbox::FirstMessageRecord::new(
+            trigger.creation_key.clone(),
+            "Changed prompt",
+            NOW,
+        )
+        .unwrap(),
+    );
+    assert_eq!(
+        reopened.admit_agent_reusing_profile(trigger).await,
+        Err(SandboxStoreError::AgentCreationConflict)
+    );
+    client.database(&database).drop().await.unwrap();
+}
+
 #[path = "agent_admission_mongo_integration_tests/creation_revival.rs"]
 mod creation_revival;
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn automatic_profile_admission_is_pinned_and_replayed_atomically() {
+    let uri = std::env::var("CHRONO_TEST_MONGODB_URI").unwrap();
+    let client = Client::with_uri_str(uri).await.unwrap();
+    let database = format!("cma_profile_admission_{}", uuid::Uuid::new_v4().simple());
+    let store = MongoSandboxStore::open(&client, &database).await.unwrap();
+    let parent = sandbox("automatic");
+    let mut workspace = workspace(&parent, "automatic");
+    let mut input = admission(&workspace, "automatic");
+    workspace.profile.content.agent_profiles = vec![layer2_core::profiles::AgentProfileRef::new(
+        input.profile.id.clone(),
+        input.profile.revision,
+    )];
+    workspace.profile.digest =
+        layer2_core::profiles::content_digest(&workspace.profile.content).unwrap();
+    store.create_sandbox(parent.clone()).await.unwrap();
+    store.create_workspace(workspace.clone()).await.unwrap();
+    input.origin = AgentOrigin::WorkspaceProfile { index: 0 };
+    input.creation_key = format!("workspace-profile:{}:0", workspace.id);
+    let mut invalid = input.clone();
+    invalid.origin = AgentOrigin::WorkspaceProfile { index: 1 };
+    invalid.creation_key = format!("workspace-profile:{}:1", workspace.id);
+    assert!(matches!(
+        store.admit_agent(invalid).await,
+        Err(SandboxStoreError::InvalidTransaction(_))
+    ));
+    let mut attempts = tokio::task::JoinSet::new();
+    for _ in 0..8 {
+        let store = store.clone();
+        let mut candidate = input.clone();
+        candidate.agent_id = AgentId::generate();
+        candidate.worktree_id = WorktreeId::generate();
+        attempts.spawn(async move { store.admit_agent(candidate).await });
+    }
+    let mut created = 0;
+    let mut identities = std::collections::BTreeSet::new();
+    while let Some(result) = attempts.join_next().await {
+        let result = result.unwrap().unwrap();
+        created += usize::from(matches!(result, AgentAdmissionResult::Created(_)));
+        identities.insert(result.creation().agent.id.clone());
+    }
+    assert_eq!(created, 1);
+    assert_eq!(identities.len(), 1);
+    let reopened = MongoSandboxStore::open(&client, &database).await.unwrap();
+    let replay = reopened.admit_agent(input.clone()).await.unwrap();
+    assert!(matches!(replay, AgentAdmissionResult::Existing(_)));
+    assert!(identities.contains(&replay.creation().agent.id));
+    let mut paused = reopened.get_sandbox(&parent.id).await.unwrap().unwrap();
+    let revision = paused.revision;
+    paused.status = SandboxStatus::Installing;
+    paused.revision += 1;
+    reopened.save_sandbox(revision, paused).await.unwrap();
+    input.creation_key.push_str("-new");
+    assert_eq!(
+        reopened.admit_agent(input).await,
+        Err(SandboxStoreError::SandboxNotReady)
+    );
+    client.database(&database).drop().await.unwrap();
+}
 
 async fn fixture(
     suffix: &str,
@@ -88,6 +260,7 @@ fn sandbox(suffix: &str) -> Sandbox {
         failure: None,
         runtime: None,
         credential: SandboxCredentialState {
+            service_grants: Vec::new(),
             reaches: vec![],
             key_generation: 1,
             delivered: true,
@@ -269,7 +442,7 @@ async fn admission_reconciliation_rejects_an_above_high_water_orphan() {
     let (client, database, store, _, _, admission) = fixture("reconcile_orphan").await;
     let mut transaction = store.client.start_session().await.unwrap();
     start_transaction(&mut transaction).await.unwrap();
-    let receipt = match super::apply_admission(&store, &admission, &mut transaction).await {
+    let receipt = match super::apply_admission(&store, &admission, false, &mut transaction).await {
         Ok(AdmissionReceipt::Created(receipt)) => receipt,
         Ok(AdmissionReceipt::Existing(_)) => panic!("fresh admission unexpectedly replayed"),
         Err(_) => panic!("fresh admission transaction failed"),

@@ -182,6 +182,29 @@ impl SandboxWorker {
         mut sandbox: Sandbox,
         now: SystemTime,
     ) -> Result<(), SandboxStoreError> {
+        if sandbox.lifecycle.background_checkpoint.is_some() {
+            return self
+                .retry_failure(
+                    sandbox,
+                    WorkerFailure::retryable("finishing background snapshot cleanup"),
+                    now,
+                )
+                .await;
+        }
+        if let Some(home) = &mut sandbox.lifecycle.home {
+            if sandbox.runtime.is_some() {
+                return Err(SandboxStoreError::Corrupt(
+                    "home release still has a bound runtime".into(),
+                ));
+            }
+            if let Err(error) =
+                crate::sandbox::home::release_home(self.dependencies.adapter.as_ref(), home).await
+            {
+                return self
+                    .retry_failure(sandbox, adapter_failure(error), now)
+                    .await;
+            }
+        }
         let policy = match self.config.policy.current_sandbox_policy().await {
             Ok(policy) => policy,
             Err(_) => {
@@ -194,6 +217,18 @@ impl SandboxWorker {
                     .await
             }
         };
+        // Archive retention ends with the runtime, independently of history retention.
+        // The purger fences late publications and retries exact object deletions.
+        if let Err(error) = self
+            .dependencies
+            .checkpoints
+            .purge_checkpoint_objects(&sandbox, &operation_id(&sandbox))
+            .await
+        {
+            return self
+                .retry_failure(sandbox, dependency_failure(error), now)
+                .await;
+        }
         let purge_at = now + policy.retention_grace;
         sandbox.purge_after = Some(rfc3339_at(purge_at));
         let next = if sandbox.credential.revoke_debt.is_empty() {

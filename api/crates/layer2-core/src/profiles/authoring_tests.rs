@@ -19,6 +19,7 @@ impl Default for Source {
             expected_credential: None,
             services: Ok(vec![AuthoringServiceEntry {
                 id: ServiceId::new("research"),
+                catalog_id: None,
                 name: "Research".into(),
                 description: Some("Owner-visible research service".into()),
             }]),
@@ -159,6 +160,7 @@ async fn bounds_are_supplied_policy_and_catalog_reads_are_owner_scoped() {
         .unwrap()
         .push(AuthoringServiceEntry {
             id: ServiceId::new("analytics"),
+            catalog_id: None,
             name: "Analytics".into(),
             description: None,
         });

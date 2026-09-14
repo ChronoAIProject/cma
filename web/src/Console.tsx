@@ -1,4 +1,6 @@
+import { Presence } from './ui/Presence';
 import { lazy, Suspense, useCallback, useEffect, useState } from 'react';
+import { LandingCharacter } from './landing/LandingCharacter';
 import {
   useCmaClient,
   useProfileViewsClient,
@@ -9,6 +11,7 @@ import { canOpenOperations } from './operator/capabilities';
 import { AgentSurface } from './agent/AgentSurface';
 import { AgentDetails } from './agent/Details';
 import { useAgentController } from './agent/controller';
+import { sameAgent } from './agent/status';
 import type { User } from './auth/types';
 import { ProfileMenu } from './profile/ProfileMenu';
 import type { AppRoute } from './routing/routes';
@@ -71,6 +74,12 @@ export function Console({
     setRevision((value) => value + 1);
   }, [refreshNavigation]);
   const agent = useAgentController(client, route.kind === 'agent' ? route.agentId : undefined, {
+    summary:
+      route.kind === 'agent' && navigation.status === 'ready'
+        ? navigation.items
+            .flatMap(({ workspaces }) => workspaces.flatMap((workspace) => workspace.agents))
+            .find(({ id }) => id === route.agentId)
+        : undefined,
     onHierarchyChange: refresh,
     onDeleted: () => onNavigate({ kind: 'home' }),
   });
@@ -81,6 +90,7 @@ export function Console({
       agent.reload();
     },
     onCreate,
+    user.id,
   );
   const canUse = user.capabilities.includes('use_own_sandboxes');
   const canCreate = !user.visitor && canUse && onCreate !== undefined;
@@ -100,6 +110,7 @@ export function Console({
       <AgentSurface
         key={route.agentId}
         agentId={route.agentId}
+        viewerId={user.id}
         controller={agent}
         detailsOpen={detailsOpen}
         onDetailsOpenChange={setDetailsOpen}
@@ -110,6 +121,7 @@ export function Console({
         key={route.sandboxId}
         client={client}
         sandboxId={route.sandboxId}
+        viewerId={user.id}
         revision={revision}
         permissions={permissions}
         busy={actions.pending}
@@ -195,13 +207,11 @@ export function Console({
       </section>
     ) : (
       <section className="console__empty" aria-labelledby="empty-title">
-        <p className="console__eyebrow">CMA</p>
+        <div className="brand-home brand-home--compact">
+          <LandingCharacter autoRotate />
+        </div>
         <h1 id="empty-title">
-          {route.kind === 'home'
-            ? user.visitor
-              ? 'Your agents'
-              : 'Create your first agent'
-            : route.kind.replaceAll('_', ' ')}
+          {route.kind === 'home' ? 'Welcome to CMA' : route.kind.replaceAll('_', ' ')}
         </h1>
         {route.kind === 'home' && canCreate ? (
           <div className="console__empty-actions">
@@ -232,6 +242,7 @@ export function Console({
             onClose={() => setDetailsOpen(false)}
             detail={ready?.detail}
             workspace={ready?.workspace}
+            historyLoading={ready?.historyLoading}
             pending={agent.pending}
             actionError={agent.actionError}
             onNavigate={onNavigate}
@@ -243,21 +254,44 @@ export function Console({
       overlay={actions.overlay}
       sidebarCollapsed={sidebarCollapsed}
       onSidebarCollapsedChange={setSidebarCollapsed}
-      sidebar={({ collapsed, onToggle }) => (
+      sidebar={({ collapsed, onToggle, onNavigate: onSidebarNavigate }) => (
         <Sidebar
           collapsed={collapsed}
           onToggleCollapsed={onToggle}
           canCreateAgent={canCreate}
           onNewAgent={() => onCreate?.({ kind: 'new_agent' })}
+          onHome={() => {
+            setDetailsOpen(false);
+            onSidebarNavigate();
+            onNavigate({ kind: 'home' });
+          }}
           navigation={
             navigation.status === 'ready' ? (
               <Tree
                 key={user.id}
                 viewerId={user.id}
-                items={navigation.items}
+                items={navigation.items.map((item) => ({
+                  ...item,
+                  workspaces: item.workspaces.map((workspace) => ({
+                    ...workspace,
+                    agents: workspace.agents.map((summary) =>
+                      route.kind === 'agent' &&
+                      agent.state.status === 'ready' &&
+                      agent.state.detail.id === route.agentId &&
+                      sameAgent(agent.state.detail, summary)
+                        ? { ...summary, status: agent.state.detail.status }
+                        : summary,
+                    ),
+                  })),
+                }))}
+                refreshError={navigation.refreshError}
+                lifecycleBusy={actions.pending}
                 route={route}
                 permissions={permissions}
-                onNavigate={onNavigate}
+                onNavigate={(next) => {
+                  onSidebarNavigate();
+                  onNavigate(next);
+                }}
                 onAction={actions.select}
               />
             ) : navigation.status === 'loading' ? (
@@ -283,11 +317,14 @@ export function Console({
       )}
       center={
         <main className="console__surface">
-          {actions.error === undefined ? null : (
-            <p className="console__action-error" role="alert">
-              {actions.error}
-            </p>
-          )}
+          {actions.notice}
+          <Presence>
+            {actions.error === undefined ? null : (
+              <p className="console__action-error" role="alert">
+                {actions.error}
+              </p>
+            )}
+          </Presence>
           {content}
         </main>
       }

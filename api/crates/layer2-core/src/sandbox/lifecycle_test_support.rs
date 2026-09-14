@@ -40,12 +40,14 @@ pub(super) fn sandbox() -> Sandbox {
         status: SandboxStatus::Active,
         failure: None,
         runtime: Some(RuntimeBinding {
+            boot_id: None,
             runtime_id: "runtime-old".into(),
             runtime_version: "image-v1".into(),
             provision_generation: None,
             bound_at: "2026-09-05T00:00:00Z".into(),
         }),
         credential: SandboxCredentialState {
+            service_grants: Vec::new(),
             reaches: vec![],
             key_generation: 1,
             delivered: true,

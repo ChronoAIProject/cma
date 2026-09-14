@@ -49,6 +49,7 @@ struct ConversationState {
 }
 
 pub(super) struct Bridge {
+    pub(super) subscription: Option<super::subscriptions::HostedSubscriptionBinding>,
     sink: Arc<Mutex<Sink>>,
     pub(super) pending: Pending,
     next_id: AtomicI64,
@@ -78,11 +79,34 @@ struct Ready {
 }
 
 impl Bridge {
+    #[cfg(test)]
     pub(super) async fn open(
         stream: Socket,
         expected_agent: &str,
         cwd: String,
         settings: HostedAgentOpenSettings,
+        resume_conversation: Option<String>,
+        updates_tx: mpsc::Sender<ConversationUpdate>,
+    ) -> crate::Result<OpenedBridge> {
+        Self::open_with_subscription(
+            stream,
+            expected_agent,
+            cwd,
+            (settings, None),
+            resume_conversation,
+            updates_tx,
+        )
+        .await
+    }
+
+    pub(super) async fn open_with_subscription(
+        stream: Socket,
+        expected_agent: &str,
+        cwd: String,
+        (settings, subscription): (
+            HostedAgentOpenSettings,
+            Option<super::subscriptions::HostedSubscriptionBinding>,
+        ),
         resume_conversation: Option<String>,
         updates_tx: mpsc::Sender<ConversationUpdate>,
     ) -> crate::Result<OpenedBridge> {
@@ -95,6 +119,7 @@ impl Bridge {
         validate_ready(declaration, expected_agent)?;
 
         let bridge = Arc::new(Self {
+            subscription,
             sink: Arc::new(Mutex::new(sink)),
             pending: Arc::new(Mutex::new(HashMap::new())),
             next_id: AtomicI64::new(1),

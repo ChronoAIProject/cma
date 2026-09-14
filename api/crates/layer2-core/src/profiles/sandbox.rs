@@ -163,6 +163,8 @@ impl SandboxProfileContent {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SandboxProfile {
+    #[serde(default)]
+    pub availability: super::SandboxProfileAvailability,
     pub id: SandboxProfileId,
     pub owner: SubjectId,
     pub name: String,
@@ -182,6 +184,7 @@ pub struct SandboxProfile {
 
 impl SandboxProfile {
     pub fn validate(&self, bounds: ProfileCapacityBounds) -> Result<(), ProfileError> {
+        self.availability.validate(self.visibility)?;
         validate_metadata(&self.name, &self.description)?;
         self.draft.validate(bounds)?;
         Ok(())

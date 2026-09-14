@@ -20,6 +20,8 @@ import { ResourceFields } from './pickers/ResourceFields';
 import { ServicePicker } from './pickers/ServicePicker';
 import { validateSandboxProfile } from './sandboxValidation';
 import { useCapacityBounds } from './capacityBounds';
+import { SandboxAvailabilityFields } from './SandboxAvailabilityFields';
+import { isCodexConnection } from './modelProvider';
 
 const INITIAL: ProfileDraft<SandboxProfileContent> = {
   name: '',
@@ -80,6 +82,7 @@ function SandboxEditor({
           editor.change({ ...editor.draft, content: { ...value, ...next } });
         return (
           <>
+            <SandboxAvailabilityFields editor={editor} />
             <section className="profile-editor__band">
               <h2>Size</h2>
               <ResourceFields
@@ -90,39 +93,39 @@ function SandboxEditor({
               />
             </section>
             <section className="profile-editor__band">
-              <h2>Services it can reach</h2>
+              <h2>NyxID services</h2>
               <ServicePicker
                 catalog={services}
-                value={value.nyxidServices}
+                value={value.nyxidServices.filter((service) => !isCodexConnection(service))}
                 onChange={(nyxidServices) => content({ nyxidServices })}
                 disabled={editor.locked}
               />
             </section>
             <section className="profile-editor__band">
-              <h2>Agent</h2>
+              <h2>Codex provider</h2>
               <div className="profile-field">
-                <span className="profile-field__label">Agent provider</span>
-                <span>Codex</span>
-                <p className="profile-field__help">
-                  Codex is the supported agent provider for this sandbox.
-                </p>
-              </div>
-              <div className="profile-field">
-                <span className="profile-field__label">Model access</span>
                 <ChoiceGroup
-                  label="Model access"
+                  label="Codex provider"
                   value={value.modelAccess}
                   options={[
-                    { value: 'chronoai_managed', label: 'ChronoAI managed' },
-                    { value: 'own_credentials', label: 'Your own account' },
+                    { value: 'chronoai_managed', label: 'Chrono LLM (public)' },
+                    { value: 'own_credentials', label: 'My Codex subscription' },
                   ]}
                   disabled={editor.locked}
                   describedBy="profile-model-access-help"
-                  onChange={(modelAccess) => content({ modelAccess })}
+                  onChange={(modelAccess) =>
+                    content({
+                      modelAccess,
+                      nyxidServices: value.nyxidServices.filter(
+                        (service) => !isCodexConnection(service),
+                      ),
+                    })
+                  }
                 />
                 <p id="profile-model-access-help" className="profile-field__help">
-                  Use ChronoAI-managed model access or connect your own account when the sandbox
-                  starts.
+                  {value.modelAccess === 'chronoai_managed'
+                    ? 'Codex uses Chrono LLM (public) through NyxID. No personal Codex subscription is needed.'
+                    : 'Each user signs in with their own Codex subscription through OpenAI before their sandbox opens.'}
                 </p>
               </div>
             </section>

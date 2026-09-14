@@ -8,6 +8,10 @@ use super::LaunchCollections;
 pub(super) fn launch_indexes() -> Vec<IndexModel> {
     vec![
         named_index(
+            doc! { "owner": 1, "record.resolution.agent.id": 1, "created_at": 1, "_id": 1 },
+            "trigger_launches_owned_agent_source",
+        ),
+        named_index(
             doc! { "owner": 1_i32, "_id": 1_i32 },
             "trigger_launches_owner_id",
         ),
@@ -133,11 +137,24 @@ mod tests {
 
     #[test]
     fn command_and_event_indexes_are_unique() {
-        for index in [
-            &launch_indexes()[6],
-            &event_indexes()[0],
-            &handoff_indexes()[1],
+        for (indexes, name) in [
+            (launch_indexes(), "trigger_launches_owner_command"),
+            (event_indexes(), "trigger_launch_events_launch_sequence"),
+            (
+                handoff_indexes(),
+                "service_connection_handoffs_owner_intent",
+            ),
         ] {
+            let index = indexes
+                .iter()
+                .find(|index| {
+                    index
+                        .options
+                        .as_ref()
+                        .and_then(|options| options.name.as_deref())
+                        == Some(name)
+                })
+                .unwrap();
             assert_eq!(
                 index.options.as_ref().and_then(|row| row.unique),
                 Some(true)

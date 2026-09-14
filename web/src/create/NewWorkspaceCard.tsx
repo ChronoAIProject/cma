@@ -1,3 +1,4 @@
+import { Presence } from '../ui/Presence';
 import { useState } from 'react';
 import type { CmaWebClient } from '../api/client';
 import type { WorkspaceDetail } from '../api/types';
@@ -9,6 +10,7 @@ import { TrustConfirmation } from './TrustConfirmation';
 import { WherePicker, type LocationChoice } from './WherePicker';
 import { useCreationCommand } from './transaction';
 import { NewSandboxCard } from './NewSandboxCard';
+import { useConnectionGate } from '../connections/useConnectionGate';
 import '../profiles/Profiles.css';
 import './Create.css';
 
@@ -37,6 +39,7 @@ export function NewWorkspaceCard({
   const [profile, setProfile] = useState(initial?.kind === 'workspace' ? initial : undefined);
   const [confirmed, setConfirmed] = useState(false);
   const command = useCreationCommand(onCreated);
+  const connections = useConnectionGate();
   const ready =
     profile !== undefined && locationReady && (!profile.requiresConfirmation || confirmed);
   const submit = () => {
@@ -47,8 +50,12 @@ export function NewWorkspaceCard({
       trustConfirmed: profile.requiresConfirmation ? confirmed : undefined,
       commandsDigest: profile.requiresConfirmation ? profile.revision.digest : undefined,
     };
-    void command.submit((options) => client.createWorkspace(id, input, options));
+    connections.run(
+      { type: 'sandbox', id },
+      () => void command.submit((options) => client.createWorkspace(id, input, options)),
+    );
   };
+  if (connections.pending) return connections.dialog;
   if (newSandbox)
     return (
       <NewSandboxCard
@@ -116,11 +123,13 @@ export function NewWorkspaceCard({
             disabled={command.locked}
           />
         )}
-        {command.failure === undefined ? null : (
-          <p className="create-error" role="alert">
-            {command.failure.message}
-          </p>
-        )}
+        <Presence>
+          {command.failure === undefined ? null : (
+            <p className="create-error" role="alert">
+              {command.failure.message}
+            </p>
+          )}
+        </Presence>
       </div>
     </Modal>
   );

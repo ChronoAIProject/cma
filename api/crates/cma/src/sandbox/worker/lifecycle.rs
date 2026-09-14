@@ -10,9 +10,11 @@ use super::SandboxWorker;
 
 mod checkpoint;
 mod conversations;
+mod home_recovery;
 mod pause;
 mod queue;
 mod restore;
+mod service_access;
 mod support;
 
 impl SandboxWorker {
@@ -48,6 +50,7 @@ impl SandboxWorker {
                     self.teardown_lifecycle_runtime(sandbox, now).await
                 }
                 SandboxPausePhase::PublishPaused => self.publish_paused(sandbox, now).await,
+                SandboxPausePhase::ResumeWriters => self.cancel_pause(sandbox, now).await,
             },
             SandboxLifecycleOperation::Revive { phase, .. } => {
                 self.run_restore_phase(sandbox, phase, now).await

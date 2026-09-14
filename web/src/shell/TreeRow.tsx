@@ -15,6 +15,7 @@ export interface TreeRowAction {
   readonly icon: ReactNode;
   readonly danger?: boolean;
   readonly disabled?: boolean;
+  readonly reason?: string;
 }
 
 interface TreeRowProps {
@@ -56,6 +57,7 @@ export function TreeRow({
   const menuItems: MenuEntry[] = actions.map((action) => ({
     id: action.id,
     label: action.label,
+    reason: action.reason,
     icon: action.icon,
     danger: action.danger,
     disabled: action.disabled,
@@ -100,7 +102,9 @@ export function TreeRow({
           {expanded === true ? <IconChevronDownOutline14 /> : <IconChevronRightOutline14 />}
         </button>
       )}
-      {route === undefined ? (
+      {route === undefined && onToggle === undefined ? (
+        <span className="tree-row__label">{labelContent}</span>
+      ) : route === undefined ? (
         <button type="button" className="tree-row__label" tabIndex={-1} onClick={onToggle}>
           {labelContent}
         </button>

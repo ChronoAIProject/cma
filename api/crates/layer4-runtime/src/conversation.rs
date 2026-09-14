@@ -19,7 +19,46 @@ pub(crate) fn capture(agent_home: &Path) -> Result<ConversationSnapshot> {
             "agent home contains no conversation record",
         )
     })?;
-    let metadata = std::fs::metadata(&path).map_err(capture_io("inspect conversation"))?;
+    capture_file(&path)
+}
+
+/// Snapshot exports must select the admitted conversation, including when a
+/// newer child session also exists. A duplicate identity is ambiguous, not newest-wins.
+pub(crate) fn capture_named(agent_home: &Path, expected: &str) -> Result<ConversationSnapshot> {
+    let mut matched = None;
+    for path in session_files(&agent_home.join("sessions"))? {
+        let file = std::fs::File::open(&path).map_err(capture_io("open conversation header"))?;
+        let mut opening = Vec::new();
+        std::io::BufReader::new(file)
+            .take(MAX_OPENING_BYTES + 1)
+            .read_until(b'\n', &mut opening)
+            .map_err(capture_io("read conversation header"))?;
+        if conversation_id(&opening).as_deref() == Some(expected) && matched.replace(path).is_some()
+        {
+            return Err(RuntimeError::rejected(
+                "conversation_ambiguous",
+                "snapshot contains duplicate conversation identities",
+            ));
+        }
+    }
+    let path = matched.ok_or_else(|| {
+        RuntimeError::rejected(
+            "conversation_not_found",
+            "snapshot does not contain the admitted conversation",
+        )
+    })?;
+    let captured = capture_file(&path)?;
+    if captured.conversation_id != expected {
+        return Err(RuntimeError::rejected(
+            "conversation_changed",
+            "snapshot conversation identity changed during export",
+        ));
+    }
+    Ok(captured)
+}
+
+fn capture_file(path: &Path) -> Result<ConversationSnapshot> {
+    let metadata = std::fs::metadata(path).map_err(capture_io("inspect conversation"))?;
     if metadata.len() > MAX_ARCHIVE_BYTES {
         return Err(RuntimeError::rejected(
             "conversation_too_large",
@@ -27,7 +66,7 @@ pub(crate) fn capture(agent_home: &Path) -> Result<ConversationSnapshot> {
         ));
     }
     let mut archive = Vec::with_capacity(metadata.len() as usize);
-    std::fs::File::open(&path)
+    std::fs::File::open(path)
         .map_err(capture_io("open conversation"))?
         .take(MAX_ARCHIVE_BYTES + 1)
         .read_to_end(&mut archive)
@@ -52,8 +91,24 @@ pub(crate) fn capture(agent_home: &Path) -> Result<ConversationSnapshot> {
 }
 
 fn newest_file(root: &Path) -> Result<Option<PathBuf>> {
+    let mut newest: Option<(std::time::SystemTime, PathBuf)> = None;
+    for path in session_files(root)? {
+        let modified = std::fs::metadata(&path)
+            .and_then(|metadata| metadata.modified())
+            .map_err(capture_io("inspect conversation timestamp"))?;
+        if newest
+            .as_ref()
+            .is_none_or(|(time, prior)| (modified, &path) > (*time, prior))
+        {
+            newest = Some((modified, path));
+        }
+    }
+    Ok(newest.map(|(_, path)| path))
+}
+
+fn session_files(root: &Path) -> Result<Vec<PathBuf>> {
     if !root.exists() {
-        return Ok(None);
+        return Ok(Vec::new());
     }
     let metadata = std::fs::symlink_metadata(root).map_err(capture_io("inspect sessions"))?;
     if !metadata.is_dir() || metadata.file_type().is_symlink() {
@@ -64,7 +119,7 @@ fn newest_file(root: &Path) -> Result<Option<PathBuf>> {
     }
     let mut pending = vec![root.to_path_buf()];
     let mut visited = 0_usize;
-    let mut newest: Option<(std::time::SystemTime, PathBuf)> = None;
+    let mut files = Vec::new();
     while let Some(directory) = pending.pop() {
         for entry in std::fs::read_dir(directory).map_err(capture_io("list sessions"))? {
             let entry = entry.map_err(capture_io("read sessions entry"))?;
@@ -84,21 +139,11 @@ fn newest_file(root: &Path) -> Result<Option<PathBuf>> {
             if kind.is_dir() {
                 pending.push(entry.path());
             } else if kind.is_file() {
-                let modified = entry
-                    .metadata()
-                    .and_then(|metadata| metadata.modified())
-                    .map_err(capture_io("inspect conversation timestamp"))?;
-                let path = entry.path();
-                if newest
-                    .as_ref()
-                    .is_none_or(|(time, prior)| (modified, &path) > (*time, prior))
-                {
-                    newest = Some((modified, path));
-                }
+                files.push(entry.path());
             }
         }
     }
-    Ok(newest.map(|(_, path)| path))
+    Ok(files)
 }
 
 fn conversation_id(bytes: &[u8]) -> Option<String> {

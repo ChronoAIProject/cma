@@ -57,6 +57,11 @@ fn sandbox_only_events(
     mutation: &SandboxLifecycleMutation,
 ) -> Result<Vec<SandboxEventKind>, SandboxStoreError> {
     let next = &mutation.sandbox;
+    if current.credential.current != next.credential.current {
+        return Ok(vec![SandboxEventKind::CredentialChanged {
+            key_generation: next.credential.key_generation,
+        }]);
+    }
     if next.status == SandboxStatus::Failed {
         let failure = next
             .failure
@@ -89,6 +94,10 @@ fn sandbox_only_events(
                 Some(SandboxLifecycleOperation::Revive { .. }) => {
                     events.push(SandboxEventKind::Revived)
                 }
+                Some(SandboxLifecycleOperation::Pause {
+                    phase: crate::sandbox::SandboxPausePhase::ResumeWriters,
+                    ..
+                }) => {}
                 Some(SandboxLifecycleOperation::ImageRotation {
                     target_runtime_version,
                     ..

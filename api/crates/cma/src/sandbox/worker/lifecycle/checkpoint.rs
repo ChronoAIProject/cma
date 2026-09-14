@@ -1,4 +1,5 @@
-use std::time::SystemTime;
+use std::future::Future;
+use std::time::{Duration, SystemTime};
 
 use layer2_core::rfc3339_at;
 use layer2_core::sandbox::store::{
@@ -6,8 +7,7 @@ use layer2_core::sandbox::store::{
     SandboxStoreError,
 };
 use layer2_core::sandbox::{
-    Agent, Sandbox, SandboxCheckpointConversation, SandboxCheckpointRef, SandboxImageRotationPhase,
-    SandboxLifecycleOperation, SandboxPausePhase,
+    Agent, Sandbox, SandboxCheckpointConversation, SandboxCheckpointRef, SandboxLifecycleOperation,
 };
 use layer3_adapter::{
     writer_resume_tokens_match, AdapterError, AgentSlot, CheckpointHoldReceipt,
@@ -25,19 +25,61 @@ impl SandboxWorker {
         sandbox: Sandbox,
         now: SystemTime,
     ) -> Result<(), SandboxStoreError> {
+        let started = tokio::time::Instant::now();
+        let work = Box::pin(self.capture_and_publish_bounded(sandbox.clone(), now, started));
+        self.checkpoint_capture_deadline(&sandbox, now, started, work)
+            .await
+    }
+
+    pub(crate) async fn checkpoint_capture_deadline(
+        &self,
+        sandbox: &Sandbox,
+        now: SystemTime,
+        started: tokio::time::Instant,
+        work: impl Future<Output = Result<(), SandboxStoreError>>,
+    ) -> Result<(), SandboxStoreError> {
+        match tokio::time::timeout(Duration::from_secs(1_800), work).await {
+            Ok(result) => result,
+            Err(_) => {
+                // A timed-out publication may still commit. Fence it with a durable
+                // retry while preserving the exact hold token, never release on a read.
+                let recovery = self.handle_lifecycle_failure(
+                    sandbox.clone(),
+                    WorkerFailure::retryable("lifecycle checkpoint operation deadline elapsed"),
+                    now + started.elapsed(),
+                );
+                tokio::time::timeout(Duration::from_secs(30), recovery)
+                    .await
+                    .map_err(|_| {
+                        SandboxStoreError::Unavailable(
+                            "lifecycle checkpoint retry persistence is unconfirmed".into(),
+                        )
+                    })?
+            }
+        }
+    }
+
+    async fn capture_and_publish_bounded(
+        &self,
+        sandbox: Sandbox,
+        now: SystemTime,
+        started: tokio::time::Instant,
+    ) -> Result<(), SandboxStoreError> {
         let Some(runtime) = runtime(&sandbox) else {
             return self
                 .handle_lifecycle_failure(
                     sandbox,
                     WorkerFailure::terminal_security("lifecycle runtime binding is absent"),
-                    now,
+                    now + started.elapsed(),
                 )
                 .await;
         };
         let agents = self.lifecycle_agents(&sandbox).await?;
         for agent in agents.iter().filter(|agent| agent.status.is_live()) {
             if let Err(failure) = require_quiet_agent(agent) {
-                return self.handle_lifecycle_failure(sandbox, failure, now).await;
+                return self
+                    .handle_lifecycle_failure(sandbox, failure, now + started.elapsed())
+                    .await;
             }
         }
         let epoch = sandbox
@@ -45,7 +87,11 @@ impl SandboxWorker {
             .map_err(model_error)?;
         let token = match lifecycle_writer_token(&sandbox) {
             Ok(token) => token,
-            Err(failure) => return self.handle_lifecycle_failure(sandbox, failure, now).await,
+            Err(failure) => {
+                return self
+                    .handle_lifecycle_failure(sandbox, failure, now + started.elapsed())
+                    .await
+            }
         };
         let request = match checkpoint_hold_request(
             self.dependencies.adapter.as_ref(),
@@ -56,7 +102,11 @@ impl SandboxWorker {
             Ok(request) => request,
             Err(error) => {
                 return self
-                    .handle_lifecycle_failure(sandbox, adapter_failure(error), now)
+                    .handle_lifecycle_failure(
+                        sandbox,
+                        adapter_failure(error),
+                        now + started.elapsed(),
+                    )
                     .await
             }
         };
@@ -77,13 +127,17 @@ impl SandboxWorker {
                         WorkerFailure::terminal_security(
                             "runtime returned invalid held checkpoint evidence",
                         ),
-                        now,
+                        now + started.elapsed(),
                     )
                     .await
             }
             Err(error) => {
                 return self
-                    .fail_after_writer_resume(sandbox, checkpoint_hold_failure(error), now)
+                    .fail_after_writer_resume(
+                        sandbox,
+                        checkpoint_hold_failure(error),
+                        now + started.elapsed(),
+                    )
                     .await
             }
         };
@@ -93,8 +147,13 @@ impl SandboxWorker {
             .await
         {
             Ok(captures) => captures,
-            Err(failure) => return self.fail_after_writer_resume(sandbox, failure, now).await,
+            Err(failure) => {
+                return self
+                    .fail_after_writer_resume(sandbox, failure, now + started.elapsed())
+                    .await
+            }
         };
+        let now = now + started.elapsed();
         let stamp = rfc3339_at(now);
         let checkpoint =
             match SandboxCheckpointRef::seal(&held.checkpoint, &captures, stamp.clone()) {
@@ -127,6 +186,7 @@ impl SandboxWorker {
                 .filter(|agent| agent.status.is_live())
                 .map(SandboxCheckpointAgentGuard::capture)
                 .collect(),
+            nonblocking: false,
             checkpoint,
             sandbox: next.clone(),
             appended_at: stamp,
@@ -209,7 +269,7 @@ impl SandboxWorker {
         let receipt = self
             .dependencies
             .adapter
-            .checkpoint_for_teardown(&runtime, &request)
+            .verify_checkpoint_hold(&runtime, &request)
             .await
             .map_err(checkpoint_hold_failure)?;
         if !valid_held_receipt(&receipt, &request)
@@ -258,7 +318,11 @@ impl SandboxWorker {
         failure: WorkerFailure,
         now: SystemTime,
     ) -> Result<(), SandboxStoreError> {
-        if self.resume_lifecycle_writers(&sandbox).await.is_err() {
+        // Retry delay starts after writer recovery, not before its potentially slow acknowledgement.
+        let started = tokio::time::Instant::now();
+        let resumed = self.resume_lifecycle_writers(&sandbox).await;
+        let now = now + started.elapsed();
+        if resumed.is_err() {
             return self
                 .handle_lifecycle_failure(
                     sandbox,
@@ -306,20 +370,8 @@ impl SandboxWorker {
         if stored.as_ref() == Some(expected) {
             return Ok(());
         }
-        if stored
-            .as_ref()
-            .is_some_and(|sandbox| lifecycle_keeps_writers_held(sandbox, current))
-        {
-            return Err(error);
-        }
-        if stored
-            .as_ref()
-            .is_some_and(|sandbox| sandbox.runtime == current.runtime)
-        {
-            if let Err(resume_error) = self.resume_lifecycle_writers(current).await {
-                tracing::warn!(sandbox_id = %current.id, error = ?resume_error, "checkpoint publication failed and writer resumption could not be confirmed");
-            }
-        }
+        // An ambiguous commit can arrive after this read. Leave exact-token debt
+        // with the durable lifecycle so its next claim replays or continues the hold.
         Err(error)
     }
 }
@@ -408,27 +460,4 @@ fn valid_held_receipt(receipt: &CheckpointHoldReceipt, request: &CheckpointHoldR
     receipt.checkpoint.epoch == request.checkpoint.epoch
         && receipt.checkpoint.writers == WriterState::Held
         && writer_resume_tokens_match(&receipt.writer_resume_token, &request.writer_resume_token)
-}
-
-fn lifecycle_keeps_writers_held(stored: &Sandbox, attempted: &Sandbox) -> bool {
-    let same_operation = stored
-        .lifecycle
-        .operation
-        .as_ref()
-        .zip(attempted.lifecycle.operation.as_ref())
-        .is_some_and(|(stored, attempted)| {
-            stored.authority().operation_id == attempted.authority().operation_id
-        });
-    same_operation
-        && matches!(
-            stored.lifecycle.operation,
-            Some(SandboxLifecycleOperation::Pause {
-                phase: SandboxPausePhase::PauseAgents | SandboxPausePhase::TeardownRuntime,
-                ..
-            }) | Some(SandboxLifecycleOperation::ImageRotation {
-                phase: SandboxImageRotationPhase::PauseAgents
-                    | SandboxImageRotationPhase::TeardownRuntime,
-                ..
-            })
-        )
 }

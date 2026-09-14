@@ -145,14 +145,14 @@
 }
 .public-step {
   display: grid;
-  grid-template-columns: 24px minmax(0, 1fr);
+  grid-template-columns: 44px minmax(0, 1fr);
   gap: 12px;
   padding: 16px 0;
   border-bottom: 1px solid var(--dsw-alias-border-l2);
 }
 .public-step__icon {
-  width: 24px;
-  height: 24px;
+  width: 44px;
+  height: 44px;
   display: grid;
   place-items: center;
 }
@@ -191,4 +191,21 @@
   .public-review .button {
     min-height: 44px;
   }
+}
+.public-service-verified {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.5rem 0;
+}
+
+.public-service-verified > span:first-child {
+  width: 2rem;
+  height: 2rem;
+  flex: 0 0 2rem;
+}
+
+.public-service-verified > span:last-child {
+  margin-left: auto;
+  color: var(--live);
 }

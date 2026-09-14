@@ -322,12 +322,14 @@ pub(super) fn sandbox(id: &str, owner: &str) -> Sandbox {
         status: SandboxStatus::Active,
         failure: None,
         runtime: Some(RuntimeBinding {
+            boot_id: None,
             provision_generation: Some(1),
             runtime_id: "runtime-route".into(),
             runtime_version: "sha256:runtime".into(),
             bound_at: NOW.into(),
         }),
         credential: SandboxCredentialState {
+            service_grants: Vec::new(),
             reaches: vec![ServiceId::new("api-github")],
             key_generation: 0,
             delivered: false,

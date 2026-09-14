@@ -74,10 +74,40 @@ async fn load_replay_with_session(
     session: &mut ClientSession,
     read: ReplayRead,
 ) -> Result<Option<AdmissionReceipt>, LoadError> {
-    let agent_find = store.agents.find_one(doc! {
+    let binding_id = binding_id(admission).map_err(LoadError::Domain)?;
+    let binding_find = store
+        .agent_reuse_bindings
+        .find_one(doc! { "_id": &binding_id });
+    let binding_find = match read {
+        ReplayRead::Transaction => binding_find,
+        ReplayRead::Snapshot => binding_find.read_concern(ReadConcern::snapshot()),
+    };
+    let binding = binding_find
+        .session(&mut *session)
+        .await
+        .map_err(LoadError::Driver)?;
+    let mut agent_query = doc! {
         "owner": admission.owner.as_str(),
         "creation_key": &admission.creation_key,
-    });
+    };
+    if let Some(binding) = &binding {
+        if binding.get_i64("document_schema_version").ok()
+            != Some(super::sandbox_mongo::DOCUMENT_SCHEMA_VERSION)
+            || binding.get_str("owner").ok() != Some(admission.owner.as_str())
+            || binding.get_str("creation_key").ok() != Some(admission.creation_key.as_str())
+        {
+            return Err(LoadError::Domain(SandboxStoreError::Corrupt(
+                "Agent reuse binding is invalid".into(),
+            )));
+        }
+        if binding.get_str("fingerprint").ok()
+            != Some(admission.fingerprint().map_err(LoadError::Domain)?.as_str())
+        {
+            return Err(LoadError::Domain(SandboxStoreError::AgentCreationConflict));
+        }
+        agent_query = doc! { "_id": binding.get_str("agent_id").map_err(|_| LoadError::Domain(SandboxStoreError::Corrupt("Agent reuse binding has no Agent".into())))?, "owner": admission.owner.as_str() };
+    }
+    let agent_find = store.agents.find_one(agent_query);
     let agent_find = match read {
         ReplayRead::Transaction => agent_find,
         ReplayRead::Snapshot => agent_find.read_concern(ReadConcern::snapshot()),
@@ -87,7 +117,13 @@ async fn load_replay_with_session(
         .await
         .map_err(LoadError::Driver)?
     else {
-        return Ok(None);
+        return if binding.is_some() {
+            Err(LoadError::Domain(SandboxStoreError::Corrupt(
+                "Agent reuse binding target is missing".into(),
+            )))
+        } else {
+            Ok(None)
+        };
     };
     let agent = read_agent(&agent_document).map_err(LoadError::Domain)?;
     let worktree_find = store
@@ -125,9 +161,28 @@ async fn load_replay_with_session(
     }
     let creation =
         assemble_creation(agent, worktree_document, initial_log).map_err(LoadError::Domain)?;
+    if binding.is_some() {
+        creation.validate_replay().map_err(LoadError::Domain)?;
+        if creation.agent.workspace_id != admission.workspace_id
+            || creation.agent.profile != admission.profile
+        {
+            return Err(LoadError::Domain(SandboxStoreError::Corrupt(
+                "Agent reuse binding lineage disagrees".into(),
+            )));
+        }
+        return Ok(Some(AdmissionReceipt::Existing(Box::new(creation))));
+    }
     classify_replay(admission, creation)
         .map(Some)
         .map_err(LoadError::Domain)
+}
+
+pub(super) fn binding_id(admission: &AgentAdmission) -> Result<String, SandboxStoreError> {
+    layer2_core::profiles::content_digest(&(
+        admission.owner.as_str(),
+        admission.creation_key.as_str(),
+    ))
+    .map_err(|error| SandboxStoreError::Corrupt(error.to_string()))
 }
 
 pub(super) async fn replay_after_duplicate(

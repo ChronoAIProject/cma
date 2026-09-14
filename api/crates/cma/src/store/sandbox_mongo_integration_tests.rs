@@ -79,6 +79,7 @@ use super::worktrees::worktree_replacement_fields;
 use super::DefaultProfileSpec;
 
 const NOW: &str = "2026-09-05T00:00:00Z";
+mod background_checkpoint_tests;
 const MINUTE: &str = "2026-09-05T00:01:00Z";
 const TWO_MINUTES: &str = "2026-09-05T00:02:00Z";
 static DATABASE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
@@ -136,6 +137,7 @@ pub(super) fn sandbox(id: &str) -> Sandbox {
         failure: None,
         runtime: None,
         credential: SandboxCredentialState {
+            service_grants: Vec::new(),
             reaches: vec![],
             key_generation: 1,
             delivered: true,
@@ -612,6 +614,7 @@ fn advance_claimed_agent(claimed: &Agent) -> Agent {
     next
 }
 
+mod agent_log_read_tests;
 mod agent_title_tests;
 mod agent_transaction_tests;
 mod agent_worker_tests;
@@ -620,8 +623,10 @@ mod execution_tests;
 mod launch_command_tests;
 mod profile_transaction_tests;
 mod sandbox_lifecycle_tests;
+mod service_access_tests;
 mod skill_material_tests;
 mod transaction_reconciliation_tests;
+mod warm_hierarchy_tests;
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
 async fn fresh_database_initializes_every_schema_v1_collection_and_index() {
@@ -1493,7 +1498,7 @@ async fn workspace_claims_survive_reopen_and_fence_out_an_expired_worker() {
 
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
-async fn workspace_removal_locks_the_row_and_rejects_only_live_agents() {
+async fn workspace_removal_locks_the_row_and_durably_admits_live_child_cleanup() {
     let (client, name) = database("workspace_removal").await;
     let store = MongoSandboxStore::open(&client, &name).await.unwrap();
     let parent = sandbox("sbx_workspace_removal");
@@ -1504,28 +1509,6 @@ async fn workspace_removal_locks_the_row_and_rejects_only_live_agents() {
     agent.workspace_id = candidate.id.clone();
     store.create_agent(agent.clone()).await.unwrap();
 
-    assert_eq!(
-        store
-            .begin_workspace_removal(&candidate.id, &candidate.owner, NOW.into())
-            .await,
-        Err(SandboxStoreError::WorkspaceHasLiveAgents)
-    );
-    assert_eq!(
-        store.get_workspace(&candidate.id).await.unwrap(),
-        Some(candidate.clone())
-    );
-    let raw = store
-        .workspaces
-        .find_one(doc! { "_id": candidate.id.as_str() })
-        .await
-        .unwrap()
-        .unwrap();
-    assert!(!raw.contains_key("removal_lock_fence"));
-
-    let expected = agent.revision;
-    agent.status = agent.status.transition(AgentStatus::Stopped).unwrap();
-    agent.revision += 1;
-    store.save_agent(expected, agent).await.unwrap();
     let removing = store
         .begin_workspace_removal(&candidate.id, &candidate.owner, NOW.into())
         .await
@@ -1533,6 +1516,14 @@ async fn workspace_removal_locks_the_row_and_rejects_only_live_agents() {
     assert_eq!(removing.status, WorkspaceStatus::Removing);
     assert_eq!(removing.work.step, WorkspaceWorkStep::Remove);
     assert_eq!(removing.revision, 2);
+    assert_eq!(store.get_agent(&agent.id).await.unwrap(), Some(agent));
+    let raw = store
+        .workspaces
+        .find_one(doc! { "_id": candidate.id.as_str() })
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(raw.get_i64("removal_lock_fence").unwrap(), 1);
     assert_eq!(
         store
             .begin_workspace_removal(&candidate.id, &candidate.owner, NOW.into())
@@ -1738,6 +1729,40 @@ async fn default_profiles_seed_idempotently_and_refuse_configuration_drift() {
         .seed_default_profiles(&spec, bounds, &[])
         .await
         .unwrap();
+
+    for collection in [
+        &store.agent_profiles,
+        &store.workspace_profiles,
+        &store.sandbox_profiles,
+    ] {
+        collection
+            .update_many(
+                doc! {},
+                doc! {"$set": {"uses_count": 7_i64, "record.uses_count": 7_i64}},
+            )
+            .await
+            .unwrap();
+    }
+    store
+        .seed_default_profiles(&spec, bounds, &[])
+        .await
+        .unwrap();
+    for collection in [
+        &store.agent_profiles,
+        &store.workspace_profiles,
+        &store.sandbox_profiles,
+    ] {
+        assert_eq!(
+            collection
+                .find_one(doc! {})
+                .await
+                .unwrap()
+                .unwrap()
+                .get_i64("uses_count")
+                .unwrap(),
+            7
+        );
+    }
 
     let mut changed = spec;
     changed.agent_model = "model-b".into();

@@ -110,6 +110,7 @@ struct UploadStore {
     calls: AtomicUsize,
     uploaded: Mutex<Option<UploadedArchive>>,
     alter_receipt: bool,
+    refuse_upload: bool,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -127,6 +128,11 @@ impl CheckpointArchiveStore for UploadStore {
         mut archive: CheckpointArchiveUpload,
     ) -> crate::Result<CheckpointArchiveReceipt> {
         self.calls.fetch_add(1, Ordering::SeqCst);
+        if self.refuse_upload {
+            return Err(AdapterError::Unavailable(
+                "fixture storage rejection".into(),
+            ));
+        }
         let mut bytes = Vec::new();
         while let Some(chunk) = archive.chunks.recv().await {
             bytes.extend_from_slice(&chunk?);
@@ -260,6 +266,32 @@ async fn export_rejects_missing_zero_or_oversized_content_lengths() {
 }
 
 #[tokio::test]
+async fn export_preserves_storage_rejection_when_the_upload_channel_closes() {
+    let bytes = vec![0x35; 128 * 1024];
+    let checkpoint = checkpoint(&bytes);
+    let fixture = serve(
+        response(
+            "200 OK",
+            &[("Content-Length", bytes.len().to_string())],
+            &bytes,
+        ),
+        "/checkpoint",
+    )
+    .await;
+    let store: Arc<dyn CheckpointArchiveStore> = Arc::new(UploadStore {
+        refuse_upload: true,
+        ..UploadStore::default()
+    });
+    assert_eq!(
+        export(&client(), fixture.url, AUTH, &checkpoint, &store)
+            .await
+            .unwrap_err(),
+        AdapterError::Unavailable("fixture storage rejection".into())
+    );
+    let _ = fixture.request.await;
+}
+
+#[tokio::test]
 async fn export_rejects_stream_hash_and_durable_receipt_mismatches() {
     let bytes = b"runtime bytes";
     let wrong_checkpoint = checkpoint(b"different bytes");
@@ -301,7 +333,7 @@ async fn export_rejects_stream_hash_and_durable_receipt_mismatches() {
 }
 
 #[tokio::test]
-async fn import_streams_exact_length_and_requires_no_content() {
+async fn import_streams_exact_length_and_accepts_legacy_no_content() {
     let bytes = b"durable checkpoint bytes";
     let request = restore(bytes);
     let store: Arc<dyn CheckpointArchiveStore> = Arc::new(DownloadStore::new(
@@ -329,6 +361,7 @@ async fn import_streams_exact_length_and_requires_no_content() {
     assert!(headers.starts_with("put /proxy/runtime/checkpoints/archive http/1.1"));
     assert!(headers.contains(&format!("content-length: {}", bytes.len())));
     assert!(headers.contains("open-sandbox-api-key: provider-secret"));
+    assert!(headers.contains(&format!("accept: {CHECKPOINT_UPLOAD_RECEIPT_MEDIA_TYPE}")));
     assert_eq!(&raw[header_end..], bytes);
 }
 
@@ -383,7 +416,184 @@ async fn import_rejects_store_identity_hash_and_runtime_status_mismatches() {
     .await;
     let error = import(&client(), fixture.url, AUTH, &request, &store)
         .await
-        .expect_err("runtime must acknowledge import with 204");
+        .expect_err("an empty 200 is not a committed receipt");
     assert!(matches!(error, AdapterError::Rejected(_)));
     fixture.request.await.expect("fixture completes");
+}
+
+fn committed_upload(bytes: &[u8]) -> serde_json::Value {
+    let request = restore(bytes);
+    serde_json::to_value(CheckpointUploadResponse::Committed {
+        object_reference: request.object_reference,
+        sha256: request.sha256,
+        size_bytes: bytes.len() as u64,
+    })
+    .expect("upload receipt serializes")
+}
+
+async fn import_response(response: Vec<u8>, bytes: &[u8]) -> crate::Result<()> {
+    let request = restore(bytes);
+    let store: Arc<dyn CheckpointArchiveStore> = Arc::new(DownloadStore::new(
+        &request,
+        bytes.len() as u64,
+        vec![Ok(bytes.to_vec())],
+    ));
+    let fixture = serve(response, "/checkpoint").await;
+    let result = import(&client(), fixture.url, AUTH, &request, &store).await;
+    fixture.request.await.expect("fixture completes");
+    result
+}
+
+fn upload_response(body: &[u8]) -> Vec<u8> {
+    response(
+        "200 OK",
+        &[
+            ("Content-Type", CHECKPOINT_UPLOAD_RECEIPT_MEDIA_TYPE.into()),
+            ("Content-Length", body.len().to_string()),
+        ],
+        body,
+    )
+}
+
+#[tokio::test]
+async fn import_accepts_only_the_exact_committed_upload_identity() {
+    let bytes = b"durable checkpoint bytes";
+    let valid = committed_upload(bytes);
+    import_response(upload_response(valid.to_string().as_bytes()), bytes)
+        .await
+        .expect("correlated completion is accepted");
+
+    for (field, value) in [
+        ("object_reference", serde_json::json!("other-object")),
+        ("sha256", serde_json::json!(digest(b"different"))),
+        ("size_bytes", serde_json::json!(bytes.len() + 1)),
+        ("unknown", serde_json::json!(true)),
+        ("type", serde_json::json!("pending")),
+    ] {
+        let mut wrong = valid.clone();
+        wrong[field] = value;
+        let result = import_response(upload_response(wrong.to_string().as_bytes()), bytes).await;
+        assert!(matches!(result, Err(AdapterError::Rejected(_))), "{field}");
+    }
+}
+
+#[tokio::test]
+async fn import_preserves_streamed_failure_classification() {
+    for retryable in [false, true] {
+        let body = serde_json::to_vec(&CheckpointUploadResponse::Failure {
+            code: "checkpoint_validation_failed".into(),
+            detail: "archive inspection refused the bytes".into(),
+            retryable,
+        })
+        .unwrap();
+        let error = import_response(upload_response(&body), b"archive")
+            .await
+            .expect_err("a streamed failure is not completion");
+        assert_eq!(matches!(error, AdapterError::Unavailable(_)), retryable);
+        assert_eq!(matches!(error, AdapterError::Rejected(_)), !retryable);
+    }
+}
+
+#[tokio::test]
+async fn import_rejects_malformed_truncated_and_oversized_receipts() {
+    let bytes = b"archive";
+    for body in [
+        b" \n\t".to_vec(),
+        b"{\"type\":\"committed\"".to_vec(),
+        vec![b' '; ERROR_BODY_BYTES + 1],
+    ] {
+        assert!(matches!(
+            import_response(upload_response(&body), bytes).await,
+            Err(AdapterError::Rejected(_))
+        ));
+    }
+    let body = committed_upload(bytes).to_string();
+    let wrong_media = response(
+        "200 OK",
+        &[
+            ("Content-Type", "application/json".into()),
+            ("Content-Length", body.len().to_string()),
+        ],
+        body.as_bytes(),
+    );
+    assert!(matches!(
+        import_response(wrong_media, bytes).await,
+        Err(AdapterError::Rejected(_))
+    ));
+    let truncated = response(
+        "200 OK",
+        &[
+            ("Content-Type", CHECKPOINT_UPLOAD_RECEIPT_MEDIA_TYPE.into()),
+            ("Content-Length", (body.len() + 1).to_string()),
+        ],
+        body.as_bytes(),
+    );
+    assert!(matches!(
+        import_response(truncated, bytes).await,
+        Err(AdapterError::Unavailable(_))
+    ));
+    let unbounded = response(
+        "200 OK",
+        &[("Content-Type", CHECKPOINT_UPLOAD_RECEIPT_MEDIA_TYPE.into())],
+        &vec![b' '; ERROR_BODY_BYTES + 1],
+    );
+    assert!(matches!(
+        import_response(unbounded, bytes).await,
+        Err(AdapterError::Rejected(_))
+    ));
+}
+
+#[tokio::test]
+async fn import_heartbeats_keep_reads_alive_without_acknowledging_before_commit() {
+    use std::time::Duration;
+
+    let bytes = b"durable checkpoint bytes";
+    let request = restore(bytes);
+    let store: Arc<dyn CheckpointArchiveStore> = Arc::new(DownloadStore::new(
+        &request,
+        bytes.len() as u64,
+        vec![Ok(bytes.to_vec())],
+    ));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = Url::parse(&format!(
+        "http://{}/checkpoint",
+        listener.local_addr().unwrap()
+    ))
+    .unwrap();
+    let (ready, waiting) = tokio::sync::oneshot::channel();
+    let (release, released) = tokio::sync::oneshot::channel();
+    let server = tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.unwrap();
+        read_request(&mut stream).await;
+        stream.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: {CHECKPOINT_UPLOAD_RECEIPT_MEDIA_TYPE}\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n").as_bytes()).await.unwrap();
+        // The total wait exceeds the client's idle deadline, but each heartbeat does not.
+        for _ in 0..12 {
+            stream.write_all(b"1\r\n \r\n").await.unwrap();
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        ready.send(()).unwrap();
+        released.await.unwrap();
+        let body = committed_upload(bytes).to_string();
+        stream
+            .write_all(format!("{:x}\r\n{body}\r\n0\r\n\r\n", body.len()).as_bytes())
+            .await
+            .unwrap();
+        stream.shutdown().await.unwrap();
+    });
+    let client = reqwest::Client::builder()
+        .read_timeout(Duration::from_millis(500))
+        .build()
+        .unwrap();
+    let import = tokio::spawn(async move { import(&client, url, AUTH, &request, &store).await });
+    waiting.await.unwrap();
+    assert!(
+        !import.is_finished(),
+        "heartbeats must not publish completion"
+    );
+    release.send(()).unwrap();
+    import
+        .await
+        .unwrap()
+        .expect("streamed exact completion succeeds");
+    server.await.unwrap();
 }

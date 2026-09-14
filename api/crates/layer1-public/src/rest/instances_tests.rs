@@ -42,6 +42,11 @@ use crate::rest::instances_problem::HierarchyProblem;
 use crate::AuthenticatedSubject;
 
 const NOW: &str = "2026-09-05T00:00:00Z";
+
+#[path = "sandbox_lifecycle_view_tests.rs"]
+mod lifecycle_view_tests;
+#[path = "sandbox_service_access_tests.rs"]
+mod service_access_tests;
 type OperationKey = (String, String, String);
 type OperationRecord = ([u8; 32], Option<Vec<u8>>);
 
@@ -117,12 +122,11 @@ pub(super) fn fixture_with_operations(
     let hierarchy = HierarchyReadService::new(store.clone());
     let operations = Arc::new(MemoryOperationStore::default());
     let operation_store: Arc<dyn OperationStore> = injected.unwrap_or_else(|| operations.clone());
-    let router = hierarchy_router(HierarchyState::new(
-        sandboxes,
-        workspaces,
-        hierarchy,
-        operation_store,
-    ));
+    let router = hierarchy_router(
+        HierarchyState::new(sandboxes, workspaces, hierarchy, operation_store).with_user_directory(
+            layer2_core::UserDirectory::new(super::public_names::tests::Names::seeded()),
+        ),
+    );
     Fixture {
         router,
         store,
@@ -208,6 +212,7 @@ pub(super) async fn publish_sandbox_profile(
     let id = SandboxProfileId(id.into());
     profiles
         .create_sandbox_profile(SandboxProfile {
+            availability: Default::default(),
             id: id.clone(),
             owner: SubjectId::new(owner),
             name: format!("Sandbox {id}"),
@@ -303,6 +308,7 @@ fn stored_sandbox(id: &str, owner: &str, status: SandboxStatus, max_workspaces: 
         failure: None,
         runtime: None,
         credential: SandboxCredentialState {
+            service_grants: Vec::new(),
             reaches: vec![],
             key_generation: 0,
             delivered: false,
@@ -444,7 +450,7 @@ async fn insert_hierarchy(
     }
 }
 
-fn checkpoint(epoch: u64) -> SandboxCheckpointRef {
+pub(super) fn checkpoint(epoch: u64) -> SandboxCheckpointRef {
     let object_reference = format!("checkpoints/sandbox-{epoch}.tar.zst");
     let sha256 = format!("{epoch:064x}");
     let sealed_at = "2026-09-05T00:29:00Z".to_owned();
@@ -890,6 +896,8 @@ async fn hierarchy_reads_filter_page_count_and_replay_events() {
     .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(page["items"][0]["id"], "sbx_1");
+    assert_eq!(page["items"][0]["owner"], "owner");
+    assert_eq!(page["items"][0]["owner_name"], "Research Creator");
     assert_eq!(page["next"], "sbx_1");
     let (status, page) = json_response(
         &fixture.router,
@@ -911,6 +919,8 @@ async fn hierarchy_reads_filter_page_count_and_replay_events() {
     )
     .await;
     assert_eq!(detail["workspace_count"], 1);
+    assert_eq!(detail["owner"], "owner");
+    assert_eq!(detail["owner_name"], "Research Creator");
     assert_eq!(detail["worktree_count"], 1);
     assert_eq!(detail["agent_count"], 1);
     assert_eq!(detail["workspaces"][0]["id"], "wks_3");
@@ -1073,7 +1083,7 @@ async fn foreign_and_missing_hierarchy_responses_are_byte_identical() {
 }
 
 #[tokio::test]
-async fn workspace_mutations_project_every_named_hierarchy_conflict() {
+async fn workspace_mutations_project_conflicts_and_admit_live_child_removal() {
     let fixture = fixture(10);
     let active = stored_sandbox("sbx_active", "owner", SandboxStatus::Active, 1);
     let unready = stored_sandbox("sbx_unready", "owner", SandboxStatus::Provisioning, 1);
@@ -1212,7 +1222,7 @@ async fn workspace_mutations_project_every_named_hierarchy_conflict() {
         Some(&agent),
     )
     .await;
-    let (status, problem) = json_response(
+    let (status, removing) = json_response(
         &fixture.router,
         authenticated(
             Method::DELETE,
@@ -1222,8 +1232,20 @@ async fn workspace_mutations_project_every_named_hierarchy_conflict() {
         ),
     )
     .await;
-    assert_eq!(status, StatusCode::CONFLICT);
-    assert_eq!(problem["code"], "workspace_has_live_agents");
+    assert_eq!(status, StatusCode::ACCEPTED);
+    assert_eq!(removing["id"], "wks_live");
+    assert_eq!(removing["status"], "removing");
+    let replay = json_response(
+        &fixture.router,
+        authenticated(
+            Method::DELETE,
+            "/api/v1/workspaces/wks_live",
+            None,
+            Some("live-agents"),
+        ),
+    )
+    .await;
+    assert_eq!(replay, (status, removing));
 }
 
 #[tokio::test]

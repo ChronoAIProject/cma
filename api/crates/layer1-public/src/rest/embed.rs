@@ -19,7 +19,7 @@ use crate::AuthenticatedCaller;
 
 /// Subresource integrity for the exact bytes in `web/public/embed/v1.js`.
 pub const EMBED_V1_JAVASCRIPT_SRI: &str =
-    "sha384-hyi+n+8axKIAw/N4+9hJAAoaeKrVpTkh2N9SWJ6vo8nIrP+K29nRGqzJ2VseOkJn";
+    "sha384-K56ODoEc3ZTiX/9Xfe3xk5PEm0Q+bQw5brGMyIfL3hGTeREM9Xf7zvR/7nn1XGuI";
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -178,7 +178,15 @@ pub(super) fn build_descriptor(
     let theme = theme_key(presentation.theme);
     let public_url = path_url(
         public_origin,
-        &["t", public_id.as_str(), placement_id.as_str()],
+        &[
+            "api",
+            "v1",
+            "triggers",
+            "public",
+            public_id.as_str(),
+            "open",
+            placement_id.as_str(),
+        ],
     )
     .to_string();
     let mut badge_url = path_url(

@@ -1,6 +1,6 @@
 //! Read-only identity directory backed by an explicit store port.
 
-use std::sync::Arc;
+use std::{collections::BTreeMap, sync::Arc};
 
 use serde::{Deserialize, Serialize};
 
@@ -38,6 +38,25 @@ pub trait UserDirectoryStore: Send + Sync {
     async fn observe(&self, identity: &PublicIdentity) -> Result<(), StoreError>;
     async fn user(&self, subject: &SubjectId) -> Result<Option<RegisteredUser>, StoreError>;
     async fn list(&self, query: &DirectoryQuery) -> Result<Page<RegisteredUser>, StoreError>;
+
+    /// Resolve public names for identities on an already-authorized resource page.
+    async fn display_names(
+        &self,
+        subjects: &[SubjectId],
+    ) -> Result<BTreeMap<String, String>, StoreError> {
+        let mut names = BTreeMap::new();
+        for subject in subjects {
+            if let Some(user) = self.user(subject).await? {
+                if user.identity.subject != *subject {
+                    return Err(StoreError::Malformed("directory identity mismatch".into()));
+                }
+                if let Some(name) = user.identity.display_name {
+                    names.insert(subject.0.clone(), name);
+                }
+            }
+        }
+        Ok(names)
+    }
 }
 
 pub struct UserDirectory {
@@ -55,6 +74,31 @@ impl UserDirectory {
 
     pub async fn user(&self, subject: &SubjectId) -> Result<Option<RegisteredUser>, StoreError> {
         self.store.user(subject).await
+    }
+
+    /// Call only after authorizing access to the records bearing these subjects.
+    /// This resolves names, without granting access to the directory itself.
+    pub async fn display_names(
+        &self,
+        subjects: &[SubjectId],
+    ) -> Result<BTreeMap<String, String>, StoreError> {
+        if subjects.len() > 200 {
+            return Err(StoreError::Malformed(
+                "identity lookup exceeds page bound".into(),
+            ));
+        }
+        if subjects.is_empty() {
+            return Ok(BTreeMap::new());
+        }
+        let mut names = self.store.display_names(subjects).await?;
+        if names
+            .keys()
+            .any(|key| !subjects.iter().any(|subject| &subject.0 == key))
+        {
+            return Err(StoreError::Malformed("directory identity mismatch".into()));
+        }
+        names.retain(|subject, name| !name.trim().is_empty() && name.trim() != subject);
+        Ok(names)
     }
 
     pub async fn list(

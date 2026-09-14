@@ -13,6 +13,7 @@ use layer2_core::ServiceId;
 use crate::{auth::AuthMode, store::AuthEncryptionKey};
 
 mod execution;
+mod home;
 mod profiles;
 mod runtime;
 mod storage;
@@ -26,7 +27,7 @@ const DEFAULT_PUBLIC_URL: &str = "http://localhost:8080";
 const DEFAULT_CORS_ORIGIN: &str = "http://localhost:5173";
 const DEFAULT_DATABASE: &str = "chrono_bot";
 const DEFAULT_ACTIVITY_RETENTION_DAYS: u64 = 90;
-const DEFAULT_BASELINE_SERVICES: &str = "chrono-llm,ornn-api,ornn";
+const DEFAULT_BASELINE_SERVICES: &str = "chrono-llm-public,ornn-api";
 const DEFAULT_TRUSTED_PROXY_HOPS: usize = 1;
 const MAX_TRUSTED_PROXY_HOPS: usize = 16;
 const MINIMUM_HEALTH_REQUESTS_PER_MINUTE: u32 = 30;
@@ -483,3 +484,7 @@ fn validate_mongodb_uri(value: &str) -> Result<(), String> {
 #[cfg(test)]
 #[path = "config_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "config/home_tests.rs"]
+mod home_tests;

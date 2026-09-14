@@ -8,6 +8,11 @@ pub(super) fn validate_record(record: &Record, config: &RuntimeConfig) -> Result
     if record.version != 1 {
         return Err(corrupt("runtime mutation journal version is unsupported"));
     }
+    if record.runtime_generation != crate::mutation_scope::generation(config, &record.subject) {
+        return Err(corrupt(
+            "runtime mutation journal belongs to another process generation",
+        ));
+    }
     validate_operation(&record.operation(), config)
         .map_err(|_| corrupt("runtime mutation operation identity is invalid"))?;
     if record

@@ -80,5 +80,12 @@ pub(super) fn admit(
 }
 
 fn rejected<T>(operation: WireOperation, code: &str) -> crate::Result<T> {
-    Err(AdapterError::Rejected(format!("{operation:?}: {code}")))
+    let detail = format!("{operation:?}: {code}");
+    Err(
+        if operation == WireOperation::OpenAgent && code == "mutation_authority_conflict" {
+            AdapterError::OperationIdentityConflict(detail)
+        } else {
+            AdapterError::Rejected(detail)
+        },
+    )
 }

@@ -283,21 +283,25 @@ fn append_pre_write_rollback(
             });
         }
         PreWriteRollback::Approval(snapshot)
-            if current.status == AgentStatus::Working
-                && current.conversation.active_turn == Some(prepared.turn_sequence) =>
+            if matches!(
+                current.status,
+                AgentStatus::Working | AgentStatus::WaitingApproval
+            ) && current.conversation.active_turn == Some(prepared.turn_sequence) =>
         {
-            next.transition(AgentStatus::WaitingApproval, at.to_owned(), None)
-                .map_err(|error| AgentOperationError::Corrupt(error.to_string()))?;
             logs.push(AgentLogKind::ApprovalRequested {
                 approval_id: snapshot.approval_id.clone(),
                 action: snapshot.action.clone(),
                 detail: snapshot.detail.clone(),
                 runtime_locator: snapshot.runtime_locator.clone(),
             });
-            logs.push(AgentLogKind::StatusChanged {
-                from: AgentStatus::Working,
-                to: AgentStatus::WaitingApproval,
-            });
+            if current.status == AgentStatus::Working {
+                next.transition(AgentStatus::WaitingApproval, at.to_owned(), None)
+                    .map_err(|error| AgentOperationError::Corrupt(error.to_string()))?;
+                logs.push(AgentLogKind::StatusChanged {
+                    from: AgentStatus::Working,
+                    to: AgentStatus::WaitingApproval,
+                });
+            }
         }
         PreWriteRollback::WaitingApproval
             if current.status == AgentStatus::Working

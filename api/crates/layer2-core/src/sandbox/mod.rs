@@ -14,6 +14,7 @@ mod agent_reads_fold;
 mod agent_runtime;
 mod agent_service;
 mod agent_work;
+mod background_checkpoint;
 mod checkpoint;
 mod checkpoint_capture;
 mod checkpoint_writer_recovery;
@@ -31,6 +32,8 @@ mod first_message;
 mod first_message_dispatch;
 mod first_message_service;
 mod hierarchy;
+mod home;
+mod home_recovery;
 mod inactivity;
 mod launch_recovery;
 mod launch_service;
@@ -38,17 +41,24 @@ mod lifecycle;
 mod lifecycle_execution;
 mod lifecycle_execution_support;
 mod lifecycle_service;
+mod lifecycle_service_access;
 mod limits;
+mod pending_approvals;
 mod provision;
 mod queued_message;
 mod revive;
 mod rotate;
 mod runtime_generation;
+mod runtime_health;
 mod runtime_recovery;
 mod runtime_recovery_agents;
 #[allow(clippy::module_inception)]
 mod sandbox;
 mod service;
+mod service_access;
+mod service_access_service;
+#[cfg(test)]
+mod service_access_tests;
 mod service_admission;
 mod service_creation;
 mod service_trust;
@@ -58,10 +68,15 @@ mod title;
 mod title_sanitize;
 mod title_service;
 mod title_store;
+mod warmup;
 mod workspace;
 mod workspace_service;
 mod workspace_work;
 mod worktree;
+pub use home_recovery::{SandboxHomeRecovery, SandboxRecoveryPause};
+pub use warmup::{
+    WarmAgent, WarmSandbox, WarmSandboxPlan, WarmSandboxState, WarmWorkspace, WarmWorkspacePlan,
+};
 
 pub use admin::{
     AgentAdminSummary, OperatorError, SandboxAdminQuery, SandboxAdminStore, SandboxAdminSummary,
@@ -97,10 +112,15 @@ pub use agent_work::{
     AgentCleanupDebt, AgentWorkLease, AgentWorkReceipt, AgentWorkState, AgentWorkStep,
     ResolvedAgentSkill,
 };
+pub use background_checkpoint::{
+    SandboxBackgroundCheckpoint, SandboxBackgroundCheckpointPlan,
+    SandboxBackgroundCheckpointProgress,
+};
 pub use checkpoint::{
-    sandbox_checkpoint_due, SandboxCheckpointConversation, SandboxCheckpointConversationRef,
-    SandboxCheckpointHistory, SandboxCheckpointPublication, SandboxCheckpointRef,
-    MAX_SANDBOX_CONVERSATION_SNAPSHOT_BYTES, SANDBOX_CHECKPOINT_INTERVAL_SECONDS,
+    sandbox_checkpoint_due, sandbox_checkpoint_due_with_interval, SandboxCheckpointConversation,
+    SandboxCheckpointConversationRef, SandboxCheckpointHistory, SandboxCheckpointPublication,
+    SandboxCheckpointRef, MAX_SANDBOX_CONVERSATION_SNAPSHOT_BYTES,
+    SANDBOX_CHECKPOINT_INTERVAL_SECONDS,
 };
 pub use checkpoint_capture::{SandboxCheckpointCapture, SandboxCheckpointCapturePhase};
 pub use conversation::{
@@ -111,7 +131,8 @@ pub use conversation_recorder::{
     AgentLiveFragment, AgentLiveFragmentKind, AgentLiveSubscription, DurableAgentUpdateRecorder,
 };
 pub use credential::{
-    SandboxCredentialAuthority, SandboxCredentialState, SandboxRevokeDebt, SandboxSignInState,
+    SandboxCredentialAuthority, SandboxCredentialState, SandboxRevokeDebt, SandboxServiceGrant,
+    SandboxSignInState,
 };
 pub use credential_prerequisite::{
     FixedSandboxCredentialPrerequisite, SandboxCredentialPrerequisite,
@@ -130,9 +151,11 @@ pub use first_message_service::{AgentWorkAuthority, FirstMessageDispatchOutcome}
 pub use hierarchy::{
     AgentHierarchySummary, HierarchyCounts, HierarchyReadError, HierarchyReadService,
     HierarchyReadStore, OwnerSandboxQuery, SandboxHierarchyRecord, SandboxHierarchySummary,
-    SandboxHierarchyView, SandboxInventoryRecord, WorkspaceHierarchyRecord,
-    WorkspaceHierarchySummary, WorkspaceHierarchyView, WorktreeHierarchySummary,
+    SandboxHierarchyView, SandboxInventoryRecord, SandboxSnapshotDownload,
+    WorkspaceHierarchyRecord, WorkspaceHierarchySummary, WorkspaceHierarchyView,
+    WorktreeHierarchySummary,
 };
+pub use home::SandboxHome;
 pub use inactivity::{
     inactivity_pause_notice, is_inactivity_pause_candidate, SandboxAgentActivity,
     SandboxAgentLogActivity,
@@ -143,6 +166,7 @@ pub use lifecycle::{
 };
 pub use lifecycle_service::SandboxLifecycleCommandError;
 pub use limits::{enforce_agent_limit, enforce_workspace_limit, SandboxLimitError};
+pub use pending_approvals::PendingAgentApprovals;
 pub use provision::{SandboxWorkLease, SandboxWorkState, SandboxWorkStep};
 pub use queued_message::{
     QueuedAgentMessage, QueuedMessageState, MAX_AGENT_MESSAGE_BYTES, MAX_QUEUED_AGENT_MESSAGES,
@@ -156,7 +180,7 @@ pub use rotate::{
     SandboxRotationAgentIdentity, SandboxRotationIdentity,
 };
 pub use runtime_generation::SandboxRuntimeProvisionReservation;
-pub use sandbox::{RuntimeBinding, Sandbox, SandboxLimits, TypedFailure};
+pub use sandbox::{RuntimeBinding, Sandbox, SandboxLifecycleBlocker, SandboxLimits, TypedFailure};
 pub use service::{
     CreateSandbox, SandboxOrigin, SandboxPolicy, SandboxPolicySource, SandboxService,
     SandboxServiceError,
@@ -202,6 +226,8 @@ mod hierarchy_tests;
 mod inactivity_tests;
 #[cfg(test)]
 mod launch_service_tests;
+#[cfg(test)]
+mod lifecycle_eligibility_tests;
 #[cfg(test)]
 mod lifecycle_execution_tests;
 #[cfg(test)]

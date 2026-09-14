@@ -301,7 +301,7 @@ impl AgentView {
             conforms_to: agent_conformance(&agent.capabilities),
             reach: sandbox
                 .credential
-                .reaches
+                .effective_reaches()
                 .into_iter()
                 .map(|service| service.to_string())
                 .collect(),

@@ -1,11 +1,19 @@
-import { useState } from 'react';
+import { Presence } from '../ui/Presence';
+import { useId, useState } from 'react';
 import type { KeyboardEvent, ReactNode } from 'react';
-import type { AgentStatus, SandboxStatus } from '../api/types';
+import type { AgentStatus, SandboxStatus, SandboxSummary, WorkspaceDetail } from '../api/types';
+import {
+  sandboxChildrenAvailable,
+  sandboxLifecycleAction,
+  sandboxLifecycleLabel,
+} from '../sandbox/lifecycle';
 import type { AppRoute } from '../routing/routes';
 import { StateDot, type StateDotState } from '../ui/StateDot';
 import {
   IconAgentPresetOutline16,
   IconBranchOutline16,
+  IconChevronDownOutline14,
+  IconChevronRightOutline14,
   IconDataOutline16,
   IconFolderOpenOutline16,
   IconPauseOutline16,
@@ -42,6 +50,8 @@ export type TreeAction =
 interface TreeProps {
   readonly viewerId: string;
   readonly items: readonly NavigationSandbox[];
+  readonly refreshError?: string;
+  readonly lifecycleBusy?: boolean;
   readonly route: AppRoute;
   readonly permissions: TreePermissions;
   readonly onNavigate: (route: AppRoute) => void;
@@ -144,21 +154,32 @@ function keyboardNavigation(event: KeyboardEvent<HTMLDivElement>) {
   }
 }
 
-function sandboxActions(status: SandboxStatus, permissions: TreePermissions): TreeRowAction[] {
+function sandboxActions(
+  sandbox: SandboxSummary,
+  permissions: TreePermissions,
+  stale: boolean,
+  busy: boolean,
+): TreeRowAction[] {
   const actions: TreeRowAction[] = [];
   if (permissions.createWorkspace)
-    actions.push({ id: 'new_workspace', label: 'New workspace', icon: <IconPlusOutline16 /> });
+    actions.push({
+      id: 'new_workspace',
+      label: 'New workspace',
+      icon: <IconPlusOutline16 />,
+      disabled: busy || !sandboxChildrenAvailable(sandbox),
+      reason: !sandboxChildrenAvailable(sandbox)
+        ? 'Available when the Sandbox is active.'
+        : undefined,
+    });
   if (permissions.pauseSandbox) {
-    actions.push(
-      status === 'paused'
-        ? { id: 'revive_sandbox', label: 'Revive', icon: <IconPlayOutline16 /> }
-        : {
-            id: 'pause_sandbox',
-            label: 'Pause',
-            icon: <IconPauseOutline16 />,
-            disabled: status !== 'active',
-          },
-    );
+    const action = sandboxLifecycleAction(sandbox, stale);
+    actions.push({
+      id: action.kind,
+      label: action.label,
+      icon: action.kind === 'revive_sandbox' ? <IconPlayOutline16 /> : <IconPauseOutline16 />,
+      disabled: busy || !action.allowed,
+      reason: busy ? 'A Sandbox action is in progress.' : action.reason,
+    });
   }
   if (permissions.deleteSandbox)
     actions.push({
@@ -166,20 +187,45 @@ function sandboxActions(status: SandboxStatus, permissions: TreePermissions): Tr
       label: 'Delete',
       icon: <IconTrashOutline16 />,
       danger: true,
+      disabled:
+        busy ||
+        stale ||
+        sandbox.status === 'retiring' ||
+        sandbox.lifecycle?.checkpoint !== undefined ||
+        sandbox.lifecycle?.operation !== undefined,
+      reason:
+        sandbox.status === 'retiring'
+          ? 'Deletion is already in progress.'
+          : sandbox.lifecycle?.checkpoint !== undefined ||
+              sandbox.lifecycle?.operation !== undefined
+            ? 'Wait for the current Sandbox operation to finish.'
+            : undefined,
     });
   return actions;
 }
 
-function workspaceActions(permissions: TreePermissions): TreeRowAction[] {
+function workspaceActions(
+  workspace: WorkspaceDetail,
+  permissions: TreePermissions,
+  busy: boolean,
+): TreeRowAction[] {
   const actions: TreeRowAction[] = [];
   if (permissions.createAgent)
-    actions.push({ id: 'new_agent', label: 'New agent', icon: <IconPlusOutline16 /> });
+    actions.push({
+      id: 'new_agent',
+      label: 'New agent',
+      icon: <IconPlusOutline16 />,
+      disabled: busy || workspace.status !== 'ready',
+      reason: workspace.status !== 'ready' ? 'The Workspace is not ready.' : undefined,
+    });
   if (permissions.removeWorkspace)
     actions.push({
       id: 'remove_workspace',
       label: 'Remove',
       icon: <IconTrashOutline16 />,
       danger: true,
+      disabled: busy || workspace.status === 'removing',
+      reason: workspace.status === 'removing' ? 'Deletion is already in progress.' : undefined,
     });
   return actions;
 }
@@ -200,11 +246,37 @@ function agentActions(status: AgentStatus, permissions: TreePermissions): TreeRo
       icon: <IconTrashOutline16 />,
       danger: true,
       disabled: !['stopped', 'failed'].includes(status),
+      reason: !['stopped', 'failed'].includes(status)
+        ? 'Stop this Agent before deleting it and its Worktree.'
+        : undefined,
     });
   return actions;
 }
 
-export function Tree({ viewerId, items, route, permissions, onNavigate, onAction }: TreeProps) {
+export function Tree({
+  viewerId,
+  items,
+  refreshError,
+  lifecycleBusy = false,
+  route,
+  permissions,
+  onNavigate,
+  onAction,
+}: TreeProps) {
+  const visibleItems = items.filter(({ sandbox }) => sandbox.status !== 'retired');
+  const groupId = useId();
+  const groups = [
+    {
+      id: 'live',
+      label: 'Live',
+      items: visibleItems.filter(({ sandbox }) => sandboxLifecycleLabel(sandbox) !== 'Paused'),
+    },
+    {
+      id: 'paused',
+      label: 'Paused',
+      items: visibleItems.filter(({ sandbox }) => sandboxLifecycleLabel(sandbox) === 'Paused'),
+    },
+  ];
   const [collapsed, setCollapsed] = useState(() => restored(viewerId));
   const toggle = (node: string) => {
     setCollapsed((current) => {
@@ -217,125 +289,208 @@ export function Tree({ viewerId, items, route, permissions, onNavigate, onAction
   };
 
   return (
-    <div
-      className="resource-tree"
-      role="tree"
-      aria-label="Sandboxes"
-      onKeyDown={keyboardNavigation}
-    >
-      {items.map(({ sandbox, workspaces }) => {
-        const sandboxNode = `sandbox:${sandbox.id}`;
-        const sandboxExpanded = !collapsed.has(sandboxNode);
-        const paused = sandbox.status === 'paused';
+    <div className="resource-tree">
+      <Presence>
+        {refreshError === undefined ? null : (
+          <p className="resource-tree__notice" role="alert">
+            {refreshError}
+          </p>
+        )}
+      </Presence>
+      {groups.map((group) => {
+        const groupNode = `group:${group.id}`;
+        const expanded = !collapsed.has(groupNode);
         return (
-          <div className="resource-tree__branch" key={sandbox.id}>
-            <TreeRow
-              nodeId={sandboxNode}
-              level={1}
-              label={sandbox.name}
-              icon={<IconDataOutline16 />}
-              route={{ kind: 'sandbox', sandboxId: sandbox.id }}
-              selected={route.kind === 'sandbox' && route.sandboxId === sandbox.id}
-              expanded={sandboxExpanded}
-              reviving={sandbox.status === 'reviving'}
-              meta={stateMeta(
-                sandbox.status,
-                paused ? (
-                  <span
-                    className="tree-row__paused"
-                    role="img"
-                    aria-label="Sandbox paused"
-                    title="Sandbox paused"
-                  >
-                    <IconPauseOutline16 />
-                  </span>
-                ) : undefined,
-              )}
-              actions={sandboxActions(sandbox.status, permissions)}
-              onNavigate={onNavigate}
-              onToggle={() => toggle(sandboxNode)}
-              onAction={(kind) =>
-                onAction({
-                  kind: kind as
-                    'new_workspace' | 'pause_sandbox' | 'revive_sandbox' | 'delete_sandbox',
-                  sandboxId: sandbox.id,
-                })
-              }
-            />
-            {sandboxExpanded ? (
-              <div role="group">
-                {workspaces.map((workspace) => {
-                  const workspaceNode = `workspace:${workspace.id}`;
-                  const workspaceExpanded = !collapsed.has(workspaceNode);
-                  return (
-                    <div className="resource-tree__branch" key={workspace.id}>
-                      <TreeRow
-                        nodeId={workspaceNode}
-                        parentId={sandboxNode}
-                        level={2}
-                        label={workspace.name}
-                        icon={
-                          workspace.source.type === 'git_repository' ? (
-                            <IconBranchOutline16 />
-                          ) : (
-                            <IconFolderOpenOutline16 />
-                          )
-                        }
-                        meta={statusLabel(workspace.status)}
-                        expanded={workspaceExpanded}
-                        actions={workspaceActions(permissions)}
-                        onNavigate={onNavigate}
-                        onToggle={() => toggle(workspaceNode)}
-                        onAction={(kind) =>
-                          onAction({
-                            kind: kind as 'new_agent' | 'remove_workspace',
-                            workspaceId: workspace.id,
-                          })
-                        }
-                      />
-                      {workspaceExpanded ? (
-                        <div role="group">
-                          {workspace.agents.map((agent) => {
-                            const effectiveStatus = paused ? 'paused' : agent.status;
-                            return (
-                              <TreeRow
-                                key={agent.id}
-                                nodeId={`agent:${agent.id}`}
-                                parentId={workspaceNode}
-                                level={3}
-                                label={agent.title?.trim() || 'Untitled agent'}
-                                icon={<IconAgentPresetOutline16 />}
-                                route={{ kind: 'agent', agentId: agent.id }}
-                                selected={route.kind === 'agent' && route.agentId === agent.id}
-                                dimmed={paused}
-                                meta={stateMeta(
-                                  effectiveStatus,
-                                  <time dateTime={agent.updatedAt}>
-                                    {activityLabel(agent.updatedAt)}
-                                  </time>,
-                                )}
-                                actions={agentActions(agent.status, permissions)}
-                                onNavigate={onNavigate}
-                                onAction={(kind) =>
-                                  onAction({
-                                    kind: kind as 'stop_agent' | 'delete_agent',
-                                    agentId: agent.id,
-                                  })
-                                }
-                              />
-                            );
-                          })}
-                        </div>
-                      ) : null}
-                    </div>
-                  );
-                })}
-              </div>
-            ) : null}
-          </div>
+          <section
+            className="resource-tree__section"
+            key={group.id}
+            aria-label={`${group.label} sandboxes`}
+          >
+            <button
+              type="button"
+              className="resource-tree__heading"
+              aria-label={`${expanded ? 'Collapse' : 'Expand'} ${group.label} sandboxes`}
+              aria-expanded={expanded}
+              aria-controls={`${groupId}-${group.id}`}
+              onClick={() => toggle(groupNode)}
+            >
+              {expanded ? <IconChevronDownOutline14 /> : <IconChevronRightOutline14 />}
+              <span>{group.label}</span>
+              <span className="resource-tree__count">{group.items.length}</span>
+            </button>
+            <div id={`${groupId}-${group.id}`} hidden={!expanded}>
+              {expanded ? (
+                <div
+                  role="tree"
+                  aria-label={`${group.label} sandboxes`}
+                  onKeyDown={keyboardNavigation}
+                >
+                  {group.items.map(({ sandbox, workspaces }) => {
+                    const sandboxNode = `sandbox:${sandbox.id}`;
+                    const childrenAvailable = sandboxChildrenAvailable(sandbox);
+                    const sandboxExpanded = childrenAvailable && !collapsed.has(sandboxNode);
+                    const paused = sandbox.status === 'paused';
+                    return (
+                      <div className="resource-tree__branch" key={sandbox.id}>
+                        <TreeRow
+                          nodeId={sandboxNode}
+                          level={1}
+                          label={sandbox.name}
+                          icon={<IconDataOutline16 />}
+                          route={{ kind: 'sandbox', sandboxId: sandbox.id }}
+                          selected={route.kind === 'sandbox' && route.sandboxId === sandbox.id}
+                          expanded={childrenAvailable ? sandboxExpanded : undefined}
+                          reviving={sandbox.status === 'reviving'}
+                          meta={
+                            <>
+                              <span className="tree-row__state">
+                                <StateDot
+                                  state={
+                                    refreshError !== undefined
+                                      ? 'warning'
+                                      : sandbox.lifecycle?.operation !== undefined
+                                        ? 'ongoing'
+                                        : dotFor(sandbox.status)
+                                  }
+                                  size={8}
+                                />
+                                {sandboxLifecycleLabel(sandbox)}
+                              </span>
+                              {paused ? (
+                                <span
+                                  className="tree-row__paused"
+                                  role="img"
+                                  aria-label="Sandbox paused"
+                                  title="Sandbox paused"
+                                >
+                                  <IconPauseOutline16 />
+                                </span>
+                              ) : undefined}
+                            </>
+                          }
+                          actions={sandboxActions(
+                            sandbox,
+                            permissions,
+                            refreshError !== undefined,
+                            lifecycleBusy,
+                          )}
+                          onNavigate={onNavigate}
+                          onToggle={childrenAvailable ? () => toggle(sandboxNode) : undefined}
+                          onAction={(kind) =>
+                            onAction({
+                              kind: kind as
+                                | 'new_workspace'
+                                | 'pause_sandbox'
+                                | 'revive_sandbox'
+                                | 'delete_sandbox',
+                              sandboxId: sandbox.id,
+                            })
+                          }
+                        />
+                        {sandboxExpanded ? (
+                          <div role="group">
+                            {workspaces
+                              .filter((workspace) => workspace.status !== 'removed')
+                              .map((workspace) => {
+                                const workspaceNode = `workspace:${workspace.id}`;
+                                const workspaceReady = workspace.status === 'ready';
+                                const workspaceExpanded =
+                                  workspaceReady && !collapsed.has(workspaceNode);
+                                return (
+                                  <div className="resource-tree__branch" key={workspace.id}>
+                                    <TreeRow
+                                      nodeId={workspaceNode}
+                                      parentId={sandboxNode}
+                                      level={2}
+                                      label={workspace.name}
+                                      icon={
+                                        workspace.source.type === 'git_repository' ? (
+                                          <IconBranchOutline16 />
+                                        ) : (
+                                          <IconFolderOpenOutline16 />
+                                        )
+                                      }
+                                      meta={
+                                        workspace.status === 'removing'
+                                          ? 'Deleting'
+                                          : statusLabel(workspace.status)
+                                      }
+                                      expanded={workspaceReady ? workspaceExpanded : undefined}
+                                      actions={workspaceActions(
+                                        workspace,
+                                        permissions,
+                                        lifecycleBusy,
+                                      )}
+                                      onNavigate={onNavigate}
+                                      onToggle={
+                                        workspaceReady ? () => toggle(workspaceNode) : undefined
+                                      }
+                                      onAction={(kind) =>
+                                        onAction({
+                                          kind: kind as 'new_agent' | 'remove_workspace',
+                                          workspaceId: workspace.id,
+                                        })
+                                      }
+                                    />
+                                    {workspaceExpanded ? (
+                                      <div role="group">
+                                        {workspace.agents
+                                          .filter((agent) => agent.status !== 'deleted')
+                                          .map((agent) => {
+                                            const effectiveStatus = paused
+                                              ? 'paused'
+                                              : agent.status;
+                                            return (
+                                              <TreeRow
+                                                key={agent.id}
+                                                nodeId={`agent:${agent.id}`}
+                                                parentId={workspaceNode}
+                                                level={3}
+                                                label={agent.title?.trim() || 'Untitled agent'}
+                                                icon={<IconAgentPresetOutline16 />}
+                                                route={{ kind: 'agent', agentId: agent.id }}
+                                                selected={
+                                                  route.kind === 'agent' &&
+                                                  route.agentId === agent.id
+                                                }
+                                                dimmed={paused}
+                                                meta={stateMeta(
+                                                  effectiveStatus,
+                                                  <time dateTime={agent.updatedAt}>
+                                                    {activityLabel(agent.updatedAt)}
+                                                  </time>,
+                                                )}
+                                                actions={agentActions(agent.status, permissions)}
+                                                onNavigate={onNavigate}
+                                                onAction={(kind) =>
+                                                  onAction({
+                                                    kind: kind as 'stop_agent' | 'delete_agent',
+                                                    agentId: agent.id,
+                                                  })
+                                                }
+                                              />
+                                            );
+                                          })}
+                                      </div>
+                                    ) : null}
+                                  </div>
+                                );
+                              })}
+                          </div>
+                        ) : null}
+                      </div>
+                    );
+                  })}
+                  {group.items.length === 0 ? (
+                    <p className="resource-tree__empty">No {group.label.toLowerCase()} sandboxes</p>
+                  ) : null}
+                </div>
+              ) : null}
+            </div>
+          </section>
         );
       })}
-      {items.length === 0 ? <p className="resource-tree__empty">No Sandboxes</p> : null}
+      {visibleItems.length === 0 ? <p className="resource-tree__empty">No Sandboxes</p> : null}
     </div>
   );
 }

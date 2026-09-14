@@ -7,6 +7,7 @@ import { usePlateFocus } from '../ui/plate';
 import type { OperatorClient } from './client';
 import { operatorFailure, type OperatorFailure } from './failure';
 import { FailureNotice, Timestamp, stateWord } from './records';
+import { ReferenceLink } from '../profiles/ReferenceLink';
 
 export function SandboxDetail({
   client,
@@ -98,9 +99,7 @@ export function SandboxDetail({
                 <dt>Status</dt>
                 <dd className="operator-state">{stateWord(detail.sandbox.status)}</dd>
                 <dt>Owner</dt>
-                <dd>
-                  <code>{detail.sandbox.owner}</code>
-                </dd>
+                <dd>{detail.owner_name?.trim() || 'Name unavailable'}</dd>
                 <dt>Identifier</dt>
                 <dd>
                   <code>{detail.sandbox.id}</code>
@@ -109,7 +108,7 @@ export function SandboxDetail({
                 <dd>{detail.sandbox.runtime?.runtime_version ?? 'not bound'}</dd>
                 <dt>Profile</dt>
                 <dd>
-                  <code>{detail.sandbox.profile.id}</code> revision{' '}
+                  <ReferenceLink kind="sandbox" id={detail.sandbox.profile.id} /> revision{' '}
                   {detail.sandbox.profile.revision}
                 </dd>
                 <dt>Created</dt>
@@ -134,27 +133,41 @@ export function SandboxDetail({
                       <p>
                         {workspace.name}: {stateWord(workspace.status)}
                       </p>
-                      <code>{workspace.id}</code>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </section>
-            <section>
-              <h3>Agents ({detail.agents.length})</h3>
-              {detail.agents.length === 0 ? (
-                <p>No Agents.</p>
-              ) : (
-                <ul>
-                  {detail.agents.map((agent) => (
-                    <li key={agent.id}>
                       <p>
-                        {agent.title ?? agent.id}: {stateWord(agent.status)}
+                        Profile: <ReferenceLink kind="workspace" id={workspace.profile_id} />{' '}
+                        revision {workspace.profile_revision}
                       </p>
-                      <p>
-                        Workspace <code>{agent.workspace_id}</code>
-                      </p>
-                      <code>{agent.worktree_id}</code>
+                      <h4>
+                        Agents (
+                        {
+                          detail.agents.filter((agent) => agent.workspace_id === workspace.id)
+                            .length
+                        }
+                        )
+                      </h4>
+                      {detail.agents.some((agent) => agent.workspace_id === workspace.id) ? (
+                        <ul>
+                          {detail.agents
+                            .filter((agent) => agent.workspace_id === workspace.id)
+                            .map((agent) => (
+                              <li key={agent.id}>
+                                <p>
+                                  {agent.title?.trim() || 'Untitled agent'}:{' '}
+                                  {stateWord(agent.status)}
+                                </p>
+                                <p>
+                                  Profile: <ReferenceLink kind="agent" id={agent.profile_id} />{' '}
+                                  revision {agent.profile_revision}
+                                </p>
+                                <p>
+                                  Last activity <Timestamp value={agent.updated_at} />
+                                </p>
+                              </li>
+                            ))}
+                        </ul>
+                      ) : (
+                        <p>No Agents.</p>
+                      )}
                     </li>
                   ))}
                 </ul>

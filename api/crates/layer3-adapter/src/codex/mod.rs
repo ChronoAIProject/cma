@@ -10,7 +10,8 @@ use tokio::sync::mpsc;
 pub use config::{render_config, CodexConfig};
 pub(crate) use home::RESERVED_ENVIRONMENT_NAMES;
 pub use home::{
-    render_agent_home, render_launch, AGENT_HOME_ROOT, BRIDGE_PROGRAM, SHARED_AUTH_PATH,
+    checkpoint_exclusions, render_agent_home, render_launch, AGENT_HOME_ROOT, BRIDGE_PROGRAM,
+    SHARED_AUTH_PATH,
 };
 
 use crate::hosted::{
@@ -52,7 +53,7 @@ impl HostedAgentRuntime for CodexRuntime {
     fn open_settings(&self, request: &AgentOpenRequest) -> crate::Result<HostedAgentOpenSettings> {
         let permission_mode = match request.options.permission {
             crate::PermissionLevel::Guarded => "read-only",
-            crate::PermissionLevel::Autonomous => "agent",
+            crate::PermissionLevel::Autonomous => "agent-full-access",
         };
         Ok(HostedAgentOpenSettings {
             permission_mode: Some(permission_mode.into()),
@@ -92,6 +93,11 @@ impl CodexAdapter {
     pub fn hosted(&self) -> &HostedAdapter {
         &self.hosted
     }
+
+    pub fn with_home_volumes(mut self, store: Arc<dyn crate::HomeVolumeStore>) -> Self {
+        self.hosted = self.hosted.with_home_volumes(store);
+        self
+    }
 }
 
 #[async_trait::async_trait]
@@ -100,8 +106,16 @@ impl SandboxAdapter for CodexAdapter {
         self.hosted.capabilities()
     }
 
+    fn home_volumes(&self) -> Option<&dyn crate::HomeVolumeStore> {
+        self.hosted.home_volumes()
+    }
+
     async fn provision(&self, spec: &SandboxSpec) -> crate::Result<RuntimeHandle> {
         self.hosted.provision(spec).await
+    }
+
+    async fn runtime_status(&self, handle: &RuntimeHandle) -> crate::Result<crate::RuntimeStatus> {
+        self.hosted.runtime_status(handle).await
     }
 
     async fn provision_runtime(
@@ -207,6 +221,14 @@ impl SandboxAdapter for CodexAdapter {
             .await
     }
 
+    async fn cache_skill_archive(
+        &self,
+        handle: &RuntimeHandle,
+        archive: &crate::SkillArchive,
+    ) -> crate::Result<()> {
+        self.hosted.cache_skill_archive(handle, archive).await
+    }
+
     async fn remove_agent_home(
         &self,
         handle: &RuntimeHandle,
@@ -227,6 +249,19 @@ impl SandboxAdapter for CodexAdapter {
     ) -> crate::Result<ConversationChannel> {
         self.hosted
             .open_agent(handle, authority_fence, request, updates)
+            .await
+    }
+
+    async fn reconnect_agent(
+        &self,
+        handle: &RuntimeHandle,
+        authority_fence: u64,
+        request: &AgentOpenRequest,
+        conversation_id: &str,
+        updates: mpsc::Sender<ConversationUpdate>,
+    ) -> crate::Result<ConversationChannel> {
+        self.hosted
+            .reconnect_agent(handle, authority_fence, request, conversation_id, updates)
             .await
     }
 
@@ -267,6 +302,14 @@ impl SandboxAdapter for CodexAdapter {
         request: &CheckpointHoldRequest,
     ) -> crate::Result<CheckpointHoldReceipt> {
         self.hosted.checkpoint_for_teardown(handle, request).await
+    }
+
+    async fn verify_checkpoint_hold(
+        &self,
+        handle: &RuntimeHandle,
+        request: &CheckpointHoldRequest,
+    ) -> crate::Result<CheckpointHoldReceipt> {
+        self.hosted.verify_checkpoint_hold(handle, request).await
     }
 
     async fn resume_checkpoint_writers(

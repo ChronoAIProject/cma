@@ -30,6 +30,7 @@ pub(super) const SANDBOXES: &str = "sandboxes";
 pub(super) const WORKSPACES: &str = "workspaces";
 pub(super) const WORKTREES: &str = "worktrees";
 pub(super) const AGENTS: &str = "agents";
+pub(super) const AGENT_REUSE_BINDINGS: &str = "agent_reuse_bindings";
 pub(super) const AGENT_LOG: &str = "agent_log";
 pub(super) const SANDBOX_EVENTS: &str = "sandbox_events";
 pub(super) const SANDBOX_ADMISSIONS: &str = "sandbox_admissions";
@@ -40,16 +41,19 @@ pub(super) const WORKSPACE_PROFILES: &str = "workspace_profiles";
 pub(super) const WORKSPACE_PROFILE_REVISIONS: &str = "workspace_profile_revisions";
 pub(super) const SANDBOX_PROFILES: &str = "sandbox_profiles";
 pub(super) const SANDBOX_PROFILE_REVISIONS: &str = "sandbox_profile_revisions";
+pub(super) const WARM_SANDBOXES: &str = "warm_sandboxes";
 
 const SANDBOX_COLLECTIONS: &[&str] = &[
     SANDBOXES,
     WORKSPACES,
     WORKTREES,
     AGENTS,
+    AGENT_REUSE_BINDINGS,
     AGENT_LOG,
     SANDBOX_EVENTS,
     SANDBOX_ADMISSIONS,
     CHECKPOINTS,
+    WARM_SANDBOXES,
 ];
 const PROFILE_COLLECTIONS: &[&str] = &[
     AGENT_PROFILES,
@@ -70,10 +74,19 @@ pub struct MongoSandboxStore {
     pub(super) workspaces: Collection<Document>,
     pub(super) worktrees: Collection<Document>,
     pub(super) agents: Collection<Document>,
+    pub(super) agent_reuse_bindings: Collection<Document>,
     pub(super) agent_log: Collection<Document>,
     pub(super) sandbox_events: Collection<Document>,
     pub(super) sandbox_admissions: Collection<Document>,
     pub(super) checkpoints: Collection<Document>,
+    pub(super) sandbox_profiles: Collection<Document>,
+    pub(super) sandbox_profile_revisions: Collection<Document>,
+    pub(super) warm_workspace_revisions: Collection<Document>,
+    pub(super) warm_agent_revisions: Collection<Document>,
+    pub(super) warm_sandboxes: Collection<Document>,
+    pub(super) warm_runtime_version: Option<String>,
+    pub(super) warm_home_policy: Option<layer3_adapter::HomeVolumePolicy>,
+    pub(crate) warmup_changed: std::sync::Arc<tokio::sync::Notify>,
 }
 
 impl MongoSandboxStore {
@@ -99,10 +112,19 @@ impl MongoSandboxStore {
             workspaces: majority_collection(&database, WORKSPACES),
             worktrees: majority_collection(&database, WORKTREES),
             agents: majority_collection(&database, AGENTS),
+            agent_reuse_bindings: majority_collection(&database, AGENT_REUSE_BINDINGS),
             agent_log: majority_collection(&database, AGENT_LOG),
             sandbox_events: majority_collection(&database, SANDBOX_EVENTS),
             sandbox_admissions: majority_collection(&database, SANDBOX_ADMISSIONS),
             checkpoints: majority_collection(&database, CHECKPOINTS),
+            sandbox_profiles: majority_collection(&database, SANDBOX_PROFILES),
+            sandbox_profile_revisions: majority_collection(&database, SANDBOX_PROFILE_REVISIONS),
+            warm_workspace_revisions: majority_collection(&database, WORKSPACE_PROFILE_REVISIONS),
+            warm_agent_revisions: majority_collection(&database, AGENT_PROFILE_REVISIONS),
+            warm_sandboxes: majority_collection(&database, WARM_SANDBOXES),
+            warm_runtime_version: None,
+            warm_home_policy: None,
+            warmup_changed: std::sync::Arc::new(tokio::sync::Notify::new()),
         };
         super::sandboxes::ensure_indexes(&store.sandboxes).await?;
         super::workspaces::ensure_indexes(&store.workspaces).await?;
@@ -111,6 +133,7 @@ impl MongoSandboxStore {
         super::agent_log::ensure_indexes(&store.agent_log).await?;
         super::sandbox_events::ensure_indexes(&store.sandbox_events).await?;
         super::checkpoints::ensure_indexes(&store.checkpoints).await?;
+        super::warm_sandboxes::ensure_indexes(&store.warm_sandboxes).await?;
         tracing::info!(database = name, "sandbox-model Mongo store ready");
         Ok(store)
     }

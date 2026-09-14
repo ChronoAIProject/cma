@@ -25,7 +25,10 @@ use crate::{
 use super::*;
 
 mod credential_prerequisite;
+mod no_review_consent;
+mod prepared_reuse;
 mod request_validation;
+mod reused_connections;
 mod trust;
 
 const NOW: &str = "2026-09-05T00:00:00Z";
@@ -47,6 +50,7 @@ struct ContextState {
     sandbox: Option<Sandbox>,
     workspace: Option<Workspace>,
     agent: Option<Agent>,
+    prepared_agents: std::collections::BTreeMap<AgentId, Agent>,
     sandbox_reads: usize,
     workspace_reads: usize,
     agent_reads: usize,
@@ -85,6 +89,35 @@ impl StubContextReader {
 
 #[async_trait]
 impl LaunchContextReader for StubContextReader {
+    async fn owned_sandbox(
+        &self,
+        owner: &SubjectId,
+        id: &SandboxId,
+    ) -> Result<Option<Sandbox>, LaunchResolutionError> {
+        Ok(self
+            .state
+            .lock()
+            .unwrap()
+            .sandbox
+            .as_ref()
+            .filter(|sandbox| sandbox.owner == *owner && sandbox.id == *id)
+            .cloned())
+    }
+    async fn owned_agent(
+        &self,
+        owner: &SubjectId,
+        id: &AgentId,
+    ) -> Result<Option<Agent>, LaunchResolutionError> {
+        Ok(self
+            .state
+            .lock()
+            .unwrap()
+            .prepared_agents
+            .get(id)
+            .filter(|agent| agent.owner == *owner)
+            .cloned())
+    }
+
     async fn newest_matching_sandbox(
         &self,
         _owner: &SubjectId,
@@ -148,14 +181,28 @@ impl ServiceConnectionBroker for StubBroker {
     async fn requirements(
         &self,
         _owner: &SubjectId,
-        _services: &[ServiceId],
+        services: &[ServiceId],
     ) -> Result<Vec<ServiceRequirement>, ServiceConnectionError> {
         let mut state = self.state.lock().unwrap();
         state.calls += 1;
         if state.unavailable {
             return Err(ServiceConnectionError::Unavailable("offline".into()));
         }
-        Ok(state.requirements.clone())
+        let mut requirements = state.requirements.clone();
+        let public = ServiceId::new(crate::profiles::PUBLIC_CODEX_SERVICE);
+        // These fixtures have an already-connected managed model provider.
+        // Individual tests can override it explicitly with a missing state.
+        if services.contains(&public)
+            && !requirements
+                .iter()
+                .any(|requirement| requirement.service == public)
+        {
+            requirements.push(ServiceRequirement {
+                service: public,
+                state: ServiceRequirementState::Satisfied,
+            });
+        }
+        Ok(requirements)
     }
 
     async fn create_handoff(
@@ -431,9 +478,15 @@ async fn nested_resolution_queries_only_applicable_context_and_requirements() {
         .await
         .unwrap()
         .launch;
-    assert!(launch.requirements.services.is_empty());
+    assert_eq!(
+        launch.requirements.services,
+        vec![
+            requirement("github", ServiceRequirementState::Satisfied),
+            requirement("chrono-llm-public", ServiceRequirementState::Satisfied)
+        ]
+    );
     assert_eq!(reused.contexts.reads(), (1, 1, 1));
-    assert_eq!(reused.broker.calls(), 0);
+    assert_eq!(reused.broker.calls(), 1);
 }
 
 #[tokio::test]
@@ -738,24 +791,22 @@ async fn repeat_choice_returns_bounded_context_and_records_both_valid_branches()
         .await
         .unwrap()
         .launch;
-    assert_eq!(resumed.state, LaunchState::Ready);
+    assert_eq!(resumed.state, LaunchState::Resolving);
     assert_eq!(resumed.first_message, FirstMessageDelivery::Completed);
     assert_eq!(resumed.confirmations.len(), 1);
     assert_eq!(
         resumed.confirmations[0].surface,
         LaunchConsentSurface::Landing
     );
-    assert!(resumed
-        .steps
-        .iter()
-        .all(|step| step.status == LaunchStepStatus::Completed));
+    assert_eq!(resumed.work.step, LaunchWorkStep::ResolveSandbox);
+    assert!(resumed.ready_at.is_none());
     assert!(resumed.review.needs.is_empty());
-    assert_eq!(fixture.broker.calls(), 0);
+    assert_eq!(fixture.broker.calls(), 2);
     assert_eq!(
         fixture.stats().await,
         TriggerStats {
             launches_total: 2,
-            agents_ready_total: 1,
+            agents_ready_total: 0,
         }
     );
     let replay = fixture
@@ -769,7 +820,7 @@ async fn repeat_choice_returns_bounded_context_and_records_both_valid_branches()
         fixture.stats().await,
         TriggerStats {
             launches_total: 2,
-            agents_ready_total: 1,
+            agents_ready_total: 0,
         }
     );
 
@@ -981,7 +1032,11 @@ async fn reuse_matches_parent_profile_ids_and_global_trigger_origin_across_revis
     old_agent.profile.revision = 41;
     old_agent.sandbox_id = SandboxId("sbx_previous_launch".into());
     old_agent.workspace_id = WorkspaceId("wks_previous_launch".into());
-    agent_fixture.contexts.replace(None, None, Some(old_agent));
+    let mut old_parent = sandbox(&agent_fixture.resolved_profiles, SandboxStatus::Active);
+    old_parent.id = old_agent.sandbox_id.clone();
+    agent_fixture
+        .contexts
+        .replace(Some(old_parent), None, Some(old_agent));
     let mut request = agent_fixture.request("global-agent");
     request.start_if_ready = true;
     let resumed = agent_fixture
@@ -994,7 +1049,7 @@ async fn reuse_matches_parent_profile_ids_and_global_trigger_origin_across_revis
         .await
         .unwrap()
         .launch;
-    assert_eq!(resumed.state, LaunchState::Ready);
+    assert_eq!(resumed.state, LaunchState::Resolving);
     assert_eq!(
         resumed.resolution.sandbox.id().unwrap().as_str(),
         "sbx_previous_launch"
@@ -1040,14 +1095,14 @@ async fn existing_agent_still_requires_start_consent_and_owner_review() {
             )
             .await
             .unwrap();
-        assert_eq!(ready.state, LaunchState::Ready);
+        assert_eq!(ready.state, LaunchState::Resolving);
         assert_eq!(ready.confirmations[0].surface, LaunchConsentSurface::Review);
-        assert_eq!(ready.work.step, LaunchWorkStep::Finish);
+        assert_eq!(ready.work.step, LaunchWorkStep::ResolveSandbox);
         assert_eq!(
             fixture.stats().await,
             TriggerStats {
                 launches_total: 1,
-                agents_ready_total: 1,
+                agents_ready_total: 0,
             }
         );
     }
@@ -1135,7 +1190,7 @@ async fn admitted_drafts_start_from_their_frozen_revision_after_retirement() {
         )
         .await
         .unwrap();
-    assert_eq!(ready.state, LaunchState::Ready);
+    assert_eq!(ready.state, LaunchState::Resolving);
     assert_eq!(ready.revision_digest, draft.revision_digest);
 }
 
@@ -1306,6 +1361,14 @@ async fn start_rechecks_requirements_and_requires_the_exact_trust_digest() {
             LaunchEventKind::RequirementChanged {
                 service: ServiceId::new("slack"),
                 state: ServiceRequirementState::Satisfied,
+            },
+            LaunchEventKind::StepChanged {
+                step: started
+                    .steps
+                    .iter()
+                    .find(|step| step.key == LaunchStepKey::CheckingRequirements)
+                    .unwrap()
+                    .clone(),
             },
             LaunchEventKind::ConfirmationRecorded,
             LaunchEventKind::StateChanged {
@@ -1673,6 +1736,7 @@ async fn fixture_with_workspace_configuration(
             target,
             reuse,
             first_message: "a".repeat(160),
+            quick_messages: Vec::new(),
             consent: TriggerConsent { always_review },
         },
         NOW.into(),
@@ -1818,6 +1882,7 @@ async fn publish_sandbox(
     workspace_nested: bool,
 ) -> SandboxProfileRef {
     let profile = SandboxProfile {
+        availability: Default::default(),
         id: crate::SandboxProfileId("sbp_launch_sandbox".into()),
         owner: SubjectId::new(owner),
         name: "Launch Sandbox".into(),
@@ -1882,7 +1947,8 @@ fn sandbox(profiles: &ResolvedTriggerProfiles, status: SandboxStatus) -> Sandbox
         failure: None,
         runtime: None,
         credential: SandboxCredentialState {
-            reaches: vec![],
+            service_grants: Vec::new(),
+            reaches: profiles.sandbox.content.nyxid_services.clone(),
             key_generation: 0,
             delivered: false,
             current: None,

@@ -28,7 +28,10 @@ async fn lifecycle_checkpoint_replays_exact_exclusions_after_agent_becomes_a_tom
         .unwrap();
     assert_eq!(
         before.checkpoint.exclusions,
-        [format!(".cma/agents/{}/home/tmp/arg0", agent.id)]
+        [
+            format!(".cma/agents/{}/home/tmp/arg0", agent.id),
+            ".codex/tmp/arg0".to_string()
+        ]
     );
     let revision = agent.revision;
     agent
@@ -325,7 +328,7 @@ async fn late_pause(parked: bool) -> (Harness, Sandbox, Agent, SystemTime) {
 }
 
 async fn retry_late_hold(parked: bool, resumed_before_restart: bool) {
-    let (harness, current, agent, pause_at) = late_pause(parked).await;
+    let (harness, current, agent, pause_at) = Box::pin(late_pause(parked)).await;
     let authority = current.lifecycle.operation.as_ref().unwrap().authority();
     if resumed_before_restart {
         let runtime = RuntimeHandle(current.runtime.as_ref().unwrap().runtime_id.clone());
@@ -386,16 +389,7 @@ async fn retry_late_hold(parked: bool, resumed_before_restart: bool) {
     assert_eq!(checkpoint.epoch, 2);
     assert_eq!(checkpoint.conversations.len(), 1);
     assert_eq!(checkpoint.conversations[0].agent_id, agent.id);
-    assert_eq!(
-        captured
-            .lifecycle
-            .checkpoints
-            .previous
-            .as_ref()
-            .unwrap()
-            .epoch,
-        1
-    );
+    assert!(captured.lifecycle.checkpoints.previous.is_none());
     harness.run(&current.id, retry_at).await;
     let parked_agent = harness.store.get_agent(&agent.id).await.unwrap().unwrap();
     assert_eq!(parked_agent.status, AgentStatus::Paused);

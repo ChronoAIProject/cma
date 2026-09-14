@@ -52,6 +52,7 @@ impl SandboxPageParams {
 pub(crate) struct SandboxSummaryView {
     id: String,
     owner: String,
+    owner_name: Option<String>,
     name: String,
     #[schema(value_type = String)]
     status: SandboxStatus,
@@ -66,6 +67,7 @@ impl From<SandboxAdminSummary> for SandboxSummaryView {
         Self {
             id: value.id.0,
             owner: value.owner.0,
+            owner_name: None,
             name: value.name,
             status: value.status,
             runtime_version: value.runtime_version,
@@ -134,6 +136,7 @@ impl From<AgentAdminSummary> for AgentSummaryView {
 
 #[derive(Debug, Serialize, ToSchema)]
 pub(crate) struct SandboxDetailView {
+    owner_name: Option<String>,
     #[schema(value_type = Object)]
     sandbox: Sandbox,
     workspaces: Vec<WorkspaceSummaryView>,
@@ -143,6 +146,7 @@ pub(crate) struct SandboxDetailView {
 impl From<SandboxAdminView> for SandboxDetailView {
     fn from(value: SandboxAdminView) -> Self {
         Self {
+            owner_name: None,
             sandbox: value.sandbox,
             workspaces: value.workspaces.into_iter().map(Into::into).collect(),
             agents: value.agents.into_iter().map(Into::into).collect(),
@@ -188,8 +192,18 @@ pub(crate) async fn list(
         .0
         .into_query()?;
     let page = state.sandboxes.list_sandboxes(&caller, &query).await?;
+    let subjects: Vec<_> = page.items.iter().map(|row| row.owner.clone()).collect();
+    let names = super::super::public_names::resolve(&state.users, &subjects).await;
     Ok(Json(SandboxPageView {
-        items: page.items.into_iter().map(Into::into).collect(),
+        items: page
+            .items
+            .into_iter()
+            .map(|row| {
+                let mut view = SandboxSummaryView::from(row);
+                view.owner_name = names.get(&view.owner).cloned();
+                view
+            })
+            .collect(),
         next: page.next,
     }))
 }
@@ -200,13 +214,19 @@ pub(crate) async fn read(
     AuthenticatedCaller(caller): AuthenticatedCaller,
     Path(id): Path<String>,
 ) -> Result<Json<SandboxDetailView>, ProtectedProblem> {
-    state
+    let value = state
         .sandboxes
         .read_sandbox(&caller, &SandboxId(id))
         .await
-        .map(Into::into)
-        .map(Json)
-        .map_err(ProtectedProblem::sandbox)
+        .map_err(ProtectedProblem::sandbox)?;
+    let names = super::super::public_names::resolve(
+        &state.users,
+        std::slice::from_ref(&value.sandbox.owner),
+    )
+    .await;
+    let mut view = SandboxDetailView::from(value);
+    view.owner_name = names.get(&view.sandbox.owner.0).cloned();
+    Ok(Json(view))
 }
 
 #[utoipa::path(

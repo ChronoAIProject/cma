@@ -1,9 +1,12 @@
+import { Presence } from '../ui/Presence';
 import { useEffect, useRef, useState } from 'react';
 import type { ProfileKind } from '../routing/routes';
 import { ChoiceGroup } from '../profiles/ChoiceGroup';
 import { Button } from '../ui/Button';
-import { IconCheckOutline16 } from '../ui/icons';
+import { IconCheckOutline16, IconPlusOutline16 } from '../ui/icons';
+import { ReferenceLink } from '../profiles/ReferenceLink';
 import type { CreationClient, CreationProfile, ProfileChoice, ProfileSource } from './client';
+import { ProfilePreview } from './ProfilePreview';
 
 export function ProfilePicker({
   client,
@@ -110,25 +113,38 @@ export function ProfilePicker({
         }}
       />
       {loading ? <p role="status">Loading profiles</p> : null}
-      {error === undefined ? null : (
-        <div role="alert">
-          <p>{error}</p>
-          <Button
-            disabled={disabled || loading}
-            onClick={() => {
-              setLoading(true);
-              setReload((value) => value + 1);
-            }}
-          >
-            Try again
-          </Button>
-        </div>
-      )}
+      <Presence>
+        {error === undefined ? null : (
+          <div role="alert">
+            <p>{error}</p>
+            <Button
+              disabled={disabled || loading}
+              onClick={() => {
+                setLoading(true);
+                setReload((value) => value + 1);
+              }}
+            >
+              Try again
+            </Button>
+          </div>
+        )}
+      </Presence>
       <ul className="create-profile-picker__list">
         {choices.map((choice) => (
-          <li key={`${choice.id}:${String(choice.revision)}`}>
+          <ProfilePreview
+            key={`${source}:${choice.id}:${String(choice.revision)}`}
+            client={client}
+            kind={kind}
+            choice={choice}
+          >
+            <span>
+              <ReferenceLink kind={kind} id={choice.id} name={choice.name} />{' '}
+              <span>Version {choice.revision}</span>
+            </span>
             <Button
               variant="outline"
+              aria-label={`Select ${choice.name} Version ${choice.revision}`}
+              title={`Select ${choice.name}`}
               disabled={disabled || loading}
               aria-pressed={
                 value?.revision.profileId === choice.id &&
@@ -138,13 +154,13 @@ export function ProfilePicker({
                 value?.revision.profileId === choice.id &&
                 value.revision.revision === choice.revision ? (
                   <IconCheckOutline16 />
-                ) : undefined
+                ) : (
+                  <IconPlusOutline16 />
+                )
               }
               onClick={() => void choose(choice)}
-            >
-              {choice.name} <span>Version {choice.revision}</span>
-            </Button>
-          </li>
+            />
+          </ProfilePreview>
         ))}
       </ul>
       {!loading && !error && choices.length === 0 ? <p>No published profiles</p> : null}
@@ -155,7 +171,9 @@ export function ProfilePicker({
       )}
       {value === undefined ? null : (
         <div className="create-profile-picker__selection">
-          <strong>{value.name}</strong>
+          <strong>
+            <ReferenceLink kind={kind} id={value.revision.profileId} name={value.name} />
+          </strong>
           <span>Version {value.revision.revision}</span>
           {value.kind === 'agent' ? (
             <p>

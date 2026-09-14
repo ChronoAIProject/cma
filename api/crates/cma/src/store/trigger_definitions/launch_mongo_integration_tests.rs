@@ -24,6 +24,9 @@ const NOW: &str = "2026-09-05T04:00:00Z";
 const LATER: &str = "2026-09-05T04:01:00Z";
 const LATEST: &str = "2026-09-05T04:02:00Z";
 
+#[path = "launch_observation_mongo_tests.rs"]
+mod observation_tests;
+
 fn digest(byte: char) -> String {
     byte.to_string().repeat(64)
 }
@@ -104,6 +107,142 @@ async fn stats(seed: &Seeded, trigger: &PublicTrigger) -> TriggerStats {
         .unwrap()
         .unwrap()
         .stats
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn landing_consent_survives_connection_wait_and_store_restart_without_reconfirmation() {
+    let seed = seeded("launch_pending_consent").await;
+    let mut definition = trigger("trg_pending_consent", &seed.owner, &seed.target);
+    definition.draft.consent.always_review = false;
+    seed.store.create_trigger(definition).await.unwrap();
+    let public = seed
+        .store
+        .publish_trigger(
+            &TriggerId("trg_pending_consent".into()),
+            &seed.owner,
+            1,
+            NOW.into(),
+        )
+        .await
+        .unwrap();
+    let mut candidate = launch(&public, 'a', 'b');
+    candidate.requirements.services = vec![ServiceRequirement {
+        service: ServiceId::new("api-github"),
+        state: ServiceRequirementState::Missing,
+    }];
+    candidate.review =
+        ReviewRequirements::build(&candidate.requirements, None, false, false).unwrap();
+    candidate
+        .confirm_landing_start(LaunchConfirmation {
+            surface: LaunchConsentSurface::Landing,
+            trust_confirmed_digest: None,
+            acknowledgements: Vec::new(),
+            confirmed_at: NOW.into(),
+        })
+        .unwrap();
+    let stored = seed
+        .store
+        .admit_launch(LaunchAdmission {
+            launch: candidate.clone(),
+            trigger: public.clone(),
+            events: vec![
+                LaunchEventKind::Created,
+                LaunchEventKind::ConfirmationRecorded,
+            ],
+        })
+        .await
+        .unwrap()
+        .launch()
+        .clone();
+    assert_eq!(stored.state, LaunchState::Draft);
+    assert!(stored.started_at.is_none());
+    let reopened =
+        MongoTriggerDefinitionStore::open(&seed.client, &seed.database, Arc::clone(&seed.profiles))
+            .await
+            .unwrap();
+    let mut observed = reopened
+        .launch(&stored.id, &stored.owner)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(observed, stored);
+    assert!(reopened.due_launches(LATER, 10).await.unwrap().is_empty());
+    for clear in [false, true] {
+        let mut changed = observed.clone();
+        if clear {
+            changed.confirmations.clear();
+        } else {
+            changed.confirmations[0]
+                .acknowledgements
+                .push("changed-after-click".into());
+        }
+        changed.revision += 1;
+        assert!(matches!(
+            reopened
+                .commit_launch(LaunchCommit {
+                    expected_revision: observed.revision,
+                    launch: changed,
+                    event_at: LATER.into(),
+                    events: Vec::new(),
+                })
+                .await,
+            Err(LaunchStoreError::Corrupt(_))
+        ));
+    }
+    let expected_revision = observed.revision;
+    let requirements = RequirementsSnapshot {
+        services: vec![ServiceRequirement {
+            service: ServiceId::new("api-github"),
+            state: ServiceRequirementState::Satisfied,
+        }],
+        checked_at: LATER.into(),
+    };
+    let review = ReviewRequirements::build(&requirements, None, false, false).unwrap();
+    observed
+        .refresh_review(requirements, review, LATER.into())
+        .unwrap();
+    observed = reopened
+        .commit_launch(LaunchCommit {
+            expected_revision,
+            launch: observed,
+            event_at: LATER.into(),
+            events: vec![LaunchEventKind::RequirementChanged {
+                service: ServiceId::new("api-github"),
+                state: ServiceRequirementState::Satisfied,
+            }],
+        })
+        .await
+        .unwrap();
+    let expected_revision = observed.revision;
+    observed.start_confirmed(LATEST.into()).unwrap();
+    let started = reopened
+        .commit_launch(LaunchCommit {
+            expected_revision,
+            launch: observed,
+            event_at: LATEST.into(),
+            events: vec![LaunchEventKind::StateChanged {
+                from: LaunchState::Draft,
+                to: LaunchState::Resolving,
+            }],
+        })
+        .await
+        .unwrap();
+    assert_eq!(started.confirmations, stored.confirmations);
+    assert_eq!(started.started_at.as_deref(), Some(LATEST));
+    assert_eq!(started.confirmations[0].confirmed_at, NOW);
+    let events = reopened
+        .launch_events(&stored.id, &stored.owner, 0, 10)
+        .await
+        .unwrap();
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| event.kind == LaunchEventKind::ConfirmationRecorded)
+            .count(),
+        1
+    );
+    seed.client.database(&seed.database).drop().await.unwrap();
 }
 
 #[tokio::test]

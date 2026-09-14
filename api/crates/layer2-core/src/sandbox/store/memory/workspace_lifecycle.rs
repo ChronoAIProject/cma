@@ -119,12 +119,13 @@ impl WorkspaceAdmissionStore for InMemorySandboxStore {
         if parent.lifecycle.checkpoint_capture.is_some() {
             return Err(SandboxStoreError::Conflict);
         }
-        if state
-            .agents
-            .values()
-            .any(|agent| agent.workspace_id == current.id && agent.status.is_live())
-        {
-            return Err(SandboxStoreError::WorkspaceHasLiveAgents);
+        if state.agents.values().any(|agent| {
+            agent.workspace_id == current.id
+                && (agent.owner != current.owner || agent.sandbox_id != current.sandbox_id)
+        }) {
+            return Err(SandboxStoreError::Corrupt(
+                "workspace child lineage is inconsistent".into(),
+            ));
         }
         let mut next = current;
         next.transition(WorkspaceStatus::Removing, now.clone(), None)

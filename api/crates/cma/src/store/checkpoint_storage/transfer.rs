@@ -7,9 +7,9 @@ use layer3_adapter::hosted::{
 use sha2::{Digest, Sha256};
 use tokio::sync::mpsc;
 
-use super::{rejected, unavailable, CheckpointBlobStore, ChronoStorage, Result};
+use super::{rejected, unavailable, ChronoStorage, Result};
 
-const CHUNK_BYTES: usize = 256 * 1024;
+pub(super) const CHUNK_BYTES: usize = 256 * 1024;
 
 pub(super) async fn upload(
     store: &ChronoStorage,
@@ -100,7 +100,10 @@ pub(super) async fn upload(
         .await
         .map_err(|_| unavailable("checkpoint storage upload is uncertain"))?;
     if !response.status().is_success() {
-        return Err(unavailable("checkpoint storage upload was rejected"));
+        return Err(layer3_adapter::AdapterError::Unavailable(format!(
+            "checkpoint storage upload was rejected (HTTP {})",
+            response.status().as_u16()
+        )));
     }
     seal.lock()
         .expect("upload seal lock")
@@ -108,8 +111,7 @@ pub(super) async fn upload(
         .ok_or_else(|| {
             unavailable("checkpoint storage upload did not consume the complete stream")
         })??;
-    let mut retained = store
-        .download(key, &object_reference, &sha256, size_bytes)
+    let mut retained = download(store, key, &object_reference, &sha256, size_bytes)
         .await?
         .chunks;
     while let Some(chunk) = retained.recv().await {
@@ -125,6 +127,32 @@ pub(super) async fn download(
     sha256: &str,
     size: u64,
 ) -> Result<CheckpointArchiveDownload> {
+    let response = download_response(store, key, size).await?;
+    let (sender, chunks) = mpsc::channel(2);
+    let expected = sha256.to_owned();
+    tokio::spawn(async move {
+        tokio::select! {
+            _ = sender.closed() => {}
+            result = stream_download(response, size, &expected, &sender) => {
+                if let Err(error) = result {
+                    let _ = sender.send(Err(error)).await;
+                }
+            }
+        }
+    });
+    Ok(CheckpointArchiveDownload {
+        object_reference: reference.to_owned(),
+        sha256: sha256.to_owned(),
+        size_bytes: size,
+        chunks,
+    })
+}
+
+pub(super) async fn download_response(
+    store: &ChronoStorage,
+    key: &str,
+    size: u64,
+) -> Result<reqwest::Response> {
     if !(1..=MAX_CHECKPOINT_ARCHIVE_BYTES).contains(&size) {
         return Err(rejected("checkpoint archive size is invalid"));
     }
@@ -145,19 +173,7 @@ pub(super) async fn download(
             "checkpoint storage download status or size is invalid",
         ));
     }
-    let (sender, chunks) = mpsc::channel(2);
-    let expected = sha256.to_owned();
-    tokio::spawn(async move {
-        if let Err(error) = stream_download(response, size, &expected, &sender).await {
-            let _ = sender.send(Err(error)).await;
-        }
-    });
-    Ok(CheckpointArchiveDownload {
-        object_reference: reference.to_owned(),
-        sha256: sha256.to_owned(),
-        size_bytes: size,
-        chunks,
-    })
+    Ok(response)
 }
 
 async fn stream_download(

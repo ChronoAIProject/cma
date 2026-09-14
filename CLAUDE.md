@@ -208,6 +208,29 @@ implicitly. The owner may add Workspaces and Agents from independently selected
 published profiles within the recorded limits. Published profile changes never
 mutate existing instances.
 
+An explicit owner service-access command may append additional NyxID grants
+while the Sandbox is fully Paused. It preserves the original profile and creation
+scope, records the owner and time, and renews scoped credentials before revival.
+Profile publication never grants this additional instance access implicitly.
+
+Sandbox Profile availability is a mutable scheduling policy, separate from its
+immutable environment revisions. Always keep alive applies to existing and future
+Sandboxes of that Profile and prevents inactivity pause; explicit manual pause
+remains available. Warmup is restricted to published public Profiles, with a target
+of one through five unowned runtimes. Private forks have their own default policy
+and provision fresh. Changing this policy never rewrites pinned environments,
+ownership or conversations.
+
+Warm runtime authority lives in `warm_sandboxes`, separately from owned Sandbox
+records. Reservations pin the public revision, service floor, execution policy
+and runtime image. A ready reservation and its owned Sandbox are transferred in
+one admission transaction under the existing owner quota/name/Trigger fences.
+The reserved Sandbox ID and installation receipt survive the transfer; user
+credentials are minted only afterward. Reconciliation reads unowned authority
+before owned authority, and never reclaims a preparing or ready reservation as
+an orphan. Failed/stale runtimes must finish teardown before their capacity is
+reallocated. Claimed runtimes are controlled exclusively by their owned Sandbox.
+
 #### Capabilities must be proved
 
 "This can never do that" and "that just failed" are separate typed facts.
@@ -311,7 +334,9 @@ controller takes back over live runtimes, replaces lost ones, recovers durable
 operations and reclaims resources no record owns. Reconciliation is owner- and
 writer-fenced; an expired worker must not mutate a newer worker's resources.
 
-Quiet Sandboxes pause according to platform settings after every Agent is quiet.
+Quiet Sandboxes pause according to platform settings after every Agent is quiet,
+unless their Profile has Always keep alive enabled. Inactivity admission fences
+the mutable Profile policy in the same transaction as its Sandbox/Agent evidence.
 Any admitted message, creation or Launch that needs one revives it. The owner
 does not need to repair a deployment by clicking a revive control.
 
@@ -321,7 +346,19 @@ Runtime image drift causes recorded rotation. A writer fence first holds the
 whole Sandbox home, including Workspaces, Worktrees, Agent homes and transcripts,
 for a consistent checkpoint. Restore installs that snapshot into a replacement
 runtime; the controller resumes the Agents and records the resulting version.
-The two retained checkpoints provide bounded recovery history.
+Only the latest completed checkpoint is retained. A replacement must commit before
+older completed objects are pruned; legacy two-generation records are accepted until
+their next successful publication. Periodic capture defaults to thirty minutes and
+uses the live global admin checkpoint interval; manual and automatic pause still
+require a fresh consistent checkpoint before teardown.
+Deleting a Sandbox removes its snapshot archives after runtime teardown and before
+reporting Deleted. Conversation and lifecycle history retain their separate grace
+period; archive cleanup failures remain durable, retryable deletion work.
+The archive cleanup sweep also reconciles snapshots retained by earlier releases
+against validated Deleted Sandbox records without deleting their history.
+Periodic capture waits that same interval from the later of the latest snapshot
+and current runtime binding. Initial provisioning and revival must not immediately
+capture just because the previous snapshot is missing or overdue.
 
 Rotation and restore are never silent. The record names the runtime version,
 checkpoint timestamp and progress. The UI preserves history and explains why

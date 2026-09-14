@@ -35,6 +35,16 @@ pub(super) struct Fixture {
 }
 
 impl Fixture {
+    pub(super) fn no_review() -> Self {
+        let mut fixture = Self::published();
+        fixture.trigger.draft.consent.always_review = false;
+        fixture
+            .trigger
+            .publish("2026-09-05T02:00:00Z".into())
+            .unwrap();
+        fixture.store = Arc::new(ReadOnlyTriggerStore::new(fixture.trigger.clone()));
+        fixture
+    }
     pub(super) fn published() -> Self {
         Self::new(TriggerAvailability::Published, false)
     }
@@ -123,6 +133,7 @@ fn content() -> TriggerContent {
             agent: AgentReusePolicy::Ask,
         },
         first_message: OWNER_SECRET.into(),
+        quick_messages: Vec::new(),
         consent: TriggerConsent {
             always_review: true,
         },

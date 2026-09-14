@@ -1,6 +1,6 @@
 use super::*;
 use layer2_core::sandbox::store::{
-    AgentStore, SandboxLifecycleAgentScope, SandboxLifecycleExecutionStore,
+    AgentLogStore, AgentStore, SandboxLifecycleAgentScope, SandboxLifecycleExecutionStore,
     SandboxLifecycleMutation, SandboxMutationGuard,
 };
 use layer2_core::sandbox::{SandboxCheckpointCapturePhase, SANDBOX_CHECKPOINT_INTERVAL_SECONDS};
@@ -22,7 +22,58 @@ async fn active() -> (Harness, Sandbox, SystemTime) {
     let created = harness.create().await;
     let now = start_time(&created);
     let active = harness.drive_active(&created.id, now).await;
-    (harness, active, now + Duration::from_secs(1))
+    (
+        harness,
+        active,
+        now + Duration::from_secs(SANDBOX_CHECKPOINT_INTERVAL_SECONDS + 1),
+    )
+}
+
+#[tokio::test]
+async fn first_periodic_capture_waits_for_the_live_interval_across_worker_restart() {
+    let harness = Harness::new(Vec::new(), 0, Duration::from_secs(60)).await;
+    let created = harness.create().await;
+    let now = start_time(&created);
+    let active = harness.drive_active(&created.id, now).await;
+    let source = Arc::new(MutablePolicy(Mutex::new(harness.policy.clone())));
+    for elapsed in [1, 120, 599, 600] {
+        let worker = SandboxCheckpointMaintenance::with_policy_source(
+            harness.store.clone(),
+            harness.adapter.clone(),
+            "test".into(),
+            "first-capture-restarted".into(),
+            source.clone(),
+        );
+        assert_eq!(
+            worker
+                .run_once(now + Duration::from_secs(elapsed))
+                .await
+                .unwrap(),
+            0
+        );
+        assert_eq!(harness.stored(&active.id).await, active);
+    }
+    source.0.lock().unwrap().checkpoint_interval_seconds = 600;
+    let worker = SandboxCheckpointMaintenance::with_policy_source(
+        harness.store.clone(),
+        harness.adapter.clone(),
+        "test".into(),
+        "first-capture-new-policy".into(),
+        source,
+    );
+    assert_eq!(
+        worker
+            .run_once(now + Duration::from_secs(600))
+            .await
+            .unwrap(),
+        1
+    );
+    assert!(harness
+        .stored(&active.id)
+        .await
+        .lifecycle
+        .checkpoint_capture
+        .is_some());
 }
 
 fn token(sandbox: &Sandbox) -> String {
@@ -35,6 +86,84 @@ fn token(sandbox: &Sandbox) -> String {
         .writer_resume_token
         .clone()
         .unwrap()
+}
+
+#[tokio::test]
+async fn checkpoint_interval_changes_apply_without_worker_restart() {
+    let (harness, active, now) = active().await;
+    let source = Arc::new(MutablePolicy(Mutex::new(harness.policy.clone())));
+    let worker = SandboxCheckpointMaintenance::with_policy_source(
+        harness.store.clone(),
+        harness.adapter.clone(),
+        "test".into(),
+        "live-policy".into(),
+        source.clone(),
+    );
+    for _ in 0..3 {
+        assert_eq!(worker.run_once(now).await.unwrap(), 1);
+    }
+    let completed = harness.stored(&active.id).await;
+    assert!(completed.lifecycle.checkpoints.latest.is_some());
+    assert!(completed.lifecycle.checkpoint_capture.is_none());
+    let later = now + Duration::from_secs(600);
+    assert_eq!(worker.run_once(later).await.unwrap(), 0);
+    source.0.lock().unwrap().checkpoint_interval_seconds = 600;
+    assert_eq!(worker.run_once(later).await.unwrap(), 1);
+    assert!(harness
+        .stored(&active.id)
+        .await
+        .lifecycle
+        .checkpoint_capture
+        .is_some());
+}
+
+#[tokio::test]
+async fn periodic_capture_waits_two_quiet_minutes_across_worker_restart() {
+    let (harness, active, now) = active().await;
+    let mut agent = lifecycle_queue_tests::ready_agent(&active, now);
+    agent.conversation.last_seq = 1;
+    harness.store.create_agent(agent.clone()).await.unwrap();
+    harness
+        .store
+        .append_agent_log(
+            &agent.id,
+            rfc3339_at(now),
+            layer2_core::sandbox::AgentLogKind::WorkStepCompleted {
+                step: layer2_core::sandbox::AgentWorkStep::None,
+            },
+        )
+        .await
+        .unwrap();
+    for elapsed in [0, 4, 119] {
+        let worker = maintenance(&harness, "quiet-restarted");
+        assert_eq!(
+            worker
+                .run_once(now + Duration::from_secs(elapsed))
+                .await
+                .unwrap(),
+            0
+        );
+        assert_eq!(harness.stored(&active.id).await, active);
+    }
+    assert!(!harness
+        .backend
+        .requests()
+        .await
+        .iter()
+        .any(|(_, request)| matches!(request, RequestFrame::CheckpointForTeardown(_))));
+    assert_eq!(
+        maintenance(&harness, "quiet-restarted")
+            .run_once(now + Duration::from_secs(120))
+            .await
+            .unwrap(),
+        1
+    );
+    assert!(harness
+        .stored(&active.id)
+        .await
+        .lifecycle
+        .checkpoint_capture
+        .is_some());
 }
 
 #[tokio::test]
@@ -92,6 +221,7 @@ async fn periodic_checkpoint_exclusions_include_retained_terminal_agent_homes() 
         holds[0].checkpoint.exclusions,
         ids.iter()
             .map(|id| format!(".cma/agents/{id}/home/tmp/arg0"))
+            .chain(std::iter::once(".codex/tmp/arg0".to_string()))
             .collect::<Vec<_>>()
     );
     worker.run_once(now).await.unwrap();
@@ -166,8 +296,20 @@ async fn periodic_capture_persists_authority_before_io_and_retains_debt_until_re
 #[tokio::test]
 async fn failed_conversation_capture_keeps_resume_debt_and_publishes_nothing() {
     let (harness, active, now) = active().await;
-    let agent = lifecycle_queue_tests::ready_agent(&active, now);
-    harness.store.create_agent(agent).await.unwrap();
+    let mut agent = lifecycle_queue_tests::ready_agent(&active, now);
+    agent.conversation.last_seq = 1;
+    harness.store.create_agent(agent.clone()).await.unwrap();
+    harness
+        .store
+        .append_agent_log(
+            &agent.id,
+            rfc3339_at(now - Duration::from_secs(120)),
+            layer2_core::sandbox::AgentLogKind::WorkStepCompleted {
+                step: layer2_core::sandbox::AgentWorkStep::None,
+            },
+        )
+        .await
+        .unwrap();
     let worker = maintenance(&harness, "periodic-a");
     let runtime = RuntimeHandle(active.runtime.as_ref().unwrap().runtime_id.clone());
     worker.run_once(now).await.unwrap();

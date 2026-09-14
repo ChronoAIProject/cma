@@ -1,3 +1,4 @@
+import { Presence } from '../../ui/Presence';
 import { useEffect, useRef, useState } from 'react';
 import { Button } from '../../ui/Button';
 import { Input } from '../../ui/Input';
@@ -162,14 +163,18 @@ export function WorkspaceLocationPicker({
               >
                 {checking === key ? 'Verifying repository' : 'Verify repository'}
               </Button>
-              {verified === key ? <span role="status">Repository verified</span> : null}
+              <Presence>
+                {verified === key ? <span role="status">Repository verified</span> : null}
+              </Presence>
             </div>
           )}
-          {failure?.key === key ? (
-            <p role="alert" className="profile-field__error">
-              {failure.message}
-            </p>
-          ) : null}
+          <Presence>
+            {failure?.key === key ? (
+              <p role="alert" className="profile-field__error">
+                {failure.message}
+              </p>
+            ) : null}
+          </Presence>
         </>
       ) : (
         <Field

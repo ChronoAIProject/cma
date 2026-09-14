@@ -6,6 +6,7 @@ publish = false
 
 [dependencies]
 axum = { workspace = true }
+flate2 = { workspace = true }
 futures-util = { workspace = true }
 layer3-adapter = { workspace = true }
 libc = { workspace = true }
@@ -17,6 +18,7 @@ tokio = { workspace = true, features = ["fs"] }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 url = { workspace = true }
+uuid = { workspace = true }
 zip = { workspace = true }
 
 [dev-dependencies]

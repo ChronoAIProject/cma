@@ -24,6 +24,81 @@ const T3: &str = "2026-09-05T03:00:00Z";
 const T4: &str = "2026-09-05T04:00:00Z";
 static DATABASE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn marketplace_resolves_public_author_names_without_changing_ownership() {
+    use layer2_core::{PublicIdentity, UserDirectoryStore};
+
+    let (client, name, store) = database("authors").await;
+    let directory = super::directory::MongoUserDirectoryStore::open(&client, &name)
+        .await
+        .unwrap();
+    let profile = agent_profile("agp_author", "publisher", "Named author's profile");
+    store.create_agent_profile(profile.clone()).await.unwrap();
+    store
+        .publish_agent_profile(&profile.id, 1, T1.into())
+        .await
+        .unwrap();
+    let locator = MarketplaceLocator::Agent(profile.id.clone());
+    make_public(&store, &profile.owner, &locator).await;
+    assert_eq!(
+        store
+            .read_marketplace(&locator)
+            .await
+            .unwrap()
+            .summary
+            .owner_display,
+        "Author unavailable"
+    );
+    for display_name in [
+        Some("Research author"),
+        Some("Renamed author"),
+        Some(" "),
+        None,
+    ] {
+        directory
+            .observe(&PublicIdentity {
+                subject: profile.owner.clone(),
+                display_name: display_name.map(str::to_string),
+                avatar_url: None,
+            })
+            .await
+            .unwrap();
+        let expected = display_name
+            .filter(|name| !name.trim().is_empty())
+            .unwrap_or("Author unavailable");
+        let page = store
+            .list_marketplace(&MarketplaceQuery::default())
+            .await
+            .unwrap();
+        assert_eq!(page.items.len(), 1);
+        assert_eq!(page.items[0].owner_display, expected);
+        let entry = store.read_marketplace(&locator).await.unwrap();
+        assert_eq!(entry.summary.owner_display, expected);
+        assert_eq!(entry.owner, profile.owner);
+        assert_eq!(entry.summary.name, profile.name);
+        let names = directory
+            .display_names(&[profile.owner.clone(), SubjectId::new("missing-person")])
+            .await
+            .unwrap();
+        assert_eq!(
+            names.get(profile.owner.as_str()).map(String::as_str),
+            display_name.filter(|name| !name.trim().is_empty())
+        );
+        assert!(!names.contains_key("missing-person"));
+    }
+    let names = super::directory::public_display_names(&client, &name, &["unrelated".into()])
+        .await
+        .unwrap();
+    assert!(names.is_empty());
+    assert!(
+        super::directory::public_display_names(&client, &name, &vec!["publisher".into(); 201])
+            .await
+            .is_err()
+    );
+    client.database(&name).drop().await.unwrap();
+}
+
 #[path = "profile_reference_mongo_tests.rs"]
 mod reference_tests;
 
@@ -98,6 +173,7 @@ fn workspace_profile(id: &str, agent: AgentProfileRef) -> WorkspaceProfile {
 
 fn sandbox_profile(id: &str, workspaces: Vec<WorkspaceProfileRef>) -> SandboxProfile {
     SandboxProfile {
+        availability: Default::default(),
         id: SandboxProfileId(id.into()),
         owner: SubjectId("publisher".into()),
         name: "Gamma sandbox".into(),

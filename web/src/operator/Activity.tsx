@@ -106,14 +106,18 @@ function ActivityRecords({
                   {row.actor === null ? (
                     'Not signed in'
                   ) : (
-                    <>
-                      Actor <code>{row.actor}</code>
-                    </>
+                    <>Actor {row.actor_name?.trim() || 'Name unavailable'}</>
                   )}
                 </span>
                 {row.target === null ? null : (
                   <span>
-                    {row.target.kind} <code>{row.target.id}</code>
+                    {row.target.kind === 'subject' ? (
+                      <>User {row.target_name?.trim() || 'Name unavailable'}</>
+                    ) : (
+                      <>
+                        {row.target.kind} <code>{row.target.id}</code>
+                      </>
+                    )}
                   </span>
                 )}
               </p>

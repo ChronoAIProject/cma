@@ -78,6 +78,7 @@ export interface ServiceCatalogClient {
 
 export interface ServiceCatalogEntry {
   readonly id: string;
+  readonly catalogId?: string;
   readonly name: string;
   readonly description?: string;
 }
@@ -104,10 +105,12 @@ export interface ProfileSummary {
 }
 
 export interface ProfileDocument<Content> extends ProfileSummary {
+  readonly availability?: SandboxProfileAvailability;
   readonly draft: Content;
 }
 
 export interface ProfileDraft<Content> {
+  readonly availability?: SandboxProfileAvailability;
   readonly name: string;
   readonly description: string;
   readonly content: Content;
@@ -116,6 +119,12 @@ export interface ProfileDraft<Content> {
 export interface ProfileRevision<Content> extends ProfileRevisionSummary {
   readonly profileId: string;
   readonly content: Content;
+}
+
+export interface SandboxProfileAvailability {
+  readonly warmupEnabled: boolean;
+  readonly warmupCount: number;
+  readonly alwaysKeepAlive: boolean;
 }
 
 /** Public profile operations, bound to one profile kind by the SDK adapter. */

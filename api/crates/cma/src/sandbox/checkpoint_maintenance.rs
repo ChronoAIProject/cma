@@ -1,3 +1,4 @@
+use futures_util::{stream, StreamExt};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
@@ -8,14 +9,18 @@ use layer2_core::sandbox::store::{
     SandboxReconciliationStore, SandboxStoreError,
 };
 use layer2_core::sandbox::{
-    sandbox_checkpoint_due, Agent, Sandbox, SandboxCheckpointCapturePhase, SandboxEventKind,
-    SandboxStatus, SandboxWorkStep, Workspace,
+    sandbox_checkpoint_due_with_interval, Agent, Sandbox, SandboxCheckpointCapturePhase,
+    SandboxEventKind, SandboxPolicySource, SandboxStatus, SandboxWorkStep, Workspace,
 };
 use layer3_adapter::{writer_resume_tokens_match, CheckpointWriterResumeRequest, SandboxAdapter};
 
 use super::runtime_attachment::adopt_bound_runtime;
 
 mod capture;
+mod export;
+mod lease;
+
+use lease::CaptureClock;
 
 const CLAIM_DURATION: Duration = Duration::from_secs(5 * 60);
 const RETRY_DELAY: Duration = Duration::from_secs(30);
@@ -35,24 +40,84 @@ pub(crate) struct SandboxCheckpointMaintenance {
     adapter: Arc<dyn SandboxAdapter>,
     deployment_id: String,
     holder: String,
+    policy: Arc<dyn SandboxPolicySource>,
+    export: Option<ExportDependencies>,
+}
+
+#[derive(Clone)]
+pub(crate) struct ExportDependencies {
+    pub homes: Arc<dyn SnapshotExportStore>,
+    pub objects: Arc<dyn layer3_adapter::hosted::CheckpointArchiveStoreFactory>,
+    pub image: String,
+}
+
+pub(crate) trait SnapshotExportStore:
+    layer3_adapter::HomeSnapshotStore
+    + layer3_adapter::HomeSnapshotViewStore
+    + layer3_adapter::HomeSnapshotExportJobStore
+{
+}
+impl<T> SnapshotExportStore for T where
+    T: layer3_adapter::HomeSnapshotStore
+        + layer3_adapter::HomeSnapshotViewStore
+        + layer3_adapter::HomeSnapshotExportJobStore
+{
 }
 
 impl SandboxCheckpointMaintenance {
+    #[cfg(test)]
     pub(crate) fn new(
         store: Arc<dyn SandboxCheckpointMaintenanceStore>,
         adapter: Arc<dyn SandboxAdapter>,
         deployment_id: String,
         holder: String,
     ) -> Arc<Self> {
+        Self::with_policy_source(
+            store,
+            adapter,
+            deployment_id,
+            holder,
+            Arc::new(layer2_core::sandbox::SandboxPolicy::default()),
+        )
+    }
+
+    pub(crate) fn with_policy_source(
+        store: Arc<dyn SandboxCheckpointMaintenanceStore>,
+        adapter: Arc<dyn SandboxAdapter>,
+        deployment_id: String,
+        holder: String,
+        policy: Arc<dyn SandboxPolicySource>,
+    ) -> Arc<Self> {
         Arc::new(Self {
             store,
             adapter,
             deployment_id,
             holder,
+            policy,
+            export: None,
+        })
+    }
+
+    pub(crate) fn with_export_dependencies(
+        store: Arc<dyn SandboxCheckpointMaintenanceStore>,
+        adapter: Arc<dyn SandboxAdapter>,
+        deployment_id: String,
+        holder: String,
+        policy: Arc<dyn SandboxPolicySource>,
+        export: ExportDependencies,
+    ) -> Arc<Self> {
+        Arc::new(Self {
+            store,
+            adapter,
+            deployment_id,
+            holder,
+            policy,
+            export: Some(export),
         })
     }
 
     pub(crate) async fn run_once(&self, now: SystemTime) -> Result<usize, SandboxStoreError> {
+        let clock = CaptureClock::new(now);
         let mut cursor = None;
         let mut progressed = 0;
         let mut first_error = None;
@@ -64,8 +129,21 @@ impl SandboxCheckpointMaintenance {
                         .map_err(|_| SandboxStoreError::InvalidPage)?,
                 )
                 .await?;
-            for sandbox in page.items {
-                match self.process(sandbox, now).await {
+            let (background, held): (Vec<_>, Vec<_>) =
+                page.items.into_iter().partition(|sandbox| {
+                    self.export.is_some()
+                        && (sandbox.lifecycle.background_checkpoint.is_some()
+                            || (sandbox.lifecycle.checkpoint_capture.is_none()
+                                && sandbox.lifecycle.home.is_some()))
+                });
+            let background = stream::iter(background)
+                .map(|sandbox| self.process(sandbox, &clock))
+                .buffer_unordered(4);
+            let held = stream::iter(held).then(|sandbox| self.process(sandbox, &clock));
+            let results = background.chain(held);
+            tokio::pin!(results);
+            while let Some(result) = results.next().await {
+                match result {
                     Ok(changed) => progressed += usize::from(changed),
                     Err(SandboxStoreError::Conflict | SandboxStoreError::NotFound) => {}
                     Err(error) => {
@@ -79,11 +157,38 @@ impl SandboxCheckpointMaintenance {
         first_error.map_or(Ok(progressed), Err)
     }
 
-    async fn process(&self, sandbox: Sandbox, now: SystemTime) -> Result<bool, SandboxStoreError> {
+    async fn process(
+        &self,
+        sandbox: Sandbox,
+        clock: &CaptureClock,
+    ) -> Result<bool, SandboxStoreError> {
+        let now = clock.now();
         let stamp = rfc3339_at(now);
+        if sandbox.lifecycle.background_checkpoint.is_some() {
+            return self.process_export(&sandbox, clock).await;
+        }
         let Some(capture) = sandbox.lifecycle.checkpoint_capture.as_ref() else {
-            if !sandbox_checkpoint_due(&sandbox, &stamp) {
+            let policy = self
+                .policy
+                .current_sandbox_policy()
+                .await
+                .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?;
+            if !sandbox_checkpoint_due_with_interval(
+                &sandbox,
+                &stamp,
+                policy.checkpoint_interval_seconds,
+            ) {
                 return Ok(false);
+            }
+            if self.export.is_some()
+                && sandbox
+                    .lifecycle
+                    .home
+                    .as_ref()
+                    .is_some_and(|home| home.attachment().is_some())
+            {
+                self.begin_export(&sandbox, clock).await?;
+                return Ok(true);
             }
             let agents = self.agents(&sandbox).await?;
             let workspaces = self.workspaces(&sandbox).await?;
@@ -91,6 +196,7 @@ impl SandboxCheckpointMaintenance {
                 return Ok(false);
             }
             let mut next = sandbox.clone();
+            let stamp = rfc3339_at(clock.now());
             if next.begin_checkpoint_capture(stamp.clone()).is_err() {
                 return Ok(false);
             }
@@ -118,17 +224,21 @@ impl SandboxCheckpointMaintenance {
             .expect("claimed capture remains present");
         if capture.phase == SandboxCheckpointCapturePhase::Capture {
             if abandoned || claimed.status != SandboxStatus::Active {
-                self.require_resume(&claimed, now).await?;
+                self.require_resume(&claimed, clock.now()).await?;
             } else {
-                self.capture_and_publish(&claimed, now).await?;
+                self.capture_and_publish(claimed, clock).await?;
             }
         } else {
-            self.resume(&claimed, now).await?;
+            self.resume(&claimed, clock).await?;
         }
         Ok(true)
     }
 
-    async fn resume(&self, claimed: &Sandbox, now: SystemTime) -> Result<(), SandboxStoreError> {
+    async fn resume(
+        &self,
+        claimed: &Sandbox,
+        clock: &CaptureClock,
+    ) -> Result<(), SandboxStoreError> {
         let capture = claimed
             .lifecycle
             .checkpoint_capture
@@ -144,7 +254,7 @@ impl SandboxCheckpointMaintenance {
             .writer_resume_token
             .as_ref()
             .ok_or(SandboxStoreError::Conflict)?;
-        let result = async {
+        let result = tokio::time::timeout(lease::FINALIZE_TIMEOUT, async {
             let handle =
                 adopt_bound_runtime(self.adapter.as_ref(), claimed, &self.deployment_id).await?;
             self.adapter
@@ -155,12 +265,13 @@ impl SandboxCheckpointMaintenance {
                     },
                 )
                 .await
-        }
+        })
         .await;
+        let now = clock.now();
         let mut next = claimed.clone();
         let stamp = rfc3339_at(now);
         match result {
-            Ok(receipt)
+            Ok(Ok(receipt))
                 if receipt.writers_resumed
                     && writer_resume_tokens_match(&receipt.writer_resume_token, token) =>
             {

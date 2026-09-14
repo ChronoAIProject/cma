@@ -12,7 +12,13 @@ mod checkpoint;
 mod conversation;
 mod conversation_channel;
 mod error;
+mod home_snapshot;
+mod home_snapshot_export;
+mod home_snapshot_job;
+mod home_snapshot_view;
+mod home_volume;
 mod runtime;
+mod runtime_status;
 mod workspace;
 
 pub mod codex;
@@ -24,7 +30,7 @@ pub use adapter::SandboxAdapter;
 pub use agent::{
     AgentCloseRequest, AgentHomePlan, AgentHomeRemoveRequest, AgentHomeRequest, AgentLaunch,
     AgentOpenRequest, AgentSkill, AgentSlot, ConversationSnapshot, HomeFile, HomeSymlink,
-    PermissionLevel, ReasoningEffort, RuntimeOptions, ThinkingEffort,
+    PermissionLevel, ReasoningEffort, RuntimeOptions, SkillArchive, ThinkingEffort,
 };
 pub use agent_provider::AgentProvider;
 pub use capabilities::{
@@ -46,6 +52,26 @@ pub use conversation::{
     UsageUpdate,
 };
 pub use error::{AdapterError, Result, RuntimeContractMismatch};
+pub use home_snapshot::{
+    HomeSnapshotInventoryEntry, HomeSnapshotObservation, HomeSnapshotReceipt, HomeSnapshotRequest,
+    HomeSnapshotStore,
+};
+pub use home_snapshot_export::{
+    HomeSnapshotConversationIdentity, HomeSnapshotExportConversation, HomeSnapshotExportReceipt,
+    HomeSnapshotExportRequest, MAX_SNAPSHOT_EXPORT_CONVERSATIONS,
+};
+pub use home_snapshot_job::{
+    HomeSnapshotExportJobInventoryEntry, HomeSnapshotExportJobObservation,
+    HomeSnapshotExportJobPhase, HomeSnapshotExportJobReceipt, HomeSnapshotExportJobRequest,
+    HomeSnapshotExportJobStore,
+};
+pub use home_snapshot_view::{
+    HomeSnapshotViewInventoryEntry, HomeSnapshotViewObservation, HomeSnapshotViewReceipt,
+    HomeSnapshotViewStore,
+};
+pub use home_volume::{
+    HomeVolumeAttachment, HomeVolumePolicy, HomeVolumeReceipt, HomeVolumeRequest, HomeVolumeStore,
+};
 pub use runtime::{
     CommandReceipt, CredentialFrame, InstallReceipt, InstallRequest, RuntimeAdoptionRequest,
     RuntimeCredential, RuntimeHandle, RuntimeImage, RuntimeLifecycle, RuntimeObservation,
@@ -53,6 +79,7 @@ pub use runtime::{
     DEFAULT_COMMAND_TIMEOUT_SECONDS, DEFAULT_HOME_DIRECTORY, DEFAULT_SUPERVISOR_PROGRAM,
     DEFAULT_TOTAL_TIMEOUT_SECONDS,
 };
+pub use runtime_status::{valid_home_identity, RuntimeStatus, RuntimeStatusRequest};
 pub use workspace::{
     SetupReceipt, WorkspaceReceipt, WorkspaceRemoveReceipt, WorkspaceRemoveRequest,
     WorkspaceRequest, WorkspaceSetupRequest, WorkspaceSource, WorktreeReceipt, WorktreeRef,

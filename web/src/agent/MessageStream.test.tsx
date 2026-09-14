@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import { expect, it, vi } from 'vitest';
 import { conversationFromTranscript, foldLiveEvent } from './conversation';
 import { MessageStream } from './MessageStream';
@@ -30,10 +30,11 @@ function conversation() {
 
 it('renders messages and Agent activity in their original stream order', () => {
   render(<MessageStream conversation={conversation()} onApproval={vi.fn()} />);
+  fireEvent.click(screen.getByRole('button', { name: /^Thinking/ }));
   const ordered = [
     'Find the issue',
-    'Reasoning',
-    'Read package',
+    'Thinking',
+    'Tool - Read package - running - ongoing',
     'Write package',
     'The issue is fixed',
   ].map((name) => screen.getByText(name));
@@ -47,31 +48,50 @@ it('renders messages and Agent activity in their original stream order', () => {
 });
 
 it('follows new content only while the reader stays at the end', () => {
-  const scrollIntoView = vi.fn();
-  const previous = HTMLElement.prototype.scrollIntoView;
-  HTMLElement.prototype.scrollIntoView = scrollIntoView;
+  let resize: (() => void) | undefined;
+  const disconnect = vi.fn();
+  vi.stubGlobal(
+    'ResizeObserver',
+    class {
+      constructor(callback: () => void) {
+        resize = callback;
+      }
+      observe() {}
+      disconnect = disconnect;
+    },
+  );
   try {
     const draw = () => (
       <div className="agent-surface__conversation" data-testid="scroller">
         <MessageStream conversation={conversation()} onApproval={vi.fn()} />
       </div>
     );
-    const { rerender } = render(draw());
-    expect(scrollIntoView).toHaveBeenCalledOnce();
+    const { rerender, unmount } = render(draw());
     const scroller = screen.getByTestId('scroller');
+    let height = 1000;
     Object.defineProperties(scroller, {
-      scrollHeight: { value: 1000 },
+      scrollHeight: { get: () => height },
       clientHeight: { value: 400 },
     });
+    act(() => resize?.());
+    expect(scroller.scrollTop).toBe(1000);
+    height = 1200;
+    fireEvent.scroll(scroller);
+    act(() => resize?.());
+    expect(scroller.scrollTop).toBe(1200);
     scroller.scrollTop = 0;
     fireEvent.scroll(scroller);
     rerender(draw());
-    expect(scrollIntoView).toHaveBeenCalledOnce();
-    scroller.scrollTop = 600;
+    act(() => resize?.());
+    expect(scroller.scrollTop).toBe(0);
+    scroller.scrollTop = 800;
     fireEvent.scroll(scroller);
+    height = 1400;
     rerender(draw());
-    expect(scrollIntoView).toHaveBeenCalledTimes(2);
+    expect(scroller.scrollTop).toBe(1400);
+    unmount();
+    expect(disconnect).toHaveBeenCalledOnce();
   } finally {
-    HTMLElement.prototype.scrollIntoView = previous;
+    vi.unstubAllGlobals();
   }
 });

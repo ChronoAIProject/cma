@@ -21,6 +21,15 @@ pub(crate) struct AgentProjectionServices {
 }
 
 impl AgentProjectionServices {
+    pub(crate) fn with_connections(
+        mut self,
+        connections: Arc<dyn layer2_core::sandbox::SandboxCredentialPrerequisite>,
+    ) -> Self {
+        self.agents = self.agents.with_connections(connections.clone());
+        self.operations = self.operations.with_connections(connections);
+        self
+    }
+
     pub(crate) fn new<S, P, R, Q>(
         store: Arc<S>,
         profiles: Arc<P>,
@@ -55,6 +64,10 @@ impl AgentProjectionServices {
 
     pub(crate) fn operations(&self) -> Arc<AgentOperationService> {
         Arc::clone(&self.operations)
+    }
+
+    pub(crate) fn reads(&self) -> Arc<AgentReadService> {
+        Arc::clone(&self.reads)
     }
 
     pub(crate) fn router(&self, operation_records: Arc<dyn OperationStore>) -> Router {
@@ -156,11 +169,11 @@ fn resource_failure(sandbox_id: &str, error: AdapterError) -> SandboxResourceRea
         AdapterError::Unsupported(_) => SandboxResourceReadError::Unsupported(
             "the runtime does not support resource readings".into(),
         ),
-        AdapterError::Rejected(_) | AdapterError::RuntimeContractMismatch(_) => {
-            SandboxResourceReadError::Corrupt(
-                "the runtime resource authority or reply is invalid".into(),
-            )
-        }
+        AdapterError::Rejected(_)
+        | AdapterError::OperationIdentityConflict(_)
+        | AdapterError::RuntimeContractMismatch(_) => SandboxResourceReadError::Corrupt(
+            "the runtime resource authority or reply is invalid".into(),
+        ),
         AdapterError::Unavailable(_) | AdapterError::AtCapacity(_) => {
             SandboxResourceReadError::Unavailable(
                 "the runtime resource transport is unavailable".into(),

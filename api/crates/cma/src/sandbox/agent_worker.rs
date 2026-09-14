@@ -15,6 +15,7 @@ mod first_message;
 mod reconcile;
 mod startup;
 mod startup_open;
+mod startup_publication;
 mod startup_support;
 mod support;
 
@@ -83,6 +84,7 @@ impl AgentWorker {
     }
 
     pub async fn run_one(&self, id: &AgentId, now: SystemTime) -> Result<bool, SandboxStoreError> {
+        let started = tokio::time::Instant::now();
         let Some(agent) = self
             .dependencies
             .store
@@ -96,7 +98,43 @@ impl AgentWorker {
         else {
             return Ok(false);
         };
-        self.execute(agent, now).await?;
+        Box::pin(self.execute(agent, now + started.elapsed())).await?;
+        Ok(true)
+    }
+
+    /// Follow already-prepared startup steps immediately, keeping each durable claim.
+    pub(crate) async fn run_scheduled(
+        &self,
+        id: &AgentId,
+        now: SystemTime,
+    ) -> Result<bool, SandboxStoreError> {
+        let started = tokio::time::Instant::now();
+        let progressed = self.run_one(id, now).await?;
+        if !progressed {
+            return Ok(false);
+        }
+        for _ in 0..6 {
+            let Some(agent) = self.dependencies.store.get_agent(id).await? else {
+                break;
+            };
+            if agent.work.warm_conversation_id.is_none()
+                || !matches!(
+                    agent.work.step,
+                    AgentWorkStep::AddWorktree
+                        | AgentWorkStep::MaterializeHome
+                        | AgentWorkStep::OpenConversation
+                        | AgentWorkStep::PublishReady
+                        | AgentWorkStep::PublishConnection
+                        | AgentWorkStep::DispatchFirstMessage
+                )
+                || !agent.work.is_due(&rfc3339_at(now + started.elapsed()))
+            {
+                break;
+            }
+            if !self.run_one(id, now + started.elapsed()).await? {
+                break;
+            }
+        }
         Ok(true)
     }
 

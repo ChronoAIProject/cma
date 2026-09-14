@@ -19,7 +19,19 @@ pub trait SandboxAdapter: Send + Sync {
     /// Abilities proved for the admitted runtime contract.
     fn capabilities(&self) -> AdapterCapabilities;
 
+    /// Optional durable storage authority; absence must never fall back to an empty home.
+    fn home_volumes(&self) -> Option<&dyn crate::HomeVolumeStore> {
+        None
+    }
+
     async fn provision(&self, spec: &SandboxSpec) -> Result<RuntimeHandle>;
+
+    /// Read the current process incarnation only for a verified persistent home.
+    async fn runtime_status(&self, _handle: &RuntimeHandle) -> Result<crate::RuntimeStatus> {
+        Err(crate::AdapterError::Unsupported(
+            "persistent runtime status is not supported".into(),
+        ))
+    }
 
     /// Provision an exact non-zero runtime generation.
     async fn provision_runtime(&self, request: &RuntimeProvisionRequest) -> Result<RuntimeHandle> {
@@ -123,6 +135,17 @@ pub trait SandboxAdapter: Send + Sync {
         request: &AgentHomeRequest,
     ) -> Result<()>;
 
+    /// Stage verified public skill bytes before user credential binding.
+    async fn cache_skill_archive(
+        &self,
+        _handle: &RuntimeHandle,
+        _archive: &crate::SkillArchive,
+    ) -> Result<()> {
+        Err(crate::AdapterError::Unsupported(
+            "skill archive preparation is unavailable".into(),
+        ))
+    }
+
     async fn remove_agent_home(
         &self,
         handle: &RuntimeHandle,
@@ -135,6 +158,17 @@ pub trait SandboxAdapter: Send + Sync {
         handle: &RuntimeHandle,
         authority_fence: u64,
         request: &AgentOpenRequest,
+        updates: mpsc::Sender<ConversationUpdate>,
+    ) -> Result<ConversationChannel>;
+
+    /// Replay the original open operation while attaching its recorded conversation.
+    /// The connection identity does not change the durable launch fingerprint.
+    async fn reconnect_agent(
+        &self,
+        handle: &RuntimeHandle,
+        authority_fence: u64,
+        request: &AgentOpenRequest,
+        conversation_id: &str,
         updates: mpsc::Sender<ConversationUpdate>,
     ) -> Result<ConversationChannel>;
 
@@ -172,6 +206,17 @@ pub trait SandboxAdapter: Send + Sync {
         Err(crate::AdapterError::Unsupported(
             "checkpoint writer hold is not supported".into(),
         ))
+    }
+
+    /// Revalidate the exact writer hold for an already-published checkpoint.
+    /// The caller must compare the receipt with its durable checkpoint identity.
+    /// Transports may omit archive transfer; the default replays the capture.
+    async fn verify_checkpoint_hold(
+        &self,
+        handle: &RuntimeHandle,
+        request: &CheckpointHoldRequest,
+    ) -> Result<CheckpointHoldReceipt> {
+        self.checkpoint_for_teardown(handle, request).await
     }
 
     /// Release a retained checkpoint writer fence after an aborted teardown.

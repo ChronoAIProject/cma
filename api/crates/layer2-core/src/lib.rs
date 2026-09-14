@@ -58,10 +58,10 @@ pub use log::{EventLog, EventStore};
 pub use operation::{OperationClaim, OperationReservation, OperationStore, StoreError};
 pub use paging::{Page, PageRequest, DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE};
 pub use platform::{
-    InactivitySettings, MarketplaceSettings, PlatformDefaults, PlatformLimits, PlatformSettings,
-    RetentionSettings, TriggerSettings, DEFAULT_AGENT_PROFILE_ID, DEFAULT_PROFILE_REVISION,
-    DEFAULT_SANDBOX_PROFILE_ID, DEFAULT_WORKSPACE_PROFILE_ID, MAX_PAUSE_AFTER_SECONDS,
-    MIN_PAUSE_AFTER_SECONDS,
+    CheckpointSettings, InactivitySettings, MarketplaceSettings, PlatformDefaults, PlatformLimits,
+    PlatformSettings, RetentionSettings, TriggerSettings, DEFAULT_AGENT_PROFILE_ID,
+    DEFAULT_CHECKPOINT_INTERVAL_SECONDS, DEFAULT_PROFILE_REVISION, DEFAULT_SANDBOX_PROFILE_ID,
+    DEFAULT_WORKSPACE_PROFILE_ID, MAX_PAUSE_AFTER_SECONDS, MIN_PAUSE_AFTER_SECONDS,
 };
 pub use platform_service::{
     PlatformSettingsService, PlatformSettingsStore, StoredPlatformSettings,

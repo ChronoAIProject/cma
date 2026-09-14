@@ -19,6 +19,12 @@ mod selection;
 const CONTEXT_POLL_INTERVAL: Duration = Duration::from_millis(250);
 pub const AGENT_CONTEXT_ADMISSION_BOUND: Duration = Duration::from_secs(10 * 60);
 
+#[derive(Clone, Copy)]
+enum CheckpointReadiness {
+    Wait,
+    Refuse,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct AgentContextOverrides {
     pub sandbox_id: Option<SandboxId>,
@@ -38,6 +44,8 @@ pub enum AgentContextError {
     AdmissionTimeout,
     #[error("context is not ready")]
     NotReady,
+    #[error("sandbox checkpoint is in progress; input was not admitted")]
+    CheckpointInProgress,
     #[error("context dependency is unavailable")]
     Unavailable,
     #[error(transparent)]
@@ -140,7 +148,9 @@ impl AgentContextService {
             Some(id) => self.sandboxes.read(caller, &id).await?,
             None => self.default_sandbox(caller, &defaults).await?,
         };
-        let sandbox = self.wait_for_sandbox(caller, sandbox).await?;
+        let sandbox = self
+            .wait_for_sandbox(caller, sandbox, CheckpointReadiness::Wait)
+            .await?;
         let workspace = match explicit_workspace {
             Some(workspace) => workspace,
             None => self.default_workspace(caller, &sandbox, &defaults).await?,
@@ -171,15 +181,19 @@ impl AgentContextService {
         tokio::time::timeout(AGENT_CONTEXT_ADMISSION_BOUND, async {
             loop {
                 let agent = self.agents.read(caller, id).await?;
+                let sandbox = self.sandboxes.read(caller, &agent.sandbox_id).await?;
+                if sandbox.lifecycle.checkpoint_capture.is_some() {
+                    return Err(AgentContextError::CheckpointInProgress);
+                }
                 match agent.status {
                     AgentStatus::Ready => {
-                        let sandbox = self.sandboxes.read(caller, &agent.sandbox_id).await?;
-                        self.wait_for_sandbox(caller, sandbox).await?;
+                        self.wait_for_sandbox(caller, sandbox, CheckpointReadiness::Refuse)
+                            .await?;
                         return Ok(agent);
                     }
                     AgentStatus::Paused => {
-                        let sandbox = self.sandboxes.read(caller, &agent.sandbox_id).await?;
-                        self.wait_for_sandbox(caller, sandbox).await?;
+                        self.wait_for_sandbox(caller, sandbox, CheckpointReadiness::Refuse)
+                            .await?;
                     }
                     AgentStatus::Starting => {}
                     AgentStatus::Working | AgentStatus::WaitingApproval => return Ok(agent),
@@ -198,8 +212,17 @@ impl AgentContextService {
         &self,
         caller: &Caller,
         mut sandbox: Sandbox,
+        checkpoint: CheckpointReadiness,
     ) -> Result<Sandbox, AgentContextError> {
+        self.sandboxes
+            .require_connections(caller, &sandbox.id)
+            .await?;
         loop {
+            if matches!(checkpoint, CheckpointReadiness::Refuse)
+                && sandbox.lifecycle.checkpoint_capture.is_some()
+            {
+                return Err(AgentContextError::CheckpointInProgress);
+            }
             match sandbox.status {
                 SandboxStatus::Active if sandbox.lifecycle.checkpoint_capture.is_none() => {
                     return Ok(sandbox)

@@ -45,9 +45,44 @@ pub(super) fn runtime_failure(failure: WireFailure) -> AdapterError {
     let detail = format!("{}: {}", failure.code, failure.detail);
     if failure.retryable {
         AdapterError::Unavailable(detail)
+    } else if matches!(
+        failure.code.as_str(),
+        "mutation_authority_conflict" | "runtime_mutation_replay_mismatch"
+    ) {
+        AdapterError::OperationIdentityConflict(detail)
     } else if failure.code == "at_capacity" {
         AdapterError::AtCapacity(detail)
     } else {
         AdapterError::Rejected(detail)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::wire::WireOperation;
+
+    #[test]
+    fn only_exact_nonretryable_identity_codes_enable_reconnect_compatibility() {
+        for (code, retryable, conflict) in [
+            ("mutation_authority_conflict", false, true),
+            ("runtime_mutation_replay_mismatch", false, true),
+            ("mutation_authority_conflict", true, false),
+            ("mutation_authority_stale", false, false),
+            ("mutation_authority_retired", false, false),
+            ("runtime_mutation_replay_mismatch_suffix", false, false),
+            ("agent_process_not_live", false, false),
+        ] {
+            let error = runtime_failure(WireFailure {
+                operation: WireOperation::OpenAgent,
+                code: code.into(),
+                detail: "runtime_mutation_replay_mismatch".into(),
+                retryable,
+            });
+            assert_eq!(
+                matches!(error, AdapterError::OperationIdentityConflict(_)),
+                conflict
+            );
+        }
     }
 }

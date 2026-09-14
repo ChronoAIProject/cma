@@ -1,3 +1,4 @@
+import { Presence } from '../ui/Presence';
 import { useEffect, useRef, useState } from 'react';
 import {
   type CreatedServiceConnection,
@@ -51,7 +52,11 @@ export function ConnectAssistant({
   const [busy, setBusy] = useState(false);
   const [blocked, setBlocked] = useState(false);
   const [error, setError] = useState<string>();
+  const [verifying, setVerifying] = useState(false);
+  const [notConnected, setNotConnected] = useState(false);
   const [pollRevision, setPollRevision] = useState(0);
+  const verifyRequested = useRef(false);
+  const pollController = useRef<AbortController | undefined>(undefined);
   const popup = useRef<Window | null>(null);
   const command = useRef<{ key: string; intent: string } | undefined>(undefined);
   const active = useRef(false);
@@ -71,42 +76,68 @@ export function ConnectAssistant({
   useEffect(() => {
     if (handoff === undefined) return;
     const controller = new AbortController();
+    pollController.current = controller;
+    const immediate = verifyRequested.current;
+    verifyRequested.current = false;
+    let explicitCheck = immediate;
     const startedAt = Date.now();
     const deadline = setTimeout(() => {
+      if (controller.signal.aborted) return;
       setError(connectionCopy.timeout);
+      setVerifying(false);
       controller.abort();
     }, 300_000);
     let timer: ReturnType<typeof setTimeout> | undefined;
     let failures = 0;
     const poll = async () => {
+      if (controller.signal.aborted) return;
       try {
         const status = await client.requests.readConnection(handoff.handoff_id, {
           signal: controller.signal,
         });
         if (controller.signal.aborted) return;
-        if (status.launch_id !== requestId || status.service_id !== service.service)
+        if (
+          status.handoff_id !== handoff.handoff_id ||
+          status.launch_id !== requestId ||
+          status.service_id !== service.service
+        )
           throw new Error();
         setState(status.state);
         setError(undefined);
         failures = 0;
         if (status.state === 'satisfied') {
+          setNotConnected(false);
           clearTimeout(deadline);
+          if (!explicitCheck) {
+            // Returning from NyxID never assigns a sandbox until the user
+            // explicitly verifies on this same launch page.
+            setState('pending');
+            return;
+          }
           clearConnectionReturn(requestId, service.service);
           popup.current?.close();
           satisfied.current(service.service);
           return;
         }
         if (status.state !== 'pending') {
+          setNotConnected(false);
           clearTimeout(deadline);
           clearConnectionReturn(requestId, service.service);
           popup.current?.close();
           command.current = undefined;
           return;
         }
+        if (explicitCheck) setNotConnected(true);
       } catch (cause) {
         if (controller.signal.aborted) return;
         failures += 1;
+        setNotConnected(false);
         setError(refusalSentence(cause));
+      } finally {
+        if (!controller.signal.aborted && explicitCheck) {
+          explicitCheck = false;
+          setVerifying(false);
+        }
       }
       if (Date.now() - startedAt >= 300_000) {
         setError(connectionCopy.timeout);
@@ -117,7 +148,8 @@ export function ConnectAssistant({
         Math.min(1500 * 2 ** failures, 15_000, 300_000 - (Date.now() - startedAt)),
       );
     };
-    timer = setTimeout(() => void poll(), 1500);
+    if (immediate) void poll();
+    else timer = setTimeout(() => void poll(), 1500);
     return () => {
       controller.abort();
       clearTimeout(timer);
@@ -127,9 +159,23 @@ export function ConnectAssistant({
 
   const connect = () => {
     if (active.current) return;
+    popup.current?.close();
     popup.current = window.open('about:blank', '_blank', 'popup,width=520,height=720');
     if (popup.current !== null) popup.current.opener = null;
     setBlocked(popup.current === null);
+    setError(undefined);
+    setNotConnected(false);
+    if (
+      state === 'pending' &&
+      handoff?.hosted_url !== undefined &&
+      Date.parse(handoff.expires_at) > Date.now()
+    ) {
+      if (popup.current !== null) popup.current.location.href = handoff.hosted_url;
+      return;
+    }
+    pollController.current?.abort();
+    if (handoff !== undefined && Date.parse(handoff.expires_at) <= Date.now())
+      command.current = undefined;
     command.current ??= { key: crypto.randomUUID(), intent: crypto.randomUUID() };
     const selected = command.current;
     active.current = true;
@@ -167,6 +213,17 @@ export function ConnectAssistant({
         if (live.current) setBusy(false);
       });
   };
+  const verify = () => {
+    if (handoff === undefined || state !== 'pending') {
+      onRecheck();
+      return;
+    }
+    setError(undefined);
+    setNotConnected(false);
+    setVerifying(true);
+    verifyRequested.current = true;
+    setPollRevision((value) => value + 1);
+  };
   const name = service.display_name ?? connectionCopy.unknown;
   const manualUrl = service.setup_url === undefined ? undefined : secureSetupUrl(service.setup_url);
   const pending = state === 'pending';
@@ -178,11 +235,11 @@ export function ConnectAssistant({
           <p>{connectionCopy.manual}</p>
           {manualUrl === undefined ? null : (
             <a href={manualUrl} target="_blank" rel="noopener noreferrer">
-              {connectionCopy.open}
+              {connectionCopy.connect}
             </a>
           )}
           <Button disabled={disabled} onClick={onRecheck}>
-            {publicCopy.checkAgain}
+            {connectionCopy.verify}
           </Button>
         </>
       ) : service.connection_mode !== 'hosted' ? (
@@ -194,9 +251,11 @@ export function ConnectAssistant({
         </>
       ) : (
         <>
+          <Presence>
+            {state === undefined ? null : <p role="status">{connectionStates[state]}</p>}
+          </Presence>
           {pending ? (
             <>
-              <p role="status">{connectionStates.pending}</p>
               {blocked && handoff?.hosted_url !== undefined ? (
                 <>
                   <p>{connectionCopy.blocked}</p>
@@ -209,27 +268,30 @@ export function ConnectAssistant({
                   ))}
                 </ol>
               )}
-              <Button disabled={disabled} onClick={() => setPollRevision((value) => value + 1)}>
-                {connectionCopy.connected}
+            </>
+          ) : null}
+          <Presence>
+            {notConnected ? <p role="status">{connectionCopy.notConnected}</p> : null}
+          </Presence>
+          {state === 'satisfied' ? null : (
+            <div className="public-actions">
+              <Button disabled={disabled || busy || verifying} onClick={connect}>
+                {connectionCopy.connect}
               </Button>
-            </>
-          ) : (
-            <>
-              {state === undefined ? null : <p role="status">{connectionStates[state]}</p>}
-              {state === 'satisfied' ? null : (
-                <Button disabled={disabled || busy} onClick={connect}>
-                  {connectionCopy.connect}
-                </Button>
-              )}
-            </>
+              <Button disabled={disabled || busy || verifying} onClick={verify}>
+                {verifying ? connectionCopy.verifying : connectionCopy.verify}
+              </Button>
+            </div>
           )}
         </>
       )}
-      {error === undefined ? null : (
-        <p className="public-error" role="alert">
-          {error}
-        </p>
-      )}
+      <Presence>
+        {error === undefined ? null : (
+          <p className="public-error" role="alert">
+            {error}
+          </p>
+        )}
+      </Presence>
     </section>
   );
 }

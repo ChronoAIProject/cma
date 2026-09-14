@@ -9,7 +9,7 @@ use layer2_core::sandbox::store::{
     SandboxMaintenanceOutcome, SandboxMaintenanceStore, SandboxReconciliationStore,
     SandboxRuntimeLossRequest, SandboxStore, SandboxStoreError,
 };
-use layer2_core::sandbox::{Sandbox, SandboxPolicySource};
+use layer2_core::sandbox::{AgentService, Sandbox, SandboxPolicySource, SandboxStatus};
 use layer2_core::{rfc3339_at, SandboxId};
 use layer3_adapter::{RuntimeAdoptionRequest, RuntimeObservation, SandboxAdapter};
 use tokio::sync::watch;
@@ -19,6 +19,9 @@ use tokio::time::MissedTickBehavior;
 use super::runtime_mapping::sandbox_spec;
 
 const RECONCILIATION_INTERVAL: Duration = Duration::from_secs(15);
+
+#[path = "reconciliation_homes.rs"]
+mod homes;
 
 pub(crate) trait ReconciliationStore:
     SandboxReconciliationStore + SandboxMaintenanceStore + SandboxStore
@@ -36,6 +39,7 @@ pub(crate) struct SandboxReconciler {
     policy: Arc<dyn SandboxPolicySource>,
     deployment_id: String,
     runtime_version: String,
+    profile_agents: Option<Arc<AgentService>>,
 }
 
 impl SandboxReconciler {
@@ -52,7 +56,13 @@ impl SandboxReconciler {
             policy,
             deployment_id,
             runtime_version,
+            profile_agents: None,
         }
+    }
+
+    pub(crate) fn with_profile_agents(mut self, agents: Arc<AgentService>) -> Self {
+        self.profile_agents = Some(agents);
+        self
     }
 
     /// Fail closed before starting any worker if either authority is incomplete.
@@ -68,13 +78,32 @@ impl SandboxReconciler {
         }
         for observation in &inventory {
             let id = SandboxId(observation.sandbox_id.clone());
+            // Read pool authority first: a concurrent claim publishes its owned
+            // Sandbox atomically, before the following fresh owned-record read.
+            if self
+                .store
+                .unowned_runtime_authority(&id, observation.generation, observation.handle.as_str())
+                .await?
+            {
+                continue;
+            }
             if let Some(current) = self.store.get_sandbox(&id).await? {
                 current
                     .validate()
                     .map_err(|error| corrupt(&error.to_string()))?;
-                // The durable high-water mark cannot regress or bind an older
-                // generation. Equal/newer observations may still be provisioning.
-                if observation.generation >= current.lifecycle.runtime_generation_high_water
+                // A settled pause/retirement cannot bind an equal generation;
+                // any later revive reserves a newer one before provider I/O.
+                let settled_unbound = current.runtime.is_none()
+                    && matches!(
+                        current.status,
+                        SandboxStatus::Paused | SandboxStatus::Retiring | SandboxStatus::Retired
+                    )
+                    && current.lifecycle.runtime_provision.is_none()
+                    && current.lifecycle.operation.is_none()
+                    && current.lifecycle.checkpoint_capture.is_none();
+                if observation.generation > current.lifecycle.runtime_generation_high_water
+                    || (observation.generation == current.lifecycle.runtime_generation_high_water
+                        && !settled_unbound)
                     || current.runtime.as_ref().is_some_and(|binding| {
                         binding.runtime_id == observation.handle.0
                             || binding.provision_generation.is_none()
@@ -88,7 +117,7 @@ impl SandboxReconciler {
                 .await
                 .map_err(provider_error)?;
         }
-        Ok(())
+        self.reconcile_homes().await
     }
 
     async fn authority(&self) -> Result<BTreeMap<SandboxId, Sandbox>, SandboxStoreError> {
@@ -210,14 +239,38 @@ impl SandboxReconciler {
         {
             return Ok(false);
         }
+        let mut next = sandbox.clone();
         if binding.provision_generation.is_none() {
-            let mut next = sandbox.clone();
             next.record_adopted_runtime_generation(
                 binding,
                 observation.generation,
                 rfc3339_at(now),
             )
             .map_err(|error| corrupt(&error.to_string()))?;
+        }
+        if sandbox.lifecycle.home.is_some() {
+            let status = self
+                .adapter
+                .runtime_status(&observation.handle)
+                .await
+                .map_err(provider_error)?;
+            if !next
+                .runtime_process_matches(&status)
+                .map_err(|error| corrupt(&error.to_string()))?
+                || (matches!(
+                    sandbox.status,
+                    SandboxStatus::Active
+                        | SandboxStatus::CredentialRotating
+                        | SandboxStatus::Pausing
+                ) && (!status.installation_ready || !status.credential_ready))
+            {
+                return Ok(false);
+            }
+            let expected = next.runtime.clone().expect("adopted runtime is bound");
+            next.record_runtime_boot(&expected, &status, rfc3339_at(now))
+                .map_err(|error| corrupt(&error.to_string()))?;
+        }
+        if next != *sandbox {
             self.store.save_sandbox(sandbox.revision, next).await?;
         }
         Ok(true)
@@ -255,6 +308,11 @@ impl SandboxReconciler {
         loop {
             let candidates = self.store.sandbox_maintenance_candidates(&page).await?;
             for sandbox_id in candidates.items {
+                if let Some(agents) = &self.profile_agents {
+                    if let Err(error) = agents.reconcile_profile_agents(&sandbox_id).await {
+                        tracing::error!(sandbox_id = %sandbox_id, error = %error, "automatic profile agent reconciliation failed");
+                    }
+                }
                 let rotation = self
                     .store
                     .schedule_image_rotation(SandboxImageRotationRequest {

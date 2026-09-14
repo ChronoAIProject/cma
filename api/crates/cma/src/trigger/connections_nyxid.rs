@@ -16,6 +16,7 @@ use crate::auth::{persistence::SecretValue, AuthState};
 
 mod catalog;
 mod composition;
+mod credentials;
 
 #[allow(
     unused_imports,
@@ -154,6 +155,13 @@ impl NyxidServiceConnectionBroker {
             .filter(|row| row.slug == connected.slug)
             .is_some_and(UserServiceRow::is_usable);
         if active && matches.next().is_none() {
+            if self
+                .credential_requirement(credential, &connected.id, &connected.slug)
+                .await?
+                != ServiceRequirementState::Satisfied
+            {
+                return Ok(BrokerHandoffState::Failed);
+            }
             Ok(BrokerHandoffState::Satisfied)
         } else {
             Ok(BrokerHandoffState::Failed)
@@ -203,13 +211,45 @@ impl ServiceConnectionBroker for NyxidServiceConnectionBroker {
         }
         let credential = self.credential(owner).await?;
         let rows = self.user_services(&credential).await?;
-        Ok(services
+        let mut requirements = services
             .iter()
             .map(|service| ServiceRequirement {
                 service: service.clone(),
                 state: requirement_state(service, &rows),
             })
-            .collect())
+            .collect::<Vec<_>>();
+        let checks = requirements
+            .iter()
+            .enumerate()
+            .filter_map(|(index, requirement)| {
+                if requirement.state != ServiceRequirementState::Satisfied {
+                    return None;
+                }
+                let matches = matching_services(&requirement.service, &rows);
+                let [row] = matches.as_slice() else {
+                    return None;
+                };
+                Some((index, row.id.clone(), row.slug.clone()))
+            })
+            .collect::<Vec<_>>();
+        let verified = futures_util::stream::iter(checks)
+            .map(|(index, id, slug)| {
+                let credential = &credential;
+                async move {
+                    Ok::<_, ServiceConnectionError>((
+                        index,
+                        self.credential_requirement(credential, &id, &slug).await?,
+                    ))
+                }
+            })
+            .buffer_unordered(4)
+            .collect::<Vec<_>>()
+            .await;
+        for result in verified {
+            let (index, state) = result?;
+            requirements[index].state = state;
+        }
+        Ok(requirements)
     }
 
     async fn create_handoff(
@@ -390,18 +430,25 @@ async fn decode<T: DeserializeOwned>(response: Response) -> Result<T, ServiceCon
     serde_json::from_slice(&body).map_err(|_| malformed())
 }
 
-fn requirement_state(service: &ServiceId, rows: &[UserServiceRow]) -> ServiceRequirementState {
+fn matching_services<'a>(
+    service: &ServiceId,
+    rows: &'a [UserServiceRow],
+) -> Vec<&'a UserServiceRow> {
     let exact = rows
         .iter()
         .filter(|row| row.id == service.as_str())
         .collect::<Vec<_>>();
-    let matches = if exact.is_empty() {
+    if exact.is_empty() {
         rows.iter()
             .filter(|row| row.slug == service.as_str())
             .collect::<Vec<_>>()
     } else {
         exact
-    };
+    }
+}
+
+fn requirement_state(service: &ServiceId, rows: &[UserServiceRow]) -> ServiceRequirementState {
+    let matches = matching_services(service, rows);
     match matches.as_slice() {
         [] => ServiceRequirementState::Missing,
         [row] if !row.is_allowed() => ServiceRequirementState::Unknown,

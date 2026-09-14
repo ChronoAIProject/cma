@@ -26,6 +26,7 @@ pub struct ProviderHostedControlTransport {
     http: reqwest::Client,
     archive_factory: Arc<dyn CheckpointArchiveStoreFactory>,
     state: Arc<Mutex<TransportState>>,
+    subscriptions: Option<Arc<dyn super::HostedSubscriptionSource>>,
 }
 
 #[derive(Default)]
@@ -79,7 +80,13 @@ impl ProviderHostedControlTransport {
             http,
             archive_factory,
             state: Arc::new(Mutex::new(TransportState::default())),
+            subscriptions: None,
         })
+    }
+
+    pub fn with_subscriptions(mut self, source: Arc<dyn super::HostedSubscriptionSource>) -> Self {
+        self.subscriptions = Some(source);
+        self
     }
 
     async fn endpoint(&self, handle: &RuntimeHandle) -> crate::Result<RuntimeEndpoint> {
@@ -150,16 +157,7 @@ impl ProviderHostedControlTransport {
             .await?;
         }
 
-        let response = match self.control(endpoint, &request).await {
-            Ok(response) => response,
-            Err(error)
-                if matches!(request, RequestFrame::CheckpointForTeardown(_))
-                    && !error.is_runtime_loss() =>
-            {
-                return Err(self.recover_rejected_hold(endpoint, &request, error).await)
-            }
-            Err(error) => return Err(error),
-        };
+        let response = self.control_with_hold_recovery(endpoint, &request).await?;
 
         if let Some(checkpoint) = successful_checkpoint(&response) {
             let archive = self.archive(handle).await?;
@@ -187,6 +185,22 @@ impl ProviderHostedControlTransport {
             self.close_link(handle, &request.request.agent_id).await;
         }
         Ok(response)
+    }
+
+    async fn control_with_hold_recovery(
+        &self,
+        endpoint: &RuntimeEndpoint,
+        request: &RequestFrame,
+    ) -> crate::Result<ResponseFrame> {
+        match self.control(endpoint, request).await {
+            Err(error)
+                if matches!(request, RequestFrame::CheckpointForTeardown(_))
+                    && !error.is_runtime_loss() =>
+            {
+                Err(self.recover_rejected_hold(endpoint, request, error).await)
+            }
+            result => result,
+        }
     }
 
     async fn recover_rejected_hold(
@@ -376,6 +390,22 @@ impl super::HostedControlTransport for ProviderHostedControlTransport {
         self.exchange_at(handle, &endpoint, request).await
     }
 
+    async fn verify_checkpoint_hold(
+        &self,
+        handle: &RuntimeHandle,
+        request: &crate::CheckpointHoldRequest,
+    ) -> crate::Result<ResponseFrame> {
+        // Require the sandbox binding, but do not transfer the archive again.
+        // The caller already published it and checks the pinned identity.
+        self.archive(handle).await?;
+        let endpoint = self.endpoint(handle).await?;
+        self.control_with_hold_recovery(
+            &endpoint,
+            &RequestFrame::CheckpointForTeardown(request.clone()),
+        )
+        .await
+    }
+
     async fn open_agent(
         &self,
         handle: &RuntimeHandle,
@@ -398,11 +428,24 @@ impl super::HostedControlTransport for ProviderHostedControlTransport {
             _ => unreachable!("control correlation verifies open response operation"),
         };
         let socket = self.connect(&endpoint, &launch.request.agent_id).await?;
-        let opened = Bridge::open(
+        let subscription = if settings.own_credential {
+            match &self.subscriptions {
+                Some(source) => Some(super::subscriptions::HostedSubscriptionBinding {
+                    source: source.clone(),
+                    sandbox_id: self.archive(handle).await?.sandbox_id,
+                    runtime: handle.clone(),
+                    agent: launch.request.agent_id.clone(),
+                }),
+                None => None,
+            }
+        } else {
+            None
+        };
+        let opened = Bridge::open_with_subscription(
             socket,
             launch.request.agent_id.as_str(),
             launch.request.cwd.clone(),
-            settings,
+            (settings, subscription),
             resume_conversation,
             updates,
         )
@@ -439,8 +482,8 @@ impl super::HostedControlTransport for ProviderHostedControlTransport {
 }
 
 fn restore_request(request: &RequestFrame) -> Option<&crate::RestoreRequest> {
+    // Bootstrap admits installation identity; only Restore consumes the archive.
     match request {
-        RequestFrame::BootstrapRestore(request) => Some(&request.checkpoint),
         RequestFrame::Restore(request) => Some(request),
         _ => None,
     }

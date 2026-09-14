@@ -237,6 +237,7 @@ pub(super) struct FakeDriver {
     crash_once: Mutex<Option<layer2_core::trigger_domain::LaunchEffectKind>>,
     install_target_workspace: AtomicBool,
     invalid_result: Mutex<Option<(layer2_core::trigger_domain::LaunchEffectKind, String)>>,
+    checkpoint_once: Mutex<Option<layer2_core::trigger_domain::LaunchEffectKind>>,
 }
 
 impl FakeDriver {
@@ -256,6 +257,7 @@ impl FakeDriver {
             crash_once: Mutex::new(None),
             install_target_workspace: AtomicBool::new(false),
             invalid_result: Mutex::new(None),
+            checkpoint_once: Mutex::new(None),
         });
         driver.install_context(inputs);
         driver
@@ -279,6 +281,13 @@ impl FakeDriver {
 
     pub(super) fn set_crash_once(&self, kind: layer2_core::trigger_domain::LaunchEffectKind) {
         *self.crash_once.lock().unwrap() = Some(kind);
+    }
+
+    pub(super) fn checkpoint_before_next_creation(
+        &self,
+        kind: layer2_core::trigger_domain::LaunchEffectKind,
+    ) {
+        *self.checkpoint_once.lock().unwrap() = Some(kind);
     }
 
     pub(super) fn set_invalid_result(
@@ -526,6 +535,27 @@ impl LaunchResourceDriver for FakeDriver {
     }
 
     async fn apply(&self, effect: LaunchResourceEffect) -> Result<String, LaunchResourceError> {
+        if self.checkpoint_once.lock().unwrap().take() == Some(effect.kind()) {
+            let sandbox_id = match &effect {
+                LaunchResourceEffect::CreateWorkspace { sandbox_id, .. } => sandbox_id.clone(),
+                LaunchResourceEffect::CreateAgent { workspace_id, .. } => self
+                    .workspaces
+                    .lock()
+                    .unwrap()
+                    .get(workspace_id)
+                    .unwrap()
+                    .sandbox_id
+                    .clone(),
+                _ => panic!("checkpoint test hook only supports child creation"),
+            };
+            self.mutate_sandbox(&sandbox_id, |sandbox| {
+                sandbox.begin_checkpoint_capture(stamp(0)).unwrap()
+            });
+            return Err(LaunchResourceError::retryable(
+                "launch_sandbox_not_ready",
+                "Sandbox is checkpointing",
+            ));
+        }
         match effect {
             LaunchResourceEffect::CreateSandbox {
                 caller,
@@ -607,6 +637,8 @@ impl LaunchResourceDriver for FakeDriver {
                     if sandbox.status == SandboxStatus::Paused {
                         sandbox.status = SandboxStatus::Reviving;
                         sandbox.updated_at = stamp(1);
+                    } else if sandbox.status == SandboxStatus::Pausing {
+                        sandbox.request_pause_cancellation(stamp(1)).unwrap();
                     }
                 });
                 self.record_result(EffectCall {
@@ -692,13 +724,16 @@ impl LaunchResourceDriver for FakeDriver {
                 authority,
                 workspace_id,
                 request,
+                reuse_existing: _,
             } => {
                 let (trigger_id, launch_id) = match &request.origin {
                     AgentOrigin::Trigger {
                         trigger_id,
                         launch_id,
                     } => (trigger_id.clone(), launch_id.clone()),
-                    AgentOrigin::Manual => return Err(Self::missing_profile()),
+                    AgentOrigin::Manual | AgentOrigin::WorkspaceProfile { .. } => {
+                        return Err(Self::missing_profile())
+                    }
                 };
                 let context = self
                     .context_for_agent(&request.profile)
@@ -842,6 +877,7 @@ pub(super) fn frozen_inputs(
             agent: AgentReusePolicy::AlwaysNew,
         },
         first_message: first_message.into(),
+        quick_messages: Vec::new(),
         consent: TriggerConsent {
             always_review: false,
         },
@@ -997,12 +1033,14 @@ pub(super) fn sandbox_resource(
             detail: "sandbox provisioning failed".into(),
         }),
         runtime: (status == SandboxStatus::Active).then(|| RuntimeBinding {
+            boot_id: None,
             provision_generation: Some(1),
             runtime_id: "runtime-launch".into(),
             runtime_version: "test".into(),
             bound_at: stamp(0),
         }),
         credential: SandboxCredentialState {
+            service_grants: Vec::new(),
             reaches: Vec::new(),
             key_generation: 0,
             delivered: false,

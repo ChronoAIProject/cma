@@ -1,3 +1,4 @@
+import { Presence } from '../../ui/Presence';
 import { useEffect, useRef, useState } from 'react';
 import { CommandKeys } from '../../api/client';
 import type { AppRoute, ProfileKind } from '../../routing/routes';
@@ -168,16 +169,18 @@ function Detail({
           before confirming sandbox creation.
         </p>
       ) : null}
-      {failure === undefined ? null : (
-        <div role="alert">
-          <p>{failure.message}</p>
-          {failure.uncertain ? (
-            <Button disabled={pending} onClick={() => void fork()}>
-              Retry fork
-            </Button>
-          ) : null}
-        </div>
-      )}
+      <Presence>
+        {failure === undefined ? null : (
+          <div role="alert">
+            <p>{failure.message}</p>
+            {failure.uncertain ? (
+              <Button disabled={pending} onClick={() => void fork()}>
+                Retry private copy
+              </Button>
+            ) : null}
+          </div>
+        )}
+      </Presence>
       <footer className="profile-editor__actions">
         <Button
           variant="primary"
@@ -195,10 +198,18 @@ function Detail({
             disabled={pending || failure?.uncertain || forkedId !== undefined}
             onClick={() => void fork()}
           >
-            {pending ? 'Forking' : 'Fork to my profiles'}
+            {pending ? 'Creating private copy' : 'Customize a private copy'}
           </Button>
         ) : null}
       </footer>
+      {canManage ? (
+        <p className="profile-field__help">
+          Use the shared profile as published, or create your own private copy to edit its settings.
+          {kind === 'sandbox'
+            ? ' A private copy starts a fresh sandbox and does not use the original profile’s warm sandboxes.'
+            : ''}
+        </p>
+      ) : null}
       {onUse === undefined ? (
         <p className="profile-field__help">Profile creation is unavailable from this view.</p>
       ) : null}

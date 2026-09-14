@@ -1,3 +1,4 @@
+import { Presence } from '../../ui/Presence';
 import { useEffect, useState } from 'react';
 import type { ResourcePage } from '../../api/types';
 import { Button } from '../../ui/Button';
@@ -6,6 +7,7 @@ import { Picker } from '../../ui/Picker';
 import { IconPlusOutline16, IconSearchOutline16, IconTrashOutline16 } from '../../ui/icons';
 import type { SkillCatalogClient, SkillCatalogEntry, SkillReference } from '../client';
 import { isSkillVersion } from '../validation';
+import { ReferenceLink } from '../ReferenceLink';
 
 interface SearchState extends ResourcePage<SkillCatalogEntry> {
   readonly loading: boolean;
@@ -95,7 +97,9 @@ export function SkillPicker({
       <p id="profile-skill-search-help" className="profile-field__help">
         Search Ornn, then choose the skills and versions this agent should use.
       </p>
-      {catalog === undefined ? <p role="status">The skill catalogue is unavailable.</p> : null}
+      <Presence>
+        {catalog === undefined ? <p role="status">The skill catalogue is unavailable.</p> : null}
+      </Presence>
       {value.length === 0 ? (
         <p className="profile-field__help">No skills selected.</p>
       ) : (
@@ -105,14 +109,21 @@ export function SkillPicker({
             const versions = entry?.versions.filter(isSkillVersion) ?? [];
             return (
               <li key={`${skill.id}:${String(index)}`}>
-                <span>{entry?.name ?? skill.id}</span>
+                <span>
+                  <ReferenceLink
+                    kind="skill"
+                    id={skill.id}
+                    name={entry?.name}
+                    version={skill.version}
+                  />
+                </span>
                 <div>
                   <label className="sr-only" htmlFor={`profile-skill-version-${String(index)}`}>
-                    Version for {skill.id}
+                    Version for {entry?.name ?? 'selected skill'}
                   </label>
                   <Picker
                     id={`profile-skill-version-${String(index)}`}
-                    label={`Version for ${skill.id}`}
+                    label={`Version for ${entry?.name ?? 'selected skill'}`}
                     describedBy={`profile-skill-version-${String(index)}-help`}
                     placement="skill-picker__version"
                     value={skill.version ?? ''}
@@ -140,8 +151,8 @@ export function SkillPicker({
                   <Button
                     size="sm"
                     icon={<IconTrashOutline16 />}
-                    aria-label={`Remove ${skill.id}`}
-                    title={`Remove ${skill.id}`}
+                    aria-label={`Remove ${entry?.name ?? 'selected skill'}`}
+                    title={`Remove ${entry?.name ?? 'selected skill'}`}
                     disabled={disabled}
                     onClick={() => onChange(value.filter((_, at) => at !== index))}
                   />
@@ -168,12 +179,11 @@ export function SkillPicker({
           return (
             <li key={entry.id}>
               <div>
-                <strong>{entry.name}</strong>
+                <strong>
+                  <ReferenceLink kind="skill" id={entry.id} name={entry.name} />
+                </strong>
                 {entry.description === undefined ? null : <p>{entry.description}</p>}
-                <span>
-                  {entry.id}
-                  {entry.versions[0] === undefined ? '' : ` · ${entry.versions[0]}`}
-                </span>
+                <span>{entry.versions[0] === undefined ? '' : `Version ${entry.versions[0]}`}</span>
               </div>
               <Button
                 size="sm"
@@ -195,22 +205,29 @@ export function SkillPicker({
         })}
       </ul>
       {state.loading ? <p role="status">Loading skills</p> : null}
-      {state.error !== undefined ? (
-        <div role="alert">
-          <p>{state.error}</p>
-          <Button
-            size="sm"
-            onClick={() => {
-              setState((previous) => ({ ...previous, loading: true, error: undefined }));
-              setReload((version) => version + 1);
-            }}
-          >
-            Try again
-          </Button>
-        </div>
-      ) : catalog !== undefined && !state.loading && state.items.length === 0 ? (
-        <p>No matching skills</p>
-      ) : null}
+      <>
+        {state.error !== undefined ? null : catalog !== undefined &&
+          !state.loading &&
+          state.items.length === 0 ? (
+          <p>No matching skills</p>
+        ) : null}
+        <Presence>
+          {state.error !== undefined ? (
+            <div role="alert">
+              <p>{state.error}</p>
+              <Button
+                size="sm"
+                onClick={() => {
+                  setState((previous) => ({ ...previous, loading: true, error: undefined }));
+                  setReload((version) => version + 1);
+                }}
+              >
+                Try again
+              </Button>
+            </div>
+          ) : null}
+        </Presence>
+      </>
       {state.next === undefined ? null : (
         <Button
           size="sm"

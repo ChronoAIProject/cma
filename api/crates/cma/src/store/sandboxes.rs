@@ -314,6 +314,11 @@ async fn classify_cas_miss(
 #[async_trait::async_trait]
 impl SandboxStore for MongoSandboxStore {
     async fn create_sandbox(&self, sandbox: Sandbox) -> Result<(), SandboxStoreError> {
+        if !sandbox.credential.service_grants.is_empty() {
+            return Err(SandboxStoreError::InvalidTransaction(
+                "service access requires an existing sandbox and an atomic grant",
+            ));
+        }
         if sandbox.revision != 1 {
             return Err(SandboxStoreError::Conflict);
         }
@@ -359,6 +364,9 @@ impl SandboxStore for MongoSandboxStore {
         if current.revision != expected_revision {
             return Err(SandboxStoreError::Conflict);
         }
+        current
+            .validate_service_access_successor(&sandbox)
+            .map_err(|_| SandboxStoreError::Conflict)?;
         current
             .validate_checkpoint_capture_successor(&sandbox)
             .map_err(|_| SandboxStoreError::Conflict)?;

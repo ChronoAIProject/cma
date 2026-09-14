@@ -50,6 +50,10 @@ export function sandboxFixture(status: SandboxStatus = 'active'): SandboxDetail 
     id: 'sbx_1',
     name: 'Atlas',
     status,
+    lifecycle: {
+      pause: status === 'active' ? { allowed: true } : { allowed: false, reason: 'not_active' },
+      revive: status === 'paused' ? { allowed: true } : { allowed: false, reason: 'not_paused' },
+    },
     profile: { id: 'sbp_default', revision: 1 },
     lastActivityAt: '2026-09-06T00:05:00Z',
     createdAt: '2026-09-06T00:00:00Z',

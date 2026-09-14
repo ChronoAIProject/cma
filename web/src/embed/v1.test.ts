@@ -28,7 +28,10 @@ describe('CMA trigger embed', () => {
 
     const anchor = element.querySelector('a');
     const image = element.querySelector('img');
-    expect(anchor).toHaveAttribute('href', 'https://cma.example/t/pub_example/plc_readme');
+    expect(anchor).toHaveAttribute(
+      'href',
+      'https://cma.example/api/v1/triggers/public/pub_example/open/plc_readme',
+    );
     expect(image).toHaveAttribute('alt', 'Open in CMA');
     expect(image).toHaveAttribute(
       'src',
@@ -73,7 +76,10 @@ describe('CMA trigger embed', () => {
     existing.dataset.cmaOrigin = 'https://cma.example';
     document.body.append(existing);
     await executeEmbed();
-    expect(existing).toHaveAttribute('href', 'https://cma.example/t/pub_example/plc_docs');
+    expect(existing).toHaveAttribute(
+      'href',
+      'https://cma.example/api/v1/triggers/public/pub_example/open/plc_docs',
+    );
     expect(existing.querySelector('img')).toHaveAttribute('alt', 'Try it');
 
     const dynamic = existing.cloneNode(false) as HTMLAnchorElement;

@@ -289,7 +289,11 @@ fn request_tier(request: &Request) -> RequestTier {
     {
         return RequestTier::Health;
     }
-    if request.method() != Method::POST || path == "/api/v1/profile-authoring/repositories/resolve"
+    if request.method() != Method::POST
+        || matches!(
+            path,
+            "/api/v1/profile-authoring/repositories/resolve" | "/auth/connections/check"
+        )
     {
         return RequestTier::Default;
     }
@@ -304,6 +308,14 @@ fn request_tier(request: &Request) -> RequestTier {
 /// changes buckets based on ambient credentials and can be used to exhaust a
 /// subject's protected-route allowance.
 fn uses_client_operation_key(path: &str) -> bool {
+    // These authenticated endpoints coordinate one owner's connections. Keep
+    // users behind the same network from consuming each other's login budget.
+    if matches!(
+        path,
+        "/auth/connections/check" | "/auth/connections/start" | "/auth/connections/cancel"
+    ) {
+        return false;
+    }
     path == "/openapi.json"
         || path == "/api/v1/conformance"
         || is_public_trigger_preview(path)

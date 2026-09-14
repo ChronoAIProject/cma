@@ -17,10 +17,20 @@ fn options() -> RuntimeOptions {
 fn skill() -> AgentSkill {
     AgentSkill {
         id: "review".into(),
+        name: None,
         version: Some("7".into()),
         archive_sha256: "ab".repeat(32),
         source_url: "https://skills.example/review.tar.gz".into(),
     }
+}
+
+#[test]
+fn legacy_skill_payload_without_name_round_trips_unchanged() {
+    let payload = serde_json::to_value(skill()).unwrap();
+    assert!(payload.get("name").is_none());
+    let decoded: AgentSkill = serde_json::from_value(payload.clone()).unwrap();
+    assert_eq!(decoded.name, None);
+    assert_eq!(serde_json::to_value(decoded).unwrap(), payload);
 }
 
 #[test]
@@ -120,6 +130,9 @@ fn agent_request_digests_cover_every_semantic_execution_field() {
     changed_home!(|request: &mut AgentHomeRequest| request.options.slot = AgentSlot::new("agent-b"));
     changed_home!(|request: &mut AgentHomeRequest| request.system_prompt.push('!'));
     changed_home!(|request: &mut AgentHomeRequest| request.skills[0].id.push_str("-other"));
+    changed_home!(
+        |request: &mut AgentHomeRequest| request.skills[0].name = Some("named-skill".into())
+    );
     changed_home!(|request: &mut AgentHomeRequest| request.skills[0].version = None);
     changed_home!(|request: &mut AgentHomeRequest| request.skills[0]
         .archive_sha256
@@ -179,6 +192,7 @@ fn rendered_payload_digests_cover_materialization_and_launch_fields() {
     changed_plan!(|plan: &mut AgentHomePlan| plan.files[0].bytes.push(0));
     changed_plan!(|plan: &mut AgentHomePlan| plan.symlinks[0].path.push_str("-other"));
     changed_plan!(|plan: &mut AgentHomePlan| plan.symlinks[0].target.push_str("-other"));
+    changed_plan!(|plan: &mut AgentHomePlan| plan.skills[0].name = Some("named-skill".into()));
     assert!(plans.iter().all(|digest| digest != &expected));
     let mut refreshed_locator = plan.clone();
     refreshed_locator.skills[0].source_url.push_str("?rotated");

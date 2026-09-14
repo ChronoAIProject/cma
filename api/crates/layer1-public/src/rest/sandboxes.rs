@@ -18,8 +18,8 @@ use crate::AuthenticatedCaller;
 use super::idempotency::{IdempotencyKey, RequestBody};
 use super::instances::{confirmed_digest, execute_command, execute_empty_command, HierarchyState};
 use super::instances_openapi_shapes::{
-    CreateSandboxRequest, OwnerSandboxDetailView, OwnerSandboxPageView, SandboxEventView,
-    SandboxView,
+    CreateSandboxRequest, OwnerSandboxDetailView, OwnerSandboxPageView, OwnerSandboxSummaryView,
+    SandboxEventView, SandboxView,
 };
 use super::instances_problem::HierarchyProblem;
 use super::BodyProblem;
@@ -48,7 +48,56 @@ pub(super) fn routes() -> Router<HierarchyState> {
         .route("/api/v1/sandboxes/{id}", get(read).delete(remove))
         .route("/api/v1/sandboxes/{id}/pause", post(pause))
         .route("/api/v1/sandboxes/{id}/revive", post(revive))
+        .route(
+            "/api/v1/sandboxes/{id}/service-access",
+            post(super::sandbox_service_access::grant),
+        )
         .route("/api/v1/sandboxes/{id}/events", get(events))
+        .route(
+            "/api/v1/sandboxes/{id}/snapshots/{epoch}/download",
+            get(download_snapshot),
+        )
+}
+
+#[utoipa::path(get, path = "/api/v1/sandboxes/{id}/snapshots/{epoch}/download", tag = "sandboxes", params(("id" = String, Path), ("epoch" = u64, Path)), responses((status = 200, content_type = "application/octet-stream"), (status = 404, body = crate::rest::ProblemDocument)))]
+pub(super) async fn download_snapshot(
+    State(state): State<HierarchyState>,
+    AuthenticatedCaller(caller): AuthenticatedCaller,
+    Path((id, epoch)): Path<(String, u64)>,
+) -> Result<Response, HierarchyProblem> {
+    let snapshot = state
+        .hierarchy
+        .snapshot(&caller, &SandboxId(id), epoch)
+        .await
+        .map_err(HierarchyProblem::sandbox_read)?;
+    let stream = futures_util::stream::unfold(snapshot.chunks, |mut chunks| async move {
+        chunks
+            .recv()
+            .await
+            .map(|chunk| (chunk.map_err(std::io::Error::other), chunks))
+    });
+    Ok((
+        [
+            (
+                axum::http::header::CONTENT_TYPE,
+                "application/octet-stream".to_owned(),
+            ),
+            (
+                axum::http::header::CONTENT_LENGTH,
+                snapshot.size_bytes.to_string(),
+            ),
+            (
+                axum::http::header::CONTENT_DISPOSITION,
+                format!("attachment; filename=\"cma-snapshot-{epoch}.cma\""),
+            ),
+            (
+                axum::http::header::CACHE_CONTROL,
+                "private, no-store".to_owned(),
+            ),
+        ],
+        axum::body::Body::from_stream(stream),
+    )
+        .into_response())
 }
 
 #[utoipa::path(
@@ -135,8 +184,22 @@ pub(super) async fn list(
         )
         .await
         .map_err(HierarchyProblem::sandbox_read)?;
+    let subjects: Vec<_> = page
+        .items
+        .iter()
+        .map(|row| row.sandbox.owner.clone())
+        .collect();
+    let names = super::public_names::resolve(&state.users, &subjects).await;
     Ok(Json(OwnerSandboxPageView {
-        items: page.items.into_iter().map(Into::into).collect(),
+        items: page
+            .items
+            .into_iter()
+            .map(|row| {
+                let mut view = OwnerSandboxSummaryView::from(row);
+                view.sandbox.owner_name = names.get(&view.sandbox.owner).cloned();
+                view
+            })
+            .collect(),
         next: page.next,
     }))
 }
@@ -147,13 +210,17 @@ pub(super) async fn read(
     AuthenticatedCaller(caller): AuthenticatedCaller,
     Path(id): Path<String>,
 ) -> Result<Json<OwnerSandboxDetailView>, HierarchyProblem> {
-    state
+    let value = state
         .hierarchy
         .sandbox(&caller, &SandboxId(id))
         .await
-        .map(Into::into)
-        .map(Json)
-        .map_err(HierarchyProblem::sandbox_read)
+        .map_err(HierarchyProblem::sandbox_read)?;
+    let names =
+        super::public_names::resolve(&state.users, std::slice::from_ref(&value.sandbox.owner))
+            .await;
+    let mut view = OwnerSandboxDetailView::from(value);
+    view.sandbox.owner_name = names.get(&view.sandbox.owner).cloned();
+    Ok(Json(view))
 }
 
 #[utoipa::path(delete, path = "/api/v1/sandboxes/{id}", tag = "sandboxes", params(("id" = String, Path), ("Idempotency-Key" = String, Header)), responses((status = 202, body = SandboxView), (status = 404, body = crate::rest::ProblemDocument)))]
@@ -194,7 +261,7 @@ pub(super) async fn remove(
         (status = 401, description = "not_authenticated", body = crate::rest::ProblemDocument, content_type = "application/problem+json"),
         (status = 403, description = "forbidden", body = crate::rest::ProblemDocument, content_type = "application/problem+json"),
         (status = 404, description = "sandbox_not_found", body = crate::rest::ProblemDocument, content_type = "application/problem+json"),
-        (status = 409, description = "sandbox_not_active or idempotency operation conflict", body = crate::rest::ProblemDocument, content_type = "application/problem+json"),
+        (status = 409, description = "sandbox_not_active, sandbox_lifecycle_busy, or idempotency operation conflict", body = crate::rest::ProblemDocument, content_type = "application/problem+json"),
         (status = 422, description = "idempotency_key_reused", body = crate::rest::ProblemDocument, content_type = "application/problem+json"),
         (status = 503, description = "Sandbox lifecycle unavailable", body = crate::rest::ProblemDocument, content_type = "application/problem+json")
     )
@@ -240,7 +307,7 @@ pub(super) async fn pause(
         (status = 401, description = "not_authenticated", body = crate::rest::ProblemDocument, content_type = "application/problem+json"),
         (status = 403, description = "forbidden", body = crate::rest::ProblemDocument, content_type = "application/problem+json"),
         (status = 404, description = "sandbox_not_found", body = crate::rest::ProblemDocument, content_type = "application/problem+json"),
-        (status = 409, description = "sandbox_not_paused or idempotency operation conflict", body = crate::rest::ProblemDocument, content_type = "application/problem+json"),
+        (status = 409, description = "sandbox_not_paused, sandbox_lifecycle_busy, or idempotency operation conflict", body = crate::rest::ProblemDocument, content_type = "application/problem+json"),
         (status = 422, description = "idempotency_key_reused", body = crate::rest::ProblemDocument, content_type = "application/problem+json"),
         (status = 503, description = "Sandbox lifecycle unavailable", body = crate::rest::ProblemDocument, content_type = "application/problem+json")
     )

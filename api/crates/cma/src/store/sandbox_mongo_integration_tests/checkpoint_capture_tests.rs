@@ -9,7 +9,64 @@ use crate::store::sandbox_maintenance::mongo_integration_tests::{
 };
 
 mod concurrency_tests;
+mod cooldown_tests;
 mod publication_tests;
+mod quiet_tests;
+mod renewal_tests;
+
+const QUIET_AT: &str = "2026-09-04T23:58:00Z";
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn checkpoint_capture_waits_for_missing_pinned_agents_in_the_same_transaction() {
+    let (client, name) = database("capture_profile_priority").await;
+    let store = MongoSandboxStore::open(&client, &name).await.unwrap();
+    let mut parent = active_sandbox("sbx_capture_profile_priority");
+    parent.work = SandboxWorkState::new(SandboxWorkStep::None, NOW.into());
+    store.create_sandbox(parent.clone()).await.unwrap();
+    let mut agent = ready_agent(&parent, "agt_capture_profile_priority");
+    let mut workspace = ready_workspace(&parent, agent.workspace_id.as_str(), "project");
+    workspace
+        .profile
+        .content
+        .agent_profiles
+        .push(layer2_core::profiles::AgentProfileRef {
+            id: agent.profile.id.clone(),
+            revision: agent.profile.revision,
+        });
+    agent.origin = layer2_core::sandbox::AgentOrigin::WorkspaceProfile { index: 0 };
+    agent.creation_key = format!("workspace-profile:{}:0", workspace.id);
+    store.create_workspace(workspace.clone()).await.unwrap();
+    let request = begin(&parent);
+    assert_eq!(
+        store.commit_sandbox_lifecycle(request.clone()).await,
+        Err(SandboxStoreError::Conflict)
+    );
+    assert_eq!(
+        store.get_sandbox(&parent.id).await.unwrap(),
+        Some(parent.clone())
+    );
+    assert_eq!(
+        store.get_workspace(&workspace.id).await.unwrap(),
+        Some(workspace)
+    );
+    assert!(store
+        .sandbox_events(&parent.id, 0, 10)
+        .await
+        .unwrap()
+        .is_empty());
+    insert_agent(&store, &agent, QUIET_AT).await;
+    store
+        .commit_sandbox_lifecycle(request.clone())
+        .await
+        .unwrap();
+    let reopened = MongoSandboxStore::open(&client, &name).await.unwrap();
+    assert_eq!(
+        reopened.get_sandbox(&parent.id).await.unwrap(),
+        Some(request.sandbox)
+    );
+    client.database(&name).drop().await.unwrap();
+}
 
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
@@ -96,7 +153,7 @@ async fn capture_fixture(store: &MongoSandboxStore, suffix: &str) -> (Sandbox, W
     let agent = ready_agent(&parent, &format!("agt_capture_{suffix}"));
     let workspace = ready_workspace(&parent, agent.workspace_id.as_str(), "project");
     store.create_workspace(workspace.clone()).await.unwrap();
-    insert_agent(store, &agent, NOW).await;
+    insert_agent(store, &agent, QUIET_AT).await;
     (parent, workspace, agent)
 }
 
@@ -152,12 +209,12 @@ async fn checkpoint_capture_holds_every_writer_until_exact_resume_acknowledgemen
     );
     assert_eq!(
         store.commit_agent_conversation(stale_input).await,
-        Err(SandboxStoreError::Conflict)
+        Err(SandboxStoreError::CheckpointInProgress)
     );
     let input = begin_stored_conversation_turn(&store, agent.clone()).await;
     assert_eq!(
         store.commit_agent_conversation(input).await,
-        Err(SandboxStoreError::Conflict)
+        Err(SandboxStoreError::CheckpointInProgress)
     );
     assert_eq!(
         store

@@ -3,9 +3,10 @@ use crate::seconds_from_rfc3339;
 
 use super::requirements::valid_digest;
 use super::{
-    Launch, LaunchBlockedReason, LaunchConfirmation, LaunchSeed, LaunchState, LaunchStep,
-    LaunchStepKey, LaunchStepStatus, LaunchWorkState, LaunchWorkStep, RequirementsSnapshot,
-    ResolvedResource, ReviewRequirements, TriggerError,
+    Launch, LaunchBlockedReason, LaunchConfirmation, LaunchConsentSurface, LaunchEventKind,
+    LaunchSeed, LaunchState, LaunchStep, LaunchStepKey, LaunchStepStatus, LaunchWorkState,
+    LaunchWorkStep, RequirementsSnapshot, ResolvedResource, ReviewNeed, ReviewRequirements,
+    TriggerError,
 };
 
 impl Launch {
@@ -15,7 +16,7 @@ impl Launch {
         } else {
             FirstMessageDelivery::Completed
         };
-        let launch = Self {
+        let mut launch = Self {
             id: crate::LaunchId::generate(),
             trigger_id: seed.trigger_id,
             revision_digest: seed.revision_digest,
@@ -45,18 +46,65 @@ impl Launch {
             ready_at: None,
             revision: 1,
         };
+        launch.sync_requirement_step(&launch.created_at.clone())?;
         launch.validate()?;
         Ok(launch)
     }
 
     pub fn start(&mut self, confirmation: LaunchConfirmation) -> Result<(), TriggerError> {
-        if self.state != LaunchState::Draft || !self.review.can_start_now {
+        if self.state != LaunchState::Draft
+            || !self.review.can_start_now
+            || !self.confirmations.is_empty()
+        {
             return Err(TriggerError::new("launch_not_startable", "state"));
         }
         confirmation.validate()?;
         let at = confirmation.confirmed_at.clone();
         self.confirmations.push(confirmation);
+        self.begin_start(at)
+    }
+
+    pub fn confirm_landing_start(
+        &mut self,
+        confirmation: LaunchConfirmation,
+    ) -> Result<(), TriggerError> {
+        self.validate()?;
+        confirmation.validate()?;
+        if self.state != LaunchState::Draft
+            || !self.confirmations.is_empty()
+            || confirmation.surface != LaunchConsentSurface::Landing
+            || confirmation.trust_confirmed_digest != self.trust.confirmation_digest
+            || self.review.needs.iter().any(|need| {
+                matches!(
+                    need,
+                    ReviewNeed::OwnerRequiresReview | ReviewNeed::RepeatChoice
+                )
+            })
+        {
+            return Err(TriggerError::new(
+                "invalid_launch_confirmation",
+                "confirmation",
+            ));
+        }
+        self.review = ReviewRequirements::build(&self.requirements, None, false, false)?;
+        self.updated_at = confirmation.confirmed_at.clone();
+        self.confirmations.push(confirmation);
+        self.validate()
+    }
+
+    pub fn start_confirmed(&mut self, at: String) -> Result<(), TriggerError> {
+        if self.state != LaunchState::Draft
+            || !self.review.can_start_now
+            || !matches!(self.confirmations.as_slice(), [confirmation] if confirmation.surface == LaunchConsentSurface::Landing)
+        {
+            return Err(TriggerError::new("launch_not_startable", "state"));
+        }
+        self.begin_start(at)
+    }
+
+    fn begin_start(&mut self, at: String) -> Result<(), TriggerError> {
         self.transition(LaunchState::Resolving, at.clone())?;
+        self.sync_requirement_step(&at)?;
         self.started_at = Some(at.clone());
         self.work = LaunchWorkState::new(LaunchWorkStep::ResolveSandbox, at);
         self.validate()
@@ -77,20 +125,8 @@ impl Launch {
                 "resolution",
             ));
         }
-        self.confirmations.push(confirmation);
-        self.state = LaunchState::Ready;
-        self.first_message = FirstMessageDelivery::Completed;
-        self.started_at = Some(at.clone());
-        self.ready_at = Some(at.clone());
-        self.updated_at = at.clone();
-        for step in &mut self.steps {
-            step.status = LaunchStepStatus::Completed;
-            step.started_at.get_or_insert_with(|| at.clone());
-            step.completed_at.get_or_insert_with(|| at.clone());
-        }
-        self.work.schedule(LaunchWorkStep::Finish, at);
-        self.bump_revision()?;
-        self.validate()
+        // Reuse preserves the conversation, but still needs live parent resources.
+        self.start(confirmation)
     }
 
     pub fn refresh_review(
@@ -98,7 +134,7 @@ impl Launch {
         requirements: RequirementsSnapshot,
         review: ReviewRequirements,
         at: String,
-    ) -> Result<(), TriggerError> {
+    ) -> Result<Option<LaunchEventKind>, TriggerError> {
         if self.state != LaunchState::Draft || seconds_from_rfc3339(&at).is_none() {
             return Err(TriggerError::new("launch_not_reviewable", "state"));
         }
@@ -106,9 +142,42 @@ impl Launch {
         review.validate()?;
         self.requirements = requirements;
         self.review = review;
+        let event = self.sync_requirement_step(&at)?;
         self.updated_at = at;
         self.bump_revision()?;
-        self.validate()
+        self.validate()?;
+        Ok(event)
+    }
+
+    pub(super) fn sync_requirement_step(
+        &mut self,
+        at: &str,
+    ) -> Result<Option<LaunchEventKind>, TriggerError> {
+        let missing = self
+            .requirements
+            .services
+            .iter()
+            .any(|service| service.needs_connection());
+        let (status, detail) = if missing {
+            (
+                LaunchStepStatus::Blocked,
+                "Connect required accounts to continue",
+            )
+        } else {
+            (
+                LaunchStepStatus::Completed,
+                "Required accounts are connected",
+            )
+        };
+        if self
+            .steps
+            .iter()
+            .any(|step| step.key == LaunchStepKey::CheckingRequirements && step.status == status)
+        {
+            return Ok(None);
+        }
+        self.set_step(LaunchStepKey::CheckingRequirements, status, detail, at)
+            .map(Some)
     }
 
     pub fn transition(&mut self, next: LaunchState, at: String) -> Result<(), TriggerError> {

@@ -1,9 +1,8 @@
-use std::collections::BTreeMap;
-
 use super::*;
 use crate::sandbox::store::{
     validate_agent_conversation_admission, AgentConversationMutation, AgentConversationStore,
 };
+use crate::sandbox::PendingAgentApprovals;
 use crate::seconds_from_rfc3339;
 
 #[async_trait]
@@ -18,6 +17,14 @@ impl AgentConversationStore for InMemorySandboxStore {
         let mut state = self.lock();
         let mut candidate = state.clone();
         validate_mutation(&candidate, &mutation)?;
+        if mutation.admission_guard.is_some() {
+            candidate
+                .sandboxes
+                .get_mut(&mutation.agent.sandbox_id)
+                .ok_or(SandboxStoreError::Conflict)?
+                .cancel_recovery_pause(&mutation.appended_at)
+                .map_err(|error| SandboxStoreError::Corrupt(error.to_string()))?;
+        }
 
         let id = mutation.agent.id.clone();
         candidate.agents.insert(id.clone(), mutation.agent);
@@ -40,26 +47,11 @@ impl AgentConversationStore for InMemorySandboxStore {
         if !state.agents.contains_key(id) {
             return Err(SandboxStoreError::NotFound);
         }
-        let mut pending = BTreeMap::new();
+        let mut pending = PendingAgentApprovals::default();
         for entry in state.agent_logs.get(id).into_iter().flatten() {
-            match &entry.kind {
-                AgentLogKind::TurnStarted { .. } | AgentLogKind::TurnCompleted { .. } => {
-                    pending.clear();
-                }
-                AgentLogKind::ApprovalRequested { approval_id, .. } => {
-                    pending.insert(approval_id.clone(), entry.clone());
-                }
-                AgentLogKind::ApprovalResolved { approval_id, .. } => {
-                    pending.remove(approval_id);
-                }
-                AgentLogKind::TurnFailed { .. }
-                | AgentLogKind::TurnInterrupted { .. }
-                | AgentLogKind::Stopped { .. }
-                | AgentLogKind::Deleted => pending.clear(),
-                _ => {}
-            }
+            pending.observe(entry);
         }
-        Ok(pending.into_values().collect())
+        Ok(pending.into_entries())
     }
 }
 

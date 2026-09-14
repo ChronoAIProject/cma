@@ -1,0 +1,237 @@
+import { act, fireEvent, render, screen } from '@testing-library/react';
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+import { ConnectionWizard } from './ConnectionWizard';
+import {
+  subscriptionService,
+  type ConnectionClient,
+  type ConnectionReport,
+  type ConnectionTarget,
+  type StartedConnection,
+} from './client';
+
+const target: ConnectionTarget = { type: 'agent', id: 'agent-one' };
+const services = ['api-github', 'ornn-api', subscriptionService];
+const names = ['GitHub', 'Ornn skills', 'My Codex subscription'];
+const flush = () => act(async () => undefined);
+const poll = () =>
+  act(async () => {
+    await vi.advanceTimersByTimeAsync(2000);
+  });
+let popup: {
+  opener: unknown;
+  closed: boolean;
+  location: { href: string };
+  focus: ReturnType<typeof vi.fn>;
+  close: ReturnType<typeof vi.fn>;
+};
+
+beforeEach(() => {
+  vi.useFakeTimers();
+  sessionStorage.clear();
+  popup = { opener: {}, closed: false, location: { href: '' }, focus: vi.fn(), close: vi.fn() };
+  vi.spyOn(window, 'open').mockImplementation(() => popup as unknown as Window);
+});
+afterEach(() => {
+  vi.useRealTimers();
+  vi.restoreAllMocks();
+  sessionStorage.clear();
+});
+
+function fixture() {
+  const connected = new Set<string>();
+  const report = (owner = 'owner'): ConnectionReport => ({
+    owner,
+    ready: connected.size === services.length,
+    checked_at: new Date().toISOString(),
+    services: services.map((service, index) => ({
+      service,
+      display_name: names[index] ?? service,
+      kind: index === 2 ? 'codex' : 'nyxid',
+      state: connected.has(service) ? 'satisfied' : 'missing',
+      connection_mode: 'hosted',
+    })),
+  });
+  const client: ConnectionClient = {
+    check: vi.fn(async () => report()),
+    start: vi.fn(async (_target, active) => ({
+      ...active,
+      owner: 'owner',
+      hosted_url: `https://identity.example.test/${active.service_id}`,
+      expires_at: new Date(Date.now() + 600000).toISOString(),
+    })),
+    cancel: vi.fn(async () => undefined),
+  };
+  return { client, connected, report };
+}
+
+it('one Connect all action verifies every service in sequence before continuing once', async () => {
+  const { client, connected } = fixture();
+  const ready = vi.fn();
+  render(<ConnectionWizard target={target} client={client} onReady={ready} />);
+  await flush();
+  fireEvent.click(screen.getByRole('button', { name: 'Connect all' }));
+  await flush();
+  expect(popup.location.href).toContain('api-github');
+  expect(ready).not.toHaveBeenCalled();
+  for (const service of services) {
+    connected.add(service);
+    await poll();
+  }
+  expect(vi.mocked(client.start).mock.calls.map((call) => call[1].service_id)).toEqual(services);
+  expect(ready).toHaveBeenCalledOnce();
+  expect(window.open).toHaveBeenCalledOnce();
+  await poll();
+  expect(ready).toHaveBeenCalledOnce();
+});
+
+it('keeps checking after a popup is blocked and provides an explicit reopen action', async () => {
+  vi.mocked(window.open).mockReturnValueOnce(null);
+  const { client, connected } = fixture();
+  const ready = vi.fn();
+  render(<ConnectionWizard target={target} client={client} onReady={ready} />);
+  await flush();
+  fireEvent.click(screen.getByRole('button', { name: 'Connect all' }));
+  await flush();
+  expect(screen.getByText(/Open the sign-in window to continue/)).toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: 'Open sign-in window' }));
+  await flush();
+  expect(client.start).toHaveBeenCalledOnce();
+  expect(popup.location.href).toContain('api-github');
+  services.forEach((service) => connected.add(service));
+  await poll();
+  expect(ready).toHaveBeenCalledOnce();
+});
+
+it('checks the current account before restoring a saved handoff', async () => {
+  const { client } = fixture();
+  sessionStorage.setItem(
+    `cma.connection.${JSON.stringify(target)}`,
+    JSON.stringify({
+      owner: 'other-user',
+      service_id: subscriptionService,
+      intent_id: 'old-intent',
+      hosted_url: 'https://auth.openai.com/codex/device',
+      expires_at: new Date(Date.now() + 60000).toISOString(),
+    }),
+  );
+  render(<ConnectionWizard target={target} client={client} onReady={vi.fn()} />);
+  await flush();
+  await poll();
+  expect(vi.mocked(client.check).mock.calls.every((call) => call[1] === undefined)).toBe(true);
+  expect(sessionStorage.getItem(`cma.connection.${JSON.stringify(target)}`)).toBeNull();
+  expect(client.start).not.toHaveBeenCalled();
+});
+
+it('restores an owner-matched pending login without issuing another start', async () => {
+  const { client } = fixture();
+  const active = {
+    owner: 'owner',
+    service_id: subscriptionService,
+    intent_id: 'saved-intent',
+    hosted_url: 'https://auth.openai.com/codex/device',
+    expires_at: new Date(Date.now() + 60000).toISOString(),
+    user_code: 'ABCD-1234',
+  };
+  sessionStorage.setItem(`cma.connection.${JSON.stringify(target)}`, JSON.stringify(active));
+  render(<ConnectionWizard target={target} client={client} onReady={vi.fn()} />);
+  await flush();
+  await poll();
+  expect(vi.mocked(client.check).mock.calls[0]?.[1]).toBeUndefined();
+  expect(vi.mocked(client.check).mock.calls[1]?.[1]).toEqual(active);
+  expect(screen.getByText('ABCD-1234')).toBeInTheDocument();
+  expect(client.start).not.toHaveBeenCalled();
+});
+
+it('cancels a late start response without navigating or continuing', async () => {
+  const { client } = fixture();
+  let finish!: (value: StartedConnection) => void;
+  vi.mocked(client.start).mockImplementation(
+    () =>
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+  );
+  const ready = vi.fn();
+  const cancel = vi.fn();
+  render(<ConnectionWizard target={target} client={client} onReady={ready} onCancel={cancel} />);
+  await flush();
+  fireEvent.click(screen.getByRole('button', { name: 'Connect all' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+  const started = {
+    ...vi.mocked(client.start).mock.calls[0]![1],
+    owner: 'owner',
+    hosted_url: 'https://identity.example.test/connect',
+    expires_at: new Date(Date.now() + 60000).toISOString(),
+  };
+  await act(async () => finish(started));
+  expect(client.cancel).toHaveBeenCalledWith(target, started);
+  expect(cancel).toHaveBeenCalledOnce();
+  expect(ready).not.toHaveBeenCalled();
+  expect(popup.location.href).toBe('');
+});
+
+it('does not mistake an older usable subscription for completed forced re-login', async () => {
+  const { client, connected, report } = fixture();
+  services.forEach((service) => connected.add(service));
+  vi.mocked(client.check).mockImplementation(async (_target, active) =>
+    active === undefined
+      ? report()
+      : {
+          ...report(),
+          ready: false,
+          active_state: 'pending',
+          services: report().services.map((row) =>
+            row.service === subscriptionService ? { ...row, state: 'missing' } : row,
+          ),
+        },
+  );
+  const ready = vi.fn();
+  render(<ConnectionWizard target={target} client={client} forceSubscription onReady={ready} />);
+  await flush();
+  expect(ready).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole('button', { name: 'Re-login with Codex subscription' }));
+  await flush();
+  await poll();
+  expect(client.start).toHaveBeenCalledWith(
+    target,
+    expect.objectContaining({ service_id: subscriptionService }),
+    true,
+  );
+  expect(ready).not.toHaveBeenCalled();
+  vi.mocked(client.check).mockResolvedValue({ ...report(), active_state: 'satisfied' });
+  await poll();
+  expect(ready).toHaveBeenCalledOnce();
+});
+
+it('fences pending starts when the selected sandbox changes', async () => {
+  const { client } = fixture();
+  let finish!: (value: StartedConnection) => void;
+  vi.mocked(client.start).mockImplementation(
+    () =>
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+  );
+  const ready = vi.fn();
+  const view = render(<ConnectionWizard target={target} client={client} onReady={ready} />);
+  await flush();
+  fireEvent.click(screen.getByRole('button', { name: 'Connect all' }));
+  view.rerender(
+    <ConnectionWizard
+      target={{ type: 'sandbox', id: 'different' }}
+      client={client}
+      onReady={ready}
+    />,
+  );
+  await flush();
+  const started = {
+    ...vi.mocked(client.start).mock.calls[0]![1],
+    owner: 'owner',
+    hosted_url: 'https://identity.example.test/connect',
+    expires_at: new Date(Date.now() + 60000).toISOString(),
+  };
+  await act(async () => finish(started));
+  expect(client.cancel).toHaveBeenCalledWith(target, started);
+  expect(ready).not.toHaveBeenCalled();
+  expect(screen.queryByText(/Waiting for sign-in/)).not.toBeInTheDocument();
+});

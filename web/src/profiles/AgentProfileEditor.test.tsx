@@ -108,8 +108,8 @@ describe('Agent profile editing', () => {
     );
     await screen.findByRole('heading', { name: AGENT_PROFILE.name });
     await actor.click(await screen.findByRole('button', { name: 'Add Research' }));
-    expect(screen.getByRole('button', { name: 'Version for research' })).toHaveTextContent('1.2');
-    await actor.click(screen.getByRole('button', { name: 'Version for research' }));
+    expect(screen.getByRole('button', { name: 'Version for Research' })).toHaveTextContent('1.2');
+    await actor.click(screen.getByRole('button', { name: 'Version for Research' }));
     await actor.click(screen.getByRole('menuitemradio', { name: '1.1' }));
     await actor.click(screen.getByRole('radio', { name: 'Very high' }));
     await actor.click(screen.getByRole('radio', { name: 'Autonomous' }));

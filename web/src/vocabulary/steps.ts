@@ -2,7 +2,7 @@ import type { LaunchStepKey } from '@chronoai/cma-sdk';
 
 export const stepNames = {
   signing_in: 'Signing you in',
-  checking_requirements: "Checking what's needed",
+  checking_requirements: 'NyxID Service Connection Verification',
   sandbox: 'Preparing your sandbox',
   workspace: 'Setting up the workspace',
   agent: 'Starting your agent',

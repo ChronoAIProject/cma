@@ -6,6 +6,7 @@ import { PUBLIC_PREVIEW, PUBLIC_RECORD, PUBLIC_TRUST, publicClient } from '../te
 import { ReviewCard } from './ReviewCard';
 import { Progress } from './Progress';
 import { readIntent } from './intent';
+import { connectionClient } from '../connections/client';
 
 afterEach(() => {
   vi.useRealTimers();
@@ -30,12 +31,38 @@ describe('minimal review', () => {
       checked_at: record.created_at,
     });
     const changed = vi.fn();
+    let connected = false;
+    vi.mocked(connectionClient.check).mockImplementation(async () => ({
+      owner: 'owner',
+      ready: connected,
+      checked_at: record.created_at,
+      services: [
+        {
+          service: 'code',
+          display_name: 'Code host',
+          kind: 'nyxid',
+          state: connected ? 'satisfied' : 'missing',
+          connection_mode: 'hosted',
+        },
+      ],
+    }));
+    vi.spyOn(connectionClient, 'start').mockImplementation(async (_target, active) => ({
+      ...active,
+      owner: 'owner',
+      hosted_url: 'https://identity.example.test/connect',
+      expires_at: new Date(Date.now() + 600000).toISOString(),
+    }));
     render(<ReviewCard client={client} record={record} onChanged={changed} onClose={vi.fn()} />);
     await act(async () => undefined);
-    fireEvent.click(screen.getByRole('button', { name: 'Connect' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Connect all' }));
     await act(async () => undefined);
     await act(async () => {
       await vi.advanceTimersByTimeAsync(1500);
+    });
+    expect(client.requests.start).not.toHaveBeenCalled();
+    connected = true;
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2000);
     });
     expect(client.requests.start).toHaveBeenCalledOnce();
     expect(client.requests.start).toHaveBeenCalledWith(
@@ -142,14 +169,11 @@ describe('minimal review', () => {
         onClose={vi.fn()}
       />,
     );
-    await screen.findByRole('heading', { name: 'Connect Code host' });
+    await screen.findByRole('heading', { name: 'NyxID services' });
     const headings = screen.getAllByRole('heading', { level: 3 }).map((node) => node.textContent);
-    expect(headings.indexOf('Install software')).toBeLessThan(
-      headings.indexOf('Connect Code host'),
-    );
-    expect(headings.indexOf('Connect Code host')).toBeLessThan(
-      headings.indexOf('Review before continuing'),
-    );
+    expect(headings).toContain('Install software');
+    expect(headings).toContain('Codex provider');
+    expect(headings).toContain('Review before continuing');
     await actor.click(screen.getByRole('checkbox'));
     await actor.click(screen.getByRole('button', { name: 'Continue' }));
     expect(await screen.findByText('Connect the accounts below to continue.')).toBeInTheDocument();
@@ -159,6 +183,65 @@ describe('minimal review', () => {
 });
 
 describe('durable progress', () => {
+  it('keeps missing accounts blocked until a durable completion is observed', async () => {
+    const client = publicClient();
+    let stream: LaunchStreamOptions | undefined;
+    const waiting: Launch = {
+      ...PUBLIC_RECORD,
+      steps: PUBLIC_RECORD.steps.map((step) =>
+        step.key === 'checking_requirements'
+          ? {
+              key: step.key,
+              status: 'blocked',
+              safe_detail: 'Connect required accounts to continue',
+              started_at: PUBLIC_RECORD.created_at,
+            }
+          : step,
+      ),
+    };
+    vi.mocked(client.requests.read).mockResolvedValue(waiting);
+    vi.mocked(client.requests.stream).mockImplementation(async (_id, options) => {
+      stream = options;
+      await new Promise(() => undefined);
+    });
+    render(<Progress client={client} id={waiting.id} onNavigate={vi.fn()} />);
+    await screen.findByText('Connect required accounts to continue');
+    await waitFor(() => expect(stream).toBeDefined());
+    const row = screen
+      .getByRole('heading', { name: 'NyxID Service Connection Verification' })
+      .closest('li');
+    expect(row).toHaveTextContent('Needs you');
+    expect(row).not.toHaveTextContent('Done');
+    const checked: Launch = {
+      ...waiting,
+      revision: 2,
+      event_head: 2,
+      steps: waiting.steps.map((step) =>
+        step.key === 'checking_requirements'
+          ? {
+              ...step,
+              status: 'completed',
+              safe_detail: 'Required accounts are connected',
+              completed_at: waiting.updated_at,
+            }
+          : step,
+      ),
+    };
+    vi.mocked(client.requests.read).mockResolvedValue(checked);
+    await act(async () => {
+      await stream?.onEvent({
+        launch_id: waiting.id,
+        seq: 2,
+        appended_at: waiting.updated_at,
+        kind: { type: 'step_changed', step: checked.steps[1]! },
+      });
+    });
+    expect(row).toHaveTextContent('Done');
+    expect(row).toHaveTextContent('Required accounts are connected');
+    expect(row).not.toHaveTextContent('Needs you');
+    expect(client.requests.start).not.toHaveBeenCalled();
+  });
+
   it('does not acknowledge an event before its refreshed durable record is visible', async () => {
     const client = publicClient();
     let stream: LaunchStreamOptions | undefined;
@@ -268,3 +351,4 @@ describe('durable progress', () => {
     });
   });
 });
+import '../test/connectedAccounts';

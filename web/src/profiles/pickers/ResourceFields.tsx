@@ -1,3 +1,4 @@
+import { Presence } from '../../ui/Presence';
 import { useState } from 'react';
 import { Input } from '../../ui/Input';
 import { Button } from '../../ui/Button';
@@ -103,16 +104,18 @@ export function ResourceFields({
           />
         </Field>
       </div>
-      {bounds === undefined ? (
-        <div role={onRetry === undefined ? 'status' : 'alert'} aria-busy={loading}>
-          <p>{loading ? 'Loading resource limits' : 'Resource limits are unavailable.'}</p>
-          {onRetry === undefined ? null : (
-            <Button type="button" onClick={onRetry}>
-              Try again
-            </Button>
-          )}
-        </div>
-      ) : null}
+      <Presence>
+        {bounds === undefined ? (
+          <div role={onRetry === undefined ? 'status' : 'alert'} aria-busy={loading}>
+            <p>{loading ? 'Loading resource limits' : 'Resource limits are unavailable.'}</p>
+            {onRetry === undefined ? null : (
+              <Button type="button" onClick={onRetry}>
+                Try again
+              </Button>
+            )}
+          </div>
+        ) : null}
+      </Presence>
     </>
   );
 }

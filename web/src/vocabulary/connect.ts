@@ -8,18 +8,26 @@ export const connectionStates = {
   failed: 'The account could not be connected. Try again.',
 } satisfies Record<ServiceConnectionState, string>;
 export const connectionCopy = {
+  required: 'NyxID Service Connection Verification',
+  explanation:
+    'Connect every required service before CMA assigns your sandbox. Return to this page and select Verify after connecting in NyxID.',
+  connected: 'Connected',
+  verifyAll: 'Verify connections',
   title: (name: string) => `Connect ${name}`,
   connect: 'Connect',
   unknown: 'This service',
   metadataUnavailable: 'Account setup details are unavailable. Check again in a moment.',
   checklist: [
     'A NyxID window opened. Follow the steps there.',
-    'Keep this page open.',
-    "We'll continue automatically.",
+    'Return here and select Verify after connecting.',
+    'CMA will continue once every required service is verified.',
   ],
   blocked: 'Your browser blocked the NyxID window. Continue in this tab, then return here.',
   sameTab: 'Continue in NyxID',
-  connected: "I've connected it",
+  verify: 'Verify',
+  verifying: 'Verifying',
+  notConnected:
+    'This account is not connected yet. Select Connect to finish in NyxID, then Verify again.',
   manual: 'Set up this account in NyxID first.',
   open: 'Open NyxID',
   expired: 'That link expired. Try again.',

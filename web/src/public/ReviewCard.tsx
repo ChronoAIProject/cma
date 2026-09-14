@@ -1,10 +1,6 @@
-import { useEffect, useRef, useState } from 'react';
-import {
-  ApiError,
-  type Launch,
-  type ServiceConnectionMetadata,
-  type TriggerPreview,
-} from '@chronoai/cma-sdk';
+import { Presence } from '../ui/Presence';
+import { useRef, useState } from 'react';
+import { ApiError, type Launch, type TriggerPreview } from '@chronoai/cma-sdk';
 import { Button } from '../ui/Button';
 import {
   checkCredentialRecoveryOwner,
@@ -17,9 +13,11 @@ import { routePath } from '../routing/routes';
 import { Modal } from '../ui/Modal';
 import { needNames, needOrder, publicCopy } from '../vocabulary/needs';
 import { refusalSentence } from '../vocabulary/errors';
+import { connectionCopy } from '../vocabulary/connect';
 import type { PublicClient } from './client';
 import { isUnsettledCommand } from './admission';
-import { ConnectAssistant } from './ConnectAssistant';
+import { ConnectionWizard } from '../connections/ConnectionWizard';
+import type { ConnectionTarget } from '../connections/client';
 import { Details, SoftwareDetails } from './Details';
 import {
   clearDraftRecovery,
@@ -52,8 +50,8 @@ export function ReviewCard({
           need.type === 'trust_confirmation' && need.commands_digest === recovery.confirmedDigest,
       ),
   );
-  const [connected, setConnected] = useState<readonly string[]>([]);
-  const [metadata, setMetadata] = useState<readonly ServiceConnectionMetadata[]>([]);
+  const [connectionsReady, setConnectionsReady] = useState(false);
+  const [connectionRevision, setConnectionRevision] = useState(0);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | undefined>(
     recovery === undefined ? undefined : credentialSetupMessage,
@@ -69,19 +67,7 @@ export function ReviewCard({
   const trust = needs.find((need) => need.type === 'trust_confirmation');
   const ownerReview = needs.some((need) => need.type === 'owner_requires_review');
   const missing = needs.flatMap((need) => (need.type === 'connection' ? [need.service] : []));
-
-  useEffect(() => {
-    const controller = new AbortController();
-    void client.requests.requirements(record.id, { signal: controller.signal }).then(
-      (value) => {
-        if (!controller.signal.aborted) setMetadata(value.services);
-      },
-      (cause: unknown) => {
-        if (!controller.signal.aborted) setError(refusalSentence(cause));
-      },
-    );
-    return () => controller.abort();
-  }, [client, record.id, record.revision]);
+  const connectionsOnly = missing.length > 0 && missing.length === needs.length;
 
   const start = async (explicit = false) => {
     if (active.current || needsSignIn || (!explicit && explicitRetryRequired.current)) return;
@@ -138,7 +124,10 @@ export function ReviewCard({
           'launch_changed',
         ].includes(cause.code ?? '')
       ) {
-        if (cause.code === 'launch_requirements_not_met') setConnected([]);
+        if (cause.code === 'launch_requirements_not_met') {
+          setConnectionsReady(false);
+          setConnectionRevision((value) => value + 1);
+        }
         try {
           onChanged(await client.requests.read(record.id));
         } catch {
@@ -150,21 +139,16 @@ export function ReviewCard({
       setBusy(false);
     }
   };
-  const satisfy = (service: string) => {
-    const next = [...new Set([...connected, service])];
-    setConnected(next);
-    if (
-      !ownerReview &&
-      (trust === undefined || confirmed) &&
-      missing.every((item) => next.includes(item))
-    )
-      void start();
+  const satisfy = () => {
+    setConnectionsReady(true);
+    if (!ownerReview && (trust === undefined || confirmed)) void start();
   };
-  const canStart = trust === undefined || confirmed;
+  const canStart = connectionsReady && (trust === undefined || confirmed);
+  const connectionTarget: ConnectionTarget = { type: 'launch', id: record.id };
   return (
     <Modal
       open
-      title={publicCopy.review}
+      title={connectionsOnly ? connectionCopy.required : publicCopy.review}
       onClose={onClose}
       dismissible={!busy}
       footer={
@@ -173,11 +157,21 @@ export function ReviewCard({
           disabled={busy || needsSignIn || (!uncertain && !canStart)}
           onClick={() => void start(true)}
         >
-          {uncertain ? publicCopy.retry : publicCopy.continue}
+          {uncertain
+            ? publicCopy.retry
+            : connectionsOnly
+              ? connectionCopy.verifyAll
+              : publicCopy.continue}
         </Button>
       }
     >
       <div className="public-review">
+        <ConnectionWizard
+          key={`${record.id}:${connectionRevision}`}
+          target={connectionTarget}
+          onReady={satisfy}
+          onCancel={onClose}
+        />
         {needs.map((need, index) => {
           switch (need.type) {
             case 'trust_confirmation':
@@ -197,29 +191,7 @@ export function ReviewCard({
                 </section>
               );
             case 'connection':
-              return connected.includes(need.service) ? null : (
-                <ConnectAssistant
-                  key={need.service}
-                  client={client}
-                  requestId={record.id}
-                  service={
-                    metadata.find((item) => item.service === need.service) ?? {
-                      service: need.service,
-                      state: 'unknown',
-                    }
-                  }
-                  disabled={busy || uncertain}
-                  onSatisfied={satisfy}
-                  onRecheck={() => {
-                    if (!ownerReview && (trust === undefined || confirmed)) void start();
-                    else
-                      void client.requests.requirements(record.id).then(
-                        (value) => setMetadata(value.services),
-                        (cause: unknown) => setError(refusalSentence(cause)),
-                      );
-                  }}
-                />
-              );
+              return null;
             case 'owner_requires_review':
               return (
                 <section key={index}>
@@ -236,11 +208,13 @@ export function ReviewCard({
               return <p key={index}>{needNames[need.type]}</p>;
           }
         })}
-        {error === undefined ? null : (
-          <p className="public-error" role="alert">
-            {error}
-          </p>
-        )}
+        <Presence>
+          {error === undefined ? null : (
+            <p className="public-error" role="alert">
+              {error}
+            </p>
+          )}
+        </Presence>
         {needsSignIn ? (
           <SandboxCredentialSetup
             returnTo={credentialReturnTo}

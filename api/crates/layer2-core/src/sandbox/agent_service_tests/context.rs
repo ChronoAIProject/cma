@@ -312,6 +312,74 @@ async fn context_waits_for_workspace_and_agent_readiness() {
 
 #[tokio::test(start_paused = true)]
 async fn first_input_durably_requests_revive_and_obeys_the_admission_bound() {
+    let (harness, agent) = paused_context().await;
+    let before = tokio::time::Instant::now();
+    assert_eq!(
+        harness
+            .service
+            .await_input_ready(&caller("owner", true), &agent.id)
+            .await,
+        Err(AgentContextError::AdmissionTimeout)
+    );
+    assert_eq!(before.elapsed(), AGENT_CONTEXT_ADMISSION_BOUND);
+    let sandbox = harness
+        .store
+        .get_sandbox(&agent.sandbox_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(sandbox.status, SandboxStatus::Reviving);
+    assert!(matches!(
+        sandbox.lifecycle.operation,
+        Some(SandboxLifecycleOperation::Revive { .. })
+    ));
+    assert!(harness
+        .store
+        .get_agent(&agent.id)
+        .await
+        .unwrap()
+        .unwrap()
+        .conversation
+        .active_turn
+        .is_none());
+}
+
+#[tokio::test(start_paused = true)]
+async fn paused_input_automatically_revives_and_returns_the_same_ready_context() {
+    let (harness, agent) = paused_context().await;
+    let store = harness.store.clone();
+    let original = agent.clone();
+    let worker = tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        let mut parent = store.get_sandbox(&agent.sandbox_id).await.unwrap().unwrap();
+        assert_eq!(parent.status, SandboxStatus::Reviving);
+        let revision = parent.revision;
+        parent.status = SandboxStatus::Active;
+        parent.lifecycle.operation = None;
+        parent.work = SandboxWorkState::new(SandboxWorkStep::None, NOW.into());
+        parent.revision += 1;
+        store.save_sandbox(revision, parent).await.unwrap();
+        let mut ready = agent;
+        let revision = ready.revision;
+        ready.status = AgentStatus::Ready;
+        ready.revision += 1;
+        store.save_agent(revision, ready).await.unwrap();
+    });
+    let ready = harness
+        .service
+        .await_input_ready(&caller("owner", true), &original.id)
+        .await
+        .unwrap();
+    worker.await.unwrap();
+    assert_eq!(ready.status, AgentStatus::Ready);
+    assert_eq!(ready.id, original.id);
+    assert_eq!(ready.sandbox_id, original.sandbox_id);
+    assert_eq!(ready.workspace_id, original.workspace_id);
+    assert_eq!(ready.worktree_id, original.worktree_id);
+    assert_eq!(ready.conversation, original.conversation);
+}
+
+async fn paused_context() -> (ContextHarness, Agent) {
     use crate::sandbox::store::{SandboxTransaction, SandboxTransactionStore};
 
     let harness = ContextHarness::new(SandboxStatus::Active, WorkspaceStatus::Ready).await;
@@ -345,33 +413,5 @@ async fn first_input_durably_requests_revive_and_obeys_the_admission_bound() {
         })
         .await
         .unwrap();
-    let before = tokio::time::Instant::now();
-    assert_eq!(
-        harness
-            .service
-            .await_input_ready(&caller("owner", true), &agent.id)
-            .await,
-        Err(AgentContextError::AdmissionTimeout)
-    );
-    assert_eq!(before.elapsed(), AGENT_CONTEXT_ADMISSION_BOUND);
-    let sandbox = harness
-        .store
-        .get_sandbox(&agent.sandbox_id)
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(sandbox.status, SandboxStatus::Reviving);
-    assert!(matches!(
-        sandbox.lifecycle.operation,
-        Some(SandboxLifecycleOperation::Revive { .. })
-    ));
-    assert!(harness
-        .store
-        .get_agent(&agent.id)
-        .await
-        .unwrap()
-        .unwrap()
-        .conversation
-        .active_turn
-        .is_none());
+    (harness, agent)
 }

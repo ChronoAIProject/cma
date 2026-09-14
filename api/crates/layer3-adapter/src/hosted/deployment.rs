@@ -110,7 +110,7 @@ impl HostedDeployment {
                 if spec.own_credential {
                     String::new()
                 } else {
-                    self.upstream_base_url.clone()
+                    self.scoped_model_base_url(spec)
                 },
             ),
             (
@@ -135,6 +135,9 @@ impl HostedDeployment {
                 PLACEHOLDER_CREDENTIAL.to_string(),
             ),
         ]);
+        if spec.home_volume.is_some() {
+            env.insert("TMPDIR".into(), super::home::TRANSFER_ROOT.into());
+        }
         for (name, value) in &spec.environment {
             if env.contains_key(name) || name.starts_with("CHRONO_") || name.starts_with("NYXID_") {
                 return Err(AdapterError::Rejected(format!(
@@ -184,18 +187,55 @@ impl HostedDeployment {
             ]),
             timeout: spec.timeout_seconds.or(self.default_timeout_seconds),
             metadata,
+            volumes: Vec::new(),
         };
+        super::home::render(&mut request, spec)?;
         request.metadata.insert(
             SPEC_FINGERPRINT_METADATA.to_string(),
             provider_request_fingerprint(&request)?,
         );
         Ok(request)
     }
+
+    fn scoped_model_base_url(&self, spec: &SandboxSpec) -> String {
+        let configured = self.upstream_base_url.clone();
+        let (Ok(mut upstream), Ok(platform)) = (
+            reqwest::Url::parse(&configured),
+            reqwest::Url::parse(&self.platform_base_url),
+        ) else {
+            return configured;
+        };
+        if upstream.origin() != platform.origin()
+            || !matches!(
+                upstream.path(),
+                "/api/v1/proxy/s/chrono-llm" | "/api/v1/proxy/s/chrono-llm-public"
+            )
+        {
+            return configured;
+        }
+        // Service scope is pinned with a Sandbox's credential. Older homes
+        // must still revive with their original LLM route after the deployment
+        // default switches to the public service. Prefer public for new scopes.
+        let service = if spec
+            .reaches
+            .iter()
+            .any(|service| service == "chrono-llm-public")
+        {
+            "chrono-llm-public"
+        } else if spec.reaches.iter().any(|service| service == "chrono-llm") {
+            "chrono-llm"
+        } else {
+            return configured;
+        };
+        upstream.set_path(&format!("/api/v1/proxy/s/{service}"));
+        upstream.to_string()
+    }
 }
 
 pub(super) fn provider_request_fingerprint(
     request: &ProviderSandboxRequest,
 ) -> crate::Result<String> {
+    request.validate_volumes()?;
     let ProviderSandboxRequest {
         image,
         entrypoint,
@@ -203,6 +243,7 @@ pub(super) fn provider_request_fingerprint(
         resource_limits,
         timeout,
         metadata,
+        volumes,
     } = request;
     if metadata.contains_key(SPEC_FINGERPRINT_METADATA) {
         return Err(AdapterError::Rejected(
@@ -229,6 +270,14 @@ pub(super) fn provider_request_fingerprint(
     for (name, value) in stable_metadata {
         hash_string(&mut digest, name);
         hash_string(&mut digest, value);
+    }
+    // Existing volume-free runtime identities must survive this wire extension.
+    // Bound volumes add a separate domain and cover every serialized mount field.
+    if !volumes.is_empty() {
+        digest.update(b"\0cma-provider-volumes-v1\0");
+        let encoded = serde_json::to_string(volumes)
+            .map_err(|error| AdapterError::Rejected(format!("encode runtime volumes: {error}")))?;
+        hash_string(&mut digest, &encoded);
     }
     Ok(URL_SAFE_NO_PAD.encode(digest.finalize()))
 }

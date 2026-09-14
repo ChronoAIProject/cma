@@ -68,6 +68,16 @@ fn bypasses_ambient_auth(path: &str) -> bool {
     let Some(path) = path.strip_prefix('/') else {
         return false;
     };
+    let entry = path.split('/').collect::<Vec<_>>();
+    if matches!(entry.as_slice(),
+        ["api", "v1", "triggers", "public", public_id, "entry-intent"]
+            if !public_id.is_empty())
+        || matches!(entry.as_slice(),
+            ["api", "v1", "triggers", "public", public_id, "open", placement_id]
+                if !public_id.is_empty() && !placement_id.is_empty())
+    {
+        return true;
+    }
     let mut segments = path.split('/');
     matches!(
         (
@@ -123,6 +133,8 @@ mod tests {
             "/auth/logout",
             "/api/v1/triggers/public/pub_example",
             "/api/v1/triggers/public/pub_example/badge.svg",
+            "/api/v1/triggers/public/pub_example/open/plc_readme",
+            "/api/v1/triggers/public/pub_example/entry-intent",
         ] {
             assert!(bypasses_ambient_auth(path), "expected bypass for {path}");
         }

@@ -136,10 +136,14 @@ fn wakeable_blocks_refresh_only_the_frozen_requirement_and_can_reblock() {
         events.as_slice(),
         [
             LaunchEventKind::RequirementChanged { state, .. },
+            LaunchEventKind::StepChanged { step: accounts },
             LaunchEventKind::StepChanged { step },
             LaunchEventKind::Blocked { .. },
             LaunchEventKind::Deferred { retry_at }
         ] if *state == ServiceRequirementState::Missing
+            && accounts.key == LaunchStepKey::CheckingRequirements
+            && accounts.status == LaunchStepStatus::Blocked
+            && accounts.completed_at.is_none()
             && step.status == LaunchStepStatus::Blocked
             && retry_at == LATER
     ));
@@ -166,9 +170,13 @@ fn wakeable_blocks_refresh_only_the_frozen_requirement_and_can_reblock() {
         events.as_slice(),
         [
             LaunchEventKind::RequirementChanged { state, .. },
+            LaunchEventKind::StepChanged { step: accounts },
             LaunchEventKind::StepChanged { step },
             LaunchEventKind::Resumed { .. }
         ] if *state == ServiceRequirementState::Satisfied
+            && accounts.key == LaunchStepKey::CheckingRequirements
+            && accounts.status == LaunchStepStatus::Completed
+            && accounts.completed_at.as_deref() == Some(LATER)
             && step.status == LaunchStepStatus::Running
     ));
 

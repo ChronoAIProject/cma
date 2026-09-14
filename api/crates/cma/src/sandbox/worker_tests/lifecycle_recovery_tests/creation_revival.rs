@@ -13,6 +13,12 @@ use layer2_core::sandbox::{
 
 #[tokio::test]
 async fn paused_create_survives_each_revive_restart_and_starts_after_checkpoint_agents() {
+    // This scenario retains several complete generations across its awaits.
+    // Keep the test's aggregate future off the small default test-thread stack.
+    Box::pin(paused_create_scenario()).await;
+}
+
+async fn paused_create_scenario() {
     let harness = Harness::new(vec!["install-once".into()], 0, Duration::from_secs(60)).await;
     let created = harness.create().await;
     let now = start_time(&created);

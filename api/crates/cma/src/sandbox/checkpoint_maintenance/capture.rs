@@ -1,5 +1,3 @@
-use std::time::SystemTime;
-
 use layer2_core::rfc3339_at;
 use layer2_core::sandbox::store::{
     SandboxCheckpointAgentGuard, SandboxCheckpointMutation, SandboxMutationGuard, SandboxStoreError,
@@ -9,15 +7,25 @@ use layer3_adapter::{
     writer_resume_tokens_match, AgentSlot, CheckpointHoldRequest, CheckpointRequest, WriterState,
 };
 
+use super::lease::{self, CaptureClock};
 use super::{adopt_bound_runtime, model_error, SandboxCheckpointMaintenance};
 
 impl SandboxCheckpointMaintenance {
     pub(super) async fn capture_and_publish(
         &self,
-        claimed: &Sandbox,
-        now: SystemTime,
+        mut claimed: Sandbox,
+        clock: &CaptureClock,
     ) -> Result<(), SandboxStoreError> {
-        let result = self.capture(claimed, now).await;
+        let deadline = tokio::time::Instant::now() + lease::CAPTURE_TIMEOUT;
+        let original = claimed.clone();
+        let result = self
+            .keep_capture_claim(
+                &mut claimed,
+                clock,
+                deadline,
+                self.capture(&original, clock),
+            )
+            .await;
         match result {
             Ok((checkpoint, guards)) => {
                 let capture = claimed
@@ -30,7 +38,7 @@ impl SandboxCheckpointMaintenance {
                     .lease
                     .as_ref()
                     .ok_or(SandboxStoreError::Conflict)?;
-                let stamp = rfc3339_at(now);
+                let stamp = rfc3339_at(clock.now());
                 let mut next = claimed.clone();
                 next.publish_captured_checkpoint(
                     checkpoint.clone(),
@@ -39,19 +47,32 @@ impl SandboxCheckpointMaintenance {
                     stamp.clone(),
                 )
                 .map_err(model_error)?;
-                let result = self
-                    .store
-                    .publish_sandbox_checkpoint(SandboxCheckpointMutation {
-                        guard: SandboxMutationGuard::capture(claimed),
-                        agents: guards,
-                        checkpoint,
-                        sandbox: next.clone(),
-                        appended_at: stamp,
-                    })
-                    .await;
-                if result.is_ok()
-                    || self.store.get_sandbox(&claimed.id).await?.as_ref() == Some(&next)
-                {
+                let publication = async {
+                    let result = self
+                        .store
+                        .publish_sandbox_checkpoint(SandboxCheckpointMutation {
+                            guard: SandboxMutationGuard::capture(&claimed),
+                            agents: guards,
+                            nonblocking: false,
+                            checkpoint,
+                            sandbox: next.clone(),
+                            appended_at: stamp,
+                        })
+                        .await;
+                    if result.is_ok()
+                        || self.store.get_sandbox(&claimed.id).await?.as_ref() == Some(&next)
+                    {
+                        Ok(())
+                    } else {
+                        result
+                    }
+                };
+                let result = tokio::time::timeout_at(
+                    deadline.min(tokio::time::Instant::now() + lease::FINALIZE_TIMEOUT),
+                    publication,
+                )
+                .await;
+                if matches!(result, Ok(Ok(()))) {
                     return Ok(());
                 }
             }
@@ -59,13 +80,18 @@ impl SandboxCheckpointMaintenance {
                 tracing::debug!(sandbox_id = %claimed.id, error = %error, "periodic checkpoint capture requires writer resumption");
             }
         }
-        self.require_resume(claimed, now).await
+        tokio::time::timeout(
+            lease::FINALIZE_TIMEOUT,
+            self.require_resume(&claimed, clock.now()),
+        )
+        .await
+        .map_err(|_| lease::deadline_error())?
     }
 
     async fn capture(
         &self,
         claimed: &Sandbox,
-        now: SystemTime,
+        clock: &CaptureClock,
     ) -> Result<(SandboxCheckpointRef, Vec<SandboxCheckpointAgentGuard>), SandboxStoreError> {
         let agents = self.agents(claimed).await?;
         if agents
@@ -102,7 +128,13 @@ impl SandboxCheckpointMaintenance {
         let handle = adopt_bound_runtime(self.adapter.as_ref(), claimed, &self.deployment_id)
             .await
             .map_err(provider_error)?;
-        if self.store.get_sandbox(&claimed.id).await?.as_ref() != Some(claimed) {
+        if !self
+            .store
+            .get_sandbox(&claimed.id)
+            .await?
+            .as_ref()
+            .is_some_and(|current| lease::same_capture_claim(claimed, current))
+        {
             return Err(SandboxStoreError::Conflict);
         }
         let held = self
@@ -144,8 +176,9 @@ impl SandboxCheckpointMaintenance {
                     .map_err(model_error)?,
             );
         }
-        let checkpoint = SandboxCheckpointRef::seal(&held.checkpoint, &snapshots, rfc3339_at(now))
-            .map_err(model_error)?;
+        let checkpoint =
+            SandboxCheckpointRef::seal(&held.checkpoint, &snapshots, rfc3339_at(clock.now()))
+                .map_err(model_error)?;
         Ok((checkpoint, guards))
     }
 }

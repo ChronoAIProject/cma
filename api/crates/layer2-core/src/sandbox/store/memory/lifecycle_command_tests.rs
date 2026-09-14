@@ -6,11 +6,156 @@ use crate::sandbox::store::{
     SandboxLifecycleCommandResult, SandboxLifecycleCommandStore, SandboxStore, SandboxStoreError,
 };
 use crate::sandbox::{
-    SandboxEventKind, SandboxLifecycleOperation, SandboxReviveCause, SandboxStatus, SandboxWorkStep,
+    SandboxEventKind, SandboxLifecycleOperation, SandboxPausePhase, SandboxReviveCause,
+    SandboxStatus, SandboxWorkStep,
 };
 use crate::SubjectId;
 
 use super::InMemorySandboxStore;
+
+#[tokio::test]
+async fn concurrent_pause_cancellation_preserves_authority_and_fences_stale_publication() {
+    for phase in [
+        SandboxPausePhase::CaptureAndPublishCheckpoint,
+        SandboxPausePhase::PauseAgents,
+    ] {
+        let store = Arc::new(InMemorySandboxStore::default());
+        let mut value = stored_sandbox();
+        value.begin_pause(NOW.into(), None).unwrap();
+        value.revision = 1;
+        if let Some(SandboxLifecycleOperation::Pause {
+            phase: current,
+            checkpoint_epoch,
+            ..
+        }) = value.lifecycle.operation.as_mut()
+        {
+            *current = phase;
+            if phase == SandboxPausePhase::PauseAgents {
+                *checkpoint_epoch = Some(1);
+                value.lifecycle.checkpoints.latest = Some(checkpoint(1, NOW));
+            }
+        }
+        store.create_sandbox(value.clone()).await.unwrap();
+        let authority = value
+            .lifecycle
+            .operation
+            .as_ref()
+            .unwrap()
+            .authority()
+            .clone();
+        let mut tasks = Vec::new();
+        for _ in 0..16 {
+            let store = store.clone();
+            let value = value.clone();
+            tasks.push(tokio::spawn(async move {
+                store
+                    .schedule_sandbox_lifecycle(SandboxLifecycleCommand::revive(
+                        value.id,
+                        value.owner,
+                        NOW.into(),
+                        SandboxReviveCause::TriggerLaunch,
+                    ))
+                    .await
+                    .unwrap()
+            }));
+        }
+        let mut scheduled = 0;
+        for task in tasks {
+            let SandboxLifecycleCommandResult::Accepted(outcome) = task.await.unwrap() else {
+                panic!("pause cancellation was refused");
+            };
+            scheduled +=
+                usize::from(outcome.disposition == SandboxLifecycleCommandDisposition::Scheduled);
+            assert_eq!(outcome.sandbox.status, SandboxStatus::Pausing);
+            assert_eq!(
+                outcome
+                    .sandbox
+                    .lifecycle
+                    .operation
+                    .as_ref()
+                    .unwrap()
+                    .authority(),
+                &authority
+            );
+            assert!(matches!(
+                outcome.sandbox.lifecycle.operation,
+                Some(SandboxLifecycleOperation::Pause {
+                    phase: SandboxPausePhase::ResumeWriters,
+                    ..
+                })
+            ));
+        }
+        assert_eq!(scheduled, 1);
+        let stored = store.get_sandbox(&value.id).await.unwrap().unwrap();
+        assert_eq!(stored.revision, value.revision + 1);
+        let mut stale = value.clone();
+        stale.revision += 1;
+        assert_eq!(
+            store.save_sandbox(value.revision, stale).await,
+            Err(SandboxStoreError::Conflict)
+        );
+        assert_eq!(store.get_sandbox(&value.id).await.unwrap(), Some(stored));
+    }
+}
+
+#[tokio::test]
+async fn teardown_admission_and_foreign_ownership_refuse_pause_cancellation() {
+    for phase in [
+        SandboxPausePhase::TeardownRuntime,
+        SandboxPausePhase::PublishPaused,
+    ] {
+        let store = InMemorySandboxStore::default();
+        let mut value = stored_sandbox();
+        value.begin_pause(NOW.into(), None).unwrap();
+        value.revision = 1;
+        value.lifecycle.checkpoints.latest = Some(checkpoint(1, NOW));
+        if let Some(SandboxLifecycleOperation::Pause {
+            phase: current,
+            checkpoint_epoch,
+            ..
+        }) = value.lifecycle.operation.as_mut()
+        {
+            *current = phase;
+            *checkpoint_epoch = Some(1);
+        }
+        if phase == SandboxPausePhase::PublishPaused {
+            value.runtime = None;
+        }
+        store.create_sandbox(value.clone()).await.unwrap();
+        assert_eq!(
+            store
+                .schedule_sandbox_lifecycle(SandboxLifecycleCommand::revive(
+                    value.id.clone(),
+                    SubjectId("stranger".into()),
+                    NOW.into(),
+                    SandboxReviveCause::TriggerLaunch
+                ))
+                .await,
+            Err(SandboxStoreError::NotFound)
+        );
+        assert_eq!(
+            store
+                .schedule_sandbox_lifecycle(SandboxLifecycleCommand::revive(
+                    value.id.clone(),
+                    value.owner.clone(),
+                    NOW.into(),
+                    SandboxReviveCause::TriggerLaunch
+                ))
+                .await
+                .unwrap(),
+            SandboxLifecycleCommandResult::NotEligible(value.clone())
+        );
+        assert_eq!(
+            store.get_sandbox(&value.id).await.unwrap(),
+            Some(value.clone())
+        );
+        assert!(store
+            .sandbox_events(&value.id, 0, 10)
+            .await
+            .unwrap()
+            .is_empty());
+    }
+}
 
 #[tokio::test]
 async fn pause_binds_owner_status_revision_work_and_event_in_one_application() {
@@ -208,7 +353,7 @@ async fn revive_pins_checkpoint_and_replays_without_changing_its_cause() {
         panic!("revive operation was not persisted");
     };
     assert_eq!(*cause, SandboxReviveCause::AgentMessage);
-    assert_eq!(*checkpoint_epoch, 9);
+    assert_eq!(*checkpoint_epoch, Some(9));
 
     let replay = store
         .schedule_sandbox_lifecycle(SandboxLifecycleCommand::revive(

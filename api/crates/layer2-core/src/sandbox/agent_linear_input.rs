@@ -26,6 +26,7 @@ impl AgentOperationService {
         }
         for _ in 0..MAX_OPERATION_COMMIT_RETRIES {
             let current = self.owned_agent(caller, id).await?;
+            self.require_agent_connections(&current).await?;
             require_granted(&current, [RuntimeCapability::Conversation])?;
             if self.latest_turn(&current).await? != previous_turn_sequence {
                 return Err(AgentOperationError::PreviousTurnConflict);

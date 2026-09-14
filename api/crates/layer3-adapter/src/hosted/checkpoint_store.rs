@@ -3,7 +3,7 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 
 /// Maximum archive accepted by the runtime contract: header, manifest, payload.
-pub const MAX_CHECKPOINT_ARCHIVE_BYTES: u64 = 24 + (64 * 1024 * 1024) + (16 * 1024 * 1024 * 1024);
+pub const MAX_CHECKPOINT_ARCHIVE_BYTES: u64 = 24 + (128 * 1024 * 1024) + (16 * 1024 * 1024 * 1024);
 
 /// A runtime archive being committed to durable storage.
 pub struct CheckpointArchiveUpload {

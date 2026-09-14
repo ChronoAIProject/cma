@@ -32,6 +32,7 @@ pub struct MongoCheckpointObjectStore {
     manifests: Collection<Document>,
     gates: Collection<Document>,
     tombstones: Collection<Document>,
+    sandboxes: Collection<Document>,
     objects: Arc<dyn CheckpointBlobStore>,
     client: Client,
 }
@@ -64,6 +65,7 @@ impl MongoCheckpointObjectStore {
             manifests,
             gates: majority_collection(&database, GATES),
             tombstones,
+            sandboxes: majority_collection(&database, super::sandbox_mongo::SANDBOXES),
             objects,
             client: client.clone(),
         })
@@ -89,9 +91,10 @@ impl MongoCheckpointObjectStore {
 
     pub(crate) async fn cleanup_due(&self, now: std::time::SystemTime) -> AdapterResult<usize> {
         let now = mongodb::bson::DateTime::from_system_time(now);
+        let retired = purge::retire_deleted_sandboxes(self, now).await;
         let manifests = purge::cleanup_due(self, now).await;
         let tombstones = tombstones::cleanup_due(self, now).await;
-        Ok(manifests? + tombstones?)
+        Ok(retired? + manifests? + tombstones?)
     }
 }
 

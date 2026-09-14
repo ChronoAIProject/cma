@@ -13,6 +13,7 @@ use layer2_core::StoreError;
 pub mod admin;
 mod agent_openapi_shapes;
 mod agent_operate;
+mod agent_source;
 mod agents;
 #[cfg(test)]
 pub(crate) mod agents_tests;
@@ -55,8 +56,11 @@ mod instances_tests;
 mod launch_events;
 mod launch_quota;
 mod launches;
+mod public_names;
+mod sandbox_service_access;
 mod sandboxes;
 mod service_connections;
+mod trigger_entry;
 mod trigger_openapi_shapes;
 mod trigger_placements;
 mod trigger_problem;
@@ -66,6 +70,7 @@ mod triggers;
 mod workspaces;
 mod worktrees;
 
+pub use agent_source::agent_source_router;
 pub use agents::{agent_router, AgentRoutesState};
 pub use embed::{
     EmbedContentSecurityPolicy, EmbedDescriptor, EmbedSnippets, EMBED_V1_JAVASCRIPT_SRI,
@@ -262,6 +267,14 @@ impl std::error::Error for InvalidPublicOrigin {}
 /// Compose the Trigger assets independently of the remaining resource routes.
 pub fn trigger_assets_router(state: TriggerAssetsState) -> Router {
     Router::new()
+        .route(
+            "/api/v1/triggers/public/{public_id}/open/{placement_id}",
+            get(trigger_entry::open),
+        )
+        .route(
+            "/api/v1/triggers/public/{public_id}/entry-intent",
+            axum::routing::post(trigger_entry::consume),
+        )
         .route(
             "/api/v1/triggers/public/{public_id}/badge.svg",
             get(badge::read),

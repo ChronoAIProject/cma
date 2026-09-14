@@ -1,5 +1,8 @@
 use std::sync::Arc;
 
+#[path = "agent_profile_provisioning.rs"]
+mod profile_provisioning;
+
 use serde::{Deserialize, Serialize};
 
 use crate::profiles::store::{AgentProfileStore, ProfileStoreError, ProfileUseRecorder};
@@ -38,6 +41,8 @@ pub struct CreateAgent {
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum AgentServiceError {
+    #[error(transparent)]
+    Connection(#[from] super::SandboxCredentialPrerequisiteError),
     #[error("forbidden")]
     Forbidden,
     #[error("agent profile not found")]
@@ -77,6 +82,7 @@ pub enum AgentServiceError {
 impl AgentServiceError {
     pub const fn code(&self) -> &'static str {
         match self {
+            Self::Connection(error) => error.code(),
             Self::Forbidden => "forbidden",
             Self::ProfileNotFound => "agent_profile_not_found",
             Self::WorkspaceNotFound => "workspace_not_found",
@@ -99,6 +105,7 @@ impl AgentServiceError {
 }
 
 pub struct AgentService {
+    connections: Arc<dyn super::SandboxCredentialPrerequisite>,
     store: Arc<dyn AgentServiceStore>,
     profiles: Arc<dyn AgentProfileStore>,
     profile_uses: Arc<dyn ProfileUseRecorder>,
@@ -141,11 +148,26 @@ impl AgentService {
         R: AgentRuntimeRegistry + 'static,
     {
         Arc::new(Self {
+            connections: Arc::new(super::FixedSandboxCredentialPrerequisite::Ready),
             store,
             profiles,
             profile_uses,
             runtimes,
             runtime_capabilities,
+        })
+    }
+
+    pub fn with_connections(
+        &self,
+        connections: Arc<dyn super::SandboxCredentialPrerequisite>,
+    ) -> Arc<Self> {
+        Arc::new(Self {
+            connections,
+            store: self.store.clone(),
+            profiles: self.profiles.clone(),
+            profile_uses: self.profile_uses.clone(),
+            runtimes: self.runtimes.clone(),
+            runtime_capabilities: self.runtime_capabilities.clone(),
         })
     }
 
@@ -161,7 +183,7 @@ impl AgentService {
                 "trigger origin requires launch admission".into(),
             ));
         }
-        self.create_with_profile(caller, workspace_id, request, false)
+        self.create_with_profile(caller, workspace_id, request, false, false)
             .await
     }
 
@@ -172,13 +194,25 @@ impl AgentService {
         workspace_id: &WorkspaceId,
         request: CreateAgent,
     ) -> Result<Agent, AgentServiceError> {
+        self.create_or_reuse_for_launch(caller, authority, workspace_id, request, false)
+            .await
+    }
+
+    pub async fn create_or_reuse_for_launch(
+        &self,
+        caller: &Caller,
+        authority: Capability,
+        workspace_id: &WorkspaceId,
+        request: CreateAgent,
+        reuse_existing: bool,
+    ) -> Result<Agent, AgentServiceError> {
         require_launch(caller, authority)?;
         if !matches!(&request.origin, AgentOrigin::Trigger { .. }) {
             return Err(AgentServiceError::InvalidRequest(
                 "launch admission requires trigger origin".into(),
             ));
         }
-        self.create_with_profile(caller, workspace_id, request, true)
+        self.create_with_profile(caller, workspace_id, request, true, reuse_existing)
             .await
     }
 
@@ -188,6 +222,7 @@ impl AgentService {
         workspace_id: &WorkspaceId,
         request: CreateAgent,
         frozen_profile: bool,
+        reuse_existing: bool,
     ) -> Result<Agent, AgentServiceError> {
         self.runtime_capabilities
             .require([RuntimeCapability::Conversation])
@@ -198,6 +233,7 @@ impl AgentService {
             return Err(AgentServiceError::WorkspaceNotReady);
         }
         let sandbox = self.parent_sandbox(caller, &workspace).await?;
+        self.connections.check_sandbox(&sandbox).await?;
         if !sandbox.accepts_creation_admission() {
             return Err(AgentServiceError::SandboxNotReady);
         }
@@ -210,28 +246,35 @@ impl AgentService {
         let now = now_rfc3339();
         let agent_id = AgentId::generate();
         let creation_key = creation_key(&request.origin, &agent_id)?;
+        let creation_key = if reuse_existing {
+            creation_key.replacen("trigger:", "trigger-profile:", 1)
+        } else {
+            creation_key
+        };
         let first_message = request
             .first_message
             .map(|text| FirstMessageRecord::new(creation_key.clone(), text, now.clone()))
             .transpose()
             .map_err(|error| AgentServiceError::InvalidRequest(error.to_string()))?;
-        let result = self
-            .store
-            .admit_agent(AgentAdmission {
-                owner: caller.subject.clone(),
-                workspace_id: workspace.id,
-                agent_id,
-                worktree_id: WorktreeId::generate(),
-                profile: AgentProfileSnapshot::from(&revision),
-                capabilities: self.runtime_capabilities.clone(),
-                title: request.title,
-                first_message,
-                origin: request.origin,
-                creation_key,
-                event_at: now,
-            })
-            .await
-            .map_err(store_error)?;
+        let admission = AgentAdmission {
+            owner: caller.subject.clone(),
+            workspace_id: workspace.id,
+            agent_id,
+            worktree_id: WorktreeId::generate(),
+            profile: AgentProfileSnapshot::from(&revision),
+            capabilities: self.runtime_capabilities.clone(),
+            title: request.title,
+            first_message,
+            origin: request.origin,
+            creation_key,
+            event_at: now,
+        };
+        let result = if reuse_existing {
+            self.store.admit_agent_reusing_profile(admission).await
+        } else {
+            self.store.admit_agent(admission).await
+        }
+        .map_err(store_error)?;
         if let AgentAdmissionResult::Created(creation) = &result {
             self.record_profile_use(&creation.agent).await;
         }
@@ -399,6 +442,9 @@ impl AgentService {
 fn creation_key(origin: &AgentOrigin, agent_id: &AgentId) -> Result<String, AgentServiceError> {
     match origin {
         AgentOrigin::Manual => Ok(format!("manual:{agent_id}")),
+        AgentOrigin::WorkspaceProfile { .. } => Err(AgentServiceError::InvalidRequest(
+            "workspace profile origin requires automatic admission".into(),
+        )),
         AgentOrigin::Trigger {
             trigger_id,
             launch_id,

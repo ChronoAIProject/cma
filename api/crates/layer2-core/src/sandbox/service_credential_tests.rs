@@ -49,6 +49,28 @@ async fn missing_credential_prerequisite_admits_no_sandbox_or_profile_use() {
         .items
         .is_empty());
     assert_eq!(sandbox_use_count(&profiles, &reference.id).await, 0);
+    let missing = vec![
+        ServiceId::new("api-github"),
+        ServiceId::new(crate::profiles::CODEX_SUBSCRIPTION_CONNECTION),
+    ];
+    *prerequisite.0.lock().unwrap() =
+        Err(SandboxCredentialPrerequisiteError::ConnectionsRequired {
+            services: missing.clone(),
+        });
+    assert_eq!(
+        service
+            .create(&owner, request(reference.clone()))
+            .await
+            .unwrap_err(),
+        SandboxServiceError::ConnectionsRequired { services: missing }
+    );
+    assert!(store
+        .list_sandboxes(&owner.subject, &PageRequest::default())
+        .await
+        .unwrap()
+        .items
+        .is_empty());
+    assert_eq!(sandbox_use_count(&profiles, &reference.id).await, 0);
     *prerequisite.0.lock().unwrap() = Ok(());
     assert_eq!(
         service

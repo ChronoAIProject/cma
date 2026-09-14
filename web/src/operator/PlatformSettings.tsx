@@ -1,3 +1,4 @@
+import { Presence } from '../ui/Presence';
 import { useEffect, useId, useRef, useState } from 'react';
 import type { PlatformSettings as Settings, StoredPlatformSettings } from '@chronoai/cma-sdk';
 import { Button } from '../ui/Button';
@@ -124,53 +125,59 @@ function SettingsEditor({
     >
       <p className="operator-notice">Revision {revision}</p>
       <FailureNotice failure={failure} />
-      {needsReview ? (
-        <div className="operator-conflict" role="status">
-          <p>
-            Your draft is retained.{' '}
-            {current === undefined
-              ? 'The current settings could not be read.'
-              : `The current revision is ${current.revision}.`}
-          </p>
-          <div className="operator-actions">
-            <Button
-              disabled={busy || current === undefined}
-              onClick={() => {
-                if (current !== undefined) {
-                  setDraft(current.settings);
-                  setBase(current.settings);
-                  setRevision(current.revision);
-                  setCurrent(undefined);
-                  setNeedsReview(false);
-                  setFailure(undefined);
-                }
-              }}
-            >
-              Load current values
-            </Button>
-            <Button
-              disabled={busy || current === undefined}
-              onClick={() => {
-                if (current !== undefined) {
-                  setDraft(reviewSettingsDraft(base, draft, current.settings));
-                  setBase(current.settings);
-                  setRevision(current.revision);
-                  setCurrent(undefined);
-                  setNeedsReview(false);
-                  setFailure(undefined);
-                }
-              }}
-            >
-              Review retained draft
-            </Button>
-            {current === undefined ? (
-              <Button disabled={busy} icon={<IconRefreshOutline16 />} onClick={() => void reread()}>
-                Read current settings
+      <Presence>
+        {needsReview ? (
+          <div className="operator-conflict" role="status">
+            <p>
+              Your draft is retained.{' '}
+              {current === undefined
+                ? 'The current settings could not be read.'
+                : `The current revision is ${current.revision}.`}
+            </p>
+            <div className="operator-actions">
+              <Button
+                disabled={busy || current === undefined}
+                onClick={() => {
+                  if (current !== undefined) {
+                    setDraft(current.settings);
+                    setBase(current.settings);
+                    setRevision(current.revision);
+                    setCurrent(undefined);
+                    setNeedsReview(false);
+                    setFailure(undefined);
+                  }
+                }}
+              >
+                Load current values
               </Button>
-            ) : null}
+              <Button
+                disabled={busy || current === undefined}
+                onClick={() => {
+                  if (current !== undefined) {
+                    setDraft(reviewSettingsDraft(base, draft, current.settings));
+                    setBase(current.settings);
+                    setRevision(current.revision);
+                    setCurrent(undefined);
+                    setNeedsReview(false);
+                    setFailure(undefined);
+                  }
+                }}
+              >
+                Review retained draft
+              </Button>
+              {current === undefined ? (
+                <Button
+                  disabled={busy}
+                  icon={<IconRefreshOutline16 />}
+                  onClick={() => void reread()}
+                >
+                  Read current settings
+                </Button>
+              ) : null}
+            </div>
           </div>
-        </div>
-      ) : null}
+        ) : null}
+      </Presence>
       <section>
         <h3>Defaults</h3>
         {(['sandbox', 'workspace', 'agent'] as const).map((kind) => (
@@ -201,6 +208,26 @@ function SettingsEditor({
           }
         />
       </section>
+      {draft.checkpoints === undefined ? null : (
+        <section>
+          <h3>Snapshots</h3>
+          <NumberField
+            label="Save progress every (minutes)"
+            value={draft.checkpoints.interval_seconds / 60}
+            minimum={1}
+            maximum={1440}
+            step="any"
+            error={fieldError('checkpoints.interval_seconds')}
+            disabled={disabled}
+            onChange={(value) =>
+              update({
+                ...draft,
+                checkpoints: { ...draft.checkpoints, interval_seconds: Math.round(value * 60) },
+              })
+            }
+          />
+        </section>
+      )}
       <section>
         <h3>Retention</h3>
         <div className="operator-settings-grid">
@@ -310,7 +337,9 @@ function SettingsEditor({
         >
           {busy ? 'Saving' : 'Save settings'}
         </Button>
-        {saved ? <p role="status">Settings saved at revision {revision}.</p> : null}
+        <Presence>
+          {saved ? <p role="status">Settings saved at revision {revision}.</p> : null}
+        </Presence>
       </div>
     </form>
   );
@@ -321,6 +350,7 @@ function NumberField({
   value,
   minimum = 0,
   maximum = 4_294_967_295,
+  step = 1,
   disabled,
   error,
   onChange,
@@ -329,6 +359,7 @@ function NumberField({
   readonly value: number;
   readonly minimum?: number;
   readonly maximum?: number;
+  readonly step?: number | 'any';
   readonly disabled: boolean;
   readonly error?: string;
   readonly onChange: (value: number) => void;
@@ -343,7 +374,7 @@ function NumberField({
         value={Number.isNaN(value) ? '' : value}
         min={minimum}
         max={maximum}
-        step={1}
+        step={step}
         required
         disabled={disabled}
         aria-invalid={error !== undefined}

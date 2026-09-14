@@ -40,6 +40,7 @@ impl SandboxPolicySource for LiveSandboxPolicy {
             max_sandboxes_per_owner,
             max_sandboxes_per_visitor,
             inactivity_pause_after_seconds: stored.settings.inactivity.pause_after_seconds,
+            checkpoint_interval_seconds: stored.settings.checkpoints.interval_seconds,
             retention_grace: Duration::from_secs(retention_seconds),
             baseline_services: self.baseline_services.clone(),
         })

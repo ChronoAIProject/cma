@@ -47,10 +47,15 @@ use super::live_agents::{
 
 const DEPLOYMENT_ID: &str = "lifecycle-test";
 
+mod lifecycle_connection_tests;
+mod retired_runtime_tests;
 mod runtime_attachment_tests;
 mod sdk_conformance_tests;
 mod sign_in_tests;
 mod skill_material_tests;
+mod startup_publication_tests;
+mod warm_handoff_tests;
+mod workspace_removal_tests;
 
 struct Harness {
     store: Arc<InMemorySandboxStore>,
@@ -104,6 +109,7 @@ impl Harness {
             .await
             .unwrap();
         sandbox.runtime = Some(RuntimeBinding {
+            boot_id: None,
             provision_generation: Some(generation),
             runtime_id: runtime.0.clone(),
             runtime_version: CodexSandboxSpec::default().deployment.image.uri,
@@ -283,6 +289,7 @@ fn sandbox(id: &SandboxId, owner: SubjectId, stamp: &str) -> Sandbox {
         failure: None,
         runtime: None,
         credential: SandboxCredentialState {
+            service_grants: Vec::new(),
             reaches: vec![ServiceId::new("ornn-api")],
             key_generation: 3,
             delivered: true,
@@ -438,6 +445,7 @@ impl AgentSkillResolver for ScriptedSkills {
                     .map(|skill| ResolvedAgentSkill {
                         source: SkillSource::Ornn,
                         id: SkillId::new(skill.id),
+                        name: skill.name,
                         version: skill.version.expect("resolved literal"),
                         archive_sha256: skill.archive_sha256,
                     })
@@ -460,6 +468,7 @@ impl AgentSkillResolver for ScriptedSkills {
             .zip(locators)
             .map(|(skill, source_url)| AgentSkill {
                 id: skill.id.as_str().to_owned(),
+                name: skill.name.clone(),
                 version: Some(skill.version.clone()),
                 archive_sha256: skill.archive_sha256.clone(),
                 source_url,
@@ -896,6 +905,7 @@ async fn transient_skill_resolution_retries_then_materializes_exact_archive() {
     };
     let material = AgentSkill {
         id: "research".into(),
+        name: None,
         version: Some("7.0".into()),
         archive_sha256: "e".repeat(64),
         source_url: "https://ornn.example/skills/research/7.0.tar.gz".into(),
@@ -955,6 +965,7 @@ async fn lost_home_reply_retries_with_a_rotated_locator_for_the_same_archive() {
     };
     let first = AgentSkill {
         id: "research".into(),
+        name: None,
         version: Some("7.0".into()),
         archive_sha256: "e".repeat(64),
         source_url: "https://ornn.example/temporary/a.tar.gz".into(),

@@ -34,6 +34,7 @@ export interface MenuItem {
   readonly id: string;
   readonly label: ReactNode;
   readonly disabled?: boolean;
+  readonly reason?: string;
   /** A leading 16px glyph. */
   readonly icon?: ReactNode;
   /** Destructive: error-coloured, with its own hover fill. */
@@ -344,6 +345,7 @@ function MenuRow({
        */
       role={choosing ? 'menuitemradio' : 'menuitem'}
       data-id={entry.id}
+      data-has-reason={entry.reason === undefined ? undefined : ''}
       className={['menu__item', entry.danger === true ? 'menu__item--danger' : '']
         .filter(Boolean)
         .join(' ')}
@@ -367,7 +369,16 @@ function MenuRow({
           {entry.icon}
         </span>
       )}
-      <span className="menu__itemlabel">{entry.label}</span>
+      <span className="menu__itemlabel">
+        {entry.reason === undefined ? (
+          entry.label
+        ) : (
+          <>
+            <span className="menu__labeltext">{entry.label}</span>{' '}
+            <span className="menu__reason">{entry.reason}</span>
+          </>
+        )}
+      </span>
       {selected ? <IconCheckOutline16 className="menu__check" /> : null}
     </button>
   );

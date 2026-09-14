@@ -62,6 +62,7 @@ pub struct TriggerPreview {
     pub description: String,
     pub button_label: ButtonLabel,
     pub theme: Theme,
+    pub always_review: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub signup_hint: Option<String>,
     pub publisher_display_name: String,
@@ -96,6 +97,7 @@ impl TriggerPreview {
             description: content.presentation.description.clone(),
             button_label: content.presentation.button_label,
             theme: content.presentation.theme,
+            always_review: content.consent.always_review,
             signup_hint: content.presentation.signup_hint.clone(),
             publisher_display_name,
             what_happens: content.reuse.what_happens(),
@@ -109,7 +111,7 @@ impl TriggerPreview {
                     cpu_millis: profiles.sandbox.content.cpu_millis,
                     memory_mib: profiles.sandbox.content.memory_mib,
                 },
-                services: profiles.sandbox.content.nyxid_services.clone(),
+                services: profiles.sandbox.content.connection_services(),
             },
             first_message: content
                 .first_message

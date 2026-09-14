@@ -81,19 +81,13 @@ pub(super) fn request_fingerprint(
 pub(super) fn validate_requirement_identity(
     expected: &[ServiceId],
     snapshot: &RequirementsSnapshot,
-    sandbox_pending: bool,
 ) -> Result<(), LaunchServiceError> {
     let actual = snapshot
         .services
         .iter()
         .map(|requirement| &requirement.service)
         .collect::<Vec<_>>();
-    let matches = if sandbox_pending {
-        expected.iter().eq(actual)
-    } else {
-        actual.is_empty()
-    };
-    if matches {
+    if expected.iter().eq(actual) {
         Ok(())
     } else {
         Err(LaunchServiceError::Corrupt(

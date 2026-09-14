@@ -285,6 +285,10 @@ async fn apply_admission(
             },
         ));
     }
+    let prepared = super::warm_sandboxes::adopt_workspace(store, &sandbox, candidate, session)
+        .await
+        .map_err(ApplyError::Domain)?;
+    let candidate = &prepared;
     let revival_event =
         if admission.kind == WorkspaceAdmissionKind::SandboxProfile {
             None

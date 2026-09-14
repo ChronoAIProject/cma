@@ -130,6 +130,15 @@ module CIContract
     require!(workflow.dig("concurrency", "cancel-in-progress") == false, "remote writers cannot be cancelled by a newer run")
     triggers = workflow["on"] || workflow[true]
     require!(triggers.keys.sort == %w[schedule workflow_dispatch], "remote campaign cannot execute on PR code")
+    %w[smoke journeys].each do |id|
+      row = workflow.fetch("jobs").fetch(id)
+      require!(!row.fetch("env").key?("CMA_E2E_OUTPUT_DIR"), "runner evidence path must be initialized at step runtime")
+      command = %Q(printf '%s\\n' "CMA_E2E_OUTPUT_DIR=$RUNNER_TEMP/cma-e2e-#{id}-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" >> "$GITHUB_ENV")
+      initialize = step(row, "Initialize isolated evidence path", command)
+      require!(initialize["working-directory"] == ".", "evidence initialization must not depend on a child directory")
+      harness = id == "smoke" ? "GET-only smoke, no credentials or hooks" : "Require complete fixtures and execute J0-J7, faults and security"
+      order(row, ["Initialize isolated evidence path", harness])
+    end
     plan = job(workflow, "plan", "Reviewed staging authority")
     step(plan, "Bind the exact reviewed develop commit and observer authority", "node .github/scripts/staging-authority.mjs plan")
     remote = job(workflow, "journeys", "Explicitly scoped staging journeys")

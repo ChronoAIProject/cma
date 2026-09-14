@@ -43,6 +43,8 @@ struct StoredFailure {
 pub(super) struct Record {
     version: u32,
     sandbox_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    runtime_generation: Option<u64>,
     operation_id: String,
     request_sha256: String,
     payload_sha256: String,
@@ -108,7 +110,10 @@ pub(crate) fn begin<T: DeserializeOwned>(
     operation: &Operation,
 ) -> Result<Begin<T>> {
     validation::validate_operation(operation, config)?;
-    let path = io::journal_path(&config.state_root, &operation.operation_id);
+    let path = io::journal_path(
+        &crate::mutation_scope::root(config, &operation.subject),
+        &operation.operation_id,
+    );
     if let Some(record) = records(config)?
         .into_iter()
         .find(|record| record.operation_id == operation.operation_id)
@@ -125,6 +130,7 @@ fn create_started<T: DeserializeOwned>(
     let record = Record {
         version: JOURNAL_VERSION,
         sandbox_id: config.sandbox_id.clone(),
+        runtime_generation: crate::mutation_scope::generation(config, &operation.subject),
         operation_id: operation.operation_id.clone(),
         request_sha256: operation.request_sha256.clone(),
         payload_sha256: operation.payload_sha256.clone(),
@@ -135,7 +141,10 @@ fn create_started<T: DeserializeOwned>(
     };
     validation::validate_record(&record, config)?;
     let ticket = Ticket {
-        path: io::journal_path(&config.state_root, &operation.operation_id),
+        path: io::journal_path(
+            &crate::mutation_scope::root(config, &operation.subject),
+            &operation.operation_id,
+        ),
         record,
     };
     match ticket.persist_new() {
@@ -153,7 +162,10 @@ pub(crate) fn started(config: &RuntimeConfig) -> Result<Vec<Pending>> {
             let operation = record.operation();
             Pending {
                 ticket: Ticket {
-                    path: io::journal_path(&config.state_root, &record.operation_id),
+                    path: io::journal_path(
+                        &crate::mutation_scope::root(config, &record.subject),
+                        &record.operation_id,
+                    ),
                     record,
                 },
                 operation,
@@ -259,12 +271,31 @@ impl Ticket {
 }
 
 fn records(config: &RuntimeConfig) -> Result<Vec<Record>> {
-    let files = io::scan(&config.state_root)?;
+    let mut files = Vec::new();
+    for root in crate::mutation_scope::roots(config)? {
+        files.extend(io::scan(&root)?);
+        if files.len() > MAX_JOURNAL_ENTRIES {
+            return Err(corrupt(
+                "runtime mutation journal contains too many entries",
+            ));
+        }
+    }
     for file in &files {
         validation::validate_record(&file.record, config)?;
         if file.record.sandbox_id != config.sandbox_id {
             return Err(corrupt(
                 "runtime mutation journal belongs to another sandbox",
+            ));
+        }
+        if file.path.parent()
+            != io::journal_path(
+                &crate::mutation_scope::root(config, &file.record.subject),
+                &file.record.operation_id,
+            )
+            .parent()
+        {
+            return Err(corrupt(
+                "runtime mutation journal is in another generation scope",
             ));
         }
     }

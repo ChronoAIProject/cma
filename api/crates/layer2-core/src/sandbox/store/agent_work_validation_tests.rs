@@ -16,7 +16,42 @@ const AT: &str = "2026-09-05T00:00:10Z";
 const RETRY_AT: &str = "2026-09-05T00:00:20Z";
 const LEASE_END: &str = "2026-09-05T00:01:00Z";
 
+mod retired_runtime_tests;
 mod sign_in_tests;
+
+#[test]
+fn warm_home_intent_preserves_the_prepared_skill_selection_and_session() {
+    let (mut current, worktree) = claimed(
+        AgentWorkStep::MaterializeHome,
+        AgentStatus::Starting,
+        WorktreeStatus::Creating,
+    );
+    current
+        .work
+        .receipts
+        .push(receipt(&current, AgentWorkStep::AddWorktree));
+    current.work.warm_conversation_id = Some("prepared-session".into());
+    current.work.resolved_skills = Some(vec![]);
+    let mut next = current.clone();
+    next.work
+        .cleanup_debt
+        .push(debt(&current, AgentWorkStep::MaterializeHome));
+    let intent = publication(&current, next, vec![], None, None);
+    assert_valid(&current, &worktree, &intent);
+    let mut erased = intent.clone();
+    erased.agent.work.resolved_skills = None;
+    assert_conflict(&current, &worktree, &erased);
+    for conversation in [None, Some("different-session".into())] {
+        let mut changed = intent.clone();
+        changed.agent.work.warm_conversation_id = conversation;
+        assert_conflict(&current, &worktree, &changed);
+    }
+    let mut unwarmed = current.clone();
+    unwarmed.work.warm_conversation_id = None;
+    let mut forged = intent;
+    forged.agent.work.warm_conversation_id = None;
+    assert_conflict(&unwarmed, &worktree, &forged);
+}
 
 #[test]
 fn skill_material_is_committed_once_with_the_first_home_intent() {
@@ -37,6 +72,7 @@ fn skill_material_is_committed_once_with_the_first_home_intent() {
     let material = vec![crate::sandbox::ResolvedAgentSkill {
         source: crate::profiles::SkillSource::Ornn,
         id: crate::SkillId::new("research"),
+        name: Some("research".into()),
         version: "2.10".into(),
         archive_sha256: "a".repeat(64),
     }];
@@ -81,7 +117,29 @@ fn skill_material_is_committed_once_with_the_first_home_intent() {
     let mut replacement = advance.clone();
     replacement.agent.work.resolved_skills.as_mut().unwrap()[0].archive_sha256 = "b".repeat(64);
     assert_conflict(&selected, &worktree, &replacement);
+    let mut replacement = advance;
+    replacement.agent.work.resolved_skills.as_mut().unwrap()[0].name = Some("renamed".into());
+    assert_conflict(&selected, &worktree, &replacement);
     assert_eq!(selected.profile, current.profile);
+}
+
+#[test]
+fn legacy_skill_material_without_name_round_trips_and_new_names_are_validated() {
+    let legacy = serde_json::json!({
+        "source": "ornn",
+        "id": "research",
+        "version": "1.0",
+        "archive_sha256": "a".repeat(64),
+    });
+    let mut material: crate::sandbox::ResolvedAgentSkill =
+        serde_json::from_value(legacy.clone()).unwrap();
+    assert_eq!(material.name, None);
+    assert_eq!(serde_json::to_value(&material).unwrap(), legacy);
+    assert!(material.validate().is_ok());
+    for name in ["", " spaced", "control\n"] {
+        material.name = Some(name.into());
+        assert!(material.validate().is_err());
+    }
 }
 
 #[test]
@@ -462,6 +520,40 @@ fn cleanup_advance_settles_only_the_required_compensation() {
     let mut invalid = mutation.clone();
     invalid.sandbox_event = None;
     assert_conflict(&current, &worktree, &invalid);
+}
+
+#[test]
+fn elapsed_cleanup_delay_allows_fenced_agent_shutdown_to_continue() {
+    for deadline in [NOW, AT] {
+        let (mut current, worktree) = claimed(
+            AgentWorkStep::FenceInteraction,
+            AgentStatus::Ready,
+            WorktreeStatus::Ready,
+        );
+        current.work.cleanup_not_before = Some(deadline.into());
+        let mut next = current.clone();
+        next.work
+            .advance(
+                "worker",
+                fence(&current),
+                AgentWorkStep::CloseProcess,
+                AT.into(),
+            )
+            .unwrap();
+        assert_eq!(next.work.ready_at, AT);
+        assert!(next.work.cleanup_not_before.is_none());
+        let mutation = publication(
+            &current,
+            next,
+            vec![completed(AgentWorkStep::FenceInteraction)],
+            None,
+            None,
+        );
+        assert_valid(&current, &worktree, &mutation);
+        let mut premature = mutation.clone();
+        premature.agent.work.ready_at = NOW.into();
+        assert_conflict(&current, &worktree, &premature);
+    }
 }
 
 #[test]

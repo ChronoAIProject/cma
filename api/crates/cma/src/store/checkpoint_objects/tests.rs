@@ -96,7 +96,29 @@ fn stage_identity_is_unique_sandbox_bound_and_opaque() {
 }
 
 #[test]
+fn large_archive_stage_records_all_parts_before_upload_and_accepts_legacy_keys() {
+    let mut identity = identity(b"archive identity");
+    identity.size_bytes = 222_838_896;
+    let stage = ManifestDoc::new(SANDBOX, &identity, DateTime::now());
+    assert!(stage.object_key.ends_with(".parts-v1-222838896"));
+    assert_eq!(
+        read_manifest(manifest_document(&stage).unwrap()).unwrap(),
+        stage
+    );
+    let mut legacy = stage.clone();
+    legacy.object_key = legacy.object_key.split(".parts-v1-").next().unwrap().into();
+    assert_eq!(
+        read_manifest(manifest_document(&legacy).unwrap()).unwrap(),
+        legacy
+    );
+    let mut wrong = stage;
+    wrong.object_key.push('0');
+    assert!(read_manifest(manifest_document(&wrong).unwrap()).is_err());
+}
+
+#[test]
 fn manifest_round_trips_with_a_bounded_ambiguous_upload_lifetime() {
+    assert_eq!(UPLOAD_LIFETIME, std::time::Duration::from_secs(1_200));
     let now = DateTime::now();
     let expected = ManifestDoc::new(SANDBOX, &identity(b"round trip archive"), now);
     assert_eq!(

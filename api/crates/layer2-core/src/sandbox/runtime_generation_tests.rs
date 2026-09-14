@@ -337,6 +337,7 @@ fn fence(value: &Sandbox) -> u64 {
 
 fn binding(generation: Option<u64>) -> RuntimeBinding {
     RuntimeBinding {
+        boot_id: None,
         runtime_id: "replacement-runtime".into(),
         runtime_version: "image-v1".into(),
         provision_generation: generation,

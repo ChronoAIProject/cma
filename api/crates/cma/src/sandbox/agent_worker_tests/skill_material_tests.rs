@@ -21,6 +21,7 @@ fn restarted(harness: &Harness, skills: Arc<dyn AgentSkillResolver>) -> Arc<Agen
 fn runtime_skill(version: &str, hash: char, locator: &str) -> AgentSkill {
     AgentSkill {
         id: "research".into(),
+        name: None,
         version: Some(version.into()),
         archive_sha256: hash.to_string().repeat(64),
         source_url: format!("https://platform.example/{locator}"),

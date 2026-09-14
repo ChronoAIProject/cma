@@ -26,6 +26,7 @@ let capabilities = [
 const sandbox = {
   id: 'sbx-research',
   owner: 'operator@example.test',
+  owner_name: 'Shining',
   name: 'Research environment',
   status: 'active',
   runtime_version: 'cma-runtime-2.4.1',
@@ -37,6 +38,7 @@ const profile = {
   kind: 'agent',
   id: 'agp-research',
   owner: 'operator@example.test',
+  owner_name: 'Shining',
   name: 'Research and review',
   visibility: 'public',
   updated_at: now,
@@ -127,6 +129,7 @@ ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(
     }
     if (path === '/api/v1/admin/sandboxes/sbx-research')
       return reply({
+        owner_name: 'Shining',
         sandbox: {
           ...sandbox,
           profile: { id: 'sbp_default', revision: 1, digest: 'digest' },
@@ -295,7 +298,7 @@ ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(
     await page.$eval('.operator-drawer', (element) => element.contains(document.activeElement)),
   );
   await page.$eval('.operator-drawer', (element) =>
-    [...element.querySelectorAll('button:not(:disabled)')].at(-1).focus(),
+    [...element.querySelectorAll('button:not(:disabled), a[href]')].at(-1).focus(),
   );
   await page.keyboard.press('Tab');
   assert.equal(

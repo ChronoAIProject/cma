@@ -1,4 +1,4 @@
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
 
 use layer2_core::rfc3339_at;
 use layer2_core::sandbox::store::{
@@ -96,12 +96,23 @@ impl SandboxWorker {
         failure: WorkerFailure,
         now: SystemTime,
     ) -> Result<(), SandboxStoreError> {
+        self.handle_lifecycle_failure_after(sandbox, failure, now, self.config.retry_delay)
+            .await
+    }
+
+    pub(super) async fn handle_lifecycle_failure_after(
+        &self,
+        sandbox: Sandbox,
+        failure: WorkerFailure,
+        now: SystemTime,
+        retry_delay: Duration,
+    ) -> Result<(), SandboxStoreError> {
         let stamp = rfc3339_at(now);
         let lease = lifecycle_lease(&sandbox, &self.config.holder)?;
         let mut next = sandbox.clone();
         let recorded_failure = if failure.is_retryable() {
             next.retry_lifecycle(
-                rfc3339_at(now + self.config.retry_delay),
+                rfc3339_at(now + retry_delay),
                 &lease.holder,
                 lease.fence,
                 stamp.clone(),

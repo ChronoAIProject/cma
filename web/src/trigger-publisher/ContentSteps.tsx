@@ -1,3 +1,4 @@
+import { Presence } from '../ui/Presence';
 import type { ProfileKind, TriggerContent } from '@chronoai/cma-sdk';
 import { Input } from '../ui/Input';
 import { ChoiceGroup } from '../profiles/ChoiceGroup';
@@ -5,6 +6,7 @@ import type { PublisherProfileChoice, TriggerPublisherClient } from './client';
 import { DraftBadge } from './BadgePreview';
 import { LABELS, resultSentence, reuseExplanation, type SelectedProfiles } from './model';
 import { ProfilePicker } from './ProfilePicker';
+import { QuickMessageFields } from './QuickMessageFields';
 
 export function TargetStep({
   client,
@@ -39,11 +41,13 @@ export function TargetStep({
           onSelect={(choice) => onSelect(kind, choice)}
         />
       ))}
-      {sentence === '' ? null : (
-        <p className="trigger-result" role="status">
-          {sentence}
-        </p>
-      )}
+      <Presence>
+        {sentence === '' ? null : (
+          <p className="trigger-result" role="status">
+            {sentence}
+          </p>
+        )}
+      </Presence>
       <TrustDisclosures profiles={profiles} />
     </>
   );
@@ -146,14 +150,22 @@ export function PresentationStep({
                 onChange={(event) => change(event.target.value)}
               />
             )}
-            {error === undefined ? null : (
-              <p className="trigger-error" role="alert">
-                {error}
-              </p>
-            )}
+            <Presence>
+              {error === undefined ? null : (
+                <p className="trigger-error" role="alert">
+                  {error}
+                </p>
+              )}
+            </Presence>
           </div>
         );
       })}
+      <QuickMessageFields
+        value={value.quick_messages ?? []}
+        disabled={disabled}
+        error={errors.quick_messages}
+        onChange={(quick_messages) => onChange({ ...value, quick_messages })}
+      />
       <fieldset className="trigger-badge-options" disabled={disabled}>
         <legend>Button label</legend>
         {(Object.keys(LABELS) as (keyof typeof LABELS)[]).map((label) => (

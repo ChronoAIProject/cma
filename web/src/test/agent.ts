@@ -13,6 +13,11 @@ export function agentClient(overrides: Partial<CmaWebClient> = {}): CmaWebClient
     readAgentUsage: async () => AGENT_USAGE,
     readAgentEvents: async () => ({ items: [] }),
     readSandboxEvents: async () => [],
+    readSandboxProfileSettings: async () => ({
+      agentProvider: 'codex',
+      modelAccess: 'chronoai_managed',
+      nyxidServices: ['github'],
+    }),
     replayAgent: async (_id, options) =>
       new Promise<void>((resolve) => {
         options.signal?.addEventListener('abort', () => resolve(), { once: true });

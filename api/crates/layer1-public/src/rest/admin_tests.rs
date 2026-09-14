@@ -130,6 +130,7 @@ pub(crate) struct Fixture {
     pub(crate) sandboxes: Arc<InMemorySandboxStore>,
     pub(crate) profiles: Arc<InMemoryProfileStore>,
     activity: Arc<MemoryActivity>,
+    names: Arc<crate::rest::public_names::tests::Names>,
 }
 
 pub(crate) fn fixture(inventory: bool) -> Fixture {
@@ -148,7 +149,9 @@ pub(crate) fn fixture(inventory: bool) -> Fixture {
         retirement,
         Arc::clone(&activity_service),
     ));
-    let mut state = AdminState::new(settings, operators, activity_service);
+    let names = crate::rest::public_names::tests::Names::seeded();
+    let mut state = AdminState::new(settings, operators, activity_service)
+        .with_user_directory(layer2_core::UserDirectory::new(names.clone()));
     if inventory {
         state = state.with_runtime_inventory(Arc::new(FixedInventory));
     }
@@ -157,7 +160,78 @@ pub(crate) fn fixture(inventory: bool) -> Fixture {
         sandboxes,
         profiles,
         activity,
+        names,
     }
+}
+
+#[tokio::test]
+async fn owner_names_follow_authorized_cross_owner_reads_and_never_grant_control() {
+    use std::sync::atomic::Ordering;
+    let fixture = fixture(false);
+    fixture
+        .sandboxes
+        .create_sandbox(sandbox("sbx_names", "owner-b", "runtime-a"))
+        .await
+        .unwrap();
+    for path in [
+        "/api/v1/admin/sandboxes",
+        "/api/v1/admin/sandboxes/sbx_names",
+        "/api/v1/admin/activity",
+    ] {
+        let response = send(&fixture.app, Method::GET, path, None, []).await;
+        assert!(matches!(
+            response.status(),
+            StatusCode::FORBIDDEN | StatusCode::NOT_FOUND
+        ));
+        assert!(!String::from_utf8(body_bytes(response).await)
+            .unwrap()
+            .contains("Sam Lee"));
+    }
+    assert_eq!(fixture.names.calls.load(Ordering::SeqCst), 0);
+    let page = send(
+        &fixture.app,
+        Method::GET,
+        "/api/v1/admin/sandboxes",
+        None,
+        [Capability::ReadAllSandboxes],
+    )
+    .await;
+    assert_eq!(page.status(), StatusCode::OK);
+    let page = response_json(page).await;
+    assert_eq!(page["items"][0]["owner"], "owner-b");
+    assert_eq!(page["items"][0]["owner_name"], "Sam Lee");
+    let detail = send(
+        &fixture.app,
+        Method::GET,
+        "/api/v1/admin/sandboxes/sbx_names",
+        None,
+        [Capability::ReadAllSandboxes],
+    )
+    .await;
+    let detail = response_json(detail).await;
+    assert_eq!(detail["owner_name"], "Sam Lee");
+    assert_eq!(detail["sandbox"]["owner"], "owner-b");
+    let activity = send(
+        &fixture.app,
+        Method::GET,
+        "/api/v1/admin/activity",
+        None,
+        [Capability::ReadActivityLog],
+    )
+    .await;
+    assert_eq!(
+        response_json(activity).await["items"][0]["actor_name"],
+        "Morgan Park"
+    );
+    let refused = send(
+        &fixture.app,
+        Method::POST,
+        "/api/v1/admin/sandboxes/sbx_names/retire",
+        None,
+        [Capability::ReadAllSandboxes],
+    )
+    .await;
+    assert_eq!(refused.status(), StatusCode::NOT_FOUND);
 }
 
 fn request(
@@ -243,12 +317,14 @@ pub(crate) fn sandbox(id: &str, owner: &str, version: &str) -> Sandbox {
         status: SandboxStatus::Active,
         failure: None,
         runtime: Some(RuntimeBinding {
+            boot_id: None,
             provision_generation: Some(1),
             runtime_id: format!("runtime-{id}"),
             runtime_version: version.into(),
             bound_at: NOW.into(),
         }),
         credential: SandboxCredentialState {
+            service_grants: Vec::new(),
             reaches: vec![],
             key_generation: 0,
             delivered: false,
@@ -326,6 +402,7 @@ async fn settings_support_read_replace_presence_aware_patch_and_reset() {
     assert_eq!(initial.status(), StatusCode::OK);
     let initial = response_json(initial).await;
     assert_eq!(initial["revision"], 0);
+    assert_eq!(initial["settings"]["checkpoints"]["interval_seconds"], 1800);
 
     let changed = send(
         &fixture.app,
@@ -333,7 +410,8 @@ async fn settings_support_read_replace_presence_aware_patch_and_reset() {
         "/api/v1/admin/settings",
         Some(json!({
             "expected_revision": 0,
-            "marketplace": {"enabled": false}
+            "marketplace": {"enabled": false},
+            "checkpoints": {"interval_seconds": 600}
         })),
         capability,
     )
@@ -342,6 +420,7 @@ async fn settings_support_read_replace_presence_aware_patch_and_reset() {
     let changed = response_json(changed).await;
     assert_eq!(changed["revision"], 1);
     assert_eq!(changed["settings"]["marketplace"]["enabled"], false);
+    assert_eq!(changed["settings"]["checkpoints"]["interval_seconds"], 600);
     assert_eq!(
         changed["settings"]["inactivity"],
         initial["settings"]["inactivity"]
@@ -403,6 +482,9 @@ async fn settings_refusals_are_confidential_specific_and_revision_safe() {
         json!({"expected_revision": 0}),
         json!({"expected_revision": 0, "marketplace": null}),
         json!({"expected_revision": 0, "inactivity": {"pause_after_seconds": 59}}),
+        json!({"expected_revision": 0, "checkpoints": {"interval_seconds": 59}}),
+        json!({"expected_revision": 0, "checkpoints": {"interval_seconds": 86401}}),
+        json!({"expected_revision": 0, "checkpoints": null}),
     ] {
         let response = send(
             &fixture.app,
@@ -760,7 +842,8 @@ async fn runtime_inventory_and_activity_each_require_their_exact_capability() {
         .activity
         .append(
             &ActivityRecord::new(ActivityAction::Configure, ActivityOutcome::Succeeded)
-                .by(SubjectId::new("operator-a")),
+                .by(SubjectId::new("operator-a"))
+                .on(ActivityTarget::Subject(SubjectId::new("owner-b"))),
         )
         .await
         .unwrap();
@@ -796,10 +879,10 @@ async fn runtime_inventory_and_activity_each_require_their_exact_capability() {
     )
     .await;
     assert_eq!(activity.status(), StatusCode::OK);
-    assert_eq!(
-        response_json(activity).await["items"][0]["action"],
-        "configure"
-    );
+    let activity = response_json(activity).await;
+    assert_eq!(activity["items"][0]["action"], "configure");
+    assert_eq!(activity["items"][0]["actor_name"], "Morgan Park");
+    assert_eq!(activity["items"][0]["target_name"], "Sam Lee");
 
     let unavailable = fixture(false);
     let response = send(

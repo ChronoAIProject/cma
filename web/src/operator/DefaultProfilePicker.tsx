@@ -6,6 +6,7 @@ import { IconRefreshOutline16, IconSearchOutline16 } from '../ui/icons';
 import type { OperatorClient } from './client';
 import { operatorFailure, type OperatorFailure } from './failure';
 import { FailureNotice } from './records';
+import { ReferenceLink } from '../profiles/ReferenceLink';
 
 export function DefaultProfilePicker({
   client,
@@ -100,9 +101,7 @@ export function DefaultProfilePicker({
           }}
         >
           {containsSelected ? null : (
-            <option value={selected}>
-              {value.id} / revision {value.revision} (current)
-            </option>
+            <option value={selected}>Current profile / revision {value.revision}</option>
           )}
           {state.items.map((item) => (
             <option
@@ -114,6 +113,13 @@ export function DefaultProfilePicker({
           ))}
         </select>
       </label>
+      <p>
+        <ReferenceLink
+          kind={kind}
+          id={value.id}
+          name={state.items.find((item) => item.id === value.id)?.name}
+        />
+      </p>
       {error === undefined ? null : (
         <p className="operator-failure" id={errorId}>
           {error}

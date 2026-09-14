@@ -19,15 +19,29 @@
           "items": [
             {
               "id": "sbx_route",
+              "owner": "owner-a",
+              "owner_name": "Alex Chen",
               "name": "research",
               "status": "active",
               "profile": {
                 "id": "sbp_route",
                 "revision": 3
               },
+              "nyxid_services": [
+                "api-github"
+              ],
               "limits": {
                 "max_workspaces": 4,
                 "max_agents_per_workspace": 4
+              },
+              "lifecycle": {
+                "pause": {
+                  "allowed": true
+                },
+                "revive": {
+                  "allowed": false,
+                  "reason": "not_paused"
+                }
               },
               "runtime_version": "sha256:runtime",
               "last_activity_at": "2026-09-05T00:00:00Z",
@@ -60,15 +74,29 @@
         },
         "body": {
           "id": "sbx_route",
+          "owner": "owner-a",
+          "owner_name": "Alex Chen",
           "name": "research",
           "status": "active",
           "profile": {
             "id": "sbp_route",
             "revision": 3
           },
+          "nyxid_services": [
+            "api-github"
+          ],
           "limits": {
             "max_workspaces": 4,
             "max_agents_per_workspace": 4
+          },
+          "lifecycle": {
+            "pause": {
+              "allowed": true
+            },
+            "revive": {
+              "allowed": false,
+              "reason": "not_paused"
+            }
           },
           "runtime_version": "sha256:runtime",
           "last_activity_at": "2026-09-05T00:00:00Z",
@@ -279,27 +307,38 @@
       "captures": {}
     },
     {
-      "id": "workspace-live-agent-conflict",
+      "id": "workspace-live-agent-removal",
       "operation": "DELETE /api/v1/workspaces/{id}",
       "scenario": "instances_owner",
       "request": {
         "method": "DELETE",
         "path": "/api/v1/workspaces/wks_route",
         "headers": {
-          "idempotency-key": "workspace-live-agent-conflict"
+          "idempotency-key": "workspace-live-agent-removal"
         }
       },
       "response": {
-        "status": 409,
+        "status": 202,
         "headers": {
-          "content-type": "application/problem+json"
+          "content-type": "application/json"
         },
         "body": {
-          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource-conflict",
-          "title": "resource conflict",
-          "status": 409,
-          "detail": "The operation conflicts with current resource state.",
-          "code": "workspace_has_live_agents"
+          "id": "wks_route",
+          "sandbox_id": "sbx_route",
+          "name": "project",
+          "path": "/home/cma/project",
+          "source": {
+            "type": "empty"
+          },
+          "resolved_commit": "cccccccccccccccccccccccccccccccccccccccc",
+          "status": "removing",
+          "profile": {
+            "id": "wkp_route",
+            "revision": 2
+          },
+          "created_at": "2026-09-05T00:00:00Z",
+          "ready_at": "2026-09-05T00:00:00Z",
+          "revision": 2
         },
         "bodyKind": "json"
       },
@@ -331,15 +370,30 @@
         },
         "body": {
           "id": "sbx_11111111111111111111111111111111",
+          "owner": "owner-a",
+          "owner_name": null,
           "name": "contract-created",
           "status": "provisioning",
           "profile": {
             "id": "sbp_contract",
             "revision": 1
           },
+          "nyxid_services": [
+            "chrono-llm-public"
+          ],
           "limits": {
             "max_workspaces": 4,
             "max_agents_per_workspace": 4
+          },
+          "lifecycle": {
+            "pause": {
+              "allowed": false,
+              "reason": "not_active"
+            },
+            "revive": {
+              "allowed": false,
+              "reason": "not_paused"
+            }
           },
           "last_activity_at": "2026-09-05T00:00:00Z",
           "created_at": "2026-09-05T00:00:00Z",
@@ -524,15 +578,30 @@
         },
         "body": {
           "id": "sbx_11111111111111111111111111111111",
+          "owner": "owner-a",
+          "owner_name": null,
           "name": "contract-created",
           "status": "retiring",
           "profile": {
             "id": "sbp_contract",
             "revision": 1
           },
+          "nyxid_services": [
+            "chrono-llm-public"
+          ],
           "limits": {
             "max_workspaces": 4,
             "max_agents_per_workspace": 4
+          },
+          "lifecycle": {
+            "pause": {
+              "allowed": false,
+              "reason": "not_active"
+            },
+            "revive": {
+              "allowed": false,
+              "reason": "not_paused"
+            }
           },
           "last_activity_at": "2026-09-05T00:00:00Z",
           "created_at": "2026-09-05T00:00:00Z",
@@ -563,15 +632,35 @@
         },
         "body": {
           "id": "sbx_route",
+          "owner": "owner-a",
+          "owner_name": null,
           "name": "research",
           "status": "pausing",
           "profile": {
             "id": "sbp_route",
             "revision": 3
           },
+          "nyxid_services": [
+            "api-github"
+          ],
           "limits": {
             "max_workspaces": 4,
             "max_agents_per_workspace": 4
+          },
+          "lifecycle": {
+            "pause": {
+              "allowed": false,
+              "reason": "not_active"
+            },
+            "revive": {
+              "allowed": false,
+              "reason": "not_paused"
+            },
+            "operation": {
+              "purpose": "pause",
+              "phase": "capture_and_publish_checkpoint",
+              "started_at": "2026-09-05T00:00:00Z"
+            }
           },
           "runtime_version": "sha256:runtime",
           "last_activity_at": "2026-09-05T00:00:00Z",
@@ -588,7 +677,7 @@
     {
       "id": "sandbox-revive-not-paused",
       "operation": "POST /api/v1/sandboxes/{id}/revive",
-      "scenario": "instances_lifecycle",
+      "scenario": "instances_not_paused",
       "request": {
         "method": "POST",
         "path": "/api/v1/sandboxes/sbx_route/revive",

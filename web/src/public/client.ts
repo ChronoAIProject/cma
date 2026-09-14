@@ -4,6 +4,7 @@ export interface PublicClient {
   readonly requests: Pick<
     Launches,
     | 'preview'
+    | 'entryIntent'
     | 'createOrResume'
     | 'read'
     | 'start'

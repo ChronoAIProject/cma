@@ -1,11 +1,12 @@
+import { Presence } from '../../ui/Presence';
 import { useEffect, useRef, useState } from 'react';
 import type { AppRoute, ProfileKind } from '../../routing/routes';
-import { routePath } from '../../routing/routes';
 import type { ResourcePage } from '../../api/types';
 import { Button } from '../../ui/Button';
 import { Input } from '../../ui/Input';
 import { IconSearchOutline16 } from '../../ui/icons';
 import { ProfileTabs } from '../ProfileTabs';
+import { ProfileCard } from '../ProfileCard';
 import type { MarketplaceClient, MarketplaceSummary } from './client';
 import '../Profiles.css';
 import './Marketplace.css';
@@ -125,7 +126,7 @@ export function Marketplace({
         aria-labelledby={`profile-tab-${kind}`}
         aria-busy={state.loading}
       >
-        <ul className="marketplace-grid">
+        <ul className="profile-card-grid">
           {state.items.map((entry) => {
             const route: AppRoute = {
               kind: 'marketplace_profile',
@@ -134,55 +135,45 @@ export function Marketplace({
             };
             return (
               <li key={entry.id}>
-                <h2>
-                  <a
-                    href={routePath(route)}
-                    onClick={(event) => {
-                      if (
-                        event.button !== 0 ||
-                        event.metaKey ||
-                        event.ctrlKey ||
-                        event.shiftKey ||
-                        event.altKey
-                      )
-                        return;
-                      event.preventDefault();
-                      onNavigate(route);
-                    }}
-                  >
-                    {entry.name}
-                  </a>
-                </h2>
-                <p>{entry.description}</p>
-                <span>By {entry.ownerDisplay}</span>
-                <div className="marketplace-card-meta">
-                  <span>Revision {entry.latestRevision}</span>
-                  <span>
-                    {entry.usesCount} {entry.usesCount === 1 ? 'use' : 'uses'}
-                  </span>
-                </div>
+                <ProfileCard
+                  name={entry.name}
+                  description={entry.description}
+                  route={route}
+                  onNavigate={onNavigate}
+                  visibility="public"
+                  revision={entry.latestRevision}
+                  author={entry.ownerDisplay}
+                  usesCount={entry.usesCount}
+                  timestamp={entry.publishedAt}
+                  timestampLabel="Published"
+                />
               </li>
             );
           })}
         </ul>
         {state.loading ? <p role="status">Loading profiles</p> : null}
-        {state.error === undefined ? (
-          !state.loading && state.items.length === 0 ? (
-            <p>No matching profiles</p>
-          ) : null
-        ) : (
-          <div role="alert">
-            <p>{state.error}</p>
-            <Button
-              onClick={() => {
-                setState((previous) => ({ ...previous, loading: true, error: undefined }));
-                setReload((version) => version + 1);
-              }}
-            >
-              Try again
-            </Button>
-          </div>
-        )}
+        <>
+          {state.error === undefined ? (
+            !state.loading && state.items.length === 0 ? (
+              <p>No matching profiles</p>
+            ) : null
+          ) : null}
+          <Presence>
+            {state.error === undefined ? null : (
+              <div role="alert">
+                <p>{state.error}</p>
+                <Button
+                  onClick={() => {
+                    setState((previous) => ({ ...previous, loading: true, error: undefined }));
+                    setReload((version) => version + 1);
+                  }}
+                >
+                  Try again
+                </Button>
+              </div>
+            )}
+          </Presence>
+        </>
         {state.next === undefined ? null : (
           <Button
             disabled={state.loading}

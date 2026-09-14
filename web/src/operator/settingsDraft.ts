@@ -34,6 +34,15 @@ export function reviewSettingsDraft(
     inactivity: merge(base.inactivity, draft.inactivity, current.inactivity, [
       'pause_after_seconds',
     ]),
+    ...(base.checkpoints === undefined ||
+    draft.checkpoints === undefined ||
+    current.checkpoints === undefined
+      ? {}
+      : {
+          checkpoints: merge(base.checkpoints, draft.checkpoints, current.checkpoints, [
+            'interval_seconds',
+          ]),
+        }),
     retention: merge(base.retention, draft.retention, current.retention, [
       'checkpoint_grace_days',
       'agent_log_days',

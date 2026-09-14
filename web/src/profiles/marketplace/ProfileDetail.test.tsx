@@ -4,30 +4,36 @@ import { expect, it, vi } from 'vitest';
 import { MARKETPLACE_SANDBOX, marketplaceClient } from '../../test/profiles';
 import { ProfileDetail } from './ProfileDetail';
 import { ApiError } from '@chronoai/cma-sdk';
+import { NamedReferences } from '../../test/references';
 
 it('shows every top-level and referenced revision setting before handing a pinned sandbox to creation', async () => {
   const actor = userEvent.setup();
   const onUse = vi.fn();
   render(
-    <ProfileDetail
-      client={marketplaceClient()}
-      kind="sandbox"
-      profileId={MARKETPLACE_SANDBOX.summary.id}
-      onNavigate={vi.fn()}
-      onUse={onUse}
-    />,
+    <NamedReferences>
+      <ProfileDetail
+        client={marketplaceClient()}
+        kind="sandbox"
+        profileId={MARKETPLACE_SANDBOX.summary.id}
+        onNavigate={vi.fn()}
+        onUse={onUse}
+      />
+    </NamedReferences>,
   );
   await screen.findByRole('heading', { name: 'Research sandbox' });
   for (const text of [
     '2 cores · 4 GiB',
     'ChronoAI managed',
-    'storage',
     'mkdir -p /home/cma/tools',
     'RUN_MODE',
     'mkdir -p reports',
     'Inspect the repository before making changes.',
   ])
     expect(screen.getByText(text)).toBeInTheDocument();
+  expect(await screen.findByRole('link', { name: 'Chrono Storage' })).toHaveAttribute(
+    'href',
+    'https://nyx.chrono-ai.fun/services/catalog-storage',
+  );
   expect(
     screen.getByRole('heading', { name: 'Research workspace · Revision 1' }),
   ).toBeInTheDocument();
@@ -64,11 +70,11 @@ it.each(['network', 'idempotency_in_flight', 'idempotency_recovery_required'])(
       />,
     );
     await screen.findByRole('heading', { name: 'Research sandbox' });
-    await actor.click(screen.getByRole('button', { name: 'Fork to my profiles' }));
-    await screen.findByRole('button', { name: 'Retry fork' });
+    await actor.click(screen.getByRole('button', { name: 'Customize a private copy' }));
+    await screen.findByRole('button', { name: 'Retry private copy' });
     expect(screen.getByRole('button', { name: 'Use' })).toBeDisabled();
-    expect(screen.getByRole('button', { name: 'Fork to my profiles' })).toBeDisabled();
-    await actor.click(screen.getByRole('button', { name: 'Retry fork' }));
+    expect(screen.getByRole('button', { name: 'Customize a private copy' })).toBeDisabled();
+    await actor.click(screen.getByRole('button', { name: 'Retry private copy' }));
     expect(forkProfile.mock.calls[0]?.slice(0, 3)).toEqual([
       'sandbox',
       MARKETPLACE_SANDBOX.summary.id,
@@ -99,6 +105,8 @@ it('does not offer management actions without the owner capability or a creation
     />,
   );
   await screen.findByRole('heading', { name: 'Research sandbox' });
-  expect(screen.queryByRole('button', { name: 'Fork to my profiles' })).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole('button', { name: 'Customize a private copy' }),
+  ).not.toBeInTheDocument();
   expect(screen.getByRole('button', { name: 'Use' })).toBeDisabled();
 });

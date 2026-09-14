@@ -31,6 +31,10 @@ mod checkpoint_lifecycle;
 mod guards;
 #[path = "supervisor_mutations.rs"]
 mod mutations;
+#[path = "supervisor_recovery.rs"]
+mod recovery;
+#[path = "supervisor_status.rs"]
+mod status;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Phase {
@@ -54,7 +58,11 @@ pub(crate) struct HeldCheckpoint {
 
 pub(crate) struct Supervisor {
     config: RuntimeConfig,
+    boot_id: String,
     phase: RwLock<Phase>,
+    // Only a fresh runtime may prepare unowned work. Recovered homes require
+    // renewed owner credentials even when their installation receipt survives.
+    allow_unowned_preparation: bool,
     restore_bootstrap: RwLock<Option<RestoreBootstrapReceipt>>,
     operation_gate: Arc<Mutex<()>>,
     credential: CredentialHolder,
@@ -80,25 +88,45 @@ impl Supervisor {
         config: RuntimeConfig,
         writer_boundary: SupervisorBoundary,
     ) -> Result<Arc<Self>> {
-        crate::fs_durability::create_dir_all(&config.home).map_err(|error| {
-            RuntimeError::unavailable("home_unavailable", format!("create sandbox home: {error}"))
-        })?;
+        if config.home_identity.is_none() {
+            crate::fs_durability::create_dir_all(&config.home).map_err(|error| {
+                RuntimeError::unavailable(
+                    "home_unavailable",
+                    format!("create sandbox home: {error}"),
+                )
+            })?;
+        }
         if !path_is_directory(&config.home) {
             return Err(RuntimeError::rejected(
                 "home_invalid",
                 "sandbox home is not a directory",
             ));
         }
+        let home = crate::persistent_home::initialize(&config)?;
         let install_state = crate::install::recover(&config)?;
+        let restored = home
+            .as_ref()
+            .map(|home| home.restore_completed(&install_state))
+            .transpose()?
+            .unwrap_or(false);
         let (phase, restore_bootstrap) = match install_state {
             RecoveryState::Completed => (Phase::Installed, None),
-            RecoveryState::Inherited(receipt) => (Phase::RestorePending, Some(receipt)),
+            RecoveryState::Inherited(receipt) => (
+                if restored {
+                    Phase::Installed
+                } else {
+                    Phase::RestorePending
+                },
+                Some(receipt),
+            ),
             RecoveryState::Absent | RecoveryState::Terminal => (Phase::Provisioned, None),
         };
         let checkpoint = CheckpointStore::new(&config);
         Ok(Arc::new(Self {
             config,
+            boot_id: uuid::Uuid::new_v4().simple().to_string(),
             phase: RwLock::new(phase),
+            allow_unowned_preparation: phase == Phase::Provisioned,
             restore_bootstrap: RwLock::new(restore_bootstrap),
             operation_gate: Arc::new(Mutex::new(())),
             credential: CredentialHolder::new(),
@@ -120,6 +148,13 @@ impl Supervisor {
 
     pub(crate) async fn dispatch(&self, request: RequestFrame) -> ResponseFrame {
         let operation = request.operation();
+        // Observation must not repair journals or wait for archive capture/export.
+        if let RequestFrame::RuntimeStatus(request) = request {
+            return match self.runtime_status(request).await {
+                Ok(status) => ResponseFrame::RuntimeStatus(status),
+                Err(error) => error.response(operation),
+            };
+        }
         if matches!(
             request,
             RequestFrame::PrepareWorkspace(_)
@@ -132,7 +167,7 @@ impl Supervisor {
             if let Err(error) = self.recover_journals().await {
                 return error.response(operation);
             }
-            if let Err(error) = self.require_credentialed().await {
+            if let Err(error) = self.authorize_preparation(&request).await {
                 return error.response(operation);
             }
             if let RequestFrame::RemoveWorkspace(reference) = &request {
@@ -153,6 +188,9 @@ impl Supervisor {
             };
         }
         let _operation = self.operation_gate.lock().await;
+        if let Err(error) = crate::persistent_home::verify(&self.config) {
+            return error.response(operation);
+        }
         let writers_held = self.held_checkpoint.lock().await.is_some();
         if writers_held
             && !matches!(
@@ -189,9 +227,15 @@ impl Supervisor {
                 | RequestFrame::ResumeCheckpointWriters(_)
                 | RequestFrame::Resources
         ) {
-            self.require_credentialed().await?;
+            self.authorize_preparation(&request).await?;
         }
         match request {
+            RequestFrame::CacheSkillArchive(archive) => {
+                crate::skills::cache_archive(&self.config, &archive)?;
+                Ok(ResponseFrame::CacheSkillArchive {
+                    sha256: archive.sha256,
+                })
+            }
             RequestFrame::Install(request) => self.install(request).await,
             RequestFrame::BootstrapRestore(request) => self.bootstrap_restore(request).await,
             RequestFrame::Credential(frame) => self.credential(frame).await,
@@ -246,57 +290,10 @@ impl Supervisor {
             RequestFrame::Resources => Ok(ResponseFrame::Resources(
                 self.resources.sample(std::time::Instant::now()).into(),
             )),
-        }
-    }
-
-    async fn recover_journals(&self) -> Result<()> {
-        let _operation = self.operation_gate.lock().await;
-        if self.held_checkpoint.lock().await.is_some() {
-            return Err(writers_held_error());
-        }
-        self.recover_journals_locked().await
-    }
-
-    async fn recover_journals_locked(&self) -> Result<()> {
-        let durable = crate::install::recover(&self.config)?;
-        let mut phase = self.phase.write().await;
-        let mut bootstrap = self.restore_bootstrap.write().await;
-        let consistent = match durable {
-            RecoveryState::Completed if bootstrap.is_none() => match *phase {
-                Phase::Provisioned => {
-                    *phase = Phase::Installed;
-                    true
-                }
-                Phase::Installed | Phase::Credentialed => true,
-                Phase::RestorePending | Phase::RestoreCredentialed => false,
-            },
-            RecoveryState::Inherited(receipt) => match (&*bootstrap, *phase) {
-                (None, Phase::Provisioned) => {
-                    *bootstrap = Some(receipt);
-                    *phase = Phase::RestorePending;
-                    true
-                }
-                (
-                    Some(existing),
-                    Phase::RestorePending | Phase::RestoreCredentialed | Phase::Credentialed,
-                ) => existing == &receipt,
-                _ => false,
-            },
-            RecoveryState::Absent | RecoveryState::Terminal => {
-                bootstrap.is_none() && *phase == Phase::Provisioned
+            RequestFrame::RuntimeStatus(_) => {
+                unreachable!("status requests observe without mutation")
             }
-            RecoveryState::Completed => false,
-        };
-        if !consistent {
-            return Err(RuntimeError::rejected(
-                "install_state_invalid",
-                "runtime lifecycle disagrees with its durable installation state",
-            ));
         }
-        drop(bootstrap);
-        drop(phase);
-        crate::workspace_runtime::recover_locked(&self.config).await?;
-        self.recover_mutations_locked().await
     }
 
     async fn authorize_mutation(&self, request: &RequestFrame) -> Result<()> {
@@ -350,7 +347,7 @@ impl Supervisor {
         let Some((authority_fence, operation)) = fenced else {
             return Ok(());
         };
-        self.require_credentialed().await?;
+        self.authorize_preparation(request).await?;
         crate::mutation_authority::admit(&self.config, authority_fence, &operation)
     }
 
@@ -379,6 +376,8 @@ impl Supervisor {
         match *phase {
             Phase::Provisioned => *phase = Phase::RestorePending,
             Phase::RestorePending | Phase::RestoreCredentialed | Phase::Credentialed => {}
+            Phase::Installed
+                if self.config.home_identity.is_some() && bootstrap.as_ref() == Some(&receipt) => {}
             Phase::Installed => {
                 return Err(RuntimeError::rejected(
                     "install_mode_conflict",
@@ -476,8 +475,14 @@ fn writers_held_error() -> RuntimeError {
 #[path = "supervisor_authority_tests.rs"]
 mod authority_tests;
 #[cfg(test)]
+#[path = "supervisor_checkpoint_http_tests.rs"]
+mod checkpoint_http_tests;
+#[cfg(test)]
 #[path = "supervisor_mutation_tests.rs"]
 mod mutation_tests;
+#[cfg(test)]
+#[path = "supervisor_persistent_home_tests.rs"]
+mod persistent_home_tests;
 #[cfg(test)]
 #[path = "supervisor_restore_tests.rs"]
 mod restore_tests;

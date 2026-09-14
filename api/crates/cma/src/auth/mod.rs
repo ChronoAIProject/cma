@@ -87,6 +87,7 @@ pub struct AuthState {
     pub(super) nyxid_public_url: String,
     pub(super) http: reqwest::Client,
     pub(super) metadata: RwLock<Option<ProviderMetadata>>,
+    cookie_verifications: cookie_authorization::VerificationFlights,
     pub(in crate::auth) signup_options_cache: signup_options::SignupOptionsCache,
     pub(super) store: Arc<dyn AuthStore>,
     pub(super) records: Option<SignInRecords>,
@@ -143,6 +144,7 @@ impl AuthState {
                 .build()
                 .expect("the rustls HTTP client builds"),
             metadata: RwLock::new(None),
+            cookie_verifications: cookie_authorization::VerificationFlights::default(),
             signup_options_cache: signup_options::SignupOptionsCache::default(),
         })
     }
@@ -318,8 +320,16 @@ impl AuthState {
             .get(&discovery_url)
             .send()
             .await
-            .map_err(|error| format!("identity discovery request failed: {error}"))?;
+            .map_err(|error| {
+                identity::verification_failure("discovery", "transport", None);
+                format!("identity discovery request failed: {error}")
+            })?;
         if !response.status().is_success() {
+            identity::verification_failure(
+                "discovery",
+                "http_status",
+                Some(response.status().as_u16()),
+            );
             return Err(format!(
                 "identity discovery returned HTTP {}",
                 response.status().as_u16()

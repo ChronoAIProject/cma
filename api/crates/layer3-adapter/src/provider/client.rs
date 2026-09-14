@@ -77,16 +77,19 @@ impl SandboxClient {
         &self,
         request: &ProviderSandboxRequest,
     ) -> Result<ProviderSandbox, ProviderError> {
+        request.validate_volumes()?;
         let url = format!("{}/v1/sandboxes", self.base_url);
+        let mut wire_request = request.clone();
+        super::metadata::encode(&mut wire_request.metadata);
         let response = self
             .http
             .post(&url)
             .header(API_KEY_HEADER, self.api_key.as_ref())
-            .json(request)
+            .json(&wire_request)
             .send()
             .await
             .map_err(|error| ProviderError::Unreachable(format!("POST {url}: {error}")))?;
-        decode(response).await
+        decode_sandbox(response).await
     }
 
     pub async fn get(&self, id: &str) -> Result<ProviderSandbox, ProviderError> {
@@ -98,7 +101,7 @@ impl SandboxClient {
             .send()
             .await
             .map_err(|error| ProviderError::Unreachable(format!("GET {url}: {error}")))?;
-        decode(response).await
+        decode_sandbox(response).await
     }
 
     pub async fn endpoint(&self, id: &str, port: u16) -> Result<ProviderEndpoint, ProviderError> {
@@ -141,7 +144,7 @@ impl SandboxClient {
                     ),
                 });
             }
-            let listing: Listing = serde_json::from_slice(&body).map_err(|error| {
+            let mut listing: Listing = serde_json::from_slice(&body).map_err(|error| {
                 ProviderError::Malformed(format!(
                     "sandbox listing page {pages_read} not readable: {error}"
                 ))
@@ -154,6 +157,9 @@ impl SandboxClient {
                 .pagination
                 .as_ref()
                 .map_or(LIST_PAGE_SIZE, |page| page.page_size);
+            for sandbox in &mut listing.items {
+                super::metadata::decode(&mut sandbox.metadata);
+            }
             answer.extend(listing.items);
             if !has_next {
                 return Ok(answer);
@@ -223,6 +229,12 @@ impl SandboxClient {
             detail: truncate(&String::from_utf8_lossy(&body)),
         })
     }
+}
+
+async fn decode_sandbox(response: reqwest::Response) -> Result<ProviderSandbox, ProviderError> {
+    let mut sandbox: ProviderSandbox = decode(response).await?;
+    super::metadata::decode(&mut sandbox.metadata);
+    Ok(sandbox)
 }
 
 async fn decode<T: serde::de::DeserializeOwned>(

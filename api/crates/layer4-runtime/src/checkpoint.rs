@@ -48,6 +48,33 @@ impl CheckpointStore {
         blocking(move || restore_archive(&archive, &expected, &home, &scratch)).await
     }
 
+    /// The caller must have finished export or restore and retired any replay
+    /// authority before releasing this local transfer object.
+    pub(crate) async fn discard(&self, reference: &str) -> Result<()> {
+        let store = self.clone();
+        let reference = reference.to_string();
+        blocking(move || {
+            store.ensure_store()?;
+            let path = store.object_path(&reference)?;
+            match std::fs::symlink_metadata(&path) {
+                Ok(metadata) if metadata.is_file() && !metadata.file_type().is_symlink() => {
+                    crate::fs_durability::remove_file(&path)
+                        .map_err(checkpoint_io("remove finished checkpoint transfer"))
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                    crate::fs_durability::sync_parent(&path)
+                        .map_err(checkpoint_io("sync finished checkpoint removal"))
+                }
+                Ok(_) => Err(RuntimeError::rejected(
+                    "checkpoint_object_invalid",
+                    "checkpoint transfer object is not a regular file",
+                )),
+                Err(error) => Err(checkpoint_io("inspect finished checkpoint transfer")(error)),
+            }
+        })
+        .await
+    }
+
     pub(crate) fn download_path(&self, reference: &str) -> Result<PathBuf> {
         self.ensure_store()?;
         let path = self.object_path(reference)?;
@@ -140,7 +167,6 @@ impl CheckpointStore {
 }
 
 fn restore_archive(archive: &Path, expected: &str, home: &Path, scratch: &Path) -> Result<()> {
-    let inspected = crate::checkpoint_archive::inspect(archive, expected, home)?;
     crate::fs_durability::create_dir_all(scratch)
         .map_err(checkpoint_io("create restore scratch directory"))?;
     let staged = scratch.join(format!(
@@ -149,9 +175,11 @@ fn restore_archive(archive: &Path, expected: &str, home: &Path, scratch: &Path) 
         stamp()
     ));
     let mut cleanup = Cleanup(Some(staged.clone()));
-    crate::checkpoint_archive::extract(archive, &inspected, &staged)?;
+    crate::checkpoint_archive::extract(archive, expected, home, &staged)?;
     crate::checkpoint_copy::replace_home(home, &staged, scratch)?;
-    cleanup.remove_now();
+    cleanup
+        .remove_now()
+        .map_err(checkpoint_io("remove restored staging tree"))?;
     Ok(())
 }
 
@@ -211,16 +239,19 @@ fn stamp() -> u128 {
 struct Cleanup(Option<PathBuf>);
 
 impl Cleanup {
-    fn remove_now(&mut self) {
-        if let Some(path) = self.0.take() {
-            let _ = std::fs::remove_dir_all(path);
-        }
+    fn remove_now(&mut self) -> std::io::Result<()> {
+        let Some(path) = self.0.as_ref() else {
+            return Ok(());
+        };
+        crate::checkpoint_copy::remove_tree(path)?;
+        self.0 = None;
+        Ok(())
     }
 }
 
 impl Drop for Cleanup {
     fn drop(&mut self) {
-        self.remove_now();
+        let _ = self.remove_now();
     }
 }
 
