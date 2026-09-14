@@ -1,0 +1,132 @@
+use axum::{
+    http::StatusCode,
+    response::{IntoResponse, Response},
+    Json,
+};
+use layer2_core::resource_access::{
+    AccessError, MembershipError, ResourceAccessError, ResourceAccessStoreError,
+};
+use layer2_core::sandbox::{
+    agent_io::{CommandAdmissionError, CommandAuthorizationError, CommandLedgerError},
+    AgentReadError,
+};
+use serde_json::json;
+
+pub(super) fn error(
+    status: StatusCode,
+    code: &str,
+    message: &str,
+    param: Option<&str>,
+) -> Response {
+    let mut response = (
+        status,
+        Json(json!({"error": {
+            "type": if status.is_server_error() { "server_error" } else { "invalid_request_error" },
+            "code": code, "message": message, "param": param,
+        }})),
+    )
+        .into_response();
+    if matches!(
+        status,
+        StatusCode::TOO_MANY_REQUESTS | StatusCode::SERVICE_UNAVAILABLE
+    ) {
+        response
+            .headers_mut()
+            .insert("retry-after", "1".parse().unwrap());
+    }
+    response
+}
+pub(super) fn field(field: &str, code: &str, message: &str) -> Response {
+    error(StatusCode::UNPROCESSABLE_ENTITY, code, message, Some(field))
+}
+pub(super) fn missing() -> Response {
+    error(
+        StatusCode::NOT_FOUND,
+        "response_not_found",
+        "The requested response or conversation is unavailable.",
+        None,
+    )
+}
+pub(super) fn unauthenticated() -> Response {
+    error(
+        StatusCode::UNAUTHORIZED,
+        "authentication_required",
+        "A current authenticated request credential is required.",
+        None,
+    )
+}
+pub(super) fn unavailable() -> Response {
+    error(StatusCode::SERVICE_UNAVAILABLE, "response_unavailable", "The response cannot be observed right now. Retry with the same idempotency key or retrieve the admitted response.", None)
+}
+pub(super) fn read(error: AgentReadError) -> Response {
+    tracing::debug!(error = %error, "Responses v2 history read refused");
+    match error {
+        AgentReadError::NotFound => missing(),
+        _ => unavailable(),
+    }
+}
+pub(super) fn admission(value: CommandAdmissionError) -> Response {
+    tracing::debug!(error = %value, "Responses v2 command request refused");
+    match value {
+        CommandAdmissionError::ModelMismatch => field(
+            "model",
+            "model_mismatch",
+            "model must match the pinned Agent Profile model.",
+        ),
+        CommandAdmissionError::Input(_) => field(
+            "input",
+            "invalid_response_input",
+            "The Agent accepts bounded text input; this input is invalid or unsupported.",
+        ),
+        CommandAdmissionError::Authority(CommandAuthorizationError::Revoked) => error(
+            StatusCode::FORBIDDEN,
+            "command_authority_required",
+            "Current credential custody does not authorize durable command execution.",
+            None,
+        ),
+        CommandAdmissionError::Ledger(CommandLedgerError::NotFound)
+        | CommandAdmissionError::Access(ResourceAccessError::Access(AccessError::NotFound))
+        | CommandAdmissionError::Access(ResourceAccessError::Store(
+            ResourceAccessStoreError::NotFound,
+        ))
+        | CommandAdmissionError::Access(ResourceAccessError::Membership(
+            MembershipError::NotMember,
+        )) => missing(),
+        CommandAdmissionError::Access(ResourceAccessError::Access(
+            AccessError::Forbidden | AccessError::UnsafeInteractiveShare,
+        )) => error(
+            StatusCode::FORBIDDEN,
+            "response_forbidden",
+            "This resource does not permit the requested interaction.",
+            None,
+        ),
+        CommandAdmissionError::Ledger(CommandLedgerError::Invalid) => field(
+            "Idempotency-Key",
+            "invalid_idempotency_key",
+            "Idempotency-Key must contain 1 to 256 bytes without control characters.",
+        ),
+        CommandAdmissionError::Ledger(CommandLedgerError::QueueFull) => error(
+            StatusCode::TOO_MANY_REQUESTS,
+            "agent_command_queue_full",
+            "The Agent command queue is full. Retry the same request after capacity is available.",
+            None,
+        ),
+        CommandAdmissionError::Ledger(CommandLedgerError::IdempotencyConflict) => error(
+            StatusCode::CONFLICT,
+            "agent_command_key_conflict",
+            "This idempotency key already identifies different input.",
+            Some("Idempotency-Key"),
+        ),
+        CommandAdmissionError::Ledger(
+            CommandLedgerError::Conflict
+            | CommandLedgerError::NotAdmissible
+            | CommandLedgerError::StaleClaim,
+        ) => error(
+            StatusCode::CONFLICT,
+            "agent_command_admission_conflict",
+            "The Agent cannot admit the request from this observation. Retry using the same key.",
+            None,
+        ),
+        _ => unavailable(),
+    }
+}

@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "openapi_operations": 126,
+  "openapi_operations": 133,
   "operations": {
     "GET /api/v1/organizations": {
       "classification": "openapi",
@@ -1939,6 +1939,88 @@
         "resource_access_unavailable",
         "resource_forbidden",
         "resource_not_found"
+      ]
+    },
+    "GET /api/v2": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/responses/v2/mod.rs# Versioned Responses routes use durable command admission and current history access.",
+      "required_problems": [
+        "authentication_required"
+      ]
+    },
+    "POST /api/v2/responses": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/responses/v2/mod.rs# Versioned Responses routes use durable command admission and current history access.",
+      "required_problems": [
+        "stream_required",
+        "conversation_previous_response_conflict",
+        "model_mismatch",
+        "responses_field_unsupported",
+        "store_required",
+        "invalid_metadata",
+        "invalid_response_input",
+        "invalid_conversation",
+        "agent_command_key_conflict",
+        "authentication_required",
+        "response_not_found"
+      ],
+      "required_protocol_failures": [
+        "agent_command_authority_revoked"
+      ]
+    },
+    "POST /api/v2/agents/{agent_id}/responses": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/responses/v2/mod.rs# Versioned Responses routes use durable command admission and current history access.",
+      "required_problems": [
+        "conversation_alias_mismatch",
+        "authentication_required",
+        "response_not_found"
+      ],
+      "required_protocol_failures": [
+        "agent_command_authority_revoked"
+      ]
+    },
+    "GET /api/v2/responses/{response_id}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/responses/v2/mod.rs# Versioned Responses routes use durable command admission and current history access.",
+      "required_problems": [
+        "authentication_required",
+        "response_not_found",
+        "responses_field_unsupported"
+      ],
+      "required_protocol_failures": [
+        "agent_command_authority_revoked"
+      ]
+    },
+    "GET /api/v2/responses/{response_id}/events": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/responses/v2/mod.rs# Versioned Responses routes use durable command admission and current history access.",
+      "required_problems": [
+        "authentication_required",
+        "response_not_found",
+        "invalid_replay_cursor"
+      ],
+      "required_protocol_failures": [
+        "agent_command_authority_revoked"
+      ]
+    },
+    "GET /api/v2/conversations/{conversation_id}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/responses/v2/mod.rs# Versioned Responses routes use durable command admission and current history access.",
+      "required_problems": [
+        "authentication_required",
+        "response_not_found"
+      ]
+    },
+    "GET /api/v2/conversations/{conversation_id}/items": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/responses/v2/mod.rs# Versioned Responses routes use durable command admission and current history access.",
+      "required_problems": [
+        "authentication_required",
+        "response_not_found",
+        "invalid_items_limit",
+        "invalid_items_order",
+        "invalid_items_cursor"
       ]
     }
   }
