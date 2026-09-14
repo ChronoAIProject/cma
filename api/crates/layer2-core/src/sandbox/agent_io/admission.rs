@@ -6,39 +6,11 @@ use sha2::{Digest, Sha256};
 
 use crate::ids::{AgentCommandId, AgentResponseId};
 use crate::sandbox::{AgentOperationError, AgentOperationKind};
-use crate::{AgentId, LaunchId, SubjectId};
+use crate::AgentId;
 
 use super::{AgentCommand, AGENT_IO_SCHEMA_VERSION};
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
-pub enum AgentOwner {
-    Person { subject: SubjectId },
-    Organization { subject: SubjectId },
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
-pub enum AgentActor {
-    Human {
-        subject: SubjectId,
-    },
-    Api {
-        subject: SubjectId,
-        delegation_id: Option<String>,
-    },
-    Trigger {
-        subject: SubjectId,
-        launch_id: LaunchId,
-    },
-    Channel {
-        bridge_id: String,
-        grant_id: String,
-        platform: String,
-        chat_id: String,
-        sender_id: String,
-    },
-}
+pub use crate::resource_access::{ResourceActor as AgentActor, ResourceOwner as AgentOwner};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
