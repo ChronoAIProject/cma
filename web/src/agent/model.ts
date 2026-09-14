@@ -61,6 +61,8 @@ export interface ConversationState {
   readonly recovery: readonly RecoveryNotice[];
   readonly usage?: AgentUsage;
   readonly activeRunId?: string;
+  /** Recorded turn start, independent of route mounts and stream reconnects. */
+  readonly activeRunStartedAt?: string;
   readonly agentStatus?: AgentStatus;
   readonly agentStatusAt?: string;
   readonly livePausedNotice?: string | null;

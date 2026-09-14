@@ -1,4 +1,5 @@
 import type { ConversationState } from './model';
+import { isPendingTool } from './toolStatus';
 
 const groups = ['messages', 'toolCalls', 'reasoning', 'approvals', 'recovery'] as const;
 
@@ -56,14 +57,25 @@ export function orderEntries(
   for (const key of groups) {
     const known = new Map(previous[key].map((item) => [item.id, item]));
     Object.assign(result, {
-      [key]: next[key].map((item) => ({
-        ...item,
-        sequence:
-          item.sequence ??
-          known.get(item.id)?.sequence ??
-          (item === known.get(item.id) ? undefined : sequence),
-        order: item.order ?? known.get(item.id)?.order ?? ++order,
-      })),
+      [key]: next[key].map((item) => {
+        const previousItem = known.get(item.id);
+        const settled =
+          key === 'toolCalls' &&
+          'status' in item &&
+          previousItem !== undefined &&
+          'status' in previousItem &&
+          isPendingTool(previousItem) &&
+          !isPendingTool(item);
+        return {
+          ...item,
+          sequence: settled
+            ? sequence
+            : (item.sequence ??
+              known.get(item.id)?.sequence ??
+              (item === known.get(item.id) ? undefined : sequence)),
+          order: settled ? ++order : (item.order ?? known.get(item.id)?.order ?? ++order),
+        };
+      }),
     });
   }
   return result;
@@ -169,12 +181,22 @@ export function mergeTranscriptSnapshot(
         }))
         .sort((left, right) => left.order - right.order),
     });
+  const useSnapshotState =
+    snapshot.cursor > previousCursor || (trustEqualState && snapshot.cursor === previousCursor);
+  const activeRunId = useSnapshotState ? snapshot.activeRunId : current.activeRunId;
   return {
     ...result,
-    activeRunId:
-      snapshot.cursor > previousCursor || (trustEqualState && snapshot.cursor === previousCursor)
-        ? snapshot.activeRunId
-        : current.activeRunId,
+    activeRunId,
+    activeRunStartedAt:
+      activeRunId === undefined
+        ? undefined
+        : useSnapshotState
+          ? snapshot.activeRunStartedAt
+          : (current.activeRunStartedAt ??
+            (snapshot.activeRunId === activeRunId ? snapshot.activeRunStartedAt : undefined)),
+    reasoning: result.reasoning.filter(
+      (block) => activeRunId !== undefined && block.runId === activeRunId,
+    ),
     cursor: Math.max(current.cursor, snapshot.cursor),
   };
 }
