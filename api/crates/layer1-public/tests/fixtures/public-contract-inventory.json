@@ -243,7 +243,8 @@
         "agent_not_found",
         "forbidden",
         "instance_service_unavailable",
-        "not_authenticated"
+        "not_authenticated",
+        "organization_authority_unavailable"
       ]
     },
     "GET /api/v1/agents/{id}/events": {
@@ -254,7 +255,8 @@
         "forbidden",
         "instance_service_unavailable",
         "invalid_instance_query",
-        "not_authenticated"
+        "not_authenticated",
+        "organization_authority_unavailable"
       ]
     },
     "GET /api/v1/agents/{id}/resources": {
@@ -266,7 +268,8 @@
         "agent_resources_unsupported",
         "forbidden",
         "instance_service_unavailable",
-        "not_authenticated"
+        "not_authenticated",
+        "organization_authority_unavailable"
       ]
     },
     "GET /api/v1/agents/{id}/source": {
@@ -300,7 +303,8 @@
         "agent_not_found",
         "forbidden",
         "instance_service_unavailable",
-        "not_authenticated"
+        "not_authenticated",
+        "organization_authority_unavailable"
       ]
     },
     "GET /api/v1/agents/{id}/usage": {
@@ -311,7 +315,8 @@
         "agent_not_found",
         "forbidden",
         "instance_service_unavailable",
-        "not_authenticated"
+        "not_authenticated",
+        "organization_authority_unavailable"
       ]
     },
     "GET /api/v1/agui/agents/{id}/sandbox": {

@@ -1,3 +1,5 @@
+#[path = "service_tests/reads.rs"]
+mod reads;
 use std::sync::{
     atomic::{AtomicUsize, Ordering},
     Arc, Mutex,

@@ -149,6 +149,8 @@ pub trait SandboxResourceReader: Send + Sync {
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum AgentReadError {
+    #[error(transparent)]
+    Access(crate::resource_access::ResourceAccessError),
     #[error("forbidden")]
     Forbidden,
     #[error("agent not found")]
@@ -170,6 +172,7 @@ pub enum AgentReadError {
 impl AgentReadError {
     pub const fn code(&self) -> &'static str {
         match self {
+            Self::Access(_) => "resource_access_failed",
             Self::Forbidden => "forbidden",
             Self::NotFound => "agent_not_found",
             Self::InvalidPage => "invalid_page",

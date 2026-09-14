@@ -1,4 +1,7 @@
-use axum::{extract::FromRequestParts, http::request::Parts};
+use axum::{
+    extract::{FromRequestParts, OptionalFromRequestParts},
+    http::request::Parts,
+};
 use layer2_core::resource_access::CallerContext;
 
 use crate::{AuthenticatedCaller, DelegatedCredential};
@@ -16,7 +19,7 @@ impl<S: Send + Sync> FromRequestParts<S> for AuthenticatedResourceCaller {
 
     async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
         let AuthenticatedCaller(caller) =
-            AuthenticatedCaller::from_request_parts(parts, state).await?;
+            <AuthenticatedCaller as FromRequestParts<S>>::from_request_parts(parts, state).await?;
         let context = parts
             .extensions
             .get::<CallerContext>()
@@ -27,5 +30,23 @@ impl<S: Send + Sync> FromRequestParts<S> for AuthenticatedResourceCaller {
             context,
             credential: parts.extensions.get::<DelegatedCredential>().cloned(),
         })
+    }
+}
+
+// Absence supports older service compositions. Invalid present context is an
+// authentication error and must never silently fall back to legacy authority.
+impl<S: Send + Sync> OptionalFromRequestParts<S> for AuthenticatedResourceCaller {
+    type Rejection = crate::auth::NotAuthenticated;
+
+    async fn from_request_parts(
+        parts: &mut Parts,
+        state: &S,
+    ) -> Result<Option<Self>, Self::Rejection> {
+        if parts.extensions.get::<CallerContext>().is_none() {
+            return Ok(None);
+        }
+        <Self as FromRequestParts<S>>::from_request_parts(parts, state)
+            .await
+            .map(Some)
     }
 }

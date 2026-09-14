@@ -21,6 +21,14 @@ pub(crate) struct AgentProjectionServices {
 }
 
 impl AgentProjectionServices {
+    pub(crate) fn with_resource_access(
+        mut self,
+        access: Arc<layer2_core::resource_access::ResourceAccessService>,
+    ) -> Self {
+        self.reads = self.reads.with_resource_access(access);
+        self
+    }
+
     pub(crate) fn with_connections(
         mut self,
         connections: Arc<dyn layer2_core::sandbox::SandboxCredentialPrerequisite>,

@@ -102,7 +102,9 @@ pub use agent_read_types::{
     AgentTranscriptMessage, AgentTranscriptRole, AgentTranscriptTurn, AgentTurnOutcome, AgentUsage,
     AgentUsageReading, SandboxResourceReadError, SandboxResourceReader, SandboxResourceReading,
 };
-pub use agent_reads::AgentReadService;
+pub use agent_reads::{
+    AgentDetailReading, AgentReadService, AgentVisibleLogEntry, SharedAgentDetail,
+};
 pub use agent_runtime::{
     AgentRuntimeConnection, AgentRuntimeError, AgentRuntimeInputError, AgentRuntimeInputSender,
     AgentRuntimePromptResponse, AgentRuntimeRegistry, AgentRuntimeTarget,
