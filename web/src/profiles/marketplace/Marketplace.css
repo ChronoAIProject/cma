@@ -34,6 +34,11 @@
   gap: 16px;
   padding: 16px 0;
 }
+.marketplace-facts[data-compact] > div {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 8px;
+  padding: 12px 0;
+}
 .marketplace-facts dt {
   color: var(--dsw-alias-label-secondary);
   font: var(--dsw-font-s-14);

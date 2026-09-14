@@ -1,0 +1,98 @@
+import { ApiError, TransportError } from '@chronoai/cma-sdk';
+import type { CmaWebClient } from '../api/client';
+import type {
+  AgentDetail,
+  AgentEvent,
+  AgentUsage,
+  SandboxEvent,
+  WorkspaceDetail,
+} from '../api/types';
+import { mergeTranscriptSnapshot } from './chronology';
+import { conversationFromTranscript, foldAgentEvent, type ConversationState } from './conversation';
+
+export interface ReadyAgent {
+  readonly detail: AgentDetail;
+  readonly workspace: WorkspaceDetail;
+  readonly conversation: ConversationState;
+  readonly sandboxEvents?: readonly SandboxEvent[];
+  readonly historyLoading?: boolean;
+  readonly historyUnavailable?: boolean;
+}
+
+function withUsage(conversation: ConversationState, usage: AgentUsage): ConversationState {
+  return { ...conversation, usage };
+}
+
+export function transientReadFailure(error: unknown): boolean {
+  return (error instanceof ApiError && error.isRetryable) || error instanceof TransportError;
+}
+
+export async function loadAgent(
+  client: CmaWebClient,
+  agentId: string,
+  signal: AbortSignal,
+  allowIncompleteHistory = false,
+  onHistoryProgress?: (ready: ReadyAgent) => void,
+): Promise<ReadyAgent & { readonly durableEvents: readonly AgentEvent[] }> {
+  const [detail, transcript, usage] = await Promise.all([
+    client.readAgent(agentId, { signal }),
+    client.readAgentTranscript(agentId, { signal }),
+    client.readAgentUsage(agentId, { signal }),
+  ]);
+  if (detail.id !== agentId || transcript.agentId !== agentId || usage.agentId !== agentId) {
+    throw new Error('Agent projections referred to different resources.');
+  }
+
+  const workspace = await client.readWorkspace(detail.workspace.id, { signal });
+  if (workspace.id !== detail.workspace.id || workspace.sandboxId !== detail.sandbox.id) {
+    throw new Error('Agent projections referred to different resources.');
+  }
+  let conversation = conversationFromTranscript({ ...transcript, turns: [], throughSeq: 0 });
+  const durableEvents: AgentEvent[] = [];
+  let cursor: number | undefined = 0;
+  const seen = new Set<number>([0]);
+  let historyUnavailable = false;
+  const snapshot = conversationFromTranscript(transcript);
+  const projectedConversation = () => {
+    const merged = mergeTranscriptSnapshot(conversation, snapshot, conversation.cursor, true);
+    return usage.throughSeq >= (merged.usage?.throughSeq ?? 0) ? withUsage(merged, usage) : merged;
+  };
+  do {
+    let page;
+    try {
+      page = await client.readAgentEvents(agentId, { cursor, signal });
+    } catch (error) {
+      if (signal.aborted || !allowIncompleteHistory || !transientReadFailure(error)) throw error;
+      historyUnavailable = true;
+      break;
+    }
+    signal.throwIfAborted();
+    durableEvents.push(...page.items);
+    conversation = page.items.reduce(foldAgentEvent, conversation);
+    const nextCursor = page.next;
+    if (nextCursor !== undefined && (nextCursor <= (cursor ?? 0) || seen.has(nextCursor))) {
+      throw new Error('Agent event pagination did not advance.');
+    }
+    cursor = nextCursor;
+    if (cursor !== undefined) {
+      seen.add(cursor);
+      // One authorized event page permits a readable snapshot, not complete-history acceptance.
+      onHistoryProgress?.({
+        detail,
+        workspace,
+        conversation: projectedConversation(),
+        historyLoading: true,
+        historyUnavailable: false,
+      });
+    }
+  } while (cursor !== undefined);
+
+  return {
+    detail,
+    workspace,
+    conversation: projectedConversation(),
+    durableEvents,
+    historyLoading: false,
+    historyUnavailable,
+  };
+}
