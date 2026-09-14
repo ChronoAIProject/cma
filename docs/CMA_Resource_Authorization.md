@@ -153,8 +153,9 @@ actor, membership and policy-fence fields using the existing 422 contract.
 Effective permissions describe policy; lifecycle, runtime support and each
 operation's authorization still apply. Agent REST detail/history/usage readers
 now enforce these permissions. Organization Agent inventory and safe source
-categories and hierarchy views are also composed. Streams, artifacts and
-interactions remain required across the rest of the product.
+categories and hierarchy views are also composed. AG-UI replay/follow applies
+the same shared history policy; other streams, artifacts and interactions
+remain required across the rest of the product.
 
 OpenAPI and repository TypeScript/Rust SDKs expose all six operations. The SDKs
 retain explicit keys/revisions and never automatically resend an uncertain
@@ -294,6 +295,30 @@ SDKs expose `listAccessible` / `list_accessible` with an optional organization
 selector. Legacy personal `list` types remain intact and refuse reduced shared
 responses. This adds discovery only; organization ownership admission and
 organization credential custody remain separate requirements.
+
+## Agent Replay And Live Follow
+
+AG-UI GET events composes `AgentReadService::authorize_event_stream`, an opaque
+nonrenewing authority with no bearer credential, and a safe stream snapshot of
+Agent ID, runtime generation, active turn, durable head and approved history.
+It never projects raw parent configuration. Full log integrity is checked before
+redaction. Withheld entries become empty state patches carrying their durable
+cursors, so reconnect does not get stuck behind private records.
+
+All pending frames pass a current policy/lifetime check at release. Counted
+membership lifetime is monotonic and cannot be extended by reads; every IO phase
+has a 15-second bound shortened by the original evidence deadline. Idle follow
+wakes by that deadline. Snapshot success, dependency failure and timeout pass a
+final policy fence. A changed policy, expired authority or unavailable store ends
+observation. A reconnect obtains fresh exact-credential evidence. Personal owners
+reauthorize against their actual captured caller and current owner kind, while
+retaining exact root/Agent incarnations and ancestry; recipient grant revision
+changes therefore do not break the independent owner stream. No read path sends
+input, changes the Agent, renews a credential or adopts another target.
+
+AG-UI run, Responses creation/streams, companions, files and attachment tickets
+still require their separately documented scopes. Shared event access alone
+cannot authorize any of them.
 
 ## Deferred personal commands
 

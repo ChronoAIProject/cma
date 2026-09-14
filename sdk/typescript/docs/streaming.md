@@ -57,3 +57,12 @@ support, and preserve the user's existing history during recovery.
 The Responses subset accepts one nonempty user text input with `stream: true`
 and an existing `conversation`. Unsupported fields and delete/cancel operations
 produce named problems. See [Reference](reference.md) for exact request shapes.
+
+Agent replay accepts current organization/shared history access. Shared readers
+receive approved events; private sign-in/configuration records become empty
+`STATE_DELTA` patches with durable cursors. Acknowledge these cursors without
+changing application state. Shared connections close on policy changes or at
+the membership deadline (at most 60 seconds). Reconnect with the actual request
+credential and the last fully acknowledged cursor; the new request checks
+current membership again. Stream closure never submits another Agent input.
+Personal-owner replay remains available during organization-provider outages.

@@ -22,6 +22,7 @@ mod share_cases;
 mod shared_agent_cases;
 mod shared_hierarchy_cases;
 mod shared_source_cases;
+mod shared_stream_cases;
 mod snapshot_cases;
 mod source_cases;
 mod state_cases;
@@ -113,6 +114,9 @@ fn paths() -> Vec<PathBuf> {
 }
 
 async fn scenario(name: &str) -> Scenario {
+    if let Some(scenario) = shared_stream_cases::scenario(name).await {
+        return scenario;
+    }
     if let Some(scenario) = sandbox_inventory_cases::scenario(name).await {
         return scenario;
     }

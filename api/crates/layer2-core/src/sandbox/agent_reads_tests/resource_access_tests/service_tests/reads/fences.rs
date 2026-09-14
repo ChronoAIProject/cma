@@ -350,3 +350,75 @@ async fn held_narrow_authorization_cannot_validate_a_sibling_result() {
         .await
         .is_err());
 }
+
+#[tokio::test]
+async fn stream_policy_io_is_bounded_and_cannot_release_after_revocation_or_expiry() {
+    for fault in ["revoked", "expired", "timeout"] {
+        let (store, authority, access, selector) =
+            setup(Reply::Role(OrganizationRole::Viewer)).await;
+        let agent = history(&store).await;
+        let share = access
+            .change_share(
+                &context("owner"),
+                Some("request-credential"),
+                create(&selector, "grant"),
+            )
+            .await
+            .unwrap()
+            .share;
+        let entered = Arc::new(tokio::sync::Notify::new());
+        let resume = Arc::new(tokio::sync::Notify::new());
+        let reads =
+            service(store.clone()).with_resource_access(Arc::new(ResourceAccessService::new(
+                Arc::new(PolicyStore {
+                    inner: store,
+                    replacement: None,
+                    calls: AtomicUsize::new(0),
+                    gate: Some((entered.clone(), resume.clone())),
+                }),
+                authority,
+            )));
+        let held = reads
+            .authorize_event_stream(&context("recipient"), Some("request-credential"), &agent.id)
+            .await
+            .unwrap();
+        let task = tokio::spawn(async move { reads.event_stream_snapshot(&held).await });
+        tokio::time::timeout(Duration::from_secs(2), entered.notified())
+            .await
+            .unwrap();
+        if fault == "revoked" {
+            access
+                .change_share(&context("owner"), None, revoke(&selector, &share))
+                .await
+                .unwrap();
+            resume.notify_one();
+        } else {
+            tokio::time::pause();
+            tokio::time::advance(if fault == "expired" {
+                MAX_MEMBERSHIP_AGE
+            } else {
+                Duration::from_secs(15)
+            })
+            .await;
+        }
+        let result = task.await.unwrap();
+        if fault != "revoked" {
+            tokio::time::resume();
+        }
+        match fault {
+            "revoked" => assert!(matches!(
+                result,
+                Err(AgentReadError::Access(ResourceAccessError::Store(
+                    ResourceAccessStoreError::Conflict
+                )))
+            )),
+            "expired" => assert!(matches!(
+                result,
+                Err(AgentReadError::Access(ResourceAccessError::Access(
+                    AccessError::RevalidationRequired
+                )))
+            )),
+            _ => assert!(matches!(result, Err(AgentReadError::Unavailable(_)))),
+        }
+    }
+}

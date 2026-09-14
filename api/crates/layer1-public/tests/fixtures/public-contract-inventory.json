@@ -381,6 +381,7 @@
         "instance_service_unavailable",
         "invalid_replay_query",
         "not_authenticated",
+        "organization_authority_unavailable",
         "thread_not_found"
       ],
       "required_protocol_failures": [

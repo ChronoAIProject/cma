@@ -1,9 +1,10 @@
 # AG-UI Interface
 
 AG-UI is CMA's primary live conversation interface. `threadId` identifies an
-existing caller-owned Agent, never a Sandbox, Workspace, Launch or a separately
+existing Agent, never a Sandbox, Workspace, Launch or a separately
 created Chat. Provision and manage those resources through [REST](API_REST.md).
-The same authentication and ownership rules apply to streaming requests.
+Replay/follow supports current organization ownership and sharing grants. Run
+admission and the companion routes retain their documented personal scope.
 
 ## Routes
 
@@ -148,6 +149,32 @@ reconnection attempts and callback delivery, resumes only acknowledged durable
 progress, and accepts cancellation via `AbortSignal`. See the SDK reference for
 its exact option names and error classes. The web client uses this same public
 binding, with no private conversation transport.
+
+## Organization And Shared Replay
+
+`GET /api/v1/agui/events` requires current Agent history access. A narrow Agent
+view grant permits only that Agent's events. It supplies no sibling, parent,
+file, terminal or command access. Personal-owner replay keeps its existing frames.
+Other readers receive the approved history projection: sign-in URLs/codes,
+private correlation metadata, native conversation identifiers, configuration,
+available commands and first-message internals are withheld. Runtime failure
+messages are sanitized. A withheld durable record emits `STATE_DELTA` with an
+empty `delta` array, its timestamp and its final cursor; apply no state change
+and acknowledge that cursor normally. Live fragments have no durable cursor and
+must still match the Agent, runtime generation, active turn and committed log.
+
+The server checks current resource policy immediately before releasing each
+buffered frame. Grant changes close the shared connection; a new GET evaluates
+remaining grants. Membership evidence is bound to the exact authenticated
+credential and expires within 60 seconds, including idle time and store IO.
+The connection closes at expiry and stores no renewable request credential.
+Reconnect from the last fully acknowledged durable cursor to obtain fresh
+membership evidence. Removal, unknown roles or provider failures cannot extend
+the old connection. An authorization failure before headers is a typed HTTP
+problem; a failure after streaming starts ends observation without an Agent
+failure event. The TypeScript replay client can reconnect within its configured
+bounds; Rust callers reconnect explicitly. Personal-owner streams remain usable
+when recipient grants change or the organization provider is unavailable.
 
 ## Read-Only Companions
 

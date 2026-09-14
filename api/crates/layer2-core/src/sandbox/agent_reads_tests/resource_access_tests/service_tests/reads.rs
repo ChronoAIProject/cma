@@ -2,6 +2,8 @@ use super::*;
 
 #[path = "reads/fences.rs"]
 mod fences;
+#[path = "reads/stream.rs"]
+mod stream;
 
 async fn history(store: &InMemorySandboxStore) -> Agent {
     let agent = store

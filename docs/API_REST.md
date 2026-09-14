@@ -421,8 +421,9 @@ returns 409. Owner/actor/evidence fields in request bodies are rejected.
 
 Effective-access kinds additionally include `workspace` and `worktree`. Its
 capabilities are a current policy projection, with a bounded revalidation time;
-they are not credentials for later commands. Existing shared history, stream,
-file and interaction boundaries are still being integrated. See
+they are not credentials for later commands. Shared Agent REST history and
+AG-UI replay/follow enforce current policy. File, attachment and interaction
+boundaries are still being integrated. See
 [Resource authorization](CMA_Resource_Authorization.md) for the current limits.
 
 The following rows are derived from the actual OpenAPI export and checked for
