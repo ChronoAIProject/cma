@@ -1,7 +1,11 @@
+use crate::resource_access::{ResourceAccessError, ResourceAccessService};
 use crate::sandbox::{AgentMessageOutcome, AgentOperationError, AgentOperationService};
 use crate::Caller;
 
-use super::{AdmittedAgentCommand, AgentAuthorizationRevision, AgentCommandEnvelope};
+use super::{
+    AdmittedAgentCommand, AgentAuthorizationRevision, AgentCommandEnvelope,
+    CommandExecutionAuthorization,
+};
 
 /// Capture a nonsecret reference to the exact durable personal credential
 /// selected at admission. Bearers without matching custody must be refused.
@@ -44,6 +48,29 @@ pub trait AgentCommandAuthorizer: Send + Sync {
         &self,
         envelope: &AgentCommandEnvelope,
     ) -> Result<Caller, CommandAuthorizationError>;
+
+    /// Verify retained custody and current resource authority for the exact
+    /// command. Shared implementations must select the actor's retained sign-in,
+    /// verify its current credential and recheck exact custody after resource IO.
+    /// The returned proof must not retain a raw credential.
+    async fn authorize_resource_command(
+        &self,
+        access: &ResourceAccessService,
+        envelope: &AgentCommandEnvelope,
+    ) -> Result<CommandExecutionAuthorization, ResourceCommandAuthorizationError> {
+        let caller = self.authorize_command(envelope).await?;
+        Ok(access
+            .authorize_personal_command_execution(&caller, envelope)
+            .await?)
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum ResourceCommandAuthorizationError {
+    #[error(transparent)]
+    Custody(#[from] CommandAuthorizationError),
+    #[error(transparent)]
+    Resource(#[from] ResourceAccessError),
 }
 
 #[derive(Debug, thiserror::Error)]

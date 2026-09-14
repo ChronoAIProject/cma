@@ -35,7 +35,7 @@ pub use admission_service::{
 };
 pub use authorization::{
     AgentCommandAdmissionAuthority, AgentCommandAuthorizer, CommandAuthorizationError,
-    DeferredCommandError, PersonalCommandAdmissionAuthority,
+    DeferredCommandError, PersonalCommandAdmissionAuthority, ResourceCommandAuthorizationError,
 };
 pub use binding::bind_command_dispatch;
 pub use capabilities::AgentInterfaceCapabilities;
