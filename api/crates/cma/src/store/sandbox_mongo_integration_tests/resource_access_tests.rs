@@ -119,6 +119,13 @@ async fn replicas_recover_one_share_receipt_and_preserve_the_live_agent_and_ance
     assert_eq!(after.shares, std::slice::from_ref(&receipt.share));
     assert_eq!(after.fence().policy_revision, 1);
     let reopened = MongoSandboxStore::open(&client, &name).await.unwrap();
+    assert_eq!(
+        reopened
+            .share_mutation_receipt(&receipt.operation_id)
+            .await
+            .unwrap(),
+        Some(receipt.clone())
+    );
     assert_eq!(reopened.mutate_share(first.clone()).await.unwrap(), receipt);
     let mut changed = first;
     changed.change = ShareChange::Create {

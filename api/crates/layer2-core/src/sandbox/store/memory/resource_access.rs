@@ -114,6 +114,22 @@ fn snapshot(
 
 #[async_trait::async_trait]
 impl crate::resource_access::ResourceShareStore for InMemorySandboxStore {
+    async fn share_mutation_receipt(
+        &self,
+        operation_id: &str,
+    ) -> Result<Option<crate::resource_access::ShareMutationReceipt>, ResourceAccessStoreError>
+    {
+        let receipt = self
+            .lock()
+            .resource_share_commands
+            .get(operation_id)
+            .cloned();
+        if let Some(receipt) = &receipt {
+            receipt.validate()?;
+        }
+        Ok(receipt)
+    }
+
     async fn mutate_share(
         &self,
         request: crate::resource_access::ShareMutation,

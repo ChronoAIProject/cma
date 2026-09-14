@@ -2,6 +2,9 @@ use super::*;
 use crate::resource_access::*;
 use sha2::{Digest as _, Sha256};
 
+#[path = "resource_access_tests/service_tests.rs"]
+mod service_tests;
+
 async fn fixture() -> (InMemorySandboxStore, ResourceTarget) {
     let store = InMemorySandboxStore::default();
     insert_hierarchy(
