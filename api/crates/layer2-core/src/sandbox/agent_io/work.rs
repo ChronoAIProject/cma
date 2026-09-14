@@ -61,6 +61,15 @@ pub struct CommandWorkState {
     pub lease: Option<CommandLease>,
     pub dispatch: Option<CommandDispatch>,
     pub failure: Option<CommandFailure>,
+    #[serde(default)]
+    pub observation: Option<CommandObservation>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CommandObservation {
+    pub event_cursor: u64,
+    pub delivery: AgentOperationDelivery,
 }
 
 #[derive(Debug, Clone)]
@@ -180,6 +189,13 @@ impl AdmittedAgentCommand {
 
 pub(super) fn validate_work(record: &AdmittedAgentCommand) -> Result<(), CommandLedgerError> {
     let work = &record.work;
+    if work.observation.as_ref().is_some_and(|observation| {
+        work.dispatch
+            .as_ref()
+            .is_none_or(|dispatch| observation.event_cursor < dispatch.operation_sequence)
+    }) {
+        return Err(CommandLedgerError::Corrupt);
+    }
     if let Some(lease) = &work.lease {
         if lease.claim.fence == 0
             || lease.claim.holder.trim().is_empty()

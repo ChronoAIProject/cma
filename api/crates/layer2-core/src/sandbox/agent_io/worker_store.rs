@@ -7,6 +7,13 @@ use super::{
 
 #[async_trait]
 pub trait AgentCommandWorkerStore: AgentCommandStore {
+    /// Rebuild delivery and response state from the authoritative Agent and its
+    /// complete log in one snapshot. No caller-supplied completion is accepted.
+    async fn reconcile_command(
+        &self,
+        id: &crate::ids::AgentCommandId,
+    ) -> Result<AdmittedAgentCommand, CommandLedgerError>;
+
     /// One command at a time owns this Agent's dispatch lane. A lease takeover
     /// may reclaim an unfenced command, never one already bound to execution.
     async fn claim_next_command(
