@@ -9,12 +9,32 @@ use crate::sandbox::store::InMemorySandboxStore;
 
 #[async_trait]
 impl AgentCommandStore for InMemorySandboxStore {
+    async fn get_response_command(
+        &self,
+        id: &crate::ids::AgentResponseId,
+    ) -> Result<Option<AdmittedAgentCommand>, CommandLedgerError> {
+        let state = self.lock();
+        let mut matches = state
+            .agent_commands
+            .values()
+            .filter(|command| command.receipt.response_id.as_ref() == Some(id));
+        let record = matches.next().cloned();
+        if matches.next().is_some() {
+            return Err(CommandLedgerError::Corrupt);
+        }
+        if let Some(record) = &record {
+            record.validate()?;
+        }
+        Ok(record)
+    }
+
     async fn reserve_command(
         &self,
         request: CommandReservation,
     ) -> Result<CommandReservationResult, CommandLedgerError> {
         request.validate()?;
         let mut state = self.lock();
+        request.require_current_authority()?;
         let key = (request.scope(), request.key_sha256.clone());
         if let Some(id) = state.agent_command_keys.get(&key) {
             let current = state
@@ -32,6 +52,11 @@ impl AgentCommandStore for InMemorySandboxStore {
             .get(&agent.sandbox_id)
             .ok_or(CommandLedgerError::NotFound)?;
         validate_command_reservation(&request, agent, parent)?;
+        crate::sandbox::agent_io::validate_command_reservation_policy(
+            &request,
+            parent,
+            state.resource_policies.get(&parent.id),
+        )?;
         let waiting = state
             .agent_commands
             .values()
@@ -46,6 +71,12 @@ impl AgentCommandStore for InMemorySandboxStore {
         if state
             .agent_commands
             .contains_key(&request.envelope.command_id)
+            || request.response_id.as_ref().is_some_and(|id| {
+                state
+                    .agent_commands
+                    .values()
+                    .any(|command| command.receipt.response_id.as_ref() == Some(id))
+            })
         {
             return Err(CommandLedgerError::Conflict);
         }
