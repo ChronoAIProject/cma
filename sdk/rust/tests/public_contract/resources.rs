@@ -31,6 +31,55 @@ pub async fn dispatch(c: &Context<'_>) -> Result<()> {
         };
     }
     match op {
+        "GET /api/v1/resource-access/{kind}/{id}" => c.check(
+            client
+                .resource_access()
+                .effective(c.param("kind"), c.param("id"))
+                .await,
+        ),
+        "GET /api/v1/resource-shares/{kind}/{id}" => c.check(
+            client
+                .resource_access()
+                .list_shares(c.param("kind"), c.param("id"))
+                .await,
+        ),
+        "GET /api/v1/resource-shares/{kind}/{id}/{share_id}" => c.check(
+            client
+                .resource_access()
+                .read_share(c.param("kind"), c.param("id"), c.param("share_id"))
+                .await,
+        ),
+        "POST /api/v1/resource-shares/{kind}/{id}" => c.check(
+            client
+                .resource_access()
+                .create_share(c.param("kind"), c.param("id"), &c.body()?, &c.key()?)
+                .await,
+        ),
+        "PATCH /api/v1/resource-shares/{kind}/{id}/{share_id}" => c.check(
+            client
+                .resource_access()
+                .update_share(
+                    c.param("kind"),
+                    c.param("id"),
+                    c.param("share_id"),
+                    &c.body()?,
+                    &c.key()?,
+                )
+                .await,
+        ),
+        "DELETE /api/v1/resource-shares/{kind}/{id}/{share_id}" => c.check(
+            client
+                .resource_access()
+                .revoke_share(
+                    c.param("kind"),
+                    c.param("id"),
+                    c.param("share_id"),
+                    c.number("expected_revision")?
+                        .ok_or_else(|| invalid("revision required"))?,
+                    &c.key()?,
+                )
+                .await,
+        ),
         "GET /api/v1/sandboxes" => c.check(
             client
                 .sandboxes()

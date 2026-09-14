@@ -363,6 +363,21 @@ arbitrary shell, database deletion or NyxID administration endpoint here.
 
 ## Operation Inventory
 
+Resource share management uses `kind=agent|sandbox`. The owner can create a
+`view` or `org_roles` grant for a canonical current organization choice, list
+active direct grants, read a revoked grant, change its mode, or revoke it.
+Create bodies contain `target_org_id` and `mode`; update bodies contain `mode`
+and `expected_revision`; revoke requires the `expected_revision` query.
+Every mutation requires an explicit `Idempotency-Key`. Equivalent retries return
+the original receipt even after later revocation; changed input with that key
+returns 409. Owner/actor/evidence fields in request bodies are rejected.
+
+Effective-access kinds additionally include `workspace` and `worktree`. Its
+capabilities are a current policy projection, with a bounded revalidation time;
+they are not credentials for later commands. Existing shared history, stream,
+file and interaction boundaries are still being integrated. See
+[Resource authorization](CMA_Resource_Authorization.md) for the current limits.
+
 The following rows are derived from the actual OpenAPI export and checked for
 complete method/path coverage. Schema names refer to
 `/openapi.json#/components/schemas/<name>`. `key` means the required
@@ -372,6 +387,18 @@ not a guarantee that asynchronous work has finished. The shared error contract
 above applies even when an operation annotates only its principal responses.
 
 <!-- openapi-operations:start -->
+
+### Resource access and share management
+
+| Operation | Body / Key | Query | Response |
+|---|---|---|---|
+| `GET /api/v1/resource-access/{kind}/{id}` | - | - | 200 EffectiveAccessView |
+| `GET /api/v1/resource-shares/{kind}/{id}` | - | - | 200 ActiveShareList |
+| `POST /api/v1/resource-shares/{kind}/{id}` | CreateShareBody; key | - | 200 ShareReceiptView |
+| `GET /api/v1/resource-shares/{kind}/{id}/{share_id}` | - | - | 200 ResourceShareView |
+| `PATCH /api/v1/resource-shares/{kind}/{id}/{share_id}` | UpdateShareBody; key | - | 200 ShareReceiptView |
+| `DELETE /api/v1/resource-shares/{kind}/{id}/{share_id}` | -; key | expected_revision* | 200 ShareReceiptView |
+
 ### Administration
 
 | Operation | Body / Key | Query | Response |

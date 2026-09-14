@@ -58,3 +58,22 @@ sequence, not by turn id, since one turn may contain several owner inputs.
 `agents.terminal(id)` returns the server's named refusal as `ApiError`; no
 attachment ticket or terminal plane exists. Use [Streaming](streaming.md) for
 live conversation traffic and durable replay.
+
+# Organization share management
+
+`client.resourceAccess` provides `effective`, `listShares`, `readShare`,
+`createShare`, `updateShare` and `revokeShare`. Share kinds are `agent` and
+`sandbox`; effective policy also accepts `workspace` and `worktree`.
+Create with `{ target_org_id, mode: 'view' | 'org_roles' }`; update with
+`{ expected_revision, mode }`; revoke with the current revision. Each mutation
+requires explicit command options containing `idempotencyKey`. Retrying the
+same command/key recovers its original receipt after an uncertain response.
+
+The personal owner manages grants. Recipients cannot reshare. Lists contain
+active direct grants; individual reads retain revoked records. Unsafe narrow
+interactive grants are rejected unless current isolation or an explicit
+compatible whole-Sandbox grant is proved. Choose `view` for ordinary Agent
+sharing. Effective capabilities describe current policy and expire at their
+revalidation deadline; later operations recheck authorization. Generalized shared
+history, streaming, artifacts and interaction remain under development, so these
+management methods do not yet enable recipient use across existing interfaces.

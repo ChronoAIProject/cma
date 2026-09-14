@@ -7,8 +7,10 @@ mod context;
 mod identity;
 mod lineage;
 mod policy;
+mod service;
 mod share;
 mod share_command;
+mod sharing_service;
 mod store;
 
 pub use authority::{OrganizationAuthority, OrganizationChoice};
@@ -19,11 +21,13 @@ pub use context::{
 pub use identity::{ResourceActor, ResourceOwner};
 pub use lineage::ResourceLineage;
 pub use policy::{AccessDecision, AccessError, AccessPurpose, ResourceCapability, ResourceScope};
+pub use service::{AuthorizedResource, ResourceAccessError, ResourceAccessService};
 pub use share::{ResourceSelector, ResourceShare, ShareMode, SharingIsolation};
 pub use share_command::{
     plan_share_mutation, ResourceShareStore, ShareChange, ShareMutation, ShareMutationPlan,
     ShareMutationReceipt, MAX_ACTIVE_RESOURCE_SHARES,
 };
+pub use sharing_service::ShareCommand;
 pub use store::{
     OrganizationOwnershipEvidence, ResourceAccessSnapshot, ResourceAccessStore,
     ResourceAccessStoreError, ResourcePolicyFence, ResourcePolicyRecord, ResourceTarget,
