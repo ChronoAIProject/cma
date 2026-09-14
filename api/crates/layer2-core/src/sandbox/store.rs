@@ -387,6 +387,9 @@ pub struct InMemorySandboxStore {
 
 #[derive(Clone, Default)]
 struct State {
+    resource_policies: HashMap<SandboxId, crate::resource_access::ResourcePolicyRecord>,
+    resource_shares: HashMap<String, crate::resource_access::ShareMutationReceipt>,
+    resource_share_commands: HashMap<String, crate::resource_access::ShareMutationReceipt>,
     agent_commands: HashMap<crate::ids::AgentCommandId, super::agent_io::AdmittedAgentCommand>,
     agent_command_keys: HashMap<(String, String), crate::ids::AgentCommandId>,
     agent_command_orders: HashMap<AgentId, super::agent_io::CommandLane>,

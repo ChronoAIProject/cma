@@ -57,6 +57,7 @@ mod profile_index_tests;
 mod profile_operator_mongo_integration_tests;
 mod profile_references;
 mod profiles;
+mod resource_access;
 mod sandbox_admission;
 #[cfg(test)]
 mod sandbox_admission_mongo_integration_tests;

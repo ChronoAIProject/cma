@@ -1,3 +1,6 @@
+#[path = "agent_reads_tests/resource_access_tests.rs"]
+mod resource_access_tests;
+
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
