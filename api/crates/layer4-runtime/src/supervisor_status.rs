@@ -1,0 +1,57 @@
+use layer3_adapter::{RuntimeStatus, RuntimeStatusRequest};
+
+use super::{Phase, Supervisor};
+use crate::failure::{Result, RuntimeError};
+
+impl Supervisor {
+    pub(super) async fn runtime_status(
+        &self,
+        request: RuntimeStatusRequest,
+    ) -> Result<RuntimeStatus> {
+        request.validate().map_err(|_| invalid())?;
+        if request.sandbox_id != self.config.sandbox_id
+            || request.generation != self.config.generation
+            || self.config.home_identity.as_ref() != Some(&request.home_identity)
+        {
+            return Err(invalid());
+        }
+        let phase = self.phase.read().await;
+        let home = crate::persistent_home::verify(&self.config)?.ok_or_else(invalid)?;
+        let installation = crate::install_state::inspect(&self.config)?;
+        let durable_ready = home.installation_ready(installation.as_ref())?;
+        let installation_ready = matches!(*phase, Phase::Installed | Phase::Credentialed);
+        if installation_ready && !durable_ready {
+            return Err(RuntimeError::unavailable(
+                "runtime_status_inconsistent",
+                "runtime readiness is not supported by durable home state",
+            ));
+        }
+        let status = RuntimeStatus {
+            sandbox_id: request.sandbox_id.clone(),
+            generation: request.generation,
+            home_identity: request.home_identity.clone(),
+            boot_id: self.boot_id.clone(),
+            installation_ready,
+            credential_ready: matches!(*phase, Phase::Credentialed | Phase::RestoreCredentialed),
+            restore_pending: matches!(*phase, Phase::RestorePending | Phase::RestoreCredentialed),
+            agent_processes: self
+                .agents
+                .read()
+                .await
+                .values()
+                .filter(|agent| !agent.bridge.is_ended())
+                .count()
+                .try_into()
+                .map_err(|_| invalid())?,
+        };
+        status.validate_for(&request).map_err(|_| invalid())?;
+        Ok(status)
+    }
+}
+
+fn invalid() -> RuntimeError {
+    RuntimeError::rejected(
+        "runtime_status_identity_invalid",
+        "runtime status identity does not match this persistent runtime",
+    )
+}

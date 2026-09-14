@@ -1,14 +1,8 @@
-import { Suspense, lazy } from 'react';
-import { Landing } from './landing/Landing';
+import { Console } from './Console';
 import { useAuth } from './auth/context';
-import { PublicTriggerPreview } from './trigger/PublicTriggerPreview';
-import { routePath, useAppRouter } from './routing/routes';
-/*
- * Mount order matters — `docs/Web_Style.md` §2. The palette sheets must be
- * parsed before anything reads an alias off them, and `tokens.css` first
- * because the others reference the font stacks and the easing curve it
- * declares.
- */
+import { BrandLoading } from './landing/LandingCharacter';
+import { SignInLanding } from './landing/SignInLanding';
+import { useAppRouter } from './routing/routes';
 import './styles/tokens.css';
 import './styles/design-platform.css';
 import './styles/effects-typography.css';
@@ -17,96 +11,110 @@ import './styles/shiki.css';
 import './styles/base.css';
 import './styles/components.css';
 import './AppError.css';
+import { lazy, Suspense, useState } from 'react';
+import { Presence } from './ui/Presence';
+import { useCmaClient, useCreationClient, usePublicClient } from './api/context';
+import type { CreationRequest } from './create/CreationFlow';
+import { ReferenceProvider } from './profiles/ReferenceLink';
 
-/*
- * The console pulls in xterm.js, roughly 400KB before compression. A visitor
- * who never signs in should never download it, so it is split out and fetched
- * only once there is an identity. The landing page is the first impression and
- * is frequently the whole visit.
- */
-const Console = lazy(async () => {
-  const module = await import('./Console');
-  return { default: module.Console };
-});
+const CreationFlow = lazy(() =>
+  import('./create/CreationFlow').then((module) => ({ default: module.CreationFlow })),
+);
+const PublicJourney = lazy(() =>
+  import('./public/PublicJourney').then((module) => ({ default: module.PublicJourney })),
+);
 
-/**
- * One page frame, two states.
- *
- * Unauthenticated it is a terminal that introduces itself and takes a prompt;
- * authenticated it is the same frame carrying the three views docs/Web_Style.md
- * §1 admits — sessions, operations and Developer.
- *
- * A deliberately small workflow router owns the canonical CMA Trigger deep
- * links. Account-menu utility views remain transient and do not create more
- * routes. A utility view is where somebody is right now, so it does not
- * persist; an arrangement is a setting about how a list is drawn, and that
- * does.
- */
 export function App() {
   const { state, signIn, signOut } = useAuth();
   const router = useAppRouter();
+  const client = useCmaClient();
+  const creation = useCreationClient();
+  const publicClient = usePublicClient();
+  const [request, setRequest] = useState<{
+    readonly owner: string;
+    readonly value: CreationRequest;
+  }>();
+  const [hierarchyRevision, setHierarchyRevision] = useState(0);
 
-  switch (state.status) {
-    case 'checking':
-      // Deliberately empty rather than a spinner: the check resolves against a
-      // cookie in a few milliseconds, and a flash of loading chrome is worse
-      // than a frame of nothing.
-      return <div className="app-checking" aria-busy="true" />;
-
-    case 'authenticated':
-      return (
-        // Web_Style.md forbids a full-page spinner; the console arrives from
-        // cache or a same-origin chunk, so an empty frame is the honest wait.
-        <Suspense fallback={<div className="app-checking" aria-busy="true" />}>
-          <Console
-            user={state.user}
-            route={router.route}
-            onNavigate={router.navigate}
-            onSignOut={() => void signOut()}
-          />
+  if (
+    (router.route.kind === 'public_trigger' || router.route.kind === 'launch') &&
+    publicClient !== undefined &&
+    state.status !== 'error'
+  ) {
+    return (
+      <ReferenceProvider
+        key={state.status === 'authenticated' ? state.user.id : 'anonymous'}
+        onNavigate={router.navigate}
+      >
+        <Suspense fallback={<BrandLoading />}>
+          <PublicJourney client={publicClient} route={router.route} onNavigate={router.navigate} />
         </Suspense>
-      );
-
-    case 'error':
-      return (
-        <main className="app-error" role="alert">
-          <p className="app-error__what">{state.message}</p>
-          <p className="app-error__next">Reload the page to try again.</p>
-        </main>
-      );
-
-    case 'anonymous': {
-      if (router.route.kind === 'trigger') {
-        const returnTo = routePath(router.route);
-        return (
-          <PublicTriggerPreview
-            publicId={router.route.publicId}
-            authError={router.route.authError}
-            onSignIn={() => void signIn(returnTo)}
-          />
-        );
-      }
-      const returnTo =
-        router.route.kind === 'trigger_recovery' ||
-        router.route.kind === 'launch' ||
-        router.route.kind === 'contribute' ||
-        router.route.kind === 'session'
-          ? routePath(router.route)
-          : undefined;
-      return (
-        /*
-         * No frame at all. §9's frame is three columns of session, and a
-         * visitor has no sessions — wrapping the landing in an empty sidebar
-         * and an empty details column would draw two panels that say nothing
-         * and cannot be opened.
-         */
-        <Landing returnTo={returnTo} />
-      );
-    }
-
-    default: {
-      const exhaustive: never = state;
-      return exhaustive;
-    }
+      </ReferenceProvider>
+    );
   }
+
+  if (state.status === 'checking') {
+    return <BrandLoading label="Signing you in" />;
+  }
+  if (state.status === 'error') {
+    return (
+      <main className="app-error" role="alert">
+        <p className="app-error__what">{state.message}</p>
+        <p className="app-error__next">Reload the page to try again.</p>
+      </main>
+    );
+  }
+  if (state.status === 'anonymous') {
+    return <SignInLanding onSignIn={() => signIn(window.location.pathname)} />;
+  }
+  return (
+    <ReferenceProvider key={state.user.id} onNavigate={router.navigate}>
+      <Console
+        key={state.user.id}
+        user={state.user}
+        route={router.route}
+        onNavigate={router.navigate}
+        hierarchyRevision={hierarchyRevision}
+        onCreate={
+          creation === undefined
+            ? undefined
+            : (value) => setRequest({ owner: state.user.id, value })
+        }
+        onUseProfile={
+          creation === undefined
+            ? undefined
+            : (selection) =>
+                setRequest({ owner: state.user.id, value: { kind: 'profile_use', selection } })
+        }
+        onSignOut={() => {
+          setRequest(undefined);
+          void signOut();
+        }}
+      />
+      <Presence>
+        {request === undefined ||
+        request.owner !== state.user.id ||
+        creation === undefined ||
+        state.user.visitor ||
+        !state.user.capabilities.includes('use_own_sandboxes') ? null : (
+          <Suspense fallback={null}>
+            <CreationFlow
+              key={state.user.id}
+              request={request.value}
+              client={client}
+              catalog={creation}
+              canCreateSandbox={state.user.capabilities.includes('create_sandbox')}
+              onClose={() => setRequest(undefined)}
+              onChanged={() => setHierarchyRevision((value) => value + 1)}
+              onCreated={(route) => {
+                setRequest(undefined);
+                setHierarchyRevision((value) => value + 1);
+                router.navigate(route);
+              }}
+            />
+          </Suspense>
+        )}
+      </Presence>
+    </ReferenceProvider>
+  );
 }

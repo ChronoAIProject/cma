@@ -1,7 +1,7 @@
 //! Authenticated encryption for durable authentication secrets.
 
 use base64::{engine::general_purpose::STANDARD, Engine as _};
-use layer2_core::store::StoreError;
+use layer2_core::StoreError;
 use mongodb::bson::{spec::BinarySubtype, Binary};
 use ring::{
     aead::{self, Aad, LessSafeKey, Nonce, UnboundKey},
@@ -59,7 +59,7 @@ impl std::fmt::Debug for AuthEncryptionKey {
 
 /// One encrypted field as it is stored in BSON.
 #[derive(Clone, Serialize, Deserialize)]
-pub(super) struct CipherEnvelope {
+pub(crate) struct CipherEnvelope {
     version: i32,
     nonce: Binary,
     ciphertext: Binary,
@@ -76,14 +76,14 @@ impl std::fmt::Debug for CipherEnvelope {
 }
 
 /// AES-256-GCM bound to this deployment's durable record namespace.
-pub(super) struct AuthCipher {
+pub(crate) struct AuthCipher {
     key: LessSafeKey,
     random: SystemRandom,
     deployment: String,
 }
 
 impl AuthCipher {
-    pub(super) fn new(
+    pub(crate) fn new(
         deployment: impl Into<String>,
         key: &AuthEncryptionKey,
     ) -> Result<Self, StoreError> {
@@ -97,7 +97,7 @@ impl AuthCipher {
         })
     }
 
-    pub(super) fn seal(
+    pub(crate) fn seal(
         &self,
         record_kind: &str,
         record_id: &[u8],
@@ -125,7 +125,7 @@ impl AuthCipher {
         })
     }
 
-    pub(super) fn open(
+    pub(crate) fn open(
         &self,
         record_kind: &str,
         record_id: &[u8],

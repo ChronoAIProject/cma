@@ -1,0 +1,203 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "agui-replay-agent-deleted",
+      "operation": "GET /api/v1/agui/events",
+      "scenario": "experience_deleted",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agui/events?thread_id=agt_contract&starting_after=11&follow=false",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "no-cache, no-store",
+          "content-type": "text/event-stream",
+          "x-accel-buffering": "no"
+        },
+        "body": [
+          {
+            "id": "12",
+            "data": {
+              "type": "RUN_ERROR",
+              "threadId": "agt_contract",
+              "runId": "3",
+              "code": "agent_deleted",
+              "message": "The Agent was deleted.",
+              "timestamp": "2026-09-05T00:00:00Z"
+            }
+          }
+        ],
+        "bodyKind": "sse"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agui-replay-agent-stopped-owner",
+      "operation": "GET /api/v1/agui/events",
+      "scenario": "experience_stopped_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agui/events?thread_id=agt_contract&starting_after=10&follow=false",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "no-cache, no-store",
+          "content-type": "text/event-stream",
+          "x-accel-buffering": "no"
+        },
+        "body": [
+          {
+            "id": "11",
+            "data": {
+              "type": "RUN_ERROR",
+              "threadId": "agt_contract",
+              "runId": "3",
+              "code": "owner",
+              "message": "The Agent stopped.",
+              "timestamp": "2026-09-05T00:00:00Z"
+            }
+          }
+        ],
+        "bodyKind": "sse"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agui-replay-agent-stopped-operator",
+      "operation": "GET /api/v1/agui/events",
+      "scenario": "experience_stopped_operator",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agui/events?thread_id=agt_contract&starting_after=10&follow=false",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "no-cache, no-store",
+          "content-type": "text/event-stream",
+          "x-accel-buffering": "no"
+        },
+        "body": [
+          {
+            "id": "11",
+            "data": {
+              "type": "RUN_ERROR",
+              "threadId": "agt_contract",
+              "runId": "3",
+              "code": "operator",
+              "message": "The Agent stopped.",
+              "timestamp": "2026-09-05T00:00:00Z"
+            }
+          }
+        ],
+        "bodyKind": "sse"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agui-replay-agent-stopped-runtime-lost",
+      "operation": "GET /api/v1/agui/events",
+      "scenario": "experience_stopped_runtime_lost",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agui/events?thread_id=agt_contract&starting_after=10&follow=false",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "no-cache, no-store",
+          "content-type": "text/event-stream",
+          "x-accel-buffering": "no"
+        },
+        "body": [
+          {
+            "id": "11",
+            "data": {
+              "type": "RUN_ERROR",
+              "threadId": "agt_contract",
+              "runId": "3",
+              "code": "runtime_lost",
+              "message": "The Agent stopped.",
+              "timestamp": "2026-09-05T00:00:00Z"
+            }
+          }
+        ],
+        "bodyKind": "sse"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agui-replay-agent-stopped-sandbox-retired",
+      "operation": "GET /api/v1/agui/events",
+      "scenario": "experience_stopped_sandbox_retired",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agui/events?thread_id=agt_contract&starting_after=10&follow=false",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "no-cache, no-store",
+          "content-type": "text/event-stream",
+          "x-accel-buffering": "no"
+        },
+        "body": [
+          {
+            "id": "11",
+            "data": {
+              "type": "RUN_ERROR",
+              "threadId": "agt_contract",
+              "runId": "3",
+              "code": "sandbox_retired",
+              "message": "The Agent stopped.",
+              "timestamp": "2026-09-05T00:00:00Z"
+            }
+          }
+        ],
+        "bodyKind": "sse"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agui-replay-agent-stopped-failed",
+      "operation": "GET /api/v1/agui/events",
+      "scenario": "experience_stopped_failed",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agui/events?thread_id=agt_contract&starting_after=10&follow=false",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "no-cache, no-store",
+          "content-type": "text/event-stream",
+          "x-accel-buffering": "no"
+        },
+        "body": [
+          {
+            "id": "11",
+            "data": {
+              "type": "RUN_ERROR",
+              "threadId": "agt_contract",
+              "runId": "3",
+              "code": "failed",
+              "message": "The Agent stopped.",
+              "timestamp": "2026-09-05T00:00:00Z"
+            }
+          }
+        ],
+        "bodyKind": "sse"
+      },
+      "captures": {}
+    }
+  ]
+}

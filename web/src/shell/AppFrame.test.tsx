@@ -117,7 +117,7 @@ function renderFrame(detailsOpen = true) {
   return render(
     <AppFrame
       detailsOpen={detailsOpen}
-      sidebar={<p>sessions</p>}
+      sidebar={<p>navigation</p>}
       center={<p>surface</p>}
       details={<p>details</p>}
       overlay={<p>banner</p>}
@@ -228,13 +228,13 @@ describe('the page frame', () => {
     renderFrame();
     measure(900);
 
-    const toggle = screen.getByRole('button', { name: /show sessions/i });
+    const toggle = screen.getByRole('button', { name: /show navigation/i });
     act(() => {
       toggle.click();
     });
 
     expect(tracks().startsWith(`${SIDEBAR_DEFAULT}px`)).toBe(true);
-    expect(screen.getByRole('button', { name: /hide sessions/i })).toHaveAttribute(
+    expect(screen.getByRole('button', { name: /hide navigation/i })).toHaveAttribute(
       'aria-expanded',
       'true',
     );
@@ -248,7 +248,7 @@ describe('the page frame', () => {
           <>
             <p>{collapsed ? 'sidebar rail' : 'sidebar panel'}</p>
             <button type="button" onClick={onToggle}>
-              {collapsed ? 'Show sessions' : 'Hide sessions'}
+              {collapsed ? 'Show navigation' : 'Hide navigation'}
             </button>
           </>
         )}
@@ -258,13 +258,13 @@ describe('the page frame', () => {
     measure(390);
 
     expect(screen.getByText('sidebar rail')).toBeInTheDocument();
-    expect(screen.getAllByRole('button', { name: 'Show sessions' })).toHaveLength(1);
+    expect(screen.getAllByRole('button', { name: 'Show navigation' })).toHaveLength(1);
     act(() => {
-      screen.getByRole('button', { name: 'Show sessions' }).click();
+      screen.getByRole('button', { name: 'Show navigation' }).click();
     });
 
     expect(screen.getByText('sidebar panel')).toBeInTheDocument();
-    expect(screen.getAllByRole('button', { name: 'Hide sessions' })).toHaveLength(1);
+    expect(screen.getAllByRole('button', { name: 'Hide navigation' })).toHaveLength(1);
     expect(document.querySelector('.frame')).toHaveAttribute('data-sidebar-overlay');
 
     const css = readFileSync(resolve(process.cwd(), 'src/shell/AppFrame.css'), 'utf8');
@@ -278,7 +278,7 @@ describe('the page frame', () => {
     // nothing collapsed, it would be a second control for the same thing.
     renderFrame();
     measure(1600);
-    expect(screen.queryByRole('button', { name: /sessions/i })).toBeNull();
+    expect(screen.queryByRole('button', { name: /navigation/i })).toBeNull();
   });
 
   it('gives each resizable border one named handle', () => {
@@ -287,7 +287,7 @@ describe('the page frame', () => {
     measure(1600);
     const handles = screen.getAllByRole('separator');
     expect(handles.map((handle) => handle.getAttribute('aria-label'))).toEqual([
-      'Resize the session list',
+      'Resize navigation',
       'Resize the details column',
     ]);
   });
@@ -308,7 +308,7 @@ describe('the page frame', () => {
     renderFrame();
     measure(1600);
 
-    const sidebar = screen.getByRole('separator', { name: 'Resize the session list' });
+    const sidebar = screen.getByRole('separator', { name: 'Resize navigation' });
     dragAcrossFrames(sidebar, [SIDEBAR_DEFAULT, 300, 320, 340]);
     expect(tracks().startsWith('340px ')).toBe(true);
 

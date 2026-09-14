@@ -1,0 +1,1468 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "launch-errors-setup-review",
+      "operation": "POST /api/v1/triggers/public/{public_id}/launches",
+      "scenario": "launch_review",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/triggers/public/$public_id/launches",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "launch-review-create"
+        },
+        "body": {
+          "start_if_ready": false
+        }
+      },
+      "response": {
+        "status": 201,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "id": "lch_contract",
+          "trigger_id": "trg_contract",
+          "revision_digest": "99c37e06273ae4a6c3fe64593254086bb5f938db25cad7c6ed09910406b776c9",
+          "public_id": "public_contract",
+          "state": "draft",
+          "steps": [
+            {
+              "key": "signing_in",
+              "status": "completed",
+              "safe_detail": "",
+              "started_at": "2026-09-07T00:00:00Z",
+              "completed_at": "2026-09-07T00:00:00Z"
+            },
+            {
+              "key": "checking_requirements",
+              "status": "blocked",
+              "safe_detail": "Connect required accounts to continue",
+              "started_at": "2026-09-07T00:00:00Z"
+            },
+            {
+              "key": "sandbox",
+              "status": "pending",
+              "safe_detail": ""
+            },
+            {
+              "key": "workspace",
+              "status": "pending",
+              "safe_detail": ""
+            },
+            {
+              "key": "agent",
+              "status": "pending",
+              "safe_detail": ""
+            },
+            {
+              "key": "first_message",
+              "status": "pending",
+              "safe_detail": ""
+            },
+            {
+              "key": "ready",
+              "status": "pending",
+              "safe_detail": ""
+            }
+          ],
+          "resolution": {
+            "sandbox": {
+              "state": "pending"
+            },
+            "workspace": {
+              "state": "pending"
+            },
+            "agent": {
+              "state": "pending"
+            },
+            "choice_required": false
+          },
+          "requirements": {
+            "services": [
+              {
+                "service": "github",
+                "state": "missing"
+              },
+              {
+                "service": "chrono-llm-public",
+                "state": "missing"
+              }
+            ],
+            "checked_at": "2026-09-07T00:00:00Z"
+          },
+          "review": {
+            "needs": [
+              {
+                "type": "connection",
+                "service": "github"
+              },
+              {
+                "type": "connection",
+                "service": "chrono-llm-public"
+              }
+            ],
+            "can_start_now": false
+          },
+          "trust": {
+            "version": 1,
+            "disclosures": []
+          },
+          "first_message": "queued",
+          "confirmations": [],
+          "event_head": 1,
+          "created_at": "2026-09-07T00:00:00Z",
+          "updated_at": "2026-09-07T00:00:00Z",
+          "revision": 1
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "launch_id": "/id",
+        "launch_review_create_created_at": "/created_at",
+        "launch_review_create_requirements_checked_at": "/requirements/checked_at",
+        "launch_review_create_steps_0_completed_at": "/steps/0/completed_at",
+        "launch_review_create_steps_0_started_at": "/steps/0/started_at",
+        "launch_review_create_steps_1_started_at": "/steps/1/started_at",
+        "launch_review_create_updated_at": "/updated_at",
+        "public_id": "/public_id",
+        "trigger_id": "/trigger_id"
+      }
+    },
+    {
+      "id": "launch-errors-setup-ready",
+      "operation": "POST /api/v1/triggers/public/{public_id}/launches",
+      "scenario": "launch_ready",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/triggers/public/$public_id/launches",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "launch-ready-create"
+        },
+        "body": {
+          "start_if_ready": false
+        }
+      },
+      "response": {
+        "status": 201,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "id": "lch_contract",
+          "trigger_id": "trg_contract",
+          "revision_digest": "99c37e06273ae4a6c3fe64593254086bb5f938db25cad7c6ed09910406b776c9",
+          "public_id": "public_contract",
+          "state": "draft",
+          "steps": [
+            {
+              "key": "signing_in",
+              "status": "completed",
+              "safe_detail": "",
+              "started_at": "2026-09-07T00:00:00Z",
+              "completed_at": "2026-09-07T00:00:00Z"
+            },
+            {
+              "key": "checking_requirements",
+              "status": "completed",
+              "safe_detail": "",
+              "started_at": "2026-09-07T00:00:00Z",
+              "completed_at": "2026-09-07T00:00:00Z"
+            },
+            {
+              "key": "sandbox",
+              "status": "pending",
+              "safe_detail": ""
+            },
+            {
+              "key": "workspace",
+              "status": "pending",
+              "safe_detail": ""
+            },
+            {
+              "key": "agent",
+              "status": "pending",
+              "safe_detail": ""
+            },
+            {
+              "key": "first_message",
+              "status": "pending",
+              "safe_detail": ""
+            },
+            {
+              "key": "ready",
+              "status": "pending",
+              "safe_detail": ""
+            }
+          ],
+          "resolution": {
+            "sandbox": {
+              "state": "pending"
+            },
+            "workspace": {
+              "state": "pending"
+            },
+            "agent": {
+              "state": "pending"
+            },
+            "choice_required": false
+          },
+          "requirements": {
+            "services": [
+              {
+                "service": "github",
+                "state": "satisfied"
+              },
+              {
+                "service": "chrono-llm-public",
+                "state": "satisfied"
+              }
+            ],
+            "checked_at": "2026-09-07T00:00:00Z"
+          },
+          "review": {
+            "needs": [],
+            "can_start_now": true
+          },
+          "trust": {
+            "version": 1,
+            "disclosures": []
+          },
+          "first_message": "queued",
+          "confirmations": [],
+          "event_head": 1,
+          "created_at": "2026-09-07T00:00:00Z",
+          "updated_at": "2026-09-07T00:00:00Z",
+          "revision": 1
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "launch_id": "/id",
+        "launch_ready_create_created_at": "/created_at",
+        "launch_ready_create_requirements_checked_at": "/requirements/checked_at",
+        "launch_ready_create_steps_0_completed_at": "/steps/0/completed_at",
+        "launch_ready_create_steps_0_started_at": "/steps/0/started_at",
+        "launch_ready_create_steps_1_completed_at": "/steps/1/completed_at",
+        "launch_ready_create_steps_1_started_at": "/steps/1/started_at",
+        "launch_ready_create_updated_at": "/updated_at",
+        "public_id": "/public_id",
+        "trigger_id": "/trigger_id"
+      }
+    },
+    {
+      "id": "launch-error-create-missing-key",
+      "operation": "POST /api/v1/triggers/public/{public_id}/launches",
+      "scenario": "launch_review",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/triggers/public/$public_id/launches",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "start_if_ready": false
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/missing-idempotency-key",
+          "title": "missing idempotency key",
+          "status": 400,
+          "detail": "This operation requires an Idempotency-Key header.",
+          "code": "missing_idempotency_key"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "launch-error-create-invalid-key",
+      "operation": "POST /api/v1/triggers/public/{public_id}/launches",
+      "scenario": "launch_review",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/triggers/public/$public_id/launches",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "bad key"
+        },
+        "body": {
+          "start_if_ready": false
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-idempotency-key",
+          "title": "invalid idempotency key",
+          "status": 400,
+          "detail": "Idempotency-Key must contain between 1 and 255 visible ASCII bytes.",
+          "code": "invalid_idempotency_key"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "launch-error-create-invalid-body",
+      "operation": "POST /api/v1/triggers/public/{public_id}/launches",
+      "scenario": "launch_review",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/triggers/public/$public_id/launches",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "launch-error-create-invalid-body"
+        },
+        "body": "invalid-object"
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid_json",
+          "title": "invalid_json",
+          "status": 422,
+          "detail": "Failed to deserialize the JSON body into the target type: invalid type: string \"invalid-object\", expected struct CreateLaunchRequest at line 1 column 16",
+          "code": "invalid_json"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "launch-error-create-missing-media-type",
+      "operation": "POST /api/v1/triggers/public/{public_id}/launches",
+      "scenario": "launch_review",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/triggers/public/$public_id/launches",
+        "headers": {
+          "idempotency-key": "launch-error-create-missing-media-type"
+        },
+        "body": {
+          "start_if_ready": false
+        }
+      },
+      "response": {
+        "status": 415,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/json_content_type_required",
+          "title": "json_content_type_required",
+          "status": 415,
+          "detail": "The request body must use an application/json content type.",
+          "code": "json_content_type_required"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "launch-error-create-malformed-body",
+      "operation": "POST /api/v1/triggers/public/{public_id}/launches",
+      "scenario": "launch_review",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/triggers/public/$public_id/launches",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "launch-error-create-malformed-body"
+        },
+        "rawBody": "{"
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid_json",
+          "title": "invalid_json",
+          "status": 400,
+          "detail": "Failed to parse the request body as JSON: EOF while parsing an object at line 1 column 1",
+          "code": "invalid_json"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "launch-error-start-missing-key",
+      "operation": "POST /api/v1/launches/{id}/start",
+      "scenario": "launch_review",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/launches/$launch_id/start",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {}
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/missing-idempotency-key",
+          "title": "missing idempotency key",
+          "status": 400,
+          "detail": "This operation requires an Idempotency-Key header.",
+          "code": "missing_idempotency_key"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "launch-error-start-invalid-key",
+      "operation": "POST /api/v1/launches/{id}/start",
+      "scenario": "launch_review",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/launches/$launch_id/start",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "bad key"
+        },
+        "body": {}
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-idempotency-key",
+          "title": "invalid idempotency key",
+          "status": 400,
+          "detail": "Idempotency-Key must contain between 1 and 255 visible ASCII bytes.",
+          "code": "invalid_idempotency_key"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "launch-error-start-invalid-body",
+      "operation": "POST /api/v1/launches/{id}/start",
+      "scenario": "launch_review",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/launches/$launch_id/start",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "launch-error-start-invalid-body"
+        },
+        "body": "invalid-object"
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid_json",
+          "title": "invalid_json",
+          "status": 422,
+          "detail": "Failed to deserialize the JSON body into the target type: invalid type: string \"invalid-object\", expected struct StartLaunchRequest at line 1 column 16",
+          "code": "invalid_json"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "launch-error-start-missing-media-type",
+      "operation": "POST /api/v1/launches/{id}/start",
+      "scenario": "launch_review",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/launches/$launch_id/start",
+        "headers": {
+          "idempotency-key": "launch-error-start-missing-media-type"
+        },
+        "body": {}
+      },
+      "response": {
+        "status": 415,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/json_content_type_required",
+          "title": "json_content_type_required",
+          "status": 415,
+          "detail": "The request body must use an application/json content type.",
+          "code": "json_content_type_required"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "launch-error-start-malformed-body",
+      "operation": "POST /api/v1/launches/{id}/start",
+      "scenario": "launch_review",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/launches/$launch_id/start",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "launch-error-start-malformed-body"
+        },
+        "rawBody": "{"
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid_json",
+          "title": "invalid_json",
+          "status": 400,
+          "detail": "Failed to parse the request body as JSON: EOF while parsing an object at line 1 column 1",
+          "code": "invalid_json"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "launch-error-cancel-missing-key",
+      "operation": "POST /api/v1/launches/{id}/cancel",
+      "scenario": "launch_review",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/launches/$launch_id/cancel",
+        "headers": {}
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/missing-idempotency-key",
+          "title": "missing idempotency key",
+          "status": 400,
+          "detail": "This operation requires an Idempotency-Key header.",
+          "code": "missing_idempotency_key"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "launch-error-cancel-invalid-key",
+      "operation": "POST /api/v1/launches/{id}/cancel",
+      "scenario": "launch_review",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/launches/$launch_id/cancel",
+        "headers": {
+          "idempotency-key": "bad key"
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-idempotency-key",
+          "title": "invalid idempotency key",
+          "status": 400,
+          "detail": "Idempotency-Key must contain between 1 and 255 visible ASCII bytes.",
+          "code": "invalid_idempotency_key"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "launch-error-connection-create-missing-key",
+      "operation": "POST /api/v1/service-connections",
+      "scenario": "launch_review",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/service-connections",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "service_id": "github",
+          "launch_id": "$launch_id",
+          "intent_id": "contract-intent"
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/missing-idempotency-key",
+          "title": "missing idempotency key",
+          "status": 400,
+          "detail": "This operation requires an Idempotency-Key header.",
+          "code": "missing_idempotency_key"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "launch-error-connection-create-invalid-key",
+      "operation": "POST /api/v1/service-connections",
+      "scenario": "launch_review",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/service-connections",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "bad key"
+        },
+        "body": {
+          "service_id": "github",
+          "launch_id": "$launch_id",
+          "intent_id": "contract-intent"
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-idempotency-key",
+          "title": "invalid idempotency key",
+          "status": 400,
+          "detail": "Idempotency-Key must contain between 1 and 255 visible ASCII bytes.",
+          "code": "invalid_idempotency_key"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "launch-error-connection-create-invalid-body",
+      "operation": "POST /api/v1/service-connections",
+      "scenario": "launch_review",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/service-connections",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "launch-error-connection-create-invalid-body"
+        },
+        "body": "invalid-object"
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid_json",
+          "title": "invalid_json",
+          "status": 422,
+          "detail": "Failed to deserialize the JSON body into the target type: invalid type: string \"invalid-object\", expected struct CreateServiceConnectionRequest at line 1 column 16",
+          "code": "invalid_json"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "launch-error-connection-create-missing-media-type",
+      "operation": "POST /api/v1/service-connections",
+      "scenario": "launch_review",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/service-connections",
+        "headers": {
+          "idempotency-key": "launch-error-connection-create-missing-media-type"
+        },
+        "body": {
+          "service_id": "github",
+          "launch_id": "$launch_id",
+          "intent_id": "contract-intent"
+        }
+      },
+      "response": {
+        "status": 415,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/json_content_type_required",
+          "title": "json_content_type_required",
+          "status": 415,
+          "detail": "The request body must use an application/json content type.",
+          "code": "json_content_type_required"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "launch-error-connection-create-malformed-body",
+      "operation": "POST /api/v1/service-connections",
+      "scenario": "launch_review",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/service-connections",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "launch-error-connection-create-malformed-body"
+        },
+        "rawBody": "{"
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid_json",
+          "title": "invalid_json",
+          "status": 400,
+          "detail": "Failed to parse the request body as JSON: EOF while parsing an object at line 1 column 1",
+          "code": "invalid_json"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "launch-error-create-missing-trigger",
+      "operation": "POST /api/v1/triggers/public/{public_id}/launches",
+      "scenario": "launch_review",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/triggers/public/public_missing/launches",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "launch-error-create-missing-trigger"
+        },
+        "body": {
+          "start_if_ready": false
+        }
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/trigger-not-found",
+          "title": "trigger not found",
+          "status": 404,
+          "detail": "No Trigger matches this request.",
+          "code": "trigger_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "launch-error-create-reused-key",
+      "operation": "POST /api/v1/triggers/public/{public_id}/launches",
+      "scenario": "launch_review",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/triggers/public/$public_id/launches",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "launch-review-create"
+        },
+        "body": {
+          "start_if_ready": true
+        }
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/idempotency-key-reused",
+          "title": "idempotency key reused",
+          "status": 422,
+          "detail": "This Idempotency-Key already names a different request.",
+          "code": "idempotency_key_reused"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "launch-error-create-invalid-origin",
+      "operation": "POST /api/v1/triggers/public/{public_id}/launches",
+      "scenario": "launch_review",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/triggers/public/$public_id/launches",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "launch-error-create-invalid-origin"
+        },
+        "body": {
+          "start_if_ready": false,
+          "referrer_origin": "https://source.example/path"
+        }
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-launch-request",
+          "title": "invalid launch request",
+          "status": 422,
+          "detail": "The Launch request does not satisfy its validation contract.",
+          "code": "invalid_launch_request"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "launch-error-create-missing-start-choice",
+      "operation": "POST /api/v1/triggers/public/{public_id}/launches",
+      "scenario": "launch_review",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/triggers/public/$public_id/launches",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "launch-error-create-missing-start-choice"
+        },
+        "body": {}
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid_json",
+          "title": "invalid_json",
+          "status": 422,
+          "detail": "Failed to deserialize the JSON body into the target type: missing field `start_if_ready` at line 1 column 2",
+          "code": "invalid_json"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "launch-error-create-invalid-placement",
+      "operation": "POST /api/v1/triggers/public/{public_id}/launches",
+      "scenario": "launch_review",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/triggers/public/$public_id/launches",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "launch-error-create-invalid-placement"
+        },
+        "body": {
+          "start_if_ready": false,
+          "placement_id": "plc_missing"
+        }
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-launch-request",
+          "title": "invalid launch request",
+          "status": 422,
+          "detail": "The Launch request does not satisfy its validation contract.",
+          "code": "invalid_launch_request"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "launch-error-start-invalid-digest",
+      "operation": "POST /api/v1/launches/{id}/start",
+      "scenario": "launch_ready",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/launches/$launch_id/start",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "launch-error-start-invalid-digest"
+        },
+        "body": {
+          "trust_confirmed_digest": "invalid"
+        }
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-launch-request",
+          "title": "invalid launch request",
+          "status": 422,
+          "detail": "The Launch request does not satisfy its validation contract.",
+          "code": "invalid_launch_request"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "launch-error-start-trust-mismatch",
+      "operation": "POST /api/v1/launches/{id}/start",
+      "scenario": "launch_ready",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/launches/$launch_id/start",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "launch-error-start-trust-mismatch"
+        },
+        "body": {
+          "trust_confirmed_digest": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/trust-confirmation-mismatch",
+          "title": "trust confirmation mismatch",
+          "status": 409,
+          "detail": "The trust confirmation does not match the reviewed commands.",
+          "code": "trust_confirmation_mismatch"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "launch-error-start-invalid-acknowledgement",
+      "operation": "POST /api/v1/launches/{id}/start",
+      "scenario": "launch_ready",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/launches/$launch_id/start",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "launch-error-start-invalid-acknowledgement"
+        },
+        "body": {
+          "acknowledgements": [
+            ""
+          ]
+        }
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-launch-request",
+          "title": "invalid launch request",
+          "status": 422,
+          "detail": "The Launch request does not satisfy its validation contract.",
+          "code": "invalid_launch_request"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "launch-error-list-invalid-state",
+      "operation": "GET /api/v1/launches",
+      "scenario": "trigger_forbidden",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/launches?state=invalid",
+        "headers": {}
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-launch-cursor",
+          "title": "invalid launch cursor",
+          "status": 400,
+          "detail": "The query parameters are not valid for this resource.",
+          "code": "invalid_launch_cursor"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "launch-error-list-malformed-limit",
+      "operation": "GET /api/v1/launches",
+      "scenario": "trigger_forbidden",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/launches?limit=-1",
+        "headers": {}
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-launch-cursor",
+          "title": "invalid launch cursor",
+          "status": 400,
+          "detail": "The query parameters are not valid for this resource.",
+          "code": "invalid_launch_cursor"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "launch-error-list-invalid-cursor",
+      "operation": "GET /api/v1/launches",
+      "scenario": "trigger_forbidden",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/launches?cursor=not-a-cursor",
+        "headers": {}
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-launch-cursor",
+          "title": "invalid launch cursor",
+          "status": 400,
+          "detail": "The Launch cursor is invalid for this query.",
+          "code": "invalid_launch_cursor"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "launch-error-events-malformed-after",
+      "operation": "GET /api/v1/launches/{id}/events",
+      "scenario": "launch_review",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/launches/$launch_id/events?after=-1",
+        "headers": {}
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-launch-event-query",
+          "title": "invalid launch event query",
+          "status": 400,
+          "detail": "The query parameters are not valid for this resource.",
+          "code": "invalid_launch_event_query"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "launch-error-stream-invalid-query",
+      "operation": "GET /api/v1/agui/launches/{id}/events",
+      "scenario": "launch_review",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agui/launches/$launch_id/events?follow=false&unknown=true",
+        "headers": {}
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-launch-event-query",
+          "title": "invalid launch event query",
+          "status": 400,
+          "detail": "The Launch event stream parameters are not valid.",
+          "code": "invalid_launch_event_query"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "launch-error-stream-malformed-follow",
+      "operation": "GET /api/v1/agui/launches/{id}/events",
+      "scenario": "launch_review",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agui/launches/$launch_id/events?follow=invalid",
+        "headers": {}
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-launch-event-query",
+          "title": "invalid launch event query",
+          "status": 400,
+          "detail": "The Launch event stream parameters are not valid.",
+          "code": "invalid_launch_event_query"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "launch-error-stream-invalid-limit",
+      "operation": "GET /api/v1/agui/launches/{id}/events",
+      "scenario": "launch_review",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agui/launches/$launch_id/events?follow=false&limit=0",
+        "headers": {}
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-launch-event-query",
+          "title": "invalid launch event query",
+          "status": 400,
+          "detail": "The Launch event stream parameters are not valid.",
+          "code": "invalid_launch_event_query"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "launch-error-connection-invalid-service",
+      "operation": "POST /api/v1/service-connections",
+      "scenario": "launch_review",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/service-connections",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "launch-error-connection-invalid-service"
+        },
+        "body": {
+          "service_id": "unrequested",
+          "launch_id": "$launch_id",
+          "intent_id": "contract-intent"
+        }
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-service-connection",
+          "title": "invalid service connection",
+          "status": 422,
+          "detail": "The service connection request is invalid.",
+          "code": "invalid_service_connection"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "launch-error-connection-empty-intent",
+      "operation": "POST /api/v1/service-connections",
+      "scenario": "launch_review",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/service-connections",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "launch-error-connection-empty-intent"
+        },
+        "body": {
+          "service_id": "github",
+          "launch_id": "$launch_id",
+          "intent_id": ""
+        }
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-service-connection",
+          "title": "invalid service connection",
+          "status": 422,
+          "detail": "The service connection request is invalid.",
+          "code": "invalid_service_connection"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "launch-errors-setup-connection",
+      "operation": "POST /api/v1/service-connections",
+      "scenario": "launch_review",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/service-connections",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "connection-create"
+        },
+        "body": {
+          "service_id": "github",
+          "launch_id": "$launch_id",
+          "intent_id": "contract-intent"
+        }
+      },
+      "response": {
+        "status": 201,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "handoff_id": "sch_contract",
+          "hosted_url": "https://identity.example/connect/contract-intent",
+          "expires_at": "2026-09-07T00:15:00Z"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "connection_create_expires_at": "/expires_at",
+        "handoff_id": "/handoff_id"
+      }
+    },
+    {
+      "id": "launch-error-connection-intent-reused",
+      "operation": "POST /api/v1/service-connections",
+      "scenario": "launch_review",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/service-connections",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "launch-error-connection-intent-reused"
+        },
+        "body": {
+          "service_id": "unrequested",
+          "launch_id": "$launch_id",
+          "intent_id": "contract-intent"
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/service-connection-intent-reused",
+          "title": "service connection intent reused",
+          "status": 409,
+          "detail": "This intent is already bound to a different service connection.",
+          "code": "service_connection_intent_reused"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "launch-errors-cancel",
+      "operation": "POST /api/v1/launches/{id}/cancel",
+      "scenario": "launch_review",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/launches/$launch_id/cancel",
+        "headers": {
+          "idempotency-key": "launch-review-cancel"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "id": "lch_contract",
+          "trigger_id": "trg_contract",
+          "revision_digest": "99c37e06273ae4a6c3fe64593254086bb5f938db25cad7c6ed09910406b776c9",
+          "public_id": "public_contract",
+          "state": "cancelled",
+          "steps": [
+            {
+              "key": "signing_in",
+              "status": "completed",
+              "safe_detail": "",
+              "started_at": "2026-09-07T00:00:00Z",
+              "completed_at": "2026-09-07T00:00:00Z"
+            },
+            {
+              "key": "checking_requirements",
+              "status": "blocked",
+              "safe_detail": "Connect required accounts to continue",
+              "started_at": "2026-09-07T00:00:00Z"
+            },
+            {
+              "key": "sandbox",
+              "status": "pending",
+              "safe_detail": ""
+            },
+            {
+              "key": "workspace",
+              "status": "pending",
+              "safe_detail": ""
+            },
+            {
+              "key": "agent",
+              "status": "pending",
+              "safe_detail": ""
+            },
+            {
+              "key": "first_message",
+              "status": "pending",
+              "safe_detail": ""
+            },
+            {
+              "key": "ready",
+              "status": "pending",
+              "safe_detail": ""
+            }
+          ],
+          "resolution": {
+            "sandbox": {
+              "state": "pending"
+            },
+            "workspace": {
+              "state": "pending"
+            },
+            "agent": {
+              "state": "pending"
+            },
+            "choice_required": false
+          },
+          "requirements": {
+            "services": [
+              {
+                "service": "github",
+                "state": "missing"
+              },
+              {
+                "service": "chrono-llm-public",
+                "state": "missing"
+              }
+            ],
+            "checked_at": "2026-09-07T00:00:00Z"
+          },
+          "review": {
+            "needs": [
+              {
+                "type": "connection",
+                "service": "github"
+              },
+              {
+                "type": "connection",
+                "service": "chrono-llm-public"
+              }
+            ],
+            "can_start_now": false
+          },
+          "trust": {
+            "version": 1,
+            "disclosures": []
+          },
+          "first_message": "queued",
+          "confirmations": [],
+          "event_head": 3,
+          "created_at": "2026-09-07T00:00:00Z",
+          "updated_at": "2026-09-07T00:00:00Z",
+          "revision": 2
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "launch_review_cancel_created_at": "/created_at",
+        "launch_review_cancel_requirements_checked_at": "/requirements/checked_at",
+        "launch_review_cancel_steps_0_completed_at": "/steps/0/completed_at",
+        "launch_review_cancel_steps_0_started_at": "/steps/0/started_at",
+        "launch_review_cancel_steps_1_started_at": "/steps/1/started_at",
+        "launch_review_cancel_updated_at": "/updated_at"
+      }
+    },
+    {
+      "id": "launch-error-connection-terminal-launch",
+      "operation": "POST /api/v1/service-connections",
+      "scenario": "launch_review",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/service-connections",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "launch-error-connection-terminal-launch"
+        },
+        "body": {
+          "service_id": "github",
+          "launch_id": "$launch_id",
+          "intent_id": "terminal-intent"
+        }
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/service-connection-not-found",
+          "title": "service connection not found",
+          "status": 404,
+          "detail": "No service connection matches this request.",
+          "code": "service_connection_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    }
+  ]
+}

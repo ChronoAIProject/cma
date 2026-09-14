@@ -3,14 +3,20 @@ import { createRoot } from 'react-dom/client';
 import { App } from './App';
 import { AuthContextProvider } from './auth/context';
 import { createNyxidAuthProvider } from './auth/nyxid';
-import { startBrowserCompatibilityMeasurement } from './observability/browserCompatibility';
 import { startAppearance } from './theme/appearance';
+import { createClient } from '@chronoai/cma-sdk';
+import { CmaClientProvider } from './api/context';
+import { createRestWebClient } from './api/rest';
+import { createProfileViewsClient } from './api/profiles';
+import { createCreationClient } from './api/creation';
+import { createOperatorClient } from './operator/client';
+import { createTriggerPublisherClient } from './trigger-publisher/client';
+import { createPublicClient } from './public/client';
 
 /*
  * Before the first render, so the page never paints in the wrong theme and
  * corrects itself a frame later.
  */
-startBrowserCompatibilityMeasurement();
 startAppearance();
 
 const container = document.getElementById('root');
@@ -24,11 +30,27 @@ if (!container) {
  * for tests.
  */
 const authProvider = createNyxidAuthProvider();
+const sdk = createClient();
+const client = createRestWebClient(sdk);
+const profiles = createProfileViewsClient(sdk);
+const creation = createCreationClient(sdk);
+const operator = createOperatorClient(sdk);
+const publisher = createTriggerPublisherClient(sdk);
+const publicClient = createPublicClient(sdk);
 
 createRoot(container).render(
   <StrictMode>
     <AuthContextProvider provider={authProvider}>
-      <App />
+      <CmaClientProvider
+        client={client}
+        profiles={profiles}
+        creation={creation}
+        operator={operator}
+        publisher={publisher}
+        publicClient={publicClient}
+      >
+        <App />
+      </CmaClientProvider>
     </AuthContextProvider>
   </StrictMode>,
 );

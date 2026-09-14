@@ -1,0 +1,147 @@
+use std::future::Future;
+use std::time::{Duration, SystemTime};
+
+use layer2_core::sandbox::store::SandboxStoreError;
+use layer2_core::sandbox::{
+    Agent, AgentStatus, AgentWorkStep, FirstMessageRecord, Sandbox, SandboxStatus,
+};
+use layer2_core::seconds_from_rfc3339;
+
+use super::support::RequestEvidence;
+use super::AgentWorker;
+
+const MAX_PUBLICATION_ATTEMPTS: usize = 8;
+
+impl AgentWorker {
+    pub(super) async fn startup_progress(
+        &self,
+        agent: Agent,
+        next_step: AgentWorkStep,
+        now: SystemTime,
+        evidence: RequestEvidence,
+        identity: Option<(String, u64)>,
+        sandbox: &Sandbox,
+    ) -> Result<(), SandboxStoreError> {
+        self.retry_startup_publication(agent, sandbox, now, |mut current, at| {
+            let evidence = evidence.clone();
+            let identity = identity.clone();
+            async move {
+                if let Some((conversation_id, generation)) = identity {
+                    current.conversation.conversation_id = Some(conversation_id);
+                    current.conversation.runtime_generation = Some(generation);
+                }
+                self.progress(
+                    current,
+                    next_step,
+                    at,
+                    Some(evidence),
+                    Vec::new(),
+                    None,
+                    None,
+                )
+                .await
+            }
+        })
+        .await
+    }
+
+    // Only durable publication belongs in this closure, never runtime side effects.
+    pub(in crate::sandbox) async fn retry_startup_publication<F, Fut, T>(
+        &self,
+        mut agent: Agent,
+        sandbox: &Sandbox,
+        now: SystemTime,
+        mut publish: F,
+    ) -> Result<T, SandboxStoreError>
+    where
+        F: FnMut(Agent, SystemTime) -> Fut,
+        Fut: Future<Output = Result<T, SandboxStoreError>>,
+    {
+        let started = tokio::time::Instant::now();
+        for attempt in 0..MAX_PUBLICATION_ATTEMPTS {
+            let at = now + started.elapsed();
+            if !holds_startup_authority(&agent, &self.config.holder, at) {
+                return Err(SandboxStoreError::Conflict);
+            }
+            match publish(agent.clone(), at).await {
+                Err(SandboxStoreError::Conflict) if attempt + 1 < MAX_PUBLICATION_ATTEMPTS => {
+                    let current = self
+                        .dependencies
+                        .store
+                        .get_agent(&agent.id)
+                        .await?
+                        .ok_or(SandboxStoreError::NotFound)?;
+                    if !only_startup_metadata_changed(&agent, &current) {
+                        return Err(SandboxStoreError::Conflict);
+                    }
+                    let parent = self
+                        .dependencies
+                        .store
+                        .get_sandbox(&agent.sandbox_id)
+                        .await?
+                        .ok_or(SandboxStoreError::NotFound)?;
+                    if parent.id != sandbox.id
+                        || parent.owner != agent.owner
+                        || parent.status != SandboxStatus::Active
+                        || !parent.credential.delivered
+                        || parent.lifecycle.checkpoint_capture.is_some()
+                        || parent.runtime.is_none()
+                        || parent.runtime != sandbox.runtime
+                    {
+                        return Err(SandboxStoreError::Conflict);
+                    }
+                    agent = current;
+                }
+                result => return result,
+            }
+        }
+        Err(SandboxStoreError::Conflict)
+    }
+}
+
+fn holds_startup_authority(agent: &Agent, holder: &str, now: SystemTime) -> bool {
+    agent.status == AgentStatus::Starting
+        && agent.requested_stop_reason.is_none()
+        && agent.deleted_at.is_none()
+        && matches!(
+            agent.work.step,
+            AgentWorkStep::AddWorktree
+                | AgentWorkStep::MaterializeHome
+                | AgentWorkStep::OpenConversation
+                | AgentWorkStep::PublishReady
+        )
+        && agent.work.lease.as_ref().is_some_and(|lease| {
+            lease.holder == holder
+                && lease.fence > 0
+                && seconds_from_rfc3339(&lease.expires_at).is_some_and(|seconds| {
+                    now < SystemTime::UNIX_EPOCH + Duration::from_secs(seconds)
+                })
+        })
+}
+
+fn only_startup_metadata_changed(previous: &Agent, current: &Agent) -> bool {
+    if current.revision <= previous.revision
+        || current.conversation.last_seq < previous.conversation.last_seq
+    {
+        return false;
+    }
+    if previous.conversation.first_message != current.conversation.first_message {
+        let Some(first) = current.conversation.first_message.as_ref() else {
+            return false;
+        };
+        if previous.conversation.first_message.is_some()
+            || FirstMessageRecord::new(&previous.creation_key, &first.text, &first.queued_at)
+                .as_ref()
+                != Ok(first)
+        {
+            return false;
+        }
+    }
+    let mut normalized = current.clone();
+    normalized.revision = previous.revision;
+    normalized.updated_at = previous.updated_at.clone();
+    normalized.title = previous.title.clone();
+    normalized.conversation.last_seq = previous.conversation.last_seq;
+    normalized.conversation.first_message = previous.conversation.first_message.clone();
+    normalized == *previous
+}

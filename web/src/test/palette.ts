@@ -4,12 +4,8 @@ import { resolve } from 'node:path';
 /**
  * Reading the design tokens the way the browser does — for tests only.
  *
- * Two suites need to answer "what colour is this token, in this theme": the
- * token layer's own guards and the terminal palette, which duplicates the
- * values as literals because xterm renders to canvas and cannot resolve
- * `var()`. They had a copy of this logic each, and the copies disagreed in a
- * way that silently narrowed one of them to a single block — so it lives here
- * once instead.
+ * Token tests need to answer "what colour is this token, in this theme" without
+ * a browser. This reader keeps that source parsing in one place.
  */
 
 /** Read from disk: vitest does not run Vite's CSS pipeline, so `?raw` is empty. */

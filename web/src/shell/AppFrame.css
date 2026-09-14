@@ -73,7 +73,20 @@
  * otherwise paint a 1px seam down the right of the page.
  */
 .frame[data-details-collapsed] .frame__details {
+  visibility: hidden;
   border-left: none;
+}
+
+.frame[data-details-overlay]:not([data-sidebar-overlay]) .frame__details {
+  position: absolute;
+  grid-column: 1 / -1;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 10;
+  width: min(520px, calc(100% - 56px));
+  visibility: visible;
+  box-shadow: var(--dsw-shadow-lv3);
 }
 
 .frame__handle {

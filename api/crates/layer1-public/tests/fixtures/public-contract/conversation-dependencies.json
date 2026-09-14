@@ -1,0 +1,155 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "dependency-conversation-terminal",
+      "operation": "GET /api/v1/agents/{id}/terminal",
+      "scenario": "conversation_dependency_unavailable",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_contract/terminal",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/instance-service-unavailable",
+          "title": "instance service unavailable",
+          "status": 503,
+          "detail": "An instance dependency could not complete this request.",
+          "code": "instance_service_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "dependency-conversation-sandbox",
+      "operation": "GET /api/v1/agui/agents/{id}/sandbox",
+      "scenario": "conversation_dependency_unavailable",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agui/agents/agt_contract/sandbox",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/instance-service-unavailable",
+          "title": "instance service unavailable",
+          "status": 503,
+          "detail": "An instance dependency could not complete this request.",
+          "code": "instance_service_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "dependency-conversation-events",
+      "operation": "GET /api/v1/agui/events",
+      "scenario": "conversation_dependency_unavailable",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agui/events?thread_id=agt_contract&follow=false",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/instance-service-unavailable",
+          "title": "instance service unavailable",
+          "status": 503,
+          "detail": "An instance dependency could not complete this request.",
+          "code": "instance_service_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "dependency-conversation-conversation",
+      "operation": "GET /api/v1/conversations/{id}",
+      "scenario": "conversation_dependency_unavailable",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/conversations/agt_contract",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/instance-service-unavailable",
+          "title": "instance service unavailable",
+          "status": 503,
+          "detail": "An instance dependency could not complete this request.",
+          "code": "instance_service_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "dependency-conversation-items",
+      "operation": "GET /api/v1/conversations/{id}/items",
+      "scenario": "conversation_dependency_unavailable",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/conversations/agt_contract/items",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/instance-service-unavailable",
+          "title": "instance service unavailable",
+          "status": 503,
+          "detail": "An instance dependency could not complete this request.",
+          "code": "instance_service_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "dependency-conversation-response",
+      "operation": "GET /api/v1/responses/{response_id}",
+      "scenario": "conversation_dependency_unavailable",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/responses/resp_agt_contract_3",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/instance-service-unavailable",
+          "title": "instance service unavailable",
+          "status": 503,
+          "detail": "An instance dependency could not complete this request.",
+          "code": "instance_service_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    }
+  ]
+}
