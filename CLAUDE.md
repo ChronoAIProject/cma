@@ -350,10 +350,16 @@ does not need to repair a deployment by clicking a revive control.
 
 ### Runtime rotation and checkpoints
 
-Runtime image drift causes recorded rotation. A writer fence first holds the
-whole Sandbox home, including Workspaces, Worktrees, Agent homes and transcripts,
-for a consistent checkpoint. Restore installs that snapshot into a replacement
-runtime; the controller resumes the Agents and records the resulting version.
+Changing the configured runtime image never rotates existing live Sandboxes.
+Reconciliation adopts each retained runtime using its recorded image; new
+allocations use the configured image. API/web upgrade and rollback must preserve
+the existing runtime, native conversation, admitted turns, approvals and dirty
+work without user repair. An incompatible feature stays disabled until retained
+runtime coexistence and uninterrupted interaction are proved. Previously admitted
+rotation operations remain readable and recoverable; image drift cannot admit
+new ones. For an independently admitted pause or recovery, a writer fence holds
+the whole Sandbox home for a consistent checkpoint, and restore preserves that
+snapshot and the retained conversation identity.
 Only the latest completed checkpoint is retained. A replacement must commit before
 older completed objects are pruned; legacy two-generation records are accepted until
 their next successful publication. Periodic capture defaults to thirty minutes and

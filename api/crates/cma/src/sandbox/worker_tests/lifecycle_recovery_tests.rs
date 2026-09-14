@@ -213,7 +213,6 @@ pub(super) async fn restarted_worker(harness: &Harness, now: SystemTime) -> Arc<
         adapter.clone(),
         Arc::new(harness.policy.clone()),
         "test".into(),
-        image(),
     )
     .initialize(now)
     .await
