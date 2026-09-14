@@ -6,7 +6,7 @@ use crate::sandbox::agent_io::*;
 use crate::sandbox::store::{AgentStore, SandboxMutationGuard};
 use crate::sandbox::*;
 
-fn reservation(agent: &Agent, parent: &Sandbox, key: &str) -> CommandReservation {
+pub(super) fn reservation(agent: &Agent, parent: &Sandbox, key: &str) -> CommandReservation {
     let command = AgentCommand::message("Inspect this.");
     CommandReservation {
         envelope: AgentCommandEnvelope {
@@ -50,7 +50,7 @@ async fn fixture() -> (Arc<InMemorySandboxStore>, Agent, Sandbox) {
     (store, agent, parent)
 }
 
-fn record(result: CommandReservationResult) -> AdmittedAgentCommand {
+pub(super) fn record(result: CommandReservationResult) -> AdmittedAgentCommand {
     match result {
         CommandReservationResult::Created(value) | CommandReservationResult::Existing(value) => {
             *value

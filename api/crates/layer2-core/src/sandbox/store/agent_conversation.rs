@@ -8,6 +8,8 @@ use super::{SandboxMutationGuard, SandboxStoreError};
 /// One generation-fenced, all-or-nothing conversation mutation.
 #[derive(Debug, Clone)]
 pub struct AgentConversationMutation {
+    /// Ledger claim bound to the new runtime operation in this same transaction.
+    pub command_claim: Option<crate::sandbox::agent_io::CommandClaim>,
     /// Exact parent authority for newly admitted input; absent for runtime evidence.
     pub admission_guard: Option<SandboxMutationGuard>,
     pub expected_agent_revision: u64,

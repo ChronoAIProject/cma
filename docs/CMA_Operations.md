@@ -84,8 +84,24 @@ queue order commit in one Mongo transaction, with unique authority/key and
 Agent/order indexes. Resource observations are fenced in the same transaction.
 There is no TTL on command keys. An unknown commit returns an unavailable
 outcome; only a retry with the same key may resolve that reservation. No runtime
-input is sent by the reservation adapter. Worker dispatch and recovery remain
-separate rollout prerequisites before the public adapters can admit this work.
+input is sent by the reservation adapter.
+
+Command workers claim one per-Agent dispatch lane with a bounded 1–60 second
+lease and a monotonic fence. Renewal, release and refusal require the exact live
+claim. Normal messages retain their order while controls retain the active turn
+observed at admission. In one transaction, the conversation store binds the
+claimed command to its exact input, metadata, operation, turn and runtime
+generation, and commits the Agent and semantic logs. Runtime input follows only
+a confirmed commit. Ambiguous-commit verification includes the exact command
+binding, since identical controls can otherwise have identical Agent/log facts.
+A bound command cannot be claimed for dispatch again, including after lease
+expiry or release. Existing queued messages and Trigger first-message delivery
+retain priority. The preliminary execution service accepts matching personal
+callers only; a channel envelope does not establish a personal caller.
+
+Background execution, fresh bridge/organization authorization, authoritative
+completion recovery and public admission wiring remain rollout prerequisites.
+The ledger alone does not make busy queues or durable Responses available.
 
 The disposable cluster bootstrap is
 `.github/tools/cma-bridge-continuity/bootstrap.py`. Install its pinned Python

@@ -233,6 +233,7 @@ pub(super) async fn seed_waiting_approval(store: &InMemorySandboxStore) -> Agent
     waiting.conversation.last_seq = 2;
     store
         .commit_agent_conversation(AgentConversationMutation {
+            command_claim: None,
             admission_guard: None,
             expected_agent_revision: working.revision,
             expected_last_seq: 0,
