@@ -151,7 +151,9 @@ async function oneIndicator(page) {
 async function errorSurface(page, port) {
   const problems = [];
   await page.setViewport({ width: 1440, height: 900 });
-  await visit(page, port);
+  await visit(page, port, 'domcontentloaded');
+  await ready(page, '.app-error', { label: 'unreachable service surface' });
+  await page.evaluate(() => document.fonts.ready.then(() => undefined));
 
   const seen = await page.evaluate(() => {
     const surface = document.querySelector('.app-error');
@@ -230,7 +232,11 @@ async function main() {
       void request.continue();
     });
 
-    await visit(page, PORT);
+    // Measure a rendered surface with loaded fonts. Network-idle is unrelated
+    // to layout readiness and can time out while the UI is already usable.
+    await visit(page, PORT, 'domcontentloaded');
+    await ready(page, '.sign-in-landing', { label: 'signed-out landing' });
+    await page.evaluate(() => document.fonts.ready.then(() => undefined));
 
     const problems = [];
     for (const dark of [false, true]) {
@@ -270,8 +276,9 @@ async function main() {
     for (const problem of await oneIndicator(page)) problems.push(`signed out: ${problem}`);
 
     identity = 'authenticated';
-    await visit(page, PORT);
+    await visit(page, PORT, 'domcontentloaded');
     await ready(page, '.frame', { label: 'authenticated shell' });
+    await page.evaluate(() => document.fonts.ready.then(() => undefined));
     for (const problem of await fills(page)) problems.push(`authenticated ${problem}`);
     for (const problem of await oneIndicator(page)) problems.push(`authenticated: ${problem}`);
 
