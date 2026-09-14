@@ -88,7 +88,10 @@ input is sent by the reservation adapter.
 
 Command workers claim one per-Agent dispatch lane with a bounded 1–60 second
 lease and a monotonic fence. Renewal, release and refusal require the exact live
-claim. Normal messages retain their order while controls retain the active turn
+claim. A refusal of unclaimed queued work instead compares its exact observed
+revision and proves the absence of both a binding and a live lease atomically;
+this permits revoked/expired work to finish while an Agent is paused or busy.
+Normal messages retain their order while controls retain the active turn
 observed at admission. In one transaction, the conversation store binds the
 claimed command to its exact input, metadata, operation, turn and runtime
 generation, and commits the Agent and semantic logs. Runtime input follows only
@@ -108,8 +111,27 @@ as typed failures even when retirement logs the turn interruption first. The
 durable Agent log provides the recovery source if the response projection write
 is interrupted; live fragments cannot establish completion.
 
-Background execution, fresh bridge/organization authorization and public
-admission wiring remain rollout prerequisites.
+The production command scheduler scans nonterminal records in stable ID pages
+of 50 through the additive `agent_command_work_scan` index. Successful pages
+advance the cursor even if their work remains blocked. Up to eight tasks run
+concurrently; slow discovery occupies a separate task. Store IO is bounded to
+15 seconds, execution attempts to 45 seconds, and 30-second lane leases renew
+every 10 seconds with a five-second renewal bound. Any uncertain renewal stops
+the attempt. Settlement rereads the ledger before release or refusal: a binding
+always selects reconciliation, and an unavailable read cannot prove an absent
+dispatch. Shutdown stops new work, drains for up to 25 seconds, then cancels
+remaining attempts; their durable leases/bindings support the next replica.
+
+Unclaimed message preparation obtains fresh authority and checks the current
+record again before entering the existing Sandbox revival pipeline. It holds no
+short dispatch lease and sends no input. Preparation is bounded to 15 seconds;
+an admitted revival remains durable if the attempt is cancelled. The personal
+execution adapter checks current owner kind and target state, rereads the renewed
+claim after credential IO, and retains the actual actor. Personal owner kind is
+also checked inside the binding transaction under the parent write fence.
+
+Fresh bridge/organization execution authorization and public admission wiring
+remain rollout prerequisites.
 The ledger alone does not make busy queues or durable Responses available.
 
 Ordinary CMA provider authentication refuses NyxID relay access, callback and

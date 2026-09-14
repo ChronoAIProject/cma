@@ -107,9 +107,12 @@ they are separate ledger contracts and do not alter retained Agent records.
 The additive command ledger reserves these receipts, a response identity and a
 per-Agent order atomically. Its key scope combines verified authority, Agent and
 command kind; identical retries return the original receipt and changed input
-conflicts. No expiration index silently makes an old key reusable. Runtime
-dispatch, worker leases and the public admission adapters are still being
-connected, so common idempotent busy queues are not advertised as live.
+conflicts. No expiration index silently makes an old key reusable. A bounded
+background worker discovers admitted commands, obtains fresh personal authority,
+claims the Agent's lane and atomically binds dispatch before sending input.
+Recovery reconciles the existing binding without sending another input. Public
+admission adapters remain under development, so common idempotent busy queues
+are not advertised as live.
 
 Agent logs, Sandbox events and Launch events have independent monotonic
 sequences. REST exposes JSON event pages. AG-UI exposes SSE with a durable

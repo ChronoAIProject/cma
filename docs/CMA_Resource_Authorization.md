@@ -342,7 +342,17 @@ lane, fence and command input. Losing the lease during verification produces no
 runtime write. A command with an existing dispatch binding is reconciled from
 its log and cannot be executed again.
 
-The public admission adapters and scheduler do not yet invoke these ports.
+The production scheduler invokes a personal execution adapter using these
+authorization ports. Before dispatch it checks current personal resource policy,
+target availability and the frozen control turn, then rereads the exact claim
+to use its renewed expiry. The conversation transaction checks owner kind with
+the same parent write fence as dispatch. Neither an organization owner subject
+nor a substituted actor establishes a personal caller. Unclaimed queued
+revocations are refused through an atomic revision comparison even while the
+Agent is paused or busy. Bound commands bypass execution authorization and only
+reconcile already admitted output, including after credentials are revoked.
+
+Public admission adapters are not yet connected.
 Existing personal Agent read/operation boundaries retain their personal checks.
 Configured legacy Agent readers now check the explicit persisted owner kind;
 an org owner cannot become a personal owner through its raw subject string.
