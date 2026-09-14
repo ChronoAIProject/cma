@@ -2,10 +2,11 @@
 
 Milestone 17 separates retained resource ownership from the principal executing
 an action. The implementation in `layer2-core::resource_access` defines the
-policy, trusted adapter contracts and transactional ownership/share stores. Public
-resource projections, stream/ticket revalidation, and the complete background
-command scheduler are still being connected. This document does not establish
-that organization sharing or public queued execution is available.
+policy, transactional ownership/share stores, and authenticated share-management
+and effective-access routes. General shared reads, interaction, stream/ticket
+revalidation, and the complete background command scheduler are still being
+connected. These management routes do not yet make shared Agents usable by
+recipients across the existing interfaces.
 
 ## Ownership and attribution
 
@@ -113,6 +114,53 @@ also re-read current shares and ownership. Neither retries nor provider errors
 can renew old evidence. Lookup errors remain local to the affected org and do
 not remove independent personal access.
 
+## Authenticated service and public routes
+
+The HTTP middleware attaches a nonsecret request context after authentication.
+Provider credentials use the same issuer/subject/digest binding as fresh
+organization observations. The new extractor requires the context to match the
+existing authenticated Caller. No organization membership is inferred there.
+
+`ResourceAccessService` discards caller-supplied membership observations, obtains
+fresh evidence with the actual requesting credential, and rereads the policy
+after provider IO. A changed policy fence refuses the pending read. The entire
+lookup set has a 15-second deadline. Independent personal-owner checks do not
+depend on organization lookup.
+
+Share commands accept only selector, requested effect, expected share revision
+and idempotency key. The service supplies owner, actual actor, root fence, server
+ID and time. New target organizations require current canonical membership
+evidence for the owner. Mode changes preserve the target; revocation does not
+depend on that organization remaining available. An equivalent retry recovers
+its original immutable response after current owner authorization, even after
+revocation or organization membership loss.
+
+Production composition includes these authenticated routes:
+
+- `GET /api/v1/resource-access/{kind}/{id}` returns policy capabilities,
+  revalidation deadline and policy revision. Kinds are `agent`, `sandbox`,
+  `workspace` and `worktree`. Responses omit owner and parent metadata.
+- `GET/POST /api/v1/resource-shares/{kind}/{id}` lists active direct grants or
+  creates a grant. Share kinds are `agent` and `sandbox`. Lists are ID-sorted
+  and bounded by the 128-active-grant capacity.
+- `GET/PATCH/DELETE /api/v1/resource-shares/{kind}/{id}/{share_id}` reads a
+  management record, changes mode or revokes it. Reads retain revoked records.
+  Mutations require `Idempotency-Key`; update bodies and revoke queries require
+  `expected_revision`.
+
+Recipients cannot list owner grants or reshare. Visible read-only resources
+return 403; inaccessible resources return 404. Closed JSON bodies reject owner,
+actor, membership and policy-fence fields using the existing 422 contract.
+Effective permissions describe policy; lifecycle, runtime support and each
+operation's authorization still apply. Generalized resource/history readers,
+streams, artifacts and interaction remain required before recipients can use
+these permissions across the product.
+
+OpenAPI and repository TypeScript/Rust SDKs expose all six operations. The SDKs
+retain explicit keys/revisions and never automatically resend an uncertain
+mutation. Shared contract fixtures replay 43 actual-handler cases in both SDKs.
+No SDK package publication, UI workflow or production rollout is claimed here.
+
 ## Deferred personal commands
 
 `PersonalCommandAdmissionAuthority` requires the exact invoking credential to
@@ -159,4 +207,4 @@ ancestry, stale revisions, attribution/effect tampering, explicit organization
 evidence and root incarnation binding. Six real disposable Mongo cases cover
 replica/reopen recovery, CAS races, audit-insertion rollback, unsafe interaction,
 corrupt ownership projections and actual lost commit acknowledgment. These are
-store contracts, not evidence of public sharing or stream revocation.
+store contracts, not evidence of recipient history, interaction or stream revocation.

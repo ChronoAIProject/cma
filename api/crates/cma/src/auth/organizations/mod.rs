@@ -13,6 +13,7 @@ use serde::Deserialize;
 
 use super::{identity, persistence::SecretDigest, AuthMode, AuthState};
 
+mod request_context;
 mod transport;
 
 #[derive(Deserialize)]

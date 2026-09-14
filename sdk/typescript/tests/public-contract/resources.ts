@@ -1,6 +1,24 @@
 import type { Dispatch } from './context.js';
 
 export const resourceDispatch: Record<string, Dispatch> = {
+  'GET /api/v1/resource-access/{kind}/{id}': ({ client, param }) =>
+    client.resourceAccess.effective(param('kind'), param('id')),
+  'GET /api/v1/resource-shares/{kind}/{id}': ({ client, param }) =>
+    client.resourceAccess.listShares(param('kind'), param('id')),
+  'GET /api/v1/resource-shares/{kind}/{id}/{share_id}': ({ client, param }) =>
+    client.resourceAccess.readShare(param('kind'), param('id'), param('share_id')),
+  'POST /api/v1/resource-shares/{kind}/{id}': ({ client, param, body, command }) =>
+    client.resourceAccess.createShare(param('kind'), param('id'), body, command),
+  'PATCH /api/v1/resource-shares/{kind}/{id}/{share_id}': ({ client, param, body, command }) =>
+    client.resourceAccess.updateShare(param('kind'), param('id'), param('share_id'), body, command),
+  'DELETE /api/v1/resource-shares/{kind}/{id}/{share_id}': ({ client, param, query, command }) =>
+    client.resourceAccess.revokeShare(
+      param('kind'),
+      param('id'),
+      param('share_id'),
+      Number(query.get('expected_revision')),
+      command,
+    ),
   'GET /api/v1/conformance': ({ client }) => client.readConformance(),
   'GET /openapi.json': ({ client }) => client.readOpenApi(),
   'GET /api/v1/defaults': ({ client }) => client.readDefaults(),

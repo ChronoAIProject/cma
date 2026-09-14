@@ -36,6 +36,12 @@ use super::trigger_openapi_shapes::*;
 #[openapi(
     paths(
         super::conformance,
+        super::resource_access::effective,
+        super::resource_access::list,
+        super::resource_access::read,
+        super::resource_access::create,
+        super::resource_access::update,
+        super::resource_access::revoke,
         super::defaults::read,
         super::profile_authoring::bounds,
         super::profile_authoring::services,
@@ -357,6 +363,7 @@ use super::trigger_openapi_shapes::*;
         (name = "sandbox profiles", description = "Owned Sandbox Profile drafts and immutable revisions"),
         (name = "profile marketplace", description = "Published profiles available to authenticated callers"),
         (name = "agents", description = "Owned CMA Agents and their durable history"),
+        (name = "resource-access", description = "Current effective policy and owner-managed organization shares"),
         (name = "agent operations", description = "Input and control operations for owned CMA Agents"),
         (name = "agent usage", description = "Usage and resource readings for owned CMA Agents"),
         (name = "sandboxes", description = "Owned Sandbox lifecycle and event replay"),

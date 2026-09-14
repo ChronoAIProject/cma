@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "openapi_operations": 119,
+  "openapi_operations": 125,
   "operations": {
     "GET /api/v1/profile-authoring/bounds": {
       "classification": "openapi",
@@ -1797,6 +1797,77 @@
         "profile_secret_scanner_unavailable": "api/crates/layer2-core/src/profiles/store/marketplace_memory.rs# Public-value scanning applies to Sandbox environment variables; Agent and Workspace publication and visibility do not invoke the scanner.",
         "profile_reference_invalid": "api/crates/layer1-public/src/rest/profiles_problem.rs# Visibility dependency refusals are projected through from_marketplace as profile_public_refused, not the draft reference-validation problem."
       }
+    },
+    "GET /api/v1/resource-access/{kind}/{id}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/resource_access.rs# Authenticated service checks current ancestry, ownership and fresh organization evidence; permanent share receipts preserve CAS and retry outcomes.",
+      "required_problems": [
+        "invalid_share_command",
+        "not_authenticated",
+        "organization_authority_unavailable",
+        "resource_access_unavailable",
+        "resource_not_found"
+      ]
+    },
+    "GET /api/v1/resource-shares/{kind}/{id}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/resource_access.rs# Authenticated service checks current ancestry, ownership and fresh organization evidence; permanent share receipts preserve CAS and retry outcomes.",
+      "required_problems": [
+        "invalid_share_command",
+        "not_authenticated",
+        "resource_access_unavailable",
+        "resource_forbidden",
+        "resource_not_found"
+      ]
+    },
+    "GET /api/v1/resource-shares/{kind}/{id}/{share_id}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/resource_access.rs# Authenticated service checks current ancestry, ownership and fresh organization evidence; permanent share receipts preserve CAS and retry outcomes.",
+      "required_problems": [
+        "invalid_share_command",
+        "not_authenticated",
+        "resource_access_unavailable",
+        "resource_forbidden",
+        "resource_not_found"
+      ]
+    },
+    "POST /api/v1/resource-shares/{kind}/{id}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/resource_access.rs# Authenticated service checks current ancestry, ownership and fresh organization evidence; permanent share receipts preserve CAS and retry outcomes.",
+      "required_problems": [
+        "idempotency_key_reused",
+        "invalid_share_command",
+        "not_authenticated",
+        "organization_authority_unavailable",
+        "resource_access_unavailable",
+        "resource_forbidden",
+        "resource_not_found",
+        "share_capacity",
+        "unsafe_interactive_share"
+      ]
+    },
+    "PATCH /api/v1/resource-shares/{kind}/{id}/{share_id}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/resource_access.rs# Authenticated service checks current ancestry, ownership and fresh organization evidence; permanent share receipts preserve CAS and retry outcomes.",
+      "required_problems": [
+        "invalid_share_command",
+        "not_authenticated",
+        "resource_access_changed",
+        "resource_access_unavailable",
+        "resource_forbidden",
+        "resource_not_found"
+      ]
+    },
+    "DELETE /api/v1/resource-shares/{kind}/{id}/{share_id}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/resource_access.rs# Authenticated service checks current ancestry, ownership and fresh organization evidence; permanent share receipts preserve CAS and retry outcomes.",
+      "required_problems": [
+        "invalid_share_command",
+        "not_authenticated",
+        "resource_access_unavailable",
+        "resource_forbidden",
+        "resource_not_found"
+      ]
     }
   }
 }

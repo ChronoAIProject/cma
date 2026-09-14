@@ -1,6 +1,7 @@
 /** Typed, repository-only client for CMA's public resource APIs. */
 
 export { Cma, createClient } from './client.js';
+export * from './resource-access.js';
 export { Agents, type AgentListOptions } from './agents.js';
 export { Sandboxes, type SandboxListOptions } from './sandboxes.js';
 export { Workspaces, Worktrees } from './workspaces.js';

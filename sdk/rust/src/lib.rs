@@ -31,6 +31,7 @@ pub mod instances;
 pub mod launches;
 pub mod profile_authoring;
 pub mod profiles;
+pub mod resource_access;
 mod resources;
 pub mod responses;
 pub mod stream;

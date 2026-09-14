@@ -49,3 +49,20 @@ array preserves owner steering interleaved with Agent answers. `owner_message`
 is only the initial owner-message summary; `agent_messages` contains only
 assistant-message summaries. Concatenating those summaries loses the actual
 conversation order and later owner guidance.
+# Organization share management
+
+`client.resource_access()` provides `effective`, `list_shares`, `read_share`,
+`create_share`, `update_share` and `revoke_share`. Share kinds are `agent` and
+`sandbox`; effective policy also accepts `workspace` and `worktree`.
+`CreateShareRequest` contains `target_org_id` and `ShareMode`; an update also
+requires `expected_revision`. Revoke takes the expected revision explicitly.
+Every mutation requires `IdempotencyKey`. Reuse the same command/key to recover
+the original receipt after an uncertain response.
+
+The personal owner manages grants; recipients cannot reshare. Lists contain
+active direct grants; individual reads retain revoked records. Unsafe narrow
+interactive sharing requires current independent isolation or an explicit
+compatible whole-Sandbox grant. Effective capabilities describe current policy,
+not authorization for a later request. Generalized shared history, streaming,
+artifacts and interaction remain under development; these management methods
+do not yet enable recipient use across the existing interfaces.
