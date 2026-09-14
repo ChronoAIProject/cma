@@ -20,6 +20,7 @@ fn turn(parent: &Sandbox, current: &Agent) -> AgentConversationMutation {
     next.conversation.active_turn = Some(turn_sequence);
     next.conversation.last_seq += 2;
     AgentConversationMutation {
+        command_claim: None,
         admission_guard: Some(SandboxMutationGuard::capture(parent)),
         expected_agent_revision: current.revision,
         expected_last_seq: current.conversation.last_seq,
@@ -44,6 +45,7 @@ fn runtime_update(current: &Agent) -> AgentConversationMutation {
     next.conversation.last_seq += 1;
     next.updated_at = NOW.into();
     AgentConversationMutation {
+        command_claim: None,
         admission_guard: None,
         expected_agent_revision: current.revision,
         expected_last_seq: current.conversation.last_seq,

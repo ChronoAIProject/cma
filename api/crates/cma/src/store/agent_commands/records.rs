@@ -29,7 +29,7 @@ pub(super) fn read(value: &Document) -> Result<AdmittedAgentCommand, CommandLedg
     let expected = document(&record)?;
     if expected
         .iter()
-        .any(|(key, field)| value.get(key) != Some(field))
+        .any(|(key, field)| key != "record" && value.get(key) != Some(field))
     {
         return Err(CommandLedgerError::Corrupt);
     }

@@ -389,7 +389,7 @@ pub struct InMemorySandboxStore {
 struct State {
     agent_commands: HashMap<crate::ids::AgentCommandId, super::agent_io::AdmittedAgentCommand>,
     agent_command_keys: HashMap<(String, String), crate::ids::AgentCommandId>,
-    agent_command_orders: HashMap<AgentId, u64>,
+    agent_command_orders: HashMap<AgentId, super::agent_io::CommandLane>,
     sandboxes: HashMap<SandboxId, Sandbox>,
     workspaces: HashMap<WorkspaceId, Workspace>,
     worktrees: HashMap<WorktreeId, Worktree>,
