@@ -221,16 +221,23 @@ pub(super) async fn fixture() -> Fixture {
 pub(super) async fn fixture_with_registry<R: AgentRuntimeRegistry + 'static>(
     registry: Arc<R>,
 ) -> Fixture {
-    fixture_with_ports(registry, None).await
+    fixture_with_ports(registry, None, None).await
 }
 
 pub(super) async fn fixture_with_operations(operations: Arc<dyn OperationStore>) -> Fixture {
-    fixture_with_ports(TestRegistry::new(), Some(operations)).await
+    fixture_with_ports(TestRegistry::new(), Some(operations), None).await
+}
+
+pub(super) async fn fixture_with_resource_access(
+    authority: Arc<dyn layer2_core::resource_access::OrganizationAuthority>,
+) -> Fixture {
+    fixture_with_ports(TestRegistry::new(), None, Some(authority)).await
 }
 
 async fn fixture_with_ports<R: AgentRuntimeRegistry + 'static>(
     registry: Arc<R>,
     operations: Option<Arc<dyn OperationStore>>,
+    authority: Option<Arc<dyn layer2_core::resource_access::OrganizationAuthority>>,
 ) -> Fixture {
     let store = Arc::new(InMemorySandboxStore::default());
     let profiles = Arc::new(InMemoryProfileStore::default());
@@ -247,6 +254,12 @@ async fn fixture_with_ports<R: AgentRuntimeRegistry + 'static>(
         agent_capabilities(),
     );
     let reads = AgentReadService::new(store.clone(), Arc::new(TestResources));
+    let reads = match authority {
+        Some(authority) => reads.with_resource_access(Arc::new(
+            layer2_core::resource_access::ResourceAccessService::new(store.clone(), authority),
+        )),
+        None => reads,
+    };
     let agent_operations = AgentOperationService::new(store.clone(), registry.clone());
     let operation_records: Arc<dyn OperationStore> =
         operations.unwrap_or_else(|| Arc::new(MemoryOperationStore::default()));
