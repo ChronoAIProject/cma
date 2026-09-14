@@ -32,7 +32,7 @@ pub use agent::{
     AgentOpenRequest, AgentSkill, AgentSlot, ConversationSnapshot, HomeFile, HomeSymlink,
     PermissionLevel, ReasoningEffort, RuntimeOptions, SkillArchive, ThinkingEffort,
 };
-pub use agent_provider::AgentProvider;
+pub use agent_provider::{AgentProvider, ModelConnectionServices};
 pub use capabilities::{
     AdapterCapabilities, RuntimeContract, RUNTIME_CONTRACT_LABEL, RUNTIME_CONTRACT_VERSION,
 };

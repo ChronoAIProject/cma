@@ -51,7 +51,7 @@ async fn missing_credential_prerequisite_admits_no_sandbox_or_profile_use() {
     assert_eq!(sandbox_use_count(&profiles, &reference.id).await, 0);
     let missing = vec![
         ServiceId::new("api-github"),
-        ServiceId::new(crate::profiles::CODEX_SUBSCRIPTION_CONNECTION),
+        ServiceId::new(AgentProvider::default().connection_services().subscription),
     ];
     *prerequisite.0.lock().unwrap() =
         Err(SandboxCredentialPrerequisiteError::ConnectionsRequired {
