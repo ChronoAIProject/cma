@@ -58,7 +58,7 @@ const COMPONENT_SHEETS = ALL.filter((path) => !TOKEN_SHEETS.includes(path));
 /**
  * Custom properties a stylesheet may reference without defining.
  *
- * `--canvas-columns` is set inline from JavaScript in SessionCanvas, because
+ * `--canvas-columns` is reserved for a future resource canvas, because
  * the column count is a layout fact the browser computes rather than a design
  * decision. Its CSS fallback is deliberate and must not be deleted.
  */

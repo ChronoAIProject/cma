@@ -1,0 +1,353 @@
+use std::sync::Arc;
+use std::time::Duration;
+
+use serde::{Deserialize, Serialize};
+
+use crate::ids::{SandboxId, ServiceId};
+use crate::profiles::store::{
+    ProfileStoreError, ProfileUseRecorder, SandboxProfileStore, WorkspaceProfileStore,
+};
+use crate::profiles::SandboxProfileRef;
+use crate::{now_rfc3339, Caller, Capability, StoreError};
+
+use super::store::{Page, PageRequest, SandboxServiceStore, SandboxStoreError, SandboxTransaction};
+use super::{
+    Sandbox, SandboxCredentialPrerequisite, SandboxEvent, SandboxEventKind, SandboxStatus,
+};
+
+pub const DEFAULT_OWNER_SANDBOX_LIMIT: u16 = 3;
+pub const DEFAULT_VISITOR_SANDBOX_LIMIT: u16 = 1;
+pub const DEFAULT_RETENTION_GRACE: Duration = Duration::from_secs(7 * 24 * 60 * 60);
+pub const DEFAULT_INACTIVITY_PAUSE_AFTER_SECONDS: u64 = 15 * 60;
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+pub enum SandboxOrigin {
+    Manual,
+    Trigger { launch_id: String },
+}
+
+impl SandboxOrigin {
+    pub(super) fn validate(&self) -> Result<(), SandboxServiceError> {
+        if let Self::Trigger { launch_id } = self {
+            if launch_id.trim().is_empty()
+                || launch_id.len() > 128
+                || launch_id.chars().any(char::is_control)
+            {
+                return Err(SandboxServiceError::InvalidOrigin);
+            }
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CreateSandbox {
+    pub profile: SandboxProfileRef,
+    pub name: Option<String>,
+    pub confirmed_digest: Option<String>,
+    pub origin: SandboxOrigin,
+}
+
+/// Narrow lifecycle policy translated from deployment settings.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SandboxPolicy {
+    pub max_sandboxes_per_owner: u16,
+    pub max_sandboxes_per_visitor: u16,
+    pub inactivity_pause_after_seconds: u64,
+    pub checkpoint_interval_seconds: u64,
+    pub retention_grace: Duration,
+    pub baseline_services: Vec<ServiceId>,
+}
+
+/// Current policy without coupling sandbox lifecycle logic to admin storage.
+///
+/// A fixed policy is itself a source for tests and local composition. Production
+/// composition can translate each live platform-settings read into this type.
+#[async_trait::async_trait]
+pub trait SandboxPolicySource: Send + Sync {
+    async fn current_sandbox_policy(&self) -> Result<SandboxPolicy, StoreError>;
+}
+
+#[async_trait::async_trait]
+impl SandboxPolicySource for SandboxPolicy {
+    async fn current_sandbox_policy(&self) -> Result<SandboxPolicy, StoreError> {
+        Ok(self.clone())
+    }
+}
+
+impl Default for SandboxPolicy {
+    fn default() -> Self {
+        Self {
+            max_sandboxes_per_owner: DEFAULT_OWNER_SANDBOX_LIMIT,
+            max_sandboxes_per_visitor: DEFAULT_VISITOR_SANDBOX_LIMIT,
+            inactivity_pause_after_seconds: DEFAULT_INACTIVITY_PAUSE_AFTER_SECONDS,
+            checkpoint_interval_seconds: crate::platform::DEFAULT_CHECKPOINT_INTERVAL_SECONDS,
+            retention_grace: DEFAULT_RETENTION_GRACE,
+            baseline_services: Vec::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum SandboxServiceError {
+    #[error("renewable Sandbox credential setup is required")]
+    CredentialSetupRequired,
+    #[error("required connections have not been verified")]
+    ConnectionsRequired { services: Vec<ServiceId> },
+    #[error("forbidden")]
+    Forbidden,
+    #[error("sandbox profile not found")]
+    ProfileNotFound,
+    #[error("sandbox not found")]
+    NotFound,
+    #[error("trust confirmation required for digest {commands_digest}")]
+    TrustConfirmationRequired { commands_digest: String },
+    #[error("sandbox limit reached: {live} of {limit}")]
+    SandboxLimitReached { limit: u16, live: u16 },
+    #[error("sandbox name is invalid")]
+    InvalidName,
+    #[error("sandbox name is already in use")]
+    NameConflict,
+    #[error("sandbox origin is invalid")]
+    InvalidOrigin,
+    #[error("sandbox trigger origin is already bound to another request")]
+    SandboxOriginConflict,
+    #[error("sandbox is not in a deletable state")]
+    InvalidState,
+    #[error("sandbox service access request is invalid")]
+    InvalidServiceAccess,
+    #[error("new service access requires a fully paused sandbox")]
+    ServiceAccessRequiresPause,
+    #[error("sandbox data is not usable: {0}")]
+    Corrupt(String),
+    #[error("sandbox dependency is unavailable: {0}")]
+    Unavailable(String),
+}
+
+impl SandboxServiceError {
+    pub const fn code(&self) -> &'static str {
+        match self {
+            Self::CredentialSetupRequired => "sandbox_credential_setup_required",
+            Self::ConnectionsRequired { .. } => "connections_required",
+            Self::Forbidden => "forbidden",
+            Self::ProfileNotFound => "sandbox_profile_not_found",
+            Self::NotFound => "sandbox_not_found",
+            Self::TrustConfirmationRequired { .. } => "trust_confirmation_required",
+            Self::SandboxLimitReached { .. } => "sandbox_limit_reached",
+            Self::InvalidName => "invalid_sandbox_name",
+            Self::NameConflict => "sandbox_name_conflict",
+            Self::InvalidOrigin => "invalid_sandbox_origin",
+            Self::SandboxOriginConflict => "sandbox_origin_conflict",
+            Self::InvalidState => "sandbox_invalid_state",
+            Self::InvalidServiceAccess => "invalid_sandbox_service_access",
+            Self::ServiceAccessRequiresPause => "sandbox_service_access_requires_pause",
+            Self::Corrupt(_) => "stored_sandbox_corrupt",
+            Self::Unavailable(_) => "sandbox_service_unavailable",
+        }
+    }
+}
+
+pub struct SandboxService {
+    pub(super) store: Arc<dyn SandboxServiceStore>,
+    pub(super) profiles: Arc<dyn SandboxProfileStore>,
+    pub(super) workspace_profiles: Arc<dyn WorkspaceProfileStore>,
+    pub(super) profile_uses: Arc<dyn ProfileUseRecorder>,
+    pub(super) policy: Arc<dyn SandboxPolicySource>,
+    pub(super) credentials: Arc<dyn SandboxCredentialPrerequisite>,
+}
+
+impl SandboxService {
+    pub fn new<S, P>(
+        store: Arc<S>,
+        profiles: Arc<P>,
+        policy: SandboxPolicy,
+        credentials: Arc<dyn SandboxCredentialPrerequisite>,
+    ) -> Arc<Self>
+    where
+        S: SandboxServiceStore + 'static,
+        P: SandboxProfileStore + WorkspaceProfileStore + ProfileUseRecorder + 'static,
+    {
+        Self::with_policy_source(store, profiles, Arc::new(policy), credentials)
+    }
+
+    pub fn with_policy_source<S, P>(
+        store: Arc<S>,
+        profiles: Arc<P>,
+        policy: Arc<dyn SandboxPolicySource>,
+        credentials: Arc<dyn SandboxCredentialPrerequisite>,
+    ) -> Arc<Self>
+    where
+        S: SandboxServiceStore + 'static,
+        P: SandboxProfileStore + WorkspaceProfileStore + ProfileUseRecorder + 'static,
+    {
+        let sandbox_profiles: Arc<dyn SandboxProfileStore> = profiles.clone();
+        let workspace_profiles: Arc<dyn WorkspaceProfileStore> = profiles.clone();
+        let profile_uses: Arc<dyn ProfileUseRecorder> = profiles;
+        Self::with_dependencies(
+            store,
+            sandbox_profiles,
+            workspace_profiles,
+            profile_uses,
+            policy,
+            credentials,
+        )
+    }
+
+    pub(crate) fn with_dependencies<S>(
+        store: Arc<S>,
+        profiles: Arc<dyn SandboxProfileStore>,
+        workspace_profiles: Arc<dyn WorkspaceProfileStore>,
+        profile_uses: Arc<dyn ProfileUseRecorder>,
+        policy: Arc<dyn SandboxPolicySource>,
+        credentials: Arc<dyn SandboxCredentialPrerequisite>,
+    ) -> Arc<Self>
+    where
+        S: SandboxServiceStore + 'static,
+    {
+        Arc::new(Self {
+            store,
+            profiles,
+            workspace_profiles,
+            profile_uses,
+            policy,
+            credentials,
+        })
+    }
+
+    pub async fn list_own(
+        &self,
+        caller: &Caller,
+        page: &PageRequest,
+    ) -> Result<Page<Sandbox>, SandboxServiceError> {
+        require(caller, Capability::UseOwnSandboxes)?;
+        self.store
+            .list_sandboxes(&caller.subject, page)
+            .await
+            .map_err(store_error)
+    }
+
+    pub async fn read(
+        &self,
+        caller: &Caller,
+        id: &SandboxId,
+    ) -> Result<Sandbox, SandboxServiceError> {
+        require(caller, Capability::UseOwnSandboxes)?;
+        self.owned(caller, id).await
+    }
+
+    pub async fn events(
+        &self,
+        caller: &Caller,
+        id: &SandboxId,
+        after: u64,
+        limit: u16,
+    ) -> Result<Vec<SandboxEvent>, SandboxServiceError> {
+        require(caller, Capability::UseOwnSandboxes)?;
+        self.owned(caller, id).await?;
+        self.store
+            .sandbox_events(id, after, limit)
+            .await
+            .map_err(store_error)
+    }
+
+    pub async fn delete(
+        &self,
+        caller: &Caller,
+        id: &SandboxId,
+    ) -> Result<Sandbox, SandboxServiceError> {
+        require(caller, Capability::DeleteOwnSandbox)?;
+        let mut sandbox = self.owned(caller, id).await?;
+        if matches!(
+            sandbox.status,
+            SandboxStatus::Retiring | SandboxStatus::Retired
+        ) {
+            return Ok(sandbox);
+        }
+        let previous = sandbox.status;
+        let expected = sandbox.revision;
+        let now = now_rfc3339();
+        sandbox
+            .begin_retirement(now.clone())
+            .map_err(|_| SandboxServiceError::InvalidState)?;
+        let committed = self
+            .store
+            .commit(SandboxTransaction::SaveSandboxAndAppend {
+                expected_revision: expected,
+                sandbox: Box::new(sandbox.clone()),
+                event_at: now,
+                event: SandboxEventKind::StatusChanged {
+                    from: previous,
+                    to: SandboxStatus::Retiring,
+                },
+            })
+            .await;
+        match committed {
+            Ok(()) => Ok(sandbox),
+            Err(SandboxStoreError::Conflict) => {
+                let current = self.owned(caller, id).await?;
+                if matches!(
+                    current.status,
+                    SandboxStatus::Retiring | SandboxStatus::Retired
+                ) {
+                    Ok(current)
+                } else {
+                    Err(SandboxServiceError::Unavailable(
+                        "sandbox changed while retirement was requested".into(),
+                    ))
+                }
+            }
+            Err(error) => Err(store_error(error)),
+        }
+    }
+
+    pub(super) async fn owned(
+        &self,
+        caller: &Caller,
+        id: &SandboxId,
+    ) -> Result<Sandbox, SandboxServiceError> {
+        self.store
+            .get_sandbox(id)
+            .await
+            .map_err(store_error)?
+            .filter(|sandbox| sandbox.owner == caller.subject)
+            .ok_or(SandboxServiceError::NotFound)
+    }
+}
+
+pub(super) fn require(caller: &Caller, capability: Capability) -> Result<(), SandboxServiceError> {
+    caller
+        .authorization
+        .allows(capability)
+        .then_some(())
+        .ok_or(SandboxServiceError::Forbidden)
+}
+
+pub(super) fn profile_error(error: ProfileStoreError) -> SandboxServiceError {
+    match error {
+        ProfileStoreError::NotFound => SandboxServiceError::ProfileNotFound,
+        ProfileStoreError::Corrupt(detail) => SandboxServiceError::Corrupt(detail),
+        other => SandboxServiceError::Unavailable(other.to_string()),
+    }
+}
+
+pub(super) fn policy_error(error: StoreError) -> SandboxServiceError {
+    match error {
+        StoreError::Malformed(detail) => SandboxServiceError::Corrupt(detail),
+        other => SandboxServiceError::Unavailable(other.to_string()),
+    }
+}
+
+pub(super) fn store_error(error: SandboxStoreError) -> SandboxServiceError {
+    match error {
+        SandboxStoreError::NotFound => SandboxServiceError::NotFound,
+        SandboxStoreError::Duplicate => SandboxServiceError::NameConflict,
+        SandboxStoreError::LimitReached { limit, live } => {
+            SandboxServiceError::SandboxLimitReached { limit, live }
+        }
+        SandboxStoreError::SandboxOriginConflict => SandboxServiceError::SandboxOriginConflict,
+        SandboxStoreError::Corrupt(detail) => SandboxServiceError::Corrupt(detail),
+        SandboxStoreError::InvalidPage => SandboxServiceError::InvalidState,
+        other => SandboxServiceError::Unavailable(other.to_string()),
+    }
+}

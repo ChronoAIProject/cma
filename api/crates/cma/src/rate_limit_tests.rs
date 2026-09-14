@@ -1,1399 +1,392 @@
+use async_trait::async_trait;
+use axum::body::Body;
+use layer1_public::rest::{LaunchQuota, LaunchQuotaError};
+use layer2_core::{
+    ActivityQuery, ActivityRecord, ActivityService, ActivityStore, Authorization, Caller,
+    Capability, Page, PlatformSettings, PlatformSettingsService, PlatformSettingsStore, StoreError,
+    StoredPlatformSettings, SubjectId,
+};
 use std::{
-    net::{IpAddr, Ipv4Addr, SocketAddr},
     num::NonZeroU32,
-    sync::{
-        atomic::{AtomicUsize, Ordering},
-        Arc,
-    },
-    time::Duration,
+    sync::Mutex,
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-use axum::{
-    body::{to_bytes, Body},
-    extract::{ConnectInfo, Request, State},
-    http::{header, HeaderValue, Method, StatusCode},
-    middleware::Next,
-    response::Response,
-    routing::{get, post},
-    Router,
-};
-use governor::Quota;
-use layer1_public::AuthenticatedSubject;
-use layer2_core::SubjectId;
-use tower::ServiceExt;
+use super::visitor::visitor_quota_key;
+use super::*;
 
-use crate::{
-    config::TrustedProxyConfig,
-    rate_limit::{self, RateLimiters},
-    with_cors, with_sponsorship_privacy, REST_LINKS,
-};
+#[derive(Default)]
+struct NoopActivity;
 
-const SUBJECT: &str = "subject-rate-limit";
+#[async_trait]
+impl ActivityStore for NoopActivity {
+    async fn append(&self, _record: &ActivityRecord) -> Result<(), StoreError> {
+        Ok(())
+    }
 
-fn quota(burst: u32, replenish_one_every: Duration) -> Quota {
-    Quota::with_period(replenish_one_every)
-        .expect("the test period is positive")
-        .allow_burst(NonZeroU32::new(burst).expect("the test burst is positive"))
+    async fn list(&self, _query: &ActivityQuery) -> Result<Page<ActivityRecord>, StoreError> {
+        Ok(Page::new(Vec::new(), None))
+    }
 }
 
-fn one() -> Quota {
-    quota(1, Duration::from_secs(60))
+struct MutableSettings(Mutex<StoredPlatformSettings>);
+
+impl MutableSettings {
+    fn new(visitor_launch_limit: u32) -> Self {
+        let mut settings = PlatformSettings::default();
+        settings.limits.visitor_max_launches_per_day = visitor_launch_limit;
+        Self(Mutex::new(StoredPlatformSettings {
+            revision: 1,
+            settings,
+        }))
+    }
+
+    fn set_visitor_launch_limit(&self, limit: u32) {
+        let mut stored = self.0.lock().unwrap();
+        stored.revision += 1;
+        stored.settings.limits.visitor_max_launches_per_day = limit;
+    }
 }
 
-fn generous() -> Quota {
-    quota(1_000, Duration::from_millis(1))
+#[async_trait]
+impl PlatformSettingsStore for MutableSettings {
+    async fn read(&self) -> Result<StoredPlatformSettings, StoreError> {
+        Ok(self.0.lock().unwrap().clone())
+    }
+
+    async fn replace(
+        &self,
+        expected_revision: u64,
+        settings: &PlatformSettings,
+    ) -> Result<StoredPlatformSettings, StoreError> {
+        let mut stored = self.0.lock().unwrap();
+        if stored.revision != expected_revision {
+            return Err(StoreError::RevisionConflict {
+                expected: expected_revision,
+                actual: stored.revision,
+            });
+        }
+        *stored = StoredPlatformSettings {
+            revision: expected_revision + 1,
+            settings: settings.clone(),
+        };
+        Ok(stored.clone())
+    }
 }
 
-fn test_routes() -> Router {
-    Router::new()
-        .route("/openapi.json", get(|| async { StatusCode::NO_CONTENT }))
-        .route(
-            "/.well-known/agent-card.json",
-            get(|| async { StatusCode::NO_CONTENT }),
-        )
-        .route(
-            "/api/v1/sessions",
-            post(|| async { StatusCode::NO_CONTENT }),
-        )
-        .route(
-            "/api/v1/conversations",
-            post(|| async { StatusCode::NO_CONTENT }),
-        )
-        .route(
-            "/api/v1/responses",
-            post(|| async { StatusCode::NO_CONTENT }),
-        )
-        .route(
-            "/api/v1/sessions/{id}",
-            get(|| async { StatusCode::NO_CONTENT }),
-        )
-        .route(
-            "/api/v1/sessions/{id}/input",
-            post(|| async { StatusCode::NO_CONTENT }),
-        )
-        .route(
-            "/api/v1/sessions/{id}/steer",
-            post(|| async { StatusCode::NO_CONTENT }),
-        )
-        .route(
-            "/api/v1/sessions/{id}/plane",
-            post(|| async { StatusCode::NO_CONTENT }),
-        )
-        .route(
-            "/api/v1/sessions/{id}/revive",
-            post(|| async { StatusCode::NO_CONTENT }),
-        )
-        .route(
-            "/api/v1/launches/{id}/start",
-            post(|| async { StatusCode::NO_CONTENT }),
-        )
-        .route(
-            "/api/v1/triggers/public/{public_id}",
-            get(|| async { StatusCode::NO_CONTENT }),
-        )
-        .route(
-            "/api/v1/triggers/public/{public_id}/launches",
-            post(|| async { StatusCode::NO_CONTENT }),
-        )
-        .route(
-            "/api/v1/sponsorships/privacy-contract",
-            get(|| async { StatusCode::NO_CONTENT }),
-        )
-        .route(
-            "/internal/v1/sponsored-model/responses",
-            post(|| async { StatusCode::NO_CONTENT }),
-        )
-        .route(
-            "/api/v1/agui/triggers/{public_id}",
-            get(|| async { StatusCode::NO_CONTENT }),
-        )
-        .route(
-            "/api/v1/agui/run",
-            post(|| async { StatusCode::NO_CONTENT }),
-        )
-        .route("/api/v1/agui", get(|| async { StatusCode::NO_CONTENT }))
-        .route(
-            "/api/v1/agui/unknown",
-            get(|| async { StatusCode::NO_CONTENT }),
-        )
-        .route(
-            "/api/v1/agui/capabilities",
-            get(|| async { StatusCode::NO_CONTENT }),
-        )
-        .route(
-            "/api/v1/sessions/{id}/terminal",
-            get(|| async { StatusCode::NO_CONTENT }),
-        )
-        .route(
-            "/api/v1/sessions/{id}/terminal/",
-            get(|| async { StatusCode::NO_CONTENT }),
-        )
-        .route("/api/v1/mcp", post(|| async { StatusCode::NO_CONTENT }))
-        .route("/api/v1/a2a", post(|| async { StatusCode::NO_CONTENT }))
-        .route(
-            "/api/v1/conformance",
-            get(|| async { StatusCode::NO_CONTENT }),
-        )
-        .route("/auth", get(|| async { StatusCode::NO_CONTENT }))
-        .route("/auth/callback", get(|| async { StatusCode::NO_CONTENT }))
-        .route("/livez", get(|| async { StatusCode::NO_CONTENT }))
-        .route("/ready", get(|| async { StatusCode::NO_CONTENT }))
-}
-
-fn operation_app(limiters: Arc<RateLimiters>) -> Router {
-    test_routes().layer(axum::middleware::from_fn_with_state(
-        limiters,
-        rate_limit::enforce,
-    ))
-}
-
-fn guarded_app(limiters: Arc<RateLimiters>) -> Router {
-    test_routes()
-        .layer(axum::middleware::from_fn_with_state(
-            Arc::clone(&limiters),
-            rate_limit::enforce,
-        ))
-        .layer(axum::middleware::from_fn_with_state(
-            limiters,
-            rate_limit::admit,
-        ))
-}
-
-fn request(
-    method: Method,
-    path: &str,
-    subject: Option<&str>,
-    peer: Option<IpAddr>,
-) -> Request<Body> {
-    let mut request = Request::builder()
+fn request(method: Method, path: &str) -> Request {
+    Request::builder()
         .method(method)
         .uri(path)
         .body(Body::empty())
-        .expect("test request builds");
-    if let Some(subject) = subject {
-        request
-            .extensions_mut()
-            .insert(AuthenticatedSubject(SubjectId(subject.to_owned())));
+        .unwrap()
+}
+
+fn visitor_limiters() -> Arc<RateLimiters> {
+    let quota = || Quota::per_minute(NonZeroU32::new(1_000).unwrap());
+    Arc::new(RateLimiters::from_quotas(
+        quota(),
+        quota(),
+        quota(),
+        quota(),
+        quota(),
+        TrustedProxyConfig::sample(),
+    ))
+}
+
+fn time_on_day(day: u64, seconds: u64) -> SystemTime {
+    UNIX_EPOCH + Duration::from_secs(day * 86_400 + seconds)
+}
+
+#[test]
+fn tiers_are_generic_http_work_classes() {
+    assert_eq!(
+        request_tier(&request(
+            Method::POST,
+            "/api/v1/profile-authoring/repositories/resolve"
+        )),
+        RequestTier::Default
+    );
+    assert_eq!(
+        request_tier(&request(Method::GET, "/livez")),
+        RequestTier::Health
+    );
+    assert_eq!(
+        request_tier(&request(Method::GET, "/api/v1/resources")),
+        RequestTier::Default
+    );
+    assert_eq!(
+        request_tier(&request(Method::POST, "/api/v1/resources")),
+        RequestTier::Create
+    );
+    assert_eq!(
+        request_tier(&request(Method::POST, "/api/v1/resources/id/input")),
+        RequestTier::Input
+    );
+}
+
+#[test]
+fn public_discovery_and_auth_keep_network_scoped_budgets() {
+    for path in [
+        "/openapi.json",
+        "/api/v1/conformance",
+        "/api/v1/triggers/public/pub_example",
+        "/api/v1/triggers/public/pub_example/badge.svg",
+        "/.well-known/agent-card.json",
+        "/auth/login",
+    ] {
+        assert!(uses_client_operation_key(path), "{path}");
     }
-    if let Some(peer) = peer {
-        request
-            .extensions_mut()
-            .insert(ConnectInfo(SocketAddr::new(peer, 4242)));
+    for path in [
+        "/api/v1/resources",
+        "/api/v1/triggers/public/pub_example/launches",
+        "/api/v1/triggers/public/pub_example/badge.svg/extra",
+    ] {
+        assert!(!uses_client_operation_key(path), "{path}");
     }
-    request
-}
-
-fn subject_request(method: Method, path: &str) -> Request<Body> {
-    request(method, path, Some(SUBJECT), None)
-}
-
-fn with_xff(mut request: Request<Body>, value: &'static str) -> Request<Body> {
-    request
-        .headers_mut()
-        .insert("x-forwarded-for", HeaderValue::from_static(value));
-    request
-}
-
-fn with_cf_connecting_ip(mut request: Request<Body>, value: &'static str) -> Request<Body> {
-    request
-        .headers_mut()
-        .insert("cf-connecting-ip", HeaderValue::from_static(value));
-    request
-}
-
-fn trusted_proxy(cidrs: &[&str], forwarded_hops: usize) -> TrustedProxyConfig {
-    trusted_proxy_with_cloudflare(cidrs, forwarded_hops, &[])
-}
-
-fn trusted_proxy_with_cloudflare(
-    cidrs: &[&str],
-    forwarded_hops: usize,
-    cloudflare_cidrs: &[&str],
-) -> TrustedProxyConfig {
-    TrustedProxyConfig {
-        cidrs: cidrs
-            .iter()
-            .map(|cidr| cidr.parse().expect("test CIDR parses"))
-            .collect(),
-        forwarded_hops,
-        cloudflare_cidrs: cloudflare_cidrs
-            .iter()
-            .map(|cidr| cidr.parse().expect("test Cloudflare CIDR parses"))
-            .collect(),
-    }
-}
-
-fn complete_limiters(
-    admission: Quota,
-    health: Quota,
-    default: Quota,
-    create: Quota,
-    input: Quota,
-    trusted: TrustedProxyConfig,
-) -> Arc<RateLimiters> {
-    RateLimiters::for_test_complete(admission, health, default, create, input, trusted)
-}
-
-async fn status(app: &Router, request: Request<Body>) -> StatusCode {
-    app.clone()
-        .oneshot(request)
-        .await
-        .expect("router answers")
-        .status()
 }
 
 #[tokio::test]
-async fn a_create_burst_is_coded_linked_and_recovers_after_retry_after() {
-    let generous = quota(20, Duration::from_millis(10));
-    let app = operation_app(RateLimiters::for_test(
-        generous,
-        quota(2, Duration::from_secs(1)),
-        quota(20, Duration::from_millis(10)),
-    ));
+async fn connection_polling_keeps_creation_available_and_users_have_separate_login_budgets() {
+    use axum::{http::StatusCode, middleware, routing::post, Router};
+    use tower::ServiceExt as _;
 
-    for _ in 0..2 {
+    let quota = |n| Quota::per_hour(NonZeroU32::new(n).unwrap());
+    let limiters = Arc::new(RateLimiters::from_quotas(
+        quota(100),
+        quota(100),
+        quota(40),
+        quota(1),
+        quota(100),
+        TrustedProxyConfig::sample(),
+    ));
+    let app = Router::new()
+        .route("/auth/connections/check", post(|| async { StatusCode::OK }))
+        .route("/auth/connections/start", post(|| async { StatusCode::OK }))
+        .layer(middleware::from_fn_with_state(limiters, enforce));
+    let call = |path: &str, owner: &str| {
+        let mut r = request(Method::POST, path);
+        r.extensions_mut()
+            .insert(AuthenticatedSubject(SubjectId::new(owner)));
+        app.clone().oneshot(r)
+    };
+    // A full minute of the browser's two-second polling must leave its login
+    // creation available, even with a deliberately tiny creation allowance.
+    for _ in 0..30 {
         assert_eq!(
-            status(&app, subject_request(Method::POST, "/api/v1/sessions")).await,
-            StatusCode::NO_CONTENT
+            call("/auth/connections/check", "one")
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::OK
         );
     }
-    let response = app
-        .clone()
-        .oneshot(subject_request(Method::POST, "/api/v1/sessions"))
-        .await
-        .expect("router answers");
-    assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
     assert_eq!(
-        response.headers().get(header::CONTENT_TYPE),
-        Some(&HeaderValue::from_static("application/problem+json"))
-    );
-    assert_eq!(response.headers().get(header::LINK), Some(&REST_LINKS));
-    let retry_after = response
-        .headers()
-        .get(header::RETRY_AFTER)
-        .expect("429 carries Retry-After")
-        .to_str()
-        .expect("Retry-After is text")
-        .parse::<u64>()
-        .expect("Retry-After is a whole number");
-    assert!(retry_after > 0);
-    let body: serde_json::Value = serde_json::from_slice(
-        &to_bytes(response.into_body(), usize::MAX)
+        call("/auth/connections/start", "one")
             .await
-            .expect("problem body is bounded"),
-    )
-    .expect("problem body is json");
-    assert_eq!(body["code"], "rate_limited");
-    assert_eq!(body["status"], 429);
-
-    tokio::time::sleep(Duration::from_secs(retry_after)).await;
-    assert_eq!(
-        status(&app, subject_request(Method::POST, "/api/v1/sessions")).await,
-        StatusCode::NO_CONTENT
-    );
-}
-
-#[tokio::test]
-async fn sponsorship_rate_refusals_are_private_and_do_not_reflect_the_request() {
-    const SECRET_MARKER: &str = "rate-limited-sponsorship-secret";
-    let app = with_sponsorship_privacy(operation_app(RateLimiters::for_test(
-        one(),
-        generous(),
-        generous(),
-    )));
-    let uri = format!("/api/v1/sponsorships/privacy-contract?credential={SECRET_MARKER}");
-
-    assert_eq!(
-        status(&app, subject_request(Method::GET, &uri)).await,
-        StatusCode::NO_CONTENT
-    );
-    let response = app
-        .oneshot(subject_request(Method::GET, &uri))
-        .await
-        .expect("router answers");
-    assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
-    assert_eq!(
-        response.headers().get(header::CACHE_CONTROL),
-        Some(&HeaderValue::from_static("no-store"))
+            .unwrap()
+            .status(),
+        StatusCode::OK
     );
     assert_eq!(
-        response.headers().get(header::REFERRER_POLICY),
-        Some(&HeaderValue::from_static("no-referrer"))
-    );
-    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
-    assert!(!String::from_utf8_lossy(&body).contains(SECRET_MARKER));
-}
-
-#[tokio::test]
-async fn private_gateway_network_admission_rejects_with_private_headers() {
-    const SECRET_MARKER: &str = "private-gateway-rate-limit-secret";
-    let limiters = complete_limiters(
-        one(),
-        generous(),
-        generous(),
-        generous(),
-        generous(),
-        TrustedProxyConfig::sample(),
-    );
-    let app = with_sponsorship_privacy(test_routes().layer(axum::middleware::from_fn_with_state(
-        limiters,
-        rate_limit::admit,
-    )));
-    let uri = format!("/internal/v1/sponsored-model/responses?credential={SECRET_MARKER}");
-
-    assert_eq!(
-        status(&app, request(Method::POST, &uri, None, None)).await,
-        StatusCode::NO_CONTENT
-    );
-    let response = app
-        .oneshot(request(Method::POST, &uri, None, None))
-        .await
-        .expect("router answers");
-
-    assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
-    assert_eq!(
-        response.headers().get(header::CACHE_CONTROL),
-        Some(&HeaderValue::from_static("no-store"))
-    );
-    assert_eq!(
-        response.headers().get(header::REFERRER_POLICY),
-        Some(&HeaderValue::from_static("no-referrer"))
-    );
-    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
-    assert!(!String::from_utf8_lossy(&body).contains(SECRET_MARKER));
-}
-
-#[tokio::test]
-async fn every_provisioning_and_prompt_route_uses_its_strict_semantic_tier() {
-    for path in [
-        "/api/v1/sessions",
-        "/api/v1/conversations",
-        "/api/v1/agui/run",
-        "/api/v1/sessions/sesn_rate/plane",
-        "/api/v1/sessions/sesn_rate/revive",
-        "/api/v1/launches/launch_rate/start",
-    ] {
-        let app = operation_app(RateLimiters::for_test(generous(), one(), generous()));
-        assert_eq!(
-            status(&app, subject_request(Method::POST, path)).await,
-            StatusCode::NO_CONTENT,
-            "first provisioning operation at {path}"
-        );
-        assert_eq!(
-            status(&app, subject_request(Method::POST, path)).await,
-            StatusCode::TOO_MANY_REQUESTS,
-            "second provisioning operation at {path}"
-        );
-    }
-
-    for path in [
-        "/api/v1/responses",
-        "/api/v1/sessions/sesn_rate/input",
-        "/api/v1/sessions/sesn_rate/steer",
-    ] {
-        let app = operation_app(RateLimiters::for_test(generous(), generous(), one()));
-        assert_eq!(
-            status(&app, subject_request(Method::POST, path)).await,
-            StatusCode::NO_CONTENT,
-            "first prompt operation at {path}"
-        );
-        assert_eq!(
-            status(&app, subject_request(Method::POST, path)).await,
-            StatusCode::TOO_MANY_REQUESTS,
-            "second prompt operation at {path}"
-        );
-    }
-}
-
-#[tokio::test]
-async fn default_create_and_input_budgets_are_independent() {
-    let app = operation_app(RateLimiters::for_test(one(), one(), one()));
-    for (method, path) in [
-        (Method::POST, "/api/v1/sessions"),
-        (Method::POST, "/api/v1/sessions/sesn_rate/input"),
-        (Method::GET, "/api/v1/conformance"),
-    ] {
-        assert_eq!(
-            status(&app, subject_request(method.clone(), path)).await,
-            StatusCode::NO_CONTENT,
-            "the first {method} {path} should use its own budget"
-        );
-        assert_eq!(
-            status(&app, subject_request(method.clone(), path)).await,
-            StatusCode::TOO_MANY_REQUESTS,
-            "the second {method} {path} should exhaust only its own budget"
-        );
-    }
-}
-
-#[tokio::test]
-async fn public_routes_use_network_keys_even_with_ambient_subjects() {
-    let peer_a = IpAddr::V4(Ipv4Addr::new(192, 0, 2, 10));
-    let peer_b = IpAddr::V4(Ipv4Addr::new(192, 0, 2, 11));
-    for (method, path) in [
-        (Method::GET, "/openapi.json"),
-        (Method::GET, "/api/v1/conformance"),
-        (Method::GET, "/api/v1/agui/capabilities"),
-        (
-            Method::GET,
-            "/api/v1/triggers/public/123e4567-e89b-12d3-a456-426614174000",
-        ),
-        (
-            Method::GET,
-            "/api/v1/agui/triggers/123e4567-e89b-12d3-a456-426614174000",
-        ),
-        (Method::POST, "/api/v1/mcp"),
-        (Method::POST, "/api/v1/a2a"),
-        (Method::GET, "/.well-known/agent-card.json"),
-        (Method::GET, "/auth"),
-        (Method::GET, "/auth/callback"),
-    ] {
-        let app = operation_app(RateLimiters::for_test(one(), one(), one()));
-        assert_eq!(
-            status(&app, request(method.clone(), path, None, Some(peer_a))).await,
-            StatusCode::NO_CONTENT,
-            "first public request to {path}"
-        );
-        assert_eq!(
-            status(
-                &app,
-                request(method.clone(), path, Some(SUBJECT), Some(peer_a))
-            )
-            .await,
-            StatusCode::TOO_MANY_REQUESTS,
-            "ambient identity moved {path} off the client budget"
-        );
-        assert_eq!(
-            status(&app, request(method, path, Some(SUBJECT), Some(peer_b))).await,
-            StatusCode::NO_CONTENT,
-            "one client network consumed another at {path}"
-        );
-        assert_eq!(
-            status(
-                &app,
-                request(
-                    Method::GET,
-                    "/api/v1/sessions/sesn_rate",
-                    Some(SUBJECT),
-                    Some(peer_a),
-                )
-            )
-            .await,
-            StatusCode::NO_CONTENT,
-            "public request to {path} consumed the subject budget"
-        );
-        assert_eq!(
-            status(
-                &app,
-                request(
-                    Method::GET,
-                    "/api/v1/sessions/sesn_rate",
-                    Some(SUBJECT),
-                    Some(peer_b),
-                )
-            )
-            .await,
-            StatusCode::TOO_MANY_REQUESTS,
-            "protected subject budget split across networks after {path}"
-        );
-    }
-}
-
-#[tokio::test]
-async fn authenticated_launch_creation_nested_under_public_preview_is_subject_keyed() {
-    let app = operation_app(RateLimiters::for_test(one(), generous(), generous()));
-    let path = "/api/v1/triggers/public/123e4567-e89b-12d3-a456-426614174000/launches";
-    assert_eq!(
-        status(
-            &app,
-            request(
-                Method::POST,
-                path,
-                Some(SUBJECT),
-                Some(IpAddr::V4(Ipv4Addr::new(192, 0, 2, 10))),
-            ),
-        )
-        .await,
-        StatusCode::NO_CONTENT
-    );
-    assert_eq!(
-        status(
-            &app,
-            request(
-                Method::POST,
-                path,
-                Some(SUBJECT),
-                Some(IpAddr::V4(Ipv4Addr::new(192, 0, 2, 11))),
-            ),
-        )
-        .await,
-        StatusCode::TOO_MANY_REQUESTS,
-        "a new network must not mint another budget for the same authenticated subject"
-    );
-}
-
-#[tokio::test]
-async fn forwarding_headers_are_used_only_from_a_trusted_peer_and_skip_spoofed_prefixes() {
-    let trusted = trusted_proxy(&["35.191.0.0/16"], 1);
-    let app = operation_app(complete_limiters(
-        generous(),
-        generous(),
-        one(),
-        generous(),
-        generous(),
-        trusted,
-    ));
-    let gfe = "35.191.4.7".parse().unwrap();
-
-    let first = with_xff(
-        request(Method::GET, "/api/v1/conformance", None, Some(gfe)),
-        "203.0.113.200, 198.51.100.10, 192.0.2.40",
-    );
-    assert_eq!(status(&app, first).await, StatusCode::NO_CONTENT);
-
-    let same_client_new_spoof = with_xff(
-        request(Method::GET, "/api/v1/conformance", None, Some(gfe)),
-        "203.0.113.201, 198.51.100.10, 192.0.2.40",
-    );
-    assert_eq!(
-        status(&app, same_client_new_spoof).await,
-        StatusCode::TOO_MANY_REQUESTS,
-        "a caller-prepended token must not shard the selected client"
-    );
-
-    let different_client = with_xff(
-        request(Method::GET, "/api/v1/conformance", None, Some(gfe)),
-        "203.0.113.200, 198.51.100.11, 192.0.2.40",
-    );
-    assert_eq!(status(&app, different_client).await, StatusCode::NO_CONTENT);
-
-    let untrusted_app = operation_app(RateLimiters::for_test(one(), generous(), generous()));
-    let peer = "192.0.2.90".parse().unwrap();
-    let spoof_a = with_xff(
-        request(Method::GET, "/api/v1/conformance", None, Some(peer)),
-        "198.51.100.20, 192.0.2.40",
-    );
-    let spoof_b = with_xff(
-        request(Method::GET, "/api/v1/conformance", None, Some(peer)),
-        "198.51.100.21, 192.0.2.40",
-    );
-    assert_eq!(
-        status(&untrusted_app, spoof_a).await,
-        StatusCode::NO_CONTENT
-    );
-    assert_eq!(
-        status(&untrusted_app, spoof_b).await,
-        StatusCode::TOO_MANY_REQUESTS,
-        "an untrusted peer's header must never change its key"
-    );
-}
-
-#[tokio::test]
-async fn pinned_cloudflare_upstream_selects_only_the_agreeing_visitor_token() {
-    let app = operation_app(complete_limiters(
-        generous(),
-        generous(),
-        one(),
-        generous(),
-        generous(),
-        trusted_proxy_with_cloudflare(&["35.191.0.0/16"], 1, &["173.245.48.0/20"]),
-    ));
-    let gfe = "35.191.4.7".parse().unwrap();
-
-    let first = with_cf_connecting_ip(
-        with_xff(
-            request(Method::GET, "/api/v1/conformance", None, Some(gfe)),
-            "203.0.113.200, 198.51.100.10, 173.245.48.9, 192.0.2.40",
-        ),
-        "198.51.100.10",
-    );
-    assert_eq!(status(&app, first).await, StatusCode::NO_CONTENT);
-
-    let same_visitor_new_spoof = with_cf_connecting_ip(
-        with_xff(
-            request(Method::GET, "/api/v1/conformance", None, Some(gfe)),
-            "203.0.113.201, 198.51.100.10, 173.245.48.9, 192.0.2.40",
-        ),
-        "198.51.100.10",
-    );
-    assert_eq!(
-        status(&app, same_visitor_new_spoof).await,
-        StatusCode::TOO_MANY_REQUESTS,
-        "a caller-controlled prefix changed the Cloudflare-authenticated visitor key"
-    );
-
-    let different_visitor = with_cf_connecting_ip(
-        with_xff(
-            request(Method::GET, "/api/v1/conformance", None, Some(gfe)),
-            "203.0.113.200, 198.51.100.11, 173.245.48.9, 192.0.2.40",
-        ),
-        "198.51.100.11",
-    );
-    assert_eq!(
-        status(&app, different_visitor).await,
-        StatusCode::NO_CONTENT
-    );
-}
-
-#[tokio::test]
-async fn ambiguous_cloudflare_identity_falls_back_to_the_observed_edge() {
-    let gfe = "35.191.4.7".parse().unwrap();
-    for scenario in [
-        "missing connecting header",
-        "malformed connecting header",
-        "mismatched connecting header",
-        "duplicate connecting header",
-        "comma-joined connecting header",
-        "whitespace connecting header",
-        "worker marker",
-        "pseudo IPv4 overwrite",
-        "pseudo IPv4 without overwrite marker",
-        "malformed visitor token",
-        "missing visitor token",
-    ] {
-        let app = operation_app(complete_limiters(
-            generous(),
-            generous(),
-            one(),
-            generous(),
-            generous(),
-            trusted_proxy_with_cloudflare(&["35.191.0.0/16"], 1, &["173.245.48.0/20"]),
-        ));
-        for expected in [StatusCode::NO_CONTENT, StatusCode::TOO_MANY_REQUESTS] {
-            let visitor = if expected == StatusCode::NO_CONTENT {
-                "198.51.100.20"
-            } else {
-                "198.51.100.21"
-            };
-            let chain = match scenario {
-                "malformed visitor token" => "not-an-ip, 173.245.48.9, 192.0.2.40",
-                "missing visitor token" => "173.245.48.9, 192.0.2.40",
-                "pseudo IPv4 overwrite" | "pseudo IPv4 without overwrite marker" => {
-                    "240.10.20.30, 173.245.48.9, 192.0.2.40"
-                }
-                _ if visitor == "198.51.100.20" => "198.51.100.20, 173.245.48.9, 192.0.2.40",
-                _ => "198.51.100.21, 173.245.48.9, 192.0.2.40",
-            };
-            let mut candidate = with_xff(
-                request(Method::GET, "/api/v1/conformance", None, Some(gfe)),
-                chain,
-            );
-            match scenario {
-                "missing connecting header" => {}
-                "malformed connecting header" => {
-                    candidate = with_cf_connecting_ip(candidate, "not-an-ip");
-                }
-                "malformed visitor token" | "missing visitor token" => {
-                    candidate = with_cf_connecting_ip(candidate, visitor);
-                }
-                "mismatched connecting header" => {
-                    candidate = with_cf_connecting_ip(candidate, "198.51.100.99");
-                }
-                "duplicate connecting header" => {
-                    candidate.headers_mut().append(
-                        "cf-connecting-ip",
-                        HeaderValue::from_static("198.51.100.20"),
-                    );
-                    candidate.headers_mut().append(
-                        "cf-connecting-ip",
-                        HeaderValue::from_static("198.51.100.21"),
-                    );
-                }
-                "comma-joined connecting header" => {
-                    candidate = with_cf_connecting_ip(candidate, "198.51.100.20, 198.51.100.21");
-                }
-                "whitespace connecting header" => {
-                    candidate = with_cf_connecting_ip(candidate, "198.51.100.20 ");
-                }
-                "worker marker" => {
-                    candidate = with_cf_connecting_ip(candidate, visitor);
-                    candidate
-                        .headers_mut()
-                        .insert("cf-worker", HeaderValue::from_static("example.workers.dev"));
-                }
-                "pseudo IPv4 overwrite" => {
-                    candidate = with_cf_connecting_ip(candidate, "240.10.20.30");
-                    candidate.headers_mut().insert(
-                        "cf-connecting-ipv6",
-                        HeaderValue::from_static("2001:db8:10:20::1"),
-                    );
-                }
-                "pseudo IPv4 without overwrite marker" => {
-                    candidate = with_cf_connecting_ip(candidate, "240.10.20.30");
-                }
-                _ => unreachable!(),
-            }
-            assert_eq!(
-                status(&app, candidate).await,
-                expected,
-                "{scenario} did not retain the shared observed-edge key"
-            );
-        }
-    }
-}
-
-#[tokio::test]
-async fn cloudflare_chain_across_multiple_header_fields_stays_right_anchored() {
-    let app = operation_app(complete_limiters(
-        generous(),
-        generous(),
-        one(),
-        generous(),
-        generous(),
-        trusted_proxy_with_cloudflare(&["35.191.0.0/16"], 1, &["173.245.48.0/20"]),
-    ));
-    let gfe = "35.191.4.7".parse().unwrap();
-    for (spoofed, expected) in [
-        ("203.0.113.40", StatusCode::NO_CONTENT),
-        ("203.0.113.41", StatusCode::TOO_MANY_REQUESTS),
-    ] {
-        let mut candidate = request(Method::GET, "/api/v1/conformance", None, Some(gfe));
-        candidate
-            .headers_mut()
-            .append("x-forwarded-for", HeaderValue::from_static(spoofed));
-        candidate.headers_mut().append(
-            "x-forwarded-for",
-            HeaderValue::from_static("198.51.100.40, 173.245.48.9, 192.0.2.40"),
-        );
-        candidate = with_cf_connecting_ip(candidate, "198.51.100.40");
-        assert_eq!(
-            status(&app, candidate).await,
-            expected,
-            "a separate caller-controlled XFF field changed the selected visitor"
-        );
-    }
-}
-
-#[tokio::test]
-async fn non_cloudflare_upstream_ignores_claimed_cloudflare_identity_and_prefix() {
-    let app = operation_app(complete_limiters(
-        generous(),
-        generous(),
-        one(),
-        generous(),
-        generous(),
-        trusted_proxy_with_cloudflare(&["35.191.0.0/16"], 1, &["173.245.48.0/20"]),
-    ));
-    let gfe = "35.191.4.7".parse().unwrap();
-    for (visitor, expected) in [
-        ("198.51.100.30", StatusCode::NO_CONTENT),
-        ("198.51.100.31", StatusCode::TOO_MANY_REQUESTS),
-    ] {
-        let chain = if visitor == "198.51.100.30" {
-            "198.51.100.30, 192.0.2.90, 192.0.2.40"
-        } else {
-            "198.51.100.31, 192.0.2.90, 192.0.2.40"
-        };
-        let candidate = with_cf_connecting_ip(
-            with_xff(
-                request(Method::GET, "/api/v1/conformance", None, Some(gfe)),
-                chain,
-            ),
-            visitor,
-        );
-        assert_eq!(
-            status(&app, candidate).await,
-            expected,
-            "an unpinned upstream treated a claimed Cloudflare header as authority"
-        );
-    }
-}
-
-#[tokio::test]
-async fn direct_origin_caller_cannot_authenticate_spoofed_cloudflare_headers() {
-    let app = operation_app(RateLimiters::for_test(one(), generous(), generous()));
-    let peer = "192.0.2.91".parse().unwrap();
-    for (visitor, expected) in [
-        ("198.51.100.50", StatusCode::NO_CONTENT),
-        ("198.51.100.51", StatusCode::TOO_MANY_REQUESTS),
-    ] {
-        let chain = if visitor == "198.51.100.50" {
-            "198.51.100.50, 173.245.48.9, 192.0.2.40"
-        } else {
-            "198.51.100.51, 173.245.48.9, 192.0.2.40"
-        };
-        let candidate = with_cf_connecting_ip(
-            with_xff(
-                request(Method::GET, "/api/v1/conformance", None, Some(peer)),
-                chain,
-            ),
-            visitor,
-        );
-        assert_eq!(
-            status(&app, candidate).await,
-            expected,
-            "an untrusted TCP peer selected a spoofed forwarded identity"
-        );
-    }
-}
-
-#[tokio::test]
-async fn unreviewed_cloudflare_edge_range_degrades_to_the_edge_key() {
-    let app = operation_app(complete_limiters(
-        generous(),
-        generous(),
-        one(),
-        generous(),
-        generous(),
-        trusted_proxy_with_cloudflare(&["35.191.0.0/16"], 1, &["173.245.48.0/20"]),
-    ));
-    let gfe = "35.191.4.7".parse().unwrap();
-    for (visitor, expected) in [
-        ("198.51.100.60", StatusCode::NO_CONTENT),
-        ("198.51.100.61", StatusCode::TOO_MANY_REQUESTS),
-    ] {
-        let chain = if visitor == "198.51.100.60" {
-            "198.51.100.60, 173.245.64.9, 192.0.2.40"
-        } else {
-            "198.51.100.61, 173.245.64.9, 192.0.2.40"
-        };
-        let candidate = with_cf_connecting_ip(
-            with_xff(
-                request(Method::GET, "/api/v1/conformance", None, Some(gfe)),
-                chain,
-            ),
-            visitor,
-        );
-        assert_eq!(status(&app, candidate).await, expected);
-    }
-}
-
-#[tokio::test]
-async fn mapped_and_native_visitor_headers_are_one_cloudflare_identity() {
-    let app = operation_app(complete_limiters(
-        generous(),
-        generous(),
-        one(),
-        generous(),
-        generous(),
-        trusted_proxy_with_cloudflare(&["35.191.0.0/16"], 1, &["173.245.48.0/20"]),
-    ));
-    let gfe = "35.191.4.7".parse().unwrap();
-    let mapped = with_cf_connecting_ip(
-        with_xff(
-            request(Method::GET, "/api/v1/conformance", None, Some(gfe)),
-            "::ffff:198.51.100.70, 173.245.48.9, 192.0.2.40",
-        ),
-        "198.51.100.70",
-    );
-    assert_eq!(status(&app, mapped).await, StatusCode::NO_CONTENT);
-
-    let native = with_cf_connecting_ip(
-        with_xff(
-            request(Method::GET, "/api/v1/conformance", None, Some(gfe)),
-            "198.51.100.70, 173.245.48.9, 192.0.2.40",
-        ),
-        "198.51.100.70",
-    );
-    assert_eq!(status(&app, native).await, StatusCode::TOO_MANY_REQUESTS);
-}
-
-#[tokio::test]
-async fn cloudflare_ipv6_chain_uses_the_agreeing_visitor_network() {
-    let app = operation_app(complete_limiters(
-        generous(),
-        generous(),
-        one(),
-        generous(),
-        generous(),
-        trusted_proxy_with_cloudflare(&["2600:2d00:1:1::/64"], 1, &["2606:4700::/32"]),
-    ));
-    let gfe = "2600:2d00:1:1::9".parse().unwrap();
-    for (visitor, chain, expected) in [
-        (
-            "2001:db8:10:20::1",
-            "2001:db8:10:20::1, 2606:4700::100, 2001:db8:ffff::40",
-            StatusCode::NO_CONTENT,
-        ),
-        (
-            "2001:db8:10:20::99",
-            "2001:db8:10:20::99, 2606:4700::100, 2001:db8:ffff::40",
-            StatusCode::TOO_MANY_REQUESTS,
-        ),
-        (
-            "2001:db8:10:21::1",
-            "2001:db8:10:21::1, 2606:4700::100, 2001:db8:ffff::40",
-            StatusCode::NO_CONTENT,
-        ),
-    ] {
-        let candidate = with_cf_connecting_ip(
-            with_xff(
-                request(Method::GET, "/api/v1/conformance", None, Some(gfe)),
-                chain,
-            ),
-            visitor,
-        );
-        assert_eq!(status(&app, candidate).await, expected);
-    }
-}
-
-#[tokio::test]
-async fn unusable_trusted_forwarding_chains_fall_back_to_the_tcp_peer() {
-    let gfe = "35.191.4.7".parse().unwrap();
-    for (description, first_header, second_header) in [
-        ("missing", None, None),
-        (
-            "malformed",
-            Some("not-an-ip, 192.0.2.40"),
-            Some("still-not-an-ip, 192.0.2.41"),
-        ),
-        (
-            "empty token",
-            Some("198.51.100.10, , 192.0.2.40"),
-            Some("198.51.100.11, , 192.0.2.41"),
-        ),
-        ("too short", Some("192.0.2.40"), Some("192.0.2.41")),
-    ] {
-        let app = operation_app(complete_limiters(
-            generous(),
-            generous(),
-            one(),
-            generous(),
-            generous(),
-            trusted_proxy(&["35.191.0.0/16"], 1),
-        ));
-        let first = request(Method::GET, "/api/v1/conformance", None, Some(gfe));
-        let second = request(Method::GET, "/api/v1/conformance", None, Some(gfe));
-        let first = match first_header {
-            Some(value) => with_xff(first, value),
-            None => first,
-        };
-        let second = match second_header {
-            Some(value) => with_xff(second, value),
-            None => second,
-        };
-
-        assert_eq!(status(&app, first).await, StatusCode::NO_CONTENT);
-        assert_eq!(
-            status(&app, second).await,
-            StatusCode::TOO_MANY_REQUESTS,
-            "{description} chain did not share the TCP-peer fallback"
-        );
-    }
-}
-
-#[tokio::test]
-async fn multiple_forwarding_header_fields_form_one_right_anchored_chain() {
-    let app = operation_app(complete_limiters(
-        generous(),
-        generous(),
-        one(),
-        generous(),
-        generous(),
-        trusted_proxy(&["35.191.0.0/16"], 1),
-    ));
-    let gfe = "35.191.4.7".parse().unwrap();
-    for (spoofed, expected) in [
-        ("203.0.113.10", StatusCode::NO_CONTENT),
-        ("203.0.113.11", StatusCode::TOO_MANY_REQUESTS),
-    ] {
-        let mut request = request(Method::GET, "/api/v1/conformance", None, Some(gfe));
-        request
-            .headers_mut()
-            .append("x-forwarded-for", HeaderValue::from_static(spoofed));
-        request.headers_mut().append(
-            "x-forwarded-for",
-            HeaderValue::from_static("198.51.100.10, 192.0.2.40"),
-        );
-        assert_eq!(
-            status(&app, request).await,
-            expected,
-            "caller prefix in another header field changed the client key"
-        );
-    }
-}
-
-#[tokio::test]
-async fn ipv6_privacy_addresses_share_a_64_and_mapped_addresses_share_ipv4() {
-    let app = operation_app(RateLimiters::for_test(one(), generous(), generous()));
-    let first = "2001:db8:10:20::1".parse().unwrap();
-    let same_prefix = "2001:db8:10:20:ffff::99".parse().unwrap();
-    let other_prefix = "2001:db8:10:21::1".parse().unwrap();
-
-    assert_eq!(
-        status(
-            &app,
-            request(Method::GET, "/api/v1/conformance", None, Some(first))
-        )
-        .await,
-        StatusCode::NO_CONTENT
-    );
-    assert_eq!(
-        status(
-            &app,
-            request(Method::GET, "/api/v1/conformance", None, Some(same_prefix),)
-        )
-        .await,
-        StatusCode::TOO_MANY_REQUESTS,
-        "privacy addresses in one /64 must share a budget"
-    );
-    assert_eq!(
-        status(
-            &app,
-            request(Method::GET, "/api/v1/conformance", None, Some(other_prefix),)
-        )
-        .await,
-        StatusCode::NO_CONTENT,
-        "different /64 networks keep separate budgets"
-    );
-
-    let mapped_app = operation_app(RateLimiters::for_test(one(), generous(), generous()));
-    let mapped = "::ffff:192.0.2.33".parse().unwrap();
-    let ipv4 = "192.0.2.33".parse().unwrap();
-    assert_eq!(
-        status(
-            &mapped_app,
-            request(Method::GET, "/api/v1/conformance", None, Some(mapped))
-        )
-        .await,
-        StatusCode::NO_CONTENT
-    );
-    assert_eq!(
-        status(
-            &mapped_app,
-            request(Method::GET, "/api/v1/conformance", None, Some(ipv4))
-        )
-        .await,
-        StatusCode::TOO_MANY_REQUESTS,
-        "mapped and native IPv4 forms must be one key"
-    );
-}
-
-#[tokio::test]
-async fn requests_without_peer_metadata_share_one_fail_closed_key() {
-    let app = operation_app(RateLimiters::for_test(one(), generous(), generous()));
-    assert_eq!(
-        status(
-            &app,
-            request(Method::GET, "/api/v1/conformance", None, None)
-        )
-        .await,
-        StatusCode::NO_CONTENT
-    );
-    assert_eq!(
-        status(
-            &app,
-            request(Method::GET, "/api/v1/conformance", None, None)
-        )
-        .await,
-        StatusCode::TOO_MANY_REQUESTS
-    );
-}
-
-#[tokio::test]
-async fn health_and_network_admission_budgets_are_independent() {
-    let app = guarded_app(complete_limiters(
-        one(),
-        one(),
-        generous(),
-        generous(),
-        generous(),
-        TrustedProxyConfig::sample(),
-    ));
-    let peer = "192.0.2.61".parse().unwrap();
-
-    assert_eq!(
-        status(
-            &app,
-            request(Method::GET, "/api/v1/conformance", None, Some(peer))
-        )
-        .await,
-        StatusCode::NO_CONTENT
-    );
-    assert_eq!(
-        status(
-            &app,
-            request(Method::GET, "/api/v1/conformance", None, Some(peer))
-        )
-        .await,
+        call("/auth/connections/start", "one")
+            .await
+            .unwrap()
+            .status(),
         StatusCode::TOO_MANY_REQUESTS
     );
     assert_eq!(
-        status(&app, request(Method::GET, "/ready", None, Some(peer))).await,
-        StatusCode::NO_CONTENT,
-        "caller traffic must not consume the probe budget"
-    );
-    assert_eq!(
-        status(&app, request(Method::GET, "/livez", None, Some(peer))).await,
-        StatusCode::TOO_MANY_REQUESTS,
-        "health endpoints deliberately share their protected budget"
-    );
-}
-
-#[tokio::test]
-async fn head_health_requests_share_the_get_probe_budget() {
-    let app = guarded_app(complete_limiters(
-        generous(),
-        one(),
-        generous(),
-        generous(),
-        generous(),
-        TrustedProxyConfig::sample(),
-    ));
-    let peer = "192.0.2.62".parse().unwrap();
-    assert_eq!(
-        status(&app, request(Method::HEAD, "/ready", None, Some(peer))).await,
-        StatusCode::NO_CONTENT
-    );
-    assert_eq!(
-        status(&app, request(Method::GET, "/livez", None, Some(peer))).await,
-        StatusCode::TOO_MANY_REQUESTS,
-        "HEAD and GET probes did not share the health budget"
-    );
-}
-
-#[tokio::test]
-async fn wrong_method_health_paths_use_the_ordinary_operation_budget() {
-    let app = operation_app(RateLimiters::for_test(one(), generous(), generous()));
-    let first = status(&app, subject_request(Method::POST, "/ready")).await;
-    assert_ne!(first, StatusCode::TOO_MANY_REQUESTS);
-    assert_eq!(
-        status(&app, subject_request(Method::POST, "/ready")).await,
-        StatusCode::TOO_MANY_REQUESTS,
-        "a wrong-method health path bypassed the ordinary budget"
-    );
-}
-
-async fn count_inner(
-    State(calls): State<Arc<AtomicUsize>>,
-    request: Request,
-    next: Next,
-) -> Response {
-    calls.fetch_add(1, Ordering::SeqCst);
-    next.run(request).await
-}
-
-#[tokio::test]
-async fn production_order_rejects_before_auth_body_activity_and_handler_work() {
-    let admission_calls = Arc::new(AtomicUsize::new(0));
-    let admission_limiters = complete_limiters(
-        one(),
-        generous(),
-        generous(),
-        generous(),
-        generous(),
-        TrustedProxyConfig::sample(),
-    );
-    let admission_app = Router::new()
-        .route(
-            "/api/v1/conformance",
-            get(|| async { StatusCode::NO_CONTENT }),
-        )
-        .layer(axum::middleware::from_fn_with_state(
-            Arc::clone(&admission_calls),
-            count_inner,
-        ))
-        .layer(axum::middleware::from_fn_with_state(
-            admission_limiters,
-            rate_limit::admit,
-        ));
-    let peer = "192.0.2.71".parse().unwrap();
-    for expected in [StatusCode::NO_CONTENT, StatusCode::TOO_MANY_REQUESTS] {
-        assert_eq!(
-            status(
-                &admission_app,
-                request(Method::GET, "/api/v1/conformance", None, Some(peer))
-            )
-            .await,
-            expected
-        );
-    }
-    assert_eq!(
-        admission_calls.load(Ordering::SeqCst),
-        1,
-        "pre-auth rejection must not enter any inner work"
-    );
-
-    let activity_calls = Arc::new(AtomicUsize::new(0));
-    let operation_app = Router::new()
-        .route(
-            "/api/v1/sessions",
-            post(|| async { StatusCode::NO_CONTENT }),
-        )
-        .layer(axum::middleware::from_fn_with_state(
-            Arc::clone(&activity_calls),
-            count_inner,
-        ))
-        .layer(axum::middleware::from_fn_with_state(
-            RateLimiters::for_test(generous(), one(), generous()),
-            rate_limit::enforce,
-        ));
-    for expected in [StatusCode::NO_CONTENT, StatusCode::TOO_MANY_REQUESTS] {
-        assert_eq!(
-            status(
-                &operation_app,
-                subject_request(Method::POST, "/api/v1/sessions")
-            )
-            .await,
-            expected
-        );
-    }
-    assert_eq!(
-        activity_calls.load(Ordering::SeqCst),
-        1,
-        "an exact rejection must not enter body capture or activity recording"
-    );
-}
-
-#[tokio::test]
-async fn cors_preflights_are_exempt_and_retry_after_is_browser_visible() {
-    let origin = HeaderValue::from_static("https://integrator.example");
-    let app = with_cors(
-        guarded_app(complete_limiters(
-            one(),
-            generous(),
-            one(),
-            generous(),
-            generous(),
-            TrustedProxyConfig::sample(),
-        )),
-        vec![origin.clone()],
-    );
-    let peer = IpAddr::V4(Ipv4Addr::LOCALHOST);
-
-    for _ in 0..2 {
-        let mut preflight = request(Method::OPTIONS, "/api/v1/conformance", None, Some(peer));
-        preflight
-            .headers_mut()
-            .insert(header::ORIGIN, origin.clone());
-        preflight.headers_mut().insert(
-            header::ACCESS_CONTROL_REQUEST_METHOD,
-            HeaderValue::from_static("GET"),
-        );
-        assert!(
-            status(&app, preflight).await.is_success(),
-            "CORS should answer a listed preflight"
-        );
-    }
-
-    let mut admitted = request(Method::GET, "/api/v1/conformance", None, Some(peer));
-    admitted
-        .headers_mut()
-        .insert(header::ORIGIN, origin.clone());
-    assert_eq!(status(&app, admitted).await, StatusCode::NO_CONTENT);
-
-    let mut limited = request(Method::GET, "/api/v1/conformance", None, Some(peer));
-    limited.headers_mut().insert(header::ORIGIN, origin);
-    let response = app.oneshot(limited).await.expect("router answers");
-    assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
-    let exposed = response
-        .headers()
-        .get(header::ACCESS_CONTROL_EXPOSE_HEADERS)
-        .expect("CORS exposes response headers")
-        .to_str()
-        .expect("exposed header names are text")
-        .to_ascii_lowercase();
-    assert!(
-        exposed.split(',').any(|name| name.trim() == "retry-after"),
-        "Retry-After was not exposed: {exposed}"
-    );
-}
-
-#[tokio::test]
-async fn arbitrary_options_requests_are_not_exempt_as_cors_preflights() {
-    let origin = HeaderValue::from_static("https://integrator.example");
-    let app = with_cors(
-        guarded_app(complete_limiters(
-            generous(),
-            generous(),
-            one(),
-            generous(),
-            generous(),
-            TrustedProxyConfig::sample(),
-        )),
-        vec![origin],
-    );
-    let peer = IpAddr::V4(Ipv4Addr::LOCALHOST);
-
-    let first = status(
-        &app,
-        request(Method::OPTIONS, "/api/v1/conformance", None, Some(peer)),
-    )
-    .await;
-    assert_ne!(first, StatusCode::TOO_MANY_REQUESTS);
-    assert_eq!(
-        status(
-            &app,
-            request(Method::OPTIONS, "/api/v1/conformance", None, Some(peer))
-        )
-        .await,
-        StatusCode::TOO_MANY_REQUESTS,
-        "OPTIONS without the preflight headers consumes the ordinary budget"
-    );
-}
-
-#[tokio::test]
-async fn cors_preflights_grant_only_declared_methods_and_headers() {
-    let origin = HeaderValue::from_static("https://integrator.example");
-    let app = with_cors(test_routes(), vec![origin.clone()]);
-
-    for (method, requested_headers) in [("CONNECT", None), ("GET", Some("x-undeclared"))] {
-        let mut preflight = request(
-            Method::OPTIONS,
-            "/api/v1/conformance",
-            None,
-            Some(IpAddr::V4(Ipv4Addr::LOCALHOST)),
-        );
-        preflight
-            .headers_mut()
-            .insert(header::ORIGIN, origin.clone());
-        preflight.headers_mut().insert(
-            header::ACCESS_CONTROL_REQUEST_METHOD,
-            HeaderValue::from_static(method),
-        );
-        if let Some(requested_headers) = requested_headers {
-            preflight.headers_mut().insert(
-                header::ACCESS_CONTROL_REQUEST_HEADERS,
-                HeaderValue::from_static(requested_headers),
-            );
-        }
-
-        let response = app.clone().oneshot(preflight).await.expect("CORS answers");
-        assert_eq!(response.status(), StatusCode::OK);
-        assert!(
-            response
-                .headers()
-                .get(header::ACCESS_CONTROL_ALLOW_ORIGIN)
-                .is_none(),
-            "undeclared preflight shape received a browser grant"
-        );
-    }
-}
-
-#[tokio::test]
-async fn only_rest_rejections_claim_the_rest_profile() {
-    for (method, path, carries_rest_links) in [
-        (Method::GET, "/openapi.json", true),
-        (Method::GET, "/api/v1/sessions/sesn_rate", true),
-        (Method::GET, "/api/v1/agui", false),
-        (Method::GET, "/api/v1/agui/unknown", false),
-        (Method::POST, "/api/v1/agui/run", false),
-        (Method::GET, "/api/v1/agui/capabilities", false),
-        (Method::GET, "/api/v1/sessions/sesn_rate/terminal", false),
-        (Method::GET, "/api/v1/sessions/sesn_rate/terminal/", true),
-        (Method::POST, "/api/v1/mcp", false),
-        (Method::POST, "/api/v1/a2a", false),
-        (Method::GET, "/.well-known/agent-card.json", false),
-    ] {
-        let app = operation_app(RateLimiters::for_test(one(), one(), one()));
-        assert_eq!(
-            status(&app, subject_request(method.clone(), path)).await,
-            StatusCode::NO_CONTENT,
-            "first request to {path}"
-        );
-        let response = app
-            .oneshot(subject_request(method, path))
+        call("/auth/connections/start", "two")
             .await
-            .expect("router answers");
-        assert_eq!(
-            response.status(),
-            StatusCode::TOO_MANY_REQUESTS,
-            "for {path}"
-        );
-        assert_eq!(
-            response.headers().get(header::LINK),
-            carries_rest_links.then_some(&REST_LINKS),
-            "REST Link classification for {path}"
-        );
+            .unwrap()
+            .status(),
+        StatusCode::OK
+    );
+}
+
+#[test]
+fn ipv6_privacy_addresses_share_a_prefix_budget() {
+    let first = "2001:db8:1234:5678::1".parse().unwrap();
+    let second = "2001:db8:1234:5678:ffff::2".parse().unwrap();
+    assert_eq!(normalize_client_ip(first), normalize_client_ip(second));
+}
+
+#[test]
+fn forwarded_addresses_require_a_trusted_peer() {
+    let mut request = request(Method::GET, "/api/v1/conformance");
+    request
+        .extensions_mut()
+        .insert(ConnectInfo(SocketAddr::from(([192, 0, 2, 10], 443))));
+    request.headers_mut().insert(
+        "x-forwarded-for",
+        "198.51.100.7, 192.0.2.9".parse().unwrap(),
+    );
+
+    let untrusted = TrustedProxyConfig::sample();
+    assert_eq!(
+        resolve_client(&request, &untrusted),
+        ClientKey::Network("192.0.2.10".parse().unwrap())
+    );
+
+    let trusted = TrustedProxyConfig {
+        cidrs: vec!["192.0.2.0/24".parse().unwrap()],
+        forwarded_hops: 1,
+        cloudflare_cidrs: Vec::new(),
+    };
+    assert_eq!(
+        resolve_client(&request, &trusted),
+        ClientKey::Network("198.51.100.7".parse().unwrap())
+    );
+}
+
+#[test]
+fn visitor_launches_use_the_subject_and_exact_daily_limit() {
+    let limiters = visitor_limiters();
+    let subject = SubjectId::new("visitor-a");
+    let now = time_on_day(20_000, 12 * 60 * 60);
+    assert_eq!(visitor_quota_key(&subject), "trigger-visitor:visitor-a");
+
+    for _ in 0..5 {
+        limiters
+            .admit_visitor_launch(&subject, 5, now)
+            .expect("five launches fit")
+            .commit();
+    }
+    let exhausted = limiters
+        .admit_visitor_launch(&subject, 5, now)
+        .err()
+        .expect("the sixth launch is refused");
+    assert_eq!(exhausted.code(), "resource_quota");
+    assert_eq!(exhausted.resource(), "visitor_launches");
+    assert_eq!(exhausted.limit(), 5);
+    assert_eq!(exhausted.retry_after_seconds(now), 12 * 60 * 60);
+    limiters
+        .admit_visitor_launch(&SubjectId::new("visitor-b"), 5, now)
+        .expect("subjects have independent counts")
+        .commit();
+}
+
+#[test]
+fn visitor_launch_reservation_releases_on_drop_and_commit_retains_usage() {
+    let limiters = visitor_limiters();
+    let subject = SubjectId::new("visitor-release");
+    let now = time_on_day(20_000, 1);
+    let reservation = limiters.admit_visitor_launch(&subject, 1, now).unwrap();
+    assert!(limiters.admit_visitor_launch(&subject, 1, now).is_err());
+    drop(reservation);
+
+    limiters
+        .admit_visitor_launch(&subject, 1, now)
+        .unwrap()
+        .commit();
+    assert!(limiters.admit_visitor_launch(&subject, 1, now).is_err());
+}
+
+#[test]
+fn visitor_launch_admission_is_atomic_under_concurrency() {
+    let limiters = visitor_limiters();
+    let now = time_on_day(20_000, 1);
+    let reservations = std::thread::scope(|scope| {
+        let handles = (0..32)
+            .map(|_| {
+                let limiters = Arc::clone(&limiters);
+                scope.spawn(move || {
+                    limiters
+                        .admit_visitor_launch(&SubjectId::new("visitor-race"), 5, now)
+                        .ok()
+                })
+            })
+            .collect::<Vec<_>>();
+        handles
+            .into_iter()
+            .filter_map(|handle| handle.join().unwrap())
+            .collect::<Vec<_>>()
+    });
+    assert_eq!(reservations.len(), 5);
+    assert!(limiters
+        .admit_visitor_launch(&SubjectId::new("visitor-race"), 5, now)
+        .is_err());
+    drop(reservations);
+    assert!(limiters
+        .admit_visitor_launch(&SubjectId::new("visitor-race"), 5, now)
+        .is_ok());
+}
+
+#[test]
+fn visitor_launch_limit_is_live_and_resets_at_utc_midnight() {
+    let limiters = visitor_limiters();
+    let subject = SubjectId::new("visitor-dynamic");
+    let before_midnight = time_on_day(20_000, 86_399);
+
+    for _ in 0..3 {
+        limiters
+            .admit_visitor_launch(&subject, 5, before_midnight)
+            .unwrap()
+            .commit();
+    }
+    let reduced = limiters
+        .admit_visitor_launch(&subject, 2, before_midnight)
+        .err()
+        .expect("a reduced live limit applies immediately");
+    assert_eq!(reduced.limit(), 2);
+    assert_eq!(reduced.retry_after_seconds(before_midnight), 1);
+    limiters
+        .admit_visitor_launch(&subject, 4, before_midnight)
+        .expect("raising the limit admits one more")
+        .commit();
+    assert!(limiters
+        .admit_visitor_launch(&subject, 4, before_midnight)
+        .is_err());
+    limiters
+        .admit_visitor_launch(&subject, 1, time_on_day(20_001, 0))
+        .expect("the next UTC day has a fresh count")
+        .commit();
+}
+
+#[tokio::test]
+async fn cma_launch_quota_reads_live_settings_and_bypasses_only_nonvisitors() {
+    let limiters = visitor_limiters();
+    let settings_store = Arc::new(MutableSettings::new(1));
+    let settings = Arc::new(PlatformSettingsService::new(
+        settings_store.clone(),
+        ActivityService::new(Arc::new(NoopActivity)),
+    ));
+    let now = time_on_day(20_000, 60);
+    let quota = CmaLaunchQuota::with_clock(Arc::clone(&limiters), settings, move || now);
+    let visitor = Caller::new(
+        SubjectId::new("visitor-live"),
+        Authorization::new([Capability::LaunchTriggers]),
+    );
+
+    let first = quota.reserve(&visitor).await.unwrap();
+    let refusal = quota.reserve(&visitor).await.unwrap_err();
+    assert!(matches!(
+        refusal,
+        LaunchQuotaError::ResourceQuota(refusal)
+            if refusal.limit() == 1
+                && refusal.reset_at() == time_on_day(20_001, 0)
+    ));
+    drop(first);
+
+    let first = quota.reserve(&visitor).await.unwrap();
+    settings_store.set_visitor_launch_limit(2);
+    let second = quota.reserve(&visitor).await.unwrap();
+    settings_store.set_visitor_launch_limit(1);
+    assert!(matches!(
+        quota.reserve(&visitor).await,
+        Err(LaunchQuotaError::ResourceQuota(refusal)) if refusal.limit() == 1
+    ));
+    drop((first, second));
+
+    settings_store.set_visitor_launch_limit(0);
+    for authorization in [
+        Authorization::new([Capability::LaunchTriggers, Capability::CreateSandbox]),
+        Authorization::new([Capability::UseOwnSandboxes]),
+    ] {
+        let nonvisitor = Caller::new(SubjectId::new("not-a-visitor"), authorization);
+        quota
+            .reserve(&nonvisitor)
+            .await
+            .expect("non-visitors are unmetered");
     }
 }

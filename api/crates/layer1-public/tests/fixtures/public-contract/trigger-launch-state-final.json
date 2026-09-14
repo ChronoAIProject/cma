@@ -1,0 +1,1230 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "launch_fault_admit_conflict-seed-read",
+      "operation": "GET /api/v1/launches/{id}",
+      "scenario": "launch_fault_admit_conflict",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/launches/$launch_id",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "id": "lch_contract",
+          "trigger_id": "trg_contract",
+          "revision_digest": "99c37e06273ae4a6c3fe64593254086bb5f938db25cad7c6ed09910406b776c9",
+          "public_id": "public_contract",
+          "state": "draft",
+          "steps": [
+            {
+              "key": "signing_in",
+              "status": "completed",
+              "safe_detail": "",
+              "started_at": "2026-09-07T00:00:00Z",
+              "completed_at": "2026-09-07T00:00:00Z"
+            },
+            {
+              "key": "checking_requirements",
+              "status": "blocked",
+              "safe_detail": "Connect required accounts to continue",
+              "started_at": "2026-09-07T00:00:00Z"
+            },
+            {
+              "key": "sandbox",
+              "status": "pending",
+              "safe_detail": ""
+            },
+            {
+              "key": "workspace",
+              "status": "pending",
+              "safe_detail": ""
+            },
+            {
+              "key": "agent",
+              "status": "pending",
+              "safe_detail": ""
+            },
+            {
+              "key": "first_message",
+              "status": "pending",
+              "safe_detail": ""
+            },
+            {
+              "key": "ready",
+              "status": "pending",
+              "safe_detail": ""
+            }
+          ],
+          "resolution": {
+            "sandbox": {
+              "state": "pending"
+            },
+            "workspace": {
+              "state": "pending"
+            },
+            "agent": {
+              "state": "pending"
+            },
+            "choice_required": false
+          },
+          "requirements": {
+            "services": [
+              {
+                "service": "github",
+                "state": "missing"
+              },
+              {
+                "service": "chrono-llm-public",
+                "state": "missing"
+              }
+            ],
+            "checked_at": "2026-09-07T00:00:00Z"
+          },
+          "review": {
+            "needs": [
+              {
+                "type": "connection",
+                "service": "github"
+              },
+              {
+                "type": "connection",
+                "service": "chrono-llm-public"
+              }
+            ],
+            "can_start_now": false
+          },
+          "trust": {
+            "version": 1,
+            "disclosures": []
+          },
+          "first_message": "queued",
+          "confirmations": [],
+          "event_head": 1,
+          "created_at": "2026-09-07T00:00:00Z",
+          "updated_at": "2026-09-07T00:00:00Z",
+          "revision": 1
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "launch_id": "/id",
+        "launch_review_create_created_at": "/created_at",
+        "launch_review_create_requirements_checked_at": "/requirements/checked_at",
+        "launch_review_create_steps_0_completed_at": "/steps/0/completed_at",
+        "launch_review_create_steps_0_started_at": "/steps/0/started_at",
+        "launch_review_create_steps_1_started_at": "/steps/1/started_at",
+        "launch_review_create_updated_at": "/updated_at",
+        "public_id": "/public_id",
+        "trigger_id": "/trigger_id"
+      }
+    },
+    {
+      "id": "launch_fault_admit_conflict-write",
+      "operation": "POST /api/v1/triggers/public/{public_id}/launches",
+      "scenario": "launch_fault_admit_conflict",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/triggers/public/$public_id/launches",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "launch_fault_admit_conflict-write"
+        },
+        "body": {
+          "start_if_ready": false
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/launch-changed",
+          "title": "launch changed",
+          "status": 409,
+          "detail": "The Launch changed before this operation completed.",
+          "code": "launch_changed"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "launch_fault_connection_conflict-seed-read",
+      "operation": "GET /api/v1/launches/{id}",
+      "scenario": "launch_fault_connection_conflict",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/launches/$launch_id",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "id": "lch_contract",
+          "trigger_id": "trg_contract",
+          "revision_digest": "99c37e06273ae4a6c3fe64593254086bb5f938db25cad7c6ed09910406b776c9",
+          "public_id": "public_contract",
+          "state": "draft",
+          "steps": [
+            {
+              "key": "signing_in",
+              "status": "completed",
+              "safe_detail": "",
+              "started_at": "2026-09-07T00:00:00Z",
+              "completed_at": "2026-09-07T00:00:00Z"
+            },
+            {
+              "key": "checking_requirements",
+              "status": "blocked",
+              "safe_detail": "Connect required accounts to continue",
+              "started_at": "2026-09-07T00:00:00Z"
+            },
+            {
+              "key": "sandbox",
+              "status": "pending",
+              "safe_detail": ""
+            },
+            {
+              "key": "workspace",
+              "status": "pending",
+              "safe_detail": ""
+            },
+            {
+              "key": "agent",
+              "status": "pending",
+              "safe_detail": ""
+            },
+            {
+              "key": "first_message",
+              "status": "pending",
+              "safe_detail": ""
+            },
+            {
+              "key": "ready",
+              "status": "pending",
+              "safe_detail": ""
+            }
+          ],
+          "resolution": {
+            "sandbox": {
+              "state": "pending"
+            },
+            "workspace": {
+              "state": "pending"
+            },
+            "agent": {
+              "state": "pending"
+            },
+            "choice_required": false
+          },
+          "requirements": {
+            "services": [
+              {
+                "service": "github",
+                "state": "missing"
+              },
+              {
+                "service": "chrono-llm-public",
+                "state": "missing"
+              }
+            ],
+            "checked_at": "2026-09-07T00:00:00Z"
+          },
+          "review": {
+            "needs": [
+              {
+                "type": "connection",
+                "service": "github"
+              },
+              {
+                "type": "connection",
+                "service": "chrono-llm-public"
+              }
+            ],
+            "can_start_now": false
+          },
+          "trust": {
+            "version": 1,
+            "disclosures": []
+          },
+          "first_message": "queued",
+          "confirmations": [],
+          "event_head": 1,
+          "created_at": "2026-09-07T00:00:00Z",
+          "updated_at": "2026-09-07T00:00:00Z",
+          "revision": 1
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "launch_id": "/id",
+        "launch_review_create_created_at": "/created_at",
+        "launch_review_create_requirements_checked_at": "/requirements/checked_at",
+        "launch_review_create_steps_0_completed_at": "/steps/0/completed_at",
+        "launch_review_create_steps_0_started_at": "/steps/0/started_at",
+        "launch_review_create_steps_1_started_at": "/steps/1/started_at",
+        "launch_review_create_updated_at": "/updated_at",
+        "public_id": "/public_id",
+        "trigger_id": "/trigger_id"
+      }
+    },
+    {
+      "id": "launch_fault_connection_conflict-write",
+      "operation": "POST /api/v1/service-connections",
+      "scenario": "launch_fault_connection_conflict",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/service-connections",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "launch_fault_connection_conflict-write"
+        },
+        "body": {
+          "service_id": "github",
+          "launch_id": "$launch_id",
+          "intent_id": "contract-intent"
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/service-connection-changed",
+          "title": "service connection changed",
+          "status": 409,
+          "detail": "The service connection changed before it could be saved.",
+          "code": "service_connection_changed"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "launch_fault_handoff_satisfied-seed-read",
+      "operation": "GET /api/v1/launches/{id}",
+      "scenario": "launch_fault_handoff_satisfied",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/launches/$launch_id",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "id": "lch_contract",
+          "trigger_id": "trg_contract",
+          "revision_digest": "99c37e06273ae4a6c3fe64593254086bb5f938db25cad7c6ed09910406b776c9",
+          "public_id": "public_contract",
+          "state": "draft",
+          "steps": [
+            {
+              "key": "signing_in",
+              "status": "completed",
+              "safe_detail": "",
+              "started_at": "2026-09-07T00:00:00Z",
+              "completed_at": "2026-09-07T00:00:00Z"
+            },
+            {
+              "key": "checking_requirements",
+              "status": "blocked",
+              "safe_detail": "Connect required accounts to continue",
+              "started_at": "2026-09-07T00:00:00Z"
+            },
+            {
+              "key": "sandbox",
+              "status": "pending",
+              "safe_detail": ""
+            },
+            {
+              "key": "workspace",
+              "status": "pending",
+              "safe_detail": ""
+            },
+            {
+              "key": "agent",
+              "status": "pending",
+              "safe_detail": ""
+            },
+            {
+              "key": "first_message",
+              "status": "pending",
+              "safe_detail": ""
+            },
+            {
+              "key": "ready",
+              "status": "pending",
+              "safe_detail": ""
+            }
+          ],
+          "resolution": {
+            "sandbox": {
+              "state": "pending"
+            },
+            "workspace": {
+              "state": "pending"
+            },
+            "agent": {
+              "state": "pending"
+            },
+            "choice_required": false
+          },
+          "requirements": {
+            "services": [
+              {
+                "service": "github",
+                "state": "missing"
+              },
+              {
+                "service": "chrono-llm-public",
+                "state": "missing"
+              }
+            ],
+            "checked_at": "2026-09-07T00:00:00Z"
+          },
+          "review": {
+            "needs": [
+              {
+                "type": "connection",
+                "service": "github"
+              },
+              {
+                "type": "connection",
+                "service": "chrono-llm-public"
+              }
+            ],
+            "can_start_now": false
+          },
+          "trust": {
+            "version": 1,
+            "disclosures": []
+          },
+          "first_message": "queued",
+          "confirmations": [],
+          "event_head": 1,
+          "created_at": "2026-09-07T00:00:00Z",
+          "updated_at": "2026-09-07T00:00:00Z",
+          "revision": 1
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "launch_id": "/id",
+        "launch_review_create_created_at": "/created_at",
+        "launch_review_create_requirements_checked_at": "/requirements/checked_at",
+        "launch_review_create_steps_0_completed_at": "/steps/0/completed_at",
+        "launch_review_create_steps_0_started_at": "/steps/0/started_at",
+        "launch_review_create_steps_1_started_at": "/steps/1/started_at",
+        "launch_review_create_updated_at": "/updated_at",
+        "public_id": "/public_id",
+        "trigger_id": "/trigger_id"
+      }
+    },
+    {
+      "id": "launch_fault_handoff_satisfied-seed-handoff",
+      "operation": "POST /api/v1/service-connections",
+      "scenario": "launch_fault_handoff_satisfied",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/service-connections",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "connection-create"
+        },
+        "body": {
+          "launch_id": "$launch_id",
+          "service_id": "github",
+          "intent_id": "contract-intent"
+        }
+      },
+      "response": {
+        "status": 201,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "handoff_id": "sch_contract",
+          "hosted_url": "https://identity.example/connect/contract-intent",
+          "expires_at": "2026-09-07T00:15:00Z"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "connection_create_expires_at": "/expires_at",
+        "handoff_id": "/handoff_id"
+      }
+    },
+    {
+      "id": "launch_fault_handoff_satisfied-read-1",
+      "operation": "GET /api/v1/service-connections/{handoff_id}",
+      "scenario": "launch_fault_handoff_satisfied",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/service-connections/$handoff_id",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "handoff_id": "sch_contract",
+          "launch_id": "lch_contract",
+          "service_id": "github",
+          "state": "satisfied",
+          "expires_at": "2026-09-07T00:15:00Z",
+          "updated_at": "2026-09-07T00:00:00Z"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "handoff_satisfied_updated_at": "/updated_at"
+      }
+    },
+    {
+      "id": "launch_fault_handoff_satisfied-read-2",
+      "operation": "GET /api/v1/service-connections/{handoff_id}",
+      "scenario": "launch_fault_handoff_satisfied",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/service-connections/$handoff_id",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "handoff_id": "sch_contract",
+          "launch_id": "lch_contract",
+          "service_id": "github",
+          "state": "satisfied",
+          "expires_at": "2026-09-07T00:15:00Z",
+          "updated_at": "2026-09-07T00:00:00Z"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "handoff_satisfied_updated_at": "/updated_at"
+      }
+    },
+    {
+      "id": "launch_fault_handoff_expired-seed-read",
+      "operation": "GET /api/v1/launches/{id}",
+      "scenario": "launch_fault_handoff_expired",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/launches/$launch_id",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "id": "lch_contract",
+          "trigger_id": "trg_contract",
+          "revision_digest": "99c37e06273ae4a6c3fe64593254086bb5f938db25cad7c6ed09910406b776c9",
+          "public_id": "public_contract",
+          "state": "draft",
+          "steps": [
+            {
+              "key": "signing_in",
+              "status": "completed",
+              "safe_detail": "",
+              "started_at": "2026-09-07T00:00:00Z",
+              "completed_at": "2026-09-07T00:00:00Z"
+            },
+            {
+              "key": "checking_requirements",
+              "status": "blocked",
+              "safe_detail": "Connect required accounts to continue",
+              "started_at": "2026-09-07T00:00:00Z"
+            },
+            {
+              "key": "sandbox",
+              "status": "pending",
+              "safe_detail": ""
+            },
+            {
+              "key": "workspace",
+              "status": "pending",
+              "safe_detail": ""
+            },
+            {
+              "key": "agent",
+              "status": "pending",
+              "safe_detail": ""
+            },
+            {
+              "key": "first_message",
+              "status": "pending",
+              "safe_detail": ""
+            },
+            {
+              "key": "ready",
+              "status": "pending",
+              "safe_detail": ""
+            }
+          ],
+          "resolution": {
+            "sandbox": {
+              "state": "pending"
+            },
+            "workspace": {
+              "state": "pending"
+            },
+            "agent": {
+              "state": "pending"
+            },
+            "choice_required": false
+          },
+          "requirements": {
+            "services": [
+              {
+                "service": "github",
+                "state": "missing"
+              },
+              {
+                "service": "chrono-llm-public",
+                "state": "missing"
+              }
+            ],
+            "checked_at": "2026-09-07T00:00:00Z"
+          },
+          "review": {
+            "needs": [
+              {
+                "type": "connection",
+                "service": "github"
+              },
+              {
+                "type": "connection",
+                "service": "chrono-llm-public"
+              }
+            ],
+            "can_start_now": false
+          },
+          "trust": {
+            "version": 1,
+            "disclosures": []
+          },
+          "first_message": "queued",
+          "confirmations": [],
+          "event_head": 1,
+          "created_at": "2026-09-07T00:00:00Z",
+          "updated_at": "2026-09-07T00:00:00Z",
+          "revision": 1
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "launch_id": "/id",
+        "launch_review_create_created_at": "/created_at",
+        "launch_review_create_requirements_checked_at": "/requirements/checked_at",
+        "launch_review_create_steps_0_completed_at": "/steps/0/completed_at",
+        "launch_review_create_steps_0_started_at": "/steps/0/started_at",
+        "launch_review_create_steps_1_started_at": "/steps/1/started_at",
+        "launch_review_create_updated_at": "/updated_at",
+        "public_id": "/public_id",
+        "trigger_id": "/trigger_id"
+      }
+    },
+    {
+      "id": "launch_fault_handoff_expired-seed-handoff",
+      "operation": "POST /api/v1/service-connections",
+      "scenario": "launch_fault_handoff_expired",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/service-connections",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "connection-create"
+        },
+        "body": {
+          "launch_id": "$launch_id",
+          "service_id": "github",
+          "intent_id": "contract-intent"
+        }
+      },
+      "response": {
+        "status": 201,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "handoff_id": "sch_contract",
+          "hosted_url": "https://identity.example/connect/contract-intent",
+          "expires_at": "2026-09-07T00:15:00Z"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "connection_create_expires_at": "/expires_at",
+        "handoff_id": "/handoff_id"
+      }
+    },
+    {
+      "id": "launch_fault_handoff_expired-read-1",
+      "operation": "GET /api/v1/service-connections/{handoff_id}",
+      "scenario": "launch_fault_handoff_expired",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/service-connections/$handoff_id",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "handoff_id": "sch_contract",
+          "launch_id": "lch_contract",
+          "service_id": "github",
+          "state": "expired",
+          "expires_at": "2026-09-07T00:15:00Z",
+          "updated_at": "2026-09-07T00:00:00Z"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "handoff_expired_updated_at": "/updated_at"
+      }
+    },
+    {
+      "id": "launch_fault_handoff_expired-read-2",
+      "operation": "GET /api/v1/service-connections/{handoff_id}",
+      "scenario": "launch_fault_handoff_expired",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/service-connections/$handoff_id",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "handoff_id": "sch_contract",
+          "launch_id": "lch_contract",
+          "service_id": "github",
+          "state": "expired",
+          "expires_at": "2026-09-07T00:15:00Z",
+          "updated_at": "2026-09-07T00:00:00Z"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "handoff_expired_updated_at": "/updated_at"
+      }
+    },
+    {
+      "id": "launch_fault_handoff_cancelled-seed-read",
+      "operation": "GET /api/v1/launches/{id}",
+      "scenario": "launch_fault_handoff_cancelled",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/launches/$launch_id",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "id": "lch_contract",
+          "trigger_id": "trg_contract",
+          "revision_digest": "99c37e06273ae4a6c3fe64593254086bb5f938db25cad7c6ed09910406b776c9",
+          "public_id": "public_contract",
+          "state": "draft",
+          "steps": [
+            {
+              "key": "signing_in",
+              "status": "completed",
+              "safe_detail": "",
+              "started_at": "2026-09-07T00:00:00Z",
+              "completed_at": "2026-09-07T00:00:00Z"
+            },
+            {
+              "key": "checking_requirements",
+              "status": "blocked",
+              "safe_detail": "Connect required accounts to continue",
+              "started_at": "2026-09-07T00:00:00Z"
+            },
+            {
+              "key": "sandbox",
+              "status": "pending",
+              "safe_detail": ""
+            },
+            {
+              "key": "workspace",
+              "status": "pending",
+              "safe_detail": ""
+            },
+            {
+              "key": "agent",
+              "status": "pending",
+              "safe_detail": ""
+            },
+            {
+              "key": "first_message",
+              "status": "pending",
+              "safe_detail": ""
+            },
+            {
+              "key": "ready",
+              "status": "pending",
+              "safe_detail": ""
+            }
+          ],
+          "resolution": {
+            "sandbox": {
+              "state": "pending"
+            },
+            "workspace": {
+              "state": "pending"
+            },
+            "agent": {
+              "state": "pending"
+            },
+            "choice_required": false
+          },
+          "requirements": {
+            "services": [
+              {
+                "service": "github",
+                "state": "missing"
+              },
+              {
+                "service": "chrono-llm-public",
+                "state": "missing"
+              }
+            ],
+            "checked_at": "2026-09-07T00:00:00Z"
+          },
+          "review": {
+            "needs": [
+              {
+                "type": "connection",
+                "service": "github"
+              },
+              {
+                "type": "connection",
+                "service": "chrono-llm-public"
+              }
+            ],
+            "can_start_now": false
+          },
+          "trust": {
+            "version": 1,
+            "disclosures": []
+          },
+          "first_message": "queued",
+          "confirmations": [],
+          "event_head": 1,
+          "created_at": "2026-09-07T00:00:00Z",
+          "updated_at": "2026-09-07T00:00:00Z",
+          "revision": 1
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "launch_id": "/id",
+        "launch_review_create_created_at": "/created_at",
+        "launch_review_create_requirements_checked_at": "/requirements/checked_at",
+        "launch_review_create_steps_0_completed_at": "/steps/0/completed_at",
+        "launch_review_create_steps_0_started_at": "/steps/0/started_at",
+        "launch_review_create_steps_1_started_at": "/steps/1/started_at",
+        "launch_review_create_updated_at": "/updated_at",
+        "public_id": "/public_id",
+        "trigger_id": "/trigger_id"
+      }
+    },
+    {
+      "id": "launch_fault_handoff_cancelled-seed-handoff",
+      "operation": "POST /api/v1/service-connections",
+      "scenario": "launch_fault_handoff_cancelled",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/service-connections",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "connection-create"
+        },
+        "body": {
+          "launch_id": "$launch_id",
+          "service_id": "github",
+          "intent_id": "contract-intent"
+        }
+      },
+      "response": {
+        "status": 201,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "handoff_id": "sch_contract",
+          "hosted_url": "https://identity.example/connect/contract-intent",
+          "expires_at": "2026-09-07T00:15:00Z"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "connection_create_expires_at": "/expires_at",
+        "handoff_id": "/handoff_id"
+      }
+    },
+    {
+      "id": "launch_fault_handoff_cancelled-read-1",
+      "operation": "GET /api/v1/service-connections/{handoff_id}",
+      "scenario": "launch_fault_handoff_cancelled",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/service-connections/$handoff_id",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "handoff_id": "sch_contract",
+          "launch_id": "lch_contract",
+          "service_id": "github",
+          "state": "cancelled",
+          "expires_at": "2026-09-07T00:15:00Z",
+          "updated_at": "2026-09-07T00:00:00Z"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "handoff_cancelled_updated_at": "/updated_at"
+      }
+    },
+    {
+      "id": "launch_fault_handoff_cancelled-read-2",
+      "operation": "GET /api/v1/service-connections/{handoff_id}",
+      "scenario": "launch_fault_handoff_cancelled",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/service-connections/$handoff_id",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "handoff_id": "sch_contract",
+          "launch_id": "lch_contract",
+          "service_id": "github",
+          "state": "cancelled",
+          "expires_at": "2026-09-07T00:15:00Z",
+          "updated_at": "2026-09-07T00:00:00Z"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "handoff_cancelled_updated_at": "/updated_at"
+      }
+    },
+    {
+      "id": "launch_fault_handoff_failed-seed-read",
+      "operation": "GET /api/v1/launches/{id}",
+      "scenario": "launch_fault_handoff_failed",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/launches/$launch_id",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "id": "lch_contract",
+          "trigger_id": "trg_contract",
+          "revision_digest": "99c37e06273ae4a6c3fe64593254086bb5f938db25cad7c6ed09910406b776c9",
+          "public_id": "public_contract",
+          "state": "draft",
+          "steps": [
+            {
+              "key": "signing_in",
+              "status": "completed",
+              "safe_detail": "",
+              "started_at": "2026-09-07T00:00:00Z",
+              "completed_at": "2026-09-07T00:00:00Z"
+            },
+            {
+              "key": "checking_requirements",
+              "status": "blocked",
+              "safe_detail": "Connect required accounts to continue",
+              "started_at": "2026-09-07T00:00:00Z"
+            },
+            {
+              "key": "sandbox",
+              "status": "pending",
+              "safe_detail": ""
+            },
+            {
+              "key": "workspace",
+              "status": "pending",
+              "safe_detail": ""
+            },
+            {
+              "key": "agent",
+              "status": "pending",
+              "safe_detail": ""
+            },
+            {
+              "key": "first_message",
+              "status": "pending",
+              "safe_detail": ""
+            },
+            {
+              "key": "ready",
+              "status": "pending",
+              "safe_detail": ""
+            }
+          ],
+          "resolution": {
+            "sandbox": {
+              "state": "pending"
+            },
+            "workspace": {
+              "state": "pending"
+            },
+            "agent": {
+              "state": "pending"
+            },
+            "choice_required": false
+          },
+          "requirements": {
+            "services": [
+              {
+                "service": "github",
+                "state": "missing"
+              },
+              {
+                "service": "chrono-llm-public",
+                "state": "missing"
+              }
+            ],
+            "checked_at": "2026-09-07T00:00:00Z"
+          },
+          "review": {
+            "needs": [
+              {
+                "type": "connection",
+                "service": "github"
+              },
+              {
+                "type": "connection",
+                "service": "chrono-llm-public"
+              }
+            ],
+            "can_start_now": false
+          },
+          "trust": {
+            "version": 1,
+            "disclosures": []
+          },
+          "first_message": "queued",
+          "confirmations": [],
+          "event_head": 1,
+          "created_at": "2026-09-07T00:00:00Z",
+          "updated_at": "2026-09-07T00:00:00Z",
+          "revision": 1
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "launch_id": "/id",
+        "launch_review_create_created_at": "/created_at",
+        "launch_review_create_requirements_checked_at": "/requirements/checked_at",
+        "launch_review_create_steps_0_completed_at": "/steps/0/completed_at",
+        "launch_review_create_steps_0_started_at": "/steps/0/started_at",
+        "launch_review_create_steps_1_started_at": "/steps/1/started_at",
+        "launch_review_create_updated_at": "/updated_at",
+        "public_id": "/public_id",
+        "trigger_id": "/trigger_id"
+      }
+    },
+    {
+      "id": "launch_fault_handoff_failed-seed-handoff",
+      "operation": "POST /api/v1/service-connections",
+      "scenario": "launch_fault_handoff_failed",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/service-connections",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "connection-create"
+        },
+        "body": {
+          "launch_id": "$launch_id",
+          "service_id": "github",
+          "intent_id": "contract-intent"
+        }
+      },
+      "response": {
+        "status": 201,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "handoff_id": "sch_contract",
+          "hosted_url": "https://identity.example/connect/contract-intent",
+          "expires_at": "2026-09-07T00:15:00Z"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "connection_create_expires_at": "/expires_at",
+        "handoff_id": "/handoff_id"
+      }
+    },
+    {
+      "id": "launch_fault_handoff_failed-read-1",
+      "operation": "GET /api/v1/service-connections/{handoff_id}",
+      "scenario": "launch_fault_handoff_failed",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/service-connections/$handoff_id",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "handoff_id": "sch_contract",
+          "launch_id": "lch_contract",
+          "service_id": "github",
+          "state": "failed",
+          "expires_at": "2026-09-07T00:15:00Z",
+          "updated_at": "2026-09-07T00:00:00Z"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "handoff_failed_updated_at": "/updated_at"
+      }
+    },
+    {
+      "id": "launch_fault_handoff_failed-read-2",
+      "operation": "GET /api/v1/service-connections/{handoff_id}",
+      "scenario": "launch_fault_handoff_failed",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/service-connections/$handoff_id",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "handoff_id": "sch_contract",
+          "launch_id": "lch_contract",
+          "service_id": "github",
+          "state": "failed",
+          "expires_at": "2026-09-07T00:15:00Z",
+          "updated_at": "2026-09-07T00:00:00Z"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "handoff_failed_updated_at": "/updated_at"
+      }
+    },
+    {
+      "id": "trigger-state-version-overflow",
+      "operation": "PUT /api/v1/triggers/{id}",
+      "scenario": "trigger_fault_version_overflow",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/triggers/trg_contract",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "trigger-state-version-overflow"
+        },
+        "body": {
+          "draft_version": 18446744073709551615,
+          "content": {
+            "presentation": {
+              "title": "Contract Agent",
+              "description": "Public contract fixture",
+              "button_label": "try_it",
+              "theme": "dark"
+            },
+            "target": {
+              "sandbox_profile": {
+                "id": "sbp_route_sandbox",
+                "revision": 1
+              },
+              "workspace_profile": {
+                "id": "wkp_route_workspace",
+                "revision": 1
+              },
+              "agent_profile": {
+                "id": "agp_route_agent",
+                "revision": 1
+              }
+            },
+            "reuse": {
+              "sandbox": "always_new",
+              "workspace": "always_new",
+              "agent": "always_new"
+            },
+            "first_message": "Inspect the project.",
+            "consent": {
+              "always_review": false
+            }
+          }
+        }
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/trigger-version-overflow",
+          "title": "trigger version overflow",
+          "status": 422,
+          "detail": "The Trigger does not satisfy its validation contract.",
+          "code": "trigger_version_overflow",
+          "field": "draft_version"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    }
+  ]
+}

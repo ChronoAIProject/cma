@@ -1,0 +1,147 @@
+use layer2_core::sandbox::{
+    Sandbox, SandboxCheckpointCapturePhase, SandboxImageRotationPhase, SandboxLifecycleBlocker,
+    SandboxLifecycleOperation, SandboxPausePhase, SandboxRevivePhase,
+};
+use serde::Serialize;
+use utoipa::ToSchema;
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
+pub struct SandboxLifecycleEligibilityView {
+    pub allowed: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(value_type = Option<String>)]
+    pub reason: Option<SandboxLifecycleBlocker>,
+}
+
+impl From<Result<(), SandboxLifecycleBlocker>> for SandboxLifecycleEligibilityView {
+    fn from(value: Result<(), SandboxLifecycleBlocker>) -> Self {
+        Self {
+            allowed: value.is_ok(),
+            reason: value.err(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
+pub struct SandboxCheckpointView {
+    #[schema(value_type = String)]
+    pub phase: SandboxCheckpointCapturePhase,
+    pub started_at: String,
+    pub epoch: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
+pub struct SandboxCompletedSnapshotView {
+    pub epoch: u64,
+    pub saved_at: String,
+    pub download_url: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
+pub struct SandboxBackgroundSaveView {
+    pub phase: String,
+    pub started_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub captured_at: Option<String>,
+    pub epoch: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
+#[serde(tag = "purpose", rename_all = "snake_case")]
+pub enum SandboxLifecycleOperationView {
+    Pause {
+        #[schema(value_type = String)]
+        phase: SandboxPausePhase,
+        started_at: String,
+    },
+    Revive {
+        #[schema(value_type = String)]
+        phase: SandboxRevivePhase,
+        started_at: String,
+    },
+    ImageRotation {
+        #[schema(value_type = String)]
+        phase: SandboxImageRotationPhase,
+        started_at: String,
+    },
+}
+
+impl From<&SandboxLifecycleOperation> for SandboxLifecycleOperationView {
+    fn from(value: &SandboxLifecycleOperation) -> Self {
+        let started_at = value.authority().requested_at.clone();
+        match value {
+            SandboxLifecycleOperation::Pause { phase, .. } => Self::Pause {
+                phase: *phase,
+                started_at,
+            },
+            SandboxLifecycleOperation::Revive { phase, .. } => Self::Revive {
+                phase: *phase,
+                started_at,
+            },
+            SandboxLifecycleOperation::ImageRotation { phase, .. } => Self::ImageRotation {
+                phase: *phase,
+                started_at,
+            },
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
+pub struct SandboxLifecycleView {
+    pub pause: SandboxLifecycleEligibilityView,
+    pub revive: SandboxLifecycleEligibilityView,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub checkpoint: Option<SandboxCheckpointView>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub background_save: Option<SandboxBackgroundSaveView>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub latest_snapshot: Option<SandboxCompletedSnapshotView>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub operation: Option<SandboxLifecycleOperationView>,
+}
+
+impl From<&Sandbox> for SandboxLifecycleView {
+    fn from(value: &Sandbox) -> Self {
+        Self {
+            pause: value.pause_eligibility().into(),
+            revive: value.revive_eligibility().into(),
+            background_save: value
+                .lifecycle
+                .background_checkpoint
+                .as_ref()
+                .map(|capture| {
+                    let progress = &capture.progress;
+                    SandboxBackgroundSaveView {
+                        phase: capture.public_phase().into(),
+                        started_at: capture.started_at.clone(),
+                        captured_at: progress
+                            .snapshot
+                            .as_ref()
+                            .and_then(|snapshot| snapshot.captured_at.clone()),
+                        epoch: capture.plan.snapshot.epoch,
+                    }
+                }),
+            latest_snapshot: value
+                .lifecycle
+                .checkpoints
+                .latest
+                .as_ref()
+                .map(|checkpoint| SandboxCompletedSnapshotView {
+                    epoch: checkpoint.epoch,
+                    saved_at: checkpoint.sealed_at.clone(),
+                    download_url: format!(
+                        "/api/v1/sandboxes/{}/snapshots/{}/download",
+                        value.id, checkpoint.epoch
+                    ),
+                }),
+            checkpoint: value.lifecycle.checkpoint_capture.as_ref().map(|capture| {
+                SandboxCheckpointView {
+                    phase: capture.phase,
+                    started_at: capture.authority.requested_at.clone(),
+                    epoch: capture.checkpoint_epoch,
+                }
+            }),
+            operation: value.lifecycle.operation.as_ref().map(Into::into),
+        }
+    }
+}

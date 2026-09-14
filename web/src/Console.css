@@ -1,72 +1,56 @@
-/*
- * The terminal column, taking whatever width the rail leaves. It opens with
- * its own head band, so the rule under the session header lands on the rule
- * under the rail's — §5's whole reason for setting band heights.
- */
 .console__surface {
   display: flex;
-  flex: 1 1 auto;
   flex-direction: column;
+  height: 100%;
   min-width: 0;
   min-height: 0;
-  background: var(--dsw-alias-bg-layer-1);
-}
-
-/*
- * A failed action — docs/Web_Style.md §12.
- *
- * One 40px band at the head of the column, above whatever it is showing and
- * never in place of it: the failure belongs to one request about one session,
- * and the surface beneath it can hold a dozen live terminals. Nothing that
- * reports a failure may destroy work that did not fail.
- *
- * A dismissible .notice--fail card (§12) rather than a band: it carries what
- * failed, what was not changed, and the API's code in identifier style. It
- * reports the most recent attempt, and every action clears it as it starts,
- * so a stale failure never sits above a console that has recovered.
- */
-.console__notice {
-  align-items: center;
-  margin: 12px 16px 0;
-}
-
-.console__noticebody {
-  display: flex;
-  flex: 1 1 auto;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 0;
-}
-
-.console__noticebody p {
-  margin: 0;
-}
-
-/* The API's own code, drawn as an identifier so nobody reads it as prose. */
-.console__noticecode {
-  flex: none;
-  color: var(--dsw-alias-label-tertiary);
-  font-family: var(--ds-font-family-code);
-  font-size: 11px;
-}
-
-.console__noticedismiss {
-  flex: none;
+  background: var(--dsw-alias-bg-base);
 }
 
 .console__empty {
-  max-width: 32rem;
   margin: auto;
+  align-self: center;
+  justify-self: center;
+  max-width: 32rem;
   padding: 24px;
-  color: var(--dsw-alias-label-tertiary);
-  font-family: var(--dsw-font-family);
-  font-size: 12px;
   text-align: center;
 }
 
-/* ── §16 Responsive ──────────────────────────────────────────────────────
- *
- * The number of columns changes; the bands never do. The terminal is the last
- * surface to give up width: the sheet closes first, then the rail collapses,
- * then the rail leaves the layout.
- */
+.console__navigation-status {
+  padding: 16px;
+  overflow-wrap: anywhere;
+}
+.console__action-error {
+  margin: 0;
+  padding: 8px 16px;
+  color: var(--dsw-alias-state-error-primary);
+}
+
+.console__empty h1 {
+  margin: 6px 0 0;
+  color: var(--dsw-alias-label-primary);
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: 0;
+}
+
+.console__eyebrow {
+  margin: 0;
+  color: var(--dsw-alias-label-tertiary);
+  font-family: var(--ds-font-family-code);
+  font-size: 11px;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.console__empty a {
+  display: inline-block;
+  margin-top: 16px;
+  color: var(--dsw-alias-brand-primary);
+}
+.console__empty-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+}

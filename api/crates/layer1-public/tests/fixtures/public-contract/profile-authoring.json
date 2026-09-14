@@ -1,0 +1,2075 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "authoring-credential-bounds-owner",
+      "operation": "GET /api/v1/profile-authoring/bounds",
+      "scenario": "authoring_credential_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/profile-authoring/bounds",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "min_cpu_millis": 100,
+          "max_cpu_millis": 8000,
+          "min_memory_mib": 128,
+          "max_memory_mib": 16384
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "authoring-credential-services-owner",
+      "operation": "GET /api/v1/profile-authoring/services",
+      "scenario": "authoring_credential_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/profile-authoring/services",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": [
+          {
+            "id": "analytics",
+            "name": "Analytics"
+          },
+          {
+            "id": "research",
+            "name": "Research",
+            "description": "Research service"
+          }
+        ],
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "authoring-credential-skills-owner",
+      "operation": "GET /api/v1/profile-authoring/skills",
+      "scenario": "authoring_credential_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/profile-authoring/skills",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "items": [
+            {
+              "id": "research",
+              "name": "Research",
+              "versions": [
+                "10.2",
+                "2.10",
+                "2.9"
+              ]
+            }
+          ]
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "authoring-credential-resolve-owner",
+      "operation": "POST /api/v1/profile-authoring/repositories/resolve",
+      "scenario": "authoring_credential_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/profile-authoring/repositories/resolve",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "url": "https://github.com/example/research.git/"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "url": "https://github.com/Example/Research",
+          "default_branch": "main",
+          "commit_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "authoring-credential-bounds-forbidden",
+      "operation": "GET /api/v1/profile-authoring/bounds",
+      "scenario": "authoring_credential_forbidden",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/profile-authoring/bounds",
+        "headers": {}
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/forbidden",
+          "title": "forbidden",
+          "status": 403,
+          "detail": "This caller is not allowed to manage profiles.",
+          "code": "forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "authoring-credential-services-forbidden",
+      "operation": "GET /api/v1/profile-authoring/services",
+      "scenario": "authoring_credential_forbidden",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/profile-authoring/services",
+        "headers": {}
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/forbidden",
+          "title": "forbidden",
+          "status": 403,
+          "detail": "This caller is not allowed to manage profiles.",
+          "code": "forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "authoring-credential-skills-forbidden",
+      "operation": "GET /api/v1/profile-authoring/skills",
+      "scenario": "authoring_credential_forbidden",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/profile-authoring/skills",
+        "headers": {}
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/forbidden",
+          "title": "forbidden",
+          "status": 403,
+          "detail": "This caller is not allowed to manage profiles.",
+          "code": "forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "authoring-credential-resolve-forbidden",
+      "operation": "POST /api/v1/profile-authoring/repositories/resolve",
+      "scenario": "authoring_credential_forbidden",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/profile-authoring/repositories/resolve",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "url": "https://github.com/example/research.git/"
+        }
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/forbidden",
+          "title": "forbidden",
+          "status": 403,
+          "detail": "This caller is not allowed to manage profiles.",
+          "code": "forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "authoring-credential-bounds-anonymous",
+      "operation": "GET /api/v1/profile-authoring/bounds",
+      "scenario": "authoring_credential_anonymous",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/profile-authoring/bounds",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "authoring-credential-services-anonymous",
+      "operation": "GET /api/v1/profile-authoring/services",
+      "scenario": "authoring_credential_anonymous",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/profile-authoring/services",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "authoring-credential-skills-anonymous",
+      "operation": "GET /api/v1/profile-authoring/skills",
+      "scenario": "authoring_credential_anonymous",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/profile-authoring/skills",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "authoring-credential-resolve-anonymous",
+      "operation": "POST /api/v1/profile-authoring/repositories/resolve",
+      "scenario": "authoring_credential_anonymous",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/profile-authoring/repositories/resolve",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "url": "https://github.com/example/research.git/"
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "authoring-services-multilingual",
+      "operation": "GET /api/v1/profile-authoring/services",
+      "scenario": "authoring_multilingual",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/profile-authoring/services",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": [
+          {
+            "id": "analytics",
+            "name": "Analytics"
+          },
+          {
+            "id": "research",
+            "name": "Research",
+            "description": "一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一"
+          }
+        ],
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "authoring-skills-multilingual",
+      "operation": "GET /api/v1/profile-authoring/skills",
+      "scenario": "authoring_multilingual",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/profile-authoring/skills",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "items": [
+            {
+              "id": "research",
+              "name": "Research",
+              "description": "一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一一",
+              "versions": [
+                "10.2",
+                "2.10",
+                "2.9"
+              ]
+            }
+          ]
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "authoring-services-malformed_data",
+      "operation": "GET /api/v1/profile-authoring/services",
+      "scenario": "authoring_malformed_data",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/profile-authoring/services",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/profile-services-unavailable",
+          "title": "profile services unavailable",
+          "status": 503,
+          "detail": "The owner-visible service catalog is unavailable.",
+          "code": "profile_services_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "authoring-skills-malformed_data",
+      "operation": "GET /api/v1/profile-authoring/skills",
+      "scenario": "authoring_malformed_data",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/profile-authoring/skills",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/profile-skills-unavailable",
+          "title": "profile skills unavailable",
+          "status": 503,
+          "detail": "The owner-visible skill catalog is unavailable.",
+          "code": "profile_skills_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "authoring-resolve-malformed_data",
+      "operation": "POST /api/v1/profile-authoring/repositories/resolve",
+      "scenario": "authoring_malformed_data",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/profile-authoring/repositories/resolve",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "url": "https://github.com/example/research.git/"
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/repository-unavailable",
+          "title": "repository unavailable",
+          "status": 503,
+          "detail": "The repository could not be verified.",
+          "code": "repository_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "authoring-bounds-success",
+      "operation": "GET /api/v1/profile-authoring/bounds",
+      "scenario": "authoring_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/profile-authoring/bounds",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "min_cpu_millis": 100,
+          "max_cpu_millis": 8000,
+          "min_memory_mib": 128,
+          "max_memory_mib": 16384
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "authoring-bounds-anonymous",
+      "operation": "GET /api/v1/profile-authoring/bounds",
+      "scenario": "authoring_anonymous",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/profile-authoring/bounds",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "authoring-bounds-forbidden",
+      "operation": "GET /api/v1/profile-authoring/bounds",
+      "scenario": "authoring_forbidden",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/profile-authoring/bounds",
+        "headers": {}
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/forbidden",
+          "title": "forbidden",
+          "status": 403,
+          "detail": "This caller is not allowed to manage profiles.",
+          "code": "forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "authoring-services-success",
+      "operation": "GET /api/v1/profile-authoring/services",
+      "scenario": "authoring_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/profile-authoring/services",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": [
+          {
+            "id": "analytics",
+            "name": "Analytics"
+          },
+          {
+            "id": "research",
+            "name": "Research",
+            "description": "Research service"
+          }
+        ],
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "authoring-services-anonymous",
+      "operation": "GET /api/v1/profile-authoring/services",
+      "scenario": "authoring_anonymous",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/profile-authoring/services",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "authoring-services-forbidden",
+      "operation": "GET /api/v1/profile-authoring/services",
+      "scenario": "authoring_forbidden",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/profile-authoring/services",
+        "headers": {}
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/forbidden",
+          "title": "forbidden",
+          "status": 403,
+          "detail": "This caller is not allowed to manage profiles.",
+          "code": "forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "authoring-skills-success",
+      "operation": "GET /api/v1/profile-authoring/skills",
+      "scenario": "authoring_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/profile-authoring/skills",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "items": [
+            {
+              "id": "research",
+              "name": "Research",
+              "versions": [
+                "10.2",
+                "2.10",
+                "2.9"
+              ]
+            }
+          ]
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "authoring-skills-anonymous",
+      "operation": "GET /api/v1/profile-authoring/skills",
+      "scenario": "authoring_anonymous",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/profile-authoring/skills",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "authoring-skills-forbidden",
+      "operation": "GET /api/v1/profile-authoring/skills",
+      "scenario": "authoring_forbidden",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/profile-authoring/skills",
+        "headers": {}
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/forbidden",
+          "title": "forbidden",
+          "status": 403,
+          "detail": "This caller is not allowed to manage profiles.",
+          "code": "forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "authoring-resolve-success",
+      "operation": "POST /api/v1/profile-authoring/repositories/resolve",
+      "scenario": "authoring_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/profile-authoring/repositories/resolve",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "url": "https://github.com/example/research.git/"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "url": "https://github.com/Example/Research",
+          "default_branch": "main",
+          "commit_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "authoring-resolve-anonymous",
+      "operation": "POST /api/v1/profile-authoring/repositories/resolve",
+      "scenario": "authoring_anonymous",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/profile-authoring/repositories/resolve",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "url": "https://github.com/example/research.git/"
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "authoring-resolve-forbidden",
+      "operation": "POST /api/v1/profile-authoring/repositories/resolve",
+      "scenario": "authoring_forbidden",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/profile-authoring/repositories/resolve",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "url": "https://github.com/example/research.git/"
+        }
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/forbidden",
+          "title": "forbidden",
+          "status": 403,
+          "detail": "This caller is not allowed to manage profiles.",
+          "code": "forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "authoring-services-unavailable",
+      "operation": "GET /api/v1/profile-authoring/services",
+      "scenario": "authoring_unavailable",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/profile-authoring/services",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/profile-services-unavailable",
+          "title": "profile services unavailable",
+          "status": 503,
+          "detail": "The owner-visible service catalog is unavailable.",
+          "code": "profile_services_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "authoring-services-invalid_data",
+      "operation": "GET /api/v1/profile-authoring/services",
+      "scenario": "authoring_invalid_data",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/profile-authoring/services",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/profile-services-unavailable",
+          "title": "profile services unavailable",
+          "status": 503,
+          "detail": "The owner-visible service catalog is unavailable.",
+          "code": "profile_services_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "authoring-skills-unavailable",
+      "operation": "GET /api/v1/profile-authoring/skills",
+      "scenario": "authoring_unavailable",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/profile-authoring/skills",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/profile-skills-unavailable",
+          "title": "profile skills unavailable",
+          "status": 503,
+          "detail": "The owner-visible skill catalog is unavailable.",
+          "code": "profile_skills_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "authoring-skills-invalid_data",
+      "operation": "GET /api/v1/profile-authoring/skills",
+      "scenario": "authoring_invalid_data",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/profile-authoring/skills",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/profile-skills-unavailable",
+          "title": "profile skills unavailable",
+          "status": 503,
+          "detail": "The owner-visible skill catalog is unavailable.",
+          "code": "profile_skills_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "authoring-resolve-unavailable",
+      "operation": "POST /api/v1/profile-authoring/repositories/resolve",
+      "scenario": "authoring_unavailable",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/profile-authoring/repositories/resolve",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "url": "https://github.com/example/research.git/"
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/repository-unavailable",
+          "title": "repository unavailable",
+          "status": 503,
+          "detail": "The repository could not be verified.",
+          "code": "repository_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "authoring-resolve-invalid_data",
+      "operation": "POST /api/v1/profile-authoring/repositories/resolve",
+      "scenario": "authoring_invalid_data",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/profile-authoring/repositories/resolve",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "url": "https://github.com/example/research.git/"
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/repository-unavailable",
+          "title": "repository unavailable",
+          "status": 503,
+          "detail": "The repository could not be verified.",
+          "code": "repository_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "authoring-services-empty",
+      "operation": "GET /api/v1/profile-authoring/services",
+      "scenario": "authoring_empty",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/profile-authoring/services",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": [],
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "authoring-skills-empty",
+      "operation": "GET /api/v1/profile-authoring/skills",
+      "scenario": "authoring_empty",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/profile-authoring/skills",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "items": []
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "authoring-skills-filtered",
+      "operation": "GET /api/v1/profile-authoring/skills",
+      "scenario": "authoring_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/profile-authoring/skills?q=filtered",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "items": [],
+          "next": "next-filtered"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "authoring-skills-no-matches",
+      "operation": "GET /api/v1/profile-authoring/skills",
+      "scenario": "authoring_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/profile-authoring/skills?q=no%20matches",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "items": []
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "authoring-skills-first-page",
+      "operation": "GET /api/v1/profile-authoring/skills",
+      "scenario": "authoring_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/profile-authoring/skills?q=research&limit=1",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "items": [
+            {
+              "id": "research",
+              "name": "Research",
+              "versions": [
+                "10.2",
+                "2.10",
+                "2.9"
+              ]
+            }
+          ],
+          "next": "next-page"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "authoring-skills-next-page",
+      "operation": "GET /api/v1/profile-authoring/skills",
+      "scenario": "authoring_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/profile-authoring/skills?q=research&limit=1&cursor=next-page",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "items": [
+            {
+              "id": "research",
+              "name": "Research",
+              "versions": [
+                "10.2",
+                "2.10",
+                "2.9"
+              ]
+            }
+          ]
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "authoring-skills-limit-zero",
+      "operation": "GET /api/v1/profile-authoring/skills",
+      "scenario": "authoring_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/profile-authoring/skills?limit=0",
+        "headers": {}
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-profile-authoring-query",
+          "title": "invalid profile authoring query",
+          "status": 400,
+          "detail": "The profile authoring query is invalid.",
+          "code": "invalid_profile_authoring_query"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "authoring-skills-limit-overflow",
+      "operation": "GET /api/v1/profile-authoring/skills",
+      "scenario": "authoring_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/profile-authoring/skills?limit=65536",
+        "headers": {}
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-profile-authoring-query",
+          "title": "invalid profile authoring query",
+          "status": 400,
+          "detail": "The profile authoring query is invalid.",
+          "code": "invalid_profile_authoring_query"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "authoring-skills-limit-too-large",
+      "operation": "GET /api/v1/profile-authoring/skills",
+      "scenario": "authoring_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/profile-authoring/skills?limit=51",
+        "headers": {}
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-profile-authoring-query",
+          "title": "invalid profile authoring query",
+          "status": 400,
+          "detail": "The profile authoring query is invalid.",
+          "code": "invalid_profile_authoring_query"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "authoring-skills-limit-text",
+      "operation": "GET /api/v1/profile-authoring/skills",
+      "scenario": "authoring_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/profile-authoring/skills?limit=bad",
+        "headers": {}
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-profile-authoring-query",
+          "title": "invalid profile authoring query",
+          "status": 400,
+          "detail": "The profile authoring query is invalid.",
+          "code": "invalid_profile_authoring_query"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "authoring-skills-unknown-query",
+      "operation": "GET /api/v1/profile-authoring/skills",
+      "scenario": "authoring_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/profile-authoring/skills?unknown=1",
+        "headers": {}
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-profile-authoring-query",
+          "title": "invalid profile authoring query",
+          "status": 400,
+          "detail": "The profile authoring query is invalid.",
+          "code": "invalid_profile_authoring_query"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "authoring-skills-query-too-long",
+      "operation": "GET /api/v1/profile-authoring/skills",
+      "scenario": "authoring_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/profile-authoring/skills?q=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        "headers": {}
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-profile-authoring-query",
+          "title": "invalid profile authoring query",
+          "status": 400,
+          "detail": "The profile authoring query is invalid.",
+          "code": "invalid_profile_authoring_query"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "authoring-skills-query-control",
+      "operation": "GET /api/v1/profile-authoring/skills",
+      "scenario": "authoring_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/profile-authoring/skills?q=line%0Abreak",
+        "headers": {}
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-profile-authoring-query",
+          "title": "invalid profile authoring query",
+          "status": 400,
+          "detail": "The profile authoring query is invalid.",
+          "code": "invalid_profile_authoring_query"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "authoring-skills-query-byte-limit",
+      "operation": "GET /api/v1/profile-authoring/skills",
+      "scenario": "authoring_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/profile-authoring/skills?q=%C3%A9%C3%A9%C3%A9%C3%A9%C3%A9%C3%A9%C3%A9%C3%A9%C3%A9%C3%A9%C3%A9%C3%A9%C3%A9%C3%A9%C3%A9%C3%A9%C3%A9%C3%A9%C3%A9%C3%A9%C3%A9%C3%A9%C3%A9%C3%A9%C3%A9%C3%A9%C3%A9%C3%A9%C3%A9%C3%A9%C3%A9%C3%A9%C3%A9%C3%A9%C3%A9%C3%A9%C3%A9%C3%A9%C3%A9%C3%A9%C3%A9%C3%A9%C3%A9%C3%A9%C3%A9%C3%A9%C3%A9%C3%A9%C3%A9%C3%A9%C3%A9%C3%A9%C3%A9%C3%A9%C3%A9%C3%A9%C3%A9%C3%A9%C3%A9%C3%A9%C3%A9%C3%A9%C3%A9%C3%A9%C3%A9%C3%A9%C3%A9%C3%A9%C3%A9%C3%A9%C3%A9%C3%A9%C3%A9%C3%A9%C3%A9%C3%A9%C3%A9%C3%A9%C3%A9%C3%A9%C3%A9%C3%A9%C3%A9%C3%A9%C3%A9%C3%A9%C3%A9%C3%A9%C3%A9%C3%A9%C3%A9%C3%A9%C3%A9%C3%A9%C3%A9%C3%A9%C3%A9%C3%A9%C3%A9%C3%A9%C3%A9",
+        "headers": {}
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-profile-authoring-query",
+          "title": "invalid profile authoring query",
+          "status": 400,
+          "detail": "The profile authoring query is invalid.",
+          "code": "invalid_profile_authoring_query"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "authoring-skills-cursor-empty",
+      "operation": "GET /api/v1/profile-authoring/skills",
+      "scenario": "authoring_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/profile-authoring/skills?cursor=",
+        "headers": {}
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-profile-authoring-query",
+          "title": "invalid profile authoring query",
+          "status": 400,
+          "detail": "The profile authoring query is invalid.",
+          "code": "invalid_profile_authoring_query"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "authoring-skills-cursor-too-long",
+      "operation": "GET /api/v1/profile-authoring/skills",
+      "scenario": "authoring_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/profile-authoring/skills?cursor=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        "headers": {}
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-profile-authoring-query",
+          "title": "invalid profile authoring query",
+          "status": 400,
+          "detail": "The profile authoring query is invalid.",
+          "code": "invalid_profile_authoring_query"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "authoring-skills-cursor-control",
+      "operation": "GET /api/v1/profile-authoring/skills",
+      "scenario": "authoring_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/profile-authoring/skills?cursor=line%0Abreak",
+        "headers": {}
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-profile-authoring-query",
+          "title": "invalid profile authoring query",
+          "status": 400,
+          "detail": "The profile authoring query is invalid.",
+          "code": "invalid_profile_authoring_query"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "authoring-skills-cursor-invalid",
+      "operation": "GET /api/v1/profile-authoring/skills",
+      "scenario": "authoring_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/profile-authoring/skills?cursor=invalid",
+        "headers": {}
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-profile-authoring-query",
+          "title": "invalid profile authoring query",
+          "status": 400,
+          "detail": "The profile authoring query is invalid.",
+          "code": "invalid_profile_authoring_query"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "authoring-skills-duplicate-query",
+      "operation": "GET /api/v1/profile-authoring/skills",
+      "scenario": "authoring_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/profile-authoring/skills?q=a&q=b",
+        "headers": {}
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-profile-authoring-query",
+          "title": "invalid profile authoring query",
+          "status": 400,
+          "detail": "The profile authoring query is invalid.",
+          "code": "invalid_profile_authoring_query"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "authoring-skills-forbidden-before-query",
+      "operation": "GET /api/v1/profile-authoring/skills",
+      "scenario": "authoring_forbidden",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/profile-authoring/skills?limit=bad",
+        "headers": {}
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/forbidden",
+          "title": "forbidden",
+          "status": 403,
+          "detail": "This caller is not allowed to manage profiles.",
+          "code": "forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "authoring-skills-anonymous-before-query",
+      "operation": "GET /api/v1/profile-authoring/skills",
+      "scenario": "authoring_anonymous",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/profile-authoring/skills?limit=bad",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "authoring-resolve-release-next",
+      "operation": "POST /api/v1/profile-authoring/repositories/resolve",
+      "scenario": "authoring_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/profile-authoring/repositories/resolve",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "url": "https://github.com/example/research.git/",
+          "reference": "release/next"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "url": "https://github.com/Example/Research",
+          "reference": "release/next",
+          "default_branch": "main",
+          "commit_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "authoring-resolve-v1.0",
+      "operation": "POST /api/v1/profile-authoring/repositories/resolve",
+      "scenario": "authoring_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/profile-authoring/repositories/resolve",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "url": "https://github.com/example/research.git/",
+          "reference": "v1.0"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "url": "https://github.com/Example/Research",
+          "reference": "v1.0",
+          "default_branch": "main",
+          "commit_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "authoring-resolve-repository-missing",
+      "operation": "POST /api/v1/profile-authoring/repositories/resolve",
+      "scenario": "authoring_repository_missing",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/profile-authoring/repositories/resolve",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "url": "https://github.com/example/research.git/"
+        }
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/repository-not-found",
+          "title": "repository not found",
+          "status": 404,
+          "detail": "No public repository matches this request.",
+          "code": "repository_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "authoring-resolve-reference-missing",
+      "operation": "POST /api/v1/profile-authoring/repositories/resolve",
+      "scenario": "authoring_reference_missing",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/profile-authoring/repositories/resolve",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "url": "https://github.com/example/research.git/",
+          "reference": "absent"
+        }
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/repository-reference-not-found",
+          "title": "repository reference not found",
+          "status": 404,
+          "detail": "No branch or tag matches this repository reference.",
+          "code": "repository_reference_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "authoring-resolve-invalid-http",
+      "operation": "POST /api/v1/profile-authoring/repositories/resolve",
+      "scenario": "authoring_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/profile-authoring/repositories/resolve",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "url": "http://github.com/example/research"
+        }
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-repository",
+          "title": "invalid repository",
+          "status": 422,
+          "detail": "The repository URL or reference is invalid.",
+          "code": "invalid_repository",
+          "field": "location.url"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "authoring-resolve-invalid-foreign-host",
+      "operation": "POST /api/v1/profile-authoring/repositories/resolve",
+      "scenario": "authoring_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/profile-authoring/repositories/resolve",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "url": "https://elsewhere.example/example/research"
+        }
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-repository",
+          "title": "invalid repository",
+          "status": 422,
+          "detail": "The repository URL or reference is invalid.",
+          "code": "invalid_repository",
+          "field": "location.url"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "authoring-resolve-invalid-credentials",
+      "operation": "POST /api/v1/profile-authoring/repositories/resolve",
+      "scenario": "authoring_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/profile-authoring/repositories/resolve",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "url": "https://user@github.com/example/research"
+        }
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-repository",
+          "title": "invalid repository",
+          "status": 422,
+          "detail": "The repository URL or reference is invalid.",
+          "code": "invalid_repository",
+          "field": "location.url"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "authoring-resolve-invalid-encoded-component",
+      "operation": "POST /api/v1/profile-authoring/repositories/resolve",
+      "scenario": "authoring_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/profile-authoring/repositories/resolve",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "url": "https://github.com/example/%72esearch"
+        }
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-repository",
+          "title": "invalid repository",
+          "status": 422,
+          "detail": "The repository URL or reference is invalid.",
+          "code": "invalid_repository",
+          "field": "location.url"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "authoring-resolve-invalid-owner-too-long",
+      "operation": "POST /api/v1/profile-authoring/repositories/resolve",
+      "scenario": "authoring_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/profile-authoring/repositories/resolve",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "url": "https://github.com/xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/research"
+        }
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-repository",
+          "title": "invalid repository",
+          "status": 422,
+          "detail": "The repository URL or reference is invalid.",
+          "code": "invalid_repository",
+          "field": "location.url"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "authoring-resolve-invalid-reference-empty",
+      "operation": "POST /api/v1/profile-authoring/repositories/resolve",
+      "scenario": "authoring_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/profile-authoring/repositories/resolve",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "url": "https://github.com/example/research.git/",
+          "reference": ""
+        }
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-repository-reference",
+          "title": "invalid repository reference",
+          "status": 422,
+          "detail": "The repository URL or reference is invalid.",
+          "code": "invalid_repository_reference",
+          "field": "location.reference"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "authoring-resolve-invalid-reference-option",
+      "operation": "POST /api/v1/profile-authoring/repositories/resolve",
+      "scenario": "authoring_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/profile-authoring/repositories/resolve",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "url": "https://github.com/example/research.git/",
+          "reference": "-option"
+        }
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-repository-reference",
+          "title": "invalid repository reference",
+          "status": 422,
+          "detail": "The repository URL or reference is invalid.",
+          "code": "invalid_repository_reference",
+          "field": "location.reference"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "authoring-resolve-invalid-reference-whitespace",
+      "operation": "POST /api/v1/profile-authoring/repositories/resolve",
+      "scenario": "authoring_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/profile-authoring/repositories/resolve",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "url": "https://github.com/example/research.git/",
+          "reference": "two words"
+        }
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-repository-reference",
+          "title": "invalid repository reference",
+          "status": 422,
+          "detail": "The repository URL or reference is invalid.",
+          "code": "invalid_repository_reference",
+          "field": "location.reference"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "authoring-resolve-invalid-json",
+      "operation": "POST /api/v1/profile-authoring/repositories/resolve",
+      "scenario": "authoring_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/profile-authoring/repositories/resolve",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "rawBody": "{"
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid_json",
+          "title": "invalid_json",
+          "status": 400,
+          "detail": "Failed to parse the request body as JSON: EOF while parsing an object at line 1 column 1",
+          "code": "invalid_json"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "authoring-resolve-body-too-large",
+      "operation": "POST /api/v1/profile-authoring/repositories/resolve",
+      "scenario": "authoring_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/profile-authoring/repositories/resolve",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "rawBody": " ",
+        "rawBodyRepeat": 2097153
+      },
+      "response": {
+        "status": 413,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid_json",
+          "title": "invalid_json",
+          "status": 413,
+          "detail": "Failed to buffer the request body: length limit exceeded",
+          "code": "invalid_json"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "authoring-resolve-missing-content-type",
+      "operation": "POST /api/v1/profile-authoring/repositories/resolve",
+      "scenario": "authoring_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/profile-authoring/repositories/resolve",
+        "headers": {},
+        "body": {
+          "url": "https://github.com/example/research.git/"
+        }
+      },
+      "response": {
+        "status": 415,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid_json",
+          "title": "invalid_json",
+          "status": 415,
+          "detail": "Expected request with `Content-Type: application/json`",
+          "code": "invalid_json"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "authoring-resolve-wrong-content-type",
+      "operation": "POST /api/v1/profile-authoring/repositories/resolve",
+      "scenario": "authoring_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/profile-authoring/repositories/resolve",
+        "headers": {
+          "content-type": "text/plain"
+        },
+        "body": {
+          "url": "https://github.com/example/research.git/"
+        }
+      },
+      "response": {
+        "status": 415,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid_json",
+          "title": "invalid_json",
+          "status": 415,
+          "detail": "Expected request with `Content-Type: application/json`",
+          "code": "invalid_json"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "authoring-resolve-invalid-body-type",
+      "operation": "POST /api/v1/profile-authoring/repositories/resolve",
+      "scenario": "authoring_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/profile-authoring/repositories/resolve",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "url": 1
+        }
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid_json",
+          "title": "invalid_json",
+          "status": 422,
+          "detail": "Failed to deserialize the JSON body into the target type: url: invalid type: integer `1`, expected a string at line 1 column 8",
+          "code": "invalid_json"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "authoring-resolve-unknown-field",
+      "operation": "POST /api/v1/profile-authoring/repositories/resolve",
+      "scenario": "authoring_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/profile-authoring/repositories/resolve",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "url": "https://github.com/example/research.git/",
+          "credential": "not-a-credential"
+        }
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid_json",
+          "title": "invalid_json",
+          "status": 422,
+          "detail": "Failed to deserialize the JSON body into the target type: credential: unknown field `credential`, expected `url` or `reference` at line 1 column 62",
+          "code": "invalid_json"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "authoring-resolve-forbidden-before-body",
+      "operation": "POST /api/v1/profile-authoring/repositories/resolve",
+      "scenario": "authoring_forbidden",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/profile-authoring/repositories/resolve",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "rawBody": "{"
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/forbidden",
+          "title": "forbidden",
+          "status": 403,
+          "detail": "This caller is not allowed to manage profiles.",
+          "code": "forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "authoring-resolve-anonymous-before-body",
+      "operation": "POST /api/v1/profile-authoring/repositories/resolve",
+      "scenario": "authoring_anonymous",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/profile-authoring/repositories/resolve",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "rawBody": "{"
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    }
+  ]
+}

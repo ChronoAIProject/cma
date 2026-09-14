@@ -1,0 +1,901 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "agent-profile-create-profile-store-unavailable",
+      "operation": "POST /api/v1/agent-profiles",
+      "scenario": "profiles_store_unavailable",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agent-profiles",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "agent-profile-create-profile-store-unavailable"
+        },
+        "body": {
+          "name": "Contract agent",
+          "description": "Shared contract",
+          "content": {
+            "model": "gpt-contract",
+            "thinking_effort": "high",
+            "permission_level": "guarded",
+            "skills": [],
+            "system_prompt": "Return a precise result."
+          }
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/profile-store-unavailable",
+          "title": "profile store unavailable",
+          "status": 503,
+          "detail": "The profile store could not complete this operation.",
+          "code": "profile_store_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-profile-list-profile-store-unavailable",
+      "operation": "GET /api/v1/agent-profiles",
+      "scenario": "profiles_store_unavailable",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agent-profiles",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/profile-store-unavailable",
+          "title": "profile store unavailable",
+          "status": 503,
+          "detail": "The profile store could not complete this operation.",
+          "code": "profile_store_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-profile-read-profile-store-unavailable",
+      "operation": "GET /api/v1/agent-profiles/{id}",
+      "scenario": "profiles_store_unavailable",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agent-profiles/agp_11111111111111111111111111111111",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/profile-store-unavailable",
+          "title": "profile store unavailable",
+          "status": 503,
+          "detail": "The profile store could not complete this operation.",
+          "code": "profile_store_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-profile-update-profile-store-unavailable",
+      "operation": "PUT /api/v1/agent-profiles/{id}",
+      "scenario": "profiles_store_unavailable",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/agent-profiles/agp_11111111111111111111111111111111",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "agent-profile-update-profile-store-unavailable"
+        },
+        "body": {
+          "draft_version": 1,
+          "name": "Revised agent",
+          "content": {
+            "model": "gpt-contract",
+            "thinking_effort": "high",
+            "permission_level": "guarded",
+            "skills": [],
+            "system_prompt": "Return a precise result."
+          }
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/profile-store-unavailable",
+          "title": "profile store unavailable",
+          "status": 503,
+          "detail": "The profile store could not complete this operation.",
+          "code": "profile_store_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-profile-unpublished-public-profile-store-unavailable",
+      "operation": "PUT /api/v1/agent-profiles/{id}/visibility",
+      "scenario": "profiles_store_unavailable",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/agent-profiles/agp_11111111111111111111111111111111/visibility",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "agent-profile-unpublished-public-profile-store-unavailable"
+        },
+        "body": {
+          "visibility": "public"
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/profile-store-unavailable",
+          "title": "profile store unavailable",
+          "status": 503,
+          "detail": "The profile store could not complete this operation.",
+          "code": "profile_store_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-profile-publish-profile-store-unavailable",
+      "operation": "POST /api/v1/agent-profiles/{id}/revisions",
+      "scenario": "profiles_store_unavailable",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agent-profiles/agp_11111111111111111111111111111111/revisions",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "agent-profile-publish-profile-store-unavailable"
+        },
+        "body": {
+          "draft_version": 2
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/profile-store-unavailable",
+          "title": "profile store unavailable",
+          "status": 503,
+          "detail": "The profile store could not complete this operation.",
+          "code": "profile_store_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-profile-revisions-profile-store-unavailable",
+      "operation": "GET /api/v1/agent-profiles/{id}/revisions",
+      "scenario": "profiles_store_unavailable",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agent-profiles/agp_11111111111111111111111111111111/revisions",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/profile-store-unavailable",
+          "title": "profile store unavailable",
+          "status": 503,
+          "detail": "The profile store could not complete this operation.",
+          "code": "profile_store_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-profile-exact-revision-profile-store-unavailable",
+      "operation": "GET /api/v1/agent-profiles/{id}/revisions/{revision}",
+      "scenario": "profiles_store_unavailable",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agent-profiles/agp_11111111111111111111111111111111/revisions/1",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/profile-store-unavailable",
+          "title": "profile store unavailable",
+          "status": 503,
+          "detail": "The profile store could not complete this operation.",
+          "code": "profile_store_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-marketplace-list-profile-store-unavailable",
+      "operation": "GET /api/v1/marketplace/{kind}",
+      "scenario": "profiles_store_unavailable",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/marketplace/agent-profiles",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/profile-store-unavailable",
+          "title": "profile store unavailable",
+          "status": 503,
+          "detail": "The profile store could not complete this operation.",
+          "code": "profile_store_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-marketplace-read-profile-store-unavailable",
+      "operation": "GET /api/v1/marketplace/{kind}/{id}",
+      "scenario": "profiles_store_unavailable",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/marketplace/agent-profiles/agp_11111111111111111111111111111111",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/profile-store-unavailable",
+          "title": "profile store unavailable",
+          "status": 503,
+          "detail": "The profile store could not complete this operation.",
+          "code": "profile_store_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-marketplace-fork-profile-store-unavailable",
+      "operation": "POST /api/v1/marketplace/{kind}/{id}/fork",
+      "scenario": "profiles_store_unavailable",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/marketplace/agent-profiles/agp_11111111111111111111111111111111/fork",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "agent-marketplace-fork-profile-store-unavailable"
+        },
+        "body": {
+          "revision": 1
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/profile-store-unavailable",
+          "title": "profile store unavailable",
+          "status": 503,
+          "detail": "The profile store could not complete this operation.",
+          "code": "profile_store_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-profile-retire-profile-store-unavailable",
+      "operation": "POST /api/v1/agent-profiles/{id}/retire",
+      "scenario": "profiles_store_unavailable",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agent-profiles/agp_11111111111111111111111111111111/retire",
+        "headers": {
+          "idempotency-key": "agent-profile-retire-profile-store-unavailable"
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/profile-store-unavailable",
+          "title": "profile store unavailable",
+          "status": 503,
+          "detail": "The profile store could not complete this operation.",
+          "code": "profile_store_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "workspace-profile-create-profile-store-unavailable",
+      "operation": "POST /api/v1/workspace-profiles",
+      "scenario": "profiles_store_unavailable",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/workspace-profiles",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "workspace-profile-create-profile-store-unavailable"
+        },
+        "body": {
+          "name": "Contract workspace",
+          "description": "Shared contract",
+          "content": {
+            "location": {
+              "type": "directory",
+              "name": "contract"
+            },
+            "name": "contract",
+            "setup_commands": [],
+            "agent_profiles": []
+          }
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/profile-store-unavailable",
+          "title": "profile store unavailable",
+          "status": 503,
+          "detail": "The profile store could not complete this operation.",
+          "code": "profile_store_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "workspace-profile-list-profile-store-unavailable",
+      "operation": "GET /api/v1/workspace-profiles",
+      "scenario": "profiles_store_unavailable",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/workspace-profiles",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/profile-store-unavailable",
+          "title": "profile store unavailable",
+          "status": 503,
+          "detail": "The profile store could not complete this operation.",
+          "code": "profile_store_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "workspace-profile-read-profile-store-unavailable",
+      "operation": "GET /api/v1/workspace-profiles/{id}",
+      "scenario": "profiles_store_unavailable",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/workspace-profiles/wkp_11111111111111111111111111111111",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/profile-store-unavailable",
+          "title": "profile store unavailable",
+          "status": 503,
+          "detail": "The profile store could not complete this operation.",
+          "code": "profile_store_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "workspace-profile-update-profile-store-unavailable",
+      "operation": "PUT /api/v1/workspace-profiles/{id}",
+      "scenario": "profiles_store_unavailable",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/workspace-profiles/wkp_11111111111111111111111111111111",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "workspace-profile-update-profile-store-unavailable"
+        },
+        "body": {
+          "draft_version": 1,
+          "name": "Revised workspace",
+          "content": {
+            "location": {
+              "type": "directory",
+              "name": "contract"
+            },
+            "name": "contract",
+            "setup_commands": [],
+            "agent_profiles": []
+          }
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/profile-store-unavailable",
+          "title": "profile store unavailable",
+          "status": 503,
+          "detail": "The profile store could not complete this operation.",
+          "code": "profile_store_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "workspace-profile-unpublished-public-profile-store-unavailable",
+      "operation": "PUT /api/v1/workspace-profiles/{id}/visibility",
+      "scenario": "profiles_store_unavailable",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/workspace-profiles/wkp_11111111111111111111111111111111/visibility",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "workspace-profile-unpublished-public-profile-store-unavailable"
+        },
+        "body": {
+          "visibility": "public"
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/profile-store-unavailable",
+          "title": "profile store unavailable",
+          "status": 503,
+          "detail": "The profile store could not complete this operation.",
+          "code": "profile_store_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "workspace-profile-publish-profile-store-unavailable",
+      "operation": "POST /api/v1/workspace-profiles/{id}/revisions",
+      "scenario": "profiles_store_unavailable",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/workspace-profiles/wkp_11111111111111111111111111111111/revisions",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "workspace-profile-publish-profile-store-unavailable"
+        },
+        "body": {
+          "draft_version": 2
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/profile-store-unavailable",
+          "title": "profile store unavailable",
+          "status": 503,
+          "detail": "The profile store could not complete this operation.",
+          "code": "profile_store_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "workspace-profile-revisions-profile-store-unavailable",
+      "operation": "GET /api/v1/workspace-profiles/{id}/revisions",
+      "scenario": "profiles_store_unavailable",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/workspace-profiles/wkp_11111111111111111111111111111111/revisions",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/profile-store-unavailable",
+          "title": "profile store unavailable",
+          "status": 503,
+          "detail": "The profile store could not complete this operation.",
+          "code": "profile_store_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "workspace-profile-exact-revision-profile-store-unavailable",
+      "operation": "GET /api/v1/workspace-profiles/{id}/revisions/{revision}",
+      "scenario": "profiles_store_unavailable",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/workspace-profiles/wkp_11111111111111111111111111111111/revisions/1",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/profile-store-unavailable",
+          "title": "profile store unavailable",
+          "status": 503,
+          "detail": "The profile store could not complete this operation.",
+          "code": "profile_store_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "workspace-profile-retire-profile-store-unavailable",
+      "operation": "POST /api/v1/workspace-profiles/{id}/retire",
+      "scenario": "profiles_store_unavailable",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/workspace-profiles/wkp_11111111111111111111111111111111/retire",
+        "headers": {
+          "idempotency-key": "workspace-profile-retire-profile-store-unavailable"
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/profile-store-unavailable",
+          "title": "profile store unavailable",
+          "status": 503,
+          "detail": "The profile store could not complete this operation.",
+          "code": "profile_store_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-profile-create-profile-store-unavailable",
+      "operation": "POST /api/v1/sandbox-profiles",
+      "scenario": "profiles_store_unavailable",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/sandbox-profiles",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "sandbox-profile-create-profile-store-unavailable"
+        },
+        "body": {
+          "name": "Contract sandbox",
+          "description": "Shared contract",
+          "content": {
+            "cpu_millis": 1000,
+            "memory_mib": 1024,
+            "nyxid_services": [],
+            "agent_provider": "codex",
+            "model_access": "chronoai_managed",
+            "max_workspaces": 4,
+            "max_agents_per_workspace": 4,
+            "workspace_profiles": [],
+            "software_install_commands": [],
+            "environment_variables": []
+          }
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/profile-store-unavailable",
+          "title": "profile store unavailable",
+          "status": 503,
+          "detail": "The profile store could not complete this operation.",
+          "code": "profile_store_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-profile-list-profile-store-unavailable",
+      "operation": "GET /api/v1/sandbox-profiles",
+      "scenario": "profiles_store_unavailable",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/sandbox-profiles",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/profile-store-unavailable",
+          "title": "profile store unavailable",
+          "status": 503,
+          "detail": "The profile store could not complete this operation.",
+          "code": "profile_store_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-profile-read-profile-store-unavailable",
+      "operation": "GET /api/v1/sandbox-profiles/{id}",
+      "scenario": "profiles_store_unavailable",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/sandbox-profiles/sbp_11111111111111111111111111111111",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/profile-store-unavailable",
+          "title": "profile store unavailable",
+          "status": 503,
+          "detail": "The profile store could not complete this operation.",
+          "code": "profile_store_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-profile-update-profile-store-unavailable",
+      "operation": "PUT /api/v1/sandbox-profiles/{id}",
+      "scenario": "profiles_store_unavailable",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/sandbox-profiles/sbp_11111111111111111111111111111111",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "sandbox-profile-update-profile-store-unavailable"
+        },
+        "body": {
+          "draft_version": 1,
+          "name": "Revised sandbox",
+          "content": {
+            "cpu_millis": 1000,
+            "memory_mib": 1024,
+            "nyxid_services": [],
+            "agent_provider": "codex",
+            "model_access": "chronoai_managed",
+            "max_workspaces": 4,
+            "max_agents_per_workspace": 4,
+            "workspace_profiles": [],
+            "software_install_commands": [],
+            "environment_variables": []
+          }
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/profile-store-unavailable",
+          "title": "profile store unavailable",
+          "status": 503,
+          "detail": "The profile store could not complete this operation.",
+          "code": "profile_store_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-profile-unpublished-public-profile-store-unavailable",
+      "operation": "PUT /api/v1/sandbox-profiles/{id}/visibility",
+      "scenario": "profiles_store_unavailable",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/sandbox-profiles/sbp_11111111111111111111111111111111/visibility",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "sandbox-profile-unpublished-public-profile-store-unavailable"
+        },
+        "body": {
+          "visibility": "public"
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/profile-store-unavailable",
+          "title": "profile store unavailable",
+          "status": 503,
+          "detail": "The profile store could not complete this operation.",
+          "code": "profile_store_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-profile-publish-profile-store-unavailable",
+      "operation": "POST /api/v1/sandbox-profiles/{id}/revisions",
+      "scenario": "profiles_store_unavailable",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/sandbox-profiles/sbp_11111111111111111111111111111111/revisions",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "sandbox-profile-publish-profile-store-unavailable"
+        },
+        "body": {
+          "draft_version": 2
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/profile-store-unavailable",
+          "title": "profile store unavailable",
+          "status": 503,
+          "detail": "The profile store could not complete this operation.",
+          "code": "profile_store_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-profile-revisions-profile-store-unavailable",
+      "operation": "GET /api/v1/sandbox-profiles/{id}/revisions",
+      "scenario": "profiles_store_unavailable",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/sandbox-profiles/sbp_11111111111111111111111111111111/revisions",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/profile-store-unavailable",
+          "title": "profile store unavailable",
+          "status": 503,
+          "detail": "The profile store could not complete this operation.",
+          "code": "profile_store_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-profile-exact-revision-profile-store-unavailable",
+      "operation": "GET /api/v1/sandbox-profiles/{id}/revisions/{revision}",
+      "scenario": "profiles_store_unavailable",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/sandbox-profiles/sbp_11111111111111111111111111111111/revisions/1",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/profile-store-unavailable",
+          "title": "profile store unavailable",
+          "status": 503,
+          "detail": "The profile store could not complete this operation.",
+          "code": "profile_store_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-profile-retire-profile-store-unavailable",
+      "operation": "POST /api/v1/sandbox-profiles/{id}/retire",
+      "scenario": "profiles_store_unavailable",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/sandbox-profiles/sbp_11111111111111111111111111111111/retire",
+        "headers": {
+          "idempotency-key": "sandbox-profile-retire-profile-store-unavailable"
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/profile-store-unavailable",
+          "title": "profile store unavailable",
+          "status": 503,
+          "detail": "The profile store could not complete this operation.",
+          "code": "profile_store_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    }
+  ]
+}

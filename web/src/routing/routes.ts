@@ -1,119 +1,159 @@
 import { useCallback, useEffect, useState } from 'react';
-import type { MouseEvent as ReactMouseEvent } from 'react';
 
-/** The complete browser-route vocabulary defined by Web_Style.md section 13b. */
-export type TriggerAuthError = 'expired' | 'cancelled' | 'failed';
+export type ProfileKind = 'agent' | 'workspace' | 'sandbox';
 
 export type AppRoute =
   | { readonly kind: 'home' }
+  | { readonly kind: 'sandbox'; readonly sandboxId: string }
+  | { readonly kind: 'agent'; readonly agentId: string }
+  | { readonly kind: 'profiles' }
+  | { readonly kind: 'profile'; readonly profileKind: ProfileKind; readonly profileId: string }
+  | { readonly kind: 'marketplace' }
   | {
-      readonly kind: 'trigger';
-      readonly publicId: string;
-      readonly authError?: TriggerAuthError;
+      readonly kind: 'marketplace_profile';
+      readonly profileKind: ProfileKind;
+      readonly profileId: string;
     }
-  | { readonly kind: 'trigger_recovery'; readonly launchId: string }
+  | { readonly kind: 'triggers' }
+  | { readonly kind: 'trigger'; readonly triggerId: string }
+  | { readonly kind: 'trigger_embed'; readonly triggerId: string }
+  | { readonly kind: 'public_trigger'; readonly publicId: string; readonly placementId?: string }
   | { readonly kind: 'launch'; readonly launchId: string }
-  | { readonly kind: 'contribute'; readonly launchId: string }
-  | { readonly kind: 'session'; readonly sessionId: string }
+  | { readonly kind: 'operations' }
+  | { readonly kind: 'developer' }
   | { readonly kind: 'not_found'; readonly pathname: string };
 
-function segment(value: string): string | undefined {
+const PROFILE_KINDS: readonly ProfileKind[] = ['agent', 'workspace', 'sandbox'];
+
+function isProfileKind(value: string): value is ProfileKind {
+  return (PROFILE_KINDS as readonly string[]).includes(value);
+}
+
+function decodeSegment(value: string): string | null {
+  if (value === '') return null;
   try {
     const decoded = decodeURIComponent(value);
     return decoded !== '' && decoded !== '.' && decoded !== '..' && !decoded.includes('/')
       ? decoded
-      : undefined;
+      : null;
   } catch {
-    return undefined;
+    return null;
   }
 }
 
-function triggerAuthError(search: string): TriggerAuthError | undefined {
-  const values = new URLSearchParams(search).getAll('auth_error');
-  if (values.length !== 1) return undefined;
-  const [value] = values;
-  return value === 'expired' || value === 'cancelled' || value === 'failed' ? value : undefined;
-}
-
-/** Parse one location; query data is retained only as a closed, display-only error hint. */
-export function parseRoute(pathname: string, search = ''): AppRoute {
-  if (pathname === '/' || pathname === '') {
-    return { kind: 'home' };
-  }
-  const parts = pathname.split('/');
-  if (parts[0] !== '') {
+export function parseRoute(pathname: string): AppRoute {
+  if (pathname === '/' || pathname === '') return { kind: 'home' };
+  if (!pathname.startsWith('/') || pathname.endsWith('/')) {
     return { kind: 'not_found', pathname };
   }
 
-  const identifier = parts[2] === undefined ? undefined : segment(parts[2]);
-  if (parts.length === 3 && parts[1] === 'triggers' && identifier !== undefined) {
-    const authError = triggerAuthError(search);
-    return authError === undefined
-      ? { kind: 'trigger', publicId: identifier }
-      : { kind: 'trigger', publicId: identifier, authError };
+  const raw = pathname.slice(1).split('/');
+  const segments = raw.map(decodeSegment);
+  if (segments.some((pathSegment) => pathSegment === null)) {
+    return { kind: 'not_found', pathname };
   }
-  if (parts.length === 3 && parts[1] === 'launches' && identifier !== undefined) {
-    return { kind: 'launch', launchId: identifier };
+  const path = segments as string[];
+
+  if (path.length === 1) {
+    switch (path[0]) {
+      case 'profiles':
+        return { kind: 'profiles' };
+      case 'marketplace':
+        return { kind: 'marketplace' };
+      case 'operations':
+        return { kind: 'operations' };
+      case 'developer':
+        return { kind: 'developer' };
+      default:
+        return { kind: 'not_found', pathname };
+    }
   }
-  if (
-    parts.length === 4 &&
-    parts[1] === 'launches' &&
-    identifier !== undefined &&
-    parts[3] === 'recover'
-  ) {
-    return { kind: 'trigger_recovery', launchId: identifier };
+
+  if (path.length === 2) {
+    const [resource = '', id = ''] = path;
+    if (resource === 'sandboxes') return { kind: 'sandbox', sandboxId: id };
+    if (resource === 'agents') return { kind: 'agent', agentId: id };
+    if (resource === 'launches') return { kind: 'launch', launchId: id };
+    if (resource === 't') return { kind: 'public_trigger', publicId: id };
+    if (resource === 'triggers' && id === 'manage') return { kind: 'triggers' };
   }
-  if (
-    parts.length === 4 &&
-    parts[1] === 'launches' &&
-    identifier !== undefined &&
-    parts[3] === 'contribute'
-  ) {
-    return { kind: 'contribute', launchId: identifier };
+
+  if (path.length === 3) {
+    const [resource = '', qualifier = '', id = ''] = path;
+    if (resource === 'profiles') {
+      const profileKind = PROFILE_KINDS.find((kind) => `${kind}-profiles` === qualifier);
+      if (profileKind !== undefined) return { kind: 'profile', profileKind, profileId: id };
+    }
+    if (resource === 'marketplace' && isProfileKind(qualifier)) {
+      return { kind: 'marketplace_profile', profileKind: qualifier, profileId: id };
+    }
+    if (resource === 'triggers' && qualifier === 'manage') {
+      return { kind: 'trigger', triggerId: id };
+    }
+    if (resource === 't') {
+      return { kind: 'public_trigger', publicId: qualifier, placementId: id };
+    }
   }
-  if (parts.length === 3 && parts[1] === 'sessions' && identifier !== undefined) {
-    return { kind: 'session', sessionId: identifier };
+
+  if (path.length === 4 && path[0] === 'triggers' && path[1] === 'manage' && path[3] === 'embed') {
+    return { kind: 'trigger_embed', triggerId: path[2] ?? '' };
   }
+
   return { kind: 'not_found', pathname };
 }
 
-export function routePath(route: Exclude<AppRoute, { readonly kind: 'not_found' }>): string {
+function segment(value: string): string {
+  return encodeURIComponent(value);
+}
+
+export function routePath(route: AppRoute): string {
   switch (route.kind) {
     case 'home':
       return '/';
+    case 'sandbox':
+      return `/sandboxes/${segment(route.sandboxId)}`;
+    case 'agent':
+      return `/agents/${segment(route.agentId)}`;
+    case 'profiles':
+      return '/profiles';
+    case 'profile':
+      return `/profiles/${route.profileKind}-profiles/${segment(route.profileId)}`;
+    case 'marketplace':
+      return '/marketplace';
+    case 'marketplace_profile':
+      return `/marketplace/${route.profileKind}/${segment(route.profileId)}`;
+    case 'triggers':
+      return '/triggers/manage';
     case 'trigger':
-      return `/triggers/${encodeURIComponent(route.publicId)}`;
-    case 'trigger_recovery':
-      return `/launches/${encodeURIComponent(route.launchId)}/recover`;
-    case 'launch':
-      return `/launches/${encodeURIComponent(route.launchId)}`;
-    case 'contribute':
-      return `/launches/${encodeURIComponent(route.launchId)}/contribute`;
-    case 'session':
-      return `/sessions/${encodeURIComponent(route.sessionId)}`;
-    default: {
-      const exhaustive: never = route;
-      return exhaustive;
+      return `/triggers/manage/${segment(route.triggerId)}`;
+    case 'trigger_embed':
+      return `/triggers/manage/${segment(route.triggerId)}/embed`;
+    case 'public_trigger': {
+      const base = `/t/${segment(route.publicId)}`;
+      return route.placementId === undefined ? base : `${base}/${segment(route.placementId)}`;
     }
+    case 'launch':
+      return `/launches/${segment(route.launchId)}`;
+    case 'operations':
+      return '/operations';
+    case 'developer':
+      return '/developer';
+    case 'not_found':
+      return route.pathname;
   }
 }
 
-export type NavigableRoute = Exclude<AppRoute, { readonly kind: 'not_found' }>;
-
 export interface AppRouter {
   readonly route: AppRoute;
-  readonly navigate: (route: NavigableRoute, options?: { readonly replace?: boolean }) => void;
+  readonly navigate: (route: AppRoute, options?: { readonly replace?: boolean }) => void;
 }
 
-/** A deliberately small History API router: navigation changes views and nothing else. */
 export function useAppRouter(): AppRouter {
-  const [route, setRoute] = useState<AppRoute>(() =>
-    parseRoute(window.location.pathname, window.location.search),
-  );
+  const [route, setRoute] = useState<AppRoute>(() => parseRoute(window.location.pathname));
 
   useEffect(() => {
     const onPopState = () => {
-      setRoute(parseRoute(window.location.pathname, window.location.search));
+      setRoute(parseRoute(window.location.pathname));
     };
     window.addEventListener('popstate', onPopState);
     return () => {
@@ -123,37 +163,13 @@ export function useAppRouter(): AppRouter {
 
   const navigate = useCallback<AppRouter['navigate']>((next, options) => {
     const path = routePath(next);
-    if (path === window.location.pathname && window.location.search === '') {
-      setRoute(next);
-      return;
-    }
     if (options?.replace === true) {
       window.history.replaceState(null, '', path);
     } else {
       window.history.pushState(null, '', path);
     }
-    setRoute(next);
+    setRoute(parseRoute(path));
   }, []);
 
   return { route, navigate };
-}
-
-/** Preserve ordinary browser link gestures while handling same-origin route clicks. */
-export function routeClick(
-  event: ReactMouseEvent<HTMLAnchorElement>,
-  route: NavigableRoute,
-  navigate: AppRouter['navigate'],
-): void {
-  if (
-    event.button !== 0 ||
-    event.metaKey ||
-    event.ctrlKey ||
-    event.shiftKey ||
-    event.altKey ||
-    event.currentTarget.target === '_blank'
-  ) {
-    return;
-  }
-  event.preventDefault();
-  navigate(route);
 }

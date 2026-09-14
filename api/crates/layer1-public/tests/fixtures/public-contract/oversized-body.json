@@ -1,0 +1,92 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "oversized-admin-put",
+      "operation": "PUT /api/v1/admin/settings",
+      "scenario": "admin_operator",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/admin/settings",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "rawBody": " ",
+        "rawBodyRepeat": 2097153
+      },
+      "response": {
+        "status": 413,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/request-too-large",
+          "title": "request too large",
+          "status": 413,
+          "detail": "The request body exceeds what this service accepts.",
+          "code": "request_too_large"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "oversized-admin-patch",
+      "operation": "PATCH /api/v1/admin/settings",
+      "scenario": "admin_operator",
+      "request": {
+        "method": "PATCH",
+        "path": "/api/v1/admin/settings",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "rawBody": " ",
+        "rawBodyRepeat": 2097153
+      },
+      "response": {
+        "status": 413,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/request-too-large",
+          "title": "request too large",
+          "status": 413,
+          "detail": "The request body exceeds what this service accepts.",
+          "code": "request_too_large"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "oversized-admin-post",
+      "operation": "POST /api/v1/admin/settings/reset",
+      "scenario": "admin_operator",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/settings/reset",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "rawBody": " ",
+        "rawBodyRepeat": 2097153
+      },
+      "response": {
+        "status": 413,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/request-too-large",
+          "title": "request too large",
+          "status": 413,
+          "detail": "The request body exceeds what this service accepts.",
+          "code": "request_too_large"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    }
+  ]
+}

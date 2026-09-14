@@ -1,331 +1,337 @@
-//! Putting the authenticated subject on the request.
-//!
-//! Split from the state so that file is about identity and this one about the
-//! single place identity meets a request. Everything downstream reads what this
-//! attaches and never a header, which is what stops an interface from acquiring
-//! a user model of its own.
+//! Attach verified identity and authority to one incoming request.
 
 use std::sync::Arc;
 
 use axum::{
     extract::State,
-    http::{header, HeaderMap},
+    http::StatusCode,
+    middleware::Next,
     response::{IntoResponse, Response},
+    Json,
 };
+use layer1_public::{AuthenticatedSubject, DelegatedCredential};
 
-use layer1_public::auth::StoreUnavailable;
-use layer1_public::AuthenticatedSubject;
+use super::AuthState;
 
-use super::{AuthState, LEGACY_SESSION_COOKIE, SESSION_COOKIE};
-
-pub(crate) fn session_cookies(headers: &HeaderMap) -> Vec<String> {
-    let Some(raw) = headers
-        .get(header::COOKIE)
-        .and_then(|value| value.to_str().ok())
-    else {
-        return Vec::new();
-    };
-
-    [SESSION_COOKIE, LEGACY_SESSION_COOKIE]
-        .into_iter()
-        .filter_map(|name| {
-            raw.split(';')
-                .filter_map(|part| part.trim().split_once('='))
-                .find(|(candidate, _)| *candidate == name)
-                .map(|(_, value)| value.to_string())
-        })
-        .collect()
-}
-
-/// Middleware attaching the authenticated subject to the request.
 pub async fn attach_subject(
     State(auth): State<Arc<AuthState>>,
-    mut req: axum::extract::Request,
-    next: axum::middleware::Next,
+    mut request: axum::extract::Request,
+    next: Next,
 ) -> Response {
-    let resolved = match auth.resolve_request(req.headers()).await {
+    if bypasses_ambient_auth(request.uri().path()) {
+        return next.run(request).await;
+    }
+    let resolved = match auth.resolve_request(request.headers()).await {
         Ok(resolved) => resolved,
         Err(error) => {
-            tracing::error!(error = %error, "could not resolve identity from the auth store");
-            return StoreUnavailable.into_response();
+            tracing::error!(error = %error, "authentication store lookup failed");
+            return store_failure();
         }
     };
     if let Some(resolved) = resolved {
-        // The credential rides separately from identity: nearly every handler
-        // needs the subject, almost none needs a credential, so taking one has
-        // to be deliberate.
-        if let Some(token) = resolved.delegated_credential {
-            let credential = if resolved.credential_is_request_bound {
-                layer1_public::auth::DelegatedCredential::request_bound(token)
-            } else {
-                layer1_public::auth::DelegatedCredential::subject(token)
-            };
-            req.extensions_mut().insert(credential);
+        if let Some(value) = resolved.delegated_credential {
+            request
+                .extensions_mut()
+                .insert(DelegatedCredential::new(value));
         }
-        req.extensions_mut().insert(resolved.authorization);
-        req.extensions_mut().insert(resolved.profile);
-        req.extensions_mut()
+        request.extensions_mut().insert(resolved.authorization);
+        request.extensions_mut().insert(resolved.profile);
+        request
+            .extensions_mut()
             .insert(AuthenticatedSubject(resolved.subject));
     }
-    next.run(req).await
+    next.run(request).await
+}
+
+pub(super) fn store_failure() -> Response {
+    (
+        StatusCode::SERVICE_UNAVAILABLE,
+        Json(serde_json::json!({
+            "type": "https://spec.chrono-ai.fun/cma/1.0/problems/store-failed",
+            "title": "store failed",
+            "status": 503,
+            "detail": "Authentication authority is temporarily unavailable.",
+            "code": "store_failed",
+        })),
+    )
+        .into_response()
+}
+
+fn bypasses_ambient_auth(path: &str) -> bool {
+    // Recovery routes validate their own authority without requiring an old login.
+    if matches!(
+        path,
+        "/auth/signup-options" | "/auth/login" | "/auth/callback" | "/auth/logout"
+    ) {
+        return true;
+    }
+    let Some(path) = path.strip_prefix('/') else {
+        return false;
+    };
+    let entry = path.split('/').collect::<Vec<_>>();
+    if matches!(entry.as_slice(),
+        ["api", "v1", "triggers", "public", public_id, "entry-intent"]
+            if !public_id.is_empty())
+        || matches!(entry.as_slice(),
+            ["api", "v1", "triggers", "public", public_id, "open", placement_id]
+                if !public_id.is_empty() && !placement_id.is_empty())
+    {
+        return true;
+    }
+    let mut segments = path.split('/');
+    matches!(
+        (
+            segments.next(),
+            segments.next(),
+            segments.next(),
+            segments.next(),
+            segments.next(),
+            segments.next(),
+            segments.next(),
+        ),
+        (
+            Some("api"),
+            Some("v1"),
+            Some("triggers"),
+            Some("public"),
+            Some(public_id),
+            None,
+            None,
+        ) | (
+            Some("api"),
+            Some("v1"),
+            Some("triggers"),
+            Some("public"),
+            Some(public_id),
+            Some("badge.svg"),
+            None,
+        ) if !public_id.is_empty()
+    )
 }
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
-
     use axum::{
-        body::{to_bytes, Body},
+        body::Body,
         extract::Extension,
-        http::{header, Request, StatusCode},
+        http::{header, Request},
         routing::get,
-        Json, Router,
+        Router,
     };
-    use layer1_public::auth::DelegatedCredential;
-    use layer2_core::{Authorization, Capability, SubjectId};
-    use tower::ServiceExt;
+    use layer2_core::Authorization;
+    use tower::ServiceExt as _;
 
     use super::*;
-    use crate::auth::persistence::{AuthStore, DurableSubjectTokens, MemoryAuthStore, SecretValue};
-    use crate::auth::profile::Profile;
-    use crate::auth::AuthMode;
+    use crate::auth::{persistence::MemoryAuthStore, AuthMode};
 
-    async fn inspect_request(
-        Extension(subject): Extension<AuthenticatedSubject>,
-        Extension(authorization): Extension<Authorization>,
-        Extension(credential): Extension<DelegatedCredential>,
-        Extension(profile): Extension<Profile>,
-    ) -> Json<serde_json::Value> {
-        Json(serde_json::json!({
-            "subject": subject.0.as_str(),
-            "create": authorization.allows(Capability::CreateSession),
-            "read_all": authorization.allows(Capability::ReadAllSessions),
-            "credential": credential.value(),
-            "request_bound": credential.is_request_bound(),
-            "display_name": profile.display_name,
-        }))
+    #[test]
+    fn only_explicit_routes_bypass_ambient_auth() {
+        for path in [
+            "/auth/signup-options",
+            "/auth/login",
+            "/auth/callback",
+            "/auth/logout",
+            "/api/v1/triggers/public/pub_example",
+            "/api/v1/triggers/public/pub_example/badge.svg",
+            "/api/v1/triggers/public/pub_example/open/plc_readme",
+            "/api/v1/triggers/public/pub_example/entry-intent",
+        ] {
+            assert!(bypasses_ambient_auth(path), "expected bypass for {path}");
+        }
+
+        for path in [
+            "/auth/session",
+            "/auth/login/",
+            "/auth/callback/extra",
+            "/auth/logout/extra",
+            "auth/signup-options",
+            "/auth/signup-options/",
+            "/auth//signup-options",
+            "/auth/signup-options/extra",
+            "/api/v1/triggers/public",
+            "/api/v1/triggers/public/",
+            "/api/v1/triggers/public/pub_example/",
+            "/api/v1/triggers/public//badge.svg",
+            "/api//v1/triggers/public/pub_example",
+            "/api/v1/triggers/public/pub_example/extra",
+            "/api/v1/triggers/public/pub_example/badge.svg/extra",
+            "/api/v1/triggers/public/pub_example/launches",
+        ] {
+            assert!(!bypasses_ambient_auth(path), "unexpected bypass for {path}");
+        }
     }
 
-    fn bearer_request(token: &str) -> Request<Body> {
-        Request::get("/inspect")
-            .header(header::AUTHORIZATION, format!("Bearer {token}"))
-            .body(Body::empty())
-            .expect("request builds")
-    }
-
-    async fn response_json(response: Response) -> serde_json::Value {
-        assert_eq!(response.status(), StatusCode::OK);
-        serde_json::from_slice(
-            &to_bytes(response.into_body(), usize::MAX)
-                .await
-                .expect("response body"),
-        )
-        .expect("response json")
-    }
-
-    async fn same_subject_bearer_fixture() -> (Arc<AuthState>, Arc<MemoryAuthStore>, Router) {
-        let store = Arc::new(MemoryAuthStore::default());
-        let auth = AuthState::with_store(
-            AuthMode::Provider {
-                base_url: "http://provider.invalid".into(),
-                client_id: "client".into(),
-                client_secret: "secret".into(),
-                public_url: "http://service.invalid".into(),
+    #[tokio::test]
+    async fn trusted_identity_is_attached_with_its_authority() {
+        async fn inspect(
+            Extension(subject): Extension<AuthenticatedSubject>,
+            Extension(authority): Extension<Authorization>,
+        ) -> String {
+            format!("{}:{}", subject.subject(), authority.iter().count())
+        }
+        let auth = AuthState::in_memory(
+            AuthMode::Trusted {
+                subject: "developer".into(),
             },
             None,
-            store.clone(),
         );
-        let subject = SubjectId("shared-subject".into());
-        auth.store_sign_in(
-            &subject,
-            DurableSubjectTokens {
-                access_token: Some(SecretValue::new("browser-access".into())),
-                refresh_token: Some(SecretValue::new("browser-refresh".into())),
-                expires_at: std::time::SystemTime::now() + std::time::Duration::from_secs(3600),
-            },
-            Authorization::from_capabilities([Capability::UseOwnSessions]),
-            Profile {
-                display_name: Some("Browser profile".into()),
-                email: None,
-                avatar_url: None,
-            },
-        )
-        .await
-        .expect("browser subject state persists");
-        auth.bearer
-            .remember(
-                "token-a",
-                subject.clone(),
-                Authorization::from_capabilities([Capability::CreateSession]),
-                Profile {
-                    display_name: Some("Token A".into()),
-                    email: None,
-                    avatar_url: None,
-                },
-            )
-            .await;
-        auth.bearer
-            .remember(
-                "token-b",
-                subject,
-                Authorization::from_capabilities([Capability::ReadAllSessions]),
-                Profile {
-                    display_name: Some("Token B".into()),
-                    email: None,
-                    avatar_url: None,
-                },
-            )
-            .await;
-        let app = Router::new().route("/inspect", get(inspect_request)).layer(
-            axum::middleware::from_fn_with_state(Arc::clone(&auth), attach_subject),
-        );
-        (auth, store, app)
-    }
-
-    fn assert_token_a(value: &serde_json::Value) {
-        assert_eq!(value["subject"], "shared-subject");
-        assert_eq!(value["create"], true);
-        assert_eq!(value["read_all"], false);
-        assert_eq!(value["credential"], "token-a");
-        assert_eq!(value["request_bound"], true);
-        assert_eq!(value["display_name"], "Token A");
-    }
-
-    fn assert_token_b(value: &serde_json::Value) {
-        assert_eq!(value["subject"], "shared-subject");
-        assert_eq!(value["create"], false);
-        assert_eq!(value["read_all"], true);
-        assert_eq!(value["credential"], "token-b");
-        assert_eq!(value["request_bound"], true);
-        assert_eq!(value["display_name"], "Token B");
-    }
-
-    #[tokio::test]
-    async fn same_subject_bearers_remain_deterministically_request_bound() {
-        let (_auth, store, app) = same_subject_bearer_fixture().await;
-        let first = response_json(
-            app.clone()
-                .oneshot(bearer_request("token-a"))
-                .await
-                .unwrap(),
-        )
-        .await;
-        let second = response_json(
-            app.clone()
-                .oneshot(bearer_request("token-b"))
-                .await
-                .unwrap(),
-        )
-        .await;
-        let repeated = response_json(app.oneshot(bearer_request("token-a")).await.unwrap()).await;
-        assert_token_a(&first);
-        assert_token_b(&second);
-        assert_token_a(&repeated);
-
-        let durable = store
-            .subject(&SubjectId("shared-subject".into()))
-            .await
-            .expect("store works")
-            .expect("browser state remains");
-        assert_eq!(
-            durable.profile.display_name.as_deref(),
-            Some("Browser profile")
-        );
-        assert_eq!(
-            durable
-                .tokens
-                .expect("renewable browser tokens remain")
-                .access_token
-                .expect("browser access remains active")
-                .expose(),
-            "browser-access"
-        );
-    }
-
-    #[tokio::test]
-    async fn concurrent_same_subject_bearers_cannot_exchange_request_authority() {
-        let (_auth, _store, app) = same_subject_bearer_fixture().await;
-        let (left, right) = tokio::join!(
-            app.clone().oneshot(bearer_request("token-a")),
-            app.oneshot(bearer_request("token-b")),
-        );
-        let (left, right) = tokio::join!(
-            response_json(left.expect("token A response")),
-            response_json(right.expect("token B response")),
-        );
-        assert_token_a(&left);
-        assert_token_b(&right);
-    }
-
-    #[tokio::test]
-    async fn browser_credentials_are_marked_as_subject_renewable() {
-        let (auth, _store, app) = same_subject_bearer_fixture().await;
-        let cookie = auth
-            .issue_session(SubjectId("shared-subject".into()))
-            .await
-            .expect("browser session persists");
-        let value = response_json(
-            app.oneshot(
-                Request::get("/inspect")
-                    .header(
-                        header::COOKIE,
-                        format!("{}={cookie}", super::SESSION_COOKIE),
-                    )
-                    .body(Body::empty())
-                    .expect("request builds"),
-            )
-            .await
-            .expect("router answers"),
-        )
-        .await;
-        assert_eq!(value["credential"], "browser-access");
-        assert_eq!(value["request_bound"], false);
-    }
-
-    #[tokio::test]
-    async fn cookie_store_failure_is_a_typed_503_not_a_401() {
-        let store = Arc::new(MemoryAuthStore::default());
-        let auth = AuthState::with_store(
-            AuthMode::Provider {
-                base_url: "http://provider.invalid".into(),
-                client_id: "client".into(),
-                client_secret: "secret".into(),
-                public_url: "http://service.invalid".into(),
-            },
-            None,
-            store.clone(),
-        );
-        let cookie = auth
-            .issue_session(layer2_core::SubjectId("subject-a".into()))
-            .await
-            .expect("session persists");
-        store.set_unavailable(true);
         let app = Router::new()
-            .route("/protected", get(|| async { StatusCode::NO_CONTENT }))
-            .layer(axum::middleware::from_fn_with_state(
-                Arc::clone(&auth),
-                attach_subject,
-            ));
-
+            .route("/", get(inspect))
+            .layer(axum::middleware::from_fn_with_state(auth, attach_subject));
         let response = app
-            .oneshot(
-                Request::get("/protected")
-                    .header(
-                        header::COOKIE,
-                        format!("{}={cookie}", super::SESSION_COOKIE),
-                    )
-                    .body(Body::empty())
-                    .expect("request builds"),
-            )
+            .oneshot(Request::get("/").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn public_preview_routes_ignore_ambient_credentials() {
+        let app = public_trigger_app_with_unavailable_auth();
+
+        for path in [
+            "/api/v1/triggers/public/pub_example",
+            "/api/v1/triggers/public/pub_example/badge.svg",
+        ] {
+            let response = app
+                .clone()
+                .oneshot(stale_credentials_request(path))
+                .await
+                .expect("router answers");
+            assert_eq!(response.status(), StatusCode::OK, "{path}");
+        }
+    }
+
+    #[tokio::test]
+    async fn public_launch_route_still_resolves_authentication() {
+        let response = public_trigger_app_with_unavailable_auth()
+            .oneshot(stale_credentials_request(
+                "/api/v1/triggers/public/pub_example/launches",
+            ))
             .await
             .expect("router answers");
+
         assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
-        let body: serde_json::Value = serde_json::from_slice(
-            &to_bytes(response.into_body(), usize::MAX)
+    }
+
+    #[tokio::test]
+    async fn stale_provider_access_cannot_block_sign_in_callback_or_logout() {
+        use std::time::{Duration, SystemTime};
+
+        use crate::auth::persistence::{
+            AuthStore as _, BrowserLogin, DurableSubjectTokens, SecretDigest, SecretValue,
+            SubjectAuthState,
+        };
+        use crate::auth::{profile::Profile, ProviderMetadata};
+        use layer2_core::SubjectId;
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let upstream = tokio::spawn(async move {
+            axum::serve(
+                listener,
+                Router::new().route("/userinfo", get(|| async { StatusCode::UNAUTHORIZED })),
+            )
+            .await
+            .unwrap();
+        });
+        let store = Arc::new(MemoryAuthStore::default());
+        let owner = SubjectId::new("recovery-owner");
+        let cookie_id = SecretDigest::identify("browser-login", "stale");
+        store
+            .put_browser_login(BrowserLogin {
+                id: cookie_id.clone(),
+                subject: owner.clone(),
+                expires_at: SystemTime::now() + Duration::from_secs(3600),
+            })
+            .await
+            .unwrap();
+        store
+            .put_subject(SubjectAuthState::new(
+                owner,
+                Authorization::none(),
+                Profile::default(),
+                Some(DurableSubjectTokens {
+                    access_token: SecretValue::new("revoked-fixture-access".into()),
+                    refresh_token: None,
+                    expires_at: SystemTime::now() + Duration::from_secs(3600),
+                }),
+            ))
+            .await
+            .unwrap();
+        let auth = AuthState::with_store(
+            AuthMode::Provider {
+                base_url: base.clone(),
+                client_id: "fixture-client".into(),
+                client_secret: "fixture-value".into(),
+                public_url: "https://cma.example".into(),
+            },
+            None,
+            store.clone(),
+        );
+        *auth.metadata.write().await = Some(ProviderMetadata {
+            authorization_endpoint: format!("{base}/authorize"),
+            token_endpoint: format!("{base}/token"),
+            userinfo_endpoint: Some(format!("{base}/userinfo")),
+            introspection_endpoint: None,
+        });
+        let app = crate::auth::router(auth.clone())
+            .layer(axum::middleware::from_fn_with_state(auth, attach_subject));
+        for (path, expected) in [
+            ("/auth/session", StatusCode::SERVICE_UNAVAILABLE),
+            ("/auth/login", StatusCode::SEE_OTHER),
+            ("/auth/callback", StatusCode::BAD_REQUEST),
+            ("/auth/logout", StatusCode::SEE_OTHER),
+        ] {
+            let response = app
+                .clone()
+                .oneshot(stale_credentials_request(path))
                 .await
-                .expect("problem body"),
-        )
-        .expect("problem json");
-        assert_eq!(body["code"], "store_failed");
+                .unwrap();
+            assert_eq!(response.status(), expected, "{path}");
+        }
+        assert!(store.browser_login(&cookie_id).await.unwrap().is_none());
+        upstream.abort();
+    }
+
+    fn public_trigger_app_with_unavailable_auth() -> Router {
+        let store = Arc::new(MemoryAuthStore::default());
+        store.set_unavailable(true);
+        let auth = AuthState::with_store(
+            AuthMode::Provider {
+                base_url: "http://identity.invalid".into(),
+                client_id: "client".into(),
+                client_secret: "secret".into(),
+                public_url: "http://cma.invalid".into(),
+            },
+            None,
+            store,
+        );
+        Router::new()
+            .route(
+                "/api/v1/triggers/public/{public_id}",
+                get(public_trigger_handler),
+            )
+            .route(
+                "/api/v1/triggers/public/{public_id}/badge.svg",
+                get(public_trigger_handler),
+            )
+            .route(
+                "/api/v1/triggers/public/{public_id}/launches",
+                get(public_trigger_handler),
+            )
+            .layer(axum::middleware::from_fn_with_state(auth, attach_subject))
+    }
+
+    async fn public_trigger_handler() -> StatusCode {
+        StatusCode::OK
+    }
+
+    fn stale_credentials_request(path: &str) -> Request<Body> {
+        Request::get(path)
+            .header(header::COOKIE, "cma_session=stale")
+            .header(header::AUTHORIZATION, "Bearer stale")
+            .body(Body::empty())
+            .expect("request builds")
     }
 }

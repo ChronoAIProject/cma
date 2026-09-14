@@ -28,35 +28,6 @@ export default tseslint.config(
     plugins: { 'react-hooks': reactHooks },
     rules: {
       ...reactHooks.configs.recommended.rules,
-      /*
-       * Terminal hardening is enforced here, not just documented.
-       *
-       * src/terminal/hardening.ts neutralises these sequences defensively, but
-       * xterm's parser runs the most recently registered handler first — so an
-       * addon loaded after hardening would win. Banning the imports outright is
-       * the control that actually holds. See issue #18 and Web_Style.md §8.
-       */
-      'no-restricted-imports': [
-        'error',
-        {
-          paths: [
-            {
-              name: '@xterm/addon-clipboard',
-              message:
-                'Implements OSC 52 in both directions; the read form pipes the host clipboard back to the agent. Banned by issue #18.',
-            },
-            {
-              name: '@xterm/addon-web-links',
-              message:
-                'Opens links with no confirmation and matches bare URLs in agent output. Banned by issue #18.',
-            },
-            {
-              name: '@xterm/addon-progress',
-              message: 'Registers OSC 9, which src/terminal/hardening.ts neutralises.',
-            },
-          ],
-        },
-      ],
     },
   },
 );

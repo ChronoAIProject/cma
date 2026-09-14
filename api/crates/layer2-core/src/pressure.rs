@@ -3,7 +3,12 @@
 use serde::{Deserialize, Serialize};
 use std::time::{Duration, Instant};
 
-/// When a session's memory counts as being under pressure, and when it stops.
+#[path = "pressure_abandon.rs"]
+mod abandon;
+
+use abandon::abandon_episode;
+
+/// When a runtime's memory counts as being under pressure, and when it stops.
 ///
 /// The constructor refuses combinations that would turn a sustained signal
 /// into repeated crossings. Fields stay private because their invariants are
@@ -99,7 +104,7 @@ impl Default for MemoryPressurePolicy {
     }
 }
 
-/// When a session's processor use counts as sustained pressure.
+/// When a runtime's processor use counts as sustained pressure.
 ///
 /// CPU and memory use the same validated hysteresis and dwell contract. The
 /// alias keeps the settings independently named without duplicating a policy
@@ -189,7 +194,7 @@ pub struct CpuPressureSample {
     pub at: Instant,
 }
 
-/// A session's current memory-pressure fold.
+/// A runtime's current memory-pressure fold.
 ///
 /// This state belongs to a live entry and is never stored. Only the two edges
 /// it produces belong in durable history.
@@ -198,7 +203,7 @@ pub struct MemoryPressure {
     phase: Phase,
 }
 
-/// A session's current processor-pressure fold.
+/// A runtime's current processor-pressure fold.
 ///
 /// Like memory pressure, this state is live-only. Only its opening and closing
 /// edges belong in durable history.
@@ -489,24 +494,4 @@ fn evaluate_episode(
             Some(transition)
         }
     }
-}
-
-fn abandon_episode(phase: &mut Phase, at: Instant) -> Option<EpisodeTransition> {
-    let previous = std::mem::take(phase);
-    let Phase::Open {
-        opened_at,
-        limit,
-        peak_permille,
-        peak,
-        ..
-    } = previous
-    else {
-        return None;
-    };
-    Some(EpisodeTransition::Closed {
-        peak,
-        limit,
-        peak_permille,
-        duration_seconds: at.duration_since(opened_at).as_secs() as u32,
-    })
 }

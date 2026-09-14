@@ -1,13 +1,15 @@
-//! MCP interface (priority 4) — for agent clients.
-//!
-//! A projection of the Layer 2 core session model into MCP idiom.
+//! Documented MCP endpoint, explicitly unavailable until its protocol is implemented.
 
-use axum::{response::Response, routing::post, Router};
+use axum::{
+    http::{header, HeaderValue, StatusCode},
+    response::Response,
+    routing::post,
+    Router,
+};
 
-use crate::unavailable::interface_unavailable;
+use crate::rest::{problem_document, problem_response};
 use crate::{InterfaceProfile, Operation};
 
-/// The MCP projection of the core session model.
 #[derive(Debug, Default)]
 pub struct McpInterface;
 
@@ -17,21 +19,28 @@ impl InterfaceProfile for McpInterface {
     }
 
     fn operations(&self) -> &'static [Operation] {
-        &[
-            Operation::CreateSession,
-            Operation::SendInput,
-            Operation::ResolveApproval,
-        ]
+        &[]
     }
 }
 
-/// The documented MCP endpoint, refusing by name until it is implemented.
 pub fn router() -> Router {
     Router::new().route("/api/v1/mcp", post(not_available))
 }
 
 async fn not_available() -> Response {
-    interface_unavailable("mcp")
+    let status = StatusCode::NOT_IMPLEMENTED;
+    let mut body = problem_document(
+        status,
+        "interface-not-available",
+        "The mcp interface is not yet available.",
+        "interface_not_available",
+    );
+    body["interface"] = "mcp".into();
+    let mut response = problem_response(status, body);
+    response
+        .headers_mut()
+        .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    response
 }
 
 #[cfg(test)]
