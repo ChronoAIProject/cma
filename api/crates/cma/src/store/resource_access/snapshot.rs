@@ -90,6 +90,17 @@ pub(super) async fn read(
         agent,
     };
     lineage.validate(target)?;
+    if matches!(target, ResourceTarget::Worktree { .. }) {
+        if let Some(id) = lineage
+            .worktree
+            .as_ref()
+            .and_then(|tree| tree.agent_id.as_ref())
+        {
+            let assigned = read_agent(&get(&store.agents, id.as_str(), false, session).await?)
+                .map_err(|_| ResourceAccessStoreError::Corrupt)?;
+            lineage.validate_worktree_agent(&assigned)?;
+        }
+    }
     let policy = store
         .resource_policies
         .find_one(doc! {"_id":sandbox_id.as_str()})

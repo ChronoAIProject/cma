@@ -128,6 +128,20 @@ fn snapshot(
         agent,
     };
     lineage.validate(target)?;
+    if matches!(target, ResourceTarget::Worktree { .. }) {
+        if let Some(id) = lineage
+            .worktree
+            .as_ref()
+            .and_then(|tree| tree.agent_id.as_ref())
+        {
+            lineage.validate_worktree_agent(
+                state
+                    .agents
+                    .get(id)
+                    .ok_or(ResourceAccessStoreError::Corrupt)?,
+            )?;
+        }
+    }
     let selector = ResourceScope {
         sandbox_id: sandbox_id.clone(),
         agent_id: lineage.agent.as_ref().map(|agent| agent.id.clone()),

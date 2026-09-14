@@ -13,13 +13,15 @@ use layer2_core::sandbox::{CreateSandbox, OwnerSandboxQuery, SandboxOrigin, Sand
 use layer2_core::{Capability, SandboxId, SandboxProfileId};
 use serde::Deserialize;
 
-use crate::AuthenticatedCaller;
+use super::hierarchy_shared_shapes::AccessibleSandboxDetailView;
+use crate::{AuthenticatedCaller, AuthenticatedResourceCaller, DelegatedCredential};
+use layer2_core::sandbox::SandboxHierarchyReading;
 
 use super::idempotency::{IdempotencyKey, RequestBody};
 use super::instances::{confirmed_digest, execute_command, execute_empty_command, HierarchyState};
 use super::instances_openapi_shapes::{
-    CreateSandboxRequest, OwnerSandboxDetailView, OwnerSandboxPageView, OwnerSandboxSummaryView,
-    SandboxEventView, SandboxView,
+    CreateSandboxRequest, OwnerSandboxPageView, OwnerSandboxSummaryView, SandboxEventView,
+    SandboxView,
 };
 use super::instances_problem::HierarchyProblem;
 use super::BodyProblem;
@@ -204,22 +206,41 @@ pub(super) async fn list(
     }))
 }
 
-#[utoipa::path(get, path = "/api/v1/sandboxes/{id}", tag = "sandboxes", params(("id" = String, Path)), responses((status = 200, body = OwnerSandboxDetailView), (status = 404, body = crate::rest::ProblemDocument)))]
+#[utoipa::path(get, path = "/api/v1/sandboxes/{id}", tag = "sandboxes", params(("id" = String, Path)), responses((status = 200, body = AccessibleSandboxDetailView), (status = 404, body = crate::rest::ProblemDocument)))]
 pub(super) async fn read(
     State(state): State<HierarchyState>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
+    resource: Option<AuthenticatedResourceCaller>,
     Path(id): Path<String>,
-) -> Result<Json<OwnerSandboxDetailView>, HierarchyProblem> {
-    let value = state
-        .hierarchy
-        .sandbox(&caller, &SandboxId(id))
-        .await
-        .map_err(HierarchyProblem::sandbox_read)?;
-    let names =
-        super::public_names::resolve(&state.users, std::slice::from_ref(&value.sandbox.owner))
-            .await;
-    let mut view = OwnerSandboxDetailView::from(value);
-    view.sandbox.owner_name = names.get(&view.sandbox.owner).cloned();
+) -> Result<Json<AccessibleSandboxDetailView>, HierarchyProblem> {
+    let id = SandboxId(id);
+    let reading = match resource {
+        Some(resource) => {
+            state
+                .hierarchy
+                .sandbox_authorized(
+                    &resource.context,
+                    resource.credential.as_ref().map(DelegatedCredential::value),
+                    &id,
+                )
+                .await
+        }
+        None => state
+            .hierarchy
+            .sandbox(&caller, &id)
+            .await
+            .map(|value| SandboxHierarchyReading::Personal(Box::new(value))),
+    }
+    .map_err(HierarchyProblem::sandbox_read)?;
+    let mut view = AccessibleSandboxDetailView::from(reading);
+    if let AccessibleSandboxDetailView::Personal(personal) = &mut view {
+        let names = super::public_names::resolve(
+            &state.users,
+            &[layer2_core::SubjectId::new(personal.sandbox.owner.clone())],
+        )
+        .await;
+        personal.sandbox.owner_name = names.get(&personal.sandbox.owner).cloned();
+    }
     Ok(Json(view))
 }
 
