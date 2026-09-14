@@ -2,7 +2,7 @@
 
 Milestone 17 separates retained resource ownership from the principal executing
 an action. The implementation in `layer2-core::resource_access` defines the
-policy and trusted adapter contracts. Organization/share persistence, public
+policy, trusted adapter contracts and transactional ownership/share stores. Public
 resource projections, stream/ticket revalidation, and the complete background
 command scheduler are still being connected. This document does not establish
 that organization sharing or public queued execution is available.
@@ -28,6 +28,33 @@ therefore records a verified API actor without inventing human identity from
 profile fields. It uses the live organization authorization endpoint to prove
 membership and canonical organization identity. Browser and bridge adapters
 must retain their own verified actor/delegation evidence.
+
+## Retained ownership and share storage
+
+Memory and Mongo stores resolve Sandbox/Workspace/Worktree/Agent ancestry under
+one snapshot, checking exact parent IDs, retained owner, revisions and Agent
+conversation integrity before returning policy evidence. The additive
+`resource_policies` sidecar binds the owner kind and policy revision to the
+Sandbox ID, recorded owner and creation timestamp. An absent sidecar means the
+recorded personal owner. Organization sidecars require explicit issuer, canonical
+organization and admitting actor evidence; no production admission path writes
+them yet, and no backfill infers organization ownership.
+
+`resource_shares` holds current grants; `resource_share_commands` holds permanent
+immutable mutation receipts. Create, mode change and revoke use both policy and
+share revision fences. The owner/selector/idempotency-key scope survives later
+revocation, retries recover the original receipt, and changed input conflicts.
+Receipt validation checks attribution, root incarnation, revisions, timestamps
+and the requested effect. Only the personal owner can issue these store commands;
+the caller of these internal ports still must perform current authorization.
+
+Mongo commits policy, share, receipt and additive ancestor write guards in one
+transaction. Retained aggregate payloads/revisions, native conversation, profiles
+and logs are unchanged. An unproved commit returns unavailable; the same key
+recovers the exact original receipt. Active grants are bounded to 128 per Sandbox.
+The current stores always report isolation as unproved, so narrow interactive
+sharing needs a compatible explicit whole-Sandbox grant. Revoking that grant
+removes its interaction support on the next policy evaluation.
 
 ## Policy
 
@@ -126,3 +153,10 @@ Deferred execution tests cover missing custody, current permission removal,
 credential replacement during verification, rotation within a sign-in,
 attribution/revision tampering, denied dispatch, lease loss during provider IO,
 and refusal to resend a bound command.
+
+Resource-store tests cover concurrent mutation/replay, unchanged retained
+ancestry, stale revisions, attribution/effect tampering, explicit organization
+evidence and root incarnation binding. Six real disposable Mongo cases cover
+replica/reopen recovery, CAS races, audit-insertion rollback, unsafe interaction,
+corrupt ownership projections and actual lost commit acknowledgment. These are
+store contracts, not evidence of public sharing or stream revocation.
