@@ -1,4 +1,4 @@
-//! Personal deferred authority is bound to the sign-in incarnation that admitted
+//! Human deferred authority is bound to the sign-in incarnation that admitted
 //! it. Refresh may rotate tokens within that incarnation; another sign-in may
 //! not inherit old commands. No raw credential enters the command ledger.
 
@@ -6,12 +6,17 @@ use std::time::{Duration, SystemTime};
 
 use layer2_core::sandbox::agent_io::{
     AgentActor, AgentAuthorizationRevision, AgentCommandAdmissionAuthority, AgentCommandAuthorizer,
-    AgentCommandEnvelope, AgentOwner, CommandAuthorizationError, PersonalCommandAdmissionAuthority,
+    AgentCommandEnvelope, AgentOwner, CommandAuthorizationError, CommandExecutionAuthorization,
+    PersonalCommandAdmissionAuthority, ResourceCommandAuthorizationError,
 };
 use layer2_core::{Caller, Capability};
 use sha2::{Digest as _, Sha256};
 
-use super::{cookie_authorization, persistence::SubjectAuthState, refresh, AuthMode, AuthState};
+use super::{
+    cookie_authorization, persistence::SubjectAuthState, AuthMode, AuthState, RequestAuth,
+};
+
+mod resource;
 
 const POLICY_REVISION: u64 = 1;
 const VERIFICATION_TIMEOUT: Duration = Duration::from_secs(15);
@@ -74,7 +79,7 @@ impl PersonalCommandAdmissionAuthority for AuthState {
                 return Err(CommandAuthorizationError::Revoked);
             }
             let authority = self.command_authority_revision(&state)?;
-            self.verify_personal_state(state).await?;
+            self.verify_human_state(state).await?;
             Ok(authority)
         })
         .await
@@ -107,10 +112,10 @@ impl AuthState {
         })
     }
 
-    async fn verify_personal_state(
+    async fn verify_human_state(
         &self,
         state: SubjectAuthState,
-    ) -> Result<Caller, CommandAuthorizationError> {
+    ) -> Result<RequestAuth, CommandAuthorizationError> {
         if state.tokens.as_ref().is_some_and(|tokens| {
             !super::bearer::permits_personal_authority(tokens.access_token.expose())
         }) {
@@ -125,7 +130,7 @@ impl AuthState {
         {
             return Err(CommandAuthorizationError::Revoked);
         }
-        Ok(Caller::new(request.subject, request.authorization))
+        Ok(request)
     }
 }
 
@@ -153,28 +158,23 @@ impl AgentCommandAuthorizer for AuthState {
             if owner != subject {
                 return Err(CommandAuthorizationError::Revoked);
             }
-            let mut state = self
-                .store
-                .subject(subject)
-                .await
-                .map_err(|_| CommandAuthorizationError::Unavailable)?
-                .ok_or(CommandAuthorizationError::Revoked)?;
-            if state.subject != *subject
-                || self.command_authority_revision(&state)? != envelope.authorization
-            {
-                return Err(CommandAuthorizationError::Revoked);
-            }
-            refresh::refresh_if_needed(self, &mut state)
-                .await
-                .map_err(|_| CommandAuthorizationError::Unavailable)?;
-            // Refresh can lose a CAS to a new sign-in. Never adopt its authority.
-            if state.subject != *subject
-                || self.command_authority_revision(&state)? != envelope.authorization
-            {
-                return Err(CommandAuthorizationError::Revoked);
-            }
-            self.verify_personal_state(state).await
+            let state = self.retained_command_state(envelope).await?;
+            let request = self.verify_human_state(state).await?;
+            Ok(Caller::new(request.subject, request.authorization))
         })
+        .await
+        .map_err(|_| CommandAuthorizationError::Unavailable)?
+    }
+
+    async fn authorize_resource_command(
+        &self,
+        access: &layer2_core::resource_access::ResourceAccessService,
+        envelope: &AgentCommandEnvelope,
+    ) -> Result<CommandExecutionAuthorization, ResourceCommandAuthorizationError> {
+        tokio::time::timeout(
+            VERIFICATION_TIMEOUT,
+            self.retained_resource_command(access, envelope),
+        )
         .await
         .map_err(|_| CommandAuthorizationError::Unavailable)?
     }
