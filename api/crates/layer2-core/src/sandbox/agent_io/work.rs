@@ -173,6 +173,43 @@ impl AdmittedAgentCommand {
         if self.work.dispatch.is_some() || self.status != AgentResponseStatus::Queued {
             return Err(CommandLedgerError::Conflict);
         }
+        self.record_refusal(code, now)
+    }
+
+    /// Refuse waiting work without taking an execution lane. The store must
+    /// atomically compare the revision, so a concurrent claim, renewal or
+    /// binding always defeats this refusal. An expired lane needs no release.
+    pub fn reject_unclaimed(
+        &mut self,
+        expected_revision: u64,
+        code: CommandFailureCode,
+        now: String,
+    ) -> Result<(), CommandLedgerError> {
+        self.validate()?;
+        if seconds_from_rfc3339(&now).is_none() {
+            return Err(CommandLedgerError::Invalid);
+        }
+        if self.revision != expected_revision || !self.awaiting_claim(&now) {
+            return Err(CommandLedgerError::StaleClaim);
+        }
+        self.record_refusal(code, now)
+    }
+
+    pub fn awaiting_claim(&self, now: &str) -> bool {
+        self.status == AgentResponseStatus::Queued
+            && self.work.dispatch.is_none()
+            && self
+                .work
+                .lease
+                .as_ref()
+                .is_none_or(|lease| !lease.live_at(now))
+    }
+
+    fn record_refusal(
+        &mut self,
+        code: CommandFailureCode,
+        now: String,
+    ) -> Result<(), CommandLedgerError> {
         if code == CommandFailureCode::QueueTimeout && !self.queue_expired(&now) {
             return Err(CommandLedgerError::Invalid);
         }

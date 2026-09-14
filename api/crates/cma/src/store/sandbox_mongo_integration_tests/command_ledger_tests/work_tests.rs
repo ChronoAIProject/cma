@@ -12,7 +12,7 @@ fn after(at: &str, seconds: u64) -> String {
     )
 }
 
-fn claim_request(agent: &Agent, holder: &str, now: &str) -> CommandClaimRequest {
+pub(super) fn claim_request(agent: &Agent, holder: &str, now: &str) -> CommandClaimRequest {
     CommandClaimRequest {
         agent_id: agent.id.clone(),
         holder: holder.into(),
@@ -21,14 +21,14 @@ fn claim_request(agent: &Agent, holder: &str, now: &str) -> CommandClaimRequest 
     }
 }
 
-fn live_request(agent: &Agent, parent: &Sandbox, key: &str) -> CommandReservation {
+pub(super) fn live_request(agent: &Agent, parent: &Sandbox, key: &str) -> CommandReservation {
     let mut value = request(agent, parent, key);
     value.admitted_at = layer2_core::now_rfc3339();
     value.queue_deadline = after(&value.admitted_at, 300);
     value
 }
 
-fn message_mutation(
+pub(super) fn message_mutation(
     agent: &Agent,
     parent: &Sandbox,
     claim: &CommandClaim,

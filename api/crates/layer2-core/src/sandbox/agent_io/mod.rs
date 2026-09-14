@@ -17,6 +17,7 @@ mod lane;
 mod ledger;
 mod service;
 mod work;
+mod worker;
 mod worker_store;
 
 pub use admission::{
@@ -44,7 +45,8 @@ pub use work::{
     CommandClaim, CommandClaimRequest, CommandDispatch, CommandFailure, CommandFailureCode,
     CommandLease, CommandObservation, CommandWorkState,
 };
-pub use worker_store::AgentCommandWorkerStore;
+pub use worker::{AgentCommandExecution, AgentCommandWorker, CommandAttempt, CommandReadiness};
+pub use worker_store::{finish_command_work_page, AgentCommandWorkerStore};
 
 #[cfg(test)]
 mod event_tests;

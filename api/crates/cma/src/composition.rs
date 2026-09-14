@@ -37,6 +37,7 @@ use crate::{
 pub(crate) struct ControlPlaneComposition {
     pub router: Router,
     pub launch_scheduler: super::trigger::LaunchScheduler,
+    pub command_scheduler: super::commands::CommandScheduler,
     pub sandbox_lifecycle: SandboxLifecycleComposition,
 }
 
@@ -285,7 +286,7 @@ impl ControlPlaneComposition {
             operations: Arc::clone(&operations),
             rate_limiters: Arc::clone(&limits),
             public_origin: config.public_url.clone(),
-            worker_holder,
+            worker_holder: worker_holder.clone(),
         })?;
         let (trigger_routes, launch_scheduler) = trigger.into_parts();
         let context = AgentContextService::new(
@@ -295,6 +296,19 @@ impl ControlPlaneComposition {
             stores.sandbox_profiles.clone(),
             settings,
         );
+        let command_worker = layer2_core::sandbox::agent_io::AgentCommandWorker::new(
+            stores.sandbox_model.clone(),
+            Arc::new(crate::commands::PersonalCommandExecution {
+                authority: auth.clone(),
+                access: resource_access.clone(),
+                store: stores.sandbox_model.clone(),
+                operations: projections.operations(),
+                context: context.clone(),
+            }),
+            worker_holder,
+        )
+        .map_err(|error| format!("Agent command worker is not usable: {error}"))?;
+        let command_scheduler = crate::commands::CommandScheduler::new(command_worker);
         let resource_routes = profiles_router(profiles)
             .merge(layer1_public::rest::resource_access_router(resource_access))
             .merge(profile_authoring_router(profile_authoring))
@@ -330,6 +344,7 @@ impl ControlPlaneComposition {
         Ok(Self {
             router,
             launch_scheduler,
+            command_scheduler,
             sandbox_lifecycle,
         })
     }
