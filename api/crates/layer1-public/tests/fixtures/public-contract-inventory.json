@@ -595,6 +595,9 @@
         "forbidden",
         "hierarchy_service_unavailable",
         "not_authenticated",
+        "organization_authority_unavailable",
+        "resource_access_changed",
+        "resource_access_unavailable",
         "sandbox_not_found"
       ]
     },
@@ -626,6 +629,9 @@
         "forbidden",
         "hierarchy_service_unavailable",
         "not_authenticated",
+        "organization_authority_unavailable",
+        "resource_access_changed",
+        "resource_access_unavailable",
         "sandbox_not_found"
       ]
     },
@@ -770,6 +776,9 @@
         "forbidden",
         "hierarchy_service_unavailable",
         "not_authenticated",
+        "organization_authority_unavailable",
+        "resource_access_changed",
+        "resource_access_unavailable",
         "workspace_not_found"
       ]
     },
@@ -780,6 +789,9 @@
         "forbidden",
         "hierarchy_service_unavailable",
         "not_authenticated",
+        "organization_authority_unavailable",
+        "resource_access_changed",
+        "resource_access_unavailable",
         "workspace_not_found"
       ]
     },
@@ -790,6 +802,9 @@
         "forbidden",
         "hierarchy_service_unavailable",
         "not_authenticated",
+        "organization_authority_unavailable",
+        "resource_access_changed",
+        "resource_access_unavailable",
         "worktree_not_found"
       ]
     },

@@ -11,13 +11,13 @@ use layer2_core::profiles::WorkspaceProfileRef;
 use layer2_core::sandbox::CreateWorkspace;
 use layer2_core::{Capability, SandboxId, WorkspaceId, WorkspaceProfileId};
 
-use crate::AuthenticatedCaller;
+use super::hierarchy_shared_shapes::{AccessibleWorkspaceDetailView, AccessibleWorkspaceListView};
+use crate::{AuthenticatedCaller, AuthenticatedResourceCaller, DelegatedCredential};
+use layer2_core::sandbox::{SandboxHierarchyReading, WorkspaceHierarchyReading};
 
 use super::idempotency::{operation_scope, IdempotencyKey, RequestBody};
 use super::instances::{confirmed_digest, execute_command, execute_empty_command, HierarchyState};
-use super::instances_openapi_shapes::{
-    CreateWorkspaceRequest, WorkspaceDetailView, WorkspaceListView, WorkspaceView,
-};
+use super::instances_openapi_shapes::{CreateWorkspaceRequest, WorkspaceView};
 use super::instances_problem::HierarchyProblem;
 use super::BodyProblem;
 
@@ -78,37 +78,64 @@ pub(super) async fn create(
     .await
 }
 
-#[utoipa::path(get, path = "/api/v1/sandboxes/{id}/workspaces", tag = "workspaces", params(("id" = String, Path)), responses((status = 200, body = WorkspaceListView), (status = 404, body = crate::rest::ProblemDocument)))]
+#[utoipa::path(get, path = "/api/v1/sandboxes/{id}/workspaces", tag = "workspaces", params(("id" = String, Path)), responses((status = 200, body = AccessibleWorkspaceListView), (status = 404, body = crate::rest::ProblemDocument)))]
 pub(super) async fn list(
     State(state): State<HierarchyState>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
+    resource: Option<AuthenticatedResourceCaller>,
     Path(id): Path<String>,
-) -> Result<Json<WorkspaceListView>, HierarchyProblem> {
-    state
-        .hierarchy
-        .workspaces(&caller, &SandboxId(id))
-        .await
-        .map(|items| {
-            Json(WorkspaceListView {
-                items: items.into_iter().map(Into::into).collect(),
-            })
-        })
-        .map_err(HierarchyProblem::sandbox_read)
+) -> Result<Json<AccessibleWorkspaceListView>, HierarchyProblem> {
+    let id = SandboxId(id);
+    match resource {
+        Some(resource) => {
+            state
+                .hierarchy
+                .sandbox_authorized(
+                    &resource.context,
+                    resource.credential.as_ref().map(DelegatedCredential::value),
+                    &id,
+                )
+                .await
+        }
+        None => state
+            .hierarchy
+            .sandbox(&caller, &id)
+            .await
+            .map(|value| SandboxHierarchyReading::Personal(Box::new(value))),
+    }
+    .map(Into::into)
+    .map(Json)
+    .map_err(HierarchyProblem::sandbox_read)
 }
 
-#[utoipa::path(get, path = "/api/v1/workspaces/{id}", tag = "workspaces", params(("id" = String, Path)), responses((status = 200, body = WorkspaceDetailView), (status = 404, body = crate::rest::ProblemDocument)))]
+#[utoipa::path(get, path = "/api/v1/workspaces/{id}", tag = "workspaces", params(("id" = String, Path)), responses((status = 200, body = AccessibleWorkspaceDetailView), (status = 404, body = crate::rest::ProblemDocument)))]
 pub(super) async fn read(
     State(state): State<HierarchyState>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
+    resource: Option<AuthenticatedResourceCaller>,
     Path(id): Path<String>,
-) -> Result<Json<WorkspaceDetailView>, HierarchyProblem> {
-    state
-        .hierarchy
-        .workspace(&caller, &WorkspaceId(id))
-        .await
-        .map(Into::into)
-        .map(Json)
-        .map_err(HierarchyProblem::workspace_read)
+) -> Result<Json<AccessibleWorkspaceDetailView>, HierarchyProblem> {
+    let id = WorkspaceId(id);
+    match resource {
+        Some(resource) => {
+            state
+                .hierarchy
+                .workspace_authorized(
+                    &resource.context,
+                    resource.credential.as_ref().map(DelegatedCredential::value),
+                    &id,
+                )
+                .await
+        }
+        None => state
+            .hierarchy
+            .workspace(&caller, &id)
+            .await
+            .map(|value| WorkspaceHierarchyReading::Personal(Box::new(value))),
+    }
+    .map(Into::into)
+    .map(Json)
+    .map_err(HierarchyProblem::workspace_read)
 }
 
 #[utoipa::path(delete, path = "/api/v1/workspaces/{id}", tag = "workspaces", params(("id" = String, Path), ("Idempotency-Key" = String, Header)), responses((status = 202, body = WorkspaceView), (status = 409, body = crate::rest::ProblemDocument), (status = 404, body = crate::rest::ProblemDocument)))]

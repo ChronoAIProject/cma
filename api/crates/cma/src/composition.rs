@@ -177,7 +177,8 @@ impl ControlPlaneComposition {
         )
         .with_connections(connection_prerequisite.clone())
         .with_resource_access(resource_access.clone());
-        let hierarchy = HierarchyReadService::new(stores.sandbox_model.clone());
+        let hierarchy = HierarchyReadService::new(stores.sandbox_model.clone())
+            .with_resource_access(resource_access.clone());
         let admin = layer1_public::rest::admin::AdminState::new(
             Arc::clone(&settings),
             sandbox_operators,

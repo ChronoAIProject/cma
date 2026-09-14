@@ -154,9 +154,11 @@ pub use first_message::{
 pub use first_message_service::{AgentWorkAuthority, FirstMessageDispatchOutcome};
 pub use hierarchy::{
     AgentHierarchySummary, HierarchyCounts, HierarchyReadError, HierarchyReadService,
-    HierarchyReadStore, OwnerSandboxQuery, SandboxHierarchyRecord, SandboxHierarchySummary,
-    SandboxHierarchyView, SandboxInventoryRecord, SandboxSnapshotDownload,
-    WorkspaceHierarchyRecord, WorkspaceHierarchySummary, WorkspaceHierarchyView,
+    HierarchyReadStore, OwnerSandboxQuery, SandboxHierarchyReading, SandboxHierarchyRecord,
+    SandboxHierarchySummary, SandboxHierarchyView, SandboxInventoryRecord, SandboxSnapshotDownload,
+    SharedHierarchyAgent, SharedSandboxHierarchy, SharedWorkspaceHierarchy, SharedWorkspaceSummary,
+    SharedWorktreeSummary, WorkspaceHierarchyReading, WorkspaceHierarchyRecord,
+    WorkspaceHierarchySummary, WorkspaceHierarchyView, WorktreeHierarchyReading,
     WorktreeHierarchySummary,
 };
 pub use home::SandboxHome;
