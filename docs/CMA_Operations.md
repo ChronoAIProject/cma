@@ -112,6 +112,14 @@ Background execution, fresh bridge/organization authorization and public
 admission wiring remain rollout prerequisites.
 The ledger alone does not make busy queues or durable Responses available.
 
+Ordinary CMA provider authentication refuses NyxID relay access, callback and
+reply tokens, including relay key/scope claims. NyxID userinfo can project the
+bot owner's subject and RBAC from a relay access token; that projection does not
+grant CMA dashboard or owner-operation authority. The local claims inspection
+only denies restricted credentials. Every other credential still goes through
+the existing provider verifier. Bridge ingress must validate its own callback
+and scoped execution authority before admitting work.
+
 The disposable cluster bootstrap is
 `.github/tools/cma-bridge-continuity/bootstrap.py`. Install its pinned Python
 requirements, then supply the repository, a fresh private directory outside Git,

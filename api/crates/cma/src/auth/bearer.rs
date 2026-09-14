@@ -1,6 +1,54 @@
 //! Strict extraction of one HTTP bearer credential.
 
 use axum::http::{header, HeaderMap};
+use base64::Engine as _;
+
+/// A negative filter, never evidence of authentication. NyxID relay tokens
+/// resolve to their owner's subject and RBAC at userinfo, but their authority
+/// is restricted to bridge ingress/reply. Ordinary CMA authentication must not
+/// turn that subject projection into a dashboard or owner-operation credential.
+/// Every token that passes this filter still requires provider verification.
+pub(super) fn permits_ambient_auth(token: &str) -> bool {
+    if token.len() > 64 * 1024 {
+        return false;
+    }
+    let mut parts = token.split('.');
+    let (Some(_), Some(payload), Some(_), None) =
+        (parts.next(), parts.next(), parts.next(), parts.next())
+    else {
+        return true;
+    };
+    let Ok(bytes) = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(payload)
+        .or_else(|_| base64::engine::general_purpose::URL_SAFE.decode(payload))
+    else {
+        return true;
+    };
+    let Ok(serde_json::Value::Object(claims)) = serde_json::from_slice::<serde_json::Value>(&bytes)
+    else {
+        return true;
+    };
+    if claims
+        .get("relay")
+        .is_some_and(|value| !value.is_null() && value != &serde_json::Value::Bool(false))
+        || claims
+            .get("token_type")
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(|kind| matches!(kind, "relay_reply" | "relay_callback"))
+    {
+        return false;
+    }
+    ![
+        "relay_api_key_id",
+        "relay_api_key_name",
+        "relay_allowed_service_ids",
+        "relay_allowed_node_ids",
+        "relay_allow_all_services",
+        "relay_allow_all_nodes",
+    ]
+    .iter()
+    .any(|field| claims.get(*field).is_some_and(|value| !value.is_null()))
+}
 
 pub(super) fn bearer_token(headers: &HeaderMap) -> Option<String> {
     let mut values = headers.get_all(header::AUTHORIZATION).iter();
@@ -42,5 +90,45 @@ mod tests {
         }
         headers.append(header::AUTHORIZATION, "Bearer token-b".parse().unwrap());
         assert!(bearer_token(&headers).is_none());
+    }
+
+    #[test]
+    fn channel_tokens_are_refused_even_when_their_subject_has_owner_permissions() {
+        for claims in [
+            serde_json::json!({"sub":"owner", "permissions":["cma:*"], "relay":true}),
+            serde_json::json!({"token_type":"relay_reply"}),
+            serde_json::json!({"token_type":"relay_callback"}),
+            serde_json::json!({"relay":false, "relay_api_key_id":"selected-key"}),
+            serde_json::json!({"relay_allowed_service_ids":[]}),
+            serde_json::json!({"relay_allow_all_services":false}),
+            serde_json::json!({"relay":"true"}),
+        ] {
+            let payload = base64::engine::general_purpose::URL_SAFE_NO_PAD
+                .encode(serde_json::to_vec(&claims).unwrap());
+            assert!(!permits_ambient_auth(&format!(
+                "header.{payload}.signature"
+            )));
+        }
+    }
+
+    #[test]
+    fn ordinary_credentials_still_require_the_existing_provider_verifier() {
+        for value in [
+            "opaque",
+            "unverified.payload.signature",
+            "opaque.with.extra.parts",
+        ] {
+            assert!(permits_ambient_auth(value));
+        }
+        for claims in [
+            serde_json::json!({"sub":"owner", "token_type":"access"}),
+            serde_json::json!({"relay":false}),
+            serde_json::json!({"relay":null}),
+        ] {
+            let payload = base64::engine::general_purpose::URL_SAFE_NO_PAD
+                .encode(serde_json::to_vec(&claims).unwrap());
+            assert!(permits_ambient_auth(&format!("header.{payload}.signature")));
+        }
+        assert!(!permits_ambient_auth(&"a".repeat(64 * 1024 + 1)));
     }
 }

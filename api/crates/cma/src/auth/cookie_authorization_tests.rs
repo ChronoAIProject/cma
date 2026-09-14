@@ -248,6 +248,38 @@ async fn inactive_cookie_retains_identity_but_no_grants_or_delegated_credential(
 }
 
 #[tokio::test]
+async fn relay_owner_projection_cannot_establish_ordinary_bearer_or_login_authority() {
+    use base64::Engine as _;
+    let fixture = Fixture::new().await;
+    let metadata = fixture.auth.metadata().await.unwrap();
+    let before = fixture.control.requests.load(Ordering::SeqCst);
+    for channel in [
+        json!({"relay":true, "sub":"owner", "permissions":["cma:*"]}),
+        json!({"token_type":"relay_callback"}),
+        json!({"token_type":"relay_reply"}),
+    ] {
+        let payload = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .encode(serde_json::to_vec(&channel).unwrap());
+        let token = format!("header.{payload}.signature");
+        assert!(identity::request_for_bearer(&fixture.auth, token.clone())
+            .await
+            .unwrap()
+            .is_none());
+        assert!(identity::resolve_subject(&fixture.auth, &metadata, &token)
+            .await
+            .is_err());
+        assert_eq!(fixture.control.requests.load(Ordering::SeqCst), before);
+    }
+    let ordinary = identity::request_for_bearer(&fixture.auth, "access".into())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(ordinary.authorization.allows(Capability::UseOwnSandboxes));
+    assert_eq!(ordinary.subject, layer2_core::SubjectId::new("owner"));
+    assert!(fixture.control.requests.load(Ordering::SeqCst) > before);
+}
+
+#[tokio::test]
 async fn unusable_durable_access_never_reuses_stored_authority_or_calls_provider() {
     let fixture = Fixture::new().await;
     let original = fixture.seed().await;
