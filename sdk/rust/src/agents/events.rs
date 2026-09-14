@@ -57,6 +57,7 @@ pub struct AvailableCommand {
 event_enum! { "type";
     /// Typed durable Agent event payload; it does not model live-only frames.
     pub enum AgentEventKind {
+        AccessRedacted => "access_redacted" {},
         Created => "created" { workspace_id: String, worktree_id: String },
         ConversationOpened => "conversation_opened" { conversation_id: String, runtime_generation: u64 },
         RuntimeGenerationRetired => "runtime_generation_retired" { previous_generation: u64, runtime_generation: u64 },

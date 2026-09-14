@@ -18,6 +18,7 @@ use super::admin::settings::{
 };
 use super::admin::{ActivityPageView, ActivityView, RuntimeEntryView, RuntimeInventoryView};
 use super::agent_openapi_shapes::*;
+use super::agent_shared_shapes::*;
 use super::instances_openapi_shapes::{
     CreateSandboxRequest, CreateWorkspaceRequest, FailureView, OwnerAgentSummaryView,
     OwnerSandboxDetailView, OwnerSandboxPageView, OwnerSandboxSummaryView,
@@ -116,10 +117,10 @@ use super::trigger_openapi_shapes::*;
         super::agent_operate::interrupt,
         super::agent_operate::approval,
         super::agent_operate::stop,
-        super::agent_operate::events,
-        super::agent_operate::transcript,
-        super::agent_operate::usage,
-        super::agent_operate::resources,
+        super::agent_reads::events,
+        super::agent_reads::transcript,
+        super::agent_reads::usage,
+        super::agent_reads::resources,
         super::sandboxes::create,
         super::sandboxes::list,
         super::sandboxes::read,
@@ -292,6 +293,8 @@ use super::trigger_openapi_shapes::*;
         AgentListItemView,
         AgentPageView,
         AgentView,
+        AccessibleAgentView,
+        SharedAgentView,
         AgentFailureView,
         InputAcceptedView,
         AgentEventPageView,

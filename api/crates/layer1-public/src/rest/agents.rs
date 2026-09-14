@@ -23,10 +23,11 @@ use serde::Deserialize;
 use super::agent_openapi_shapes::{
     AgentListItemView, AgentPageView, AgentView, CreateAgentRequest,
 };
+use super::agent_shared_shapes::AccessibleAgentView;
 use super::idempotency::{self, IdempotencyKey, RequestBody};
 use super::instance_problem::InstanceProblem;
 use super::BodyProblem;
-use crate::AuthenticatedCaller;
+use crate::{AuthenticatedCaller, AuthenticatedResourceCaller, DelegatedCredential};
 
 const DEFAULT_PAGE_LIMIT: u16 = 200;
 
@@ -99,6 +100,7 @@ pub(super) fn routes() -> Router<AgentRoutesState> {
 pub fn agent_router(state: AgentRoutesState) -> Router {
     routes()
         .merge(super::agent_operate::routes())
+        .merge(super::agent_reads::routes())
         .with_state(state)
 }
 
@@ -193,16 +195,32 @@ pub(crate) async fn list(
     tag = "agents",
     params(("id" = String, Path)),
     responses(
-        (status = 200, body = AgentView),
+        (status = 200, body = AccessibleAgentView),
         (status = 404, body = crate::rest::ProblemDocument)
     )
 )]
 pub(crate) async fn read(
     State(state): State<AgentRoutesState>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
+    resource: Option<AuthenticatedResourceCaller>,
     Path(id): Path<String>,
-) -> Result<Json<AgentView>, InstanceProblem> {
-    read_view(&state, &caller, &AgentId(id)).await.map(Json)
+) -> Result<Json<AccessibleAgentView>, InstanceProblem> {
+    if let Some(resource) = resource {
+        return state
+            .reads
+            .detail_authorized(
+                &resource.context,
+                resource.credential.as_ref().map(DelegatedCredential::value),
+                &AgentId(id),
+            )
+            .await
+            .map(AccessibleAgentView::from)
+            .map(Json)
+            .map_err(InstanceProblem::from);
+    }
+    read_view(&state, &caller, &AgentId(id))
+        .await
+        .map(|view| Json(AccessibleAgentView::Personal(Box::new(view))))
 }
 
 #[utoipa::path(

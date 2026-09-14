@@ -32,6 +32,7 @@ import {
   type StopAgentRequest,
 } from './agents/types.js';
 import { agentEvent } from './agents/events.js';
+import { accessibleAgent } from './agents/shared.js';
 import { requireRefusal } from './unsupported.js';
 
 export interface AgentListOptions extends PageOptions {
@@ -62,6 +63,16 @@ export class Agents {
 
   read(id: string, options: OperationOptions = {}) {
     return read(this.config, `/api/v1/agents/${segment(id)}`, identity(agent, id), options);
+  }
+
+  /** Read an owner detail or the safe Agent-only shared detail. */
+  readAccessible(id: string, options: OperationOptions = {}) {
+    return read(
+      this.config,
+      `/api/v1/agents/${segment(id)}`,
+      identity(accessibleAgent, id),
+      options,
+    );
   }
 
   create(workspaceId: string, body: CreateAgentRequest, options: CommandOptions) {

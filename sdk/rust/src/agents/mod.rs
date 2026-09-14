@@ -8,8 +8,10 @@ use crate::{
 use reqwest::{Method, StatusCode};
 
 mod events;
+mod shared;
 mod types;
 pub use events::*;
+pub use shared::*;
 pub use types::*;
 
 /// Owner Agent list filters and opaque pagination.
@@ -49,6 +51,12 @@ impl Agents<'_> {
     pub async fn read(&self, id: &str) -> Result<Agent> {
         let value: Agent = self.client.get(&["agents", id], &[]).await?;
         identity(&value.id, id)?;
+        Ok(value)
+    }
+    /// Read personal full detail or the safe Agent-only shared projection.
+    pub async fn read_accessible(&self, id: &str) -> Result<AccessibleAgent> {
+        let value: AccessibleAgent = self.client.get(&["agents", id], &[]).await?;
+        identity(value.id(), id)?;
         Ok(value)
     }
     /// Read creation provenance and current published Trigger shortcuts.

@@ -807,3 +807,35 @@ fn profile_content_and_dependency_variants_are_typed() {
     .unwrap();
     assert_eq!(serde_json::to_value(draft).unwrap()["name"], "Renamed");
 }
+
+#[tokio::test]
+async fn accessible_agent_keeps_shared_and_personal_shapes_and_checks_identity() {
+    let server = Server::new().await;
+    let personal = agent();
+    let id = personal["id"].as_str().unwrap();
+    let path = format!("/agents/{id}");
+    let shared = json!({"access":"shared","id":id,"status":"ready","created_at":"2026-09-05T00:00:00Z","updated_at":"2026-09-05T00:00:00Z"});
+    server.expect("GET", &path, None, 200, Some(shared.clone()));
+    assert!(matches!(
+        server.client.agents().read_accessible(id).await.unwrap(),
+        AccessibleAgent::Shared(_)
+    ));
+    server.expect("GET", &path, None, 200, Some(personal.clone()));
+    assert!(matches!(
+        server.client.agents().read_accessible(id).await.unwrap(),
+        AccessibleAgent::Personal(_)
+    ));
+    server.expect("GET", &path, None, 200, Some(shared.clone()));
+    assert!(server.client.agents().read(id).await.is_err());
+    for (key, value) in [
+        ("id", json!("other")),
+        ("access", json!("future")),
+        ("status", Value::Null),
+        ("access", Value::Null),
+    ] {
+        let mut malformed = shared.clone();
+        malformed[key] = value;
+        server.expect("GET", &path, None, 200, Some(malformed));
+        assert!(server.client.agents().read_accessible(id).await.is_err());
+    }
+}

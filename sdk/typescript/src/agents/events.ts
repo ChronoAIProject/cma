@@ -47,6 +47,7 @@ export const agentOperationDelivery = enumeration(
 );
 export type AgentOperationDelivery = Output<typeof agentOperationDelivery>;
 export const agentEventKind = tagged({
+  access_redacted: variant('access_redacted', {}),
   created: variant('created', { workspace_id: text, worktree_id: text }),
   conversation_opened: variant('conversation_opened', {
     conversation_id: text,
