@@ -108,9 +108,13 @@ The additive command ledger reserves these receipts, a response identity and a
 per-Agent order atomically. Its key scope combines verified authority, Agent and
 command kind; identical retries return the original receipt and changed input
 conflicts. No expiration index silently makes an old key reusable. A bounded
-background worker discovers admitted commands, obtains fresh personal authority,
-claims the Agent's lane and atomically binds dispatch before sending input.
+background worker discovers admitted commands, verifies retained credential custody
+and current resource authority, then claims the Agent's lane and atomically binds
+dispatch before sending input.
 Recovery reconciles the existing binding without sending another input. The
+worker separately authorizes Sandbox management before requesting revival. That
+transaction fences the exact pending command, current resource policy and expiry;
+accepted lifecycle work survives cancellation of the requesting worker. The
 [Responses v2 contract](API_Responses.md) provides durable personal admission,
 receipts and explicit replay. Production shared and organization mutation
 admission remains under development.

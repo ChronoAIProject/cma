@@ -19,6 +19,8 @@ use super::sandboxes::{read_sandbox, sandbox_origin_fields, sandbox_replacement_
 use super::workspaces::{read_workspace, workspace_replacement_fields};
 use super::worktrees::{read_worktree, worktree_document};
 
+mod command_revival;
+
 enum ApplyError {
     Domain(SandboxStoreError),
     Driver(mongodb::error::Error),
@@ -26,7 +28,7 @@ enum ApplyError {
 
 enum Receipt {
     Create(SandboxEvent),
-    SaveSandbox(SandboxEvent),
+    SaveSandbox(SandboxEvent, Option<command_revival::Receipt>),
     SaveWorkspace(SandboxEvent),
 }
 
@@ -128,6 +130,7 @@ async fn apply_transaction(
             Ok(Receipt::Create(event))
         }
         SandboxTransaction::SaveSandboxAndAppend {
+            command_revival,
             expected_revision,
             sandbox,
             event_at,
@@ -167,6 +170,15 @@ async fn apply_transaction(
             if current.revision != *expected_revision {
                 return Err(ApplyError::Domain(SandboxStoreError::Conflict));
             }
+            let revival_receipt = command_revival::fence(
+                store,
+                session,
+                command_revival.as_deref(),
+                sandbox,
+                event_at,
+                event,
+            )
+            .await?;
             current
                 .validate_service_access_transaction(sandbox, event, event_at)
                 .map_err(|_| ApplyError::Domain(SandboxStoreError::Conflict))?;
@@ -235,7 +247,7 @@ async fn apply_transaction(
                 .session(session)
                 .await
                 .map_err(classify_sequence_write)?;
-            Ok(Receipt::SaveSandbox(event))
+            Ok(Receipt::SaveSandbox(event, revival_receipt))
         }
         SandboxTransaction::SaveWorkspaceAndAppend {
             expected_revision,
@@ -355,7 +367,10 @@ async fn reconcile(
                     .await?
                     .is_some())
         }
-        (SandboxTransaction::SaveSandboxAndAppend { sandbox, .. }, Receipt::SaveSandbox(event)) => {
+        (
+            SandboxTransaction::SaveSandboxAndAppend { sandbox, .. },
+            Receipt::SaveSandbox(event, revival),
+        ) => {
             let stored = store
                 .sandboxes
                 .find_one(doc! { "_id": sandbox.id.as_str() })
@@ -366,10 +381,13 @@ async fn reconcile(
                 .as_ref()
                 .map(read_sandbox)
                 .transpose()?;
-            Ok(stored.as_ref() == Some(sandbox.as_ref())
-                && reconcile_event_with_snapshot_session(store, event, &mut session)
-                    .await?
-                    .is_some())
+            Ok(
+                command_revival::matches(store, &mut session, revival.as_ref()).await?
+                    && stored.as_ref() == Some(sandbox.as_ref())
+                    && reconcile_event_with_snapshot_session(store, event, &mut session)
+                        .await?
+                        .is_some(),
+            )
         }
         (
             SandboxTransaction::SaveWorkspaceAndAppend { workspace, .. },
@@ -436,6 +454,10 @@ impl SandboxTransactionStore for MongoSandboxStore {
                     return Err(SandboxStoreError::Unavailable(error.to_string()));
                 }
             };
+            if let Err(error) = command_revival::require_current(&transaction) {
+                let _ = session.abort_transaction().await;
+                return Err(error);
+            }
             match commit_transaction(&mut session).await {
                 CommitOutcome::Committed => return Ok(()),
                 CommitOutcome::Retry(error) => last_transient = Some(error.to_string()),

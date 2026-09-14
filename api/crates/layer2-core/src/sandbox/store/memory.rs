@@ -50,6 +50,9 @@ mod agent_lifecycle;
 #[cfg(test)]
 mod agent_lifecycle_tests;
 mod agent_reads;
+mod command_revival;
+mod events;
+use events::bounded_events;
 #[cfg(test)]
 mod launch_command_tests;
 mod lifecycle;
@@ -395,11 +398,15 @@ impl SandboxTransactionStore for InMemorySandboxStore {
                 append_sandbox_event(&mut candidate, &sandbox_id, event_at, event)?;
             }
             SandboxTransaction::SaveSandboxAndAppend {
+                command_revival,
                 expected_revision,
                 sandbox,
                 event_at,
                 event,
             } => {
+                if let Some(proof) = &command_revival {
+                    command_revival::validate(&candidate, proof, &sandbox, &event_at, &event)?;
+                }
                 let id = sandbox.id.clone();
                 if candidate.sandboxes.get(&id).is_some_and(|current| {
                     current.owner != sandbox.owner
@@ -429,6 +436,11 @@ impl SandboxTransactionStore for InMemorySandboxStore {
                     *sandbox
                 )?;
                 append_sandbox_event(&mut candidate, &id, event_at, event)?;
+                if let Some(proof) = command_revival {
+                    proof
+                        .require_current()
+                        .map_err(|_| SandboxStoreError::Conflict)?;
+                }
             }
             SandboxTransaction::SaveWorkspaceAndAppend {
                 expected_revision,
@@ -478,22 +490,4 @@ fn append_sandbox_event(
     };
     events.push(event.clone());
     Ok(event)
-}
-
-fn bounded_events<T: Clone>(
-    events: Option<&Vec<T>>,
-    after: u64,
-    limit: u16,
-    sequence: impl Fn(&T) -> u64,
-) -> Result<Vec<T>, SandboxStoreError> {
-    if limit == 0 || limit > MAX_PAGE_SIZE {
-        return Err(SandboxStoreError::InvalidPage);
-    }
-    Ok(events
-        .into_iter()
-        .flatten()
-        .filter(|event| sequence(event) > after)
-        .take(usize::from(limit))
-        .cloned()
-        .collect())
 }

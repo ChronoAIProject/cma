@@ -17,6 +17,39 @@ struct ResourceFixture {
 }
 
 impl ResourceFixture {
+    async fn reserve(&self) -> AdmittedAgentCommand {
+        let snapshot = self
+            .store
+            .resource_access_snapshot(&ResourceTarget::Agent {
+                agent_id: self.envelope.agent_id.clone(),
+            })
+            .await
+            .unwrap();
+        let now = SystemTime::now();
+        let result = self
+            .store
+            .reserve_command(CommandReservation {
+                envelope: self.envelope.clone(),
+                key_sha256: command_key_digest("revival").unwrap(),
+                response_id: Some(layer2_core::ids::AgentResponseId::generate()),
+                admitted_at: layer2_core::rfc3339_at(now),
+                queue_deadline: layer2_core::rfc3339_at(now + Duration::from_secs(300)),
+                queue_capacity: 16,
+                expected_agent_revision: snapshot.lineage.agent.as_ref().unwrap().revision,
+                parent: layer2_core::sandbox::store::SandboxMutationGuard::capture(
+                    &snapshot.lineage.sandbox,
+                ),
+                policy: snapshot.fence(),
+                authority_deadline: None,
+            })
+            .await
+            .unwrap();
+        match result {
+            CommandReservationResult::Created(command)
+            | CommandReservationResult::Existing(command) => *command,
+        }
+    }
+
     async fn new(organization_owned: bool) -> Self {
         Self::with_owner(if organization_owned {
             "org"
@@ -584,4 +617,113 @@ async fn shared_credential_verification_has_one_total_deadline() {
         )
     ));
     tokio::time::resume();
+}
+
+#[tokio::test]
+async fn retained_shared_custody_authorizes_revival_with_fresh_parent_evidence() {
+    for org_owned in [false, true] {
+        let fixture = ResourceFixture::new(org_owned).await;
+        let command = fixture.reserve().await;
+        let proof = fixture
+            .identity
+            .auth
+            .authorize_command_revival(&fixture.access, &command)
+            .await
+            .unwrap();
+        proof.require_command(&command).unwrap();
+        assert_eq!(
+            proof
+                .current_snapshot()
+                .await
+                .unwrap()
+                .scope(&proof.target())
+                .unwrap()
+                .owner,
+            command.receipt.envelope.owner
+        );
+        assert_eq!(
+            fixture
+                .identity
+                .control
+                .organization_requests
+                .load(Ordering::SeqCst),
+            2
+        );
+        assert_eq!(
+            fixture
+                .store
+                .get_command(&command.receipt.envelope.command_id)
+                .await
+                .unwrap(),
+            Some(command)
+        );
+    }
+}
+
+#[tokio::test]
+async fn replacement_during_parent_authorization_invalidates_revival_custody() {
+    let fixture = ResourceFixture::new(false).await;
+    let command = fixture.reserve().await;
+    let original = command.clone();
+    let gate = Arc::new(Gate::default());
+    fixture.identity.control.organization.write().await.gate = Some(gate.clone());
+    let auth = fixture.identity.auth.clone();
+    let access = fixture.access.clone();
+    let pending =
+        tokio::spawn(async move { auth.authorize_command_revival(&access, &command).await });
+    tokio::time::timeout(Duration::from_secs(2), gate.reached.notified())
+        .await
+        .unwrap();
+    gate.release.notify_one(); // Agent interaction lookup
+    tokio::time::timeout(Duration::from_secs(2), gate.reached.notified())
+        .await
+        .unwrap();
+    fixture.identity.seed().await; // Sandbox management lookup still in flight
+    gate.release.notify_one();
+    assert!(matches!(
+        pending.await.unwrap(),
+        Err(ResourceCommandAuthorizationError::Custody(
+            CommandAuthorizationError::Unavailable
+        ))
+    ));
+    assert_eq!(
+        fixture
+            .store
+            .get_command(&original.receipt.envelope.command_id)
+            .await
+            .unwrap(),
+        Some(original)
+    );
+}
+
+#[tokio::test]
+async fn lost_org_role_between_agent_and_parent_checks_refuses_revival() {
+    let fixture = ResourceFixture::new(false).await;
+    let command = fixture.reserve().await;
+    let gate = Arc::new(Gate::default());
+    fixture.identity.control.organization.write().await.gate = Some(gate.clone());
+    let auth = fixture.identity.auth.clone();
+    let access = fixture.access.clone();
+    let pending =
+        tokio::spawn(async move { auth.authorize_command_revival(&access, &command).await });
+    tokio::time::timeout(Duration::from_secs(2), gate.reached.notified())
+        .await
+        .unwrap();
+    *fixture.identity.control.organization.write().await =
+        Reply::json(json!({"id":"org", "your_role":"viewer"}));
+    gate.release.notify_one();
+    assert!(matches!(
+        pending.await.unwrap(),
+        Err(ResourceCommandAuthorizationError::Resource(
+            ResourceAccessError::Access(_)
+        ))
+    ));
+    assert_eq!(
+        fixture
+            .identity
+            .control
+            .organization_requests
+            .load(Ordering::SeqCst),
+        2
+    );
 }
