@@ -16,12 +16,14 @@ use axum::{
 };
 use layer1_public::AuthenticatedCaller;
 use layer2_core::{
-    profiles::{is_codex_connection, CODEX_SUBSCRIPTION_CONNECTION, PUBLIC_CODEX_SERVICE},
     sandbox::SandboxPolicySource,
     trigger_domain::{
         BrokerHandoffState, ServiceConnectionBroker, ServiceConnectionMode, ServiceRequirementState,
     },
     Caller, ServiceId,
+};
+use layer3_adapter::codex::{
+    CODEX_SUBSCRIPTION_CONNECTION, CONNECTION_SERVICES, PUBLIC_CODEX_SERVICE,
 };
 use serde::{Deserialize, Serialize};
 
@@ -206,7 +208,7 @@ impl BrowserConnections {
                 let descriptor = metadata
                     .iter()
                     .find(|item| item.service == requirement.service);
-                let is_model = is_codex_connection(&requirement.service);
+                let is_model = CONNECTION_SERVICES.contains(requirement.service.as_str());
                 let display_name = match requirement.service.as_str() {
                     CODEX_SUBSCRIPTION_CONNECTION => "My Codex subscription".to_owned(),
                     PUBLIC_CODEX_SERVICE => "Chrono LLM (public)".to_owned(),

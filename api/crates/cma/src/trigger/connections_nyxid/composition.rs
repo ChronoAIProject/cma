@@ -9,7 +9,7 @@ use layer2_core::{ServiceId, SubjectId};
 use super::NyxidServiceConnectionBroker;
 use crate::auth::{AuthMode, AuthState};
 use crate::connections::{CodexSubscriptions, SubscriptionError};
-use layer2_core::profiles::CODEX_SUBSCRIPTION_CONNECTION;
+use layer3_adapter::codex::CODEX_SUBSCRIPTION_CONNECTION;
 
 const PROVIDER_HTTP_TIMEOUT: Duration = Duration::from_secs(15);
 const INVALID_PROVIDER_CONFIGURATION: &str =
