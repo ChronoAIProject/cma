@@ -1,3 +1,5 @@
+#[path = "service_tests/inventory.rs"]
+mod inventory;
 #[path = "service_tests/reads.rs"]
 mod reads;
 use std::sync::{

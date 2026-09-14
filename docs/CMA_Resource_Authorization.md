@@ -153,7 +153,8 @@ return 403; inaccessible resources return 404. Closed JSON bodies reject owner,
 actor, membership and policy-fence fields using the existing 422 contract.
 Effective permissions describe policy; lifecycle, runtime support and each
 operation's authorization still apply. Agent REST detail/history/usage readers
-now enforce these permissions. Shared collections, hierarchy views, streams,
+now enforce these permissions. Organization Agent inventory is also composed.
+Shared hierarchy views, streams,
 artifacts and interactions remain required across the rest of the product.
 
 OpenAPI and repository TypeScript/Rust SDKs expose all six operations. The SDKs
@@ -193,6 +194,36 @@ after a changed fence or expired membership. Checks do not extend evidence or
 retry effects. Membership outages retain the actionable
 `organization_authority_unavailable` response, and inaccessible Agents remain
 404 `agent_not_found`. Existing-user state has not been mutated for verification.
+
+## Organization inventory
+
+`GET /api/v1/organizations` exposes current canonical choices and presentation
+roles, not reusable membership evidence. `GET /api/v1/agents?organization=<id>`
+selects organization-owned Agents and personal Agents with a covering active
+grant to that organization. The default collection remains personal and has no
+organization dependency. SDKs expose `resourceAccess.organizations` /
+`resource_access().organizations()` and typed `listAccessible` / `list_accessible`.
+Personal list summaries retain their established JSON; other readers receive
+safe shared Agent-only fields. Organization ownership still requires an explicit
+sidecar and admission evidence; raw retained owner strings cannot enter the org
+inventory. Production organization admission remains to implement.
+
+The L2 boundary obtains new evidence with the actual requesting credential and
+intersects current provider capabilities. It clears historical/supplied membership
+observations. Parent filters first require separate current parent authorization,
+so matching a narrow Agent cannot reveal its inaccessible Sandbox or Workspace.
+Status and cursor predicates never create additional visibility.
+
+Memory filters before pagination. Mongo reads indexed ownership, whole-Sandbox
+grant and Agent-grant branches under one read-only transaction. Each branch
+joins matching Agent records, deduplicates, sorts and returns a bounded prefix;
+merging those prefixes gives the first `limit + 1` unique Agent IDs. Every
+candidate, including lookahead, resolves its authoritative policy and full
+ancestry in that snapshot. No unfiltered counts or candidate cursors leave L2.
+Membership and current policy fences are checked again before release, including
+the lookahead that determines `next`. Database/validation IO has bounded deadlines
+and at most eight concurrent final policy reads. An unavailable or changed page
+returns a typed error without partial results or stale `next` metadata.
 
 ## Deferred personal commands
 

@@ -5,7 +5,7 @@
 One Agent belongs to one Worktree in a Workspace and Sandbox. Its REST,
 AG-UI and Responses interfaces project the same conversation, not separate chats.
 REST detail, transcript, events and usage also support current organization or
-share authority. Collection, provenance, live interfaces and commands still
+share authority. Provenance, live interfaces and commands still
 use their existing personal access boundaries.
 
 ```ts
@@ -106,5 +106,29 @@ because those counters include other Agents in the Sandbox.
 Each request obtains current membership evidence. Buffered history and metrics
 are refused if policy changes or evidence expires before release. Membership
 outages return `organization_authority_unavailable`; inaccessible Agents return
-`agent_not_found`. Shared lists, streams, artifacts and interactions remain under
-development.
+`agent_not_found`. Shared hierarchy, streams, artifacts and interactions remain
+under development.
+
+Use `resourceAccess.organizations()` to obtain current canonical scope choices.
+`agents.listAccessible({ organization: orgId, limit, cursor })` returns personal
+`AgentSummary` or safe `SharedAgent` items. Omitting `organization` preserves the
+personal inventory; the existing `agents.list` method retains its personal type.
+Organization choices do not authorize later reads: every page checks current
+membership and shares. Overlapping grants yield one row, and only authorized
+rows determine `next`. Parent filters require independent parent access.
+
+```ts
+import { createClient } from '@chronoai/cma-sdk';
+
+export async function inspectOrganization(organization: string) {
+  const cma = createClient();
+  const choices = await cma.resourceAccess.organizations();
+  const agents = await cma.agents.listAccessible({ organization, limit: 20 });
+  return { choices: choices.items, agents: agents.items, next: agents.next };
+}
+```
+
+A changed buffered page, including its hidden lookahead, is refused with
+`resource_access_changed`. Restart the read under current access. Provider
+outages return `organization_authority_unavailable`; an unavailable resource
+store returns `resource_access_unavailable`. No partial page is returned.

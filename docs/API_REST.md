@@ -305,8 +305,26 @@ correlation metadata, sign-in secrets and private runtime diagnostics. The
 stored log is unchanged and complete-log validation still applies. Buffered
 results are refused when access changes or expires during IO. Organization
 outages return 503 `organization_authority_unavailable`; inaccessible Agents
-retain 404 `agent_not_found`. Shared collection, provenance, live and interaction
+retain 404 `agent_not_found`. Shared hierarchy, provenance, live and interaction
 interfaces remain under development.
+
+`GET /api/v1/organizations` returns `{ items: [{ id, role, display_name? }] }`
+ordered by canonical organization ID. Roles are `admin`, `member` or `viewer`.
+These choices support scope selection; each resource request obtains new evidence.
+
+`GET /api/v1/agents?organization=<canonical-id>` lists Agents owned by that
+organization or covered by its current Agent/whole-Sandbox shares. Omit
+`organization` to retain the existing personal inventory without organization
+lookups. `status`, `cursor` and `limit` apply after organization filtering and
+overlapping grants are deduplicated. Only authorized rows determine `next`;
+there is no unfiltered resource count. Each subsequent page rechecks membership
+and grants. An inaccessible Sandbox or Workspace filter is refused, including
+for a narrow-shared Agent, because a filter result could otherwise reveal its
+parent. A buffered page is refused after a policy change, even if only its
+hidden lookahead row lost access. Other authorized readers receive the same
+safe Agent-only fields as shared detail; personal owners retain their full list
+summary. The SDK methods are TypeScript `agents.listAccessible` and Rust
+`agents().list_accessible` with `AccessibleAgentListOptions`.
 
 `GET /api/v1/agents/{id}/source` returns owner-scoped creation provenance:
 `manual`, `workspace_profile`, or `trigger`. Trigger-created Agents also include
@@ -411,6 +429,7 @@ above applies even when an operation annotates only its principal responses.
 
 | Operation | Body / Key | Query | Response |
 |---|---|---|---|
+| `GET /api/v1/organizations` | - | - | 200 OrganizationChoicesView; 401/403/503 ProblemDocument |
 | `GET /api/v1/resource-access/{kind}/{id}` | - | - | 200 EffectiveAccessView |
 | `GET /api/v1/resource-shares/{kind}/{id}` | - | - | 200 ActiveShareList |
 | `POST /api/v1/resource-shares/{kind}/{id}` | CreateShareBody; key | - | 200 ShareReceiptView |
@@ -455,7 +474,7 @@ above applies even when an operation annotates only its principal responses.
 
 | Operation | Body / Key | Query | Response |
 |---|---|---|---|
-| `GET /api/v1/agents` | - | sandbox, workspace, status, cursor, limit | 200 AgentPageView |
+| `GET /api/v1/agents` | - | organization, sandbox, workspace, status, cursor, limit | 200 AccessibleAgentPageView |
 | `GET /api/v1/agents/{id}` | - | - | 200 AccessibleAgentView |
 | `DELETE /api/v1/agents/{id}` | -; key | - | 202 empty |
 | `GET /api/v1/agents/{id}/events` | - | after, limit | 200 AgentEventPageView |

@@ -34,23 +34,32 @@ impl AgentReadService {
         let authorized = self
             .authorized(context, credential, id, ResourceCapability::ViewDetails)
             .await?;
-        let personal = is_personal(&authorized, context);
-        let lineage = lineage(authorized.snapshot.lineage)?;
-        if personal {
-            return Ok(AgentDetailReading::Personal(Box::new(lineage)));
-        }
-        let agent = lineage.agent;
-        Ok(AgentDetailReading::Shared(Box::new(SharedAgentDetail {
-            id: agent.id,
-            status: agent.status,
-            title: agent.title,
-            model: agent.profile.content.model,
-            created_at: agent.created_at,
-            updated_at: agent.updated_at,
-            ready_at: agent.ready_at,
-            stopped_at: agent.stopped_at,
-            deleted_at: agent.deleted_at,
-        })))
+        detail_projection(authorized, context)
+    }
+
+    pub async fn organization_list_authorized(
+        &self,
+        context: &CallerContext,
+        credential: Option<&str>,
+        organization: &SubjectId,
+        query: &AgentListQuery,
+        page: &PageRequest,
+    ) -> Result<Page<AgentDetailReading>, AgentReadError> {
+        let access = self.access.as_ref().ok_or_else(|| {
+            AgentReadError::Unavailable("resource access service is not composed".into())
+        })?;
+        let page = access
+            .organization_agent_inventory(context, credential, organization, query, page)
+            .await
+            .map_err(access_error)?;
+        Ok(Page {
+            items: page
+                .items
+                .into_iter()
+                .map(|value| detail_projection(value, context))
+                .collect::<Result<_, _>>()?,
+            next: page.next,
+        })
     }
 
     pub async fn transcript_authorized(
@@ -282,4 +291,31 @@ pub(super) fn access_error(error: ResourceAccessError) -> AgentReadError {
         ResourceAccessError::Access(AccessError::Forbidden) => AgentReadError::Forbidden,
         error => AgentReadError::Access(error),
     }
+}
+
+fn detail_projection(
+    authorized: AuthorizedResource,
+    context: &CallerContext,
+) -> Result<AgentDetailReading, AgentReadError> {
+    authorized
+        .decision
+        .require(ResourceCapability::ViewDetails)
+        .map_err(|error| access_error(error.into()))?;
+    let personal = is_personal(&authorized, context);
+    let lineage = lineage(authorized.snapshot.lineage)?;
+    if personal {
+        return Ok(AgentDetailReading::Personal(Box::new(lineage)));
+    }
+    let agent = lineage.agent;
+    Ok(AgentDetailReading::Shared(Box::new(SharedAgentDetail {
+        id: agent.id,
+        status: agent.status,
+        title: agent.title,
+        model: agent.profile.content.model,
+        created_at: agent.created_at,
+        updated_at: agent.updated_at,
+        ready_at: agent.ready_at,
+        stopped_at: agent.stopped_at,
+        deleted_at: agent.deleted_at,
+    })))
 }

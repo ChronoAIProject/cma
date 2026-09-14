@@ -81,5 +81,32 @@ Sandbox resource counters require a separate Sandbox authorization.
 Reads obtain current membership and reject buffered results after a policy
 change or expiration. Organization outages return the named
 `organization_authority_unavailable` problem, and inaccessible Agents retain
-`agent_not_found`. Shared collection, live, file and interaction interfaces
+`agent_not_found`. Shared hierarchy, live, file and interaction interfaces
 remain under development.
+
+`resource_access().organizations()` returns canonical organization choices and
+current presentation roles. Use `agents().list_accessible(&options)` with
+`AccessibleAgentListOptions { organization: Some(id), filters }` to list that
+organization's owned and shared Agents. Omitting the organization preserves the
+personal collection and the existing `list` method retains its personal type.
+The new page contains `AccessibleAgentSummary::Personal` or `Shared` items.
+
+```rust,no_run
+use cma_sdk::{Client, agents::AccessibleAgentListOptions};
+# async fn run(client: Client) -> Result<(), Box<dyn std::error::Error>> {
+let choices = client.resource_access().organizations().await?;
+let organization = std::env::var("CMA_ORGANIZATION_ID")?;
+let page = client.agents().list_accessible(&AccessibleAgentListOptions {
+    organization: Some(organization),
+    ..Default::default()
+}).await?;
+# let _ = (choices, page);
+# Ok(())
+# }
+```
+
+Every page rechecks membership and grants. Overlap yields one Agent row, and
+only authorized rows determine `next`. Parent filters require independent parent
+access. A changed buffered page, including its hidden lookahead, returns
+`resource_access_changed`; store outages return `resource_access_unavailable`.
+The caller receives no partial page or unfiltered count.

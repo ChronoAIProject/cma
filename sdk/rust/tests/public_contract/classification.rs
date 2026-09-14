@@ -13,6 +13,10 @@ pub enum Classification {
 // Exact backend-invalid cases not claimed as typed HTTP replay. Each is checked
 // against its source shape or the SDK's real preflight, then its shared error is decoded.
 pub const LOCAL_CASES: &[(&str, Classification)] = &[
+    (
+        "org-inventory-invalid-authority-injection",
+        Classification::QueryShape,
+    ),
     ("sandbox-service-access-missing-key", Classification::Local),
     ("sandbox-service-access-invalid-key", Classification::Local),
     (
@@ -766,6 +770,14 @@ pub fn assert_unrepresentable(case: &Case, class: Classification) {
                 return;
             }
             let allowed: &[&str] = match case.operation.as_str() {
+                "GET /api/v1/agents" => &[
+                    "organization",
+                    "sandbox",
+                    "workspace",
+                    "status",
+                    "cursor",
+                    "limit",
+                ],
                 "GET /api/v1/profile-authoring/skills" => &["q", "limit", "cursor"],
                 "GET /api/v1/agui/events" => &["thread_id", "starting_after", "follow"],
                 "GET /api/v1/conversations/{id}/items" => &["after", "limit"],

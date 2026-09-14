@@ -64,3 +64,27 @@ impl<'de> Deserialize<'de> for AccessibleAgent {
         result.map_err(serde::de::Error::custom)
     }
 }
+
+/// A personal summary or the safe shared Agent-only projection.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AccessibleAgentSummary {
+    /// Existing personal list summary including parent context.
+    Personal(Box<super::AgentSummary>),
+    /// Shared summary without parent or profile context.
+    Shared(SharedAgent),
+}
+impl<'de> Deserialize<'de> for AccessibleAgentSummary {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let value = serde_json::Value::deserialize(deserializer)?;
+        let result = match value.get("access") {
+            None => serde_json::from_value(value).map(Self::Personal),
+            Some(marker) if marker == "shared" => serde_json::from_value(value).map(Self::Shared),
+            Some(_) => {
+                return Err(serde::de::Error::custom(
+                    "unknown Agent access discriminator",
+                ));
+            }
+        };
+        result.map_err(serde::de::Error::custom)
+    }
+}

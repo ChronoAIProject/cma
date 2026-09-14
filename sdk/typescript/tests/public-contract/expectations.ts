@@ -52,6 +52,7 @@ const protectedQueries = new Map([
   ['responses-read-stream-refused', ['stream']],
   ['triggers-embed-invalid-query', ['extra']],
   ['launch-error-stream-invalid-query', ['unknown']],
+  ['org-inventory-invalid-authority-injection', ['owner']],
 ]);
 
 export function expectation(

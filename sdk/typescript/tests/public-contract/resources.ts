@@ -1,6 +1,7 @@
 import type { Dispatch } from './context.js';
 
 export const resourceDispatch: Record<string, Dispatch> = {
+  'GET /api/v1/organizations': ({ client }) => client.resourceAccess.organizations(),
   'GET /api/v1/resource-access/{kind}/{id}': ({ client, param }) =>
     client.resourceAccess.effective(param('kind'), param('id')),
   'GET /api/v1/resource-shares/{kind}/{id}': ({ client, param }) =>
@@ -45,7 +46,7 @@ export const resourceDispatch: Record<string, Dispatch> = {
   'GET /api/v1/workspaces/{id}/worktrees': ({ client, param, options }) =>
     client.worktrees.list(param('id'), options),
   'GET /api/v1/worktrees/{id}': ({ client, param }) => client.worktrees.read(param('id')),
-  'GET /api/v1/agents': ({ client, options }) => client.agents.list(options),
+  'GET /api/v1/agents': ({ client, options }) => client.agents.listAccessible(options),
   'GET /api/v1/agents/{id}': ({ client, param }) => client.agents.readAccessible(param('id')),
   'GET /api/v1/agents/{id}/source': ({ client, param }) => client.agents.source(param('id')),
   'POST /api/v1/workspaces/{id}/agents': ({ client, param, body, command }) =>

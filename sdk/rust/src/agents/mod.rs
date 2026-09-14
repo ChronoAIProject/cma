@@ -27,6 +27,30 @@ pub struct AgentListOptions {
     pub page: PageOptions,
 }
 
+/// Organization-scoped Agent filters; omission preserves personal inventory.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct AccessibleAgentListOptions {
+    /// Canonical organization ID to inspect under current membership.
+    pub organization: Option<String>,
+    /// Status, parent and cursor filters.
+    pub filters: AgentListOptions,
+}
+impl AgentListOptions {
+    fn query(&self) -> Vec<(&'static str, String)> {
+        let mut query = self.page.query();
+        if let Some(id) = &self.sandbox {
+            query.push(("sandbox", id.clone()));
+        }
+        if let Some(id) = &self.workspace {
+            query.push(("workspace", id.clone()));
+        }
+        if let Some(status) = self.status {
+            query.push(("status", status.as_str().into()));
+        }
+        query
+    }
+}
+
 /// Owner-facing Agent operations.
 pub struct Agents<'a> {
     client: &'a Client,
@@ -35,15 +59,17 @@ pub struct Agents<'a> {
 impl Agents<'_> {
     /// List owned Agents.
     pub async fn list(&self, options: &AgentListOptions) -> Result<ResourcePage<AgentSummary>> {
-        let mut query = options.page.query();
-        if let Some(id) = &options.sandbox {
-            query.push(("sandbox", id.clone()));
-        }
-        if let Some(id) = &options.workspace {
-            query.push(("workspace", id.clone()));
-        }
-        if let Some(status) = options.status {
-            query.push(("status", status.as_str().into()));
+        let query = options.query();
+        self.client.get(&["agents"], &query).await
+    }
+    /// List personal Agents or Agents accessible in an explicit organization.
+    pub async fn list_accessible(
+        &self,
+        options: &AccessibleAgentListOptions,
+    ) -> Result<ResourcePage<AccessibleAgentSummary>> {
+        let mut query = options.filters.query();
+        if let Some(id) = &options.organization {
+            query.push(("organization", id.clone()));
         }
         self.client.get(&["agents"], &query).await
     }

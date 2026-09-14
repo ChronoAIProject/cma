@@ -839,3 +839,76 @@ async fn accessible_agent_keeps_shared_and_personal_shapes_and_checks_identity()
         assert!(server.client.agents().read_accessible(id).await.is_err());
     }
 }
+
+#[tokio::test]
+async fn organization_inventory_parses_shared_summaries_and_rejects_unknown_roles() {
+    let server = Server::new().await;
+    let shared = json!({"access":"shared","id":"agt_shared","status":"ready","created_at":"2026-09-05T00:00:00Z","updated_at":"2026-09-05T00:00:00Z"});
+    let options = AccessibleAgentListOptions {
+        organization: Some("org".into()),
+        ..Default::default()
+    };
+    server.expect(
+        "GET",
+        "/agents?organization=org",
+        None,
+        200,
+        Some(json!({"items":[agent_summary(), shared]})),
+    );
+    let page = server
+        .client
+        .agents()
+        .list_accessible(&options)
+        .await
+        .unwrap();
+    assert!(matches!(page.items[0], AccessibleAgentSummary::Personal(_)));
+    assert!(matches!(page.items[1], AccessibleAgentSummary::Shared(_)));
+    server.expect(
+        "GET",
+        "/agents?organization=org",
+        None,
+        200,
+        Some(json!({"items":[{"access":"future"}]})),
+    );
+    assert!(
+        server
+            .client
+            .agents()
+            .list_accessible(&options)
+            .await
+            .is_err()
+    );
+    server.expect(
+        "GET",
+        "/organizations",
+        None,
+        200,
+        Some(json!({"items":[{"id":"org","role":"viewer"}]})),
+    );
+    assert_eq!(
+        server
+            .client
+            .resource_access()
+            .organizations()
+            .await
+            .unwrap()
+            .items[0]
+            .role,
+        cma_sdk::resource_access::OrganizationRole::Viewer
+    );
+    server.expect(
+        "GET",
+        "/organizations",
+        None,
+        200,
+        Some(json!({"items":[{"id":"org","role":"future"}]})),
+    );
+    assert!(
+        server
+            .client
+            .resource_access()
+            .organizations()
+            .await
+            .is_err()
+    );
+}
