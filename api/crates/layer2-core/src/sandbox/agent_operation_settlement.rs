@@ -202,6 +202,7 @@ impl AgentOperationService {
         next.validate_conversation()
             .map_err(|error| AgentOperationError::Corrupt(error.to_string()))?;
         let mutation = AgentConversationMutation {
+            command_claim: admission_guard.as_ref().and(self.command_claim.clone()),
             admission_guard,
             expected_agent_revision: current.revision,
             expected_last_seq: current.conversation.last_seq,

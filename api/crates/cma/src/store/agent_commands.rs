@@ -13,12 +13,16 @@ use super::sandbox_mongo::{
     MongoSandboxStore, TRANSACTION_ATTEMPTS,
 };
 
+pub(super) mod binding;
+mod lane_records;
 mod records;
 mod reserve;
+mod worker;
+mod worker_apply;
 
 pub(super) use records::ensure_indexes;
 
-enum ApplyError {
+pub(super) enum ApplyError {
     Domain(CommandLedgerError),
     Driver(mongodb::error::Error),
 }

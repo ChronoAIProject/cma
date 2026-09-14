@@ -129,6 +129,7 @@ impl AgentOperationError {
 }
 
 pub struct AgentOperationService {
+    pub(super) command_claim: Option<super::agent_io::CommandClaim>,
     pub(super) connections: Arc<dyn super::SandboxCredentialPrerequisite>,
     pub(super) store: Arc<dyn AgentOperationStore>,
     pub(super) runtimes: Arc<dyn AgentRuntimeRegistry>,
@@ -141,6 +142,7 @@ impl AgentOperationService {
         R: AgentRuntimeRegistry + 'static,
     {
         Arc::new(Self {
+            command_claim: None,
             store,
             runtimes,
             connections: Arc::new(super::FixedSandboxCredentialPrerequisite::Ready),
@@ -152,6 +154,7 @@ impl AgentOperationService {
         connections: Arc<dyn super::SandboxCredentialPrerequisite>,
     ) -> Arc<Self> {
         Arc::new(Self {
+            command_claim: self.command_claim.clone(),
             connections,
             store: self.store.clone(),
             runtimes: self.runtimes.clone(),

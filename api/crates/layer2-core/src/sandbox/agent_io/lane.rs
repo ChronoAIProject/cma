@@ -1,0 +1,124 @@
+use serde::{Deserialize, Serialize};
+
+use crate::sandbox::{Agent, AgentStatus};
+use crate::seconds_from_rfc3339;
+
+use super::{
+    AdmittedAgentCommand, AgentCommand, AgentResponseStatus, CommandClaim, CommandClaimRequest,
+    CommandLease, CommandLedgerError,
+};
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CommandLane {
+    pub last_order: u64,
+    #[serde(default = "first_fence")]
+    pub next_fence: u64,
+    #[serde(default)]
+    pub lease: Option<CommandLease>,
+}
+
+const fn first_fence() -> u64 {
+    1
+}
+
+impl Default for CommandLane {
+    fn default() -> Self {
+        Self {
+            last_order: 0,
+            next_fence: 1,
+            lease: None,
+        }
+    }
+}
+
+impl CommandLane {
+    pub fn claim(
+        &mut self,
+        command: &mut AdmittedAgentCommand,
+        request: &CommandClaimRequest,
+    ) -> Result<bool, CommandLedgerError> {
+        request.validate()?;
+        if command.receipt.agent_order > self.last_order {
+            return Err(CommandLedgerError::Corrupt);
+        }
+        if self
+            .lease
+            .as_ref()
+            .is_some_and(|lease| lease.live_at(&request.now))
+        {
+            return Ok(false);
+        }
+        let next = self
+            .next_fence
+            .checked_add(1)
+            .filter(|value| *value <= i64::MAX as u64)
+            .ok_or(CommandLedgerError::Corrupt)?;
+        command.claim(request, self.next_fence)?;
+        self.lease = command.work.lease.clone();
+        self.next_fence = next;
+        Ok(true)
+    }
+
+    pub fn require_claim(&self, claim: &CommandClaim, now: &str) -> Result<(), CommandLedgerError> {
+        if !self
+            .lease
+            .as_ref()
+            .is_some_and(|lease| &lease.claim == claim && lease.live_at(now))
+        {
+            return Err(CommandLedgerError::StaleClaim);
+        }
+        Ok(())
+    }
+}
+
+/// Normal messages keep FIFO order while controls can address the active turn.
+/// Expired or terminal-resource work is claimable only so it can be refused.
+pub fn command_ready_for_claim(
+    command: &AdmittedAgentCommand,
+    agent: Option<&Agent>,
+    now: &str,
+) -> bool {
+    if command.status != AgentResponseStatus::Queued
+        || command.work.dispatch.is_some()
+        || command
+            .work
+            .lease
+            .as_ref()
+            .is_some_and(|lease| lease.live_at(now))
+    {
+        return false;
+    }
+    let expired = seconds_from_rfc3339(now)
+        .zip(seconds_from_rfc3339(&command.queue_deadline))
+        .is_some_and(|(now, deadline)| now >= deadline);
+    let Some(agent) = agent else { return true };
+    if expired || !agent.status.is_live() || agent.requested_stop_reason.is_some() {
+        return true;
+    }
+    if agent
+        .conversation
+        .operation
+        .as_ref()
+        .is_some_and(|operation| operation.blocks_dispatch())
+    {
+        return false;
+    }
+    match command.receipt.envelope.command {
+        AgentCommand::Message { .. } => {
+            agent.status == AgentStatus::Ready
+                && agent.conversation.active_turn.is_none()
+                && agent
+                    .conversation
+                    .queued_messages
+                    .iter()
+                    .all(|message| message.state == crate::sandbox::QueuedMessageState::Delivered)
+                && agent
+                    .conversation
+                    .first_message
+                    .as_ref()
+                    .is_none_or(|first| first.is_terminal())
+        }
+        _ => true,
+    }
+}

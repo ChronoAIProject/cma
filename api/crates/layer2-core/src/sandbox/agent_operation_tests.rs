@@ -1,5 +1,6 @@
 mod admission_fence_tests;
 mod command_tests;
+mod command_work_tests;
 mod first_message_tests;
 mod fixtures;
 mod ledger_tests;

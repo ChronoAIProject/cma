@@ -1,0 +1,200 @@
+use async_trait::async_trait;
+
+use crate::sandbox::agent_io::{
+    command_ready_for_claim, AdmittedAgentCommand, AgentCommandWorkerStore, CommandClaim,
+    CommandClaimRequest, CommandFailureCode, CommandLedgerError,
+};
+use crate::sandbox::store::InMemorySandboxStore;
+
+pub(super) fn bind_dispatch(
+    state: &mut super::State,
+    mutation: &crate::sandbox::store::AgentConversationMutation,
+) -> Result<(), crate::sandbox::store::SandboxStoreError> {
+    use crate::sandbox::store::SandboxStoreError;
+    let Some(claim) = &mutation.command_claim else {
+        return Ok(());
+    };
+    let lane = state
+        .agent_command_orders
+        .get(&claim.agent_id)
+        .ok_or(SandboxStoreError::Conflict)?;
+    let current = state
+        .agents
+        .get(&claim.agent_id)
+        .ok_or(SandboxStoreError::Conflict)?;
+    let latest_turn = state
+        .agent_logs
+        .get(&claim.agent_id)
+        .into_iter()
+        .flatten()
+        .rev()
+        .find_map(|entry| match entry.kind {
+            crate::sandbox::AgentLogKind::TurnStarted { turn_sequence, .. } => Some(turn_sequence),
+            _ => None,
+        });
+    let command = state
+        .agent_commands
+        .get_mut(&claim.command_id)
+        .ok_or(SandboxStoreError::Conflict)?;
+    crate::sandbox::agent_io::bind_command_dispatch(
+        command,
+        lane,
+        current,
+        latest_turn,
+        mutation,
+        &crate::now_rfc3339(),
+    )
+    .map_err(|error| match error {
+        CommandLedgerError::Corrupt => SandboxStoreError::Corrupt(error.to_string()),
+        _ => SandboxStoreError::Conflict,
+    })?;
+    Ok(())
+}
+
+#[async_trait]
+impl AgentCommandWorkerStore for InMemorySandboxStore {
+    async fn claim_next_command(
+        &self,
+        request: CommandClaimRequest,
+    ) -> Result<Option<AdmittedAgentCommand>, CommandLedgerError> {
+        request.validate()?;
+        let mut state = self.lock();
+        let Some(mut lane) = state.agent_command_orders.get(&request.agent_id).cloned() else {
+            return Ok(None);
+        };
+        if lane
+            .lease
+            .as_ref()
+            .is_some_and(|lease| lease.live_at(&request.now))
+        {
+            return Ok(None);
+        }
+        let agent = state.agents.get(&request.agent_id);
+        let mut waiting: Vec<_> = state
+            .agent_commands
+            .values()
+            .filter(|command| command.receipt.envelope.agent_id == request.agent_id)
+            .collect();
+        waiting.sort_by_key(|command| command.receipt.agent_order);
+        let mut selected = None;
+        for command in waiting {
+            command.validate()?;
+            if command_ready_for_claim(command, agent, &request.now) {
+                selected = Some(command.clone());
+                break;
+            }
+        }
+        let Some(mut command) = selected else {
+            return Ok(None);
+        };
+        if !lane.claim(&mut command, &request)? {
+            return Ok(None);
+        }
+        state.agent_command_orders.insert(request.agent_id, lane);
+        state
+            .agent_commands
+            .insert(command.receipt.envelope.command_id.clone(), command.clone());
+        Ok(Some(command))
+    }
+
+    async fn renew_command_claim(
+        &self,
+        claim: &CommandClaim,
+        now: String,
+        expires_at: String,
+    ) -> Result<(), CommandLedgerError> {
+        let request = CommandClaimRequest {
+            agent_id: claim.agent_id.clone(),
+            holder: claim.holder.clone(),
+            now: now.clone(),
+            expires_at: expires_at.clone(),
+        };
+        request.validate()?;
+        change(self, claim, &now, |command, lane| {
+            let previous = command
+                .work
+                .lease
+                .as_ref()
+                .ok_or(CommandLedgerError::StaleClaim)?;
+            if crate::seconds_from_rfc3339(&expires_at)
+                < crate::seconds_from_rfc3339(&previous.expires_at)
+            {
+                return Err(CommandLedgerError::Invalid);
+            }
+            command.work.lease.as_mut().unwrap().expires_at = expires_at.clone();
+            lane.lease.as_mut().unwrap().expires_at = expires_at;
+            command.revision = command
+                .revision
+                .checked_add(1)
+                .ok_or(CommandLedgerError::Corrupt)?;
+            Ok(())
+        })
+        .map(|_| ())
+    }
+
+    async fn release_command_claim(
+        &self,
+        claim: &CommandClaim,
+        now: String,
+    ) -> Result<(), CommandLedgerError> {
+        change(self, claim, &now, |command, lane| {
+            command.work.lease = None;
+            lane.lease = None;
+            command.revision = command
+                .revision
+                .checked_add(1)
+                .ok_or(CommandLedgerError::Corrupt)?;
+            Ok(())
+        })
+        .map(|_| ())
+    }
+
+    async fn reject_command(
+        &self,
+        claim: &CommandClaim,
+        code: CommandFailureCode,
+        now: String,
+    ) -> Result<AdmittedAgentCommand, CommandLedgerError> {
+        change(self, claim, &now, |command, lane| {
+            command.reject_before_dispatch(claim, code, now.clone())?;
+            lane.lease = None;
+            Ok(())
+        })
+    }
+}
+
+fn change(
+    store: &InMemorySandboxStore,
+    claim: &CommandClaim,
+    now: &str,
+    update: impl FnOnce(
+        &mut AdmittedAgentCommand,
+        &mut crate::sandbox::agent_io::CommandLane,
+    ) -> Result<(), CommandLedgerError>,
+) -> Result<AdmittedAgentCommand, CommandLedgerError> {
+    let mut state = store.lock();
+    let mut lane = state
+        .agent_command_orders
+        .get(&claim.agent_id)
+        .cloned()
+        .ok_or(CommandLedgerError::StaleClaim)?;
+    let mut command = state
+        .agent_commands
+        .get(&claim.command_id)
+        .cloned()
+        .ok_or(CommandLedgerError::StaleClaim)?;
+    lane.require_claim(claim, now)?;
+    command.require_claim(claim, now)?;
+    if lane.lease != command.work.lease {
+        return Err(CommandLedgerError::Corrupt);
+    }
+    update(&mut command, &mut lane)?;
+    command.validate()?;
+    state
+        .agent_command_orders
+        .insert(claim.agent_id.clone(), lane);
+    state
+        .agent_commands
+        .insert(claim.command_id.clone(), command.clone());
+    Ok(command)
+}

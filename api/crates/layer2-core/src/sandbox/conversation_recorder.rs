@@ -92,6 +92,7 @@ impl AgentUpdateRecorder for DurableAgentUpdateRecorder {
                 change.agent.conversation.last_seq,
             );
             let mutation = AgentConversationMutation {
+                command_claim: None,
                 admission_guard: None,
                 expected_agent_revision: current.revision,
                 expected_last_seq: current.conversation.last_seq,

@@ -114,7 +114,13 @@ pub(super) async fn apply(
             1
         }
     };
-    let record = request.record(order as u64, agent.conversation.last_seq)?;
+    let target_turn = (!matches!(
+        request.envelope.command,
+        layer2_core::sandbox::agent_io::AgentCommand::Message { .. }
+    ))
+    .then_some(agent.conversation.active_turn)
+    .flatten();
+    let record = request.record(order as u64, agent.conversation.last_seq, target_turn)?;
     store
         .agent_commands
         .insert_one(records::document(&record)?)
