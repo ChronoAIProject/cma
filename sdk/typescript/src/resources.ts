@@ -1,98 +1,93 @@
-/**
- * One session's current sandbox-resource status over REST.
- *
- * The live AG-UI lane says what the latest reading is. This point read answers
- * the one distinction that lane deliberately cannot: whether no reading has
- * arrived yet or this runtime image will never report one.
- */
-
-import type { Resources } from './conversation/model.js';
 import type { ResolvedConfig } from './config.js';
-import { ProtocolError } from './errors.js';
-import { request, type OperationOptions } from './http.js';
+import { ProtocolError, ValidationError } from './errors.js';
+import { request, type OperationOptions, type RequestOptions } from './http.js';
+import { array, object, optional, text, type Parser } from './schema.js';
 
-/** Why a granted session has no reading at this moment. */
-export type ResourceStatusReason = 'no_reading_yet' | 'runtime_does_not_report';
-
-/** The five-answer REST route narrowed to one visible session's successful body. */
-export interface SessionResourceStatus {
-  readonly reading?: Resources;
-  readonly observedAt?: string;
-  readonly reason?: ResourceStatusReason;
+export interface CommandOptions extends OperationOptions {
+  readonly idempotencyKey: string;
 }
 
-/** Read the latest resource status once; this function never polls. */
-export async function readResources(
-  config: ResolvedConfig,
-  id: string,
-  options: OperationOptions = {},
-): Promise<SessionResourceStatus> {
-  const raw = await request(config, `/api/v1/sessions/${encodeURIComponent(id)}/resources`, {
-    ...options,
-    expectedStatus: 200,
-  });
-  return toResourceStatus(raw);
+export interface PageOptions extends OperationOptions {
+  readonly cursor?: string;
+  readonly limit?: number;
 }
 
-/** Validate the REST document and translate its snake-case reading to AG-UI's model. */
-export function toResourceStatus(raw: unknown): SessionResourceStatus {
-  const body = objectOf(raw, 'resource status');
-  if (body.reading === null) {
-    if (body.observed_at !== null) {
-      throw new ProtocolError('resource status without a reading carried an observation time');
-    }
-    if (body.reason === 'no_reading_yet' || body.reason === 'runtime_does_not_report') {
-      return { reason: body.reason };
-    }
-    throw new ProtocolError('resource status without a reading carried no recognised reason');
-  }
-
-  if (body.reason !== null) {
-    throw new ProtocolError('resource status with a reading also carried an absence reason');
-  }
-  if (typeof body.observed_at !== 'string' || Number.isNaN(Date.parse(body.observed_at))) {
-    throw new ProtocolError('resource status with a reading carried no observation time');
-  }
-  const reading = objectOf(body.reading, 'resource reading');
-  return {
-    reading: {
-      cpuMillisUsed: figureOf(reading, 'cpu_millis_used'),
-      cpuMillisLimit: figureOf(reading, 'cpu_millis_limit'),
-      memoryBytesUsed: figureOf(reading, 'memory_bytes_used'),
-      memoryBytesLimit: figureOf(reading, 'memory_bytes_limit'),
-      memoryBytesPeak: figureOf(reading, 'memory_bytes_peak'),
-      stallPermille: figureOf(reading, 'stall_permille'),
-      ceilingHits: figureOf(reading, 'ceiling_hits'),
-      allocationFailures: figureOf(reading, 'allocation_failures'),
-      kills: figureOf(reading, 'kills'),
-      receivedBytes: figureOf(reading, 'received_bytes'),
-      sentBytes: figureOf(reading, 'sent_bytes'),
-      receivedBytesPerSecond: figureOf(reading, 'received_bytes_per_second'),
-      sentBytesPerSecond: figureOf(reading, 'sent_bytes_per_second'),
-      intervalMs: figureOf(reading, 'interval_ms'),
-    },
-    observedAt: body.observed_at,
-  };
+export interface EventOptions extends OperationOptions {
+  readonly after?: number;
+  readonly limit?: number;
 }
 
-function objectOf(raw: unknown, name: string): Record<string, unknown> {
-  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
-    throw new ProtocolError(`${name} was not an object`);
-  }
-  return raw as Record<string, unknown>;
+export interface ResourcePage<Value, Cursor = string> {
+  readonly items: readonly Value[];
+  readonly next?: Cursor;
 }
 
-/** `null` is absence. Missing, negative, fractional, or unsafe numbers violate the contract. */
-function figureOf(body: Record<string, unknown>, field: string): number | undefined {
-  if (!(field in body)) {
-    throw new ProtocolError(`resource reading omitted ${field}`);
+export function page<Value>(parse: Parser<Value>): Parser<ResourcePage<Value>> {
+  return object({ items: array(parse), next: optional(text) });
+}
+
+export function segment(value: string): string {
+  if (typeof value !== 'string' || value === '' || value === '.' || value === '..')
+    throw new ValidationError('resource identifiers must be nonempty path segments');
+  try {
+    return encodeURIComponent(value);
+  } catch (cause) {
+    throw new ValidationError('resource identifier is not valid Unicode', { cause });
   }
-  const value = body[field];
-  if (value === null) {
-    return undefined;
+}
+
+export function query(
+  path: string,
+  values: Readonly<Record<string, string | number | undefined>>,
+): string {
+  const params = new URLSearchParams();
+  for (const [key, value] of Object.entries(values)) {
+    if (value === undefined) continue;
+    if (typeof value === 'number' && (!Number.isSafeInteger(value) || value < 0))
+      throw new ValidationError(`${key} must be a nonnegative safe integer`);
+    params.set(key, String(value));
   }
-  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) {
-    throw new ProtocolError(`resource reading carried an invalid ${field}`);
+  const encoded = params.toString();
+  return encoded === '' ? path : `${path}?${encoded}`;
+}
+
+export function command(options: CommandOptions): RequestOptions {
+  const key = options.idempotencyKey;
+  if (typeof key !== 'string' || !/^[\x21-\x7e]{1,255}$/.test(key))
+    throw new ValidationError(
+      'idempotencyKey must contain 1 to 255 visible ASCII characters without spaces',
+    );
+  return { ...options, headers: { 'Idempotency-Key': key } };
+}
+
+export function input<Value>(parse: Parser<Value>, value: Value): Value {
+  try {
+    parse(value);
+  } catch (cause) {
+    throw new ValidationError(cause instanceof Error ? cause.message : 'invalid request body', {
+      cause,
+    });
   }
   return value;
+}
+
+export async function read<Value>(
+  config: ResolvedConfig,
+  path: string,
+  parse: Parser<Value>,
+  options: RequestOptions = {},
+): Promise<Value> {
+  return parse(await request(config, path, { expectedStatus: 200, ...options }));
+}
+
+export function identity<Value extends { readonly id: string }>(
+  parse: Parser<Value>,
+  id: string,
+): Parser<Value> {
+  return (value) => {
+    const result = parse(value);
+    if (result.id !== id)
+      throw new ProtocolError('response resource identity did not match the request');
+    return result;
+  };
 }

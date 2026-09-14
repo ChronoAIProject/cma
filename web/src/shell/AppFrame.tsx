@@ -34,12 +34,17 @@ import './AppFrame.css';
 interface AppFrameProps {
   readonly sidebar:
     | ReactNode
-    | ((state: { readonly collapsed: boolean; readonly onToggle: () => void }) => ReactNode);
+    | ((state: {
+        readonly collapsed: boolean;
+        readonly onToggle: () => void;
+        readonly onNavigate: () => void;
+      }) => ReactNode);
   readonly center: ReactNode;
   /** Always rendered. A closed details column is zero-wide, never unmounted. */
   readonly details?: ReactNode;
   /** Whether the details column is asked for. */
   readonly detailsOpen: boolean;
+  readonly compactDetailsOverlay?: boolean;
   /**
    * Whether the owner has asked for the sidebar to be closed.
    *
@@ -59,6 +64,7 @@ export function AppFrame({
   center,
   details,
   detailsOpen,
+  compactDetailsOverlay = false,
   overlay,
   sidebarCollapsed = false,
   onSidebarCollapsedChange,
@@ -167,7 +173,13 @@ export function AppFrame({
 
   const sidebarOwnsToggle = typeof sidebar === 'function';
   const renderedSidebar = sidebarOwnsToggle
-    ? sidebar({ collapsed: effectiveSidebarCollapsed, onToggle: toggleSidebar })
+    ? sidebar({
+        collapsed: effectiveSidebarCollapsed,
+        onToggle: toggleSidebar,
+        onNavigate: () => {
+          if (narrow) setExpandedAnyway(false);
+        },
+      })
     : sidebar;
 
   const onSidebarDrag = useCallback((to: number) => {
@@ -183,6 +195,9 @@ export function AppFrame({
       className="frame"
       data-dragging={dragging ? '' : undefined}
       data-details-collapsed={columns.details === 0 ? '' : undefined}
+      data-details-overlay={
+        detailsOpen && columns.details === 0 && compactDetailsOverlay ? '' : undefined
+      }
       data-sidebar-overlay={sidebarOverlay ? '' : undefined}
       style={{
         gridTemplateColumns: `${String(columns.sidebar)}px ${String(columns.center)}px ${String(columns.details)}px`,
@@ -205,7 +220,7 @@ export function AppFrame({
       <DragHandle
         side="sidebar"
         at={columns.sidebar}
-        label="Resize the session list"
+        label="Resize navigation"
         onDrag={(dx) => {
           onSidebarDrag(sidebarDragStart.current + dx);
         }}
@@ -242,7 +257,7 @@ export function AppFrame({
           aria-expanded={!effectiveSidebarCollapsed}
           onClick={toggleSidebar}
         >
-          {effectiveSidebarCollapsed ? 'Show sessions' : 'Hide sessions'}
+          {effectiveSidebarCollapsed ? 'Show navigation' : 'Hide navigation'}
         </button>
       ) : null}
     </div>

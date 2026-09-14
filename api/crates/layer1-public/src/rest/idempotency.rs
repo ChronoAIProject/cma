@@ -1,4 +1,4 @@
-//! Idempotent execution for the two side-effecting REST operations that opt in.
+//! Idempotent execution for REST commands that opt in.
 
 use std::{sync::Arc, time::Duration};
 
@@ -20,6 +20,11 @@ const MAX_KEY_BYTES: usize = 255;
 pub(super) const RETENTION: Duration = Duration::from_secs(24 * 60 * 60);
 const EXECUTION_LEASE: Duration = Duration::from_secs(2 * 60);
 
+/// Encode resource boundaries without letting opaque IDs alter the operation namespace.
+pub(super) fn operation_scope(operation: &str, resources: &[&str]) -> String {
+    serde_json::to_string(&(operation, resources)).expect("operation scopes contain only strings")
+}
+
 /// A JSON decoding result accompanied by the digest of the bytes that carried it.
 pub(super) struct RequestBody<T> {
     value: Result<T, BodyProblem>,
@@ -29,6 +34,10 @@ pub(super) struct RequestBody<T> {
 impl<T> RequestBody<T> {
     pub(super) fn into_parts(self) -> (Result<T, BodyProblem>, [u8; 32]) {
         (self.value, self.fingerprint)
+    }
+
+    pub(super) fn value(&self) -> Option<&T> {
+        self.value.as_ref().ok()
     }
 }
 
@@ -275,6 +284,22 @@ pub(super) async fn required_command<T: DeserializeOwned>(
     Ok((guard, body, confirmation_hash))
 }
 
+/// Begin a required command whose route deliberately has no request body.
+pub(super) async fn required_empty_command(
+    key: IdempotencyKey,
+    store: Arc<dyn OperationStore>,
+    caller: &Caller,
+    operation: String,
+) -> Result<Idempotency, Response> {
+    let key = key.required().map_err(IntoResponse::into_response)?;
+    let fingerprint = Sha256::digest([]).into();
+    match Idempotency::begin(key, store, caller, operation, fingerprint).await {
+        Ok(Idempotency::Replay(response)) => Err(response),
+        Ok(guard) => Ok(guard),
+        Err(response) => Err(response),
+    }
+}
+
 #[derive(Serialize, Deserialize)]
 struct RecordedResponse {
     status: u16,
@@ -326,6 +351,26 @@ mod tests {
     use layer2_core::{Authorization, SubjectId};
 
     use super::*;
+
+    #[test]
+    fn operation_scopes_preserve_opaque_resource_boundaries() {
+        for operation in ["agent:approval", "trigger:placement:retire"] {
+            assert_ne!(
+                operation_scope(operation, &["one:two", "three"]),
+                operation_scope(operation, &["one", "two:three"]),
+            );
+        }
+        let resources = ["colon:inside", "quoted\"id", "back\\slash", "nul\0id", ""];
+        let scope = operation_scope("workspace:create", &resources);
+        let decoded: (String, Vec<String>) = serde_json::from_str(&scope).unwrap();
+        assert_eq!(decoded.0, "workspace:create");
+        assert_eq!(decoded.1, resources);
+        assert_ne!(scope, operation_scope("workspace:delete", &resources));
+        assert_ne!(
+            operation_scope("operation", &[]),
+            operation_scope("operation", &[""])
+        );
+    }
 
     #[tokio::test]
     async fn keys_are_visible_ascii_and_bounded() {

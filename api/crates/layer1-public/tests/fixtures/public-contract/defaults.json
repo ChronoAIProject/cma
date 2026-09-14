@@ -1,0 +1,110 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "discovery-conformance",
+      "operation": "GET /api/v1/conformance",
+      "scenario": "discovery",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/conformance",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "service": "cma",
+          "status": "rebuilding",
+          "interfaces": []
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "defaults-read",
+      "operation": "GET /api/v1/defaults",
+      "scenario": "profiles_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/defaults",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "sandbox_profile": {
+            "id": "sbp_default",
+            "revision": 1
+          },
+          "workspace_profile": {
+            "id": "wkp_default",
+            "revision": 1
+          },
+          "agent_profile": {
+            "id": "agp_default",
+            "revision": 1
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "defaults-forbidden",
+      "operation": "GET /api/v1/defaults",
+      "scenario": "profiles_forbidden",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/defaults",
+        "headers": {}
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/forbidden",
+          "title": "forbidden",
+          "status": 403,
+          "detail": "This caller is not allowed to use owned Sandboxes.",
+          "code": "forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "defaults-unauthenticated",
+      "operation": "GET /api/v1/defaults",
+      "scenario": "profiles_anonymous",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/defaults",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    }
+  ]
+}

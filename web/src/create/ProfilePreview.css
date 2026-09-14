@@ -1,0 +1,49 @@
+.profile-preview {
+  position: fixed;
+  z-index: 1100;
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  width: min(360px, calc(100vw - 24px));
+  height: min(440px, calc(100dvh - 24px));
+  padding: 16px;
+  overflow: hidden;
+  color: var(--dsw-alias-label-primary);
+  background: var(--dsw-specific-menu);
+  border: 1px solid var(--dsw-alias-border-inverted);
+  border-radius: 8px;
+  box-shadow: var(--dsw-shadow-lv3);
+  font: var(--dsw-font-s-14);
+  animation: profile-preview-in var(--ds-transition-duration-fast) var(--ds-ease-in-out);
+}
+.profile-preview h3 {
+  margin: 0;
+  font: var(--dsw-font-s-strong-14);
+  overflow-wrap: anywhere;
+}
+.profile-preview__version {
+  margin: 4px 0 12px;
+  color: var(--dsw-alias-label-secondary);
+  font: var(--dsw-font-xs-13);
+}
+.profile-preview__body {
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+.profile-preview a {
+  color: var(--dsw-alias-brand-primary);
+}
+@keyframes profile-preview-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .profile-preview {
+    animation: none;
+  }
+}

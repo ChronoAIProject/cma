@@ -1,0 +1,238 @@
+import assert from 'node:assert/strict';
+import type { ContractCase } from './context.js';
+import { browserOperations } from './navigation.js';
+
+export const localCodes = new Map([
+  ['authoring-skills-limit-zero', 'invalid_profile_authoring_query'],
+  ['authoring-skills-limit-overflow', 'invalid_profile_authoring_query'],
+  ['authoring-skills-limit-too-large', 'invalid_profile_authoring_query'],
+  ['authoring-skills-limit-text', 'invalid_profile_authoring_query'],
+  ['authoring-skills-query-too-long', 'invalid_profile_authoring_query'],
+  ['authoring-skills-query-control', 'invalid_profile_authoring_query'],
+  ['authoring-skills-query-byte-limit', 'invalid_profile_authoring_query'],
+  ['authoring-skills-cursor-empty', 'invalid_profile_authoring_query'],
+  ['authoring-skills-cursor-too-long', 'invalid_profile_authoring_query'],
+  ['authoring-skills-cursor-control', 'invalid_profile_authoring_query'],
+  ['authoring-skills-forbidden-before-query', 'forbidden'],
+  ['authoring-skills-anonymous-before-query', 'not_authenticated'],
+  ['authoring-resolve-invalid-body-type', 'invalid_json'],
+  ['authoring-resolve-forbidden-before-body', 'forbidden'],
+  ['authoring-resolve-anonymous-before-body', 'not_authenticated'],
+  ['sandbox-invalid-query', 'invalid_query'],
+  ['admin-invalid-query', 'invalid_admin_request'],
+  ['admin-settings-invalid', 'invalid_request'],
+  ['profile-invalid-content', 'profile_invalid'],
+  ['responses-items-bad-limit', 'responses_field_unsupported'],
+  ['responses-instructions-null', 'responses_field_unsupported'],
+  ['responses-tools-null', 'responses_field_unsupported'],
+  ['responses-stream-false', 'responses_field_unsupported'],
+  ['responses-store-false', 'responses_field_unsupported'],
+  ['responses-stateless', 'responses_field_unsupported'],
+  ['responses-metadata-values', 'responses_field_unsupported'],
+  ['responses-input-role', 'responses_field_unsupported'],
+  ['responses-conversation-invalid-body', 'invalid_json'],
+  ['responses-missing-content-type', 'invalid_json'],
+  ['agui-missing-content-type', 'invalid_json'],
+  ['triggers-badge-invalid-query', 'invalid-badge-query'],
+  ['state-sandbox-create-invalid', 'profile_invalid'],
+  ['state-sandbox-update-invalid', 'profile_invalid'],
+  ['trigger-error-list-malformed-query', 'invalid_trigger_page'],
+  ['launch-error-create-missing-start-choice', 'invalid_json'],
+  ['launch-error-list-invalid-state', 'invalid_launch_cursor'],
+  ['launch-error-list-malformed-limit', 'invalid_launch_cursor'],
+  ['launch-error-events-malformed-after', 'invalid_launch_event_query'],
+  ['launch-error-stream-malformed-follow', 'invalid_launch_event_query'],
+  ['launch-error-stream-invalid-limit', 'invalid_launch_event_query'],
+]);
+
+const protectedQueries = new Map([
+  ['agui-invalid-replay-query', ['unexpected']],
+  ['responses-items-bad-query', ['unknown']],
+  ['responses-read-bad-query', ['unknown']],
+  ['responses-read-stream-refused', ['stream']],
+  ['triggers-embed-invalid-query', ['extra']],
+  ['launch-error-stream-invalid-query', ['unknown']],
+]);
+
+export function expectation(
+  fixture: ContractCase,
+): 'wire' | 'preflight-validation' | 'serializer-protection' | 'browser-only' | 'raw-wire-only' {
+  if (browserOperations.has(fixture.operation)) return 'browser-only';
+  const body = fixture.response.body as Record<string, unknown>;
+  if (['authoring-skills-unknown-query', 'authoring-skills-duplicate-query'].includes(fixture.id)) {
+    assert.equal(fixture.operation, 'GET /api/v1/profile-authoring/skills');
+    assert.equal(body.code, 'invalid_profile_authoring_query');
+    const query = new URL(fixture.request.path, 'https://contract.example').searchParams;
+    if (fixture.id === 'authoring-skills-unknown-query') assert(query.has('unknown'));
+    else assert.equal(query.getAll('q').length, 2);
+    return 'raw-wire-only';
+  }
+  if (
+    ['authoring-resolve-missing-content-type', 'authoring-resolve-wrong-content-type'].includes(
+      fixture.id,
+    )
+  ) {
+    assert.equal(fixture.operation, 'POST /api/v1/profile-authoring/repositories/resolve');
+    assert.equal(body.code, 'invalid_json');
+    assert.equal(fixture.response.status, 415);
+    assert.equal(
+      fixture.request.headers['content-type'],
+      fixture.id === 'authoring-resolve-missing-content-type' ? undefined : 'text/plain',
+    );
+    return 'raw-wire-only';
+  }
+  if (fixture.request.rawBody !== undefined) {
+    if (fixture.request.rawBodyRepeat !== undefined && fixture.response.status === 413) {
+      assert.equal(
+        body.code,
+        ['authoring-resolve-body-too-large', 'sandbox-service-access-oversize'].includes(fixture.id)
+          ? 'invalid_json'
+          : 'request_too_large',
+      );
+      assert(Buffer.byteLength(fixture.request.rawBody, 'utf8') > 2_097_152);
+      return 'raw-wire-only';
+    }
+    assert.throws(() => JSON.parse(fixture.request.rawBody!));
+    assert.equal(
+      body.code,
+      localCodes.get(fixture.id) ??
+        (fixture.operation.includes('/api/v1/admin/') ? 'malformed_json' : 'invalid_json'),
+    );
+    return 'preflight-validation';
+  }
+  if (fixture.id === 'trigger-state-version-overflow') {
+    assert.equal(fixture.operation, 'PUT /api/v1/triggers/{id}');
+    assert.equal(body.code, 'trigger_version_overflow');
+    const version = (fixture.request.body as { draft_version: unknown }).draft_version;
+    // The Rust fixture's u64 cannot cross JavaScript's number boundary exactly.
+    assert(typeof version === 'number' && Number.isInteger(version));
+    assert(version > Number.MAX_SAFE_INTEGER, 'Expected an unsafe integer fixture');
+    return 'preflight-validation';
+  }
+  if (localCodes.has(fixture.id)) {
+    assert.equal(body.code, localCodes.get(fixture.id));
+    return 'preflight-validation';
+  }
+  if (fixture.id.endsWith('-missing-key') || fixture.id.endsWith('-invalid-key')) {
+    assert(['missing_idempotency_key', 'invalid_idempotency_key'].includes(String(body.code)));
+    assert(!/^[\x21-\x7e]{1,255}$/.test(fixture.request.headers['idempotency-key'] ?? ''));
+    return 'preflight-validation';
+  }
+  if (
+    /-invalid-body(?:-reused-key)?$/.test(fixture.id) &&
+    (Array.isArray(fixture.request.body) || typeof fixture.request.body === 'string')
+  ) {
+    assert(
+      [
+        'invalid_request',
+        'invalid_json',
+        'agui_invalid_run',
+        'responses_field_unsupported',
+        'idempotency_key_reused',
+      ].includes(String(body.code)),
+    );
+    return 'preflight-validation';
+  }
+  if (fixture.id.startsWith('admin-') && fixture.id.endsWith('-invalid-page')) {
+    assert.equal(body.code, 'invalid_admin_request');
+    assert.equal(
+      new URL(fixture.request.path, 'https://contract.example').searchParams.get('limit'),
+      '0',
+    );
+    return 'preflight-validation';
+  }
+  if (fixture.id.endsWith('-missing-media-type') && fixture.request.body !== undefined) {
+    assert(['unsupported_media_type', 'json_content_type_required'].includes(String(body.code)));
+    assert(!Object.hasOwn(fixture.request.headers, 'content-type'));
+    return 'serializer-protection';
+  }
+  if (protectedQueries.has(fixture.id)) {
+    const url = new URL(fixture.request.path, 'https://contract.example');
+    for (const key of protectedQueries.get(fixture.id)!) assert(url.searchParams.has(key));
+    assert(fixture.response.status >= 400);
+    return 'serializer-protection';
+  }
+  if (fixture.operation === 'GET /auth/signup-options' && fixture.request.headers.cookie)
+    return 'serializer-protection';
+  if (fixture.id === 'responses-conversation-content-type') {
+    assert.equal(fixture.request.body, undefined);
+    assert.equal(body.code, 'invalid_json');
+    return 'serializer-protection';
+  }
+  return 'wire';
+}
+
+export function expectedRequestUrl(fixture: ContractCase): URL {
+  const url = new URL(fixture.request.path, 'https://contract.example');
+  for (const key of protectedQueries.get(fixture.id) ?? []) url.searchParams.delete(key);
+  if (fixture.operation === 'GET /api/v1/agui/events') {
+    if (!url.searchParams.has('starting_after')) url.searchParams.set('starting_after', '0');
+    if (!url.searchParams.has('follow')) url.searchParams.set('follow', 'true');
+  }
+  if (fixture.operation === 'GET /api/v1/agui/launches/{id}/events') {
+    if (!url.searchParams.has('starting_after')) url.searchParams.set('starting_after', '0');
+  }
+  return url;
+}
+
+export function expectedProjection(fixture: ContractCase): unknown {
+  if (fixture.operation === 'GET /api/v1/triggers/public/{public_id}/badge.svg') {
+    return {
+      status: fixture.response.status,
+      etag: fixture.response.headers.etag,
+      ...(fixture.response.status === 200 ? { svg: fixture.response.body } : {}),
+    };
+  }
+  if (fixture.response.bodyKind === 'empty') return undefined;
+  if (fixture.response.bodyKind === 'sse')
+    return (fixture.response.body as { id?: string; data: Record<string, unknown> }[]).map(
+      (frame) => ({
+        ...frame.data,
+        ...(fixture.operation.startsWith('GET /api/v1/agui/events') ||
+        fixture.operation.endsWith('/agui/run')
+          ? frame.id === undefined
+            ? {}
+            : { cursor: Number(frame.id) }
+          : {}),
+      }),
+    );
+  if (['GET /api/v1/triggers', 'GET /api/v1/launches'].includes(fixture.operation)) {
+    const { next_cursor, ...body } = fixture.response.body as Record<string, unknown>;
+    return { ...body, ...(next_cursor === undefined ? {} : { next: next_cursor }) };
+  }
+  if (
+    ['GET /api/v1/admin/sandboxes/{id}', 'POST /api/v1/admin/sandboxes/{id}/retire'].includes(
+      fixture.operation,
+    )
+  ) {
+    const body = fixture.response.body as Record<string, unknown>;
+    const detail = fixture.operation.startsWith('GET');
+    const sandbox = (detail ? body.sandbox : body) as Record<string, unknown>;
+    // The established SDK view intentionally excludes internal credential/checkpoint/worker records.
+    const projected = Object.fromEntries(
+      [
+        'id',
+        'owner',
+        'name',
+        'status',
+        'limits',
+        'failure',
+        'last_activity_at',
+        'created_at',
+        'updated_at',
+        'retired_at',
+        'revision',
+      ]
+        .filter((key) => Object.hasOwn(sandbox, key))
+        .map((key) => [key, sandbox[key]]),
+    );
+    const profile = sandbox.profile as Record<string, unknown>;
+    projected.profile = { id: profile.id, revision: profile.revision, digest: profile.digest };
+    if (sandbox.runtime)
+      projected.runtime = {
+        runtime_version: (sandbox.runtime as { runtime_version: string }).runtime_version,
+      };
+    return detail ? { ...body, sandbox: projected } : projected;
+  }
+  return fixture.response.body;
+}

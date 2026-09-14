@@ -1,0 +1,24 @@
+.sign-in-landing {
+  transition: opacity var(--ds-transition-duration) var(--ds-ease-in-out);
+}
+.sign-in-landing--entering {
+  opacity: 0;
+  pointer-events: none;
+}
+.sign-in-landing .sign-in-landing__brand {
+  width: min(100%, 760px);
+  padding-top: 144px;
+}
+.sign-in-landing .sign-in-landing__brand h1 {
+  font-family: 'Shrikhand', var(--dsw-font-family);
+  font-weight: 700;
+  font-synthesis: weight;
+  font-size: clamp(18px, 4.8vw, 40px);
+  line-height: 1.2;
+  white-space: nowrap;
+}
+@media (prefers-reduced-motion: reduce) {
+  .sign-in-landing {
+    transition: none;
+  }
+}

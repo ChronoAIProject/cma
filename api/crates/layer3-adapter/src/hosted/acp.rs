@@ -1,423 +1,289 @@
-//! Driving this kernel's bridge over the Agent Client Protocol.
-//!
-//! A bridge in a pod is an ACP agent, whichever kernel is behind it. This is
-//! the client half: it opens a session, prompts it, answers what it asks, and
-//! turns everything it says into the contract's own vocabulary. Because the
-//! contract *is* ACP, most of that translation is the identity function — what
-//! is left is the handshake, the correlation of requests with answers, and the
-//! deadlines that keep a silent bridge from stranding a session.
-//!
-//! Nothing here names a kernel. What differs between them is the command the
-//! pod runs and the name of the mode a session is held to, and both arrive as
-//! arguments — from the kernel's own directory, which is the only place either
-//! is written down.
-//!
-//! ## What is deliberately not filtered
-//!
-//! Bridges relay their kernel's own startup warnings as assistant message
-//! chunks — a model-metadata notice arrives looking exactly like something the
-//! agent said. Nothing here strips it: this layer must not decide which of a
-//! kernel's words are worth keeping, and a filter written against one release
-//! is a filter that silently eats real output in the next.
-
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::time::Duration;
 
-use futures_util::{stream::SplitSink, SinkExt, StreamExt};
+use futures_util::{stream::SplitSink, SinkExt as _, StreamExt as _};
+use serde::Deserialize;
 use tokio::sync::{mpsc, Mutex};
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
 
-use crate::supervisor;
-use crate::task_retirement::TaskRetirement;
+use super::update_relay::UpdateRelay;
+use super::HostedAgentOpenSettings;
 use crate::{
     AdapterError, ConversationChannel, ConversationInputSender, ConversationUpdate, PromptResponse,
-    TerminalInputSender,
 };
 
-/// The protocol version this client speaks.
 pub(super) const PROTOCOL_VERSION: u32 = 1;
-
-/// One operation may wait behind the writer, but a second is a backed-up link.
+pub(super) const CALL_DEADLINE: Duration = Duration::from_secs(30);
+pub(super) const TURN_DEADLINE: Duration = Duration::from_secs(60 * 60);
+pub(super) const SIGN_IN_DEADLINE: Duration = Duration::from_secs(16 * 60);
+const DECLARATION_DEADLINE: Duration = Duration::from_secs(10);
 const INPUT_BUFFER: usize = 1;
+const STARTUP_UPDATE_LIMIT: usize = 256;
+pub(super) const MAX_FRAME_BYTES: usize = 4 * 1024 * 1024;
+pub(super) const LANE_CONVERSATION: u8 = 0x02;
+pub(super) const LANE_CONVERSATION_GAP: u8 = 0x03;
 
-/// How long to wait for the pod to say what it is.
-///
-/// Answered immediately by any pod that serves a conversation lane at all, so
-/// this is a bound on a failure rather than on the ordinary case.
-const DECLARATION_DEADLINE: std::time::Duration = std::time::Duration::from_secs(10);
+type Socket = WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>;
+type Sink = SplitSink<Socket, Message>;
+type Pending = Arc<Mutex<HashMap<i64, PendingCall>>>;
 
-/// How long to wait for the bridge to answer a question of ours.
-///
-/// Short, because every call that uses it is a question with a quick answer:
-/// initialising, naming a conversation, setting a mode. It was thirty minutes
-/// — a bound sized for a prompt, which no longer travels this path — and that
-/// is how a pod whose agent never started held a session at `Attaching` for
-/// half an hour with nothing said. A handshake that has not answered in this
-/// long is not slow; it is not coming.
-pub(super) const CALL_DEADLINE: std::time::Duration = std::time::Duration::from_secs(30);
-
-/// How long a turn may take before it is declared lost.
-///
-/// Generous, because a turn takes as long as the model takes, and a person
-/// watching an agent think must not have it cut off underneath them. Bounded
-/// all the same: a prompt had no deadline at all, so an agent that stopped
-/// answering left the turn `running` forever — indistinguishable, from the
-/// outside, from one still working.
-pub(super) const TURN_DEADLINE: std::time::Duration = std::time::Duration::from_secs(3600);
-
-/// How long a sign-in may take.
-///
-/// Human-paced, not machine-paced: somebody has to open a page on another
-/// device, sign in, and type a code. The ordinary call deadline is thirty
-/// seconds and this timed out against it every time — the sign-in was working
-/// and the wait was not.
-///
-/// A little longer than the code itself lives, so a sign-in that runs out is
-/// reported by the kernel in its own words rather than by us giving up first.
-/// Which of the two spoke is the difference between "your code expired" and
-/// "something went wrong".
-pub(super) const SIGN_IN_DEADLINE: std::time::Duration = std::time::Duration::from_secs(16 * 60);
-
-/// The socket half this client writes to.
-type Sink = SplitSink<WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>, Message>;
-
-/// A JSON-RPC call in flight, waiting for the bridge to answer it.
-type Pending = Arc<Mutex<HashMap<i64, tokio::sync::oneshot::Sender<serde_json::Value>>>>;
-
-/// The client's side of a conversation with this kernel's bridge.
-pub struct Bridge {
-    sink: Arc<Mutex<Sink>>,
-    pub(super) pending: Pending,
-    next_id: AtomicI64,
-    /// The bridge's own identifier for this conversation, once one exists.
-    pub(super) session: Mutex<Option<String>>,
-    /// Permission requests the bridge is blocked on, by the id we gave them.
-    ///
-    /// Held because the answer comes back minutes later, from a person, and
-    /// has to be matched to the JSON-RPC request that is still waiting — and
-    /// to the options that request offered, which only it knows.
-    pub(super) blocked: Mutex<HashMap<String, Blocked>>,
-    /// Answers accepted in the active turn, including ones restored from a
-    /// durable locator rather than observed on this socket.
-    ///
-    /// The whole response is retained so a duplicate delivery of the same
-    /// JSON-RPC request can receive the identical answer without asking its
-    /// owner a second time. Cleared at the prompt's terminal response so a
-    /// later turn may safely reuse a JSON-RPC correlation id.
-    pub(super) answered: Arc<Mutex<HashMap<String, serde_json::Value>>>,
-    /// How many prompt waiters this Bridge currently owns.
-    ///
-    /// More than one may exist while a runtime accepts steering. Counting them
-    /// keeps one prompt's completion from making a later live permission request
-    /// look like restart recovery merely because another prompt is still active.
-    pub(super) owned_prompt_waiters: Arc<AtomicUsize>,
-    /// A prompt begun on a replaced control plane whose terminal response no
-    /// longer has a process-local waiter.
-    ///
-    /// Set only when a permission route had to be reconstructed from durable
-    /// state. The next unmatched JSON-RPC response is then the blocked prompt
-    /// continuing to its terminal response, and must reach the core instead of
-    /// being discarded with the old connection's waiter.
-    pub(super) orphaned_prompt_response: AtomicBool,
+pub(super) struct PendingCall {
+    pub(super) answer: tokio::sync::oneshot::Sender<serde_json::Value>,
+    pub(super) prompt: bool,
 }
 
-/// A permission request the bridge is waiting on an answer to.
 pub(super) struct Blocked {
-    /// The JSON-RPC id to answer.
     pub(super) call: serde_json::Value,
-    /// The options the bridge offered, which an intent is rendered into.
     pub(super) options: Vec<crate::PermissionOption>,
-    /// Whether a prompt begun on this Bridge owns the eventual terminal answer.
-    ///
-    /// Captured when the request arrives. A runtime can replay a blocked request
-    /// onto a replacement socket, so presence in the live map alone does not
-    /// prove that this process owns the corresponding prompt waiter.
     pub(super) owns_prompt_waiter: bool,
 }
 
-impl Bridge {
-    /// Open a conversation with the bridge behind this socket.
-    ///
-    /// Everything the handshake needs happens before the channel is handed
-    /// back, so a caller that receives one has a conversation that is ready to
-    /// be prompted rather than one that may yet fail to start.
-    /// Returns the conversation and the control sender for the same socket.
-    ///
-    /// The update sink comes from the caller for that same reason read the
-    /// other way round. The handshake can stop and wait — an own-account
-    /// session waits there for its owner to sign in, which is a person's worth
-    /// of time — and what it is waiting for has to be shown to that person
-    /// while it waits. A sink created here and returned at the end would carry
-    /// the request only after it had been answered, which is to say never.
-    ///
-    /// The second half is not optional bookkeeping. A credential reaches a
-    /// runtime as a control frame on a link the adapter has recorded, and
-    /// until now the only recorded links were terminal attachments — so a
-    /// conversation session could never be given its owner's credential, and
-    /// on a conversation-only kernel there was no other path at all.
-    pub async fn open(
-        stream: WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>,
-        cwd: String,
-        mode: Option<String>,
-        rejoin: Option<String>,
-        // Where this link's answers to a plane switch are delivered, and the
-        // runtime they are about. A conversation link is the only link a
-        // conversation-only kernel has, so without this such a session could
-        // never confirm a switch and every one of them would rotate (#289).
-        link: Option<super::LinkLifecycle>,
-        // Whether this session spends its owner's own account with the model
-        // vendor. It decides whether the agent has to be signed in before a
-        // conversation can be opened at all — an unauthenticated kernel
-        // refuses `session/new` outright.
-        own_credential: bool,
-        // Already being drained by the caller when this is called. See above.
-        updates_tx: mpsc::Sender<ConversationUpdate>,
-    ) -> Result<(ConversationChannel, TerminalInputSender), AdapterError> {
-        let (sink, mut source) = stream.split();
+#[derive(Default)]
+struct ConversationState {
+    active: Option<String>,
+    startup: Vec<(String, ConversationUpdate)>,
+    startup_lost: u64,
+}
 
-        // The pod's own declaration, read before anything else, because it
-        // says whether this conversation is being taken over from a runtime
-        // that has been replaced. A pod that predates lanes never reaches
-        // here: the conversation lane is asked for by name and an older pod
-        // does not serve one.
-        let resuming = match tokio::time::timeout(DECLARATION_DEADLINE, source.next()).await {
-            Ok(Some(Ok(Message::Text(text)))) => {
-                supervisor::Ready::from_control(&text)
-                    .ok_or_else(|| {
-                        AdapterError::Unavailable(
-                            "this runtime said something other than what it is".to_string(),
-                        )
-                    })?
-                    .resuming
-            }
-            _ => {
-                return Err(AdapterError::Unavailable(
-                    "this runtime did not declare a conversation lane".to_string(),
-                ))
-            }
-        };
+pub(super) struct Bridge {
+    pub(super) subscription: Option<super::subscriptions::HostedSubscriptionBinding>,
+    sink: Arc<Mutex<Sink>>,
+    pub(super) pending: Pending,
+    next_id: AtomicI64,
+    conversation: Mutex<ConversationState>,
+    pub(super) blocked: Mutex<HashMap<String, Blocked>>,
+    pub(super) answered: Arc<Mutex<HashMap<String, serde_json::Value>>>,
+    pub(super) owned_prompt_waiters: Arc<AtomicUsize>,
+    pub(super) orphaned_prompt_response: AtomicBool,
+    retired: AtomicBool,
+}
+
+pub(super) struct OpenedBridge {
+    pub(super) channel: ConversationChannel,
+    pub(super) bridge: Arc<Bridge>,
+    pub(super) reader: tokio::task::JoinHandle<()>,
+    pub(super) relay: tokio::task::JoinHandle<()>,
+}
+
+#[derive(Deserialize)]
+struct Ready {
+    t: String,
+    #[serde(rename = "wireVersion")]
+    wire_version: u32,
+    lanes: Vec<String>,
+    #[serde(rename = "agentId")]
+    agent_id: String,
+}
+
+impl Bridge {
+    #[cfg(test)]
+    pub(super) async fn open(
+        stream: Socket,
+        expected_agent: &str,
+        cwd: String,
+        settings: HostedAgentOpenSettings,
+        resume_conversation: Option<String>,
+        updates_tx: mpsc::Sender<ConversationUpdate>,
+    ) -> crate::Result<OpenedBridge> {
+        Self::open_with_subscription(
+            stream,
+            expected_agent,
+            cwd,
+            (settings, None),
+            resume_conversation,
+            updates_tx,
+        )
+        .await
+    }
+
+    pub(super) async fn open_with_subscription(
+        stream: Socket,
+        expected_agent: &str,
+        cwd: String,
+        (settings, subscription): (
+            HostedAgentOpenSettings,
+            Option<super::subscriptions::HostedSubscriptionBinding>,
+        ),
+        resume_conversation: Option<String>,
+        updates_tx: mpsc::Sender<ConversationUpdate>,
+    ) -> crate::Result<OpenedBridge> {
+        let (sink, mut source) = stream.split();
+        let declaration = tokio::time::timeout(DECLARATION_DEADLINE, source.next())
+            .await
+            .map_err(|_| AdapterError::Unavailable("runtime sent no Ready declaration".into()))?
+            .ok_or_else(|| AdapterError::Unavailable("runtime closed before Ready".into()))?
+            .map_err(|error| AdapterError::Unavailable(format!("Ready read failed: {error}")))?;
+        validate_ready(declaration, expected_agent)?;
+
         let bridge = Arc::new(Self {
+            subscription,
             sink: Arc::new(Mutex::new(sink)),
             pending: Arc::new(Mutex::new(HashMap::new())),
             next_id: AtomicI64::new(1),
-            session: Mutex::new(None),
+            conversation: Mutex::new(ConversationState::default()),
             blocked: Mutex::new(HashMap::new()),
             answered: Arc::new(Mutex::new(HashMap::new())),
             owned_prompt_waiters: Arc::new(AtomicUsize::new(0)),
             orphaned_prompt_response: AtomicBool::new(false),
+            retired: AtomicBool::new(false),
         });
-        // This sender's channel identity is the generation of this socket.
-        // Keep it beside the reader so a late answer from this socket cannot
-        // settle a waiter installed by a replacement connection.
-        let control = super::control_lane(Arc::clone(&bridge.sink), link.clone());
-        let mut abort_on_drop = super::AbortLinkOnDrop::new(control.clone());
-
+        let (updates, relay) = super::update_relay::spawn(updates_tx);
         let writer = Arc::clone(&bridge);
-        let writer_updates = updates_tx.clone();
+        let writer_updates = updates.clone();
         let input = ConversationInputSender::spawn(INPUT_BUFFER, move |input| {
             let writer = Arc::clone(&writer);
             let updates = writer_updates.clone();
             async move { writer.drive(input, &updates).await }
         });
 
-        // Read before anything is sent: the handshake's own answers arrive on
-        // this loop, so it has to be running to receive them.
         let reader = Arc::clone(&bridge);
-        let updates = updates_tx.clone();
-        let control_for_reader = control.downgrade();
-        let link_for_reader = link.clone();
+        let reader_updates = updates.clone();
         let reader_task = tokio::spawn(async move {
             while let Some(frame) = source.next().await {
                 match frame {
-                    Ok(Message::Binary(bytes)) => match supervisor::unframe(&bytes) {
-                        Some((supervisor::LANE_CONVERSATION, payload)) => {
-                            reader.receive(payload, &updates).await;
+                    Ok(Message::Binary(bytes)) => match unframe(&bytes) {
+                        Some((LANE_CONVERSATION, payload)) => {
+                            reader.receive(payload, &reader_updates).await;
                         }
-                        Some((supervisor::LANE_CONVERSATION_GAP, payload)) => {
-                            let frames = serde_json::from_slice::<serde_json::Value>(payload)
-                                .ok()
-                                .and_then(|v| v.get("frames").and_then(serde_json::Value::as_u64))
-                                .unwrap_or(0);
-                            let _ = updates.send(ConversationUpdate::Lost { frames }).await;
+                        Some((LANE_CONVERSATION_GAP, payload)) => {
+                            if let Some(frames) = gap_count(payload) {
+                                reader_updates.send(ConversationUpdate::Lost { frames });
+                            }
                         }
                         _ => {}
                     },
-                    Ok(Message::Text(text)) => {
-                        // Runtime control answers; the conversation itself
-                        // travels framed on its own lane.
-                        if let Some(lifecycle) = link_for_reader.as_ref() {
-                            if let Some((operation_id, installed)) =
-                                super::link::credential_answer(&text)
-                            {
-                                if let Some(control) = control_for_reader.upgrade() {
-                                    lifecycle
-                                        .settle_credential(&control, &operation_id, installed)
-                                        .await;
-                                }
-                            } else if let Some((operation_id, answer)) =
-                                super::link::runtime_policy_answer(&text)
-                            {
-                                if let Some(control) = control_for_reader.upgrade() {
-                                    lifecycle
-                                        .settle_runtime_policy(&control, &operation_id, answer)
-                                        .await;
-                                }
-                            } else if let Some((operation_id, answer)) =
-                                super::link::sponsored_model_authority_answer(&text)
-                            {
-                                if let Some(control) = control_for_reader.upgrade() {
-                                    lifecycle
-                                        .settle_sponsored_model_authority(
-                                            &control,
-                                            &operation_id,
-                                            answer,
-                                        )
-                                        .await;
-                                }
-                            } else if let Some(accepted) = super::link::switch_answer(&text) {
-                                if let Some(control) = control_for_reader.upgrade() {
-                                    lifecycle.settle(&control, accepted).await;
-                                }
-                            }
-                        }
-                    }
                     Ok(Message::Close(_)) => break,
+                    Ok(Message::Text(_)) => {
+                        tracing::debug!("text frame ignored after Ready declaration");
+                    }
                     Ok(_) => {}
-                    Err(e) => {
-                        tracing::warn!(error = %e, "conversation link read failed");
+                    Err(error) => {
+                        tracing::warn!(%error, "conversation link read failed");
                         break;
                     }
                 }
             }
+            reader.finish().await;
         });
 
-        let whole_retirement = TaskRetirement::default();
-        let whole_guard = whole_retirement.guard();
-        let (installed, installation) = if link.is_some() {
-            let (installed, installation) = tokio::sync::oneshot::channel();
-            (Some(installed), Some(installation))
-        } else {
-            (None, None)
-        };
-        let cleanup_bridge = Arc::clone(&bridge);
-        let input_retired = input.retirement();
-        let input_abort = input.abort_handle();
-        let control_retired = control.retirement();
-        let control_abort = control.abort_handle();
-        let control_for_cleanup = control.downgrade();
-        let link_for_cleanup = link.clone();
-        let cleanup_task = tokio::spawn(async move {
-            let _whole_guard = whole_guard;
-            let mut reader = reader_task;
-            let input_ended = input_retired.clone();
-            let control_ended = control_retired.clone();
-            tokio::select! {
-                _ = input_ended.wait() => {
-                    reader.abort();
-                    let _ = reader.await;
-                    control_abort.abort();
-                    control_retired.wait().await;
-                }
-                _ = control_ended.wait() => {
-                    reader.abort();
-                    let _ = reader.await;
-                    input_abort.abort();
-                    input_retired.wait().await;
-                }
-                _ = &mut reader => {
-                    input_abort.abort();
-                    control_abort.abort();
-                    input_retired.wait().await;
-                    control_retired.wait().await;
-                }
-            }
-            // Dropping every waiter makes a dead link an immediate answer.
-            cleanup_bridge.pending.lock().await.clear();
-            if let (Some(lifecycle), Some(installation)) = (link_for_cleanup.as_ref(), installation)
-            {
-                if installation.await.is_ok() {
-                    if let Some(control) = control_for_cleanup.upgrade() {
-                        lifecycle.forget(&control).await;
-                    }
-                }
-            }
-            tracing::info!("conversation link ended");
-        });
-
-        if let Some(lifecycle) = link.as_ref() {
-            if !lifecycle
-                .register(
-                    control.clone(),
-                    whole_retirement.clone(),
-                    installed.expect("a registered link has an installation barrier"),
-                )
-                .await
-            {
-                control.abort();
-                let _ = cleanup_task.await;
-                let _ = bridge.sink.lock().await.close().await;
-                return Err(AdapterError::Unavailable(
-                    "the conversation link was superseded while opening".into(),
-                ));
-            }
-        }
-
-        // A conversation to rejoin wins over one the pod says it was handed.
-        // They answer different questions — one is a control plane taking back
-        // over a live runtime, the other a runtime taking over a session — and
-        // when both are present the first is the more recent truth.
-        let handshake = bridge
-            .handshake(rejoin, resuming, cwd, mode, own_credential)
-            .await;
-        if let Err(error) = handshake {
-            // The runtime may reject the handshake while deliberately keeping
-            // its socket open. Stop every detached owner before returning, or
-            // repeated readoption attempts accumulate sockets and relay tasks.
-            control.abort();
-            let _ = cleanup_task.await;
-            let _ = bridge.sink.lock().await.close().await;
+        if let Err(error) = bridge
+            .handshake(resume_conversation, cwd, settings, &updates)
+            .await
+        {
+            bridge.retire().await;
+            reader_task.abort();
+            let _ = reader_task.await;
+            relay.abort();
+            let _ = relay.await;
             return Err(error);
         }
-        let conversation_id = bridge.session.lock().await.clone();
-        if let Some(lifecycle) = link.as_ref() {
-            if !lifecycle.is_current(&control).await {
-                control.abort();
-                let _ = cleanup_task.await;
-                let _ = bridge.sink.lock().await.close().await;
-                return Err(AdapterError::Unavailable(
-                    "the conversation link ended or was superseded while opening".into(),
-                ));
-            }
+        if reader_task.is_finished() {
+            bridge.retire().await;
+            let _ = reader_task.await;
+            relay.abort();
+            let _ = relay.await;
+            return Err(AdapterError::Unavailable(
+                "conversation link ended while opening".into(),
+            ));
         }
-
-        abort_on_drop.disarm();
-        Ok((
-            ConversationChannel {
+        let conversation_id = bridge.session().await?;
+        Ok(OpenedBridge {
+            channel: ConversationChannel {
                 input,
-                conversation_id,
+                conversation_id: Some(conversation_id),
             },
-            control,
-        ))
+            bridge,
+            reader: reader_task,
+            relay,
+        })
     }
 
-    /// Ask the bridge something and wait for its answer.
+    pub(super) async fn session(&self) -> crate::Result<String> {
+        self.conversation
+            .lock()
+            .await
+            .active
+            .clone()
+            .ok_or_else(|| AdapterError::Unavailable("runtime holds no conversation".into()))
+    }
+
+    pub(super) async fn activate_session(
+        &self,
+        session: String,
+        updates: &UpdateRelay,
+    ) -> crate::Result<()> {
+        if session.is_empty() || session.len() > 1_024 || session.chars().any(char::is_control) {
+            return Err(AdapterError::Rejected(
+                "bridge returned an invalid conversation identifier".into(),
+            ));
+        }
+        let mut state = self.conversation.lock().await;
+        if state
+            .active
+            .as_ref()
+            .is_some_and(|active| active != &session)
+        {
+            return Err(AdapterError::Rejected(
+                "bridge changed the active conversation identifier".into(),
+            ));
+        }
+        state.active = Some(session.clone());
+        for (candidate, update) in std::mem::take(&mut state.startup) {
+            if candidate == session {
+                updates.send(update.without_prompt_evidence());
+            }
+        }
+        if state.startup_lost > 0 {
+            updates.send(ConversationUpdate::Lost {
+                frames: state.startup_lost,
+            });
+            state.startup_lost = 0;
+        }
+        Ok(())
+    }
+
+    pub(super) async fn route_update(
+        &self,
+        session: &str,
+        update: ConversationUpdate,
+        updates: &UpdateRelay,
+    ) {
+        let mut state = self.conversation.lock().await;
+        match state.active.as_deref() {
+            Some(active) if active == session => {
+                drop(state);
+                updates.send(self.scope_activity(update));
+            }
+            Some(_) => tracing::warn!("discarding update for another conversation"),
+            None if state.startup.len() < STARTUP_UPDATE_LIMIT => {
+                state.startup.push((session.to_string(), update));
+            }
+            None => state.startup_lost = state.startup_lost.saturating_add(1),
+        }
+    }
+
+    fn scope_activity(&self, update: ConversationUpdate) -> ConversationUpdate {
+        let owns_prompt = self.owned_prompt_waiters.load(Ordering::SeqCst) > 0;
+        super::acp_inbound::scope_activity(update, owns_prompt)
+    }
+
     pub(super) async fn call(
         &self,
         method: &str,
         params: serde_json::Value,
-    ) -> Result<serde_json::Value, AdapterError> {
+    ) -> crate::Result<serde_json::Value> {
         self.call_within(method, params, CALL_DEADLINE).await
     }
 
-    /// The same, for something that legitimately takes longer than a call.
     pub(super) async fn call_within(
         &self,
         method: &str,
         params: serde_json::Value,
-        deadline: std::time::Duration,
-    ) -> Result<serde_json::Value, AdapterError> {
+        deadline: Duration,
+    ) -> crate::Result<serde_json::Value> {
         let waiting = self.begin(method, params).await?;
         let frame = tokio::time::timeout(deadline, waiting)
             .await
@@ -432,57 +298,124 @@ impl Bridge {
             .unwrap_or(serde_json::Value::Null))
     }
 
-    /// Send a request and hand back what will hold its answer.
-    ///
-    /// Takes the method rather than accepting a pre-built object, so a request
-    /// without one cannot be constructed. It could before, and one was: the
-    /// prompt passed its parameters straight in, and what went on the wire was
-    /// a JSON-RPC request carrying an id and no method — undispatchable, so
-    /// the agent was never asked anything and every conversation turn opened
-    /// and hung.
-    ///
-    /// Registered before it is sent, because the answer can arrive on the read
-    /// loop before this function returns.
     pub(super) async fn begin(
         &self,
         method: &str,
         params: serde_json::Value,
-    ) -> Result<tokio::sync::oneshot::Receiver<serde_json::Value>, AdapterError> {
+    ) -> crate::Result<tokio::sync::oneshot::Receiver<serde_json::Value>> {
+        self.begin_inner(method, params, false).await
+    }
+
+    pub(super) async fn begin_prompt(
+        &self,
+        params: serde_json::Value,
+    ) -> crate::Result<tokio::sync::oneshot::Receiver<serde_json::Value>> {
+        self.begin_inner("session/prompt", params, true).await
+    }
+
+    async fn begin_inner(
+        &self,
+        method: &str,
+        params: serde_json::Value,
+        prompt: bool,
+    ) -> crate::Result<tokio::sync::oneshot::Receiver<serde_json::Value>> {
+        if self.retired.load(Ordering::SeqCst) {
+            return Err(AdapterError::Unavailable(
+                "conversation link has retired".into(),
+            ));
+        }
         let id = self.next_id.fetch_add(1, Ordering::SeqCst);
         let (answer, waiting) = tokio::sync::oneshot::channel();
-        let framed = serde_json::json!({
+        let frame = serde_json::json!({
             "jsonrpc": "2.0",
             "id": id,
             "method": method,
             "params": params,
         });
-
-        self.pending.lock().await.insert(id, answer);
-        if let Err(error) = self.send(&framed).await {
+        self.pending
+            .lock()
+            .await
+            .insert(id, PendingCall { answer, prompt });
+        if let Err(error) = self.send(&frame).await {
             self.pending.lock().await.remove(&id);
             return Err(error);
         }
         Ok(waiting)
     }
 
-    /// Send one frame, expecting no answer.
-    pub(super) async fn send(&self, frame: &serde_json::Value) -> Result<(), AdapterError> {
-        let body = frame.to_string();
-        let framed = supervisor::frame(supervisor::LANE_CONVERSATION, body.as_bytes());
+    pub(super) async fn send(&self, frame: &serde_json::Value) -> crate::Result<()> {
+        if self.retired.load(Ordering::SeqCst) {
+            return Err(AdapterError::Unavailable(
+                "conversation link has retired".into(),
+            ));
+        }
+        let body = serde_json::to_vec(frame)
+            .map_err(|_| AdapterError::Rejected("ACP frame could not be encoded".into()))?;
+        if body.len() > MAX_FRAME_BYTES {
+            return Err(AdapterError::Rejected(
+                "ACP frame exceeds the size limit".into(),
+            ));
+        }
+        let mut framed = Vec::with_capacity(body.len() + 1);
+        framed.push(LANE_CONVERSATION);
+        framed.extend_from_slice(&body);
         self.sink
             .lock()
             .await
             .send(Message::Binary(framed))
             .await
-            .map_err(|e| AdapterError::Unavailable(format!("conversation write failed: {e}")))
+            .map_err(|error| {
+                AdapterError::Unavailable(format!("conversation write failed: {error}"))
+            })
+    }
+
+    pub(super) async fn retire(&self) {
+        if !self.retired.swap(true, Ordering::SeqCst) {
+            self.pending.lock().await.clear();
+            self.blocked.lock().await.clear();
+            let _ = self.sink.lock().await.close().await;
+        }
+    }
+
+    async fn finish(&self) {
+        self.retired.store(true, Ordering::SeqCst);
+        self.pending.lock().await.clear();
+        self.blocked.lock().await.clear();
     }
 }
 
-/// How a turn came out: finished, or stopped by something going wrong.
-///
-/// Kept apart from `PromptResponse` because the protocol has no word for
-/// "the agent could not answer at all", and folding that into a stop reason
-/// is what made every such turn read as an ordinary, empty completion.
+fn validate_ready(message: Message, expected_agent: &str) -> crate::Result<()> {
+    let Message::Text(text) = message else {
+        return Err(AdapterError::Rejected(
+            "runtime sent a non-text Ready declaration".into(),
+        ));
+    };
+    let ready: Ready = serde_json::from_str(&text)
+        .map_err(|_| AdapterError::Rejected("runtime Ready declaration is malformed".into()))?;
+    if ready.t != "ready"
+        || ready.wire_version != 1
+        || ready.agent_id != expected_agent
+        || !ready.lanes.iter().any(|lane| lane == "ctl")
+        || !ready.lanes.iter().any(|lane| lane == "conv")
+    {
+        return Err(AdapterError::Rejected(
+            "runtime Ready declaration does not match the requested agent".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn unframe(bytes: &[u8]) -> Option<(u8, &[u8])> {
+    bytes.split_first().map(|(lane, payload)| (*lane, payload))
+}
+
+fn gap_count(payload: &[u8]) -> Option<u64> {
+    serde_json::from_slice::<serde_json::Value>(payload)
+        .ok()?
+        .get("frames")?
+        .as_u64()
+}
+
 pub(super) enum Outcome {
     Ended(PromptResponse),
     Failed {
@@ -493,4 +426,4 @@ pub(super) enum Outcome {
 
 #[cfg(test)]
 #[path = "acp_tests.rs"]
-mod acp_tests;
+mod tests;

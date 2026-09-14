@@ -1,0 +1,1080 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "state-agent-capability-transcript",
+      "operation": "GET /api/v1/agents/{id}/transcript",
+      "scenario": "agent_state_no_capabilities",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_contract/transcript",
+        "headers": {}
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent-capability-unsupported",
+          "title": "agent capability unsupported",
+          "status": 422,
+          "detail": "The agent runtime does not support this operation.",
+          "code": "agent_capability_unsupported",
+          "capability": "conversation"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "state-agent-capability-usage",
+      "operation": "GET /api/v1/agents/{id}/usage",
+      "scenario": "agent_state_no_capabilities",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_contract/usage",
+        "headers": {}
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent-capability-unsupported",
+          "title": "agent capability unsupported",
+          "status": 422,
+          "detail": "The agent runtime does not support this operation.",
+          "code": "agent_capability_unsupported",
+          "capability": "usage"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "state-agent-capability-resources",
+      "operation": "GET /api/v1/agents/{id}/resources",
+      "scenario": "agent_state_no_capabilities",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_contract/resources",
+        "headers": {}
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent-capability-unsupported",
+          "title": "agent capability unsupported",
+          "status": 422,
+          "detail": "The agent runtime does not support this operation.",
+          "code": "agent_capability_unsupported",
+          "capability": "resources"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "state-agent-capability-input",
+      "operation": "POST /api/v1/agents/{id}/input",
+      "scenario": "agent_state_no_capabilities",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_contract/input",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "state-agent-capability-input"
+        },
+        "body": {
+          "text": "Run the contract"
+        }
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent-capability-unsupported",
+          "title": "agent capability unsupported",
+          "status": 422,
+          "detail": "The agent runtime does not support this operation.",
+          "code": "agent_capability_unsupported",
+          "capability": "conversation"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "state-agent-capability-steer",
+      "operation": "POST /api/v1/agents/{id}/steer",
+      "scenario": "agent_state_no_capabilities",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_contract/steer",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "state-agent-capability-steer"
+        },
+        "body": {
+          "text": "Adjust the result"
+        }
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent-capability-unsupported",
+          "title": "agent capability unsupported",
+          "status": 422,
+          "detail": "The agent runtime does not support this operation.",
+          "code": "agent_capability_unsupported",
+          "capability": "conversation"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "state-agent-capability-interrupt",
+      "operation": "POST /api/v1/agents/{id}/interrupt",
+      "scenario": "agent_state_no_capabilities",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_contract/interrupt",
+        "headers": {
+          "idempotency-key": "state-agent-capability-interrupt"
+        }
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent-capability-unsupported",
+          "title": "agent capability unsupported",
+          "status": 422,
+          "detail": "The agent runtime does not support this operation.",
+          "code": "agent_capability_unsupported",
+          "capability": "conversation"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "state-agent-capability-approval",
+      "operation": "POST /api/v1/agents/{id}/approvals/{request_id}",
+      "scenario": "agent_state_no_capabilities",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_contract/approvals/request_contract",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "state-agent-capability-approval"
+        },
+        "body": {
+          "decision": "deny"
+        }
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent-capability-unsupported",
+          "title": "agent capability unsupported",
+          "status": 422,
+          "detail": "The agent runtime does not support this operation.",
+          "code": "agent_capability_unsupported",
+          "capability": "conversation"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "state-agent-capability-create",
+      "operation": "POST /api/v1/workspaces/{id}/agents",
+      "scenario": "agent_state_no_capabilities",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/workspaces/wks_route/agents",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "state-agent-capability-create"
+        },
+        "body": {
+          "agent_profile": {
+            "id": "agp_route",
+            "revision": 1
+          },
+          "title": "Contract agent"
+        }
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent-capability-unsupported",
+          "title": "agent capability unsupported",
+          "status": 422,
+          "detail": "The agent runtime does not support this operation.",
+          "code": "agent_capability_unsupported",
+          "capability": "conversation"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "state-agent-resources-unsupported",
+      "operation": "GET /api/v1/agents/{id}/resources",
+      "scenario": "agent_state_resources_unsupported",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_contract/resources",
+        "headers": {}
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent-resources-unsupported",
+          "title": "agent resources unsupported",
+          "status": 422,
+          "detail": "This agent's sandbox does not report resource readings.",
+          "code": "agent_resources_unsupported"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "state-agent-workspace-unready",
+      "operation": "POST /api/v1/workspaces/{id}/agents",
+      "scenario": "agent_state_workspace_unready",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/workspaces/wks_route/agents",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "state-agent-workspace-unready"
+        },
+        "body": {
+          "agent_profile": {
+            "id": "agp_route",
+            "revision": 1
+          },
+          "title": "Contract agent"
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/workspace-not-ready",
+          "title": "workspace not ready",
+          "status": 409,
+          "detail": "The workspace is not ready to create an agent.",
+          "code": "workspace_not_ready"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "state-agent-capacity",
+      "operation": "POST /api/v1/workspaces/{id}/agents",
+      "scenario": "agent_state_limit",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/workspaces/wks_route/agents",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "state-agent-capacity"
+        },
+        "body": {
+          "agent_profile": {
+            "id": "agp_route",
+            "revision": 1
+          },
+          "title": "Contract agent"
+        }
+      },
+      "response": {
+        "status": 429,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent-limit-reached",
+          "title": "agent limit reached",
+          "status": 429,
+          "detail": "The workspace has reached its live-agent limit.",
+          "code": "agent_limit_reached",
+          "limit": 1,
+          "live": 1
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "state-agent-invalid-title",
+      "operation": "POST /api/v1/workspaces/{id}/agents",
+      "scenario": "agents_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/workspaces/wks_route/agents",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "state-agent-invalid-title"
+        },
+        "body": {
+          "agent_profile": {
+            "id": "agp_route",
+            "revision": 1
+          },
+          "title": ""
+        }
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-agent-request",
+          "title": "invalid agent request",
+          "status": 422,
+          "detail": "The agent request does not satisfy its validation contract.",
+          "code": "invalid_agent_request"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "state-agent-input-stopped",
+      "operation": "POST /api/v1/agents/{id}/input",
+      "scenario": "agents_stopped",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_contract/input",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "state-agent-input-stopped"
+        },
+        "body": {
+          "text": "Run the contract"
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent-not-ready",
+          "title": "agent not ready",
+          "status": 409,
+          "detail": "The agent is not ready for this operation.",
+          "code": "agent_not_ready"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "state-agent-stop-stopped",
+      "operation": "POST /api/v1/agents/{id}/stop",
+      "scenario": "agents_stopped",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_contract/stop",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "state-agent-stop-stopped"
+        },
+        "body": {
+          "reason": "owner"
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent-not-ready",
+          "title": "agent not ready",
+          "status": 409,
+          "detail": "The agent is not ready for this operation.",
+          "code": "agent_not_ready"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "state-agent-queue-full",
+      "operation": "POST /api/v1/agents/{id}/input",
+      "scenario": "agent_state_queue_full",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_contract/input",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "state-agent-queue-full"
+        },
+        "body": {
+          "text": "Run the contract"
+        }
+      },
+      "response": {
+        "status": 429,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent-message-queue-full",
+          "title": "agent message queue full",
+          "status": 429,
+          "detail": "The paused agent's message queue is full.",
+          "code": "agent_message_queue_full",
+          "limit": 64
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "state-agent-invalid-input",
+      "operation": "POST /api/v1/agents/{id}/input",
+      "scenario": "agents_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_contract/input",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "state-agent-invalid-input"
+        },
+        "body": {
+          "text": "  "
+        }
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-agent-request",
+          "title": "invalid agent request",
+          "status": 422,
+          "detail": "The agent request does not satisfy its validation contract.",
+          "code": "invalid_agent_request"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "state-agent-invalid-steer",
+      "operation": "POST /api/v1/agents/{id}/steer",
+      "scenario": "agents_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_contract/steer",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "state-agent-invalid-steer"
+        },
+        "body": {
+          "text": "  "
+        }
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-agent-request",
+          "title": "invalid agent request",
+          "status": 422,
+          "detail": "The agent request does not satisfy its validation contract.",
+          "code": "invalid_agent_request"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "state-agent-invalid-approval",
+      "operation": "POST /api/v1/agents/{id}/approvals/{request_id}",
+      "scenario": "agents_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_contract/approvals/%20",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "state-agent-invalid-approval"
+        },
+        "body": {
+          "decision": "deny"
+        }
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-agent-request",
+          "title": "invalid agent request",
+          "status": 422,
+          "detail": "The agent request does not satisfy its validation contract.",
+          "code": "invalid_agent_request"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "state-agent-pending-steer",
+      "operation": "POST /api/v1/agents/{id}/steer",
+      "scenario": "agent_state_working_pending",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_contract/steer",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "state-agent-pending-steer"
+        },
+        "body": {
+          "text": "Adjust the result"
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent-operation-in-flight",
+          "title": "agent operation in flight",
+          "status": 409,
+          "detail": "Another durable operation currently owns this agent.",
+          "code": "agent_operation_in_flight"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "state-agent-ambiguous-steer",
+      "operation": "POST /api/v1/agents/{id}/steer",
+      "scenario": "agent_state_steer_ambiguous",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_contract/steer",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "state-agent-ambiguous-steer"
+        },
+        "body": {
+          "text": "Adjust the result"
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent-delivery-ambiguous",
+          "title": "agent delivery ambiguous",
+          "status": 503,
+          "detail": "The operation outcome is ambiguous and requires durable reconciliation.",
+          "code": "agent_delivery_ambiguous"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "state-agent-pending-interrupt",
+      "operation": "POST /api/v1/agents/{id}/interrupt",
+      "scenario": "agent_state_working_pending",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_contract/interrupt",
+        "headers": {
+          "idempotency-key": "state-agent-pending-interrupt"
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent-operation-in-flight",
+          "title": "agent operation in flight",
+          "status": 409,
+          "detail": "Another durable operation currently owns this agent.",
+          "code": "agent_operation_in_flight"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "state-agent-ambiguous-interrupt",
+      "operation": "POST /api/v1/agents/{id}/interrupt",
+      "scenario": "agent_state_interrupt_ambiguous",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_contract/interrupt",
+        "headers": {
+          "idempotency-key": "state-agent-ambiguous-interrupt"
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent-delivery-ambiguous",
+          "title": "agent delivery ambiguous",
+          "status": 503,
+          "detail": "The operation outcome is ambiguous and requires durable reconciliation.",
+          "code": "agent_delivery_ambiguous"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "state-agent-pending-approval",
+      "operation": "POST /api/v1/agents/{id}/approvals/{request_id}",
+      "scenario": "agent_state_approval_pending",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_contract/approvals/approval_contract",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "state-agent-pending-approval"
+        },
+        "body": {
+          "decision": "deny"
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent-operation-in-flight",
+          "title": "agent operation in flight",
+          "status": 409,
+          "detail": "Another durable operation currently owns this agent.",
+          "code": "agent_operation_in_flight"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "state-agent-ambiguous-approval",
+      "operation": "POST /api/v1/agents/{id}/approvals/{request_id}",
+      "scenario": "agent_state_approval_ambiguous",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_contract/approvals/approval_contract",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "state-agent-ambiguous-approval"
+        },
+        "body": {
+          "decision": "deny"
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent-delivery-ambiguous",
+          "title": "agent delivery ambiguous",
+          "status": 503,
+          "detail": "The operation outcome is ambiguous and requires durable reconciliation.",
+          "code": "agent_delivery_ambiguous"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "state-sandbox-retire-before-pause",
+      "operation": "DELETE /api/v1/sandboxes/{id}",
+      "scenario": "instances_lifecycle",
+      "request": {
+        "method": "DELETE",
+        "path": "/api/v1/sandboxes/sbx_route",
+        "headers": {
+          "idempotency-key": "state-sandbox-retire-before-pause"
+        }
+      },
+      "response": {
+        "status": 202,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "id": "sbx_route",
+          "owner": "owner-a",
+          "owner_name": null,
+          "name": "research",
+          "status": "retiring",
+          "profile": {
+            "id": "sbp_route",
+            "revision": 3
+          },
+          "nyxid_services": [
+            "api-github"
+          ],
+          "limits": {
+            "max_workspaces": 4,
+            "max_agents_per_workspace": 4
+          },
+          "lifecycle": {
+            "pause": {
+              "allowed": false,
+              "reason": "not_active"
+            },
+            "revive": {
+              "allowed": false,
+              "reason": "not_paused"
+            }
+          },
+          "runtime_version": "sha256:runtime",
+          "last_activity_at": "2026-09-05T00:00:00Z",
+          "created_at": "2026-09-05T00:00:00Z",
+          "updated_at": "2026-09-05T00:00:00Z",
+          "revision": 2
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "sandbox_deleted_updated": "/updated_at"
+      }
+    },
+    {
+      "id": "state-sandbox-pause-not-active",
+      "operation": "POST /api/v1/sandboxes/{id}/pause",
+      "scenario": "instances_lifecycle",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/sandboxes/sbx_route/pause",
+        "headers": {
+          "idempotency-key": "state-sandbox-pause-not-active"
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource-conflict",
+          "title": "resource conflict",
+          "status": 409,
+          "detail": "The operation conflicts with current resource state.",
+          "code": "sandbox_not_active"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "state-workspace-parent-retiring",
+      "operation": "POST /api/v1/sandboxes/{id}/workspaces",
+      "scenario": "instances_lifecycle",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/sandboxes/sbx_route/workspaces",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "state-workspace-parent-retiring"
+        },
+        "body": {
+          "workspace_profile": {
+            "id": "wkp_contract",
+            "revision": 1
+          }
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource-conflict",
+          "title": "resource conflict",
+          "status": 409,
+          "detail": "The operation conflicts with current resource state.",
+          "code": "sandbox_not_ready"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "state-workspace-parent-paused",
+      "operation": "POST /api/v1/sandboxes/{id}/workspaces",
+      "scenario": "instances_paused",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/sandboxes/sbx_route/workspaces",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "state-workspace-parent-paused"
+        },
+        "body": {
+          "workspace_profile": {
+            "id": "wkp_contract",
+            "revision": 1
+          }
+        }
+      },
+      "response": {
+        "status": 201,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "id": "wks_33333333333333333333333333333333",
+          "sandbox_id": "sbx_route",
+          "name": "contract-project",
+          "path": "/home/cma/contract-project",
+          "source": {
+            "type": "empty"
+          },
+          "status": "preparing",
+          "profile": {
+            "id": "wkp_contract",
+            "revision": 1
+          },
+          "created_at": "2026-09-05T00:00:00Z",
+          "revision": 1
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "paused_workspace_created": "/created_at",
+        "paused_workspace_id": "/id"
+      }
+    },
+    {
+      "id": "state-workspace-capacity",
+      "operation": "POST /api/v1/sandboxes/{id}/workspaces",
+      "scenario": "instances_capacity",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/sandboxes/sbx_route/workspaces",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "state-workspace-capacity"
+        },
+        "body": {
+          "workspace_profile": {
+            "id": "wkp_contract",
+            "revision": 1
+          }
+        }
+      },
+      "response": {
+        "status": 429,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource-limit-reached",
+          "title": "resource limit reached",
+          "status": 429,
+          "detail": "The owner has reached the live resource limit.",
+          "code": "workspace_limit_reached",
+          "limit": 1,
+          "live": 1
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "state-sandbox-trust-required",
+      "operation": "POST /api/v1/sandboxes",
+      "scenario": "instances_trust",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/sandboxes",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "state-sandbox-trust-required"
+        },
+        "body": {
+          "sandbox_profile": {
+            "id": "sbp_contract",
+            "revision": 1
+          },
+          "name": "contract-created"
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/trust-confirmation-required",
+          "title": "trust confirmation required",
+          "status": 409,
+          "detail": "Confirm the exact commands digest before creating this resource.",
+          "code": "trust_confirmation_required",
+          "commands_digest": "478c68d2e02e09bf23de603c9b425557a96552c4dde134cb087fdbed63e035e4"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "state-sandbox-invalid-trust",
+      "operation": "POST /api/v1/sandboxes",
+      "scenario": "instances_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/sandboxes",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "state-sandbox-invalid-trust"
+        },
+        "body": {
+          "sandbox_profile": {
+            "id": "sbp_contract",
+            "revision": 1
+          },
+          "name": "contract-created",
+          "trust_confirmed": true
+        }
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-resource-request",
+          "title": "invalid resource request",
+          "status": 422,
+          "detail": "The request does not satisfy the resource contract.",
+          "code": "invalid_trust_confirmation"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "state-workspace-trust-required",
+      "operation": "POST /api/v1/sandboxes/{id}/workspaces",
+      "scenario": "instances_trust",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/sandboxes/sbx_route/workspaces",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "state-workspace-trust-required"
+        },
+        "body": {
+          "workspace_profile": {
+            "id": "wkp_contract",
+            "revision": 1
+          }
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/trust-confirmation-required",
+          "title": "trust confirmation required",
+          "status": 409,
+          "detail": "Confirm the exact commands digest before creating this resource.",
+          "code": "trust_confirmation_required",
+          "commands_digest": "16400ede5128cb695457291d1000d652cbe97ea78d90f79e95123ca5111f67ab"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "state-workspace-invalid-trust",
+      "operation": "POST /api/v1/sandboxes/{id}/workspaces",
+      "scenario": "instances_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/sandboxes/sbx_route/workspaces",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "state-workspace-invalid-trust"
+        },
+        "body": {
+          "workspace_profile": {
+            "id": "wkp_contract",
+            "revision": 1
+          },
+          "trust_confirmed": true
+        }
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-resource-request",
+          "title": "invalid resource request",
+          "status": 422,
+          "detail": "The request does not satisfy the resource contract.",
+          "code": "invalid_trust_confirmation"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    }
+  ]
+}

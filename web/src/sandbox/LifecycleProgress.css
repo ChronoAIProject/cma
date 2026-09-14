@@ -1,0 +1,48 @@
+.lifecycle-progress {
+  min-width: 0;
+  margin: 16px 0;
+  padding: 12px 0;
+  border-block: 1px solid var(--dsw-alias-border-l2);
+  color: var(--dsw-alias-label-secondary);
+  font: var(--dsw-font-s-14);
+  overflow-wrap: anywhere;
+}
+.lifecycle-progress p {
+  margin: 0 0 12px;
+}
+.lifecycle-progress .lifecycle-progress__stage {
+  color: var(--dsw-alias-label-primary);
+  font-weight: 600;
+}
+.lifecycle-progress__readings {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  margin-bottom: 12px;
+  font: var(--dsw-font-xs-13);
+  font-variant-numeric: tabular-nums;
+}
+.lifecycle-progress summary {
+  padding: 12px 0;
+  cursor: pointer;
+  color: var(--dsw-alias-label-primary);
+}
+.lifecycle-progress ol {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.lifecycle-progress li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  padding: 8px 0;
+}
+.lifecycle-progress li[aria-current='step'] {
+  color: var(--dsw-alias-label-primary);
+}
+@media (max-width: 30rem) {
+  .lifecycle-progress li {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

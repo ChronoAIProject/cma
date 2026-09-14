@@ -1,86 +1,69 @@
-# TypeScript Errors
+# Errors
 
-<!-- nav: 70 Errors -->
+<!-- nav: 10 Errors -->
 
-Every SDK-owned failure extends `CmaError`. Service refusals preserve HTTP status,
-stable problem code, and human detail; typed refusals add fields callers can act
-on. The SDK never infers a type from provider prose.
+All SDK failures derive from `CmaError`. `ApiError` represents a structured
+non-success response, `ProtocolError` rejects an invalid response boundary, and
+`TransportError` covers failures before an HTTP answer is available.
 
 ```ts
-import {
-  ApiError,
-  CapabilityRefused,
-  DeploymentAtCapacity,
-  RequestAborted,
-  createClient,
-} from '@chronoai/cma-sdk';
-
-const cma = createClient();
+import { ApiError, CmaError, createClient } from '@chronoai/cma-sdk';
 
 try {
-  await cma.steer('sesn_example', 'Change direction');
+  await createClient({ baseUrl: 'https://cma.example.com' }).readConformance();
 } catch (error) {
-  if (error instanceof CapabilityRefused) {
-    console.log('not granted', error.capability);
-  } else if (error instanceof DeploymentAtCapacity) {
-    console.log(error.freeCpuMillis, error.freeMemoryMib);
-  } else if (error instanceof RequestAborted) {
-    console.log('cancelled by caller');
-  } else if (error instanceof ApiError) {
-    console.log(error.status, error.code, error.requestId, error.retryAfterMs, error.message);
+  if (error instanceof ApiError) {
+    console.error(error.status, error.code, error.requestId);
+  } else if (error instanceof CmaError) {
+    console.error(error.name, error.message);
   } else {
     throw error;
   }
 }
 ```
 
-| Error                   | Meaning                                                   | Retry decision                                            |
-| ----------------------- | --------------------------------------------------------- | --------------------------------------------------------- |
-| `CapabilityRefused`     | This session permanently lacks the named capability       | Never for this session                                    |
-| `SessionLimitReached`   | The owner already holds the live-session limit            | Stop a session or obtain the explicit exemption           |
-| `DeploymentAtCapacity`  | Declared free CPU or memory is below the request          | Stop a session or request a smaller size                  |
-| `ApiError`              | Structured non-success response                           | Inspect `status`, `code`, and `isRetryable`               |
-| `ValidationError`       | Caller input cannot be represented                        | Fix the request                                           |
-| `CredentialError`       | Credential callback failed or returned an invalid value   | Repair or refresh credential state                        |
-| `RequestIdError`        | Request-id provider failed or returned an invalid value   | Repair the provider                                       |
-| `ResponseObserverError` | Response observer threw or rejected                       | Repair the observer; the response was not otherwise read  |
-| `RequestAborted`        | The caller cancelled the operation                        | Retry only if the caller still wants it                   |
-| `TimeoutError`          | The configured request deadline elapsed                   | Outcome may be unknown                                    |
-| `TransportError`        | No valid HTTP answer was obtained                         | A later attempt may work                                  |
-| `ProtocolError`         | A success, problem, or stream frame violated the contract | Do not retry blindly; investigate version or server drift |
+`TimeoutError` and `RequestAborted` distinguish deadlines from deliberate
+caller cancellation. Credential, request-id, and response-observer callbacks
+also have dedicated errors.
 
-`ApiError` and its typed refusal subclasses expose the response's correlation id
-as `requestId`. That value comes only from the HTTP `X-Request-Id` response header,
-never from a `request_id` member in a problem body. A missing, blank, malformed, or
-otherwise unusable response header produces `undefined`; the SDK does not invent a
-response id or substitute the caller's request id.
+`ApiError.extensions` retains structured RFC 9457 fields; `field`, `path` and
+`reason` expose string extensions when supplied. Use `code` and extensions for
+behavior, never prose matching. `isRetryable` identifies HTTP 429 and server
+failures; it does not authorize creating a new command or changing its body.
 
-When the service returns a positive, representable RFC `Retry-After` value, the
-same errors expose its delay as `retryAfterMs`. Invalid, elapsed, zero, or
-timer-unrepresentable values produce `undefined`; callers must not manufacture an
-automatic retry deadline for a `429` that has none.
+Profile, instance, Trigger-authoring, Launch and service-connection commands
+require `idempotencyKey` containing 1 to 255 visible ASCII characters without
+spaces. The SDK never generates keys or retries commands automatically. After a
+timeout, lost response, protocol decoding failure or
+`idempotency_in_flight` / `idempotency_recovery_required` response, keep the
+original command body and key. A new key could duplicate admitted work. Follow
+the service's documented recovery procedure; do not treat HTTP 409 alone as
+proof that the operation was rejected before admission.
 
-A configured `responseObserver` runs for every received HTTP response before the
-SDK makes a retry decision or decodes the status or body. If the observer throws or
-rejects, the operation stops with `ResponseObserverError`, whose `cause` preserves
-the observer failure.
+`repeatChoiceFrom(error)` extracts and validates the existing Agent context from
+`trigger_repeat_choice_required`. Show that choice to the visitor; only their
+explicit Resume or New selection creates the next command with a fresh key.
+Other refusals must not become an implicit retry or default choice.
 
-## Retry discipline
+Trigger `save` and `publish` each have their own command key and exact
+`draft_version`. A successful Save followed by an uncertain Publish means retry
+the Publish, not the Save. Keep edited content during a version conflict, read
+the current document, then let the owner choose how to proceed.
 
-Unary TypeScript operations do not retry automatically. `ApiError.isRetryable` is
-true for `429`, `5xx`, and the self-resolving `409 session_rotating` refusal.
-Other `409` responses, including `session_terminated`, are not retryable.
-`TransportError.isRetryable` is also true, but these values are advice to the caller
-rather than an automatic replay. A caller may retry `session_rotating` after the
-in-progress plane change finishes. A caller retrying `429` waits at least
-`retryAfterMs`; when it is absent, retry remains an explicit user decision. For
-`POST /sessions/{id}/input`, a completed
-refusal remains bound to its `Idempotency-Key` for 24 hours; retry the intended
-input with a fresh key after readiness, because reusing the refused key replays
-the original `409`. AG-UI applies the same rule to an explicit `runId`. The SDK
-does not make either retry automatically.
+AG-UI `run` is an exception to the REST command-key shape: it submits one public
+run request and never resends it. `runId` is correlation, not proof that repeating
+the POST is safe. A run stream ending without `RUN_FINISHED` or `RUN_ERROR` has an
+unknown outcome. Recover with read-only `agui.replay` and durable resource reads;
+never manufacture a failed run because its transport was lost.
 
-The durable event stream performs its own bounded reconnects as documented in
-[Streaming](streaming.md). A server problem document that does not match the
-[REST error contract](../../../docs/API_REST.md#11-errors) becomes `ProtocolError`
-rather than an unreliable generic refusal.
+AG-UI replay reconnects only its GET, with bounded backoff, and advances its cursor
+only after the event callback resolves. A rejected callback is not acknowledged.
+Live `cma:live` content has no durable cursor and cannot be recovered by replay.
+Launch `stream` similarly acknowledges after the callback, but performs only one
+connection; the application owns bounded reconnect or polling fallback. Preserve
+the last successfully observed record during an outage.
+
+Operator settings use revision compare-and-swap rather than command keys, and
+operator retirement methods have no SDK idempotency-key parameter. An ambiguous
+operator write requires a fresh read before the operator chooses another action.
+No method's `isRetryable` result authorizes changing this recovery contract.
