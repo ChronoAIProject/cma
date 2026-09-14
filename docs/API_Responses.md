@@ -16,7 +16,7 @@ an Agent Sandbox. Creation requires a current authenticated credential in CMA's
 durable custody, bound to the requesting sign-in incarnation. Current history
 authorization is sufficient for reads, even when the command's original execution
 credential has been revoked. Shared history is supported; shared/organization
-command execution is not enabled until its separate custody adapter is composed.
+command admission remains unavailable.
 
 | Method and route | Behavior |
 |---|---|
