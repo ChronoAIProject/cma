@@ -27,7 +27,6 @@ pub use agent::{
 pub use common::{
     AgentProfileRef, ProfileError, ProfileVisibility, SandboxProfileRef, WorkspaceProfileRef,
 };
-pub use connections::{is_codex_connection, CODEX_SUBSCRIPTION_CONNECTION, PUBLIC_CODEX_SERVICE};
 pub use digest::content_digest;
 pub use marketplace::{
     require_trust_confirmation, ForkedProfile, MarketplaceEntry, MarketplaceError, MarketplaceKind,

@@ -57,9 +57,16 @@ jobs:
       - name: Fail-closed fixtures and cleanup mechanics
         working-directory: web
         run: npm run test -- e2e/environment.test.ts e2e/owner-mechanics.test.ts
+      - name: Use supported Node LTS for the pinned browser harness
+        uses: actions/setup-node@v6
+        with:
+          # Playwright 1.58.2 stalls extracting its Chromium archive on Node 26.
+          node-version: 24.15.0
       - name: Install pinned local browser
         timeout-minutes: 10
         working-directory: web
+        env:
+          DEBUG: pw:install
         run: npx --no-install playwright install --with-deps chromium
       - name: Local browser guard mechanics
         working-directory: web

@@ -189,7 +189,7 @@ impl ServiceConnectionBroker for StubBroker {
             return Err(ServiceConnectionError::Unavailable("offline".into()));
         }
         let mut requirements = state.requirements.clone();
-        let public = ServiceId::new(crate::profiles::PUBLIC_CODEX_SERVICE);
+        let public = ServiceId::new(AgentProvider::default().connection_services().managed);
         // These fixtures have an already-connected managed model provider.
         // Individual tests can override it explicitly with a missing state.
         if services.contains(&public)
