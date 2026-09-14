@@ -15,6 +15,10 @@ pub struct AgentEventStreamAuthorization {
 }
 
 impl AgentEventStreamAuthorization {
+    pub(crate) fn resource(&self) -> (&AuthorizedResource, &AgentId, bool) {
+        (&self.held, &self.id, self.personal_caller.is_some())
+    }
+
     pub fn revalidation_deadline(&self) -> Option<tokio::time::Instant> {
         self.held
             .decision
@@ -47,6 +51,8 @@ impl AgentEventStreamAuthorization {
 /// history. Parent configuration, native conversation and credentials are absent.
 pub struct AgentEventStreamSnapshot {
     pub id: AgentId,
+    pub created_at: String,
+    pub model: Option<String>,
     pub runtime_generation: Option<u64>,
     pub active_turn: Option<u64>,
     pub head: u64,
@@ -113,6 +119,8 @@ impl AgentReadService {
         fold_agent_log(&agent, &entries).map_err(AgentReadError::Corrupt)?;
         Ok(AgentEventStreamSnapshot {
             id: agent.id,
+            created_at: agent.created_at,
+            model: agent.profile.content.model,
             runtime_generation: agent.conversation.runtime_generation,
             active_turn: agent.conversation.active_turn,
             head: agent.conversation.last_seq,

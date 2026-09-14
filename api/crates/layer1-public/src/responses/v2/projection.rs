@@ -1,0 +1,251 @@
+use super::super::{
+    InputTokenDetails, OutputMessage, OutputText, OutputTokenDetails, ResponseError, ResponseUsage,
+};
+use layer2_core::sandbox::{
+    agent_io::{AgentResponseReading, AgentResponseStatus, CommandFailureCode},
+    AgentEventStreamSnapshot, AgentLogKind,
+};
+use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
+use std::collections::BTreeMap;
+use utoipa::ToSchema;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum V2ResponseStatus {
+    Queued,
+    InProgress,
+    Completed,
+    Failed,
+    Incomplete,
+}
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct ResponseConversation {
+    pub id: String,
+}
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct V2ResponseObject {
+    pub id: String,
+    pub object: &'static str,
+    pub created_at: u64,
+    pub completed_at: Option<u64>,
+    pub conversation: ResponseConversation,
+    pub status: V2ResponseStatus,
+    pub background: bool,
+    pub error: Option<ResponseError>,
+    pub incomplete_details: Option<Value>,
+    pub instructions: Option<String>,
+    pub max_output_tokens: Option<u64>,
+    pub model: String,
+    pub output: Vec<OutputMessage>,
+    pub parallel_tool_calls: bool,
+    pub previous_response_id: Option<String>,
+    pub reasoning: Value,
+    pub store: bool,
+    pub temperature: Option<f64>,
+    pub text: Value,
+    pub tool_choice: &'static str,
+    pub tools: Vec<Value>,
+    pub top_p: Option<f64>,
+    pub truncation: &'static str,
+    pub usage: Option<ResponseUsage>,
+    pub metadata: BTreeMap<String, String>,
+}
+impl V2ResponseObject {
+    pub(super) fn terminal(&self) -> bool {
+        matches!(
+            self.status,
+            V2ResponseStatus::Completed | V2ResponseStatus::Failed | V2ResponseStatus::Incomplete
+        )
+    }
+}
+pub(super) fn project(
+    reading: AgentResponseReading,
+    snapshot: &AgentEventStreamSnapshot,
+) -> Option<V2ResponseObject> {
+    let command = reading.command;
+    if command.receipt.agent_id != snapshot.id {
+        return None;
+    }
+    let mut response = V2ResponseObject {
+        id: command.receipt.response_id?.to_string(),
+        object: "response",
+        created_at: layer2_core::seconds_from_rfc3339(&command.receipt.admitted_at)?,
+        completed_at: None,
+        conversation: ResponseConversation {
+            id: snapshot.id.to_string(),
+        },
+        status: match command.status {
+            AgentResponseStatus::Queued => V2ResponseStatus::Queued,
+            AgentResponseStatus::InProgress | AgentResponseStatus::WaitingAction => {
+                V2ResponseStatus::InProgress
+            }
+            AgentResponseStatus::Completed => V2ResponseStatus::Completed,
+            AgentResponseStatus::Failed => V2ResponseStatus::Failed,
+            AgentResponseStatus::Cancelled => V2ResponseStatus::Incomplete,
+        },
+        background: false,
+        error: command.failure.map(|code| ResponseError {
+            code: failure_code(code).into(),
+            message: "The admitted Agent command could not complete.".into(),
+        }),
+        incomplete_details: (command.status == AgentResponseStatus::Cancelled)
+            .then(|| json!({"reason":"interrupted"})),
+        instructions: None,
+        max_output_tokens: None,
+        model: snapshot
+            .model
+            .clone()
+            .unwrap_or_else(|| "deployment-default".into()),
+        output: vec![],
+        parallel_tool_calls: false,
+        previous_response_id: None,
+        reasoning: json!({"effort":null,"summary":null}),
+        store: true,
+        temperature: None,
+        text: json!({"format":{"type":"text"},"verbosity":"medium"}),
+        tool_choice: "none",
+        tools: vec![],
+        top_p: None,
+        truncation: "disabled",
+        usage: None,
+        metadata: reading.metadata,
+    };
+    let Some(turn) = command.turn_sequence else {
+        return Some(response);
+    };
+    let start = snapshot.history.iter().position(|entry| entry.seq == turn && matches!(entry.kind, Some(AgentLogKind::TurnStarted { turn_sequence, .. }) if turn_sequence == turn))?;
+    for entry in snapshot.history.iter().skip(start + 1) {
+        match &entry.kind {
+            Some(AgentLogKind::TurnStarted { .. }) => break,
+            Some(AgentLogKind::AgentMessage { content }) => response.output.push(OutputMessage {
+                id: super::super::retrieve::output_id(&snapshot.id, turn, response.output.len()),
+                kind: "message",
+                status: "completed",
+                role: "assistant",
+                content: vec![OutputText {
+                    kind: "output_text",
+                    text: content.clone(),
+                    annotations: vec![],
+                    logprobs: vec![],
+                }],
+            }),
+            Some(AgentLogKind::Usage {
+                input_tokens,
+                output_tokens,
+                ..
+            }) => {
+                response.usage = Some(ResponseUsage {
+                    input_tokens: *input_tokens,
+                    output_tokens: *output_tokens,
+                    total_tokens: input_tokens.saturating_add(*output_tokens),
+                    input_tokens_details: InputTokenDetails::default(),
+                    output_tokens_details: OutputTokenDetails::default(),
+                })
+            }
+            Some(AgentLogKind::TurnCompleted { turn_sequence }) if *turn_sequence == turn => {
+                response.status = V2ResponseStatus::Completed;
+                response.completed_at = layer2_core::seconds_from_rfc3339(&entry.appended_at);
+                response.error = None;
+                response.incomplete_details = None;
+            }
+            Some(AgentLogKind::TurnFailed {
+                turn_sequence,
+                failure,
+            }) if *turn_sequence == turn => {
+                response.status = V2ResponseStatus::Failed;
+                response.error = Some(ResponseError {
+                    code: failure.class.clone(),
+                    message: failure.detail.clone(),
+                });
+            }
+            Some(AgentLogKind::TurnInterrupted { turn_sequence, .. }) if *turn_sequence == turn => {
+                response.status = V2ResponseStatus::Incomplete;
+                response.incomplete_details = Some(json!({"reason":"interrupted"}));
+            }
+            _ => {}
+        }
+    }
+    Some(response)
+}
+fn failure_code(code: CommandFailureCode) -> &'static str {
+    match code {
+        CommandFailureCode::QueueTimeout => "agent_command_queue_timeout",
+        CommandFailureCode::AuthorityRevoked => "agent_command_authority_revoked",
+        CommandFailureCode::AuthorityUnavailable => "agent_command_authority_unavailable",
+        CommandFailureCode::AgentUnavailable => "agent_unavailable",
+        CommandFailureCode::TargetTurnChanged => "target_turn_changed",
+        CommandFailureCode::RuntimeUnavailable => "runtime_unavailable",
+        CommandFailureCode::RuntimeLost => "runtime_lost",
+        CommandFailureCode::ExecutionFailed => "agent_command_execution_failed",
+    }
+}
+
+/// Deterministic events over durable messages. Polling, reconnect and HTTP aliases
+/// cannot alter event numbering or introduce provider-private event shapes.
+pub(super) fn events(response: &V2ResponseObject, bound: bool) -> Vec<Value> {
+    let mut events = Vec::new();
+    let mut push = |kind: &str, mut body: Value| {
+        body["type"] = kind.into();
+        body["sequence_number"] = events.len().into();
+        events.push(body);
+    };
+    let mut opening = response.clone();
+    opening.status = V2ResponseStatus::Queued;
+    opening.output.clear();
+    opening.error = None;
+    opening.incomplete_details = None;
+    opening.completed_at = None;
+    opening.usage = None;
+    push("response.created", json!({"response":opening}));
+    if bound {
+        opening.status = V2ResponseStatus::InProgress;
+        push("response.in_progress", json!({"response":opening}));
+    }
+    for (index, item) in response.output.iter().enumerate() {
+        let mut empty = item.clone();
+        empty.status = "in_progress";
+        empty.content.clear();
+        push(
+            "response.output_item.added",
+            json!({"output_index":index,"item":empty}),
+        );
+        for (content_index, part) in item.content.iter().enumerate() {
+            let mut empty = part.clone();
+            empty.text.clear();
+            push(
+                "response.content_part.added",
+                json!({"output_index":index,"item_id":item.id,"content_index":content_index,"part":empty}),
+            );
+            if !part.text.is_empty() {
+                push(
+                    "response.output_text.delta",
+                    json!({"output_index":index,"item_id":item.id,"content_index":content_index,"delta":part.text,"logprobs":[]}),
+                );
+            }
+            push(
+                "response.output_text.done",
+                json!({"output_index":index,"item_id":item.id,"content_index":content_index,"text":part.text,"logprobs":[]}),
+            );
+            push(
+                "response.content_part.done",
+                json!({"output_index":index,"item_id":item.id,"content_index":content_index,"part":part}),
+            );
+        }
+        push(
+            "response.output_item.done",
+            json!({"output_index":index,"item":item}),
+        );
+    }
+    if response.terminal() {
+        push(
+            match response.status {
+                V2ResponseStatus::Completed => "response.completed",
+                V2ResponseStatus::Failed => "response.failed",
+                _ => "response.incomplete",
+            },
+            json!({"response":response}),
+        );
+    }
+    events
+}
