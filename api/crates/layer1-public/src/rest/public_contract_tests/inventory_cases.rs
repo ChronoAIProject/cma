@@ -132,6 +132,14 @@ struct FailingInventory {
 }
 #[async_trait::async_trait]
 impl ResourceAccessStore for FailingInventory {
+    async fn organization_sandboxes(
+        &self,
+        _organization: &layer2_core::SubjectId,
+        _query: &layer2_core::sandbox::OwnerSandboxQuery,
+    ) -> Result<Vec<ResourceAccessSnapshot>, ResourceAccessStoreError> {
+        Err(self.error.clone())
+    }
+
     async fn organization_agents(
         &self,
         _: &SubjectId,

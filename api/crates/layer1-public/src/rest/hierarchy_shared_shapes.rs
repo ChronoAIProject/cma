@@ -242,3 +242,52 @@ impl From<WorkspaceHierarchyReading> for AccessibleWorktreeListView {
         }
     }
 }
+
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(untagged)]
+pub(crate) enum AccessibleSandboxSummaryView {
+    Personal(Box<super::instances_openapi_shapes::OwnerSandboxSummaryView>),
+    Shared(SharedSandboxSummaryView),
+}
+#[derive(Debug, Serialize, ToSchema)]
+pub(crate) struct AccessibleSandboxPageView {
+    pub items: Vec<AccessibleSandboxSummaryView>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub next: Option<String>,
+}
+#[derive(Debug, Serialize, ToSchema)]
+pub(crate) struct SharedSandboxSummaryView {
+    access: SharedAccess,
+    id: String,
+    name: String,
+    #[schema(value_type = String)]
+    status: SandboxStatus,
+    created_at: String,
+    updated_at: String,
+    last_activity_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    retired_at: Option<String>,
+    workspace_count: u64,
+    worktree_count: u64,
+    agent_count: u64,
+}
+impl From<SandboxInventoryReading> for AccessibleSandboxSummaryView {
+    fn from(value: SandboxInventoryReading) -> Self {
+        match value {
+            SandboxInventoryReading::Personal(value) => Self::Personal(Box::new((*value).into())),
+            SandboxInventoryReading::Shared(value) => Self::Shared(SharedSandboxSummaryView {
+                access: SharedAccess::Shared,
+                id: value.id.to_string(),
+                name: value.name,
+                status: value.status,
+                created_at: value.created_at,
+                updated_at: value.updated_at,
+                last_activity_at: value.last_activity_at,
+                retired_at: value.retired_at,
+                workspace_count: value.counts.workspaces,
+                worktree_count: value.counts.worktrees,
+                agent_count: value.counts.agents,
+            }),
+        }
+    }
+}

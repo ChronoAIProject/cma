@@ -9,6 +9,7 @@ mod inventory;
 mod lineage;
 mod personal;
 mod policy;
+mod sandbox_inventory;
 mod service;
 mod share;
 mod share_command;

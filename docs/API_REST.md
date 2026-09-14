@@ -593,7 +593,7 @@ above applies even when an operation annotates only its principal responses.
 
 | Operation | Body / Key | Query | Response |
 |---|---|---|---|
-| `GET /api/v1/sandboxes` | - | status, cursor, limit | 200 OwnerSandboxPageView |
+| `GET /api/v1/sandboxes` | - | organization, status, cursor, limit | 200 AccessibleSandboxPageView |
 | `POST /api/v1/sandboxes` | CreateSandboxRequest; key | - | 201 SandboxView |
 | `GET /api/v1/sandboxes/{id}` | - | - | 200 AccessibleSandboxDetailView |
 | `GET /api/v1/sandboxes/{id}/snapshots/{epoch}/download` | - | - | 200 application/octet-stream attachment; owner-authenticated latest completed snapshot |
@@ -703,6 +703,18 @@ policy returns `resource_access_changed`, and unavailable/expired membership
 returns `organization_authority_unavailable` without partial data.
 
 `GET /api/v1/sandboxes` remains a personal collection. Explicit organization
-ownership is excluded before pagination, including lookahead. Organization
-Sandbox discovery and admission remain to implement. Snapshot download remains
+ownership is excluded before pagination, including lookahead. An explicit `organization` filter selects organization-owned
+and whole-Sandbox-shared resources under current membership. Organization
+ownership admission remains to implement. Snapshot download remains
 personal-only: hierarchy metadata visibility does not grant whole-home export.
+
+`GET /api/v1/sandboxes?organization=<canonical ID>` returns an
+`AccessibleSandboxPageView`. Each item is the compatible personal summary for
+its personal owner or a safe shared summary with `access: "shared"`, Sandbox
+ID/name/status/timestamps and authorized child counts. Child names/IDs are
+available through separately authorized hierarchy detail/list reads. A narrow
+Agent grant never supplies a Sandbox inventory candidate. Current organization
+membership is required even for an empty page; failures do not become a false
+successful empty scope. Ownership and whole-Sandbox grants are filtered and
+deduplicated before pagination. The hidden lookahead and held evidence are
+checked after count IO, before releasing either rows or `next`.

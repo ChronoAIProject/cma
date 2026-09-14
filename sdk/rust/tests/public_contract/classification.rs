@@ -14,6 +14,14 @@ pub enum Classification {
 // against its source shape or the SDK's real preflight, then its shared error is decoded.
 pub const LOCAL_CASES: &[(&str, Classification)] = &[
     (
+        "sandbox-inventory-status-invalid",
+        Classification::TypedShape,
+    ),
+    (
+        "sandbox-inventory-invalid-owner",
+        Classification::QueryShape,
+    ),
+    (
         "org-inventory-invalid-authority-injection",
         Classification::QueryShape,
     ),
@@ -770,6 +778,7 @@ pub fn assert_unrepresentable(case: &Case, class: Classification) {
                 return;
             }
             let allowed: &[&str] = match case.operation.as_str() {
+                "GET /api/v1/sandboxes" => &["organization", "status", "cursor", "limit"],
                 "GET /api/v1/agents" => &[
                     "organization",
                     "sandbox",

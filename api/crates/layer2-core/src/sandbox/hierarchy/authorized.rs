@@ -93,7 +93,7 @@ impl HierarchyReadService {
         self.worktree_held(&held, id).await
     }
 
-    fn access(&self) -> Result<&ResourceAccessService, HierarchyReadError> {
+    pub(super) fn access(&self) -> Result<&ResourceAccessService, HierarchyReadError> {
         self.access.as_deref().ok_or_else(|| {
             HierarchyReadError::Unavailable("resource access service is not composed".into())
         })
@@ -157,7 +157,7 @@ impl HierarchyReadService {
         .map_err(access_error)
     }
 
-    async fn sandbox_held(
+    pub(super) async fn sandbox_held(
         &self,
         held: &AuthorizedResource,
         id: &SandboxId,
@@ -259,7 +259,7 @@ impl HierarchyReadService {
     }
 }
 
-fn personal(held: &AuthorizedResource, caller: &Caller) -> bool {
+pub(super) fn personal(held: &AuthorizedResource, caller: &Caller) -> bool {
     match &held.snapshot.policy {
         Some(policy) => {
             matches!(&policy.owner, ResourceOwner::Person { subject } if subject == &caller.subject)

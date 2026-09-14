@@ -99,3 +99,27 @@ describe('shared hierarchy projections', () => {
     }
   });
 });
+
+it('parses shared Sandbox inventory without accepting it as personal configuration', async () => {
+  const test = transport();
+  const { workspaces, ...safe } = sandbox;
+  expect(workspaces).toHaveLength(1);
+  test.answer({ items: [safe], next: safe.id });
+  expect(
+    (
+      await test.client.sandboxes.listAccessible({
+        organization: 'org',
+        status: 'active',
+        limit: 1,
+      })
+    ).items,
+  ).toEqual([safe]);
+  expect(test.calls.at(-1)?.url).toContain('/sandboxes?limit=1&status=active&organization=org');
+  await expect(test.client.sandboxes.list()).rejects.toBeInstanceOf(ProtocolError);
+  for (const access of ['future', null]) {
+    test.answer({ items: [{ ...safe, access }] });
+    await expect(
+      test.client.sandboxes.listAccessible({ organization: 'org' }),
+    ).rejects.toBeInstanceOf(ProtocolError);
+  }
+});

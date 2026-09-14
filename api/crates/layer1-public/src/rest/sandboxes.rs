@@ -13,15 +13,16 @@ use layer2_core::sandbox::{CreateSandbox, OwnerSandboxQuery, SandboxOrigin, Sand
 use layer2_core::{Capability, SandboxId, SandboxProfileId};
 use serde::Deserialize;
 
-use super::hierarchy_shared_shapes::AccessibleSandboxDetailView;
+use super::hierarchy_shared_shapes::{
+    AccessibleSandboxDetailView, AccessibleSandboxPageView, AccessibleSandboxSummaryView,
+};
 use crate::{AuthenticatedCaller, AuthenticatedResourceCaller, DelegatedCredential};
 use layer2_core::sandbox::SandboxHierarchyReading;
 
 use super::idempotency::{IdempotencyKey, RequestBody};
 use super::instances::{confirmed_digest, execute_command, execute_empty_command, HierarchyState};
 use super::instances_openapi_shapes::{
-    CreateSandboxRequest, OwnerSandboxPageView, OwnerSandboxSummaryView, SandboxEventView,
-    SandboxView,
+    CreateSandboxRequest, OwnerSandboxSummaryView, SandboxEventView, SandboxView,
 };
 use super::instances_problem::HierarchyProblem;
 use super::BodyProblem;
@@ -32,6 +33,7 @@ const DEFAULT_EVENT_LIMIT: u16 = 200;
 #[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct SandboxPageParams {
+    organization: Option<String>,
     status: Option<SandboxStatus>,
     cursor: Option<String>,
     limit: Option<u16>,
@@ -158,23 +160,62 @@ pub(super) async fn create(
     path = "/api/v1/sandboxes",
     tag = "sandboxes",
     params(
+        ("organization" = Option<String>, Query),
         ("status" = Option<String>, Query),
         ("cursor" = Option<String>, Query),
         ("limit" = Option<u16>, Query)
     ),
-    responses((status = 200, body = OwnerSandboxPageView))
+    responses((status = 200, body = AccessibleSandboxPageView))
 )]
 pub(super) async fn list(
     State(state): State<HierarchyState>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
+    resource: Option<AuthenticatedResourceCaller>,
     params: Result<Query<SandboxPageParams>, axum::extract::rejection::QueryRejection>,
-) -> Result<Json<OwnerSandboxPageView>, HierarchyProblem> {
+) -> Result<Json<AccessibleSandboxPageView>, HierarchyProblem> {
     let params = params.map_err(|_| HierarchyProblem::InvalidQuery)?.0;
     if params.cursor.as_ref().is_some_and(String::is_empty) {
         return Err(HierarchyProblem::InvalidPage);
     }
     let page = PageRequest::new(params.limit.unwrap_or(DEFAULT_PAGE_LIMIT), params.cursor)
         .map_err(|_| HierarchyProblem::InvalidPage)?;
+    if let Some(organization) = params.organization {
+        if organization.trim().is_empty()
+            || organization.len() > 128
+            || organization.trim() != organization
+        {
+            return Err(HierarchyProblem::InvalidQuery);
+        }
+        let resource = resource.ok_or(HierarchyProblem::Forbidden)?;
+        // Resolve only the caller's own display name before acquiring inventory
+        // evidence, so no directory IO can delay release past the final fence.
+        let names =
+            super::public_names::resolve(&state.users, std::slice::from_ref(&caller.subject)).await;
+        let stored = state
+            .hierarchy
+            .organization_list_authorized(
+                &resource.context,
+                resource.credential.as_ref().map(DelegatedCredential::value),
+                &layer2_core::SubjectId::new(organization),
+                &OwnerSandboxQuery {
+                    status: params.status,
+                    page,
+                },
+            )
+            .await
+            .map_err(HierarchyProblem::sandbox_read)?;
+        let mut items: Vec<AccessibleSandboxSummaryView> =
+            stored.items.into_iter().map(Into::into).collect();
+        for item in &mut items {
+            if let AccessibleSandboxSummaryView::Personal(value) = item {
+                value.sandbox.owner_name = names.get(&value.sandbox.owner).cloned();
+            }
+        }
+        return Ok(Json(AccessibleSandboxPageView {
+            items,
+            next: stored.next,
+        }));
+    }
     let page = state
         .hierarchy
         .list_sandboxes(
@@ -192,14 +233,14 @@ pub(super) async fn list(
         .map(|row| row.sandbox.owner.clone())
         .collect();
     let names = super::public_names::resolve(&state.users, &subjects).await;
-    Ok(Json(OwnerSandboxPageView {
+    Ok(Json(AccessibleSandboxPageView {
         items: page
             .items
             .into_iter()
             .map(|row| {
                 let mut view = OwnerSandboxSummaryView::from(row);
                 view.sandbox.owner_name = names.get(&view.sandbox.owner).cloned();
-                view
+                AccessibleSandboxSummaryView::Personal(Box::new(view))
             })
             .collect(),
         next: page.next,

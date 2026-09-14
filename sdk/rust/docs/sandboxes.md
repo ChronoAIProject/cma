@@ -96,4 +96,28 @@ A narrow Agent grant cannot reveal any parent or its counts. Whole-Sandbox or
 organization access is checked for each hierarchy request, including current
 policy after the read. Snapshot archive downloads remain personal-only. Default
 Sandbox inventory excludes explicit organization ownership before pagination;
-organization Sandbox discovery is not yet exposed.
+use `list_accessible` with an organization for explicit discovery.
+
+## Organization inventory
+
+```rust,no_run
+use cma_sdk::{Client, instances::AccessibleSandboxListOptions};
+# async fn inventory(client: &Client, organization: String) -> cma_sdk::Result<()> {
+let page = client.sandboxes().list_accessible(&AccessibleSandboxListOptions {
+    organization: Some(organization),
+    ..Default::default()
+}).await?;
+for sandbox in page.items {
+    println!("{}", sandbox.id());
+}
+# Ok(())
+# }
+```
+
+Organization-owned resources and whole-Sandbox grants enter this explicit scope
+under current canonical membership. Narrow Agent grants never reveal a parent
+or its counts. `AccessibleSandboxSummary::Personal` retains the full personal
+summary; `Shared` contains safe metadata/counts. Omit the organization to select
+personal inventory. The old `list` method keeps its personal type. Every page
+revalidates current policy and the hidden lookahead after count IO; changed or
+expired authority yields a typed error without partial rows or stale cursors.

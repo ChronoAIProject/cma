@@ -12,6 +12,7 @@ import {
 } from '../schema.js';
 import {
   sandboxDetail,
+  sandboxSummary,
   workspaceDetail,
   workspaceSummary,
   worktree,
@@ -20,6 +21,7 @@ import {
   worktreeStatus,
   agentStatus,
   type SandboxDetail,
+  type SandboxSummary,
   type WorkspaceDetail,
   type WorkspaceSummary,
   type Worktree,
@@ -52,6 +54,19 @@ export const sharedHierarchyAgent = object({
   status: agentStatus,
   title: optional(text),
   updated_at: text,
+});
+export const sharedSandboxSummary = object({
+  access: shared,
+  id: text,
+  name: text,
+  status: sandboxStatus,
+  created_at: text,
+  updated_at: text,
+  last_activity_at: text,
+  retired_at: optional(text),
+  workspace_count: integer,
+  worktree_count: integer,
+  agent_count: integer,
 });
 export const sharedSandboxDetail = object({
   access: shared,
@@ -111,4 +126,11 @@ export function accessibleWorkspaceSummary(value: unknown): AccessibleWorkspaceS
 }
 export function accessibleWorktree(value: unknown): AccessibleWorktree {
   return projection(value, worktree, sharedWorktree);
+}
+
+export type SharedSandboxSummary = Output<typeof sharedSandboxSummary>;
+export type AccessibleSandboxSummary =
+  (SandboxSummary & { readonly access?: never }) | SharedSandboxSummary;
+export function accessibleSandboxSummary(value: unknown): AccessibleSandboxSummary {
+  return projection(value, sandboxSummary, sharedSandboxSummary);
 }

@@ -254,3 +254,45 @@ async fn narrow_grants_membership_loss_and_malformed_context_conceal_every_paren
         );
     }
 }
+
+#[tokio::test]
+async fn organization_sandbox_pages_keep_personal_json_and_safe_shared_counts() {
+    let (fixture, _, authority, _) = fixture(true, Reply::Member).await;
+    let before = fixture
+        .store
+        .read_sandbox_hierarchy(&SandboxId("sbx_route".into()))
+        .await
+        .unwrap();
+    let personal =
+        agents::json_response(&fixture.router, request("/api/v1/sandboxes", "owner-a")).await;
+    let scoped = agents::json_response(
+        &fixture.router,
+        request("/api/v1/sandboxes?organization=org", "owner-a"),
+    )
+    .await;
+    assert_eq!(personal.0, StatusCode::OK);
+    assert_eq!(scoped, personal);
+    let (status, shared) = agents::json_response(
+        &fixture.router,
+        request("/api/v1/sandboxes?organization=org", "recipient"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_safe(&shared);
+    assert_eq!(shared["items"][0]["access"], "shared");
+    assert_eq!(shared["items"][0]["agent_count"], 2);
+    assert!(shared["items"][0].get("workspaces").is_none());
+    *authority.0.lock().unwrap() = Reply::Outage;
+    assert_eq!(
+        agents::json_response(&fixture.router, request("/api/v1/sandboxes", "owner-a")).await,
+        personal
+    );
+    assert_eq!(
+        fixture
+            .store
+            .read_sandbox_hierarchy(&SandboxId("sbx_route".into()))
+            .await
+            .unwrap(),
+        before
+    );
+}

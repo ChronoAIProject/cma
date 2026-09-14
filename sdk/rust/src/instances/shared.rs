@@ -6,6 +6,32 @@ string_enum! { /// Shared hierarchy projection marker.
     pub enum SharedHierarchyAccess { Shared => "shared" }
 }
 
+/// Shared Sandbox summary and authorized child counts.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct SharedSandboxSummary {
+    /// Explicit shared projection.
+    pub access: SharedHierarchyAccess,
+    /// CMA Sandbox identity.
+    pub id: String,
+    /// Display name.
+    pub name: String,
+    /// Durable lifecycle status.
+    pub status: SandboxStatus,
+    /// Creation timestamp.
+    pub created_at: String,
+    /// Last update timestamp.
+    pub updated_at: String,
+    /// Last activity timestamp.
+    pub last_activity_at: String,
+    /// Retirement timestamp, if retired.
+    pub retired_at: Option<String>,
+    /// Authorized Workspace count.
+    pub workspace_count: u64,
+    /// Authorized Worktree count.
+    pub worktree_count: u64,
+    /// Authorized Agent count.
+    pub agent_count: u64,
+}
 /// Shared Sandbox detail and authorized child counts.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct SharedSandboxDetail {
@@ -157,3 +183,11 @@ accessible!(
     id
 );
 accessible!(AccessibleWorktree, Worktree, SharedWorktree, id, id);
+
+accessible!(
+    AccessibleSandboxSummary,
+    SandboxSummary,
+    SharedSandboxSummary,
+    sandbox.id,
+    id
+);

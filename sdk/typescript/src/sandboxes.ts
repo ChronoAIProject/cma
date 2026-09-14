@@ -26,15 +26,35 @@ import {
   type SandboxStatus,
 } from './instances/types.js';
 import { sandboxEvent } from './instances/events.js';
-import { accessibleSandboxDetail } from './instances/shared.js';
+import { accessibleSandboxDetail, accessibleSandboxSummary } from './instances/shared.js';
 
 export interface SandboxListOptions extends PageOptions {
   readonly status?: SandboxStatus;
 }
 
+export interface AccessibleSandboxListOptions extends SandboxListOptions {
+  readonly organization?: string;
+}
+
 /** Owner-scoped Sandbox provisioning, hierarchy reads, and lifecycle commands. */
 export class Sandboxes {
   constructor(private readonly config: ResolvedConfig) {}
+
+  /** Personal inventory by default, or an explicit current organization scope. */
+  listAccessible(options: AccessibleSandboxListOptions = {}) {
+    if (options.status !== undefined) input(sandboxStatus, options.status);
+    return read(
+      this.config,
+      query('/api/v1/sandboxes', {
+        cursor: options.cursor,
+        limit: options.limit,
+        status: options.status,
+        organization: options.organization,
+      }),
+      page(accessibleSandboxSummary),
+      options,
+    );
+  }
 
   list(options: SandboxListOptions = {}) {
     if (options.status !== undefined) input(sandboxStatus, options.status);
