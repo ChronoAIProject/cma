@@ -13,6 +13,8 @@ mod claimed_service;
 mod command;
 mod event;
 mod evidence;
+pub(in crate::sandbox) mod execution_authority;
+pub(in crate::sandbox) mod execution_dispatch;
 mod input;
 mod lane;
 mod ledger;
@@ -42,6 +44,7 @@ pub use event::{
     AgentEphemeralEvent, AgentEvent, AgentEventKind, AgentMessageRole, AGENT_IO_SCHEMA_VERSION,
 };
 pub use evidence::CommandEvidence;
+pub use execution_authority::{CommandExecutionAuthorization, CommandExecutionFence};
 pub use input::{AgentAttachmentReference, AgentContent, AgentInput};
 pub use lane::{command_ready_for_claim, CommandLane};
 pub use ledger::{

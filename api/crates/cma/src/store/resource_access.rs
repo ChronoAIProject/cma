@@ -18,6 +18,14 @@ mod records;
 mod sandbox_inventory;
 mod snapshot;
 
+pub(super) async fn read_execution_snapshot(
+    store: &MongoSandboxStore,
+    target: &ResourceTarget,
+    session: &mut mongodb::ClientSession,
+) -> Result<ResourceAccessSnapshot, ReadError> {
+    snapshot::read(store, target, session).await
+}
+
 pub(super) fn read_inventory_policy(
     document: &Document,
 ) -> Result<layer2_core::resource_access::ResourcePolicyRecord, ResourceAccessStoreError> {

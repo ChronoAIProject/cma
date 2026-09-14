@@ -53,6 +53,7 @@ pub(super) fn message_mutation(
     next.conversation.last_seq += 4;
     AgentConversationMutation {
         command_claim: Some(claim.clone()),
+        execution_fence: None,
         admission_guard: Some(SandboxMutationGuard::capture(parent)),
         expected_agent_revision: agent.revision,
         expected_last_seq: agent.conversation.last_seq,
@@ -318,6 +319,7 @@ async fn identical_control_logs_do_not_prove_a_different_command_committed() {
     );
     let mutation = AgentConversationMutation {
         command_claim: Some(claim.clone()),
+        execution_fence: None,
         admission_guard: Some(SandboxMutationGuard::capture(&parent)),
         expected_agent_revision: working.revision,
         expected_last_seq: working.conversation.last_seq,

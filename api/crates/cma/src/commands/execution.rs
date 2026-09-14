@@ -169,9 +169,20 @@ impl AgentCommandExecution for PersonalCommandExecution {
         {
             return CommandAttempt::Retry;
         }
+        let authority = match self
+            .access
+            .authorize_personal_command_execution(&caller, &current.receipt.envelope)
+            .await
+        {
+            Ok(authority) => authority,
+            Err(ResourceAccessError::Access(_)) => {
+                return CommandAttempt::Reject(CommandFailureCode::AuthorityRevoked)
+            }
+            Err(_) => return CommandAttempt::Retry,
+        };
         match self
             .operations
-            .execute_claimed_command(&caller, &current)
+            .execute_resource_claim(&authority, &current)
             .await
         {
             Ok(_) => CommandAttempt::Finished,

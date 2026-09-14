@@ -22,7 +22,13 @@ pub(super) fn bind_dispatch(
         .agents
         .get(&claim.agent_id)
         .ok_or(SandboxStoreError::Conflict)?;
-    if let Some(policy) = state.resource_policies.get(&current.sandbox_id) {
+    if let Some(fence) = &mutation.execution_fence {
+        let snapshot = super::resource_access::snapshot(state, &fence.target())
+            .map_err(|_| SandboxStoreError::Conflict)?;
+        fence
+            .validate_snapshot(&snapshot)
+            .map_err(|_| SandboxStoreError::Conflict)?;
+    } else if let Some(policy) = state.resource_policies.get(&current.sandbox_id) {
         let sandbox = state
             .sandboxes
             .get(&current.sandbox_id)

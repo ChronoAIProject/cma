@@ -65,7 +65,11 @@ async fn fixture(client: &Client, name: &str) -> (MongoSandboxStore, ResourceTar
     }
     (store, ResourceTarget::Agent { agent_id: agent.id })
 }
-fn mutation(snapshot: &ResourceAccessSnapshot, key: &str, mode: ShareMode) -> ShareMutation {
+pub(super) fn mutation(
+    snapshot: &ResourceAccessSnapshot,
+    key: &str,
+    mode: ShareMode,
+) -> ShareMutation {
     ShareMutation {
         selector: match &snapshot.lineage.agent {
             Some(agent) => ResourceSelector::Agent {

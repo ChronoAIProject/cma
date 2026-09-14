@@ -9,6 +9,21 @@ use super::super::sandbox_mongo::{signed, MongoSandboxStore, DOCUMENT_SCHEMA_VER
 use super::super::sandboxes::{read_sandbox, sandbox_replacement_fields};
 use super::ApplyError;
 
+pub(super) async fn require_current(
+    mutation: &AgentConversationMutation,
+    session: &mut ClientSession,
+) -> Result<(), SandboxStoreError> {
+    if mutation
+        .execution_fence
+        .as_ref()
+        .is_some_and(|fence| fence.require_current().is_err())
+    {
+        let _ = session.abort_transaction().await;
+        return Err(SandboxStoreError::Conflict);
+    }
+    Ok(())
+}
+
 pub(super) async fn validate_and_fence(
     store: &MongoSandboxStore,
     current: &Agent,
@@ -33,7 +48,18 @@ pub(super) async fn validate_and_fence(
     let Some(mut parent) = parent else {
         return Ok(());
     };
-    if mutation.command_claim.is_some() {
+    if let Some(fence) = &mutation.execution_fence {
+        use super::super::resource_access::{read_execution_snapshot, ReadError};
+        let snapshot = read_execution_snapshot(store, &fence.target(), session)
+            .await
+            .map_err(|error| match error {
+                ReadError::Driver(error) => ApplyError::Driver(error),
+                ReadError::Domain(_) => ApplyError::Domain(SandboxStoreError::Conflict),
+            })?;
+        fence
+            .validate_snapshot(&snapshot)
+            .map_err(|_| ApplyError::Domain(SandboxStoreError::Conflict))?;
+    } else if mutation.command_claim.is_some() {
         let policy = store
             .resource_policies
             .find_one(doc! { "_id": parent.id.as_str() })
