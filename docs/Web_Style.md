@@ -666,11 +666,30 @@ smaller of 525px and 82% of the axis. The Agent message is unboxed at 16/28.
 Use the existing markdown parser and theme tokens. Tables and code scroll within
 their own bounds; long words and links cannot widen the reading axis.
 
-Reasoning and tool activity use one Thinking disclosure per turn. Reasoning is
-live-only and never presented as recovered history. Durable tool activity survives
-reload, uses kind, target, status, and reported duration, and never invents missing
-arguments or results. Tool bodies are absent unless the public contract explicitly
-records and projects them. Unknown duration is not zero.
+One active Thinking disclosure sits outside the conversation scrollport, on the
+same reading axis directly above the composer and its quick messages. Incoming
+text and manual history scrolling cannot move it out of view. Its 44px control
+places the existing compact, rotating running CMA character before Thinking,
+followed by elapsed seconds and a single-line current-activity preview. Clicking
+or keyboard activation opens the existing 120px capped body, containing current
+live reasoning and only pending or running tool calls. The character follows
+the shared visibility, static fallback and reduced-motion behavior in §23.
+The elapsed figure comes from the recorded active turn's start timestamp, so
+navigation, reload and reconnect do not reset it. A new turn uses its own start;
+an unavailable timestamp leaves the duration unstated rather than inventing zero.
+Thinking leaves the dock when the turn finishes, fails or stops. Reasoning is
+live-only and never presented as recovered history.
+
+Each settled tool call has its own neutral, 8px-radius bordered container in the
+message timeline, inserted at its completion position and retained on reload.
+Use 12px padding and the existing 16px entry rhythm. Show the recorded title,
+kind, written status and reported duration with wrapping text; failed and stopped
+calls remain individually inspectable. A call left pending by an ended turn
+states that its outcome was not reported, without inventing success or failure.
+Tool activity never invents missing arguments or results. Tool bodies are absent
+unless the public contract supplies them, use bounded disclosure when present,
+and unknown duration is not zero. Live and replayed activity reconcile by call
+identity without duplicate cards or regression to pending after completion.
 
 AG-UI identifies the thread by Agent id and the run by durable turn sequence.
 Live content can arrive without a preceding START frame. It must be visible
@@ -1590,10 +1609,11 @@ The Agent composer restores the baseline 22px-radius capsule, 12px internal
 gap, full-width 16/24 textarea growing to fourteen lines, and a separate lower row.
 The 34px circular Send control becomes a neutral circular Stop control in the
 same seat. On narrow screens its visible circle remains 34px inside a transparent
-44px hit area contained by the existing 44px grid seat. The established Thinking row
-and 120px capped disclosure return, grouping live reasoning and durable tools
-by turn. Tool output is disclosed only when actually supplied; live reasoning
-is never fabricated on reload. The neutral sweep stops when the turn ends.
+44px hit area contained by the existing 44px grid seat. The Thinking disclosure
+retains its 120px capped body, with the active dock, compact rotating character,
+restored elapsed time and separate completed tool containers specified in §13.
+Tool output is disclosed only when actually supplied; live reasoning
+is never fabricated on reload. The character stops when the turn ends.
 Message role labels return outside the owner's bubble at 12/18 with an 8px
 gap; turns keep the baseline 16px rhythm. Thinking adds no extra bottom margin.
 Required small text uses caption ink. This is an explicit accessibility
@@ -1751,3 +1771,4 @@ Append-only. Never edit or delete an entry.
 | 2026-09-09 | Keep the signed-out ChronoAI Managed Agent title on one responsive line. Widen the landing lockup, enlarge the cloud invitation to 264px by 88px, and use matching bold Shrikhand at 24px inside it, preserving the existing activation and signed-in character behavior. |
 | 2026-09-09 | Add shared showing and dismissal fades for notification messages and dialogs, retaining only an inert exit frame, releasing focus immediately, cancelling stale dismissal on reopen, and honoring reduced motion without changing message semantics or geometry. |
 | 2026-09-09 | Add the Sandbox Profile Availability band with public-only warmup, a one-to-five target and Always keep alive, using existing fields and checkbox rows. Clarify the editable private-copy Marketplace action and its fresh Sandbox provisioning behavior. |
+| 2026-09-14 | Keep active Thinking visible above the composer with the rotating compact CMA character and elapsed time restored from the recorded turn start. Limit its disclosure to live reasoning and pending tools; show each settled tool in its own chronological container, preserving replay identity, unknown outcomes and accessible bounded details. |
