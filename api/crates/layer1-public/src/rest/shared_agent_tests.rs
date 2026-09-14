@@ -47,9 +47,26 @@ impl OrganizationAuthority for Authority {
     async fn organization_choices(
         &self,
         _: &Caller,
-        _: &str,
+        credential: &str,
     ) -> Result<Vec<OrganizationChoice>, MembershipError> {
-        unreachable!()
+        assert_eq!(credential, "request-credential");
+        match *self.0.lock().unwrap() {
+            Reply::Outage => return Err(MembershipError::Unavailable),
+            Reply::Missing => return Ok(Vec::new()),
+            Reply::Member => (),
+        }
+        Ok(vec![
+            OrganizationChoice {
+                id: SubjectId::new("org-two"),
+                role: OrganizationRole::Member,
+                display_name: None,
+            },
+            OrganizationChoice {
+                id: SubjectId::new("org"),
+                role: OrganizationRole::Viewer,
+                display_name: Some("Example organization".into()),
+            },
+        ])
     }
 }
 

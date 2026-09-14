@@ -1,4 +1,4 @@
-//! Owner-scoped CMA Agent collection, detail, creation, and deletion routes.
+//! CMA Agent collection, detail, creation, and deletion routes.
 
 use std::{future::Future, sync::Arc};
 
@@ -16,14 +16,14 @@ use layer2_core::sandbox::{
     AgentStatus, CreateAgent,
 };
 use layer2_core::{
-    AgentId, AgentProfileId, Caller, Capability, OperationStore, SandboxId, WorkspaceId,
+    AgentId, AgentProfileId, Caller, Capability, OperationStore, SandboxId, SubjectId, WorkspaceId,
 };
 use serde::Deserialize;
 
-use super::agent_openapi_shapes::{
-    AgentListItemView, AgentPageView, AgentView, CreateAgentRequest,
+use super::agent_openapi_shapes::{AgentListItemView, AgentView, CreateAgentRequest};
+use super::agent_shared_shapes::{
+    AccessibleAgentListItemView, AccessibleAgentPageView, AccessibleAgentView,
 };
-use super::agent_shared_shapes::AccessibleAgentView;
 use super::idempotency::{self, IdempotencyKey, RequestBody};
 use super::instance_problem::InstanceProblem;
 use super::BodyProblem;
@@ -58,6 +58,7 @@ impl AgentRoutesState {
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct AgentPageParams {
+    organization: Option<String>,
     sandbox: Option<String>,
     workspace: Option<String>,
     status: Option<AgentStatus>,
@@ -66,8 +67,12 @@ pub(crate) struct AgentPageParams {
 }
 
 impl AgentPageParams {
-    fn into_parts(self) -> Result<(AgentListQuery, PageRequest), InstanceProblem> {
-        if self.sandbox.as_ref().is_some_and(|value| value.is_empty())
+    fn into_parts(
+        self,
+    ) -> Result<(Option<SubjectId>, AgentListQuery, PageRequest), InstanceProblem> {
+        if self.organization.as_ref().is_some_and(|value| {
+            value.trim().is_empty() || value.len() > 128 || value != value.trim()
+        }) || self.sandbox.as_ref().is_some_and(|value| value.is_empty())
             || self
                 .workspace
                 .as_ref()
@@ -79,6 +84,7 @@ impl AgentPageParams {
         let page = PageRequest::new(self.limit.unwrap_or(DEFAULT_PAGE_LIMIT), self.cursor)
             .map_err(|_| InstanceProblem::InvalidQuery)?;
         Ok((
+            self.organization.map(SubjectId::new),
             AgentListQuery {
                 sandbox_id: self.sandbox.map(SandboxId),
                 workspace_id: self.workspace.map(WorkspaceId),
@@ -161,29 +167,54 @@ pub(crate) async fn create(
     path = "/api/v1/agents",
     tag = "agents",
     params(
+        ("organization" = Option<String>, Query),
         ("sandbox" = Option<String>, Query),
         ("workspace" = Option<String>, Query),
         ("status" = Option<String>, Query),
         ("cursor" = Option<String>, Query),
         ("limit" = Option<u16>, Query)
     ),
-    responses((status = 200, body = AgentPageView))
+    responses((status = 200, body = AccessibleAgentPageView))
 )]
 pub(crate) async fn list(
     State(state): State<AgentRoutesState>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
+    resource: Option<AuthenticatedResourceCaller>,
     params: Result<Query<AgentPageParams>, axum::extract::rejection::QueryRejection>,
-) -> Result<Json<AgentPageView>, InstanceProblem> {
-    let (query, page) = params
+) -> Result<Json<AccessibleAgentPageView>, InstanceProblem> {
+    let (organization, query, page) = params
         .map_err(|_| InstanceProblem::InvalidQuery)?
         .0
         .into_parts()?;
+    if let Some(organization) = organization {
+        let resource = resource.ok_or(InstanceProblem::Forbidden)?;
+        let stored = state
+            .reads
+            .organization_list_authorized(
+                &resource.context,
+                resource.credential.as_ref().map(DelegatedCredential::value),
+                &organization,
+                &query,
+                &page,
+            )
+            .await?;
+        return Ok(Json(AccessibleAgentPageView {
+            items: stored
+                .items
+                .into_iter()
+                .map(AccessibleAgentListItemView::from)
+                .collect(),
+            next: stored.next,
+        }));
+    }
     let stored = state.reads.list(&caller, &query, &page).await?;
-    Ok(Json(AgentPageView {
+    Ok(Json(AccessibleAgentPageView {
         items: stored
             .items
             .into_iter()
-            .map(AgentListItemView::from)
+            .map(|agent| {
+                AccessibleAgentListItemView::Personal(Box::new(AgentListItemView::from(agent)))
+            })
             .collect(),
         next: stored.next,
     }))

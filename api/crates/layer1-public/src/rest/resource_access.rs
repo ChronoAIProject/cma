@@ -24,6 +24,7 @@ use crate::AuthenticatedResourceCaller;
 
 pub fn resource_access_router(service: Arc<ResourceAccessService>) -> Router {
     Router::new()
+        .merge(super::organizations::routes())
         .route("/api/v1/resource-access/{kind}/{id}", get(effective))
         .route(
             "/api/v1/resource-shares/{kind}/{id}",

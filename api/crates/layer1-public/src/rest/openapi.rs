@@ -37,6 +37,7 @@ use super::trigger_openapi_shapes::*;
 #[openapi(
     paths(
         super::conformance,
+        super::organizations::list,
         super::resource_access::effective,
         super::resource_access::list,
         super::resource_access::read,
@@ -294,6 +295,8 @@ use super::trigger_openapi_shapes::*;
         AgentPageView,
         AgentView,
         AccessibleAgentView,
+        AccessibleAgentPageView,
+        AccessibleAgentListItemView,
         SharedAgentView,
         AgentFailureView,
         InputAcceptedView,

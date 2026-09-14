@@ -1,11 +1,56 @@
 use crate::resource_access::{
     ResourceAccessSnapshot, ResourceAccessStore, ResourceAccessStoreError, ResourceLineage,
-    ResourceOwner, ResourceScope, ResourceTarget, SharingIsolation,
+    ResourceOwner, ResourceScope, ResourceSelector, ResourceTarget, SharingIsolation,
 };
 use crate::sandbox::store::InMemorySandboxStore;
 
 #[async_trait::async_trait]
 impl ResourceAccessStore for InMemorySandboxStore {
+    async fn organization_agents(
+        &self,
+        organization: &crate::SubjectId,
+        query: &crate::sandbox::AgentListQuery,
+        page: &crate::sandbox::store::PageRequest,
+    ) -> Result<Vec<ResourceAccessSnapshot>, ResourceAccessStoreError> {
+        crate::sandbox::store::PageRequest::new(page.limit, page.cursor.clone())
+            .map_err(|_| ResourceAccessStoreError::Invalid)?;
+        let state = self.lock();
+        let mut candidates: Vec<_> = state.agents.values().filter(|agent| {
+            if !query.matches(agent)
+                || page.cursor.as_deref().is_some_and(|cursor| agent.id.as_str() <= cursor)
+            {
+                return false;
+            }
+            let owned = state.resource_policies.get(&agent.sandbox_id).is_some_and(|policy| {
+                matches!(&policy.owner, ResourceOwner::Organization { subject } if subject == organization)
+            });
+            owned || state.resource_shares.values().any(|receipt| {
+                receipt.sandbox_id == agent.sandbox_id
+                    && receipt.share.target_org_id == *organization
+                    && receipt.share.revoked_at.is_none()
+                    && match &receipt.share.selector {
+                        ResourceSelector::Sandbox { sandbox_id } => sandbox_id == &agent.sandbox_id,
+                        ResourceSelector::Agent { agent_id } => agent_id == &agent.id,
+                    }
+            })
+        }).collect();
+        candidates.sort_by(|left, right| left.id.as_str().cmp(right.id.as_str()));
+        candidates
+            .into_iter()
+            .take(usize::from(page.limit) + 1)
+            .map(|agent| {
+                let value = snapshot(
+                    &state,
+                    &ResourceTarget::Agent {
+                        agent_id: agent.id.clone(),
+                    },
+                )?;
+                value.organization_agent(organization)?;
+                Ok(value)
+            })
+            .collect()
+    }
+
     async fn resource_access_snapshot(
         &self,
         target: &ResourceTarget,
@@ -175,5 +220,17 @@ impl crate::resource_access::ResourceShareStore for InMemorySandboxStore {
             .resource_shares
             .get(id)
             .map(|receipt| receipt.share.clone()))
+    }
+}
+
+#[cfg(test)]
+impl InMemorySandboxStore {
+    pub(crate) fn set_resource_policy_for_test(
+        &self,
+        policy: crate::resource_access::ResourcePolicyRecord,
+    ) {
+        self.lock()
+            .resource_policies
+            .insert(policy.sandbox_id.clone(), policy);
     }
 }

@@ -2,7 +2,7 @@ use layer2_core::sandbox::{AgentDetailReading, AgentStatus, SharedAgentDetail};
 use serde::Serialize;
 use utoipa::ToSchema;
 
-use super::agent_openapi_shapes::AgentView;
+use super::agent_openapi_shapes::{AgentListItemView, AgentView};
 
 /// Personal owners retain the established full detail document. All other
 /// authorized readers receive the explicit Agent-only shared projection.
@@ -69,6 +69,38 @@ impl From<AgentDetailReading> for AccessibleAgentView {
                     stopped_at,
                     deleted_at,
                 })
+            }
+        }
+    }
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(untagged)]
+pub(crate) enum AccessibleAgentListItemView {
+    Personal(Box<AgentListItemView>),
+    Shared(SharedAgentView),
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub(crate) struct AccessibleAgentPageView {
+    pub(crate) items: Vec<AccessibleAgentListItemView>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) next: Option<String>,
+}
+
+impl From<AgentDetailReading> for AccessibleAgentListItemView {
+    fn from(value: AgentDetailReading) -> Self {
+        match value {
+            AgentDetailReading::Personal(lineage) => {
+                Self::Personal(Box::new(AgentListItemView::from(lineage.agent)))
+            }
+            AgentDetailReading::Shared(value) => {
+                let AccessibleAgentView::Shared(value) =
+                    AccessibleAgentView::from(AgentDetailReading::Shared(value))
+                else {
+                    unreachable!("explicit shared projection")
+                };
+                Self::Shared(value)
             }
         }
     }
