@@ -9,7 +9,9 @@ use super::checkpoint_store::{
     CheckpointArchiveDownload, CheckpointArchiveStore, CheckpointArchiveUpload,
     MAX_CHECKPOINT_ARCHIVE_BYTES,
 };
-use crate::wire::{CheckpointUploadResponse, CHECKPOINT_UPLOAD_RECEIPT_MEDIA_TYPE};
+use crate::wire::{
+    CheckpointUploadResponse, RequestFrame, ResponseFrame, CHECKPOINT_UPLOAD_RECEIPT_MEDIA_TYPE,
+};
 use crate::{AdapterError, CheckpointReceipt, RestoreRequest};
 
 const ARCHIVE_CHANNEL_CAPACITY: usize = 4;
@@ -366,3 +368,19 @@ fn hex(bytes: &[u8]) -> String {
 #[cfg(test)]
 #[path = "checkpoint_transport_tests.rs"]
 mod tests;
+
+pub(super) fn restore_request(request: &RequestFrame) -> Option<&crate::RestoreRequest> {
+    // Bootstrap admits installation identity; only Restore consumes the archive.
+    match request {
+        RequestFrame::Restore(request) => Some(request),
+        _ => None,
+    }
+}
+
+pub(super) fn successful_checkpoint(response: &ResponseFrame) -> Option<&crate::CheckpointReceipt> {
+    match response {
+        ResponseFrame::Checkpoint(receipt) => Some(receipt),
+        ResponseFrame::CheckpointForTeardown(receipt) => Some(&receipt.checkpoint),
+        _ => None,
+    }
+}

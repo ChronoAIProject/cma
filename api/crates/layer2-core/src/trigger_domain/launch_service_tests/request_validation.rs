@@ -93,3 +93,70 @@ async fn launch_listing_is_owner_scoped_without_current_launch_authority() {
         .items
         .is_empty());
 }
+
+#[tokio::test]
+async fn request_bounds_and_requirement_identity_are_defensive() {
+    let fixture = fixture(
+        default_reuse(),
+        VISITOR,
+        false,
+        false,
+        vec![ServiceId::new("github"), ServiceId::new("slack")],
+    )
+    .await;
+    for key in [
+        String::new(),
+        "has space".into(),
+        "x".repeat(256),
+        "snowman-\u{2603}".into(),
+    ] {
+        assert_eq!(
+            fixture
+                .service
+                .create_or_resume(
+                    &fixture.caller,
+                    &fixture.public.public_id,
+                    fixture.request(key),
+                )
+                .await
+                .unwrap_err(),
+            LaunchServiceError::InvalidIdempotencyKey
+        );
+    }
+    fixture.broker.set(vec![
+        requirement("slack", ServiceRequirementState::Satisfied),
+        requirement("github", ServiceRequirementState::Satisfied),
+    ]);
+    assert!(matches!(
+        fixture
+            .service
+            .create_or_resume(
+                &fixture.caller,
+                &fixture.public.public_id,
+                fixture.request("wrong-order"),
+            )
+            .await,
+        Err(LaunchServiceError::Corrupt(_))
+    ));
+
+    let mut invalid_start = StartLaunch {
+        trust_confirmed_digest: None,
+        acknowledgements: vec!["ok".into(); 33],
+    };
+    let launch_id = LaunchId::generate();
+    assert!(matches!(
+        fixture
+            .service
+            .start(&fixture.caller, &launch_id, invalid_start.clone())
+            .await,
+        Err(LaunchServiceError::InvalidRequest(_))
+    ));
+    invalid_start.acknowledgements = vec!["x".repeat(129)];
+    assert!(matches!(
+        fixture
+            .service
+            .start(&fixture.caller, &launch_id, invalid_start)
+            .await,
+        Err(LaunchServiceError::InvalidRequest(_))
+    ));
+}

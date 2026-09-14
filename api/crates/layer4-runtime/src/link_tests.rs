@@ -14,6 +14,7 @@ use layer3_adapter::{
 use tokio_tungstenite::tungstenite::Message as ClientMessage;
 
 use super::*;
+use crate::lanes;
 
 fn add_worktree_request(request: WorktreeRequest) -> RequestFrame {
     RequestFrame::AddWorktree(FencedRequest::new(1, request))
