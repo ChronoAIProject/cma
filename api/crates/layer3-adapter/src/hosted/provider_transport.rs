@@ -8,6 +8,7 @@ use tokio_tungstenite::tungstenite::protocol::WebSocketConfig;
 
 use super::acp::{Bridge, OpenedBridge, MAX_FRAME_BYTES};
 use super::checkpoint_store::{CheckpointArchiveStore, CheckpointArchiveStoreFactory};
+use super::checkpoint_transport::{restore_request, successful_checkpoint};
 use super::provider_endpoint::RuntimeEndpoint;
 use super::{checkpoint_transport, control_correlation, HostedAgentOpenSettings};
 use crate::provider::SandboxClient;
@@ -478,22 +479,6 @@ impl super::HostedControlTransport for ProviderHostedControlTransport {
             link.stop().await;
         }
         Ok(())
-    }
-}
-
-fn restore_request(request: &RequestFrame) -> Option<&crate::RestoreRequest> {
-    // Bootstrap admits installation identity; only Restore consumes the archive.
-    match request {
-        RequestFrame::Restore(request) => Some(request),
-        _ => None,
-    }
-}
-
-fn successful_checkpoint(response: &ResponseFrame) -> Option<&crate::CheckpointReceipt> {
-    match response {
-        ResponseFrame::Checkpoint(receipt) => Some(receipt),
-        ResponseFrame::CheckpointForTeardown(receipt) => Some(&receipt.checkpoint),
-        _ => None,
     }
 }
 

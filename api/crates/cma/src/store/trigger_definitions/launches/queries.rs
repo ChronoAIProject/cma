@@ -16,6 +16,9 @@ use super::documents::{read_handoff, read_launch, StoredLaunch};
 use super::event_log;
 use super::{corrupt, unavailable, MongoTriggerDefinitionStore};
 
+mod snapshots;
+pub(super) use snapshots::{snapshot_handoff, snapshot_launch, snapshot_owned_launch};
+
 pub(super) async fn by_command(
     store: &MongoTriggerDefinitionStore,
     owner: &SubjectId,
@@ -390,66 +393,6 @@ pub(super) async fn handoff_command_in_session(
         .map_err(ReadError::Driver)?;
     decode_handoff_command(document.as_ref(), owner, launch_id, intent_id)
         .map_err(ReadError::Domain)
-}
-
-pub(super) async fn snapshot_launch(
-    store: &MongoTriggerDefinitionStore,
-    id: &LaunchId,
-    session: &mut ClientSession,
-) -> Result<Option<StoredLaunch>, LaunchStoreError> {
-    store
-        .launch_data
-        .launches
-        .find_one(doc! { "_id": id.as_str() })
-        .read_concern(ReadConcern::snapshot())
-        .session(session)
-        .await
-        .map_err(unavailable)?
-        .as_ref()
-        .map(read_launch)
-        .transpose()
-}
-
-pub(super) async fn snapshot_owned_launch(
-    store: &MongoTriggerDefinitionStore,
-    id: &LaunchId,
-    owner: &SubjectId,
-    session: &mut ClientSession,
-) -> Result<Option<Launch>, LaunchStoreError> {
-    let document = store
-        .launch_data
-        .launches
-        .find_one(doc! { "_id": id.as_str(), "owner": owner.as_str() })
-        .read_concern(ReadConcern::snapshot())
-        .session(session)
-        .await
-        .map_err(unavailable)?;
-    let Some(document) = document else {
-        return Ok(None);
-    };
-    let launch = read_launch(&document)?.launch;
-    if &launch.id != id || &launch.owner != owner {
-        return Err(corrupt("owned Launch snapshot crossed its boundary"));
-    }
-    Ok(Some(launch))
-}
-
-pub(super) async fn snapshot_handoff(
-    store: &MongoTriggerDefinitionStore,
-    id: &ServiceHandoffId,
-    session: &mut ClientSession,
-) -> Result<Option<ServiceConnectionHandoff>, LaunchStoreError> {
-    store
-        .launch_data
-        .handoffs
-        .find_one(doc! { "_id": id.as_str() })
-        .read_concern(ReadConcern::snapshot())
-        .session(session)
-        .await
-        .map_err(unavailable)?
-        .as_ref()
-        .map(read_handoff)
-        .transpose()
 }
 
 fn decode_command(

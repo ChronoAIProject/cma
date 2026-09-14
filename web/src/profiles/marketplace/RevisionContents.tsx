@@ -72,14 +72,16 @@ const EFFORT = {
 export function RevisionContents({
   value,
   names,
+  compact = false,
 }: {
   readonly value: ResolvedProfileRevision;
   readonly names: readonly ResolvedProfileName[];
+  readonly compact?: boolean;
 }) {
   if (value.kind === 'agent') {
     const content = value.revision.content;
     return (
-      <dl className="marketplace-facts">
+      <dl className="marketplace-facts" data-compact={compact || undefined}>
         <Fact label="Model">{content.model ?? 'Deployment default'}</Fact>
         <Fact label="Thinking effort">{EFFORT[content.thinkingEffort]}</Fact>
         <Fact label="How freely it acts">
@@ -108,7 +110,7 @@ export function RevisionContents({
   if (value.kind === 'workspace') {
     const content = value.revision.content;
     return (
-      <dl className="marketplace-facts">
+      <dl className="marketplace-facts" data-compact={compact || undefined}>
         <Fact label="Location">
           {content.location.type === 'git_repository' ? 'GitHub repository' : 'Empty directory'}
         </Fact>
@@ -132,7 +134,7 @@ export function RevisionContents({
   }
   const content = value.revision.content;
   return (
-    <dl className="marketplace-facts">
+    <dl className="marketplace-facts" data-compact={compact || undefined}>
       <Fact label="Size">
         {content.cpuMillis / 1000} cores · {content.memoryMib / 1024} GiB
       </Fact>
