@@ -70,3 +70,30 @@ worker or writer credentials. Missing lifecycle data from an older server means
 eligibility is unavailable, not that status alone authorizes an action. A race
 with new work can return HTTP 409 `sandbox_lifecycle_busy`; refresh before
 retrying. Existing command replay semantics are unchanged.
+
+## Shared hierarchy
+
+Use `sandboxes().read_accessible`, `workspaces().read_accessible` and
+`worktrees().read_accessible` for a typed personal/shared union. Its `Personal`
+variant retains the full detail, while `Shared` contains safe metadata without
+owner/profile configuration, repository paths, credentials or runtime internals.
+The old `read` methods keep their full personal types and refuse shared output.
+`workspaces().list_accessible(sandbox_id)` and
+`worktrees().list_accessible(workspace_id)` return corresponding child unions.
+
+```rust,no_run
+use cma_sdk::{Client, instances::AccessibleSandboxDetail};
+# async fn inspect(client: &Client, id: &str) -> cma_sdk::Result<()> {
+match client.sandboxes().read_accessible(id).await? {
+    AccessibleSandboxDetail::Personal(detail) => println!("{}", detail.summary.sandbox.id),
+    AccessibleSandboxDetail::Shared(detail) => println!("{}: {} Agents", detail.id, detail.agent_count),
+}
+# Ok(())
+# }
+```
+
+A narrow Agent grant cannot reveal any parent or its counts. Whole-Sandbox or
+organization access is checked for each hierarchy request, including current
+policy after the read. Snapshot archive downloads remain personal-only. Default
+Sandbox inventory excludes explicit organization ownership before pagination;
+organization Sandbox discovery is not yet exposed.

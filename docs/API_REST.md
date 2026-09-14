@@ -595,7 +595,7 @@ above applies even when an operation annotates only its principal responses.
 |---|---|---|---|
 | `GET /api/v1/sandboxes` | - | status, cursor, limit | 200 OwnerSandboxPageView |
 | `POST /api/v1/sandboxes` | CreateSandboxRequest; key | - | 201 SandboxView |
-| `GET /api/v1/sandboxes/{id}` | - | - | 200 OwnerSandboxDetailView |
+| `GET /api/v1/sandboxes/{id}` | - | - | 200 AccessibleSandboxDetailView |
 | `GET /api/v1/sandboxes/{id}/snapshots/{epoch}/download` | - | - | 200 application/octet-stream attachment; owner-authenticated latest completed snapshot |
 | `DELETE /api/v1/sandboxes/{id}` | -; key | - | 202 SandboxView |
 | `GET /api/v1/sandboxes/{id}/events` | - | after, limit | 200 array<SandboxEventView> |
@@ -607,9 +607,9 @@ above applies even when an operation annotates only its principal responses.
 
 | Operation | Body / Key | Query | Response |
 |---|---|---|---|
-| `GET /api/v1/sandboxes/{id}/workspaces` | - | - | 200 WorkspaceListView |
+| `GET /api/v1/sandboxes/{id}/workspaces` | - | - | 200 AccessibleWorkspaceListView |
 | `POST /api/v1/sandboxes/{id}/workspaces` | CreateWorkspaceRequest; key | - | 201 WorkspaceView |
-| `GET /api/v1/workspaces/{id}` | - | - | 200 WorkspaceDetailView |
+| `GET /api/v1/workspaces/{id}` | - | - | 200 AccessibleWorkspaceDetailView |
 | `DELETE /api/v1/workspaces/{id}` | -; key | - | 202 WorkspaceView |
 
 ### Service connections
@@ -663,8 +663,8 @@ above applies even when an operation annotates only its principal responses.
 
 | Operation | Body / Key | Query | Response |
 |---|---|---|---|
-| `GET /api/v1/workspaces/{id}/worktrees` | - | - | 200 WorktreeListView |
-| `GET /api/v1/worktrees/{id}` | - | - | 200 WorktreeView |
+| `GET /api/v1/workspaces/{id}/worktrees` | - | - | 200 AccessibleWorktreeListView |
+| `GET /api/v1/worktrees/{id}` | - | - | 200 AccessibleWorktreeView |
 
 <!-- openapi-operations:end -->
 
@@ -683,3 +683,26 @@ The Layer 1 test suite independently checks that every exported method/path is
 present in this document, so route additions cannot silently pass the backend
 gates while leaving this inventory stale. The OpenAPI JSON remains a generated
 artifact, not a checked-in substitute for the server's current contract.
+
+### Shared hierarchy reads
+
+The Sandbox detail, Sandbox Workspace list, Workspace detail, Workspace Worktree
+list and Worktree detail routes require current visibility of the requested
+hierarchy. A narrow Agent share exposes none of these parents or their counts.
+Whole-Sandbox grants, organization ownership and explicit global authority can
+supply visibility under the common resource policy.
+
+Personal-owner responses preserve the existing complete JSON. Other readers get
+an explicit `access: "shared"` projection containing authorized IDs, names,
+statuses, timestamps and child counts/summaries. These projections omit owner
+identity, profile configuration, repository paths/URLs/branches/commits, runtime
+bindings, lifecycle internals, credentials and failure diagnostics. Every child
+and assigned Agent must agree with the authorized ancestry. Current policy and
+unexpired request-bound membership are checked after the hierarchy read; changed
+policy returns `resource_access_changed`, and unavailable/expired membership
+returns `organization_authority_unavailable` without partial data.
+
+`GET /api/v1/sandboxes` remains a personal collection. Explicit organization
+ownership is excluded before pagination, including lookahead. Organization
+Sandbox discovery and admission remain to implement. Snapshot download remains
+personal-only: hierarchy metadata visibility does not grant whole-home export.

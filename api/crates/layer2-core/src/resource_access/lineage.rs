@@ -13,6 +13,24 @@ pub struct ResourceLineage {
 }
 
 impl ResourceLineage {
+    /// Verify an assigned Agent in the same store snapshot without widening the
+    /// Worktree policy target to an Agent grant or exposing foreign identifiers.
+    pub fn validate_worktree_agent(&self, agent: &Agent) -> Result<(), ResourceAccessStoreError> {
+        let invalid = || ResourceAccessStoreError::Corrupt;
+        let workspace = self.workspace.as_ref().ok_or_else(invalid)?;
+        let worktree = self.worktree.as_ref().ok_or_else(invalid)?;
+        if agent.owner != self.sandbox.owner
+            || agent.workspace_id != workspace.id
+            || agent.worktree_id != worktree.id
+            || agent.sandbox_id != self.sandbox.id
+            || worktree.agent_id.as_ref() != Some(&agent.id)
+            || agent.revision == 0
+        {
+            return Err(invalid());
+        }
+        agent.validate_conversation().map_err(|_| invalid())
+    }
+
     pub fn validate(&self, target: &ResourceTarget) -> Result<(), ResourceAccessStoreError> {
         let invalid = || ResourceAccessStoreError::Corrupt;
         let sandbox = &self.sandbox;
@@ -41,18 +59,7 @@ impl ResourceLineage {
             }
         }
         if let Some(agent) = &self.agent {
-            let workspace = self.workspace.as_ref().ok_or_else(invalid)?;
-            let worktree = self.worktree.as_ref().ok_or_else(invalid)?;
-            if agent.owner != sandbox.owner
-                || agent.workspace_id != workspace.id
-                || agent.worktree_id != worktree.id
-                || agent.sandbox_id != sandbox.id
-                || worktree.agent_id.as_ref() != Some(&agent.id)
-                || agent.revision == 0
-            {
-                return Err(invalid());
-            }
-            agent.validate_conversation().map_err(|_| invalid())?;
+            self.validate_worktree_agent(agent)?;
         }
         let matches = match target {
             ResourceTarget::Sandbox { sandbox_id } => {

@@ -1,3 +1,5 @@
+#[path = "resource_access_tests/hierarchy.rs"]
+mod hierarchy;
 #[path = "resource_access_tests/inventory.rs"]
 mod inventory;
 use layer2_core::resource_access::*;

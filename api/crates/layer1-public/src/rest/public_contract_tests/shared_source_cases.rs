@@ -122,7 +122,7 @@ pub(super) async fn scenario(name: &str) -> Option<Scenario> {
     })
 }
 
-struct FailingPolicy(ResourceAccessStoreError);
+pub(super) struct FailingPolicy(pub(super) ResourceAccessStoreError);
 #[async_trait::async_trait]
 impl ResourceAccessStore for FailingPolicy {
     async fn organization_agents(

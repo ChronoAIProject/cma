@@ -14,7 +14,8 @@ revives automatically. Navigation away does not cancel an admitted Launch.
 
 A Sandbox pins an immutable Sandbox Profile when provisioned. Workspaces and
 Agents belong to that Sandbox; profile edits do not change existing instances.
-The client reads only the caller's resources unless an operator helper is used.
+The default Sandbox list contains the caller's personal resources. Accessible
+read methods also support current organization ownership and whole-Sandbox grants.
 
 `grantServiceAccess(id, { services }, { idempotencyKey })` records explicit owner
 authorization for additional NyxID services on a fully paused Sandbox. Original
@@ -76,3 +77,31 @@ Agent's real working checkout; a Worktree is not an independent terminal surface
 
 See [Profiles](profiles.md) for revision selection and [Errors](errors.md) for
 quota, trust and uncertain-command handling.
+
+## Shared hierarchy
+
+Use `sandboxes.readAccessible`, `workspaces.readAccessible` and
+`worktrees.readAccessible` when the result can be shared. The return type preserves
+the full personal detail or provides a safe shape marked `access: 'shared'`.
+Shared shapes include authorized IDs, names, statuses, timestamps and counts,
+without owner/profile configuration, repository paths, credentials or runtime
+internals. The existing `read` methods keep their personal types and refuse shared
+responses. `workspaces.listAccessible(sandboxId)` and
+`worktrees.listAccessible(workspaceId)` provide the corresponding child unions.
+
+```ts
+import { createClient } from '@chronoai/cma-sdk';
+
+export async function inspectSandbox(id: string) {
+  const cma = createClient();
+  const sandbox = await cma.sandboxes.readAccessible(id);
+  if (sandbox.access === 'shared') return { id: sandbox.id, count: sandbox.agent_count };
+  return { id: sandbox.id, count: sandbox.agent_count, profile: sandbox.profile };
+}
+```
+
+A narrow Agent grant cannot reveal any parent or its counts. Each hierarchy read
+requires current parent visibility; revoked, expired or unavailable authority
+can refuse a later request. Snapshot archives remain personal-only. The default
+Sandbox collection excludes explicit organization ownership before pagination;
+organization Sandbox discovery is not yet exposed.

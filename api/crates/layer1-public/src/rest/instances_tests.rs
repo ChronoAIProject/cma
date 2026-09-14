@@ -94,6 +94,7 @@ impl OperationStore for MemoryOperationStore {
 
 pub(super) struct Fixture {
     pub(super) router: Router,
+    pub(super) state: HierarchyState,
     pub(super) store: Arc<InMemorySandboxStore>,
     pub(super) profiles: Arc<InMemoryProfileStore>,
     operations: Arc<MemoryOperationStore>,
@@ -122,13 +123,14 @@ pub(super) fn fixture_with_operations(
     let hierarchy = HierarchyReadService::new(store.clone());
     let operations = Arc::new(MemoryOperationStore::default());
     let operation_store: Arc<dyn OperationStore> = injected.unwrap_or_else(|| operations.clone());
-    let router = hierarchy_router(
-        HierarchyState::new(sandboxes, workspaces, hierarchy, operation_store).with_user_directory(
-            layer2_core::UserDirectory::new(super::public_names::tests::Names::seeded()),
-        ),
-    );
+    let state = HierarchyState::new(sandboxes, workspaces, hierarchy, operation_store)
+        .with_user_directory(layer2_core::UserDirectory::new(
+            super::public_names::tests::Names::seeded(),
+        ));
+    let router = hierarchy_router(state.clone());
     Fixture {
         router,
+        state,
         store,
         profiles,
         operations,

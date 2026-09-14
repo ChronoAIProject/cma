@@ -17,6 +17,12 @@ mod mutation;
 mod records;
 mod snapshot;
 
+pub(super) fn read_inventory_policy(
+    document: &Document,
+) -> Result<layer2_core::resource_access::ResourcePolicyRecord, ResourceAccessStoreError> {
+    records::read_policy(document)
+}
+
 pub(super) enum ReadError {
     Domain(ResourceAccessStoreError),
     Driver(mongodb::error::Error),

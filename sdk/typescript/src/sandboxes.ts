@@ -26,6 +26,7 @@ import {
   type SandboxStatus,
 } from './instances/types.js';
 import { sandboxEvent } from './instances/events.js';
+import { accessibleSandboxDetail } from './instances/shared.js';
 
 export interface SandboxListOptions extends PageOptions {
   readonly status?: SandboxStatus;
@@ -54,6 +55,16 @@ export class Sandboxes {
       this.config,
       `/api/v1/sandboxes/${segment(id)}`,
       identity(sandboxDetail, id),
+      options,
+    );
+  }
+
+  /** Personal detail or safe shared metadata and authorized child counts. */
+  readAccessible(id: string, options: OperationOptions = {}) {
+    return read(
+      this.config,
+      `/api/v1/sandboxes/${segment(id)}`,
+      identity(accessibleSandboxDetail, id),
       options,
     );
   }

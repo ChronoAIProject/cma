@@ -106,7 +106,7 @@ because those counters include other Agents in the Sandbox.
 Each request obtains current membership evidence. Buffered history and metrics
 are refused if policy changes or evidence expires before release. Membership
 outages return `organization_authority_unavailable`; inaccessible Agents return
-`agent_not_found`. Shared hierarchy, streams, artifacts and interactions remain
+`agent_not_found`. Live streams, artifacts and interactions remain
 under development.
 
 Use `resourceAccess.organizations()` to obtain current canonical scope choices.
