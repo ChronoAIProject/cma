@@ -1950,6 +1950,7 @@ async fn lease_takeover_fences_a_stale_worker_commit() {
         store
             .commit(
                 crate::sandbox::store::SandboxTransaction::SaveSandboxAndAppend {
+                    command_revival: None,
                     expected_revision: stale_revision,
                     sandbox: Box::new(first),
                     event_at: LATER.into(),

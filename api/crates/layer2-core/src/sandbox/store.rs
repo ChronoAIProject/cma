@@ -58,6 +58,8 @@ pub use sandbox_admission::{
 };
 mod lifecycle_command;
 pub use lifecycle_command::*;
+mod command_revival;
+pub use command_revival::{validate_command_revival_transition, CommandRevivalStore};
 mod launch_command;
 pub use launch_command::*;
 pub mod checkpoint_capture;
@@ -361,6 +363,9 @@ pub enum SandboxTransaction {
         event: SandboxEventKind,
     },
     SaveSandboxAndAppend {
+        /// Internal authority for deferred command revival; absent on legacy
+        /// owner/system lifecycle transactions. Never serialized into aggregates.
+        command_revival: Option<Arc<super::agent_io::CommandRevivalAuthorization>>,
         expected_revision: u64,
         sandbox: Box<Sandbox>,
         event_at: String,

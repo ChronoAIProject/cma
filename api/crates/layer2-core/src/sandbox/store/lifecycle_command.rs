@@ -114,6 +114,7 @@ where
             };
             match self
                 .commit(SandboxTransaction::SaveSandboxAndAppend {
+                    command_revival: None,
                     expected_revision,
                     sandbox: Box::new(sandbox.clone()),
                     event_at: command.requested_at.clone(),
@@ -139,7 +140,7 @@ where
     }
 }
 
-enum PendingApplication {
+pub(super) enum PendingApplication {
     Commit {
         expected_revision: u64,
         sandbox: Sandbox,
@@ -150,7 +151,7 @@ enum PendingApplication {
 }
 
 impl PendingApplication {
-    fn result(self) -> SandboxLifecycleCommandResult {
+    pub(super) fn result(self) -> SandboxLifecycleCommandResult {
         match self {
             Self::Accepted(outcome) => SandboxLifecycleCommandResult::Accepted(outcome),
             Self::NotEligible(sandbox) => SandboxLifecycleCommandResult::NotEligible(sandbox),
@@ -159,7 +160,7 @@ impl PendingApplication {
     }
 }
 
-fn apply_command(
+pub(super) fn apply_command(
     current: Sandbox,
     command: &SandboxLifecycleCommand,
 ) -> Result<PendingApplication, SandboxStoreError> {

@@ -3,6 +3,9 @@ use crate::ids::{AgentCommandId, AgentResponseId};
 use crate::sandbox::store::SandboxMutationGuard;
 use layer3_adapter::{ConversationInput, ConversationInputSender};
 
+#[path = "command_revival_tests.rs"]
+mod revival;
+
 async fn grant(store: &InMemorySandboxStore, mode: ShareMode) -> ResourceShare {
     let snapshot = store
         .resource_access_snapshot(&ResourceTarget::Sandbox {

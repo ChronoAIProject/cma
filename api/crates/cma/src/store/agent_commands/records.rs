@@ -23,7 +23,7 @@ pub(super) fn document(record: &AdmittedAgentCommand) -> Result<Document, Comman
     })
 }
 
-pub(super) fn read(value: &Document) -> Result<AdmittedAgentCommand, CommandLedgerError> {
+pub(in crate::store) fn read(value: &Document) -> Result<AdmittedAgentCommand, CommandLedgerError> {
     let record: AdmittedAgentCommand =
         read_record(value).map_err(|_| CommandLedgerError::Corrupt)?;
     let expected = document(&record)?;

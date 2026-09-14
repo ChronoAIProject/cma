@@ -152,7 +152,7 @@ pub(super) fn compose(
         AgentCommandService::new(harness.store.clone(), access.clone(), authority.clone());
     let worker = AgentCommandWorker::new(
         harness.store.clone(),
-        Arc::new(crate::commands::PersonalCommandExecution {
+        Arc::new(crate::commands::ResourceCommandExecution {
             authority,
             access,
             store: harness.store.clone(),

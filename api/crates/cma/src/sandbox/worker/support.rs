@@ -194,6 +194,7 @@ async fn commit_advance(
     })?;
     store
         .commit(SandboxTransaction::SaveSandboxAndAppend {
+            command_revival: None,
             expected_revision,
             sandbox: Box::new(sandbox),
             event_at,
