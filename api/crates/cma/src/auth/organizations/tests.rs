@@ -112,6 +112,27 @@ fn caller() -> Caller {
         Authorization::new([Capability::UseOwnSandboxes]),
     )
 }
+
+#[tokio::test]
+async fn authenticated_request_context_matches_fresh_provider_evidence_without_extra_lookup() {
+    let fixture = Fixture::new().await;
+    let caller = caller();
+    let resolved = crate::auth::RequestAuth {
+        subject: caller.subject.clone(),
+        authorization: caller.authorization.clone(),
+        profile: crate::auth::profile::Profile::default(),
+        delegated_credential: Some("fixture-credential".into()),
+    };
+    let request = fixture.auth.resource_request_context(&resolved);
+    assert!(request.validate_principal());
+    assert_eq!(request.caller, caller);
+    assert!(request.memberships.is_empty());
+    assert!(!format!("{request:?}").contains("fixture-credential"));
+    assert_eq!(fixture.control.userinfo_calls.load(Ordering::SeqCst), 0);
+    let fresh = fixture.lookup("org-a").await.unwrap();
+    assert_eq!(fresh.credential, request.credential);
+    assert_eq!(fresh.actor, request.actor);
+}
 fn scope() -> ResourceScope {
     ResourceScope {
         sandbox_id: layer2_core::SandboxId("sandbox".into()),

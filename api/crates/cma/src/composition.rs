@@ -290,6 +290,12 @@ impl ControlPlaneComposition {
             settings,
         );
         let resource_routes = profiles_router(profiles)
+            .merge(layer1_public::rest::resource_access_router(Arc::new(
+                layer2_core::resource_access::ResourceAccessService::new(
+                    stores.sandbox_model.clone(),
+                    auth.clone(),
+                ),
+            )))
             .merge(profile_authoring_router(profile_authoring))
             .merge(hierarchy_router(hierarchy))
             .merge(projections.router(Arc::clone(&operations)))

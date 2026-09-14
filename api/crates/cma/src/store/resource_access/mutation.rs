@@ -14,6 +14,19 @@ use super::{records, snapshot, ReadError};
 
 #[async_trait::async_trait]
 impl ResourceShareStore for MongoSandboxStore {
+    async fn share_mutation_receipt(
+        &self,
+        operation_id: &str,
+    ) -> Result<Option<ShareMutationReceipt>, ResourceAccessStoreError> {
+        self.resource_share_commands
+            .find_one(doc! {"_id": operation_id})
+            .await
+            .map_err(|_| ResourceAccessStoreError::Unavailable)?
+            .as_ref()
+            .map(records::read_receipt)
+            .transpose()
+    }
+
     async fn mutate_share(
         &self,
         request: ShareMutation,

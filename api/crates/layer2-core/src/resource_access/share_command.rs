@@ -319,6 +319,13 @@ fn hex_digest(value: &str) -> bool {
 
 #[async_trait::async_trait]
 pub trait ResourceShareStore: super::ResourceAccessStore {
+    /// An immutable result is only replayable after current resource ownership
+    /// has been authorized. It never grants authority for another effect.
+    async fn share_mutation_receipt(
+        &self,
+        operation_id: &str,
+    ) -> Result<Option<ShareMutationReceipt>, ResourceAccessStoreError>;
+
     async fn mutate_share(
         &self,
         request: ShareMutation,
