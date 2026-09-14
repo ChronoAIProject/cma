@@ -15,6 +15,7 @@ use super::sandbox_mongo::{
 
 pub(super) mod binding;
 mod lane_records;
+mod reconcile;
 mod records;
 mod reserve;
 mod worker;
