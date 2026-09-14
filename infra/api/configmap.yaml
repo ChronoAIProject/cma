@@ -64,14 +64,14 @@ data:
   CHRONO_SANDBOX_HOME_CAPACITY_GIB: "64"
   CHRONO_SANDBOX_HOME_TEMPLATE: "cma-home-seed-v1"
   CHRONO_SANDBOX_HOME_TEMPLATE_UID: "e50503f6-9498-4105-a81a-5d9c34ffa810"
-  # Persist untouched Agent conversations before Ready. Update only in a verified
-  # runtime-absent window; this pin must never silently rotate an active Sandbox.
-  # Build/contract checks do not replace production pause/restore verification.
+  # Default for new allocations. Existing live Sandboxes retain their recorded
+  # image across API upgrades and rollback; drift never admits rotation work.
+  # Prove retained-runtime compatibility before deploying any new API image.
   CHRONO_SANDBOX_IMAGE: "us-central1-docker.pkg.dev/aelf-shared-k8s-prod/aelf-prod-registry/cma-runtime@sha256:5541f5a711d90c61824fe6a55b4c762d21a37cb2a63574f552390520eabf5ee4"
   # Public Profile availability controls credential-free warm runtime counts
   # (1-5 per Profile) in MongoDB. The worker pins this image, the service floor
   # and install bounds; changed pins retire old unowned reservations before
-  # replacement. Owned runtime rotation retains the existing checkpoint rules.
+  # replacement. Owned live runtimes are adopted using their durable image pin.
   # Default resource profiles are seeded only when no corresponding default
   # exists. Durable operator settings and published profiles own later choices.
   CHRONO_SANDBOX_CPU: "1"

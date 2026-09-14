@@ -585,6 +585,15 @@ impl Harness {
         holder: &str,
         adapter: Arc<dyn SandboxAdapter>,
     ) -> Arc<SandboxWorker> {
+        self.worker_with_runtime_image(holder, adapter, &runtime_image())
+    }
+
+    fn worker_with_runtime_image(
+        &self,
+        holder: &str,
+        adapter: Arc<dyn SandboxAdapter>,
+        image: &str,
+    ) -> Arc<SandboxWorker> {
         let dependencies = SandboxWorkerDependencies {
             store: self.store.clone(),
             adapter,
@@ -603,8 +612,7 @@ impl Harness {
             updates: DurableAgentUpdateRecorder::new(self.store.clone()),
             operations: AgentOperationService::new(self.store.clone(), self.registry.clone()),
         };
-        let mut config =
-            SandboxWorkerConfig::new(holder, "test", runtime_image(), self.policy.clone());
+        let mut config = SandboxWorkerConfig::new(holder, "test", image, self.policy.clone());
         config.lease_duration = Duration::from_secs(60);
         config.retry_delay = Duration::from_secs(5);
         SandboxWorker::new(dependencies, config)
@@ -976,7 +984,6 @@ async fn restarted_worker_reattaches_before_install_with_a_fence_independent_ide
         restarted.clone(),
         Arc::new(harness.policy.clone()),
         "test".into(),
-        "runtime-v2".into(),
     )
     .initialize(now)
     .await

@@ -269,7 +269,6 @@ async fn deletion_wins_a_delayed_allocation_and_reconciliation_releases_its_late
         adapter(&harness, homes.clone()),
         Arc::new(harness.policy.clone()),
         "test".into(),
-        runtime_image(),
     )
     .initialize(now + Duration::from_secs(2))
     .await
@@ -369,7 +368,6 @@ async fn control_plane_restart_adopts_exact_persistent_process_and_status_failur
         replacement,
         Arc::new(harness.policy.clone()),
         "test".into(),
-        runtime_image(),
     );
     reconciler.initialize(now).await.unwrap();
     assert_eq!(harness.stored(&created.id).await, active);

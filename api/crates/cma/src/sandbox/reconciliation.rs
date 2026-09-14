@@ -5,9 +5,8 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
 use layer2_core::sandbox::store::{
-    PageRequest, SandboxImageRotationRequest, SandboxInactivityPauseRequest,
-    SandboxMaintenanceOutcome, SandboxMaintenanceStore, SandboxReconciliationStore,
-    SandboxRuntimeLossRequest, SandboxStore, SandboxStoreError,
+    PageRequest, SandboxInactivityPauseRequest, SandboxMaintenanceStore,
+    SandboxReconciliationStore, SandboxRuntimeLossRequest, SandboxStore, SandboxStoreError,
 };
 use layer2_core::sandbox::{AgentService, Sandbox, SandboxPolicySource, SandboxStatus};
 use layer2_core::{rfc3339_at, SandboxId};
@@ -38,7 +37,6 @@ pub(crate) struct SandboxReconciler {
     adapter: Arc<dyn SandboxAdapter>,
     policy: Arc<dyn SandboxPolicySource>,
     deployment_id: String,
-    runtime_version: String,
     profile_agents: Option<Arc<AgentService>>,
 }
 
@@ -48,14 +46,12 @@ impl SandboxReconciler {
         adapter: Arc<dyn SandboxAdapter>,
         policy: Arc<dyn SandboxPolicySource>,
         deployment_id: String,
-        runtime_version: String,
     ) -> Self {
         Self {
             store,
             adapter,
             policy,
             deployment_id,
-            runtime_version,
             profile_agents: None,
         }
     }
@@ -313,23 +309,18 @@ impl SandboxReconciler {
                         tracing::error!(sandbox_id = %sandbox_id, error = %error, "automatic profile agent reconciliation failed");
                     }
                 }
-                let rotation = self
-                    .store
-                    .schedule_image_rotation(SandboxImageRotationRequest {
-                        sandbox_id: sandbox_id.clone(),
+                // A deployment's image is a default for new allocations, not
+                // permission to replace a user's live runtime. Adoption above
+                // validates the image recorded on each retained binding. Keep
+                // previously admitted lifecycle operations recoverable, but
+                // never create rotation work from configuration drift.
+                self.store
+                    .schedule_inactivity_pause(SandboxInactivityPauseRequest {
+                        sandbox_id,
                         requested_at: rfc3339_at(now),
-                        expected_runtime_version: self.runtime_version.clone(),
+                        pause_after_seconds: policy.inactivity_pause_after_seconds,
                     })
                     .await?;
-                if rotation == SandboxMaintenanceOutcome::NotEligible {
-                    self.store
-                        .schedule_inactivity_pause(SandboxInactivityPauseRequest {
-                            sandbox_id,
-                            requested_at: rfc3339_at(now),
-                            pause_after_seconds: policy.inactivity_pause_after_seconds,
-                        })
-                        .await?;
-                }
             }
             let Some(next) = candidates.next else {
                 return Ok(());

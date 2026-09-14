@@ -114,9 +114,11 @@ and first-message admission/delivery/completion are separately recorded facts.
 Do not enable input merely because one earlier provisioning step completed.
 
 Idle Sandboxes pause when every Agent is quiet. A later admitted operation
-revives the Sandbox when needed. Runtime-image drift triggers writer-fenced
-whole-home checkpoint and restore, preserving hierarchy, dirty work, Agent
-homes and conversation identity. A temporarily unavailable observation does not
+revives the Sandbox when needed. Changing the runtime-image default applies to
+new allocations. Existing live runtimes retain their recorded images across
+control-plane upgrades and rollbacks; image drift does not pause or replace them.
+Independently admitted pause and recovery preserve hierarchy, dirty work, Agent
+homes and conversation identity through checkpoint and restore. A temporarily unavailable observation does not
 prove resource death. Render recorded recovery state and keep history visible.
 
 Each capability must be proved against the pinned runtime contract. This
