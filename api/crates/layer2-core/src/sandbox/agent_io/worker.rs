@@ -1,0 +1,252 @@
+//! Durable command driving. A runtime result never proves absence of an atomic
+//! dispatch binding; only the authoritative ledger can decide the next action.
+
+use super::*;
+use crate::sandbox::store::{Page, PageRequest};
+use crate::{ids::AgentCommandId, now_rfc3339, rfc3339_at};
+use std::{
+    sync::Arc,
+    time::{Duration, SystemTime},
+};
+
+const IO_BOUND: Duration = Duration::from_secs(15);
+const ATTEMPT_BOUND: Duration = Duration::from_secs(45);
+const LEASE_LIFETIME: Duration = Duration::from_secs(30);
+const RENEW_INTERVAL: Duration = Duration::from_secs(10);
+const RENEW_BOUND: Duration = Duration::from_secs(5);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CommandAttempt {
+    Finished,
+    Retry,
+    Reject(CommandFailureCode),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CommandReadiness {
+    Ready,
+    Retry,
+    Reject(CommandFailureCode),
+}
+
+/// Production implements this with actual current credential authorization and
+/// the existing context/claimed-operation services. No actor is synthesized from
+/// the envelope owner. Preparation may request revival but may never send input.
+#[async_trait::async_trait]
+pub trait AgentCommandExecution: Send + Sync {
+    /// Fresh authority and target checks, with no lifecycle or runtime effects.
+    async fn check_queued(&self, command: &AdmittedAgentCommand) -> CommandReadiness;
+    async fn prepare_queued(&self, command: &AdmittedAgentCommand);
+    async fn execute(&self, command: &AdmittedAgentCommand) -> CommandAttempt;
+}
+
+pub struct AgentCommandWorker {
+    store: Arc<dyn AgentCommandWorkerStore>,
+    execution: Arc<dyn AgentCommandExecution>,
+    holder: String,
+}
+
+impl AgentCommandWorker {
+    pub fn new(
+        store: Arc<dyn AgentCommandWorkerStore>,
+        execution: Arc<dyn AgentCommandExecution>,
+        holder: String,
+    ) -> Result<Arc<Self>, CommandLedgerError> {
+        CommandClaimRequest {
+            agent_id: crate::AgentId("validation".into()),
+            holder: holder.clone(),
+            now: now_rfc3339(),
+            expires_at: rfc3339_at(SystemTime::now() + LEASE_LIFETIME),
+        }
+        .validate()?;
+        Ok(Arc::new(Self {
+            store,
+            execution,
+            holder,
+        }))
+    }
+
+    pub async fn discover(
+        &self,
+        page: &PageRequest,
+    ) -> Result<Page<AdmittedAgentCommand>, CommandLedgerError> {
+        let result = bounded(self.store.command_work_page(page)).await?;
+        // Defend the driver against oversized or nonadvancing adapter pages.
+        let checked = finish_command_work_page(result.items.clone(), page)?;
+        if result.items.len() > usize::from(page.limit)
+            || result.next.as_ref().is_some_and(|next| {
+                result
+                    .items
+                    .last()
+                    .is_none_or(|last| next != last.receipt.envelope.command_id.as_str())
+            })
+            || (result.next.is_some() && result.items.len() != usize::from(page.limit))
+            || checked.next.is_some()
+        {
+            return Err(CommandLedgerError::Corrupt);
+        }
+        Ok(result)
+    }
+
+    pub async fn run_one(&self, id: &AgentCommandId) -> Result<(), CommandLedgerError> {
+        let Some(candidate) = bounded(self.store.get_command(id)).await? else {
+            return Ok(());
+        };
+        candidate.validate()?;
+        if &candidate.receipt.envelope.command_id != id {
+            return Err(CommandLedgerError::Corrupt);
+        }
+        if candidate.status.is_terminal() {
+            return Ok(());
+        }
+        if candidate.work.dispatch.is_some() {
+            return bounded(self.store.reconcile_command(id)).await.map(|_| ());
+        }
+        if !candidate.awaiting_claim(&now_rfc3339()) {
+            return Ok(());
+        }
+        let readiness = if candidate.queue_expired(&now_rfc3339()) {
+            CommandReadiness::Reject(CommandFailureCode::QueueTimeout)
+        } else {
+            tokio::time::timeout(IO_BOUND, self.execution.check_queued(&candidate))
+                .await
+                .unwrap_or(CommandReadiness::Retry)
+        };
+        match readiness {
+            CommandReadiness::Ready => {}
+            CommandReadiness::Retry => return Ok(()),
+            CommandReadiness::Reject(code) => {
+                return bounded(self.store.reject_unclaimed_command(
+                    id,
+                    candidate.revision,
+                    code,
+                    now_rfc3339(),
+                ))
+                .await
+            }
+        }
+        let now = SystemTime::now();
+        let selected = bounded(self.store.claim_next_command(CommandClaimRequest {
+            agent_id: candidate.receipt.envelope.agent_id.clone(),
+            holder: self.holder.clone(),
+            now: rfc3339_at(now),
+            expires_at: rfc3339_at(now + LEASE_LIFETIME),
+        }))
+        .await?;
+        let Some(command) = selected else {
+            // No short lane lease is held while a paused context is revived.
+            // Cancellation leaves any admitted lifecycle work durable.
+            let current = bounded(self.store.get_command(id))
+                .await?
+                .ok_or(CommandLedgerError::NotFound)?;
+            current.validate()?;
+            if current != candidate
+                || !current.awaiting_claim(&now_rfc3339())
+                || current.queue_expired(&now_rfc3339())
+            {
+                return Ok(());
+            }
+            let _ = tokio::time::timeout(IO_BOUND, self.execution.prepare_queued(&current)).await;
+            return Ok(());
+        };
+        command.validate()?;
+        let claim = command
+            .work
+            .lease
+            .as_ref()
+            .ok_or(CommandLedgerError::Corrupt)?
+            .claim
+            .clone();
+        command.require_claim(&claim, &now_rfc3339())?;
+        if claim.holder != self.holder
+            || claim.agent_id != candidate.receipt.envelope.agent_id
+            || command.work.dispatch.is_some()
+        {
+            return Err(CommandLedgerError::Corrupt);
+        }
+        if command.queue_expired(&now_rfc3339()) {
+            return self
+                .settle(
+                    &command,
+                    &claim,
+                    CommandAttempt::Reject(CommandFailureCode::QueueTimeout),
+                )
+                .await;
+        }
+        let attempt = self.drive(&command, &claim).await;
+        self.settle(&command, &claim, attempt).await
+    }
+
+    async fn drive(&self, command: &AdmittedAgentCommand, claim: &CommandClaim) -> CommandAttempt {
+        let renew = async {
+            loop {
+                tokio::time::sleep(RENEW_INTERVAL).await;
+                let now = SystemTime::now();
+                let renewed = tokio::time::timeout(
+                    RENEW_BOUND,
+                    self.store.renew_command_claim(
+                        claim,
+                        rfc3339_at(now),
+                        rfc3339_at(now + LEASE_LIFETIME),
+                    ),
+                )
+                .await;
+                if !matches!(renewed, Ok(Ok(()))) {
+                    return;
+                }
+            }
+        };
+        tokio::select! {
+            result = tokio::time::timeout(ATTEMPT_BOUND, self.execution.execute(command)) => result.unwrap_or(CommandAttempt::Retry),
+            () = renew => CommandAttempt::Retry,
+        }
+    }
+
+    async fn settle(
+        &self,
+        original: &AdmittedAgentCommand,
+        claim: &CommandClaim,
+        attempt: CommandAttempt,
+    ) -> Result<(), CommandLedgerError> {
+        // A timeout/failed response may follow a committed binding. Never infer
+        // that execution did not occur, and never release/reject from a stale copy.
+        let current = bounded(self.store.get_command(&claim.command_id))
+            .await?
+            .ok_or(CommandLedgerError::NotFound)?;
+        current.validate()?;
+        if current.receipt != original.receipt
+            || current.key_sha256 != original.key_sha256
+            || current.target_turn != original.target_turn
+        {
+            return Err(CommandLedgerError::Corrupt);
+        }
+        if current.status.is_terminal() {
+            return Ok(());
+        }
+        if current.work.dispatch.is_some() {
+            return bounded(self.store.reconcile_command(&claim.command_id))
+                .await
+                .map(|_| ());
+        }
+        current.require_claim(claim, &now_rfc3339())?;
+        match attempt {
+            CommandAttempt::Finished => Err(CommandLedgerError::Corrupt),
+            CommandAttempt::Retry => {
+                bounded(self.store.release_command_claim(claim, now_rfc3339())).await
+            }
+            CommandAttempt::Reject(code) => {
+                bounded(self.store.reject_command(claim, code, now_rfc3339()))
+                    .await
+                    .map(|_| ())
+            }
+        }
+    }
+}
+
+async fn bounded<T>(
+    work: impl std::future::Future<Output = Result<T, CommandLedgerError>>,
+) -> Result<T, CommandLedgerError> {
+    tokio::time::timeout(IO_BOUND, work)
+        .await
+        .map_err(|_| CommandLedgerError::Unavailable)?
+}

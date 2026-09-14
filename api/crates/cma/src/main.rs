@@ -2,6 +2,7 @@
 
 mod activity;
 mod auth;
+mod commands;
 mod composition;
 mod config;
 mod connections;
@@ -84,6 +85,7 @@ async fn serve() -> Result<(), String> {
     let mut shutdown = ShutdownCoordinator::new();
     let worker_signal = shutdown.subscribe();
     shutdown.push(composition.launch_scheduler.spawn(worker_signal));
+    shutdown.push(composition.command_scheduler.spawn(shutdown.subscribe()));
     composition.sandbox_lifecycle.spawn(&mut shutdown);
     let http_signal = shutdown.subscribe();
     let server_result = {
