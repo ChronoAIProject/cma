@@ -10,13 +10,16 @@ use layer2_core::trigger_domain::{
 };
 use layer2_core::{rfc3339_at, seconds_from_rfc3339, ServiceId, StoreError, SubjectId};
 use reqwest::{Client, RequestBuilder, Response, StatusCode, Url};
-use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use serde::{Deserialize, Serialize};
 
 use crate::auth::{persistence::SecretValue, AuthState};
 
 mod catalog;
 mod composition;
 mod credentials;
+mod response;
+
+use response::decode;
 
 #[allow(
     unused_imports,
@@ -28,7 +31,6 @@ const CONNECT_LINKS_PATH: &str = "/api/v1/connect-links";
 const USER_SERVICES_PATH: &str = "/api/v1/user-services";
 const CONNECT_LINK_TOKEN_PREFIX: &str = "nyx_clk_";
 const CONNECT_LINK_TTL_SECONDS: u64 = 15 * 60;
-const PROVIDER_RESPONSE_MAX_BYTES: usize = 1024 * 1024;
 const USER_SERVICES_MAX_ROWS: usize = 1_000;
 const PROVIDER_UNAVAILABLE: &str = "NyxID request failed";
 const PROVIDER_MALFORMED: &str = "NyxID response was not usable";
@@ -399,35 +401,6 @@ impl UserServiceListing {
             Self::Wrapped { services } => services,
         }
     }
-}
-
-async fn decode<T: DeserializeOwned>(response: Response) -> Result<T, ServiceConnectionError> {
-    if response
-        .content_length()
-        .is_some_and(|length| length > PROVIDER_RESPONSE_MAX_BYTES as u64)
-    {
-        return Err(malformed());
-    }
-    let mut body = Vec::with_capacity(
-        response
-            .content_length()
-            .and_then(|length| usize::try_from(length).ok())
-            .unwrap_or_default()
-            .min(PROVIDER_RESPONSE_MAX_BYTES),
-    );
-    let mut chunks = response.bytes_stream();
-    while let Some(chunk) = chunks.next().await {
-        let chunk = chunk.map_err(|_| unavailable(PROVIDER_UNAVAILABLE))?;
-        if body
-            .len()
-            .checked_add(chunk.len())
-            .is_none_or(|length| length > PROVIDER_RESPONSE_MAX_BYTES)
-        {
-            return Err(malformed());
-        }
-        body.extend_from_slice(&chunk);
-    }
-    serde_json::from_slice(&body).map_err(|_| malformed())
 }
 
 fn matching_services<'a>(

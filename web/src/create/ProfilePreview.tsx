@@ -171,5 +171,5 @@ function PreviewContents({
       <p role="status">Profile details are unavailable. Open the profile page or try again.</p>
     );
   if (profile === undefined) return <p role="status">Loading profile details</p>;
-  return <RevisionContents value={profile} names={[]} />;
+  return <RevisionContents value={profile} names={[]} compact />;
 }

@@ -36,7 +36,7 @@ export function SignInLanding({ onSignIn }: { readonly onSignIn: () => Promise<v
       className={`auth-gate sign-in-landing${entering ? ' sign-in-landing--entering' : ''}`}
       aria-busy={entering}
     >
-      <div className="brand-home">
+      <div className="brand-home sign-in-landing__brand">
         <LandingCharacter key={String(failed)} onActivate={activate} />
         <h1>ChronoAI Managed Agent</h1>
         <Presence>
