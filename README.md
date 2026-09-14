@@ -1,5 +1,7 @@
 # CMA (ChronoAI Managed Agent)
 
+[![Try it](https://bot.chrono-ai.fun/api/v1/triggers/public/pub_d77caf24c76f4ce188e569a83c71b8a1/badge.svg?label=try_it&theme=auto&placement=plc_08e81ca7da574d86a8addfb61d550ecd)](https://bot.chrono-ai.fun/api/v1/triggers/public/pub_d77caf24c76f4ce188e569a83c71b8a1/open/plc_08e81ca7da574d86a8addfb61d550ecd)
+
 CMA runs managed Agents on ChronoAI infrastructure. A user's Sandbox contains
 Workspaces; each Workspace contains isolated git Worktrees, each with exactly
 one Agent. Versioned Sandbox, Workspace and Agent Profiles define the environment
