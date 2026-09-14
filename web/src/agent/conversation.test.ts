@@ -280,8 +280,8 @@ describe('durable Agent conversation folding', () => {
       durable(6, 'tool_call_updated', { call_id: 'tool', status: 'completed' }),
     );
     expect(updated.toolCalls.find((tool) => tool.id === 'tool')).toMatchObject({
-      sequence: 5,
-      order: merged.toolCalls.find((tool) => tool.id === 'tool')!.order,
+      sequence: 6,
+      order: 8,
     });
   });
 
@@ -370,9 +370,7 @@ describe('live AG-UI folding', () => {
     expect(state.messages.at(-1)).toEqual(
       expect.objectContaining({ content: 'Working', status: 'complete' }),
     );
-    expect(state.reasoning[0]).toEqual(
-      expect.objectContaining({ content: 'Check types', status: 'complete' }),
-    );
+    expect(state.reasoning).toEqual([]);
     expect(state.toolCalls[0]).toEqual(
       expect.objectContaining({ title: 'Typecheck', detail: '{"path":"app.ts"}' }),
     );

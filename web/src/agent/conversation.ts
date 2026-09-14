@@ -7,6 +7,7 @@ import type {
 } from '../api/types';
 import { orderEntries } from './chronology';
 import { consumeLiveMessage, liveMessage } from './liveMessage';
+import { liveTool, updateTool } from './toolCalls';
 import type {
   ApprovalRequest,
   ConversationMessage,
@@ -81,6 +82,7 @@ export function conversationFromTranscript(transcript: AgentTranscript): Convers
     approvals: [],
     recovery,
     activeRunId: activeTurn === undefined ? undefined : String(activeTurn.turnSequence),
+    activeRunStartedAt: activeTurn?.startedAt,
     cursor: transcript.throughSeq,
   };
 }
@@ -135,6 +137,8 @@ function foldDurableEvent(state: ConversationState, event: AgentEvent): Conversa
           kind.type === 'turn_started'
             ? String(number(kind.turn_sequence) ?? event.seq)
             : next.activeRunId,
+        activeRunStartedAt:
+          kind.type === 'turn_started' ? event.appendedAt : next.activeRunStartedAt,
       };
     case 'owner_message':
     case 'agent_message': {
@@ -160,29 +164,27 @@ function foldDurableEvent(state: ConversationState, event: AgentEvent): Conversa
     case 'tool_call_started': {
       const id = text(kind.call_id);
       if (id === undefined) return next;
-      return {
-        ...next,
-        toolCalls: upsert(next.toolCalls, {
+      return updateTool(
+        next,
+        {
           id,
           runId: next.activeRunId,
           title: text(kind.title) ?? 'Tool call',
           kind: text(kind.kind),
           status: text(kind.status) ?? 'running',
-        }),
-      };
+        },
+        true,
+      );
     }
     case 'tool_call_updated': {
       const id = text(kind.call_id);
       const current = next.toolCalls.find((tool) => tool.id === id);
       if (id === undefined || current === undefined) return next;
-      return {
-        ...next,
-        toolCalls: upsert(next.toolCalls, {
-          ...current,
-          title: text(kind.title) ?? current.title,
-          status: text(kind.status) ?? current.status,
-        }),
-      };
+      return updateTool(next, {
+        ...current,
+        title: text(kind.title) ?? current.title,
+        status: text(kind.status) ?? current.status,
+      });
     }
     case 'approval_requested': {
       const id = text(kind.approval_id);
@@ -240,11 +242,11 @@ function foldDurableEvent(state: ConversationState, event: AgentEvent): Conversa
       };
     case 'turn_completed':
     case 'turn_interrupted':
-      return { ...next, activeRunId: undefined };
+      return { ...next, activeRunId: undefined, activeRunStartedAt: undefined, reasoning: [] };
     case 'turn_failed': {
       const failure = object(kind.failure);
       return recover(
-        { ...next, activeRunId: undefined },
+        { ...next, activeRunId: undefined, activeRunStartedAt: undefined, reasoning: [] },
         {
           id: `run-error:${String(event.seq)}`,
           runId:
@@ -288,40 +290,6 @@ function liveReasoning(state: ConversationState, event: AgentLiveEvent): Convers
   return current === undefined
     ? state
     : { ...state, reasoning: upsert(state.reasoning, { ...current, status: 'complete' }) };
-}
-
-function liveTool(state: ConversationState, event: AgentLiveEvent): ConversationState {
-  const id = text(event.toolCallId);
-  if (id === undefined) return state;
-  const current = state.toolCalls.find((tool) => tool.id === id);
-  if (event.type === 'TOOL_CALL_START') {
-    return {
-      ...state,
-      toolCalls: upsert(state.toolCalls, {
-        id,
-        runId: event.runId,
-        title: text(event.toolCallName) ?? 'Tool call',
-        kind: text(event['cma:toolKind']),
-        status: text(event['cma:status']) ?? 'running',
-      }),
-    };
-  }
-  if (current === undefined) return state;
-  const update = text(event.delta);
-  const detail =
-    event.type === 'TOOL_CALL_ARGS' && update !== undefined
-      ? `${current.detail ?? ''}${update}`
-      : (text(event.result) ?? update ?? current.detail);
-  return {
-    ...state,
-    toolCalls: upsert(state.toolCalls, {
-      ...current,
-      status:
-        text(event['cma:status']) ??
-        (event.type === 'TOOL_CALL_END' ? 'completed' : current.status),
-      detail,
-    }),
-  };
 }
 
 function approvalFrom(value: unknown): ApprovalRequest | undefined {
@@ -449,7 +417,15 @@ function foldLive(
     return liveReasoning(next, event);
   }
   if (event.type === 'STATE_DELTA') return liveState(next, event);
-  if (event.type === 'RUN_STARTED') return { ...next, activeRunId: event.runId };
+  if (event.type === 'RUN_STARTED')
+    return {
+      ...next,
+      activeRunId: event.runId,
+      activeRunStartedAt:
+        next.activeRunId === event.runId
+          ? (next.activeRunStartedAt ?? event.timestamp)
+          : event.timestamp,
+    };
   if (event.type === 'RUN_FINISHED') {
     const outcome = object(event.outcome);
     const interrupts = Array.isArray(outcome?.interrupts) ? outcome.interrupts : [];
@@ -457,16 +433,19 @@ function foldLive(
       .map(approvalFrom)
       .filter((approval): approval is ApprovalRequest => approval !== undefined)
       .reduce((items, approval) => upsert(items, approval), next.approvals);
-    const reasoning = next.reasoning.map((block) =>
-      block.runId === event.runId ? { ...block, status: 'complete' as const } : block,
-    );
-    return { ...next, approvals, reasoning, activeRunId: undefined };
+    return {
+      ...next,
+      approvals,
+      reasoning: [],
+      activeRunId: undefined,
+      activeRunStartedAt: undefined,
+    };
   }
   if (event.type === 'RUN_ERROR') {
     if (['owner', 'operator', 'sandbox_retired', 'agent_deleted'].includes(text(event.code) ?? ''))
-      return { ...next, activeRunId: undefined };
+      return { ...next, activeRunId: undefined, activeRunStartedAt: undefined, reasoning: [] };
     return recover(
-      { ...next, activeRunId: undefined },
+      { ...next, activeRunId: undefined, activeRunStartedAt: undefined, reasoning: [] },
       {
         id: `live-error:${event.runId}`,
         runId: event.runId,
