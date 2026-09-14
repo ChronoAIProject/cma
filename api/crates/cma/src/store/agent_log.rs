@@ -96,6 +96,44 @@ where
     scan_complete_log(store, agent_id, last_seq, session, true, visit).await
 }
 
+async fn scan_read_log<F>(
+    store: &MongoSandboxStore,
+    agent_id: &AgentId,
+    visit: F,
+) -> Result<(), SandboxStoreError>
+where
+    F: FnMut(AgentLogEntry) -> Result<(), SandboxStoreError>,
+{
+    let mut session = store
+        .client
+        .start_session()
+        .snapshot(true)
+        .await
+        .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?;
+    let Some(aggregate) = store
+        .agents
+        .find_one(doc! { "_id": agent_id.as_str() })
+        .projection(doc! { "document_schema_version": 1, "last_seq": 1 })
+        .read_concern(ReadConcern::snapshot())
+        .session(&mut session)
+        .await
+        .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?
+    else {
+        return Ok(());
+    };
+    require_version(&aggregate).map_err(SandboxStoreError::Corrupt)?;
+    let last_seq = aggregate
+        .get_i64("last_seq")
+        .map_err(|error| SandboxStoreError::Corrupt(error.to_string()))
+        .and_then(|value| {
+            unsigned(value, "agent log sequence").map_err(SandboxStoreError::Corrupt)
+        })?;
+    scan_complete_log_with_snapshot_session(store, agent_id, last_seq, &mut session, visit)
+        .await
+        .map_err(transaction_error)?;
+    Ok(())
+}
+
 #[cfg(test)]
 pub(super) fn verify_complete_log(
     agent_id: &AgentId,
@@ -369,40 +407,35 @@ impl AgentLogStore for MongoSandboxStore {
         if limit == 0 || limit > MAX_PAGE_SIZE {
             return Err(SandboxStoreError::InvalidPage);
         }
-        let mut session = self
-            .client
-            .start_session()
-            .snapshot(true)
-            .await
-            .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?;
-        let Some(aggregate) = self
-            .agents
-            .find_one(doc! { "_id": agent_id.as_str() })
-            .projection(doc! { "document_schema_version": 1, "last_seq": 1 })
-            .read_concern(ReadConcern::snapshot())
-            .session(&mut session)
-            .await
-            .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?
-        else {
-            return Ok(Vec::new());
-        };
-        require_version(&aggregate).map_err(SandboxStoreError::Corrupt)?;
-        let last_seq = aggregate
-            .get_i64("last_seq")
-            .map_err(|error| SandboxStoreError::Corrupt(error.to_string()))
-            .and_then(|value| {
-                unsigned(value, "agent log sequence").map_err(SandboxStoreError::Corrupt)
-            })?;
         let mut page = Vec::with_capacity(usize::from(limit));
-        scan_complete_log_with_snapshot_session(self, agent_id, last_seq, &mut session, |entry| {
+        scan_read_log(self, agent_id, |entry| {
             if entry.seq > after && page.len() < usize::from(limit) {
                 page.push(entry);
             }
             Ok(())
         })
-        .await
-        .map_err(transaction_error)?;
+        .await?;
         Ok(page)
+    }
+
+    async fn agent_log_prefix(
+        &self,
+        agent_id: &AgentId,
+        through_seq: u64,
+    ) -> Result<Vec<AgentLogEntry>, SandboxStoreError> {
+        let mut entries = Vec::new();
+        // Validate the entire current snapshot once, including records beyond the prefix.
+        scan_read_log(self, agent_id, |entry| {
+            if entry.seq <= through_seq {
+                entries.push(entry);
+            }
+            Ok(())
+        })
+        .await?;
+        if u64::try_from(entries.len()).ok() != Some(through_seq) {
+            return Err(SandboxStoreError::SequenceConflict);
+        }
+        Ok(entries)
     }
 }
 

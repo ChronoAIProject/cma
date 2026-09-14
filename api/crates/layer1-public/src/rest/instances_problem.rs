@@ -1,12 +1,14 @@
 use axum::{http::StatusCode, response::IntoResponse, response::Response};
 use layer2_core::sandbox::{
-    HierarchyReadError, SandboxLifecycleCommandError, SandboxServiceError, WorkspaceServiceError,
+    HierarchyReadError, SandboxLifecycleBlocker, SandboxLifecycleCommandError, SandboxServiceError,
+    WorkspaceServiceError,
 };
 
 use super::{problem_document, problem_response};
 
 pub(crate) enum HierarchyProblem {
     CredentialSetupRequired,
+    ConnectionsRequired(Vec<layer2_core::ServiceId>),
     Forbidden,
     SandboxNotFound,
     WorkspaceNotFound,
@@ -24,12 +26,26 @@ pub(crate) enum HierarchyProblem {
     InvalidPage,
     Unavailable,
     SandboxLifecycleUnavailable(&'static str),
+    SandboxLifecycleBusy(SandboxLifecycleBlocker),
 }
 
 impl HierarchyProblem {
+    pub(crate) fn connection(
+        error: layer2_core::sandbox::SandboxCredentialPrerequisiteError,
+    ) -> Self {
+        use layer2_core::sandbox::SandboxCredentialPrerequisiteError as Error;
+        match error {
+            Error::SetupRequired => Self::CredentialSetupRequired,
+            Error::ConnectionsRequired { services } => Self::ConnectionsRequired(services),
+            Error::Unavailable(_) => Self::Unavailable,
+        }
+    }
     pub(crate) fn sandbox(error: SandboxServiceError) -> Self {
         match error {
             SandboxServiceError::CredentialSetupRequired => Self::CredentialSetupRequired,
+            SandboxServiceError::ConnectionsRequired { services } => {
+                Self::ConnectionsRequired(services)
+            }
             SandboxServiceError::Forbidden => Self::Forbidden,
             SandboxServiceError::ProfileNotFound => Self::ProfileNotFound("sandbox"),
             SandboxServiceError::NotFound => Self::SandboxNotFound,
@@ -46,6 +62,12 @@ impl HierarchyProblem {
             SandboxServiceError::SandboxOriginConflict => Self::Conflict("sandbox_origin_conflict"),
             SandboxServiceError::InvalidOrigin => Self::Invalid("invalid_sandbox_origin"),
             SandboxServiceError::InvalidState => Self::Conflict("sandbox_invalid_state"),
+            SandboxServiceError::InvalidServiceAccess => {
+                Self::Invalid("invalid_sandbox_service_access")
+            }
+            SandboxServiceError::ServiceAccessRequiresPause => {
+                Self::Conflict("sandbox_service_access_requires_pause")
+            }
             SandboxServiceError::Corrupt(_) | SandboxServiceError::Unavailable(_) => {
                 Self::Unavailable
             }
@@ -54,6 +76,7 @@ impl HierarchyProblem {
 
     pub(crate) fn workspace(error: WorkspaceServiceError) -> Self {
         match error {
+            WorkspaceServiceError::Connection(error) => Self::connection(error),
             WorkspaceServiceError::Forbidden => Self::Forbidden,
             WorkspaceServiceError::ProfileNotFound => Self::ProfileNotFound("workspace"),
             WorkspaceServiceError::NotFound => Self::WorkspaceNotFound,
@@ -81,11 +104,18 @@ impl HierarchyProblem {
         match error {
             SandboxLifecycleCommandError::Forbidden => Self::Forbidden,
             SandboxLifecycleCommandError::NotFound => Self::SandboxNotFound,
+            SandboxLifecycleCommandError::CredentialSetupRequired => Self::CredentialSetupRequired,
+            SandboxLifecycleCommandError::ConnectionsRequired { services } => {
+                Self::ConnectionsRequired(services)
+            }
             SandboxLifecycleCommandError::SandboxNotActive { .. } => {
                 Self::Conflict("sandbox_not_active")
             }
             SandboxLifecycleCommandError::SandboxNotPaused { .. } => {
                 Self::Conflict("sandbox_not_paused")
+            }
+            SandboxLifecycleCommandError::SandboxBusy { reason, .. } => {
+                Self::SandboxLifecycleBusy(reason)
             }
             SandboxLifecycleCommandError::Corrupt(_) => {
                 Self::SandboxLifecycleUnavailable("stored_sandbox_corrupt")
@@ -123,6 +153,13 @@ impl HierarchyProblem {
 impl IntoResponse for HierarchyProblem {
     fn into_response(self) -> Response {
         let (status, slug, detail, code, fields) = match self {
+            Self::ConnectionsRequired(services) => (
+                StatusCode::CONFLICT,
+                "connections-required",
+                "Connect and verify the required services before opening this sandbox.",
+                "connections_required".to_owned(),
+                vec![("services", serde_json::json!(services))],
+            ),
             Self::CredentialSetupRequired => (
                 StatusCode::CONFLICT,
                 "sandbox-credential-setup-required",
@@ -206,6 +243,13 @@ impl IntoResponse for HierarchyProblem {
                 "The Sandbox lifecycle service could not complete this operation.",
                 code.to_owned(),
                 vec![],
+            ),
+            Self::SandboxLifecycleBusy(reason) => (
+                StatusCode::CONFLICT,
+                "sandbox-lifecycle-busy",
+                "The Sandbox is completing lifecycle work. Refresh its state before retrying.",
+                "sandbox_lifecycle_busy".to_owned(),
+                vec![("reason", serde_json::json!(reason))],
             ),
         };
         let mut body = problem_document(status, slug, detail, &code);

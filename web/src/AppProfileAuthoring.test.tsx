@@ -58,7 +58,7 @@ it('authors linked research profiles through routed public SDK clients and forks
   await user.click(screen.getByRole('radio', { name: 'Autonomous' }));
   fireEvent.change(screen.getByLabelText('Search Ornn skills'), { target: { value: 'research' } });
   await user.click(await screen.findByRole('button', { name: 'Add Research' }));
-  await user.click(screen.getByRole('button', { name: 'Version for research' }));
+  await user.click(screen.getByRole('button', { name: 'Version for Research' }));
   await user.click(screen.getByRole('menuitemradio', { name: '1.1' }));
   fireEvent.change(screen.getByLabelText('System prompt'), {
     target: { value: 'Inspect trureturing, explain findings, and verify changes with tests.' },
@@ -84,7 +84,7 @@ it('authors linked research profiles through routed public SDK clients and forks
   fireEvent.change(screen.getByLabelText('CPU cores'), { target: { value: '3' } });
   fireEvent.change(screen.getByLabelText('Memory (GiB)'), { target: { value: '6' } });
   await user.click(await screen.findByRole('checkbox', { name: 'GitHub' }));
-  await user.click(screen.getByRole('radio', { name: 'Your own account' }));
+  await user.click(screen.getByRole('radio', { name: 'My Codex subscription' }));
   fireEvent.change(screen.getByLabelText('Maximum workspaces'), { target: { value: '2' } });
   fireEvent.change(screen.getByLabelText('Maximum agents per workspace'), {
     target: { value: '3' },
@@ -133,7 +133,7 @@ it('authors linked research profiles through routed public SDK clients and forks
   await screen.findByRole('heading', { name: 'trureturing sandbox', level: 1 });
   expect(screen.getByText('mkdir -p /home/cma/tools')).toBeInTheDocument();
   expect(screen.getByText('npm ci')).toBeInTheDocument();
-  await user.click(screen.getByRole('button', { name: 'Fork to my profiles' }));
+  await user.click(screen.getByRole('button', { name: 'Customize a private copy' }));
   await waitFor(() =>
     expect(window.location.pathname).toBe(`/profiles/sandbox-profiles/${FORK_ID}`),
   );
@@ -177,3 +177,4 @@ it('authors linked research profiles through routed public SDK clients and forks
   expect(test.writes().at(-1)?.body).toEqual({ revision: 1 });
   expect(test.unexpected).toEqual([]);
 }, 20_000);
+import './test/connectedAccounts';

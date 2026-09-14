@@ -45,6 +45,75 @@ afterEach(() => {
 });
 
 describe('public visitor admission', () => {
+  it('consumes a verified external click once and admits a no-review Trigger without another button', async () => {
+    const client = publicClient();
+    vi.mocked(client.requests.preview).mockResolvedValue({
+      ...PUBLIC_PREVIEW,
+      always_review: false,
+    });
+    vi.mocked(client.requests.entryIntent).mockResolvedValue({
+      accepted: true,
+      placement_id: route.placementId,
+    });
+    const test = setup(auth(signedIn), client);
+    await waitFor(() => expect(test.client.requests.createOrResume).toHaveBeenCalledOnce());
+    expect(client.requests.entryIntent).toHaveBeenCalledOnce();
+    expect(test.navigate).toHaveBeenCalledWith(
+      { kind: 'launch', launchId: PUBLIC_RECORD.id },
+      { replace: true },
+    );
+    expect(screen.queryByRole('button', { name: 'Open in CMA' })).not.toBeInTheDocument();
+  });
+
+  it('carries the external gesture through necessary anonymous sign-in with no extra confirmation', async () => {
+    const client = publicClient();
+    vi.mocked(client.requests.preview).mockResolvedValue({
+      ...PUBLIC_PREVIEW,
+      always_review: false,
+    });
+    vi.mocked(client.requests.entryIntent).mockResolvedValue({
+      accepted: true,
+      placement_id: route.placementId,
+    });
+    const test = setup(auth({ status: 'anonymous' }, signedIn), client);
+    await waitFor(() => expect(client.requests.createOrResume).toHaveBeenCalledOnce());
+    expect(test.provider.signIn).toHaveBeenCalledOnce();
+    expect(test.provider.signIn).toHaveBeenCalledWith(path, undefined);
+    expect(client.requests.entryIntent).toHaveBeenCalledOnce();
+  });
+
+  it.each([{ accepted: false }, { accepted: true, placement_id: 'different-placement' }])(
+    'does not admit no-review navigation without matching gesture evidence: %j',
+    async (entry) => {
+      const client = publicClient();
+      vi.mocked(client.requests.preview).mockResolvedValue({
+        ...PUBLIC_PREVIEW,
+        always_review: false,
+      });
+      vi.mocked(client.requests.entryIntent).mockResolvedValue(entry);
+      setup(auth(signedIn), client);
+      await waitFor(() => expect(client.requests.entryIntent).toHaveBeenCalledOnce());
+      expect(client.requests.createOrResume).not.toHaveBeenCalled();
+      expect(await screen.findByRole('button', { name: 'Open in CMA' })).toBeInTheDocument();
+    },
+  );
+
+  it('preserves configured review even when an entry endpoint could return evidence', async () => {
+    const client = publicClient();
+    vi.mocked(client.requests.preview).mockResolvedValue({
+      ...PUBLIC_PREVIEW,
+      always_review: true,
+    });
+    vi.mocked(client.requests.entryIntent).mockResolvedValue({
+      accepted: true,
+      placement_id: route.placementId,
+    });
+    setup(auth(signedIn), client);
+    expect(await screen.findByRole('button', { name: 'Open in CMA' })).toBeInTheDocument();
+    expect(client.requests.entryIntent).not.toHaveBeenCalled();
+    expect(client.requests.createOrResume).not.toHaveBeenCalled();
+  });
+
   it('does not start work from a GET or a signed-in session without a button intent', async () => {
     const test = setup();
     expect(await screen.findByRole('heading', { name: PUBLIC_PREVIEW.title })).toBeInTheDocument();

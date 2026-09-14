@@ -93,6 +93,7 @@ fn every_contract_3_request_round_trips_with_its_exact_tag() {
             }],
             skills: vec![AgentSkill {
                 id: "review".into(),
+                name: None,
                 version: Some("1".into()),
                 archive_sha256: sha(),
                 source_url: "https://ornn.example/review.tgz".into(),

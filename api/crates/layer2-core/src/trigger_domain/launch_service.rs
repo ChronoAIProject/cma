@@ -195,6 +195,9 @@ impl LaunchService {
                 SandboxCredentialPrerequisiteError::SetupRequired => {
                     LaunchServiceError::CredentialSetupRequired
                 }
+                SandboxCredentialPrerequisiteError::ConnectionsRequired { services } => {
+                    LaunchServiceError::RequirementsNotMet { services }
+                }
                 SandboxCredentialPrerequisiteError::Unavailable(detail) => {
                     LaunchServiceError::Unavailable(detail)
                 }
@@ -251,29 +254,21 @@ impl LaunchService {
                 self.require_sandbox_credentials(&caller.subject).await?;
             }
             let checked_at = now_rfc3339();
-            let requirements = if resolved.resolution.sandbox.is_pending() {
-                RequirementsSnapshot {
-                    services: self
-                        .connections
-                        .requirements(&caller.subject, &profiles.sandbox.content.nyxid_services)
-                        .await
-                        .map_err(connection_error)?,
-                    checked_at,
-                }
-            } else {
-                RequirementsSnapshot {
-                    services: Vec::new(),
-                    checked_at,
-                }
+            let required_services = self
+                .required_services(&caller.subject, &resolved.resolution, &profiles)
+                .await?;
+            let requirements = RequirementsSnapshot {
+                services: self
+                    .connections
+                    .requirements(&caller.subject, &required_services)
+                    .await
+                    .map_err(connection_error)?,
+                checked_at,
             };
             requirements
                 .validate()
                 .map_err(|error| LaunchServiceError::Corrupt(error.to_string()))?;
-            validate_requirement_identity(
-                &profiles.sandbox.content.nyxid_services,
-                &requirements,
-                resolved.resolution.sandbox.is_pending(),
-            )?;
+            validate_requirement_identity(&required_services, &requirements)?;
             let review = ReviewRequirements::build(
                 &requirements,
                 trust.confirmation_digest.clone(),
@@ -310,36 +305,27 @@ impl LaunchService {
                 events.push(LaunchEventKind::RepeatChoiceRecorded { choice });
             }
             append_resolution_events(&launch, &mut events);
-            if resolved.existing_agent && request.start_if_ready && launch.review.can_start_now {
+            // Starting a no-review Trigger explicitly accepts its frozen configuration.
+            // Connection requirements and publisher-required review remain blocking.
+            if request.start_if_ready && !trigger.revision.content.consent.always_review {
                 launch
-                    .start_existing(LaunchConfirmation {
+                    .confirm_landing_start(LaunchConfirmation {
                         surface: LaunchConsentSurface::Landing,
-                        trust_confirmed_digest: None,
+                        trust_confirmed_digest: launch.trust.confirmation_digest.clone(),
                         acknowledgements: Vec::new(),
-                        confirmed_at: now,
+                        confirmed_at: now.clone(),
                     })
                     .map_err(|error| LaunchServiceError::Corrupt(error.to_string()))?;
                 events.push(LaunchEventKind::ConfirmationRecorded);
-                events.push(LaunchEventKind::StateChanged {
-                    from: LaunchState::Draft,
-                    to: LaunchState::Ready,
-                });
-            } else if request.start_if_ready && launch.review.can_start_now {
-                launch
-                    .start(LaunchConfirmation {
-                        surface: LaunchConsentSurface::Landing,
-                        trust_confirmed_digest: None,
-                        acknowledgements: Vec::new(),
-                        confirmed_at: now,
-                    })
-                    .map_err(|error| LaunchServiceError::Corrupt(error.to_string()))?;
-                events.extend([
-                    LaunchEventKind::ConfirmationRecorded,
-                    LaunchEventKind::StateChanged {
+                if launch.review.can_start_now {
+                    launch
+                        .start_confirmed(now)
+                        .map_err(|error| LaunchServiceError::Corrupt(error.to_string()))?;
+                    events.push(LaunchEventKind::StateChanged {
                         from: LaunchState::Draft,
                         to: LaunchState::Resolving,
-                    },
-                ]);
+                    });
+                }
             }
             let admitted = self
                 .launches

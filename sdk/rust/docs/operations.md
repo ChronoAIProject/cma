@@ -7,6 +7,13 @@ caller. `admin()` uses public capability-gated routes for Sandbox and profile
 inventory, durable events, runtime inventory, activity, and platform settings.
 The SDK has no private operator channel.
 
+Sandbox and Profile inventory rows include `owner_name`, and Sandbox detail
+includes `owner_name` beside `sandbox`. Activity includes `actor_name` and a
+`target_name` for user targets. These public names are `Option<String>`; a missing
+name must not be replaced by an owner or actor subject identifier. The ordinary
+Sandbox read also includes immutable `owner` and its current `owner_name`, with
+absence supported for older servers. Names never grant resource authority.
+
 ```rust,no_run
 use cma_sdk::{Client, admin::{ActivityListOptions, SandboxListOptions}};
 # async fn run(client: Client) -> Result<(), Box<dyn std::error::Error>> {
@@ -26,6 +33,12 @@ change rather than overwriting it automatically. `Section<T>` retains additive
 settings fields, so editing a known field does not discard newer deployment
 configuration. Patch replaces only supplied sections; it is not an arbitrary
 deep merge. Server validation remains authoritative.
+
+`checkpoints.interval_seconds` controls periodic snapshots globally (60 through
+86400 seconds, default 1800), using `Section<Checkpoints>`. Workers reread the
+setting without a restart. Manual and inactivity pauses still require a fresh
+completed snapshot. Only the latest completed snapshot is retained; replacement
+commits before old archives are removed. Older APIs can omit the section.
 
 `pause_triggers` and `resume_triggers` change orchestration controls. They do not
 cancel admitted Launches or authorize deleting their resources. Operator

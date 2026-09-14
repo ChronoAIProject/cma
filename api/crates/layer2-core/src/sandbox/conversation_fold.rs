@@ -47,7 +47,10 @@ pub(super) fn fold_update(
         }
         ConversationUpdate::Asked(request) => {
             let turn = active_turn(current)?;
-            if current.status != AgentStatus::Working {
+            if !matches!(
+                current.status,
+                AgentStatus::Working | AgentStatus::WaitingApproval
+            ) {
                 return Err(AgentConversationError::InvalidState(
                     "approval request requires a working agent",
                 ));
@@ -62,15 +65,19 @@ pub(super) fn fold_update(
                 detail: approval_detail(&request.request.options),
                 runtime_locator: request.locator.map(|locator| locator.as_str().to_owned()),
             });
-            logs.push(AgentLogKind::StatusChanged {
-                from: AgentStatus::Working,
-                to: AgentStatus::WaitingApproval,
-            });
+            let status =
+                (current.status == AgentStatus::Working).then_some(AgentStatus::WaitingApproval);
+            if let Some(to) = status {
+                logs.push(AgentLogKind::StatusChanged {
+                    from: current.status,
+                    to,
+                });
+            }
             changed(
                 agent,
                 logs,
                 AgentMessageAssembly::default(),
-                Some(AgentStatus::WaitingApproval),
+                status,
                 Some(turn),
                 false,
                 appended_at,
@@ -243,16 +250,21 @@ fn fold_semantic_update(
             kind: wire_name(&call.kind),
             status: wire_name(&call.status),
         },
-        SessionUpdate::ToolCallUpdate(update) => AgentLogKind::ToolCallUpdated {
-            call_id: update.tool_call_id.0.to_string(),
-            status: update
-                .fields
-                .status
-                .as_ref()
-                .map(wire_name)
-                .unwrap_or_else(|| "updated".into()),
-            title: update.fields.title.map(|value| bounded(value, 4 * 1024)),
-        },
+        // Output-only updates carry no durable tool fields; do not invent a status change.
+        SessionUpdate::ToolCallUpdate(update)
+            if update.fields.status.is_some() || update.fields.title.is_some() =>
+        {
+            AgentLogKind::ToolCallUpdated {
+                call_id: update.tool_call_id.0.to_string(),
+                status: update
+                    .fields
+                    .status
+                    .as_ref()
+                    .map(wire_name)
+                    .unwrap_or_else(|| "updated".into()),
+                title: update.fields.title.map(|value| bounded(value, 4 * 1024)),
+            }
+        }
         SessionUpdate::UsageUpdate(usage) => AgentLogKind::Usage {
             input_tokens: 0,
             output_tokens: 0,

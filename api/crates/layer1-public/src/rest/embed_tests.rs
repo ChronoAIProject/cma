@@ -76,7 +76,7 @@ fn every_snippet_and_the_script_integrity_have_one_exact_golden() {
 fn canonical_snippets_match_the_javascript_dom_and_preserve_url_semantics() {
     let fixture = Fixture::published();
     let descriptor = descriptor(&fixture);
-    let public_url = format!("{ORIGIN}/t/{PUBLIC_ID}/{PLACEMENT_ID}");
+    let public_url = format!("{ORIGIN}/api/v1/triggers/public/{PUBLIC_ID}/open/{PLACEMENT_ID}");
     let badge_url = format!(
         "{ORIGIN}/api/v1/triggers/public/{PUBLIC_ID}/badge.svg?label=open_in_cma&theme=auto&placement={PLACEMENT_ID}"
     );

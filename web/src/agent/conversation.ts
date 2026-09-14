@@ -233,7 +233,11 @@ function foldDurableEvent(state: ConversationState, event: AgentEvent): Conversa
           })
         : next;
     case 'status_changed':
-      return { ...next, agentStatus: text(kind.to) as AgentStatus | undefined };
+      return {
+        ...next,
+        agentStatus: text(kind.to) as AgentStatus | undefined,
+        agentStatusAt: event.appendedAt,
+      };
     case 'turn_completed':
     case 'turn_interrupted':
       return { ...next, activeRunId: undefined };
@@ -331,7 +335,11 @@ function approvalFrom(value: unknown): ApprovalRequest | undefined {
   };
 }
 
-function patchState(state: ConversationState, patch: unknown): ConversationState {
+function patchState(
+  state: ConversationState,
+  patch: unknown,
+  timestamp?: string,
+): ConversationState {
   const item = object(patch);
   if (item === undefined) return state;
   const path = text(item.path);
@@ -371,7 +379,13 @@ function patchState(state: ConversationState, patch: unknown): ConversationState
     return key === undefined ? state : { ...state, usage: { ...usage, [key]: value } };
   }
   if (path === '/status' && text(item.value) !== undefined) {
-    return { ...state, agentStatus: text(item.value) as AgentStatus };
+    if (
+      timestamp === undefined ||
+      !Number.isFinite(Date.parse(timestamp)) ||
+      (state.agentStatusAt !== undefined && Date.parse(timestamp) < Date.parse(state.agentStatusAt))
+    )
+      return state;
+    return { ...state, agentStatus: text(item.value) as AgentStatus, agentStatusAt: timestamp };
   }
   if (path === '/cma/sandbox') {
     const sandbox = object(item.value);
@@ -407,7 +421,10 @@ function patchState(state: ConversationState, patch: unknown): ConversationState
 
 function liveState(state: ConversationState, event: AgentLiveEvent): ConversationState {
   const delta = Array.isArray(event.delta) ? event.delta : [];
-  return delta.reduce(patchState, state);
+  return delta.reduce<ConversationState>(
+    (current, patch) => patchState(current, patch, event.timestamp),
+    state,
+  );
 }
 
 export function foldLiveEvent(
@@ -446,6 +463,8 @@ function foldLive(
     return { ...next, approvals, reasoning, activeRunId: undefined };
   }
   if (event.type === 'RUN_ERROR') {
+    if (['owner', 'operator', 'sandbox_retired', 'agent_deleted'].includes(text(event.code) ?? ''))
+      return { ...next, activeRunId: undefined };
     return recover(
       { ...next, activeRunId: undefined },
       {

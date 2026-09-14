@@ -42,3 +42,17 @@ external URL. Poll `read_connection`, then refresh requirements. The SDK never
 calls NyxID directly. `cancel` only applies in supported states and does not
 prove external creation has quiesced. Failed terminal Launches can retain
 unresolved effect authority; never infer safe resource cleanup from that status.
+
+## Trigger Quick Messages
+
+`TriggerContent.quick_messages` accepts up to eight `TriggerQuickMessage` values,
+each with a required name (120 UTF-8 bytes), description (2,000 bytes), and text
+(32,768 bytes). Names are unique ignoring case and surrounding whitespace.
+Empty arrays preserve legacy content digests. Publish after saving to expose
+changes to visitors.
+
+`client.agents().source(agent_id).await` returns immutable creation provenance
+and the current published shortcuts. Draft edits remain private, and retired
+Triggers expose no shortcut actions. The source read never starts work. Send
+the selected text through the existing Agent message operation only following
+an explicit user click; do not resend the first prompt on reload or revival.

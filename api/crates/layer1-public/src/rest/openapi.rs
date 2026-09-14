@@ -53,6 +53,8 @@ use super::trigger_openapi_shapes::*;
         super::triggers::revisions,
         super::triggers::statistics,
         super::triggers::preview,
+        super::trigger_entry::open,
+        super::trigger_entry::consume,
         super::trigger_placements::create,
         super::trigger_placements::list,
         super::trigger_placements::retire,
@@ -101,6 +103,7 @@ use super::trigger_openapi_shapes::*;
         super::agents::create,
         super::agents::list,
         super::agents::read,
+        super::agent_source::read,
         super::agents::delete_agent,
         super::agent_operate::input,
         super::agent_operate::steer,
@@ -114,9 +117,11 @@ use super::trigger_openapi_shapes::*;
         super::sandboxes::create,
         super::sandboxes::list,
         super::sandboxes::read,
+        super::sandboxes::download_snapshot,
         super::sandboxes::remove,
         super::sandboxes::pause,
         super::sandboxes::revive,
+        super::sandbox_service_access::grant,
         super::sandboxes::events,
         super::workspaces::create,
         super::workspaces::list,
@@ -163,6 +168,10 @@ use super::trigger_openapi_shapes::*;
         TriggerReuseBody,
         TriggerConsentBody,
         TriggerContentBody,
+        TriggerQuickMessageBody,
+        super::agent_source::AgentSourceView,
+        super::agent_source::AgentOriginView,
+        super::agent_source::AgentTriggerSourceView,
         CreateTriggerRequest,
         UpdateTriggerRequest,
         PublishTriggerRequest,
@@ -230,6 +239,7 @@ use super::trigger_openapi_shapes::*;
         WorkspaceProfileContentBody,
         EnvironmentVariableBody,
         SandboxProfileContentBody,
+        SandboxProfileAvailabilityBody,
         CreateAgentProfileRequest,
         UpdateAgentProfileRequest,
         CreateWorkspaceProfileRequest,
@@ -288,9 +298,16 @@ use super::trigger_openapi_shapes::*;
         AgentResourcesView,
         ProfileReferenceView,
         CreateSandboxRequest,
+        super::instances_openapi_shapes::GrantSandboxServiceAccessRequest,
         CreateWorkspaceRequest,
         FailureView,
         SandboxLimitsView,
+        super::instances_openapi_shapes::SandboxLifecycleView,
+        super::instances_openapi_shapes::SandboxLifecycleEligibilityView,
+        super::instances_openapi_shapes::SandboxCheckpointView,
+        super::instances_openapi_shapes::SandboxBackgroundSaveView,
+        super::instances_openapi_shapes::SandboxCompletedSnapshotView,
+        super::instances_openapi_shapes::SandboxLifecycleOperationView,
         SandboxView,
         OwnerSandboxSummaryView,
         OwnerSandboxPageView,
@@ -413,6 +430,8 @@ fn anonymous_path(path: &str) -> bool {
             | "/api/v1/agui/capabilities"
             | "/api/v1/triggers/public/{public_id}"
             | "/api/v1/triggers/public/{public_id}/badge.svg"
+            | "/api/v1/triggers/public/{public_id}/open/{placement_id}"
+            | "/api/v1/triggers/public/{public_id}/entry-intent"
     )
 }
 

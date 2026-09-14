@@ -10,11 +10,11 @@ impl OrnnAgentSkillResolver {
         let Some(credentials) = &self.credentials else {
             return Ok(None);
         };
-        if !sandbox.credential.validate()
+        if sandbox.validate().is_err()
             || !sandbox.credential.delivered
             || !sandbox
                 .credential
-                .reaches
+                .effective_reaches()
                 .iter()
                 .any(|service| service.as_str() == "ornn-api")
         {

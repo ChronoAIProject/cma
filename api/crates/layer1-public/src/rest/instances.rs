@@ -12,6 +12,7 @@ use super::BodyProblem;
 
 #[derive(Clone)]
 pub struct HierarchyState {
+    pub(super) users: Option<Arc<layer2_core::UserDirectory>>,
     pub(super) sandboxes: Arc<SandboxService>,
     pub(super) workspaces: Arc<WorkspaceService>,
     pub(super) hierarchy: Arc<HierarchyReadService>,
@@ -26,11 +27,17 @@ impl HierarchyState {
         operations: Arc<dyn OperationStore>,
     ) -> Self {
         Self {
+            users: None,
             sandboxes,
             workspaces,
             hierarchy,
             operations,
         }
+    }
+
+    pub fn with_user_directory(mut self, users: Arc<layer2_core::UserDirectory>) -> Self {
+        self.users = Some(users);
+        self
     }
 }
 

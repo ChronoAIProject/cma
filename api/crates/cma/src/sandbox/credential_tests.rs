@@ -216,6 +216,7 @@ struct ProviderState {
     mints: AtomicUsize,
     revoke_failures: AtomicUsize,
     revoked: Mutex<Vec<String>>,
+    mint_requests: Mutex<Vec<serde_json::Value>>,
 }
 
 async fn services() -> Json<serde_json::Value> {
@@ -224,17 +225,26 @@ async fn services() -> Json<serde_json::Value> {
         "slug": "service-a",
         "name": "Service A",
         "is_active": true
+    }, {
+        "id": "provider-github-id",
+        "slug": "api-github",
+        "name": "GitHub",
+        "is_active": true
     }]))
 }
 
-async fn mint(State(state): State<Arc<ProviderState>>) -> Json<serde_json::Value> {
+async fn mint(
+    State(state): State<Arc<ProviderState>>,
+    Json(body): Json<serde_json::Value>,
+) -> Json<serde_json::Value> {
+    state.mint_requests.lock().unwrap().push(body.clone());
     let number = state.mints.fetch_add(1, Ordering::SeqCst) + 1;
     Json(serde_json::json!({
         "id": format!("provider-key-{number}"),
         "full_key": format!("plaintext-key-{number}"),
         "scopes": "proxy read",
         "state_version": number,
-        "allowed_service_ids": ["provider-service-id"],
+        "allowed_service_ids": body["allowed_service_ids"],
         "allowed_node_ids": [],
         "allow_all_services": false,
         "allow_all_nodes": false
@@ -306,6 +316,7 @@ fn sandbox() -> layer2_core::sandbox::Sandbox {
         failure: None,
         runtime: None,
         credential: SandboxCredentialState {
+            service_grants: Vec::new(),
             reaches: vec![ServiceId::new("service-a")],
             key_generation: 0,
             delivered: false,
@@ -343,6 +354,84 @@ fn material(owner: SubjectId, provider_key_id: &str) -> CredentialMaterial {
         },
         value: SecretValue::new("winner-plaintext".into()),
     }
+}
+
+#[tokio::test]
+async fn service_access_never_reuses_pregrant_or_stale_worker_custody() {
+    let (base_url, provider, server) = provider().await;
+    let custody = Arc::new(MemoryCustody::default());
+    let controller = ManagedSandboxCredentials::new(
+        Arc::new(KeyIssuer::new(reqwest::Client::new(), base_url, "test")),
+        Arc::new(Tokens::default()),
+        custody,
+    );
+    let mut before = sandbox();
+    let initial = controller
+        .issue(&before, 1, SystemTime::UNIX_EPOCH)
+        .await
+        .unwrap();
+    before.credential.key_generation = 1;
+    before.credential.current = Some(initial.authority.clone());
+    before.credential.delivered = true;
+    before.status = SandboxStatus::Paused;
+    before.work.step = SandboxWorkStep::None;
+    before.lifecycle.checkpoints.latest = Some(
+        layer2_core::sandbox::SandboxCheckpointRef::seal(
+            &layer3_adapter::CheckpointReceipt {
+                epoch: 1,
+                object_reference: "checkpoints/service-access".into(),
+                sha256: "a".repeat(64),
+                writers: layer3_adapter::WriterState::Resumed,
+            },
+            &[],
+            before.updated_at.clone(),
+        )
+        .unwrap(),
+    );
+    let mut granted = before.clone();
+    granted
+        .grant_service_access(
+            &before.owner,
+            &[ServiceId::new("api-github")],
+            before.updated_at.clone(),
+        )
+        .unwrap();
+    let stale = controller
+        .issue(&before, 2, SystemTime::UNIX_EPOCH)
+        .await
+        .unwrap();
+    for generation in [1, 2] {
+        assert!(matches!(
+            controller
+                .issue(&granted, generation, SystemTime::UNIX_EPOCH)
+                .await,
+            Err(CredentialError::Security(_))
+        ));
+    }
+    let fresh = controller
+        .issue(&granted, 3, SystemTime::UNIX_EPOCH)
+        .await
+        .unwrap();
+    assert_ne!(
+        fresh.authority.provider_key_id,
+        stale.authority.provider_key_id
+    );
+    assert_ne!(
+        fresh.authority.grant_fingerprint,
+        stale.authority.grant_fingerprint
+    );
+    assert_eq!(provider.mints.load(Ordering::SeqCst), 3);
+    assert_eq!(
+        provider.mint_requests.lock().unwrap()[2]["allowed_service_ids"],
+        serde_json::json!(["provider-github-id", "provider-service-id"])
+    );
+    let replay = controller
+        .issue(&granted, 3, SystemTime::UNIX_EPOCH)
+        .await
+        .unwrap();
+    assert_eq!(replay.authority, fresh.authority);
+    assert_eq!(provider.mints.load(Ordering::SeqCst), 3);
+    server.abort();
 }
 
 #[tokio::test]

@@ -18,6 +18,8 @@ use self::support::{
 
 mod execution;
 mod profile;
+mod removal;
+mod setup;
 mod support;
 pub(crate) use profile::DurableProfileWorkspaceProvisioner;
 
@@ -218,43 +220,56 @@ impl WorkspaceWorker {
         }
     }
 
-    async fn setup(&self, workspace: Workspace, now: SystemTime) -> Result<(), SandboxStoreError> {
-        let workspace = self.pin_execution(workspace).await?;
-        let (_, runtime) = match self.runtime(&workspace).await {
-            Ok(value) => value,
-            Err(failure) => return self.handle_failure(workspace, failure, now).await,
-        };
-        let execution = workspace
-            .work
-            .execution
-            .expect("execution policy was persisted");
-        let request = WorkspaceSetupRequest::with_timeouts(
-            workspace.operation_id(WorkspaceWorkStep::Setup),
-            workspace.id.to_string(),
-            workspace.name.clone(),
-            workspace.profile.content.setup_commands.clone(),
-            execution.command_timeout_seconds,
-            execution.total_timeout_seconds,
-            layer3_adapter::DEFAULT_COMMAND_OUTPUT_LIMIT_BYTES,
-        );
-        match self
-            .dependencies
-            .adapter
-            .run_workspace_setup(&runtime, &request)
-            .await
-        {
-            Ok(receipt) if valid_setup_receipt(&request, &receipt) => {
-                self.mark_ready(workspace, now).await
-            }
-            Ok(_) => {
-                self.handle_failure(workspace, WorkerFailure::invalid_receipt(), now)
+    async fn remove(&self, workspace: Workspace, now: SystemTime) -> Result<(), SandboxStoreError> {
+        match self.remove_child_agents(&workspace, now).await {
+            Ok(true) => {}
+            Ok(false) => {
+                return self
+                    .advance(
+                        workspace,
+                        WorkspaceWorkStep::Remove,
+                        now + Duration::from_secs(1),
+                    )
                     .await
             }
-            Err(error) => self.handle_failure(workspace, failure(error), now).await,
+            Err(failure) => return self.handle_failure(workspace, failure, now).await,
         }
-    }
-
-    async fn remove(&self, workspace: Workspace, now: SystemTime) -> Result<(), SandboxStoreError> {
+        let parent = self
+            .dependencies
+            .store
+            .get_sandbox(&workspace.sandbox_id)
+            .await?
+            .ok_or(SandboxStoreError::NotFound)?;
+        // Retirement already removed the entire home. Never revive it merely to delete a directory.
+        if parent.owner == workspace.owner
+            && parent.status == SandboxStatus::Retired
+            && parent.retired_at.is_some()
+            && parent.runtime.is_none()
+            && parent.lifecycle.checkpoint_capture.is_none()
+            && parent.lifecycle.operation.is_none()
+            && parent.lifecycle.runtime_provision.is_none()
+            && parent.validate().is_ok()
+        {
+            match self.dependencies.adapter.runtime_inventory().await {
+                Ok(inventory)
+                    if inventory
+                        .iter()
+                        .all(|runtime| runtime.sandbox_id != parent.id.as_str()) =>
+                {
+                    return self.mark_removed(workspace, now).await
+                }
+                Ok(_) => {
+                    return self
+                        .handle_failure(
+                            workspace,
+                            WorkerFailure::retryable("retired sandbox runtime is still present"),
+                            now,
+                        )
+                        .await
+                }
+                Err(error) => return self.handle_failure(workspace, failure(error), now).await,
+            }
+        }
         let (_, runtime) = match self.runtime(&workspace).await {
             Ok(value) => value,
             Err(failure) => return self.handle_failure(workspace, failure, now).await,

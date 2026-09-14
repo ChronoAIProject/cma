@@ -98,6 +98,7 @@ impl ProfileAuthoringSource for CmaProfileAuthoringSource {
             .into_iter()
             .map(|service| AuthoringServiceEntry {
                 id: service.id,
+                catalog_id: Some(service.catalog_id),
                 name: service.name,
                 description: service.description,
             })

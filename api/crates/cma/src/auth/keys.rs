@@ -76,6 +76,7 @@ pub struct OwnedKey {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AvailableService {
     pub id: ServiceId,
+    pub catalog_id: String,
     pub name: String,
     pub description: Option<String>,
 }
@@ -248,6 +249,7 @@ impl KeyIssuer {
             .map(|row| {
                 let id = row.slug.unwrap_or_else(|| row.id.clone());
                 AvailableService {
+                    catalog_id: row.id,
                     name: row.name.unwrap_or_else(|| id.clone()),
                     id: ServiceId::new(id),
                     description: row.description,

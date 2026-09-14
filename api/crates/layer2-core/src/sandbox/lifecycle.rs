@@ -22,6 +22,7 @@ pub enum SandboxPausePhase {
     PauseAgents,
     TeardownRuntime,
     PublishPaused,
+    ResumeWriters,
 }
 
 impl SandboxPausePhase {
@@ -34,7 +35,7 @@ impl SandboxPausePhase {
             Self::CaptureAndPublishCheckpoint => Some(Self::PauseAgents),
             Self::PauseAgents => Some(Self::TeardownRuntime),
             Self::TeardownRuntime => Some(Self::PublishPaused),
-            Self::PublishPaused => None,
+            Self::PublishPaused | Self::ResumeWriters => None,
         }
     }
 }
@@ -115,7 +116,8 @@ pub enum SandboxLifecycleOperation {
         authority: SandboxLifecycleAuthority,
         phase: SandboxRevivePhase,
         cause: SandboxReviveCause,
-        checkpoint_epoch: u64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        checkpoint_epoch: Option<u64>,
     },
     ImageRotation {
         authority: SandboxLifecycleAuthority,
@@ -146,7 +148,7 @@ impl SandboxLifecycleOperation {
             } => *checkpoint_epoch,
             Self::Revive {
                 checkpoint_epoch, ..
-            } => Some(*checkpoint_epoch),
+            } => *checkpoint_epoch,
         }
     }
 
@@ -164,12 +166,22 @@ impl SandboxLifecycleOperation {
 #[serde(deny_unknown_fields)]
 pub struct SandboxLifecycleState {
     pub next_authority: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub home: Option<Box<super::SandboxHome>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub home_recovery: Option<Box<super::SandboxHomeRecovery>>,
     #[serde(default)]
     pub runtime_generation_high_water: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub runtime_provision: Option<SandboxRuntimeProvisionReservation>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub checkpoint_capture: Option<SandboxCheckpointCapture>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub background_checkpoint: Option<Box<super::SandboxBackgroundCheckpoint>>,
+    #[serde(default, skip_serializing_if = "checkpoint_epoch_is_unreserved")]
+    pub checkpoint_epoch_high_water: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub checkpoint_capture_completed_at: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub operation: Option<SandboxLifecycleOperation>,
     #[serde(default)]
@@ -180,13 +192,22 @@ pub struct SandboxLifecycleState {
     pub rotation: SandboxRotationAccounting,
 }
 
+fn checkpoint_epoch_is_unreserved(epoch: &u64) -> bool {
+    *epoch == 0
+}
+
 impl Default for SandboxLifecycleState {
     fn default() -> Self {
         Self {
             next_authority: 1,
+            home: None,
+            home_recovery: None,
             runtime_generation_high_water: 0,
             runtime_provision: None,
             checkpoint_capture: None,
+            background_checkpoint: None,
+            checkpoint_epoch_high_water: 0,
+            checkpoint_capture_completed_at: None,
             operation: None,
             checkpoints: SandboxCheckpointHistory::default(),
             paused_notice: None,
@@ -197,7 +218,48 @@ impl Default for SandboxLifecycleState {
 
 impl SandboxLifecycleState {
     pub fn validate(&self, sandbox: &Sandbox) -> Result<(), SandboxModelError> {
-        if self.next_authority == 0 {
+        if let Some(capture) = &self.background_checkpoint {
+            capture.validate(sandbox)?;
+        }
+        if let Some(recovery) = &self.home_recovery {
+            recovery.validate_for(sandbox)?;
+            if !matches!(
+                self.operation,
+                Some(
+                    SandboxLifecycleOperation::Revive { .. }
+                        | SandboxLifecycleOperation::ImageRotation { .. }
+                )
+            ) || (recovery.resume_pause.is_some()
+                && !matches!(
+                    self.operation,
+                    Some(SandboxLifecycleOperation::Revive {
+                        cause: SandboxReviveCause::RuntimeLost,
+                        ..
+                    })
+                ))
+            {
+                return Err(invalid_lifecycle());
+            }
+        }
+        if let Some(home) = &self.home {
+            home.validate(&sandbox.id)?;
+            if (sandbox.runtime.is_some() && home.attachment().is_none())
+                || (home.released
+                    && !matches!(
+                        sandbox.status,
+                        SandboxStatus::Retiring | SandboxStatus::Retired
+                    ))
+                || (sandbox.status == SandboxStatus::Retired && !home.released)
+            {
+                return Err(invalid_lifecycle());
+            }
+        }
+        if self.next_authority == 0
+            || self
+                .checkpoint_capture_completed_at
+                .as_deref()
+                .is_some_and(|at| seconds_from_rfc3339(at).is_none())
+        {
             return Err(invalid_lifecycle());
         }
         self.checkpoints.validate()?;
@@ -243,6 +305,7 @@ impl SandboxLifecycleState {
             return Err(invalid_lifecycle());
         }
         let authority = self.allocate_authority(sandbox_id, requested_at, true)?;
+        self.home_recovery = None;
         self.operation = Some(SandboxLifecycleOperation::Pause {
             authority,
             phase: SandboxPausePhase::first(),
@@ -258,13 +321,17 @@ impl SandboxLifecycleState {
         requested_at: String,
         cause: SandboxReviveCause,
     ) -> Result<(), SandboxModelError> {
+        let home_recovery = self.select_home_recovery()?;
         let checkpoint_epoch = self
             .checkpoints
             .latest
             .as_ref()
-            .map(|checkpoint| checkpoint.epoch)
-            .ok_or_else(invalid_lifecycle)?;
+            .map(|checkpoint| checkpoint.epoch);
+        if home_recovery.is_none() && checkpoint_epoch.is_none() {
+            return Err(invalid_lifecycle());
+        }
         let authority = self.allocate_authority(sandbox_id, requested_at, false)?;
+        self.home_recovery = home_recovery;
         self.operation = Some(SandboxLifecycleOperation::Revive {
             authority,
             phase: SandboxRevivePhase::first(),
@@ -281,7 +348,9 @@ impl SandboxLifecycleState {
         target_runtime_version: String,
         identity: SandboxRotationIdentity,
     ) -> Result<(), SandboxModelError> {
+        let home_recovery = self.select_home_recovery()?;
         let authority = self.allocate_authority(sandbox_id, requested_at, true)?;
+        self.home_recovery = home_recovery;
         self.operation = Some(SandboxLifecycleOperation::ImageRotation {
             authority,
             phase: SandboxImageRotationPhase::first(),
@@ -293,6 +362,7 @@ impl SandboxLifecycleState {
     }
 
     pub(crate) fn cancel_operation(&mut self) {
+        self.home_recovery = None;
         self.operation = None;
         self.runtime_provision = None;
         self.paused_notice = None;
@@ -354,7 +424,12 @@ impl SandboxLifecycleState {
             SandboxLifecycleOperation::Pause { .. } => {
                 validate_writer_token(authority)?;
             }
-            SandboxLifecycleOperation::Revive { .. } => {
+            SandboxLifecycleOperation::Revive {
+                checkpoint_epoch, ..
+            } => {
+                if checkpoint_epoch.is_none() && self.home_recovery.is_none() {
+                    return Err(invalid_lifecycle());
+                }
                 if authority.writer_resume_token.is_some()
                     || authority.writer_resume_generation != 0
                 {

@@ -38,6 +38,16 @@ fn counts(state: &State, sandbox_id: &SandboxId) -> HierarchyCounts {
 
 #[async_trait]
 impl HierarchyReadStore for InMemorySandboxStore {
+    async fn read_snapshot_archive(
+        &self,
+        _sandbox_id: &SandboxId,
+        _checkpoint: &crate::sandbox::SandboxCheckpointRef,
+    ) -> Result<crate::sandbox::SandboxSnapshotDownload, SandboxStoreError> {
+        Err(SandboxStoreError::Unavailable(
+            "snapshot archive storage is not configured".into(),
+        ))
+    }
+
     async fn list_owner_sandbox_inventory(
         &self,
         owner: &SubjectId,

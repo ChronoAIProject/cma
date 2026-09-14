@@ -73,12 +73,14 @@ fn sandbox(
         status,
         failure: None,
         runtime: Some(RuntimeBinding {
+            boot_id: None,
             runtime_id: format!("runtime-{id}"),
             runtime_version: runtime_version.into(),
             provision_generation: Some(1),
             bound_at: NOW.into(),
         }),
         credential: SandboxCredentialState {
+            service_grants: Vec::new(),
             reaches: vec![],
             key_generation: 0,
             delivered: false,

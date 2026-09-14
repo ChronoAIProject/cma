@@ -1,12 +1,10 @@
 //! Atomic Mongo persistence for runtime conversation updates.
 
-use std::collections::BTreeMap;
-
 use layer2_core::ids::AgentId;
 use layer2_core::sandbox::store::{
     AgentConversationMutation, AgentConversationStore, SandboxStoreError,
 };
-use layer2_core::sandbox::{Agent, AgentLogEntry, AgentLogKind};
+use layer2_core::sandbox::{Agent, AgentLogEntry, PendingAgentApprovals};
 use layer2_core::seconds_from_rfc3339;
 use mongodb::bson::doc;
 use mongodb::options::ReadConcern;
@@ -437,20 +435,20 @@ async fn pending_approvals_snapshot(
         .map(read_agent)
         .transpose()?
         .ok_or(SandboxStoreError::NotFound)?;
-    let mut pending = BTreeMap::new();
+    let mut pending = PendingAgentApprovals::default();
     scan_complete_log_with_snapshot_session(
         store,
         id,
         agent.conversation.last_seq,
         session,
         |entry| {
-            fold_approval(&mut pending, entry);
+            pending.observe(&entry);
             Ok(())
         },
     )
     .await
     .map_err(|error| snapshot_error(error.into()))?;
-    Ok(pending.into_values().collect())
+    Ok(pending.into_entries())
 }
 
 async fn snapshot_session(
@@ -472,22 +470,5 @@ fn snapshot_error(error: ApplyError) -> SandboxStoreError {
     match error {
         ApplyError::Domain(error) => error,
         ApplyError::Driver(error) => SandboxStoreError::Unavailable(error.to_string()),
-    }
-}
-
-fn fold_approval(pending: &mut BTreeMap<String, AgentLogEntry>, entry: AgentLogEntry) {
-    match &entry.kind {
-        AgentLogKind::TurnStarted { .. } | AgentLogKind::TurnCompleted { .. } => pending.clear(),
-        AgentLogKind::ApprovalRequested { approval_id, .. } => {
-            pending.insert(approval_id.clone(), entry);
-        }
-        AgentLogKind::ApprovalResolved { approval_id, .. } => {
-            pending.remove(approval_id);
-        }
-        AgentLogKind::TurnFailed { .. }
-        | AgentLogKind::TurnInterrupted { .. }
-        | AgentLogKind::Stopped { .. }
-        | AgentLogKind::Deleted => pending.clear(),
-        _ => {}
     }
 }

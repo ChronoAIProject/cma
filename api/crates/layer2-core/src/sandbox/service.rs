@@ -55,6 +55,7 @@ pub struct SandboxPolicy {
     pub max_sandboxes_per_owner: u16,
     pub max_sandboxes_per_visitor: u16,
     pub inactivity_pause_after_seconds: u64,
+    pub checkpoint_interval_seconds: u64,
     pub retention_grace: Duration,
     pub baseline_services: Vec<ServiceId>,
 }
@@ -81,6 +82,7 @@ impl Default for SandboxPolicy {
             max_sandboxes_per_owner: DEFAULT_OWNER_SANDBOX_LIMIT,
             max_sandboxes_per_visitor: DEFAULT_VISITOR_SANDBOX_LIMIT,
             inactivity_pause_after_seconds: DEFAULT_INACTIVITY_PAUSE_AFTER_SECONDS,
+            checkpoint_interval_seconds: crate::platform::DEFAULT_CHECKPOINT_INTERVAL_SECONDS,
             retention_grace: DEFAULT_RETENTION_GRACE,
             baseline_services: Vec::new(),
         }
@@ -91,6 +93,8 @@ impl Default for SandboxPolicy {
 pub enum SandboxServiceError {
     #[error("renewable Sandbox credential setup is required")]
     CredentialSetupRequired,
+    #[error("required connections have not been verified")]
+    ConnectionsRequired { services: Vec<ServiceId> },
     #[error("forbidden")]
     Forbidden,
     #[error("sandbox profile not found")]
@@ -111,6 +115,10 @@ pub enum SandboxServiceError {
     SandboxOriginConflict,
     #[error("sandbox is not in a deletable state")]
     InvalidState,
+    #[error("sandbox service access request is invalid")]
+    InvalidServiceAccess,
+    #[error("new service access requires a fully paused sandbox")]
+    ServiceAccessRequiresPause,
     #[error("sandbox data is not usable: {0}")]
     Corrupt(String),
     #[error("sandbox dependency is unavailable: {0}")]
@@ -121,6 +129,7 @@ impl SandboxServiceError {
     pub const fn code(&self) -> &'static str {
         match self {
             Self::CredentialSetupRequired => "sandbox_credential_setup_required",
+            Self::ConnectionsRequired { .. } => "connections_required",
             Self::Forbidden => "forbidden",
             Self::ProfileNotFound => "sandbox_profile_not_found",
             Self::NotFound => "sandbox_not_found",
@@ -131,6 +140,8 @@ impl SandboxServiceError {
             Self::InvalidOrigin => "invalid_sandbox_origin",
             Self::SandboxOriginConflict => "sandbox_origin_conflict",
             Self::InvalidState => "sandbox_invalid_state",
+            Self::InvalidServiceAccess => "invalid_sandbox_service_access",
+            Self::ServiceAccessRequiresPause => "sandbox_service_access_requires_pause",
             Self::Corrupt(_) => "stored_sandbox_corrupt",
             Self::Unavailable(_) => "sandbox_service_unavailable",
         }
@@ -290,7 +301,11 @@ impl SandboxService {
         }
     }
 
-    async fn owned(&self, caller: &Caller, id: &SandboxId) -> Result<Sandbox, SandboxServiceError> {
+    pub(super) async fn owned(
+        &self,
+        caller: &Caller,
+        id: &SandboxId,
+    ) -> Result<Sandbox, SandboxServiceError> {
         self.store
             .get_sandbox(id)
             .await

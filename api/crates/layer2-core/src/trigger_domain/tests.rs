@@ -116,6 +116,7 @@ pub(super) async fn seed_profiles(
         .expect("workspace revision");
 
     let sandbox = SandboxProfile {
+        availability: Default::default(),
         id: sandbox_id.clone(),
         owner: owner.clone(),
         name: "Lean Sandbox".into(),
@@ -193,6 +194,7 @@ pub(super) fn content(target: TriggerTarget) -> TriggerContent {
             agent: AgentReusePolicy::Ask,
         },
         first_message: "Check theorem example.".into(),
+        quick_messages: Vec::new(),
         consent: TriggerConsent {
             always_review: true,
         },

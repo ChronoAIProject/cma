@@ -136,7 +136,10 @@ same fixed deployment policy used to validate Sandbox Profiles. It does not
 depend on catalogue or repository availability.
 
 `GET /api/v1/profile-authoring/services` returns an array of owner-visible
-`{ id, name, description? }` choices. An empty array is a successful empty
+`{ id, catalog_id?, name, description? }` choices. `id` is the selectable scope
+identifier; `catalog_id`, when reported, is the source's canonical service
+identity for opening its detail page and must not replace the profile's scope
+identifier. An empty array is a successful empty
 catalogue. Source failures return `503 profile_services_unavailable`, not an
 empty catalogue or credentials.
 Catalogue descriptions retain the complete source text up to 6144 UTF-8 bytes;
@@ -286,6 +289,16 @@ through_seq, turns }`; usage has its own `through_seq` and cumulative input,
 output and context readings. Resource readings are Sandbox-scoped observations
 projected alongside Agent identity, not per-Agent billing.
 
+`GET /api/v1/agents/{id}/source` returns owner-scoped creation provenance:
+`manual`, `workspace_profile`, or `trigger`. Trigger-created Agents also include
+the published Trigger title, public id, revision and quick messages when the
+source remains resolvable. Quick messages follow the latest published revision;
+draft edits stay private and retired Triggers return no shortcut actions.
+Reading source never sends a message or replays the first prompt. Each optional
+Trigger content `quick_messages` entry has a required unique name (120 UTF-8
+bytes), description (2,000 bytes) and text (32,768 bytes), with at most eight
+entries. Missing or empty arrays preserve legacy content digests.
+
 `GET /api/v1/agents/{id}/events` is a **JSON page**, not SSE. It accepts `after`
 and `limit` (1-200, default 200), returns `items` and optional `next`, and omits
 internal dispatch keys and runtime approval locators. Read all pages, require
@@ -400,6 +413,7 @@ above applies even when an operation annotates only its principal responses.
 | `GET /api/v1/agents/{id}` | - | - | 200 AgentView |
 | `DELETE /api/v1/agents/{id}` | -; key | - | 202 empty |
 | `GET /api/v1/agents/{id}/events` | - | after, limit | 200 AgentEventPageView |
+| `GET /api/v1/agents/{id}/source` | - | - | 200 AgentSourceView |
 | `POST /api/v1/agents/{id}/stop` | StopAgentRequest; key | - | 202 empty |
 | `GET /api/v1/agents/{id}/terminal` | - | - | 404 ProblemDocument; 501 ProblemDocument |
 | `GET /api/v1/agents/{id}/transcript` | - | - | 200 AgentTranscriptView |
@@ -442,6 +456,7 @@ above applies even when an operation annotates only its principal responses.
 | `GET /api/v1/launches/{id}/requirements` | - | - | 200 RequirementsSnapshotView |
 | `POST /api/v1/launches/{id}/start` | StartLaunchRequest; key | - | 202 LaunchView |
 | `POST /api/v1/triggers/public/{public_id}/launches` | CreateLaunchRequest; key | - | 201 LaunchView; 202 LaunchView |
+| `POST /api/v1/triggers/public/{public_id}/entry-intent` | - | - | 200 TriggerEntryIntentView |
 
 ### Discovery
 
@@ -506,10 +521,12 @@ above applies even when an operation annotates only its principal responses.
 | `GET /api/v1/sandboxes` | - | status, cursor, limit | 200 OwnerSandboxPageView |
 | `POST /api/v1/sandboxes` | CreateSandboxRequest; key | - | 201 SandboxView |
 | `GET /api/v1/sandboxes/{id}` | - | - | 200 OwnerSandboxDetailView |
+| `GET /api/v1/sandboxes/{id}/snapshots/{epoch}/download` | - | - | 200 application/octet-stream attachment; owner-authenticated latest completed snapshot |
 | `DELETE /api/v1/sandboxes/{id}` | -; key | - | 202 SandboxView |
 | `GET /api/v1/sandboxes/{id}/events` | - | after, limit | 200 array<SandboxEventView> |
 | `POST /api/v1/sandboxes/{id}/pause` | -; key | - | 202 SandboxView |
 | `POST /api/v1/sandboxes/{id}/revive` | -; key | - | 202 SandboxView |
+| `POST /api/v1/sandboxes/{id}/service-access` | GrantSandboxServiceAccessRequest; key | - | 200 SandboxView; new grants require fully Paused, existing grants replay without change |
 
 ### Workspaces
 
@@ -535,6 +552,7 @@ above applies even when an operation annotates only its principal responses.
 | `POST /api/v1/triggers` | CreateTriggerRequest; key | - | 201 TriggerView |
 | `GET /api/v1/triggers/public/{public_id}` | - | - | 200 TriggerPreviewView |
 | `GET /api/v1/triggers/public/{public_id}/badge.svg` | - | label, theme, placement | 200 SVG; 304 empty |
+| `GET /api/v1/triggers/public/{public_id}/open/{placement_id}` | - | - | 303 public Trigger page |
 | `GET /api/v1/triggers/{id}` | - | - | 200 TriggerView |
 | `PUT /api/v1/triggers/{id}` | UpdateTriggerRequest; key | - | 200 TriggerView |
 | `DELETE /api/v1/triggers/{id}` | -; key | - | 204 empty |

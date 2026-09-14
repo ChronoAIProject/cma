@@ -33,7 +33,7 @@ impl LaunchWorker {
                 else {
                     return Ok(());
                 };
-                if sandbox.status == SandboxStatus::Paused {
+                if sandbox.status == SandboxStatus::Paused || sandbox.can_cancel_pause() {
                     self.revive_resolved_sandbox(launch, now).await
                 } else {
                     self.record_sandbox(launch, sandbox.id, true, now).await

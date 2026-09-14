@@ -9,7 +9,7 @@ use crate::failure::{Result, RuntimeError};
 use crate::paths::{lexical_target, safe_relative};
 
 pub(crate) const FORMAT_VERSION: u32 = 1;
-pub(crate) const MAX_ENTRIES: usize = 200_000;
+pub(crate) const MAX_ENTRIES: usize = 500_000;
 pub(crate) const MAX_PAYLOAD_BYTES: u64 = 16 * 1024 * 1024 * 1024;
 const RUNTIME_TRANSIENT_PATHS: [&str; 2] = [".cma/preparing", ".cma/removing"];
 
@@ -356,3 +356,7 @@ fn invalid(detail: &'static str) -> RuntimeError {
 fn manifest_io(operation: &'static str) -> impl FnOnce(std::io::Error) -> RuntimeError + Copy {
     move |error| RuntimeError::unavailable("checkpoint_io_failed", format!("{operation}: {error}"))
 }
+
+#[cfg(test)]
+#[path = "checkpoint_manifest_tests.rs"]
+mod tests;

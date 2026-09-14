@@ -1,9 +1,12 @@
+use std::time::SystemTime;
+
 use layer3_adapter::hosted::{CheckpointArchiveReceipt, CheckpointArchiveUpload};
 use mongodb::bson::DateTime;
 use sha2::{Digest, Sha256};
 
 use super::model::{find_manifest, ArchiveIdentity, ManifestDoc};
 use super::{publication, rejected, unavailable, AdapterResult, MongoCheckpointObjectStore};
+use crate::store::CheckpointBlobStore;
 
 pub(super) async fn upload(
     store: &MongoCheckpointObjectStore,
@@ -55,14 +58,27 @@ pub(super) async fn upload(
     }
     let staged = ManifestDoc::new(sandbox_id, &identity, DateTime::now());
     publication::admit(store, &staged).await?;
-    let remaining = staged
-        .cleanup_after
-        .to_system_time()
-        .duration_since(std::time::SystemTime::now())
-        .map_err(|_| unavailable("checkpoint archive upload lifetime expired"))?;
-    tokio::time::timeout(remaining, store.objects.upload(&staged.object_key, archive))
-        .await
-        .map_err(|_| unavailable("checkpoint archive upload lifetime expired"))??;
+    transfer_before_deadline(store.objects.as_ref(), &staged, archive, SystemTime::now()).await?;
     publication::publish(store, &staged, &identity).await?;
     Ok(identity.receipt())
 }
+
+async fn transfer_before_deadline(
+    objects: &dyn CheckpointBlobStore,
+    staged: &ManifestDoc,
+    archive: CheckpointArchiveUpload,
+    now: SystemTime,
+) -> AdapterResult<()> {
+    let remaining = staged
+        .cleanup_after
+        .to_system_time()
+        .duration_since(now)
+        .map_err(|_| unavailable("checkpoint archive upload lifetime expired"))?;
+    tokio::time::timeout(remaining, objects.upload(&staged.object_key, archive))
+        .await
+        .map_err(|_| unavailable("checkpoint archive upload lifetime expired"))?
+}
+
+#[cfg(test)]
+#[path = "upload_tests.rs"]
+mod tests;

@@ -1,5 +1,6 @@
 import { agentStatus, failure, sandboxStatus } from './types.js';
 import {
+  array,
   enumeration,
   integer,
   object,
@@ -60,6 +61,14 @@ export const sandboxEventKind = tagged({
   }),
   agent_deleted: variant('agent_deleted', { agent_id: text }),
   credential_changed: variant('credential_changed', { key_generation: integer }),
+  service_access_granted: variant('service_access_granted', {
+    grant: object({
+      services: array(text),
+      authorized_by: text,
+      authorized_at: text,
+      credential_generation_floor: integer,
+    }),
+  }),
   checkpoint_sealed: variant('checkpoint_sealed', { object_reference: text }),
   revived: variant('revived', {}),
   rotated: variant('rotated', { runtime_version: text }),

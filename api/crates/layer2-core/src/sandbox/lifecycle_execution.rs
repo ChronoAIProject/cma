@@ -19,7 +19,9 @@ impl Sandbox {
             .checkpoints
             .latest
             .as_ref()
-            .map_or(Some(1), |checkpoint| checkpoint.epoch.checked_add(1))
+            .map_or(0, |checkpoint| checkpoint.epoch)
+            .max(self.lifecycle.checkpoint_epoch_high_water)
+            .checked_add(1)
             .ok_or_else(invalid_execution)
     }
 
@@ -51,6 +53,7 @@ impl Sandbox {
         if self.status != SandboxStatus::Active
             || self.runtime.is_none()
             || self.lifecycle.operation.is_some()
+            || self.lifecycle.background_checkpoint.is_some()
             || self.work.lease.is_some()
             || checkpoint.epoch != self.next_checkpoint_epoch()?
             || crate::seconds_from_rfc3339(&at).is_none()
@@ -175,7 +178,9 @@ impl Sandbox {
         fence: u64,
         at: String,
     ) -> Result<(), SandboxModelError> {
-        if self.lifecycle.checkpoints.latest.as_ref() != Some(verified) {
+        if self.lifecycle.home_recovery.is_some()
+            || self.lifecycle.checkpoints.latest.as_ref() != Some(verified)
+        {
             return Err(invalid_execution());
         }
         self.advance_recovery_phase(
@@ -239,6 +244,9 @@ impl Sandbox {
         fence: u64,
         at: String,
     ) -> Result<(), SandboxModelError> {
+        if self.needs_service_access_credential() {
+            return Err(invalid_execution());
+        }
         self.advance_recovery_phase(
             SandboxRevivePhase::CredentialDelivery,
             SandboxRevivePhase::HomeRestore,
@@ -369,6 +377,44 @@ impl Sandbox {
         )
     }
 
+    /// Publish the unchanged live runtime only after exact-token writer resumption.
+    pub fn complete_pause_cancellation(
+        &mut self,
+        credential_rotation_at: String,
+        holder: &str,
+        fence: u64,
+        at: String,
+    ) -> Result<(), SandboxModelError> {
+        self.apply_claimed_with_step(
+            holder,
+            fence,
+            SandboxWorkStep::WaitForCredentialRotation,
+            credential_rotation_at,
+            at.clone(),
+            |next| {
+                if next.runtime.is_none()
+                    || !matches!(
+                        next.lifecycle.operation,
+                        Some(SandboxLifecycleOperation::Pause {
+                            phase: SandboxPausePhase::ResumeWriters,
+                            ..
+                        })
+                    )
+                {
+                    return Err(invalid_execution());
+                }
+                next.lifecycle.cancel_operation();
+                next.lifecycle.paused_notice = None;
+                if crate::seconds_from_rfc3339(&at)
+                    > crate::seconds_from_rfc3339(&next.last_activity_at)
+                {
+                    next.last_activity_at = at.clone();
+                }
+                next.transition(SandboxStatus::Active, at, None)
+            },
+        )
+    }
+
     pub fn publish_lifecycle_active(
         &mut self,
         credential_rotation_at: String,
@@ -379,32 +425,52 @@ impl Sandbox {
         if crate::seconds_from_rfc3339(&credential_rotation_at).is_none() {
             return Err(invalid_execution());
         }
-        self.apply_claimed_with_step(
-            holder,
-            fence,
-            SandboxWorkStep::WaitForCredentialRotation,
-            credential_rotation_at,
-            at.clone(),
-            |next| {
-                let rotation = matches!(
+        let resume_pause = self
+            .lifecycle
+            .home_recovery
+            .as_ref()
+            .and_then(|source| source.resume_pause.clone());
+        let next_step = if resume_pause.is_some() {
+            SandboxWorkStep::RunLifecycleOperation
+        } else {
+            SandboxWorkStep::WaitForCredentialRotation
+        };
+        let ready_at = if resume_pause.is_some() {
+            at.clone()
+        } else {
+            credential_rotation_at
+        };
+        self.apply_claimed_with_step(holder, fence, next_step, ready_at, at.clone(), |next| {
+            let rotation = matches!(
+                next.lifecycle.operation,
+                Some(SandboxLifecycleOperation::ImageRotation {
+                    phase: SandboxImageRotationPhase::PublishActive,
+                    ..
+                })
+            );
+            let publishable = rotation
+                || matches!(
                     next.lifecycle.operation,
-                    Some(SandboxLifecycleOperation::ImageRotation {
-                        phase: SandboxImageRotationPhase::PublishActive,
+                    Some(SandboxLifecycleOperation::Revive {
+                        phase: SandboxRevivePhase::PublishActive,
                         ..
                     })
                 );
-                let publishable = rotation
-                    || matches!(
-                        next.lifecycle.operation,
-                        Some(SandboxLifecycleOperation::Revive {
-                            phase: SandboxRevivePhase::PublishActive,
-                            ..
-                        })
-                    );
-                if !publishable || next.runtime.is_none() {
-                    return Err(invalid_execution());
-                }
-                if rotation {
+            if !publishable || next.runtime.is_none() {
+                return Err(invalid_execution());
+            }
+            if rotation {
+                if next.lifecycle.home_recovery.is_some() {
+                    let boundary = next
+                        .lifecycle
+                        .operation
+                        .as_ref()
+                        .ok_or_else(invalid_execution)?
+                        .authority()
+                        .requested_at
+                        .clone();
+                    next.lifecycle.rotation.account_at(&boundary)?;
+                } else {
                     let checkpoint = next
                         .lifecycle
                         .checkpoints
@@ -413,12 +479,19 @@ impl Sandbox {
                         .ok_or_else(invalid_execution)?;
                     next.lifecycle.rotation.account(&checkpoint)?;
                 }
-                next.lifecycle.operation = None;
-                next.lifecycle.paused_notice = None;
+            }
+            next.lifecycle.operation = None;
+            next.lifecycle.home_recovery = None;
+            next.lifecycle.paused_notice = None;
+            if let Some(pause) = resume_pause {
+                next.lifecycle
+                    .start_pause(&next.id, at.clone(), pause.notice)?;
+                next.transition(SandboxStatus::Pausing, at, None)?;
+            } else {
                 next.transition(SandboxStatus::Active, at, None)?;
-                Ok(())
-            },
-        )
+            }
+            Ok(())
+        })
     }
 
     /// Fail the current lifecycle with a stable phase-derived class.

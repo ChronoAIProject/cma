@@ -54,9 +54,10 @@ async fn authoring_reads_use_authenticated_exact_paths_and_preserve_opaque_value
         8000
     );
     server.expect(wire::json("GET", "/api/v1/profile-authoring/services", None, 200,
-        json!([{"id":"github","name":"GitHub","description":"Repository access","private_data":"not projected"}]), true));
+        json!([{"id":"github","catalog_id":"canonical-github","name":"GitHub","description":"Repository access","private_data":"not projected"}]), true));
     let services = server.client.profile_authoring().services().await.unwrap();
     assert_eq!(services[0].id, "github");
+    assert_eq!(services[0].catalog_id.as_deref(), Some("canonical-github"));
     assert_eq!(
         services[0].description.as_deref(),
         Some("Repository access")

@@ -8,9 +8,23 @@ pub(super) fn checkpoint_sandbox_advanced(
     next: &Sandbox,
     checkpoint: &SandboxCheckpointRef,
     appended_at: &str,
+    nonblocking: bool,
 ) -> bool {
     let mut expected = current.clone();
-    let result = if let Some(capture) = current.lifecycle.checkpoint_capture.as_ref() {
+    let result = if nonblocking {
+        let Some(capture) = current.lifecycle.background_checkpoint.as_ref() else {
+            return false;
+        };
+        let Some(lease) = capture.work.lease.as_ref() else {
+            return false;
+        };
+        expected.publish_background_checkpoint(
+            checkpoint.clone(),
+            &lease.holder,
+            lease.fence,
+            appended_at.into(),
+        )
+    } else if let Some(capture) = current.lifecycle.checkpoint_capture.as_ref() {
         let Some(lease) = capture.work.lease.as_ref() else {
             return false;
         };
@@ -65,7 +79,17 @@ pub(super) fn lifecycle_sandbox_advanced(
         .is_some_and(|(old, new)| {
             old.authority().writer_resume_generation != new.authority().writer_resume_generation
         });
-    let result = if renewed_writer {
+    let result = if current.credential.current != next.credential.current {
+        let Some(authority) = next.credential.current.clone() else {
+            return false;
+        };
+        expected.replace_lifecycle_service_access_credential(
+            authority,
+            &lease.holder,
+            lease.fence,
+            appended_at.into(),
+        )
+    } else if renewed_writer {
         expected.retry_lifecycle_after_writer_resume(
             next.work.ready_at.clone(),
             &lease.holder,
@@ -131,6 +155,12 @@ fn advance_phase(
             SandboxPausePhase::PublishPaused => {
                 expected.publish_lifecycle_paused(holder, fence, at.into())
             }
+            SandboxPausePhase::ResumeWriters => expected.complete_pause_cancellation(
+                submitted.work.ready_at.clone(),
+                holder,
+                fence,
+                at.into(),
+            ),
         },
         SandboxLifecycleOperation::Revive { phase, .. } => {
             advance_revive_phase(expected, submitted, phase, holder, fence, at)
@@ -218,6 +248,9 @@ fn verify_checkpoint(
     fence: u64,
     at: &str,
 ) -> Result<(), crate::sandbox::SandboxModelError> {
+    if let Some(source) = expected.retained_home_recovery().cloned() {
+        return expected.complete_lifecycle_home_verification(&source, holder, fence, at.into());
+    }
     let checkpoint = expected
         .lifecycle
         .checkpoints

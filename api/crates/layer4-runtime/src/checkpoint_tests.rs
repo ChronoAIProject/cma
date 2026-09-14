@@ -104,6 +104,53 @@ fn restore_validation_refuses_runtime_workspace_transition_paths() {
     let _ = std::fs::remove_dir_all(config.checkpoint_root);
 }
 
+#[cfg(unix)]
+#[tokio::test]
+async fn excluded_executable_aliases_do_not_discard_agent_history_or_allow_other_escapes() {
+    let config = config("transient-aliases");
+    let aliases = [".provider/tmp/aliases", ".cma/agents/a/home/tmp/aliases"];
+    for path in aliases {
+        std::fs::create_dir_all(config.home.join(path)).unwrap();
+        std::os::unix::fs::symlink(
+            "/usr/local/bin/provider",
+            config.home.join(path).join("exec"),
+        )
+        .unwrap();
+    }
+    let history = config.home.join(".cma/agents/a/home/transcript.jsonl");
+    std::fs::write(&history, "preserved conversation\n").unwrap();
+    let rejected = crate::checkpoint_manifest::collect(&config.home, &[]).unwrap_err();
+    assert_eq!(rejected.code, "checkpoint_symlink_escape");
+    let store = CheckpointStore::new(&config);
+    let receipt = store
+        .capture(&CheckpointRequest {
+            epoch: 1,
+            exclusions: aliases.map(str::to_string).to_vec(),
+        })
+        .await
+        .unwrap();
+    store
+        .restore(&RestoreRequest {
+            object_reference: receipt.object_reference,
+            sha256: receipt.sha256,
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        std::fs::read_to_string(&history).unwrap(),
+        "preserved conversation\n"
+    );
+    for path in aliases {
+        assert!(!config.home.join(path).exists());
+    }
+    std::os::unix::fs::symlink("/etc/passwd", config.home.join("outside")).unwrap();
+    let rejected = crate::checkpoint_manifest::collect(&config.home, &aliases.map(str::to_string))
+        .unwrap_err();
+    assert_eq!(rejected.code, "checkpoint_symlink_escape");
+    std::fs::remove_dir_all(config.home).unwrap();
+    std::fs::remove_dir_all(config.checkpoint_root).unwrap();
+}
+
 #[tokio::test]
 async fn whole_home_round_trips_files_modes_links_and_worktree_dependencies() {
     let config = config("round-trip");
@@ -158,6 +205,33 @@ fn a_truncated_archive_is_refused_even_with_its_own_digest() {
     std::fs::remove_dir_all(config.checkpoint_root).unwrap();
 }
 
+#[test]
+fn archive_metadata_budget_covers_large_homes_but_remains_bounded() {
+    let config = config("metadata-budget");
+    std::fs::create_dir_all(&config.checkpoint_root).unwrap();
+    let archive = config.checkpoint_root.join("header-only.cma");
+    for (declared_size, expected_detail) in [
+        (64 * 1024 * 1024 + 1_u64, "truncated before its payload"),
+        (128 * 1024 * 1024, "truncated before its payload"),
+        (128 * 1024 * 1024 + 1, "manifest length is invalid"),
+    ] {
+        let mut bytes = b"CMAHOMEARCHIVE1\n".to_vec();
+        bytes.extend_from_slice(&declared_size.to_be_bytes());
+        std::fs::write(&archive, &bytes).unwrap();
+        let digest = hex(&Sha256::digest(&bytes));
+        let error =
+            crate::checkpoint_archive::inspect(&archive, &digest, &config.home).unwrap_err();
+        assert_eq!(error.code, "checkpoint_invalid");
+        assert!(error.detail.contains(expected_detail), "{error:?}");
+    }
+    assert_eq!(
+        crate::checkpoint_archive::MAX_ARCHIVE_BYTES,
+        layer3_adapter::hosted::MAX_CHECKPOINT_ARCHIVE_BYTES
+    );
+    std::fs::remove_dir_all(config.home).unwrap();
+    std::fs::remove_dir_all(config.checkpoint_root).unwrap();
+}
+
 #[cfg(unix)]
 #[test]
 fn checkpoint_download_refuses_a_symlinked_object() {
@@ -170,6 +244,60 @@ fn checkpoint_download_refuses_a_symlinked_object() {
     std::os::unix::fs::symlink(&outside, config.checkpoint_root.join(&reference)).unwrap();
     let error = store.download_path(&reference).unwrap_err();
     assert_eq!(error.code, "checkpoint_object_invalid");
+    std::fs::remove_dir_all(config.home).unwrap();
+    std::fs::remove_dir_all(config.checkpoint_root).unwrap();
+}
+
+#[tokio::test]
+async fn finished_transfer_removal_is_exact_idempotent_and_refuses_redirects() {
+    let config = config("finished-transfer");
+    let store = CheckpointStore::new(&config);
+    std::fs::write(config.home.join("work"), b"first snapshot").unwrap();
+    let first = store
+        .capture(&CheckpointRequest {
+            epoch: 1,
+            exclusions: Vec::new(),
+        })
+        .await
+        .unwrap();
+    std::fs::write(config.home.join("work"), b"newer snapshot").unwrap();
+    let second = store
+        .capture(&CheckpointRequest {
+            epoch: 2,
+            exclusions: Vec::new(),
+        })
+        .await
+        .unwrap();
+    let first_path = store.download_path(&first.object_reference).unwrap();
+    let second_path = store.download_path(&second.object_reference).unwrap();
+    store.discard(&first.object_reference).await.unwrap();
+    store.discard(&first.object_reference).await.unwrap();
+    assert!(!first_path.exists());
+    assert_eq!(
+        crate::checkpoint_manifest::sha256_file(&second_path).unwrap(),
+        second.sha256
+    );
+    assert!(store.discard("../work").await.is_err());
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(config.home.join("work"), &first_path).unwrap();
+        assert_eq!(
+            store
+                .discard(&first.object_reference)
+                .await
+                .unwrap_err()
+                .code,
+            "checkpoint_object_invalid"
+        );
+        assert!(std::fs::symlink_metadata(&first_path)
+            .unwrap()
+            .file_type()
+            .is_symlink());
+    }
+    assert_eq!(
+        std::fs::read(config.home.join("work")).unwrap(),
+        b"newer snapshot"
+    );
     std::fs::remove_dir_all(config.home).unwrap();
     std::fs::remove_dir_all(config.checkpoint_root).unwrap();
 }

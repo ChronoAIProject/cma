@@ -5,7 +5,10 @@ use layer2_core::sandbox::store::SandboxStoreError;
 use layer2_core::sandbox::{
     RuntimeBinding, Sandbox, SandboxEventKind, SandboxStatus, SandboxWorkStep,
 };
-use layer3_adapter::{CredentialFrame, InstallRequest, RuntimeCredential};
+use layer3_adapter::{
+    CredentialFrame, InstallRequest, RuntimeAdoptionRequest, RuntimeCredential, RuntimeHandle,
+    RuntimeProvisionRequest,
+};
 
 use super::support::{
     adapter_failure, credential_failure, credential_rotation_at, credential_valid_for_delivery,
@@ -20,6 +23,9 @@ impl SandboxWorker {
         mut sandbox: Sandbox,
         now: SystemTime,
     ) -> Result<(), SandboxStoreError> {
+        if let Some(failure) = self.prepare_sandbox_home(&mut sandbox, now).await? {
+            return self.handle_failure(sandbox, failure, now).await;
+        }
         let spec = sandbox_spec(&sandbox, &self.config.deployment_id);
         if sandbox.work.execution.is_none() {
             let expected = sandbox.revision;
@@ -30,16 +36,83 @@ impl SandboxWorker {
                 .save_sandbox(expected, sandbox.clone())
                 .await?;
         }
-        match self.dependencies.adapter.provision(&spec).await {
+        // A warm admission already owns an installed runtime. Prove that exact
+        // binding before replaying its installation receipt and minting a key.
+        if let Some(binding) = sandbox.runtime.clone() {
+            let adoption = RuntimeAdoptionRequest::new(
+                binding.provision_generation.unwrap_or(1),
+                RuntimeHandle::new(&binding.runtime_id),
+                spec.clone(),
+            )
+            .with_expected_image(&binding.runtime_version);
+            match self.dependencies.adapter.adopt_runtime(&adoption).await {
+                Ok(Some(_)) => {
+                    return self
+                        .advance_status(
+                            sandbox,
+                            SandboxStatus::Installing,
+                            SandboxWorkStep::RunInstall,
+                            now,
+                        )
+                        .await
+                }
+                Ok(None) => {
+                    // No user data or credential has been delivered at this
+                    // stage. Persist a new generation before replacing a lost
+                    // warm runtime; retries reuse this reservation.
+                    let expected = sandbox.revision;
+                    sandbox.runtime = None;
+                    sandbox.lifecycle.runtime_generation_high_water = sandbox
+                        .lifecycle
+                        .runtime_generation_high_water
+                        .checked_add(1)
+                        .ok_or(SandboxStoreError::Conflict)?;
+                    sandbox.revision =
+                        expected.checked_add(1).ok_or(SandboxStoreError::Conflict)?;
+                    self.dependencies
+                        .store
+                        .save_sandbox(expected, sandbox.clone())
+                        .await?;
+                }
+                Err(error) => {
+                    return self
+                        .handle_failure(sandbox, adapter_failure(error), now)
+                        .await
+                }
+            }
+        }
+        let generation = sandbox.lifecycle.runtime_generation_high_water.max(1);
+        match self
+            .dependencies
+            .adapter
+            .provision_runtime(&RuntimeProvisionRequest::new(generation, spec))
+            .await
+        {
             Ok(handle) => {
+                let boot_id = match crate::sandbox::runtime_attachment::provisioned_runtime_status(
+                    self.dependencies.adapter.as_ref(),
+                    &sandbox_spec(&sandbox, &self.config.deployment_id),
+                    &handle,
+                    generation,
+                )
+                .await
+                {
+                    Ok(status) => status.map(|status| status.boot_id),
+                    Err(error) => {
+                        return self
+                            .handle_failure(sandbox, adapter_failure(error), now)
+                            .await;
+                    }
+                };
                 let mut next = sandbox;
                 next.runtime = Some(RuntimeBinding {
-                    provision_generation: Some(1),
+                    boot_id,
+                    provision_generation: Some(generation),
                     runtime_id: handle.0,
                     runtime_version: self.config.runtime_version.clone(),
                     bound_at: rfc3339_at(now),
                 });
-                next.lifecycle.runtime_generation_high_water = 1;
+                next.lifecycle.runtime_generation_high_water = generation;
                 self.advance_status(
                     next,
                     SandboxStatus::Installing,

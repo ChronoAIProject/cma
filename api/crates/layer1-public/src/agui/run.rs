@@ -51,7 +51,8 @@ struct ResumePayload {
 
 #[utoipa::path(post, path = "/api/v1/agui/run", tag = "ag-ui", request_body = RunRequest,
     responses((status = 200, body = String, content_type = "text/event-stream"),
-    (status = 404, body = crate::rest::ProblemDocument), (status = 422, body = crate::rest::ProblemDocument)))]
+    (status = 404, body = crate::rest::ProblemDocument), (status = 409, body = crate::rest::ProblemDocument),
+    (status = 422, body = crate::rest::ProblemDocument)))]
 pub(super) async fn run(
     State(state): State<AgentConversationState>,
     AuthenticatedCaller(caller): AuthenticatedCaller,

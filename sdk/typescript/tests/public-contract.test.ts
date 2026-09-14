@@ -1,6 +1,12 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it, vi } from 'vitest';
-import { createClient, ApiError, ValidationError, errorFromResponse } from '../src/index.js';
+import {
+  createClient,
+  ApiError,
+  ProtocolError,
+  ValidationError,
+  errorFromResponse,
+} from '../src/index.js';
 import {
   context,
   expandRawRequest,
@@ -136,6 +142,15 @@ describe('shared public contract', () => {
         if (mode === 'serializer-protection' && fixture.id.endsWith('-missing-media-type'))
           expect(headers.get('content-type')).toBe('application/json');
         for (const [name, value] of Object.entries(fixture.request.headers)) {
+          if (
+            fixture.operation.endsWith('/entry-intent') &&
+            ['origin', 'sec-fetch-site'].includes(name)
+          ) {
+            // Fetch metadata and Origin are supplied by the browser, not forged by the SDK.
+            expect(headers.has(name)).toBe(false);
+            expect(init?.credentials).toBe('include');
+            continue;
+          }
           if (name === 'cookie') {
             // Cookies belong to the browser/host jar, never to SDK-managed header values.
             expect(headers.has('cookie')).toBe(false);
@@ -153,7 +168,8 @@ describe('shared public contract', () => {
       });
       const client = createClient({
         baseUrl: 'https://contract.example',
-        cookies: fixture.operation === 'GET /auth/session',
+        cookies:
+          fixture.operation === 'GET /auth/session' || fixture.operation.endsWith('/entry-intent'),
         fetch,
       });
       if (mode === 'browser-only') {
@@ -162,9 +178,17 @@ describe('shared public contract', () => {
         return;
       }
       const invoke = async () => dispatch[fixture.operation]!(context(client, fixture));
+      if (fixture.id === 'triggers-entry-intent-cross-origin') {
+        // Browser-origin rejection is an empty HTTP refusal, not a domain problem document.
+        expect(fixture.response.status).toBe(403);
+        expect(fixture.response.bodyKind).toBe('empty');
+        await expect(invoke()).rejects.toBeInstanceOf(ProtocolError);
+        expect(fetch).toHaveBeenCalledOnce();
+        return;
+      }
       if (mode === 'raw-wire-only') {
         // Closed query/header shapes and raw padding cannot be emitted by these typed methods.
-        const body = fixture.response.body as Record<string, unknown>;
+        const body = (fixture.response.body ?? {}) as Record<string, unknown>;
         const error = await errorFromResponse(response(fixture));
         expect(error).toBeInstanceOf(ApiError);
         expect(error).toMatchObject({
@@ -191,7 +215,7 @@ describe('shared public contract', () => {
         fixture.response.status >= 400 &&
         !(fixture.operation === 'GET /auth/session' && fixture.response.status === 401)
       ) {
-        const body = fixture.response.body as Record<string, unknown>;
+        const body = (fixture.response.body ?? {}) as Record<string, unknown>;
         const result = await invoke().then(
           () => {
             throw new Error('Expected named refusal');

@@ -1,16 +1,24 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { ApiError, TransportError } from '@chronoai/cma-sdk';
 import type { CmaWebClient } from '../api/client';
 import { CommandKeys } from '../api/client';
 import type {
   AgentDetail,
   AgentEvent,
   AgentLiveEvent,
+  AgentSummary,
   AgentUsage,
   SandboxEvent,
   WorkspaceDetail,
 } from '../api/types';
 import { readSandboxHistory } from '../sandbox/eventHistory';
+import { currentAgentStatus, sameAgent } from './status';
 import { mergeTranscriptSnapshot } from './chronology';
+import {
+  useSandboxInput,
+  type SandboxInputAvailability,
+  type SandboxResourceAvailability,
+} from './sandboxInput';
 import {
   conversationFromTranscript,
   foldAgentEvent,
@@ -23,6 +31,8 @@ export interface ReadyAgent {
   readonly workspace: WorkspaceDetail;
   readonly conversation: ConversationState;
   readonly sandboxEvents?: readonly SandboxEvent[];
+  readonly historyLoading?: boolean;
+  readonly historyUnavailable?: boolean;
 }
 
 export type AgentResourceState =
@@ -36,6 +46,9 @@ export type ApprovalDecision = 'allow' | 'deny' | 'abort';
 
 export interface AgentController {
   readonly state: AgentResourceState;
+  readonly inputAvailability: SandboxInputAvailability;
+  readonly resourceAvailability: SandboxResourceAvailability;
+  readonly progressObservation?: ReturnType<typeof useSandboxInput>['progressObservation'];
   readonly pending?: AgentCommand;
   readonly actionError?: string;
   readonly reload: () => void;
@@ -48,11 +61,14 @@ export interface AgentController {
 }
 
 interface AgentControllerOptions {
+  readonly summary?: AgentSummary;
   readonly onHierarchyChange?: () => void;
   readonly onDeleted?: () => void;
 }
 
 function errorMessage(error: unknown): string {
+  if (error instanceof ApiError && error.code === 'sandbox_checkpoint_in_progress')
+    return 'Progress is being saved. Your input was not accepted. Try again after saving finishes.';
   return error instanceof Error ? error.message : 'The Agent operation did not complete.';
 }
 
@@ -60,10 +76,16 @@ function withUsage(conversation: ConversationState, usage: AgentUsage): Conversa
   return { ...conversation, usage };
 }
 
+function transientReadFailure(error: unknown): boolean {
+  return (error instanceof ApiError && error.isRetryable) || error instanceof TransportError;
+}
+
 export async function loadAgent(
   client: CmaWebClient,
   agentId: string,
   signal: AbortSignal,
+  allowIncompleteHistory = false,
+  onHistoryProgress?: (ready: ReadyAgent) => void,
 ): Promise<ReadyAgent & { readonly durableEvents: readonly AgentEvent[] }> {
   const [detail, transcript, usage] = await Promise.all([
     client.readAgent(agentId, { signal }),
@@ -82,8 +104,22 @@ export async function loadAgent(
   const durableEvents: AgentEvent[] = [];
   let cursor: number | undefined = 0;
   const seen = new Set<number>([0]);
+  let historyUnavailable = false;
+  const snapshot = conversationFromTranscript(transcript);
+  const projectedConversation = () => {
+    const merged = mergeTranscriptSnapshot(conversation, snapshot, conversation.cursor, true);
+    return usage.throughSeq >= (merged.usage?.throughSeq ?? 0) ? withUsage(merged, usage) : merged;
+  };
   do {
-    const page = await client.readAgentEvents(agentId, { cursor, signal });
+    let page;
+    try {
+      page = await client.readAgentEvents(agentId, { cursor, signal });
+    } catch (error) {
+      if (signal.aborted || !allowIncompleteHistory || !transientReadFailure(error)) throw error;
+      historyUnavailable = true;
+      break;
+    }
+    signal.throwIfAborted();
     durableEvents.push(...page.items);
     conversation = page.items.reduce(foldAgentEvent, conversation);
     const nextCursor = page.next;
@@ -91,14 +127,27 @@ export async function loadAgent(
       throw new Error('Agent event pagination did not advance.');
     }
     cursor = nextCursor;
-    if (cursor !== undefined) seen.add(cursor);
+    if (cursor !== undefined) {
+      seen.add(cursor);
+      // One authorized event page permits a readable snapshot, not complete-history acceptance.
+      onHistoryProgress?.({
+        detail,
+        workspace,
+        conversation: projectedConversation(),
+        historyLoading: true,
+        historyUnavailable: false,
+      });
+    }
   } while (cursor !== undefined);
 
-  const snapshot = conversationFromTranscript(transcript);
-  conversation = mergeTranscriptSnapshot(conversation, snapshot, conversation.cursor, true);
-  if (usage.throughSeq >= (conversation.usage?.throughSeq ?? 0))
-    conversation = withUsage(conversation, usage);
-  return { detail, workspace, conversation, durableEvents };
+  return {
+    detail,
+    workspace,
+    conversation: projectedConversation(),
+    durableEvents,
+    historyLoading: false,
+    historyUnavailable,
+  };
 }
 
 function refreshConversation(
@@ -132,6 +181,15 @@ export function useAgentController(
   const [state, setState] = useState<AgentResourceState>(
     agentId === undefined ? { status: 'idle' } : { status: 'loading' },
   );
+  const { inputAvailability, resourceAvailability, progressObservation } = useSandboxInput(
+    client,
+    agentId,
+    state.status === 'ready' && state.detail.id === agentId ? state.detail.sandbox.id : undefined,
+  );
+  const activeTurn =
+    state.status === 'ready' &&
+    state.detail.id === agentId &&
+    state.conversation.activeRunId !== undefined;
   const [pending, setPending] = useState<AgentCommand>();
   const [actionError, setActionError] = useState<string>();
   const [replayError, setReplayError] = useState<string>();
@@ -144,6 +202,43 @@ export function useAgentController(
   useEffect(() => {
     hierarchyChanged.current = options.onHierarchyChange;
   }, [options.onHierarchyChange]);
+
+  const summary = options.summary;
+  const detail = state.status === 'ready' ? state.detail : undefined;
+  useEffect(() => {
+    if (summary === undefined || detail === undefined || summary.id !== agentId) return;
+    let cancelled = false;
+    // Reuse fresh tree metadata without reloading or replacing conversation history.
+    queueMicrotask(() => {
+      if (cancelled) return;
+      setState((current) => {
+        if (
+          current.status !== 'ready' ||
+          !sameAgent(current.detail, summary) ||
+          !(Date.parse(summary.updatedAt) >= Date.parse(current.detail.updatedAt))
+        )
+          return current;
+        const status =
+          Date.parse(summary.updatedAt) > Date.parse(current.detail.updatedAt)
+            ? summary.status
+            : current.detail.status;
+        const title = summary.title?.trim() ? summary.title : current.detail.title;
+        if (current.detail.status === status && current.detail.title === title) return current;
+        return {
+          ...current,
+          detail: {
+            ...current.detail,
+            status,
+            title,
+            updatedAt: summary.updatedAt,
+          },
+        };
+      });
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [agentId, detail, summary]);
 
   const applyLive = useCallback(
     (event: AgentLiveEvent) => {
@@ -170,7 +265,9 @@ export function useAgentController(
         return;
       }
       setState({ status: 'loading' });
-      void loadAgent(client, agentId, controller.signal)
+      void loadAgent(client, agentId, controller.signal, true, (ready) => {
+        if (!controller.signal.aborted) setState({ status: 'ready', ...ready });
+      })
         .then((ready) => {
           if (controller.signal.aborted) return;
           liveCursor.current = ready.conversation.cursor;
@@ -186,16 +283,49 @@ export function useAgentController(
     };
   }, [agentId, applyLive, client, revision]);
 
+  const historyUnavailable =
+    state.status === 'ready' && state.detail.id === agentId && state.historyUnavailable === true;
+  const historyLoading =
+    state.status === 'ready' && state.detail.id === agentId && state.historyLoading === true;
+  const historyIncomplete = historyLoading || historyUnavailable;
+  useEffect(() => {
+    if (!historyUnavailable || agentId === undefined) return;
+    const request = new AbortController();
+    let timer: ReturnType<typeof setTimeout>;
+    let retryDelay = 5000;
+    const recover = async () => {
+      try {
+        const ready = await loadAgent(client, agentId, request.signal);
+        if (request.signal.aborted) return;
+        liveCursor.current = ready.conversation.cursor;
+        setState({ status: 'ready', ...ready });
+      } catch (error) {
+        if (request.signal.aborted) return;
+        if (transientReadFailure(error)) {
+          retryDelay = Math.min(retryDelay * 2, 30000);
+          timer = setTimeout(() => void recover(), retryDelay);
+        } else setState({ status: 'error', message: errorMessage(error) });
+      }
+    };
+    timer = setTimeout(() => void recover(), 5000);
+    return () => {
+      request.abort();
+      clearTimeout(timer);
+    };
+  }, [agentId, client, historyUnavailable]);
+
   const replayEnabled =
     agentId !== undefined &&
     state.status === 'ready' &&
     state.detail.id === agentId &&
+    !historyIncomplete &&
     pending !== 'send' &&
     pending !== 'approval';
 
   const provisioning =
     state.status === 'ready' &&
     state.detail.id === agentId &&
+    !historyIncomplete &&
     (state.detail.status === 'starting' ||
       (state.detail.firstMessage !== undefined &&
         !['completed', 'failed', 'recovery_required'].includes(state.detail.firstMessage.state)));
@@ -287,7 +417,13 @@ export function useAgentController(
       approval: { readonly id: string; readonly decision: ApprovalDecision } | string,
       onAccepted?: () => void,
     ) => {
-      if (agentId === undefined || actionAbort.current !== undefined) return;
+      if (
+        agentId === undefined ||
+        actionAbort.current !== undefined ||
+        historyIncomplete ||
+        !inputAvailability.allowed
+      )
+        return;
       replayAbort.current?.abort();
       const controller = new AbortController();
       actionAbort.current = controller;
@@ -336,7 +472,7 @@ export function useAgentController(
         }
       }
     },
-    [agentId, applyLive, client],
+    [agentId, applyLive, client, historyIncomplete, inputAvailability.allowed],
   );
 
   const command = useCallback(
@@ -345,6 +481,8 @@ export function useAgentController(
       operation: (id: string, key: string, signal: AbortSignal) => Promise<void>,
     ) => {
       const mayPreemptSend = name === 'interrupt' && actionKind.current === 'send';
+      if (historyLoading) return;
+      if (name === 'interrupt' && !activeTurn) return;
       if (agentId === undefined || (actionAbort.current !== undefined && !mayPreemptSend)) {
         return;
       }
@@ -372,11 +510,26 @@ export function useAgentController(
         }
       }
     },
-    [agentId, keys, options, reload],
+    [activeTurn, agentId, historyLoading, keys, options, reload],
   );
 
+  const displayedStatus =
+    state.status === 'ready'
+      ? currentAgentStatus(state.detail, state.conversation, summary)
+      : undefined;
   return {
-    state,
+    state:
+      state.status === 'ready' &&
+      displayedStatus !== undefined &&
+      displayedStatus !== state.detail.status
+        ? {
+            ...state,
+            detail: { ...state.detail, status: displayedStatus },
+          }
+        : state,
+    inputAvailability,
+    resourceAvailability,
+    progressObservation,
     pending,
     actionError: actionError ?? replayError,
     reload,

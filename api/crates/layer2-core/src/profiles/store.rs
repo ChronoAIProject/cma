@@ -210,6 +210,21 @@ struct State {
 }
 
 impl InMemoryProfileStore {
+    pub(crate) fn with_sandbox_availability<T>(
+        &self,
+        id: &SandboxProfileId,
+        apply: impl FnOnce(super::SandboxProfileAvailability) -> T,
+    ) -> T {
+        let state = self.lock();
+        apply(
+            state
+                .sandboxes
+                .get(id)
+                .map(|profile| profile.availability)
+                .unwrap_or_default(),
+        )
+    }
+
     fn lock(&self) -> std::sync::MutexGuard<'_, State> {
         self.state
             .lock()

@@ -111,3 +111,4 @@ it('does not permit profile management without the public capability', async () 
     false,
   );
 });
+import './test/connectedAccounts';

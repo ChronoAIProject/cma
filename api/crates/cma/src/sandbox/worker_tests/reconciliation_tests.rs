@@ -271,6 +271,93 @@ async fn startup_completes_global_pagination_before_reclaiming() {
 }
 
 #[tokio::test]
+async fn settled_unbound_parents_reclaim_equal_generation_without_touching_newer_allocations() {
+    for status in [
+        SandboxStatus::Paused,
+        SandboxStatus::Retiring,
+        SandboxStatus::Retired,
+    ] {
+        let harness = Harness::new(Vec::new(), 0, Duration::from_secs(60)).await;
+        let (mut current, now) = active_with_exact_image(&harness).await;
+        let obsolete = RuntimeHandle(current.runtime.as_ref().unwrap().runtime_id.clone());
+        let newer = harness
+            .adapter
+            .provision_runtime(&layer3_adapter::RuntimeProvisionRequest::new(
+                2,
+                sandbox_spec(&current, "test"),
+            ))
+            .await
+            .unwrap();
+        let revision = current.revision;
+        current.runtime = None;
+        current.status = status;
+        current
+            .work
+            .schedule(SandboxWorkStep::None, rfc3339_at(now));
+        current.lifecycle.checkpoints.latest = Some(
+            layer2_core::sandbox::SandboxCheckpointRef::seal(
+                &layer3_adapter::CheckpointReceipt {
+                    epoch: 1,
+                    object_reference: "checkpoint/settled".into(),
+                    sha256: "a".repeat(64),
+                    writers: layer3_adapter::WriterState::Resumed,
+                },
+                &[],
+                rfc3339_at(now),
+            )
+            .unwrap(),
+        );
+        if status == SandboxStatus::Retired {
+            current.retired_at = Some(rfc3339_at(now));
+        }
+        current.revision += 1;
+        harness
+            .store
+            .save_sandbox(revision, current.clone())
+            .await
+            .unwrap();
+        reconciler(&harness, fresh_adapter(&harness, None), "runtime-v2")
+            .initialize(now)
+            .await
+            .unwrap();
+        assert!(
+            harness.backend.snapshot(&obsolete).await.is_err(),
+            "{status:?}"
+        );
+        assert!(harness.backend.snapshot(&newer).await.is_ok(), "{status:?}");
+        assert_eq!(harness.stored(&current.id).await, current);
+    }
+}
+
+#[tokio::test]
+async fn equal_generation_remains_protected_before_initial_binding_publication() {
+    let harness = Harness::new(Vec::new(), 0, Duration::from_secs(60)).await;
+    let mut created = harness.create().await;
+    let revision = created.revision;
+    created.lifecycle.runtime_generation_high_water = 1;
+    created.revision += 1;
+    harness
+        .store
+        .save_sandbox(revision, created.clone())
+        .await
+        .unwrap();
+    let pending = harness
+        .adapter
+        .provision_runtime(&layer3_adapter::RuntimeProvisionRequest::new(
+            1,
+            sandbox_spec(&created, "test"),
+        ))
+        .await
+        .unwrap();
+    reconciler(&harness, fresh_adapter(&harness, None), "runtime-v2")
+        .initialize(start_time(&created))
+        .await
+        .unwrap();
+    assert!(harness.backend.snapshot(&pending).await.is_ok());
+    assert_eq!(harness.stored(&created.id).await, created);
+}
+
+#[tokio::test]
 async fn stale_inventory_is_refetched_before_declaring_a_bound_runtime_missing() {
     let harness = Harness::new(Vec::new(), 0, Duration::from_secs(60)).await;
     let (active, now) = active_with_exact_image(&harness).await;

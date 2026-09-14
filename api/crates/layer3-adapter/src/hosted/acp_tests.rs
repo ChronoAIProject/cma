@@ -150,6 +150,10 @@ async fn fresh_bridge_routes_startup_prompt_permission_cancel_and_gap_frames() {
         let initialize = receive_json(&mut server).await;
         assert_eq!(initialize["method"], "initialize");
         assert_eq!(initialize["params"]["protocolVersion"], 1);
+        assert_eq!(
+            initialize.pointer("/params/clientCapabilities/_meta/jetbrains/air/capabilities"),
+            Some(&serde_json::json!(["sessionFailure"]))
+        );
 
         let startup = SessionUpdate::AgentMessageChunk(ContentChunk::new(ContentBlock::from(
             "startup activity",

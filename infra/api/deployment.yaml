@@ -18,6 +18,9 @@ spec:
       app.kubernetes.io/name: cma-api
   template:
     metadata:
+      annotations:
+        # Reload the environment-bound runtime pin when its ConfigMap changes.
+        cma.chronoai.dev/runtime-image: "sha256:5541f5a711d90c61824fe6a55b4c762d21a37cb2a63574f552390520eabf5ee4"
       labels:
         app.kubernetes.io/name: cma-api
         app.kubernetes.io/part-of: cma
@@ -52,7 +55,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: api
-          image: us-central1-docker.pkg.dev/aelf-shared-k8s-prod/aelf-prod-registry/cma-api:v0.10.0@sha256:88c87b3625d193712d2f0fb5bda057f1d7a5cd570ea9159d3bf78cf1fcbc65d4
+          image: us-central1-docker.pkg.dev/aelf-shared-k8s-prod/aelf-prod-registry/cma-api@sha256:8eba12c107b5823573b129b4fb00b99114da731141ebb116078e47acf0c48d87
           imagePullPolicy: IfNotPresent
           ports:
             - name: http
@@ -73,10 +76,12 @@ spec:
           resources:
             requests:
               cpu: 100m
-              memory: 128Mi
+              memory: 256Mi
             limits:
               cpu: 1000m
-              memory: 512Mi
+              # Four lifecycle sweeps can each hold bounded upload buffers.
+              # All restore downloads share a four-part (128 MiB) buffer cap.
+              memory: 1Gi
           # Startup validates MongoDB schema/indexes and composes provider
           # authorities before binding. The existing 30-minute budget is
           # finite; readiness separately checks the composed dependencies.

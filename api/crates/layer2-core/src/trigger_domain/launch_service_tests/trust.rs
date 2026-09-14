@@ -1,6 +1,28 @@
 use super::*;
 
 #[tokio::test]
+async fn explicit_no_review_start_accepts_exact_foreign_configuration_without_extra_confirmation() {
+    let fixture = fixture(default_reuse(), PUBLISHER, true, false, vec![]).await;
+    let mut request = fixture.request("external-button");
+    request.start_if_ready = true;
+    let launch = fixture
+        .service
+        .create_or_resume(&fixture.caller, &fixture.public.public_id, request)
+        .await
+        .unwrap()
+        .launch;
+    assert_eq!(launch.state, LaunchState::Resolving);
+    assert!(launch.review.needs.is_empty());
+    assert_eq!(launch.confirmations.len(), 1);
+    assert_eq!(
+        launch.confirmations[0].trust_confirmed_digest,
+        launch.trust.confirmation_digest
+    );
+    assert!(launch.trust.confirmation_digest.is_some());
+    launch.validate().unwrap();
+}
+
+#[tokio::test]
 async fn review_needs_are_ordered_and_trust_is_needed_only_for_foreign_unsafe_creation() {
     let services = vec![
         ServiceId::new("github"),
@@ -50,7 +72,18 @@ async fn review_needs_are_ordered_and_trust_is_needed_only_for_foreign_unsafe_cr
         .await
         .unwrap()
         .launch;
-    assert_eq!(reused.review.needs, vec![ReviewNeed::OwnerRequiresReview]);
+    assert_eq!(
+        reused.review.needs,
+        vec![
+            ReviewNeed::Connection {
+                service: ServiceId::new("github")
+            },
+            ReviewNeed::Connection {
+                service: ServiceId::new("slack")
+            },
+            ReviewNeed::OwnerRequiresReview,
+        ]
+    );
 
     for (owner, unsafe_profile) in [(VISITOR, true), (PUBLISHER, false)] {
         let fixture = fixture(default_reuse(), owner, unsafe_profile, false, vec![]).await;

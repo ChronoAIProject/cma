@@ -4,6 +4,48 @@ use crate::instances::{AgentStatus, Failure, SandboxStatus, WorkspaceStatus, Wor
 use crate::profiles::{PermissionLevel, ProfileReference, SkillReference, ThinkingEffort};
 use serde::{Deserialize, Serialize};
 
+/// How this Agent was originally created.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum AgentOrigin {
+    /// Direct owner creation.
+    Manual,
+    /// A configured child of a Workspace Profile.
+    WorkspaceProfile,
+    /// A visitor Launch, never another owner's Agent.
+    Trigger {
+        /// Original Trigger identity.
+        trigger_id: String,
+        /// Original Launch identity.
+        launch_id: String,
+    },
+}
+
+/// Published shortcuts and creation provenance, independent of conversation history.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct AgentSource {
+    /// Owning Agent identity.
+    pub agent_id: String,
+    /// Immutable creation provenance.
+    pub origin: AgentOrigin,
+    /// Current published Trigger, when still resolvable.
+    pub trigger: Option<AgentTriggerSource>,
+}
+
+/// Current published presentation of the originating Trigger.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct AgentTriggerSource {
+    /// Public visitor identity.
+    pub public_id: String,
+    /// Original human-readable Trigger name.
+    pub title: String,
+    /// Published revision used for these shortcuts.
+    #[serde(deserialize_with = "crate::resources::deserialize_positive")]
+    pub revision: u32,
+    /// Explicit-click messages; empty for retired Triggers.
+    pub quick_messages: Vec<crate::triggers::TriggerQuickMessage>,
+}
+
 string_enum! { /// Durable first-message delivery state.
     pub enum FirstMessageDelivery { Queued => "queued", DispatchFenced => "dispatch_fenced", WriteConfirmed => "write_confirmed", ExecutionObserved => "execution_observed", Completed => "completed", Failed => "failed", RecoveryRequired => "recovery_required" }
 }

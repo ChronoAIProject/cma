@@ -3,7 +3,7 @@ use layer2_core::sandbox::store::AgentWorkMutation;
 use layer2_core::sandbox::AgentCleanupDebt;
 use layer3_adapter::ConversationChannel;
 
-async fn opening_agent(harness: &Harness, name: &str) -> Agent {
+pub(super) async fn opening_agent(harness: &Harness, name: &str) -> Agent {
     let admitted = harness.admit(name, vec![]).await;
     harness.run(&admitted.id, harness.now).await;
     harness.run(&admitted.id, harness.now).await;
@@ -59,6 +59,12 @@ async fn startup_sign_in_reaches_durable_reads_before_authentication_completes()
     let harness = Harness::new(Arc::new(EmptyAgentSkillResolver)).await;
     let mut agent = opening_agent(&harness, "sign-in-durable").await;
     let initial = agent.clone();
+    let parent = harness
+        .store
+        .get_sandbox(&agent.sandbox_id)
+        .await
+        .unwrap()
+        .unwrap();
     let (sender, receiver) = mpsc::channel(4);
     let authentication = async {
         sender
@@ -107,6 +113,7 @@ async fn startup_sign_in_reaches_durable_reads_before_authentication_completes()
         .worker
         .await_startup_open(
             &mut agent,
+            &parent,
             receiver,
             authentication,
             Duration::from_secs(2),
@@ -136,6 +143,12 @@ async fn startup_timeout_preserves_visible_challenge_and_cleanup_intent() {
     let harness = Harness::new(Arc::new(EmptyAgentSkillResolver)).await;
     let mut agent = opening_agent(&harness, "sign-in-timeout").await;
     let initial = agent.clone();
+    let parent = harness
+        .store
+        .get_sandbox(&agent.sandbox_id)
+        .await
+        .unwrap()
+        .unwrap();
     let (sender, receiver) = mpsc::channel(4);
     let opening = async {
         sender
@@ -152,6 +165,7 @@ async fn startup_timeout_preserves_visible_challenge_and_cleanup_intent() {
         .worker
         .await_startup_open(
             &mut agent,
+            &parent,
             receiver,
             opening,
             Duration::from_millis(25),

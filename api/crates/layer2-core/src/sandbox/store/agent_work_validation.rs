@@ -1,4 +1,7 @@
-use crate::sandbox::{Agent, AgentWorkStep, Worktree, WorktreeStatus};
+use crate::sandbox::{
+    Agent, AgentStatus, AgentStopReason, AgentWorkStep, Sandbox, SandboxStatus, SandboxWorkStep,
+    Worktree, WorktreeStatus,
+};
 use crate::seconds_from_rfc3339;
 
 use super::agent_work_evidence_validation::{
@@ -16,11 +19,112 @@ pub fn validate_agent_work_mutation(
     actual_last_seq: u64,
     mutation: &AgentWorkMutation,
 ) -> Result<(), SandboxStoreError> {
+    validate_mutation(current, current_worktree, actual_last_seq, mutation, false)
+}
+
+/// Validate cleanup whose process was already removed by the parent's durable teardown.
+pub fn validate_agent_work_mutation_with_sandbox(
+    current: &Agent,
+    current_worktree: &Worktree,
+    actual_last_seq: u64,
+    mutation: &AgentWorkMutation,
+    sandbox: &Sandbox,
+) -> Result<(), SandboxStoreError> {
+    validate_mutation(
+        current,
+        current_worktree,
+        actual_last_seq,
+        mutation,
+        retiring_sandbox_process_is_absent(current, sandbox)
+            || retired_sandbox_cleanup_is_absent(current, sandbox),
+    )
+}
+
+/// Completed retirement has removed the entire runtime, not just an Agent process.
+/// A stopped Agent may retain its interrupted turn as history; it cannot execute again.
+pub fn retired_sandbox_cleanup_is_absent(agent: &Agent, sandbox: &Sandbox) -> bool {
+    matches!(agent.status, AgentStatus::Stopped | AgentStatus::Failed)
+        && matches!(
+            agent.work.step,
+            AgentWorkStep::EnsureProcessClosed
+                | AgentWorkStep::RemoveHome
+                | AgentWorkStep::RemoveWorktree
+        )
+        && agent.work.cleanup_debt.is_empty()
+        && agent.conversation.queued_messages.is_empty()
+        && agent.sandbox_id == sandbox.id
+        && agent.owner == sandbox.owner
+        && sandbox.status == SandboxStatus::Retired
+        && sandbox.retired_at.is_some()
+        && sandbox.runtime.is_none()
+        && sandbox.lifecycle.runtime_provision.is_none()
+        && sandbox.lifecycle.operation.is_none()
+        && sandbox.lifecycle.checkpoint_capture.is_none()
+        && sandbox.validate().is_ok()
+}
+
+/// A retired-runtime close is not a runtime request receipt or a completed turn.
+pub fn retiring_sandbox_process_is_absent(agent: &Agent, sandbox: &Sandbox) -> bool {
+    agent.status == AgentStatus::Paused
+        && agent.requested_stop_reason == Some(AgentStopReason::SandboxRetired)
+        && agent.work.step == AgentWorkStep::CloseProcess
+        && agent.work.cleanup_debt.is_empty()
+        && agent.conversation.active_turn.is_none()
+        && agent.conversation.queued_messages.is_empty()
+        && agent.sandbox_id == sandbox.id
+        && agent.owner == sandbox.owner
+        && sandbox.status == SandboxStatus::Retiring
+        && sandbox.work.step == SandboxWorkStep::StopAgents
+        && sandbox.runtime.is_none()
+        && sandbox.lifecycle.runtime_provision.is_none()
+        && sandbox.lifecycle.operation.is_none()
+        && sandbox.lifecycle.checkpoint_capture.is_none()
+        && agent
+            .conversation
+            .runtime_generation
+            .is_some_and(|generation| {
+                // Runtime-loss parking advances the Agent fence without allocating a runtime.
+                generation > 0
+                    && sandbox.lifecycle.runtime_generation_high_water > 0
+                    && sandbox
+                        .lifecycle
+                        .runtime_generation_high_water
+                        .checked_add(1)
+                        .is_some_and(|ceiling| generation <= ceiling)
+            })
+        && sandbox.validate().is_ok()
+        && sandbox
+            .lifecycle
+            .checkpoints
+            .latest
+            .as_ref()
+            .is_some_and(|checkpoint| {
+                checkpoint.conversations.iter().any(|conversation| {
+                    conversation.agent_id == agent.id
+                        && Some(&conversation.conversation_id)
+                            == agent.conversation.conversation_id.as_ref()
+                })
+            })
+}
+
+fn validate_mutation(
+    current: &Agent,
+    current_worktree: &Worktree,
+    actual_last_seq: u64,
+    mutation: &AgentWorkMutation,
+    retired_process_absent: bool,
+) -> Result<(), SandboxStoreError> {
     validate_common(current, current_worktree, actual_last_seq, mutation)?;
     validate_position(current, current_worktree)?;
     validate_histories(current, &mutation.agent, &mutation.appended_at)?;
     let kind = classify_publication(current, &mutation.agent)?;
-    validate_work_delta(current, &mutation.agent, mutation, kind)?;
+    validate_work_delta(
+        current,
+        &mutation.agent,
+        mutation,
+        kind,
+        retired_process_absent,
+    )?;
     validate_agent_delta(current, &mutation.agent, mutation, kind)?;
     validate_worktree_delta(current_worktree, mutation, kind, current.work.step)?;
     validate_evidence(current, current_worktree, mutation, kind)
@@ -104,12 +208,20 @@ fn validate_work_delta(
     next: &Agent,
     mutation: &AgentWorkMutation,
     kind: PublicationKind,
+    retired_process_absent: bool,
 ) -> Result<(), SandboxStoreError> {
-    if next.work.next_fence != current.work.next_fence {
+    if next.work.next_fence != current.work.next_fence
+        || next.work.warm_conversation_id != current.work.warm_conversation_id
+    {
         return Err(SandboxStoreError::Conflict);
     }
     if kind == PublicationKind::Intent && current.work.step == AgentWorkStep::MaterializeHome {
-        if current.work.resolved_skills.is_some() || next.work.resolved_skills.is_none() {
+        let warm_selection = current.work.warm_conversation_id.is_some()
+            && current.work.resolved_skills.is_some()
+            && current.work.resolved_skills == next.work.resolved_skills;
+        if !warm_selection
+            && (current.work.resolved_skills.is_some() || next.work.resolved_skills.is_none())
+        {
             return Err(SandboxStoreError::Conflict);
         }
     } else if next.work.resolved_skills != current.work.resolved_skills {
@@ -179,7 +291,7 @@ fn validate_work_delta(
                     Err(SandboxStoreError::Conflict)
                 }
             } else {
-                validate_advance_history(current, next, mutation)
+                validate_advance_history(current, next, mutation, retired_process_absent)
             }
         }
     }
@@ -225,10 +337,12 @@ fn advance_ready_at(
         mutation.agent.work.step,
         current.work.cleanup_not_before.as_ref(),
     ) {
-        (AgentWorkStep::FenceInteraction, AgentWorkStep::CloseProcess, Some(not_before))
-            if stamp(not_before)? > stamp(&mutation.appended_at)? =>
-        {
-            Ok(not_before.clone())
+        (AgentWorkStep::FenceInteraction, AgentWorkStep::CloseProcess, Some(not_before)) => {
+            if stamp(not_before)? > stamp(&mutation.appended_at)? {
+                Ok(not_before.clone())
+            } else {
+                Ok(mutation.appended_at.clone())
+            }
         }
         (_, _, Some(_)) => Err(SandboxStoreError::Conflict),
         _ => Ok(mutation.appended_at.clone()),

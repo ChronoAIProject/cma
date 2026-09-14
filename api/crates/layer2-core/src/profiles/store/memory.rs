@@ -315,6 +315,14 @@ impl SandboxProfileStore for InMemoryProfileStore {
         &self,
         profile: SandboxProfile,
     ) -> Result<(), ProfileStoreError> {
+        profile.availability.validate(profile.visibility)?;
+        if profile.availability.warmup_enabled {
+            return Err(ProfileError::new(
+                "warmup_requires_published_profile",
+                "availability.warmup_enabled",
+            )
+            .into());
+        }
         if profile.draft_version == 0 || profile.forked_from.is_some() {
             return Err(ProfileStoreError::Conflict);
         }
@@ -331,8 +339,21 @@ impl SandboxProfileStore for InMemoryProfileStore {
         expected: u64,
         profile: SandboxProfile,
     ) -> Result<(), ProfileStoreError> {
+        profile.availability.validate(profile.visibility)?;
         let id = profile.id.clone();
         let mut state = self.lock();
+        if profile.availability.warmup_enabled
+            && !state
+                .sandbox_revisions
+                .keys()
+                .any(|(profile_id, _)| profile_id == &id)
+        {
+            return Err(ProfileError::new(
+                "warmup_requires_published_profile",
+                "availability.warmup_enabled",
+            )
+            .into());
+        }
         let stored = state
             .sandboxes
             .get(&id)

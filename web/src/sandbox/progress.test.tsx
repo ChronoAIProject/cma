@@ -1,4 +1,4 @@
-import { act, render, screen, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
 import type { SandboxEvent } from '../api/types';
 import { AGENT_DETAIL, agentClient } from '../test/agent';
@@ -124,7 +124,7 @@ it('uses the Agent worktree and durable readiness without claiming an uncreated 
   ).toBe(true);
 });
 
-it('polls incremental Sandbox events, preserves progress on read failure, and stops after readiness', async () => {
+it('polls incremental Sandbox events, preserves progress on read failure, and slows after readiness', async () => {
   vi.useFakeTimers();
   const readSandbox = vi
     .fn()
@@ -156,6 +156,11 @@ it('polls incremental Sandbox events, preserves progress on read failure, and st
   await act(async () => {
     await vi.advanceTimersByTimeAsync(0);
   });
+  expect(readSandboxEvents.mock.calls.map((call) => call[1].cursor)).toEqual([0, 1]);
+  expect(
+    within(screen.getByRole('region', { name: 'Live activity' })).getByText('Sandbox created'),
+  ).toBeInTheDocument();
+  await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Advanced' })));
   expect(
     within(screen.getByRole('region', { name: 'Sandbox preparation' })).getByText(
       'Starting the sandbox',
@@ -174,7 +179,9 @@ it('polls incremental Sandbox events, preserves progress on read failure, and st
   await act(async () => {
     await vi.advanceTimersByTimeAsync(10000);
   });
-  expect(readSandbox).toHaveBeenCalledTimes(3);
+  expect(readSandbox).toHaveBeenCalledTimes(5);
+  expect(readSandboxEvents.mock.calls.at(-1)?.[1].cursor).toBe(1);
+  expect(screen.queryByRole('region', { name: 'Sandbox preparation' })).not.toBeInTheDocument();
   view.unmount();
 });
 

@@ -92,6 +92,15 @@ pub(super) async fn apply(
         .map_err(ApplyError::Driver)?
         .ok_or(ApplyError::Domain(SandboxStoreError::NotFound))?;
     let current = read_sandbox(&document).map_err(ApplyError::Domain)?;
+    if matches!(request, MaintenanceRequest::Inactivity(_))
+        && keep_alive_and_fence_policy(store, &current, session).await?
+    {
+        return Ok(MaintenanceReceipt {
+            sandbox: current,
+            event: None,
+            outcome: SandboxMaintenanceOutcome::NotEligible,
+        });
+    }
     let last_seq = document
         .get_i64("last_seq")
         .map_err(|error| SandboxStoreError::Corrupt(error.to_string()))
@@ -156,6 +165,42 @@ pub(super) async fn apply(
         event: Some(event),
         outcome: SandboxMaintenanceOutcome::Scheduled,
     })
+}
+
+async fn keep_alive_and_fence_policy(
+    store: &MongoSandboxStore,
+    sandbox: &Sandbox,
+    session: &mut ClientSession,
+) -> Result<bool, ApplyError> {
+    let Some(document) = store
+        .sandbox_profiles
+        .find_one(doc! { "_id": sandbox.profile.id.as_str() })
+        .session(&mut *session)
+        .await
+        .map_err(ApplyError::Driver)?
+    else {
+        return Ok(false);
+    };
+    let profile = super::super::sandbox_profiles::read_profile(&document)
+        .map_err(|error| ApplyError::Domain(SandboxStoreError::Corrupt(error.to_string())))?;
+    if profile.availability.always_keep_alive {
+        return Ok(true);
+    }
+    // An actual write conflicts with any concurrent policy edit. Merely reading
+    // the Profile under snapshot isolation permits an obsolete pause to commit.
+    let fenced = store
+        .sandbox_profiles
+        .update_one(
+            doc! { "_id": sandbox.profile.id.as_str() },
+            doc! { "$inc": { "inactivity_fence": 1_i64 } },
+        )
+        .session(&mut *session)
+        .await
+        .map_err(ApplyError::Driver)?;
+    if fenced.matched_count != 1 {
+        return Err(ApplyError::Domain(SandboxStoreError::Conflict));
+    }
+    Ok(false)
 }
 
 pub(super) async fn reconcile(

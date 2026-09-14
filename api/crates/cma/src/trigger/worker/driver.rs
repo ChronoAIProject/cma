@@ -67,6 +67,7 @@ pub(crate) enum LaunchResourceEffect {
         authority: Capability,
         workspace_id: WorkspaceId,
         request: CreateAgent,
+        reuse_existing: bool,
     },
 }
 
@@ -197,14 +198,28 @@ impl LaunchResourceDriver for ServiceLaunchResourceDriver {
         &self,
         target: &TriggerTarget,
     ) -> Result<ResolvedTriggerProfiles, LaunchResourceError> {
-        let sandbox = self
-            .profiles
-            .sandbox_profile_revision(&target.sandbox_profile.id, target.sandbox_profile.revision)
-            .await
-            .map_err(profile_error)?
-            .ok_or_else(missing_frozen_profile)?;
+        let (sandbox, workspace, agent) = tokio::try_join!(
+            self.profiles.sandbox_profile_revision(
+                &target.sandbox_profile.id,
+                target.sandbox_profile.revision,
+            ),
+            self.profiles.workspace_profile_revision(
+                &target.workspace_profile.id,
+                target.workspace_profile.revision,
+            ),
+            self.profiles
+                .agent_profile_revision(&target.agent_profile.id, target.agent_profile.revision,),
+        )
+        .map_err(profile_error)?;
+        let sandbox = sandbox.ok_or_else(missing_frozen_profile)?;
+        let workspace = workspace.ok_or_else(missing_frozen_profile)?;
+        let agent = agent.ok_or_else(missing_frozen_profile)?;
         let mut sandbox_workspaces = Vec::with_capacity(sandbox.content.workspace_profiles.len());
         for reference in &sandbox.content.workspace_profiles {
+            if reference.id == workspace.profile_id && reference.revision == workspace.revision {
+                sandbox_workspaces.push(workspace.clone());
+                continue;
+            }
             sandbox_workspaces.push(
                 self.profiles
                     .workspace_profile_revision(&reference.id, reference.revision)
@@ -213,21 +228,6 @@ impl LaunchResourceDriver for ServiceLaunchResourceDriver {
                     .ok_or_else(missing_frozen_profile)?,
             );
         }
-        let workspace = self
-            .profiles
-            .workspace_profile_revision(
-                &target.workspace_profile.id,
-                target.workspace_profile.revision,
-            )
-            .await
-            .map_err(profile_error)?
-            .ok_or_else(missing_frozen_profile)?;
-        let agent = self
-            .profiles
-            .agent_profile_revision(&target.agent_profile.id, target.agent_profile.revision)
-            .await
-            .map_err(profile_error)?
-            .ok_or_else(missing_frozen_profile)?;
         validate_profile_digests(&sandbox, &sandbox_workspaces, &workspace, &agent)?;
         Ok(ResolvedTriggerProfiles {
             sandbox,
@@ -340,9 +340,16 @@ impl LaunchResourceDriver for ServiceLaunchResourceDriver {
                 authority,
                 workspace_id,
                 request,
+                reuse_existing,
             } => self
                 .agents
-                .create_for_launch(&caller, authority, &workspace_id, request)
+                .create_or_reuse_for_launch(
+                    &caller,
+                    authority,
+                    &workspace_id,
+                    request,
+                    reuse_existing,
+                )
                 .await
                 .map(|agent| agent.id.to_string())
                 .map_err(agent_service_error),
@@ -428,9 +435,8 @@ fn sandbox_service_error(error: SandboxServiceError) -> LaunchResourceError {
 
 fn workspace_service_error(error: WorkspaceServiceError) -> LaunchResourceError {
     match error {
-        WorkspaceServiceError::Unavailable(_) | WorkspaceServiceError::SandboxNotReady => {
-            dependency_unavailable()
-        }
+        WorkspaceServiceError::Unavailable(_) => dependency_unavailable(),
+        WorkspaceServiceError::SandboxNotReady => sandbox_not_ready(),
         WorkspaceServiceError::LimitReached { .. } => LaunchResourceError::terminal(
             "workspace_limit_reached",
             "Workspace capacity is unavailable for this launch",
@@ -446,14 +452,21 @@ fn agent_service_error(error: AgentServiceError) -> LaunchResourceError {
     match error {
         AgentServiceError::Unavailable(_)
         | AgentServiceError::WorkspaceNotReady
-        | AgentServiceError::SandboxNotReady
         | AgentServiceError::ControlConflict => dependency_unavailable(),
+        AgentServiceError::SandboxNotReady => sandbox_not_ready(),
         AgentServiceError::LimitReached { .. } => LaunchResourceError::terminal(
             "agent_limit_reached",
             "Agent capacity is unavailable for this launch",
         ),
         _ => LaunchResourceError::terminal("agent_launch_rejected", "Agent creation was rejected"),
     }
+}
+
+fn sandbox_not_ready() -> LaunchResourceError {
+    LaunchResourceError::retryable(
+        "launch_sandbox_not_ready",
+        "The Sandbox is not ready for launch creation",
+    )
 }
 
 fn missing_frozen_profile() -> LaunchResourceError {

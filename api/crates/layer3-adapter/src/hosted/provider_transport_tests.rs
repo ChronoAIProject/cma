@@ -15,6 +15,11 @@ use crate::hosted::{
 use crate::wire::{AgentOpenReceipt, FencedReceipt, FencedRequest, ResponseFrame};
 use crate::{AgentLaunch, AgentSlot, ResourceReading};
 
+#[path = "provider_transport_checkpoint_tests.rs"]
+mod checkpoint;
+#[path = "provider_transport_restore_tests.rs"]
+mod restore;
+
 struct NullStore;
 
 #[async_trait::async_trait]

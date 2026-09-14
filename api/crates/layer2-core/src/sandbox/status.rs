@@ -44,7 +44,9 @@ impl SandboxStatus {
                 )
                 | (Self::CredentialRotating, Self::Reviving)
                 | (Self::Provisioning | Self::Installing, Self::Retiring)
-                | (Self::Pausing, Self::Paused)
+                | (Self::Pausing, Self::Paused | Self::Active | Self::Reviving)
+                | (Self::Reviving, Self::Pausing)
+                | (Self::Installing | Self::Provisioning, Self::Reviving)
                 | (Self::Paused, Self::Reviving | Self::Retiring)
                 | (
                     Self::Pausing | Self::Reviving | Self::CredentialRotating | Self::Rotating,

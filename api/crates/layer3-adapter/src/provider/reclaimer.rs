@@ -1,5 +1,7 @@
+use std::collections::BTreeMap;
 use std::time::Duration;
 
+use k8s_openapi::apimachinery::pkg::apis::meta::v1::OwnerReference;
 use kube::api::{Api, DeleteParams, DynamicObject, ListParams, Preconditions};
 use kube::core::{ApiResource, GroupVersionKind};
 
@@ -14,6 +16,7 @@ const KIND: &str = "BatchSandbox";
 const PLURAL: &str = "batchsandboxes";
 const DELETE_CONFIRM_TIMEOUT: Duration = Duration::from_secs(30);
 const DELETE_CONFIRM_POLL: Duration = Duration::from_millis(250);
+const DELETE_ATTEMPTS: usize = 3;
 
 /// Namespaced, preconditioned access to provider-owned sandbox resources.
 #[derive(Clone)]
@@ -23,11 +26,20 @@ pub struct BatchSandboxReclaimer {
     expected_creator: Option<String>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub(crate) struct CapturedSandbox {
     pub(crate) handle: RuntimeHandle,
-    uid: String,
     resource_version: String,
+    identity: DeletionIdentity,
+}
+
+#[derive(Clone, PartialEq)]
+struct DeletionIdentity {
+    uid: String,
+    generation: i64,
+    labels: BTreeMap<String, String>,
+    owner_references: Vec<OwnerReference>,
+    spec: serde_json::Value,
 }
 
 impl BatchSandboxReclaimer {
@@ -110,31 +122,72 @@ impl BatchSandboxReclaimer {
             handle,
             "Kubernetes resourceVersion",
         )?;
+        let generation = object
+            .metadata
+            .generation
+            .filter(|generation| *generation > 0)
+            .ok_or_else(|| {
+                ProviderError::Malformed(format!(
+                    "BatchSandbox {} has no positive Kubernetes generation",
+                    handle.0
+                ))
+            })?;
+        let spec = object
+            .data
+            .get("spec")
+            .filter(|spec| spec.is_object())
+            .cloned()
+            .ok_or_else(|| {
+                ProviderError::Malformed(format!("BatchSandbox {} has no specification", handle.0))
+            })?;
         Ok(Some(CapturedSandbox {
             handle: handle.clone(),
-            uid,
             resource_version,
+            identity: DeletionIdentity {
+                uid,
+                generation,
+                labels: object.metadata.labels.unwrap_or_default(),
+                owner_references: object.metadata.owner_references.unwrap_or_default(),
+                spec,
+            },
         }))
     }
 
-    pub(crate) async fn delete(&self, captured: CapturedSandbox) -> Result<(), ProviderError> {
-        let params = DeleteParams {
-            grace_period_seconds: Some(0),
-            propagation_policy: Some(kube::api::PropagationPolicy::Foreground),
-            preconditions: Some(Preconditions {
-                uid: Some(captured.uid.clone()),
-                resource_version: Some(captured.resource_version),
-            }),
-            ..DeleteParams::default()
-        };
-        match self.api.delete(captured.handle.as_str(), &params).await {
-            Ok(_) => {}
-            Err(kube::Error::Api(response)) if response.is_not_found() => return Ok(()),
-            Err(error) => {
-                return Err(kube_error(
-                    "delete BatchSandbox with identity preconditions",
-                    error,
-                ))
+    pub(crate) async fn delete(&self, mut captured: CapturedSandbox) -> Result<(), ProviderError> {
+        for attempt in 0..DELETE_ATTEMPTS {
+            let params = DeleteParams {
+                grace_period_seconds: Some(0),
+                propagation_policy: Some(kube::api::PropagationPolicy::Foreground),
+                preconditions: Some(Preconditions {
+                    uid: Some(captured.identity.uid.clone()),
+                    resource_version: Some(captured.resource_version.clone()),
+                }),
+                ..DeleteParams::default()
+            };
+            match self.api.delete(captured.handle.as_str(), &params).await {
+                Ok(_) => break,
+                Err(kube::Error::Api(response)) if response.is_not_found() => return Ok(()),
+                Err(kube::Error::Api(response))
+                    if response.code == 409 && attempt + 1 < DELETE_ATTEMPTS =>
+                {
+                    // Retirement may race a status update, but must never redirect deletion.
+                    let Some(current) = self.capture(&captured.handle).await? else {
+                        return Ok(());
+                    };
+                    if current.identity != captured.identity {
+                        return Err(identity_mismatch(
+                            &captured.handle,
+                            "identity, generation, ownership or specification changed during fenced deletion",
+                        ));
+                    }
+                    captured.resource_version = current.resource_version;
+                }
+                Err(error) => {
+                    return Err(kube_error(
+                        "delete BatchSandbox with identity preconditions",
+                        error,
+                    ))
+                }
             }
         }
 
@@ -147,12 +200,17 @@ impl BatchSandboxReclaimer {
                     .map_err(|error| kube_error("confirm fenced BatchSandbox deletion", error))?;
                 match current {
                     None => return Ok(()),
-                    Some(object)
-                        if object.metadata.uid.as_deref() != Some(captured.uid.as_str()) =>
-                    {
-                        return Ok(());
+                    Some(object) => {
+                        let uid = required(
+                            object.metadata.uid.as_deref(),
+                            &captured.handle,
+                            "Kubernetes UID during deletion confirmation",
+                        )?;
+                        if uid != captured.identity.uid {
+                            return Ok(());
+                        }
+                        tokio::time::sleep(DELETE_CONFIRM_POLL).await;
                     }
-                    Some(_) => tokio::time::sleep(DELETE_CONFIRM_POLL).await,
                 }
             }
         })

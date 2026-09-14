@@ -39,13 +39,19 @@ it('uses authenticated exact paths and retains literal versions, query encoding,
   t.answer([
     {
       id: 'github',
+      catalog_id: 'canonical-github',
       name: 'GitHub',
       description: 'Repository access',
       private_data: 'not projected',
     },
   ]);
   await expect(client.profileAuthoring.services()).resolves.toEqual([
-    { id: 'github', name: 'GitHub', description: 'Repository access' },
+    {
+      id: 'github',
+      catalog_id: 'canonical-github',
+      name: 'GitHub',
+      description: 'Repository access',
+    },
   ]);
   t.answer({ items: [skill], next: 'cursor/two+' });
   const page = await client.profileAuthoring.searchSkills({

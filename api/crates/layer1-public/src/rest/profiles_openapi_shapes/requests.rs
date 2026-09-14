@@ -40,11 +40,58 @@ profile_requests!(
     UpdateWorkspaceProfileRequest,
     WorkspaceProfileContentBody
 );
-profile_requests!(
-    CreateSandboxProfileRequest,
-    UpdateSandboxProfileRequest,
-    SandboxProfileContentBody
-);
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SandboxProfileAvailabilityBody {
+    pub warmup_enabled: bool,
+    #[schema(minimum = 1, maximum = 5)]
+    pub warmup_count: u8,
+    pub always_keep_alive: bool,
+}
+
+impl From<SandboxProfileAvailabilityBody> for layer2_core::profiles::SandboxProfileAvailability {
+    fn from(value: SandboxProfileAvailabilityBody) -> Self {
+        Self {
+            warmup_enabled: value.warmup_enabled,
+            warmup_count: value.warmup_count,
+            always_keep_alive: value.always_keep_alive,
+        }
+    }
+}
+
+impl From<layer2_core::profiles::SandboxProfileAvailability> for SandboxProfileAvailabilityBody {
+    fn from(value: layer2_core::profiles::SandboxProfileAvailability) -> Self {
+        Self {
+            warmup_enabled: value.warmup_enabled,
+            warmup_count: value.warmup_count,
+            always_keep_alive: value.always_keep_alive,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CreateSandboxProfileRequest {
+    pub name: String,
+    #[serde(default)]
+    pub description: String,
+    pub content: SandboxProfileContentBody,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub availability: Option<SandboxProfileAvailabilityBody>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct UpdateSandboxProfileRequest {
+    pub draft_version: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    pub content: SandboxProfileContentBody,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub availability: Option<SandboxProfileAvailabilityBody>,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]

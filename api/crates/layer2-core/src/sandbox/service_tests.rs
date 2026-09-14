@@ -387,6 +387,7 @@ fn profile(
     unsafe_content: bool,
 ) -> SandboxProfile {
     SandboxProfile {
+        availability: Default::default(),
         id: SandboxProfileId(id.into()),
         owner: SubjectId(owner.into()),
         name: name.into(),
@@ -506,6 +507,7 @@ fn policy(owner: u16, visitor: u16) -> SandboxPolicy {
     SandboxPolicy {
         max_sandboxes_per_owner: owner,
         max_sandboxes_per_visitor: visitor,
+        checkpoint_interval_seconds: crate::DEFAULT_CHECKPOINT_INTERVAL_SECONDS,
         inactivity_pause_after_seconds: DEFAULT_INACTIVITY_PAUSE_AFTER_SECONDS,
         retention_grace: std::time::Duration::from_secs(7 * 24 * 60 * 60),
         baseline_services: vec![
@@ -1426,6 +1428,7 @@ async fn create_reads_current_policy_for_each_admission() {
     let source = Arc::new(MutablePolicy(Mutex::new(SandboxPolicy {
         max_sandboxes_per_owner: 1,
         max_sandboxes_per_visitor: 1,
+        checkpoint_interval_seconds: crate::DEFAULT_CHECKPOINT_INTERVAL_SECONDS,
         inactivity_pause_after_seconds: DEFAULT_INACTIVITY_PAUSE_AFTER_SECONDS,
         retention_grace: DEFAULT_RETENTION_GRACE,
         baseline_services: vec![ServiceId::new("baseline-one")],
@@ -1458,6 +1461,7 @@ async fn create_reads_current_policy_for_each_admission() {
     *source.0.lock().expect("policy lock") = SandboxPolicy {
         max_sandboxes_per_owner: 2,
         max_sandboxes_per_visitor: 1,
+        checkpoint_interval_seconds: crate::DEFAULT_CHECKPOINT_INTERVAL_SECONDS,
         inactivity_pause_after_seconds: DEFAULT_INACTIVITY_PAUSE_AFTER_SECONDS,
         retention_grace: DEFAULT_RETENTION_GRACE,
         baseline_services: vec![ServiceId::new("baseline-two")],
@@ -1672,7 +1676,7 @@ async fn admission_atomically_starts_with_created_and_snapshots_the_revision() {
             .iter()
             .map(ServiceId::as_str)
             .collect::<Vec<_>>(),
-        ["baseline", "profile-service"]
+        ["baseline", "chrono-llm-public", "profile-service"]
     );
     let events = store.sandbox_events(&sandbox.id, 0, 10).await.unwrap();
     assert_eq!(events.len(), 1);
@@ -1692,11 +1696,19 @@ async fn own_account_profiles_store_only_the_required_sign_in_state() {
         false,
     );
     own_account.draft.model_access = ModelAccess::OwnCredentials;
+    own_account
+        .draft
+        .nyxid_services
+        .push(ServiceId::new("chrono-llm"));
     let reference = publish(&profiles, own_account).await;
+    let mut subscription_policy = policy(3, 1);
+    subscription_policy
+        .baseline_services
+        .push(ServiceId::new("chrono-llm-public"));
     let service = SandboxService::new(
         store,
         profiles,
-        policy(3, 1),
+        subscription_policy,
         Arc::new(crate::sandbox::FixedSandboxCredentialPrerequisite::Ready),
     );
 
@@ -1713,6 +1725,10 @@ async fn own_account_profiles_store_only_the_required_sign_in_state() {
     assert!(sandbox.credential.current.is_none());
     assert!(sandbox.credential.pending.is_none());
     assert!(sandbox.credential.revoke_debt.is_empty());
+    assert_eq!(
+        sandbox.credential.reaches,
+        ["baseline", "profile-service"].map(ServiceId::new)
+    );
 }
 
 #[tokio::test]

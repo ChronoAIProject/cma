@@ -61,6 +61,38 @@ async function toPresentation(user: ReturnType<typeof userEvent.setup>) {
 }
 
 describe('Trigger publisher flow', () => {
+  it('opens embed code from a saved published trigger and returns directly after adding a source', async () => {
+    const user = userEvent.setup();
+    const document = { ...published, placements: [] };
+    const fixture = publisherFixture(document);
+    render(<RoutedPublisher client={fixture.client} initial={document} />);
+    await user.click(await screen.findByRole('button', { name: 'Get embed code' }));
+    await screen.findByRole('heading', { name: 'Embed revision 1' });
+    await user.click(screen.getByRole('button', { name: 'Add source URL' }));
+    await screen.findByRole('textbox', { name: 'Source URL' });
+    await user.type(screen.getByRole('textbox', { name: 'Source label' }), 'Web page');
+    await user.type(
+      screen.getByRole('textbox', { name: 'Source URL' }),
+      'https://example.com/project',
+    );
+    await user.click(screen.getByRole('button', { name: 'Add source URL' }));
+    await screen.findByText('plc_readme');
+    await user.click(screen.getByRole('button', { name: 'Get embed code' }));
+    await screen.findByRole('tab', { name: 'Web page' });
+    expect(fixture.triggers.publish).not.toHaveBeenCalled();
+  });
+
+  it('makes published trigger rail links point to the embed route', async () => {
+    const fixture = publisherFixture(published);
+    const navigate = vi.fn();
+    const user = userEvent.setup();
+    render(<TriggerPublisherPage client={fixture.client} onNavigate={navigate} />);
+    const link = await screen.findByRole('link', { name: /trureturing/ });
+    expect(link).toHaveAttribute('href', `/triggers/manage/${published.id}/embed`);
+    await user.click(link);
+    expect(navigate).toHaveBeenCalledWith({ kind: 'trigger_embed', triggerId: published.id });
+  });
+
   it('publishes the trureturing setup in five steps with pinned payloads and API README/HTML snippets', async () => {
     const user = userEvent.setup();
     const test = publisherFixture();

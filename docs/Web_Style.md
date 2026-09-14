@@ -418,9 +418,14 @@ The grid transitions its tracks, except while dragging, where the transition wou
 ## 10. The sidebar
 
 The brand row, browser tree, and account foot retain the established shell
-dimensions. The mark and wordmark are the New agent shortcut when creation is
-available. Collapsing keeps the mark and the existing panel control; the browser
-region alone scrolls.
+dimensions. The mark and wordmark link to Home and close Agent details. A separate
+New agent icon button follows the build badge, never sharing the brand hit area.
+The badge sits beside CMA using existing layer-2 ground, secondary ink and border,
+11px code type, 2px/4px padding and 4px radius; it truncates within 11ch and exposes
+the complete build identity on hover. The standalone tool is 32px wide and 36px
+high; mobile header controls retain at least 44px height. Collapsing keeps the
+mark, separate creation tool and panel control. The browser region alone scrolls
+and fills all available space between header and account, with no competing spacer.
 
 The tree is Sandbox -> Workspace -> Agent. Worktrees are facts of the Agent,
 not another navigable tree level. A Sandbox row shows name, status and pause
@@ -430,9 +435,10 @@ radius, with consistent status/icon slots. Expansion state is scoped to the
 signed-in viewer and survives route changes.
 
 Expansion and navigation are separate keyboard-operable commands, with named
-`aria-expanded` state. A collapsed group retains its count. A paused Sandbox
-dims its Agent rows and names Paused; revive has an explicit moving state that
-becomes a still glyph under reduced motion. Loading and failed child reads never
+`aria-expanded` state. A collapsed group retains its count. Paused or reviving
+Sandboxes hide their descendants and expansion controls until fully Active with
+no pending lifecycle operation; revive has an explicit moving state that becomes
+a still glyph under reduced motion. Loading and failed child reads never
 masquerade as empty groups.
 
 Menus expose only public operations: Sandbox New workspace/Pause/Delete,
@@ -449,7 +455,10 @@ their canonical routes and work with refresh and browser history.
 There is no Chat/Agent switch, session group, pricing control, or terminal plane
 choice. Selecting an Agent opens its conversation; selecting a Sandbox opens
 its facts and Workspace list. Home keeps the tree with nothing selected and
-the creation empty state appropriate to the caller's capability.
+details closed. It shows Welcome to CMA beside the existing unframed 3D brand
+stage and creation action appropriate to the caller's capability. The home mark
+rotates once every eight seconds, retains its interactive spin, and stops under
+reduced motion or when hidden. Its geometry remains reserved while Three.js loads.
 
 ---
 
@@ -524,6 +533,28 @@ bounds and converts to wire units at the boundary. Creation may select the
 exact pinned deployment-default profile, never an unrecorded resource default.
 Paired fields stack below 30rem.
 
+New Agent creation names **Sandbox environment** and **Project workspace**, with
+short 13px secondary explanations of the environment and the project folder.
+The profile step explains model, skills and independence; optional title and
+first-message fields explain their effect. Deleted and deleting resources are
+absent from location choices, not disabled historical choices. Selected locations
+refresh from public records so deletion cannot leave Continue enabled.
+
+Hovering a profile row for 200ms or focusing its controls opens a nonmodal details
+preview. It is anchored to the row, not pointer movement, and uses the existing
+public profile settings renderer and original-name links. The preview is 360px
+wide and 440px high, constrained to 12px viewport margins, with an 8px radius,
+16px padding, menu fill and level-3 shadow. The body alone scrolls. It uses the
+shared menu placement calculation, right of the row on desktop and below on
+narrow screens, clamped inside the viewport and vertically between the owning
+dialog's header and footer. On short screens its body becomes shorter and scrolls;
+the close and submission controls must never sit behind the preview. Selecting a
+profile dismisses its open or pending preview. It stays open while hovered or
+focused, closes after 150ms outside, and Escape dismisses only the preview.
+Loading and read failure occupy the same stable box; hovering never selects or
+creates anything. Fade-in uses the existing fast duration, with reduced-motion
+equivalence. Profile links remain independently clickable.
+
 ### 12.3 The dropdown
 
 One control for choosing a value and for choosing an action. Both are a card at radius 12 on the menu
@@ -575,9 +606,11 @@ it is open.
 The two named wide forms remain 700px and 1000px. Every size is capped to the viewport; 440px is the
 base, not a minimum that can overflow a phone.
 
-Closed means **unmounted**, not hidden: a mounted dialog keeps its focus trap armed and steals focus
-from the page it is not covering. Focus is trapped inside it, Escape closes it, and focus returns to
-whatever opened it.
+Closed dialogs release their focus trap and return focus immediately. Their inert,
+accessibility-hidden exit frame may remain for the shared 200ms opacity fade,
+then unmounts. Initially closed dialogs render nothing. Focus is trapped only
+while open; Escape closes a dismissible dialog. Reopening during the fade cancels
+the pending removal and restores one active dialog.
 
 A width chosen per call site is how two dialogs asking the same kind of question end up different
 sizes. The exceptions are named classes a reviewer can find, never a size prop.
@@ -645,10 +678,52 @@ immediately and replaced, not duplicated, when the durable message arrives.
 Ephemeral frames never advance the durable replay cursor. Reconnect reconciles
 history without losing an unsubmitted draft or replaying already committed text.
 
+If the authorized Agent, transcript, usage and Workspace reads succeed but an
+event-history page is temporarily unavailable, keep the known conversation
+visible. The existing status band names incomplete activity and automatic retry;
+it is not complete-history acceptance. Keep the draft editable, but hold Send,
+approval actions and live replay until a complete history read succeeds. Retry
+from the start so missing tool and approval pages are not skipped. Authentication
+or permission denials and malformed identities remain explicit failures.
+
+After the first authorized event-history page, show the known transcript while
+remaining activity pages load. Use the same status band to name loading, retain
+the editable draft, and hold Send, approvals, lifecycle controls and live replay
+until history is complete. The snapshot's sequence does not skip activity pages.
+
 The composer uses its existing capsule, send/stop icon seat, focus treatment, and
 bounded growth. Stop interrupts the current turn; it does not delete the Agent.
 Approval decisions are explicit at the point of interruption. Only public API
 operations appear as commands.
+
+Enter confirms an active input-method composition without submitting or clearing
+the draft. Track composition lifecycle as well as native composition flags and
+the IME key code used by Safari. Ordinary Enter sends after composition ends;
+Shift+Enter inserts a newline. Composition completion alone never sends.
+
+Trigger-created Agents show their original Trigger name as a native link in the
+conversation header; manually created and Workspace-Profile-created Agents have
+distinct written source labels. Source loading or failure does not block history
+or ordinary messages. Do not substitute internal IDs for missing display names.
+
+An unframed, wrapping row directly above the composer contains up to eight
+publisher-defined quick-message buttons. Use existing compact outline buttons,
+8px gaps and 44px mobile targets. Names wrap without widening the conversation.
+The row has its own scrollport, bounded to the smaller of 144px and 24vh, so
+eight long names cannot consume the conversation or displace the input.
+Keep 4px inset around the scrollport for focus rings and 8px before the input.
+Hover and keyboard focus show a description tooltip above the row, aligned to
+its leading edge, bounded to 320px wide and 160px tall with its own scroll. It uses
+the existing layer-2 ground, secondary ink, 12/18 type, 12px padding, 6px radius
+and border-l2. Portal it outside the row scrollport using the existing menu
+placement helper, 12px viewport inset and overlay level 1100. A 150ms hover-exit
+delay lets the pointer reach and scroll a long description; Escape dismisses it
+immediately without moving focus. Clicking
+sends the configured text through ordinary message admission, preserving any
+typed draft. The same availability, pending and active-turn guards apply. Reads,
+reloads and publication never send a message. Quick messages use the latest
+published Trigger revision; original creation provenance and first message stay
+unchanged. Retired Triggers expose provenance but no new quick-message actions.
 
 ### Preparation, pause, and recovery
 
@@ -669,6 +744,21 @@ replacement is a quiet status notice, not an automatic failed state. When a
 checkpoint boundary is known, show its recorded time without claiming later work
 was captured. The owner never has to recreate the Agent after a rollout.
 
+The Agent conversation independently reads its exact public Sandbox while open,
+using the settled five-second and saving 1.5-second refresh cadence from §16.
+Returning from a hidden tab requires a new foreground observation; an otherwise
+allowed observation expires after ten seconds without a successful refresh.
+Actual saving phases and their recorded start time use the existing composer
+notice. While saving is known, or lifecycle information is missing or stale,
+hold Send and approval decisions without disabling draft editing or hiding
+history. Pause eligibility is not message eligibility; a normally paused Sandbox
+still resumes through the ordinary message command. No retry sends the draft.
+
+An unresolved message admission shows Starting with a disabled Send control in
+its existing circular seat. It is not an active Agent turn and exposes no Stop
+response command. Stop is available only after an active turn is recorded, and
+remains available during saving or failed Sandbox reads for a known active turn.
+
 ### Details and readings
 
 The Details drawer contains Sandbox status, pinned profile, size and services;
@@ -687,7 +777,24 @@ figure. Context-summary boundaries use neutral metadata, not failure colour.
 Resources are a public point read scoped to the Agent's Sandbox. Memory, CPU,
 and network occupy a stable three-column row on the reading axis. CPU uses a
 human unit in the ordinary surface; technical details may show the wire unit.
-Tracks appear only with reported ceilings, and each has accessible numeric values.
+The Agent's existing Sandbox lifecycle observation also gates live resources:
+only a fresh Active observation with a reported runtime version starts polling.
+Do not add another Sandbox poll or infer this from message eligibility. A paused
+Sandbox may accept messages while no runtime exists to report live resources.
+Before observation, show checking; when paused, retain Tokens and Context and
+show RAM, CPU and Network as paused with the quiet status "Sandbox paused. Live
+resources resume when it is active." Missing or stale lifecycle data holds live
+reads with an explicit unavailable status. Inactive runtime states are not an
+unsupported-resources error and never become zero readings. Cancel in-flight
+reads and discard the old sampling identity when the runtime becomes unavailable;
+fresh activation or a changed runtime version starts a new CPU sample pair.
+Tracks use reported ceilings first, independently for each resource. When a
+ceiling is absent, the exact pinned Sandbox Profile revision may supply a
+configured capacity. Its id and revision must match, and its digest must match
+when the pin includes one. That denominator visibly says "configured", including
+the accessible numeric description; it is not a runtime observation. Missing,
+forbidden, invalid or mismatched profile reads leave the honest absolute figure
+without a track. Never substitute configured capacity into resource observations.
 
 A missing grant, a runtime that cannot report, a reading not yet available, and
 an absent individual measurement remain distinct written states. None becomes
@@ -734,9 +841,19 @@ HTTPS hosted URL. Poll every 1.5 seconds with backoff for at most five minutes.
 CMA does not inspect cross-origin window contents. On satisfied, close the popup
 and continue the same intent. Expiry offers another explicit attempt.
 
-A blocked popup offers a same-tab destination and **I've connected it**. Services
-requiring manual setup link to NyxID and offer a recheck; never claim they support
-hosted setup. Do not request or display service credentials.
+A pending connection keeps **Connect** and **Verify** available in the existing
+wrapping action row. Connect reopens the current unexpired hosted link without
+creating another handoff; after a same-tab return without that in-memory URL,
+an explicit Connect may request a new link. Verify reads current status
+immediately, disables itself while checking, and explains when the account is
+still not connected. Late results from an aborted check cannot complete a newer
+attempt. A blocked popup retains its same-tab destination. Services requiring
+manual setup link to NyxID and offer a recheck; never claim they support hosted
+setup. Do not request or display service credentials.
+
+When connections are the only outstanding requirement, title the dialog
+**Connect required accounts** and label its combined recheck **Verify connections**.
+Do not describe this permission step as a new review or consent requirement.
 
 Repeat choice offers **Continue where you left off**, with title, time and the
 first-message excerpt, or **Start fresh**. The choice is an explicit server
@@ -769,6 +886,38 @@ progress; failures are announced once. On narrow viewports disclosures and steps
 become one column, text wraps, and every action is available without hover.
 A network outage preserves the last successful view and names its observation
 time. No elapsed-time heuristic changes a server state.
+
+During Sandbox preparation, the sandbox row also shows the public Sandbox's
+current operation in plain language, total elapsed time from its recorded start,
+and the last successful status check. The same unframed status band appears on
+the Sandbox page. A native Activity details disclosure contains the ordered
+operation stages and recorded start time, using existing 14/13px type, secondary
+ink, level-2 separators and 16/12/8px spacing. Completed stages derive only from
+the server's sequential phase contract. Unknown phases have no guessed steps.
+Elapsed time never advances stages or supplies a percentage or ETA. Long file
+restore explicitly says that file-level progress is not reported; a successful
+status read is not described as proof of moving bytes. Reads are nonoverlapping,
+visible-only every 1.5 seconds, and recover after transient failure. Authorization
+or visibility denial clears the last observation. Raw runtime logs, credentials,
+commands and paths never enter the activity summary.
+
+Lifecycle screens also show **Live activity** outside Advanced: a keyboard-focusable
+scroll region, 180px high and at most 30vh, with a 1px level-2 border, 6px radius,
+12px padding, 8px row gap and existing 13/20 secondary text. Timestamp and message
+use a two-column grid that wraps text; the region cannot widen or lengthen the
+page. Only the latest 100 translated lifecycle entries are retained. New entries
+follow the bottom only while the reader has not scrolled away. The adjacent
+**Last synced** timestamp changes only after a successful event read catches up;
+loading and reconnecting are explicit. No empty poll invents a log entry.
+Read-only event polling is bounded, nonoverlapping and visible-only. Access denial
+clears cached entries; transient failures retain them. Only allowlisted event and
+step names are translated, never arbitrary payloads, failure details, paths,
+commands or credentials. Launch, Sandbox and Agent pages share this treatment;
+deletion dialogs use the same bounded rendering for recorded cleanup events.
+In Agent conversations this progress follows the last message, inside the existing
+reading column, so normal conversation following leaves current progress visible
+beside the composer. The log itself is not a live region; the current-stage
+summary remains the single polite progress announcement.
 
 ---
 
@@ -824,6 +973,15 @@ list still loading must not read "nothing here", because that is an answer, and 
 moves position: a row that slides in pushes everything under it, and a list that reflows while
 somebody is reading it is worse than one that appears.
 
+Notifications and dialog surfaces fade in and out using the existing 200ms
+duration and shared easing curve. A dismissing notification retains its final
+content only until the exit finishes, becomes inert and accessibility-hidden
+immediately, and cannot dispatch another action. The semantic element and its
+layout remain unchanged during the fade. Reappearance cancels stale removal;
+reduced motion skips both animations and any visual exit retention. Loading
+skeletons, whole-page error states and conversation text retain their own existing
+presentation rather than acquiring a notification wrapper.
+
 An animation that loops has to say how it stops, and the suite checks that a sheet starting one
 carries a `reduce` block.
 
@@ -850,11 +1008,28 @@ carries a `reduce` block.
 State comes from public Sandbox and Agent records. Pair each state glyph with a
 visible word. An unavailable action names its reason where the user needs it.
 
+The sidebar has independently collapsible **Live** and **Paused** Sandbox groups,
+with owner-scoped persisted expansion and counts. Starting, resuming, pausing and
+deleting Sandboxes stay in the Live group until a settled Paused observation.
+Each group has a 32px disclosure header (44px on narrow screens), 8px internal
+spacing, existing 13px secondary text, and a tabular count aligned to the right.
+Separate groups by 16px. Each expanded group contains its own accessible tree.
+Workspace children and expansion controls exist only when the Workspace is Ready
+inside an available live Sandbox; preparing and deleting rows remain informational.
+
+Sandbox state labels are Live, Starting, Resuming, Pausing, Paused, Deleting and
+Deleted. A genuine failure is explicitly Needs attention, never a successful state.
+Internal image/credential replacement is Resuming. Background capture does not
+replace Live or Pausing. Agent labels are Starting, Ready, Working, Needs approval,
+Paused, Stopped, Deleted and Needs attention; Workspace labels are Starting, Ready,
+Deleting, Deleted and Needs attention. Done is only a completed operation step,
+never a resource state. Header and sidebar use the same resource vocabulary.
+
 | Resource/state | Working surface and permitted behavior |
 |---|---|
 | Sandbox provisioning | Recorded preparation and child progress; no invented percentage or success. |
 | Sandbox active | Workspaces and Agents; New workspace within limits, Pause, confirmed Delete. |
-| Sandbox paused | History, pause notice and reported checkpoint time remain visible; admitted message or creation revives it. |
+| Sandbox paused | Only the Sandbox row is available in navigation; selecting it opens status, preserved-work information and the public Resume action. |
 | Sandbox pausing, reviving or rotating | Durable history and recorded progress; no conflicting command or input that could be lost. |
 | Agent starting | Recorded preparation; retain an unsent draft until readiness. |
 | Agent ready or working | Conversation and composer; Interrupt only during active work; Stop. |
@@ -867,13 +1042,102 @@ unreported remain unknown. Failed commands never destroy successful content.
 Delete removes an Agent and its Worktree and requires the irreversible-action
 safeguard; Stop is a distinct operation.
 
+Paused, preparing, reviving, rotating and deleting Sandboxes expose no child
+Workspace or Agent navigation, including the Workspace band on the Sandbox page.
+Children return only after the Sandbox is active and its lifecycle operation has
+finished. An ordinary checkpoint save on an active Sandbox retains its readable
+children. Resume availability still comes from the public lifecycle record.
+The Sandbox page names the current state and explains why its children are
+unavailable. Plain-language operation progress and elapsed time remain visible;
+raw phase names and other technical facts belong in Advanced.
+No guessed readiness percentage.
+
+Deletion uses the existing risk confirmation, followed in the same overlay seat
+by the shared Modal and recorded progress treatment. Request acceptance is not
+completion. The dialog stays until dismissed, reports confirmation separately
+from cleanup, survives refresh with owner-scoped resource IDs and the same command
+key, and follows accepted cleanup with read-only polling. Closing it does not cancel server work.
+Uncertain writes offer same-key reconciliation; a failed status read never means
+successful deletion. Sandbox retirement, Workspace removal and Agent deletion
+with a removed Worktree are the terminal confirmations. Terminal resources leave
+the working sidebar; retained history stays readable through its canonical URLs.
+Deleting is written as Deleting, not Done. Workspace deletion accepts live child
+Agents and durably stops them, removes their Agents and Worktrees, and then removes
+the Workspace files. Its progress dialog reports those three stages followed by
+Deletion confirmed, using refreshed public records and Sandbox event history.
+Agent-only deletion still states its stop prerequisite. Conflicting actions remain disabled.
+
+Pause and Resume use the public Sandbox lifecycle eligibility in both the
+Sandbox page and its tree menu, never Active or Paused alone. Missing eligibility
+or a failed refresh leaves those controls unavailable with a written reason.
+The tree keeps its last successful hierarchy during refresh and transient read
+failure. Authentication, permission or visibility denial clears cached hierarchy.
+The selected Agent header, details and sidebar share one status projection. Newer
+timestamped Agent status events may supersede a resource read; older history and
+unversioned deltas cannot override a fresher resource observation. Newer matching
+navigation records update status without reloading the transcript or losing drafts.
+Message-submission progress stays beside the composer; it does not replace the
+recorded Agent state in the header.
+Normal owner or operator stops and resource deletion use the recorded terminal
+state, not an Agent run failed notification. Genuine provider failures remain visible.
+Visible Sandbox and hierarchy reads refresh every five seconds while settled,
+and every 1.5 seconds while recorded lifecycle work is in progress; reads never
+overlap or admit work. Hidden pages defer refresh until visible again.
+Every poll refreshes the authorized inventory and mutable Sandbox subtrees.
+Deleted Sandboxes are omitted before fetching their details or descendants,
+including on initial load and explicit refresh. Their retained conversation
+history remains available through direct Agent reads, independently of navigation.
+
+An actual save reports **Saving progress** during capture and **Finishing save**
+while writers resume within operation progress and Advanced, not the resource
+state seat. The Advanced dialog includes the recorded start time;
+there is no guessed percentage. Pause remains unavailable until the public
+eligibility permits it. These fields govern no Workspace or Agent creation rule.
+Tree menu reasons sit beneath their labels using the existing 13/20 voice and
+secondary ink, wrap within the menu and remain readable when the action is disabled.
+Written tree states also use secondary ink so small status text remains readable.
+
 ## 17. Sandbox and Agent details
 
-The Sandbox page is an unframed stack of state, pinned profile and runtime facts,
-resource/count limits, Workspaces and recorded lifecycle/preparation history.
-Workspace rows show source, path and state; selecting an Agent opens its
-conversation. A successful create followed by a failed detail read recovers the
-created resource, not another creation.
+The Sandbox page serves the ordinary owner: current state and permitted actions,
+named profile, agent provider, own versus ChronoAI-managed model access, effective
+NyxID service scope, then Workspaces and each Agent's model, Guarded or Autonomous
+permission, profile and skills. Profile settings come from the exact pinned
+revision. Effective reach comes from the public Sandbox service list, including
+explicit owner grants, with public Agent lineage as an older-server fallback.
+Requested profile scope never substitutes for effective reach; unconfirmed
+access is explicitly unconfirmed. Optional metadata
+failures preserve the main status and actions and offer retry.
+
+An Advanced icon-and-text command opens the shared wide Modal. Runtime version,
+IDs, profile revisions, limits, paths, recorded preparation, operation phases,
+technical timestamps and Events appear only there, except for the ordinary
+operation progress, its recorded start time and translated Live activity. Raw
+technical Events load only while that dialog is open and never hold the ordinary
+page hostage. The dialog scrolls its body,
+traps focus, closes with Escape and returns focus to Advanced.
+
+Advanced also shows the latest completed snapshot's recorded timestamp and an
+owner-authenticated download link. The link resolves the actual whole-home archive,
+not a multipart manifest or runtime-local path. Before the first completed save,
+show the absence explicitly. Ongoing capture never changes the last completed time.
+
+Workspaces and Agents use unframed bands with existing 24/16/12/8px rhythm,
+definition lists and wrapping linked lists. Each Agent is separated by the
+existing level-2 border, without floating or nested cards. Paused or reviving
+parents still hide their children until ready. A successful create followed by
+a failed detail read recovers the created resource, not another creation.
+
+All profile, service and skill references use their original catalog names and
+are links. Profiles open their canonical own-profile or public Marketplace page;
+NyxID services open `https://nyx.chrono-ai.fun/services/<catalog-id>`, using the
+canonical catalog identity rather than a service scope alias. Ornn skills open
+`https://ornn.chrono-ai.fun/skills/<id>` with the pinned version query when present.
+External links use a new tab with opener isolation; local navigation preserves
+the shell. Picker selection and reference navigation are separate controls.
+Names are resolved through public reads, deduplicated within the signed-in
+owner's mounted scope, and never replaced with UUIDs on failure. Missing names
+are explicitly unavailable, not invented; raw IDs remain only in technical views.
 
 The Agent drawer uses §9's dimensions and ordered full-width bands: Sandbox,
 Workspace, Worktree, Agent profile, first-message delivery, Agent controls.
@@ -892,7 +1156,7 @@ disabled until allowed. Failure stays beside its controls and preserves history.
 
 ## 18. Profiles and Marketplace
 
-Profiles home at `/profiles` has Sandbox, Workspace and Agent tabs. Rows show
+Profiles home at `/profiles` has Sandbox, Workspace and Agent tabs. Cards show
 name, latest published revision, visibility and update time, with New profile
 for the active kind. Editors use
 `/profiles/{agent-profiles|workspace-profiles|sandbox-profiles}/{id}`.
@@ -927,6 +1191,18 @@ one-time install commands and environment name/value rows. Size conversion
 honors deployment bounds. Installs run as the Sandbox user, before credentials,
 under `/home/cma`. Environment values are never secrets.
 
+Sandbox Profiles also have an Availability band using the existing labelled
+checkbox rows and bounded numeric field: Enable warm up, Warm sandboxes (1–5),
+and Always keep alive. Warmup is enabled only after the Profile is published and
+public; unavailable controls explain those steps. Saving applies availability
+to the Profile's existing and future Sandboxes without changing their pinned
+environment. Explain that manual pause remains available. No ready-instance
+count is inferred from the configured target.
+
+Marketplace detail offers Customize a private copy beside Use. Explain that
+the shared original is read-only and the new private copy is editable. Sandbox
+copies start fresh and do not use the original Profile's warm instances.
+
 ### Drafts, publication and trust
 
 Save draft and Publish revision are separate commands; publication confirms
@@ -940,9 +1216,20 @@ descriptions. Ordinary labels use plain language; wire tokens remain technical
 data and user-authored content.
 
 Marketplace search, kind tabs and pagination preserve the query. Repeated
-profile items may be cards: 8px radius, 16px padding/gap, 280px minimum tracks
-constrained to available width. Show name, description, author, revision and
-uses. The unframed detail discloses all pinned commands, environment values,
+profile items use the same cards in both directories: 8px radius, 16px
+padding/grid gap, 280px minimum tracks constrained to available width. Following
+Ornn's skill-card order, show a kind glyph and label, full wrapping name, a
+separate visibility/revision/retirement row, a three-line description, then an
+aligned author/usage/date footer. Internal vertical gaps and footer padding use
+12px; the description reserves 60px. Own profiles omit unavailable author data.
+Marketplace author names come from the retained public identity directory;
+missing names read Author unavailable, never an account ID. Deployment-owned
+default profiles name CMA. Name refreshes never change the owner identity used
+for permission or trust decisions.
+The heading is a native link with an expanded full-card hit target and visible
+keyboard focus; modified clicks retain normal browser navigation. Hover changes
+the border only. No content or metadata read is added per card. The unframed
+detail discloses all pinned commands, environment values,
 services, limits and nested profile revisions. Code wraps and is never executed.
 
 Use selects the published profile for creation; foreign commands or environment
@@ -968,12 +1255,16 @@ page. Do not retain the retired Chat hosts or Chat settings views.
 Use unframed compact record lists with hairline row separators, no zebra stripes,
 and no decorative section cards. A timestamp uses tabular numbers; the primary
 line uses `--text-body`, and metadata uses `--text-meta`. Identifiers use mono
-text that wraps without widening the viewport. Name and email identify a person
-when available; otherwise show the public subject identifier without guessing.
+text that wraps without widening the viewport. People are identified by their
+retained public display names. Missing names say “Name unavailable”; subject IDs
+are never a fallback for a person's name. This applies to Sandbox and Profile
+owners, Activity actors, and Activity targets that are users. The ordinary Sandbox
+information page also shows its immutable creator under Owner.
 
 Sandboxes rows show owner, name, written status, runtime version, Agent count, and
 last activity. Owner, status, and version filters retain their values during reads.
-A named details command opens a drawer with the Workspace/Agent hierarchy and
+A named details command opens a drawer with Agents grouped beneath their named
+Workspaces, pinned Profile references, and
 the durable Sandbox event timeline. No row-wide destructive target exists.
 Unknown counts or unavailable runtime observations remain explicitly unknown.
 
@@ -996,12 +1287,15 @@ states. A failed refresh retains the last successful rows.
 ### Platform settings
 
 Settings is an unframed form no wider than 920px, using full-width sections
-separated by hairlines. Sections cover Defaults, Inactivity, Retention, Limits,
+separated by hairlines. Sections cover Defaults, Inactivity, Snapshots, Retention, Limits,
 Triggers, and Marketplace. The three defaults use exact published-profile
 revision pickers with kind-specific summaries. A mutable latest revision is never
 silently substituted for a pinned choice.
 
-Time and count settings use bounded numeric inputs with explicit units. Binary
+Time and count settings use bounded numeric inputs with explicit units. Snapshot
+frequency is presented in minutes (1 to 1440, default 30), stored in
+whole seconds, and hidden only when connected to an older API without the setting.
+Fractional minutes preserve values set through the public API. Binary
 enablement uses checkboxes or switches; closed policies use native selects.
 Trigger enablement and paused admission are distinct settings. Keep unfamiliar
 or newer server fields in the document during an edit; never erase them by
@@ -1107,6 +1401,12 @@ read or failed mutation does not discard the draft.
    labels, theme, review-first checkbox, and optional sign-up hint. Render the
    actual server badge for preview after publication; unpublished labels use the
    checked-in server golden badge assets. Publisher content is plain text, not HTML.
+   Quick messages are editable repeated fieldsets, with Name, Description and
+   Message text. Add and remove use existing command buttons, never nested cards.
+   Limit names to 120 UTF-8 bytes, descriptions to 2,000 and text to 32,768; names
+   must be nonempty and unique ignoring case and surrounding whitespace. All
+   three fields are required per message, with at most eight messages. Saving a
+   draft does not alter visitor buttons until explicit publication.
 4. **Where it lives** edits labeled source-URL placements with add/remove commands.
    Every mutation retains one key and exact payload until its outcome is known.
    A placement is attribution and an allowed source declaration, not authentication.
@@ -1234,6 +1534,104 @@ A style change must not alter ownership, consent, durability or these behaviors.
 
 ---
 
+## 23. Pre-refactor visual continuity
+
+The September 7 Trigger-loop requirements restore the presentation shipped at
+`f5b6ded65750a75b5f2144e7d90436ceb402776d` (immediately before the retired
+model removal), without restoring the retired data model. This section
+supersedes the static-authentication-mark wording in sections 14a, 20 and 21.
+Shared Button, Picker, Menu, font and palette geometry remains the existing
+Inkwell/Lumen implementation from that baseline.
+
+The original Three.js character geometry, materials, studio lights, pointer
+look, press-to-spin and visibility disposal return to the unframed Home and
+authentication surfaces. The stable square is bounded to the available width,
+220px minimum when space permits and 520px maximum; compact Home uses 280px.
+The signed-in wordmark is 48px, weight 700, with zero tracking. Only the signed-out
+landing names the product ChronoAI Managed Agent on one unbroken line, with
+responsive `clamp(18px, 4.8vw, 40px)` type, 1.2 leading and zero tracking.
+Its lockup is at most 760px wide, retaining 24px horizontal padding, and has no
+separate Sign in button. Its title and cloud invitation use self-hosted
+OFL Shrikhand with the interface stack as fallback; the regular face is deliberately
+synthesized at weight 700 for the requested bold treatment. The glasses have no text.
+A cloud-shaped, 264px by 88px prompt says Click to start... above the character,
+with its top 120px above the reserved square. The signed-out lockup reserves
+144px top padding so the cloud never covers the character or clips the viewport.
+It uses layer-1 fill, primary ink,
+24px/1.2 bold Shrikhand text, a quiet shadow and a 16px speech tail placed 92px
+from the left and 4px below the body. Two 112px by 64px rounded lobes, positioned
+40px from the left and 12px above the body, and 108px from the left at its top,
+form the cloud without an image or new palette. Hover or keyboard
+focus reveals it; five seconds without either reveals it automatically, including
+touch and WebGL fallback. Its 0.45-second entrance rises 12px from 0.85 scale
+with a small 1.04 overshoot. Hover/focus also triggers a 0.65-second character
+bump of 0.08 scene units and 6% scale, gated to signed-out activation only.
+The logo is a keyboard-operable Get Started button; activation makes one complete
+0.95-second turn, followed by the existing 0.2-second opacity handover into sign-in.
+Repeated activation cannot start duplicate sign-ins. Reduced motion keeps the
+prompt static when revealed and skips bump, turn and fade; unavailable WebGL retains a
+labelled, clickable static fallback. Failed sign-in restores an explicit retry.
+This activation behavior never applies to signed-in Home or step characters.
+
+Every provisioning step uses that same character in a fixed 44px square.
+Completed steps are green and make one small jump every two seconds: a 0.6-second
+sine arc with 0.08 scene-unit lift followed by rest. Running steps stay blue and
+continuously turning; pending steps are yellow and turn once per second.
+Failures are red and still. Motion stays inside the reserved square and never
+moves a row or its text; it does not advance the recorded step state.
+These semantic character aliases resolve to existing moss 500, ink 800,
+amber 300 and red 600 in both themes; the colour is a redundant reinforcement
+of the adjacent written status. Compact characters omit the contact shadow.
+Running, pending and completed characters schedule frames only while visible;
+reduced motion makes every state still. Loading surfaces use the same running
+character, never another spinner. WebGL fallback remains still and state-coloured.
+
+The Agent composer restores the baseline 22px-radius capsule, 12px internal
+gap, full-width 16/24 textarea growing to fourteen lines, and a separate lower row.
+The 34px circular Send control becomes a neutral circular Stop control in the
+same seat. On narrow screens its visible circle remains 34px inside a transparent
+44px hit area contained by the existing 44px grid seat. The established Thinking row
+and 120px capped disclosure return, grouping live reasoning and durable tools
+by turn. Tool output is disclosed only when actually supplied; live reasoning
+is never fabricated on reload. The neutral sweep stops when the turn ends.
+Message role labels return outside the owner's bubble at 12/18 with an 8px
+gap; turns keep the baseline 16px rhythm. Thinking adds no extra bottom margin.
+Required small text uses caption ink. This is an explicit accessibility
+accommodation to the baseline: Thinking body and tool details use secondary
+ink instead of the old tertiary ink, metric text retains caption, and the
+composer placeholder uses caption instead of the old dimmed ink. Thinking's
+layer-2 ground needs secondary ink: light caption there measures only 4.29:1,
+while secondary measures 5.92:1. The old tertiary and dimmed inks do not meet
+the required small-text contrast in both themes; they are not restored or
+described as exact colour parity.
+
+Conversation opening and live output follow the latest content while the reader
+remains at the end, including content-height changes after layout. Scrolling
+up preserves the reader's position until they return to the end. Completed Agent
+preparation leaves the conversation surface once no step is active or failed;
+the pinned configuration remains available in Agent details.
+The Agent's single grid column is shrinkable to the available center width;
+long titles and tables never widen the conversation, composer or instruments.
+
+Below the composer, restore the baseline two-column tokens/context row and
+three-column RAM/CPU/network row with 12px figures, 12px column gaps and 2px
+neutral tracks capped at 240px. Resource observations use the public Agent
+resources read, sampled every five seconds while visible. CPU rate derives
+only from two monotonic samples of the same Sandbox uptime; restart, failure
+or absent samples remain Measuring, unavailable or not reported, never zero.
+Network has no ceiling or percentage. Failed refresh retains the reading and
+labels it stale. Layout stays three columns on narrow screens, wrapping within
+each column rather than widening the viewport.
+
+For a published Trigger with review disabled, an external button navigation
+carrying a server-confirmed browser gesture supplies the bounded consent.
+The browser consumes that evidence through the public entry-intent operation,
+retains its exact command across necessary sign-in and proceeds without an
+extra Proceed/Next command. Generic navigation, reloads, crawlers and OAuth
+callbacks without this evidence remain read-only. Explicitly reviewed
+Triggers retain their review controls. This supersedes wording that limited
+the consent gesture to a second click on the CMA landing page.
+
 ## Changelog
 
 Append-only. Never edit or delete an entry.
@@ -1314,3 +1712,42 @@ Append-only. Never edit or delete an entry.
 | 2026-09-06 | Amended §§1, 9–11, 12.2, 13–14, 16–18 and 19a for the Sandbox tree, Agent conversation and details, durable creation and public visitor journey, resource actions, versioned Profiles and Marketplace, persistent Developer route, and removal of terminal/session/canvas contracts. Public retry controls now require an actual supported operation. Historical rows and established palette tokens are unchanged. |
 | 2026-09-07 | Aligned the remaining typography, motion, accessibility, authentication-gate and invariant wording with the implemented Agent client. Retired terminal fonts, simulated introductions, the removed 3D authentication scene and automatic first-message claims; preserved the static brand gate, durable-history equivalence, explicit visitor consent and historical changelog. |
 | 2026-09-07 | Added four fixed light/dark badge-preview aliases in §2 using the established paper, ink and coal palette, so the publisher can inspect both appearances without switching the application theme or introducing component-level raw colours. |
+| 2026-09-07 | Restored the pre-refactor Three.js mark, Thinking container, circular composer actions and compact public resource instrumentation on the current CMA hierarchy. Added state-coloured 3D provisioning marks and bounded external-click entry consent for no-review Triggers; preserved existing shared controls, durable history and append-only style history. |
+| 2026-09-08 | Distinguished observed resource ceilings from explicitly labelled configured capacities resolved through the exact pinned Sandbox Profile revision. Added layout-aware conversation following that preserves manual reading position and removes completed preparation from the conversation surface. |
+| 2026-09-08 | Kept the Agent grid within the available center width for long titles and Markdown tables, and enforced the established 34px/44px square composer control against shared icon-button width rules. |
+| 2026-09-08 | Preserved an authorized transcript when initial event-history loading fails transiently. Reused the status band for incomplete activity and retry; retained drafts while holding commands and replay until all event pages are recovered, without masking authentication or permission denials. |
+| 2026-09-08 | Bound Sandbox page and tree Pause/Resume controls to public lifecycle eligibility. Reused status seats for actual saving phases and start time, added visible nonoverlapping refresh while Active, and preserved the hierarchy with readable unavailable reasons after a failed refresh. Workspace and Agent creation rules remain unchanged. |
+| 2026-09-08 | Added public Sandbox capture observation to the Agent composer. Preserved drafts and history while holding new messages and approval decisions during saving or unavailable lifecycle reads, kept ordinary paused-message revival, and distinguished pending admission from a durably active turn before offering Stop response. |
+| 2026-09-08 | Made long Agent history progressively readable after the first authorized activity page. Reused the status band and preserved editable drafts while holding commands and replay until all history pages load, without skipping tool or approval activity. |
+| 2026-09-08 | Bounded sidebar refresh fan-out by reusing unchanged retired Sandbox subtrees between minute rechecks. Kept authorized inventory and mutable descendants fresh, invalidated removed or changed resources, and cleared cached hierarchy on authentication or visibility denial. |
+| 2026-09-08 | Corrected conversation geometry against the actual pre-refactor baseline: restored the composer's 12px internal gap, both metrics rows' 12px gaps, Thinking's original spacing, and 34px mobile Send/Stop circles within transparent 44px hit areas. Explicitly retained readable caption ink for Thinking and metrics and applied it to the placeholder rather than restoring low-contrast tertiary/dimmed text. |
+| 2026-09-08 | Browser contrast measurement found caption ink on Thinking's preserved light layer-2 ground is only 4.29:1. Used existing secondary ink for the body and tool details, preserving the original ground and geometry while bringing that text to 5.92:1; retained caption on the composer's lighter input ground and base-ground metrics. |
+| 2026-09-08 | Shared the Agent's fresh Sandbox lifecycle observation with live resource measurements. Stopped runtime-resource polling before active-runtime confirmation and while paused, retained usage and editable drafts, showed explicit paused metrics instead of a misleading unsupported error, and reset sampling on activation or runtime-version changes. |
+| 2026-09-08 | Made inactive Sandbox hierarchy unavailable until activation, with state and Resume in its detail panel. Added persistent deletion progress and same-request recovery, explicit deletion states, terminal sidebar removal, and written deletion prerequisites while preserving retained history URLs. |
+| 2026-09-08 | Made the sidebar brand a Home link, separated the New agent tool, moved the build identity into a compact adjacent badge, and gave the resource tree all remaining column height. Home clears details and shows Welcome to CMA with the existing 3D mark rotating continuously while honoring reduced motion and visibility. |
+| 2026-09-08 | Applied shared step-character motion across the product: yellow pending turns once per second, green completed jumps once every two seconds, with stable geometry, visibility pausing, still fallback and reduced-motion equivalence. |
+| 2026-09-08 | Simplified the owner Sandbox page around status, contents and agent access; moved technical facts and event reads into Advanced. Standardized original-name profile, NyxID service and Ornn skill links with owner-scoped resolution and canonical destinations. |
+| 2026-09-08 | Made the signed-out logo the Get Started control after one lens sweep, with a complete turn and opacity handover into sign-in; renamed its heading ChronoAI Managed Agent and removed the standalone sign-in button. Preserved all signed-in character behavior and accessible reduced-motion and static fallbacks. |
+| 2026-09-08 | Exposed shared plain-language Sandbox operation progress on the Trigger journey and Sandbox page, with recorded-stage activity, elapsed time, last successful check and explicit missing file-level telemetry. Kept technical events in Advanced and prohibited timer-driven completion or estimates. |
+| 2026-09-08 | Replaced signed-out glasses lettering with a cloud invitation on hover, focus or five-second idle timeout; added a scoped character bump and self-hosted bold Shrikhand title. Preserved the single-spin sign-in handover, reduced-motion accessibility, and all signed-in character behavior. |
+| 2026-09-08 | Added the global snapshot interval in minutes, defaulting to thirty; exposed the latest completed snapshot timestamp and owner-authenticated archive download in Advanced. Added a distinct Canceling pause phase which keeps children unavailable until writer release is confirmed. |
+| 2026-09-08 | Protected chat drafts from IME confirmation Enter using composition lifecycle and native keyboard signals, including Safari key code 229. Kept ordinary Enter submission and Shift+Enter newlines. |
+| 2026-09-08 | Added independently collapsible Live/Paused sidebar groups with counts and owner-scoped persistence. Replaced generic resource states with Sandbox and Agent vocabulary; background capture no longer replaces Live/Pausing. Removed Workspace expansion and inert label buttons until Ready. |
+| 2026-09-08 | Clarified New Agent location, profile, title and first-message fields. Added anchored, bounded profile hover details using pinned public settings and original-name links, and removed deleting/deleted resources from location choices. |
+| 2026-09-08 | Confined profile hover previews vertically between the creation dialog header and footer, including short mobile viewports. Selecting a profile dismisses its open or pending preview so creation and close controls remain reachable. |
+| 2026-09-08 | Enabled Workspace deletion with live Agents. Documented durable child stop and removal before Workspace files, refreshed cleanup stages, and public Sandbox event history in the persistent deletion dialog. |
+| 2026-09-08 | Unified the selected Agent status across header, details and sidebar using timestamped resource and live observations. Older replay frames cannot overwrite a fresher state; navigation updates retain conversation history and drafts. |
+| 2026-09-09 | Removed the false Agent run failed notice for normal owner/operator stops and Sandbox retirement while preserving actual provider errors and the recorded Stopped state. |
+| 2026-09-09 | Unified Profiles and Marketplace cards using Ornn's title, badges, description and aligned metadata order with CMA tokens. All three profile kinds retain native full-card links, original names, revision/visibility/retirement facts, usage and timestamps, with responsive tracks and no additional per-card reads. |
+| 2026-09-09 | Resolved Marketplace authors through the retained public identity directory for list and detail views. Missing names are explicitly unavailable; account IDs remain ownership authority and are never used as display-name fallbacks. |
+| 2026-09-09 | Added bounded, timestamped Live activity to lifecycle and deletion surfaces, with allowlisted plain-language entries, visible-only incremental reads, reconnect and access-loss handling, and manual-scroll preservation. |
+| 2026-09-09 | Removed deleted Sandbox detail and descendant reads from sidebar loading and refresh. Kept authorized inventory, mutable state, access-denial handling and direct conversation history independent of the hidden deleted hierarchy. |
+| 2026-09-09 | Added written Agent creation provenance and publisher-defined quick messages above the composer, with current published content, hover/focus descriptions, draft-preserving guarded submission and repeated authoring fields using existing controls. |
+| 2026-09-09 | Bounded the quick-message row independently from chat after mobile stress verification; portalled descriptions through the existing viewport-clamped menu placement and hover-exit delay so long descriptions remain readable. |
+| 2026-09-09 | Kept Connect available during pending NyxID setup, reused current hosted links on reopen, and made Verify an immediate check with explicit still-not-connected feedback. Preserved popup blocking, same-tab recovery and credential-free storage. |
+| 2026-09-09 | Named connection-only dialogs Connect required accounts with Verify connections as the combined check, keeping permission setup distinct from publisher-required review. |
+| 2026-09-09 | Show retained public names for Operations owners, activity actors and user targets, with explicit unavailable names instead of subject IDs. Added Owner to the ordinary Sandbox information page and grouped the admin Agent inventory under its named Workspaces. |
+| 2026-09-09 | Read effective NyxID services from the Sandbox's public service list, including explicit owner grants, while preserving Agent lineage as an older-server fallback and the existing named service links. |
+| 2026-09-09 | Keep the signed-out ChronoAI Managed Agent title on one responsive line. Widen the landing lockup, enlarge the cloud invitation to 264px by 88px, and use matching bold Shrikhand at 24px inside it, preserving the existing activation and signed-in character behavior. |
+| 2026-09-09 | Add shared showing and dismissal fades for notification messages and dialogs, retaining only an inert exit frame, releasing focus immediately, cancelling stale dismissal on reopen, and honoring reduced motion without changing message semantics or geometry. |
+| 2026-09-09 | Add the Sandbox Profile Availability band with public-only warmup, a one-to-five target and Always keep alive, using existing fields and checkbox rows. Clarify the editable private-copy Marketplace action and its fresh Sandbox provisioning behavior. |

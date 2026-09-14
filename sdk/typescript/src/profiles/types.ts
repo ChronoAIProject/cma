@@ -1,5 +1,6 @@
 import {
   array,
+  boolean,
   enumeration,
   integer,
   object,
@@ -12,6 +13,7 @@ import {
   type Output,
   type Parser,
 } from '../schema.js';
+import { ProtocolError } from '../errors.js';
 
 export const profileKind = enumeration('agent', 'workspace', 'sandbox');
 export type ProfileKind = Output<typeof profileKind>;
@@ -70,6 +72,18 @@ export const sandboxProfileContent = object({
 });
 export type SandboxProfileContent = Output<typeof sandboxProfileContent>;
 
+/** Mutable scheduling policy for Sandbox Profiles, separate from pinned content. */
+export const sandboxProfileAvailability = object({
+  warmup_enabled: boolean,
+  warmup_count: (value: unknown) => {
+    const count = positiveInteger(value);
+    if (count > 5) throw new ProtocolError('warmup count must be between 1 and 5');
+    return count;
+  },
+  always_keep_alive: boolean,
+});
+export type SandboxProfileAvailability = Output<typeof sandboxProfileAvailability>;
+
 export interface ProfileContents {
   readonly agent: AgentProfileContent;
   readonly workspace: WorkspaceProfileContent;
@@ -84,12 +98,16 @@ export const profileRevisionSummary = object({
 export type ProfileRevisionSummary = Output<typeof profileRevisionSummary>;
 
 export interface ProfileDraft<Content> {
+  /** Sandbox Profiles only. Warmup requires a published public profile. */
+  readonly availability?: SandboxProfileAvailability;
   readonly name: string;
   readonly description?: string;
   readonly content: Content;
 }
 
 export interface ProfileUpdate<Content> {
+  /** Sandbox Profiles only; omission preserves the current policy. */
+  readonly availability?: SandboxProfileAvailability;
   readonly draft_version: number;
   readonly name?: string;
   readonly description?: string;
@@ -97,6 +115,8 @@ export interface ProfileUpdate<Content> {
 }
 
 export interface ProfileDocument<Content> {
+  /** Present for Sandbox Profiles. */
+  readonly availability?: SandboxProfileAvailability;
   readonly id: string;
   readonly owner: string;
   readonly name: string;
@@ -118,13 +138,18 @@ export interface ProfileRevision<Content> extends ProfileRevisionSummary {
 }
 
 export function profileDraft<Content>(content: Parser<Content>): Parser<ProfileDraft<Content>> {
-  const metadata = object({ name: text, description: optional(text) });
+  const metadata = object({
+    name: text,
+    description: optional(text),
+    availability: optional(sandboxProfileAvailability),
+  });
   return (value) => ({ ...metadata(value), content: content(record(value).content) });
 }
 
 export function profileUpdate<Content>(content: Parser<Content>): Parser<ProfileUpdate<Content>> {
   const metadata = object({
     draft_version: positiveInteger,
+    availability: optional(sandboxProfileAvailability),
     name: optional(text),
     description: optional(text),
   });
@@ -136,6 +161,7 @@ export function profileDocument<Content>(
 ): Parser<ProfileDocument<Content>> {
   const metadata = object({
     id: text,
+    availability: optional(sandboxProfileAvailability),
     owner: text,
     name: text,
     description: text,

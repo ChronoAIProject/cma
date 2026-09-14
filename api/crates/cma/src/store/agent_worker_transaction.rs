@@ -1,9 +1,12 @@
 //! Atomic Mongo publication for one fenced agent work step.
 
 use layer2_core::sandbox::store::{
-    validate_agent_work_mutation, AgentWorkMutation, SandboxStoreError,
+    validate_agent_work_mutation, validate_agent_work_mutation_with_sandbox, AgentWorkMutation,
+    SandboxStoreError,
 };
-use layer2_core::sandbox::{Agent, AgentLogEntry, Sandbox, SandboxEvent, Worktree};
+use layer2_core::sandbox::{
+    Agent, AgentLogEntry, AgentStatus, AgentWorkStep, Sandbox, SandboxEvent, Worktree,
+};
 use mongodb::bson::{doc, Bson};
 
 use super::agent_log::{log_document, scan_complete_log_with_session};
@@ -175,13 +178,64 @@ async fn apply_publication(
         |_| Ok(()),
     )
     .await?;
-    validate_agent_work_mutation(
-        &current,
-        &current_worktree,
-        complete_log.entry_count(),
-        mutation,
-    )
-    .map_err(ApplyError::Domain)?;
+    if (current.status == AgentStatus::Paused
+        && current.work.step == AgentWorkStep::CloseProcess
+        && mutation.agent.work.step == AgentWorkStep::PublishStopped
+        || matches!(current.status, AgentStatus::Stopped | AgentStatus::Failed)
+            && matches!(
+                current.work.step,
+                AgentWorkStep::EnsureProcessClosed
+                    | AgentWorkStep::RemoveHome
+                    | AgentWorkStep::RemoveWorktree
+            ))
+        && mutation.agent.work.receipts == current.work.receipts
+    {
+        let sandbox = store
+            .sandboxes
+            .find_one(doc! { "_id": current.sandbox_id.as_str() })
+            .session(&mut *session)
+            .await
+            .map_err(ApplyError::Driver)?
+            .as_ref()
+            .map(super::sandboxes::read_sandbox)
+            .transpose()
+            .map_err(ApplyError::Domain)?
+            .ok_or(ApplyError::Domain(SandboxStoreError::NotFound))?;
+        validate_agent_work_mutation_with_sandbox(
+            &current,
+            &current_worktree,
+            complete_log.entry_count(),
+            mutation,
+            &sandbox,
+        )
+        .map_err(ApplyError::Domain)?;
+        // Serialize the no-runtime proof with any concurrent parent publication.
+        let written = store
+            .sandboxes
+            .update_one(
+                doc! {
+                    "_id": sandbox.id.as_str(),
+                    "document_schema_version": DOCUMENT_SCHEMA_VERSION,
+                    "revision": signed(sandbox.revision, "retiring sandbox revision")
+                        .map_err(|_| ApplyError::Domain(SandboxStoreError::Conflict))?,
+                },
+                doc! { "$inc": { "runtime_writer_claim_fence": 1_i64 } },
+            )
+            .session(&mut *session)
+            .await
+            .map_err(ApplyError::Driver)?;
+        if written.matched_count != 1 {
+            return Err(ApplyError::Domain(SandboxStoreError::Conflict));
+        }
+    } else {
+        validate_agent_work_mutation(
+            &current,
+            &current_worktree,
+            complete_log.entry_count(),
+            mutation,
+        )
+        .map_err(ApplyError::Domain)?;
+    }
 
     let sign_in_sandbox = sign_in::apply(store, &current, mutation, session).await?;
     let (final_agent, logs) = final_agent_and_logs(&current, mutation)?;

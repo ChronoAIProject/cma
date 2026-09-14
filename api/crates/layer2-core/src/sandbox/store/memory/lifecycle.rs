@@ -166,6 +166,9 @@ impl SandboxWorkerStore for InMemorySandboxStore {
         state.workspaces.retain(|_, row| &row.sandbox_id != id);
         state.worktrees.retain(|_, row| &row.sandbox_id != id);
         state.agents.retain(|_, row| &row.sandbox_id != id);
+        state
+            .agent_reuse_bindings
+            .retain(|_, (agent_id, _)| !agent_ids.contains(agent_id));
         for agent_id in agent_ids {
             state.agent_logs.remove(&agent_id);
         }

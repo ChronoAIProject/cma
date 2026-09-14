@@ -254,11 +254,15 @@ fn composed_rest_router() -> Router {
     );
     let connections = ServiceConnectionService::new(Arc::clone(&launch_store), Arc::clone(&broker));
     let trigger_routes = trigger_router(TriggerRoutesState::new(
-        triggers,
+        triggers.clone(),
         launches,
         connections,
         Arc::clone(&operations),
         Arc::new(UnlimitedLaunchQuota),
+    ))
+    .merge(layer1_public::rest::agent_source_router(
+        projections.reads(),
+        triggers,
     ))
     .merge(trigger_assets_router(
         TriggerAssetsState::new(trigger_store, "https://cma.example").unwrap(),

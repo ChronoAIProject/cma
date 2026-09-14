@@ -2,6 +2,46 @@ use layer3_adapter::{CredentialFrame, RuntimeCredential};
 
 use super::*;
 
+#[test]
+fn restricted_proxy_refuses_ambiguous_hosts_and_absolute_destinations() {
+    for (uri, host, method, allowed) in [
+        ("/user", "api.github.com", "GET", true),
+        ("/user", "API.GITHUB.COM:443", "GET", true),
+        ("https://api.github.com/user", "api.github.com", "GET", true),
+        (
+            "https://untrusted.example/user",
+            "api.github.com",
+            "GET",
+            false,
+        ),
+        ("http://api.github.com/user", "api.github.com", "GET", false),
+        ("/user", "api.github.com:80", "GET", false),
+        ("/user", "api.github.com.untrusted.example", "GET", false),
+        ("api.github.com:443", "api.github.com", "CONNECT", false),
+    ] {
+        let request = Request::builder()
+            .uri(uri)
+            .method(method)
+            .header(header::HOST, host)
+            .body(Body::empty())
+            .unwrap();
+        assert_eq!(
+            allowed_request_host(&request, "api.github.com"),
+            allowed,
+            "{method} {uri} {host}"
+        );
+    }
+    let mut request = Request::builder().uri("/user").body(Body::empty()).unwrap();
+    assert!(!allowed_request_host(&request, "api.github.com"));
+    request
+        .headers_mut()
+        .append(header::HOST, HeaderValue::from_static("api.github.com"));
+    request
+        .headers_mut()
+        .append(header::HOST, HeaderValue::from_static("api.github.com"));
+    assert!(!allowed_request_host(&request, "api.github.com"));
+}
+
 #[tokio::test]
 async fn holder_refuses_generation_rollback_and_conflict() {
     let holder = CredentialHolder::new();
@@ -67,6 +107,7 @@ async fn model_proxy_strips_provider_routing_authority_before_upstream() {
         target: TargetBase::parse(&origin).unwrap(),
         credential,
         client: reqwest::Client::new(),
+        allowed_host: None,
     };
     let request = Request::builder()
         .method("POST")

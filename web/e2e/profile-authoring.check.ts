@@ -139,7 +139,7 @@ for (const viewport of [
     await page.getByLabel('Name', { exact: true }).fill('Pinned research');
     await page.getByRole('button', { name: 'Try again', exact: true }).click();
     await page.getByRole('button', { name: 'Add Repository research' }).click();
-    const version = page.getByRole('button', { name: 'Version for research' });
+    const version = page.getByRole('button', { name: 'Version for Research' });
     await expect(version).toHaveText('1234567890.123456789');
     await version.scrollIntoViewIfNeeded();
     await layout(page);

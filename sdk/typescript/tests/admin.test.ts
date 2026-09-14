@@ -48,6 +48,55 @@ const fixture = () => {
 };
 
 describe('public operator administration', () => {
+  it('retains verified creator and actor names separately from authority identifiers', async () => {
+    const t = fixture();
+    t.answer({ items: [{ ...summary, owner_name: 'Sam Lee' }], next: null });
+    expect((await t.admin.listSandboxes()).items[0]).toMatchObject({
+      owner: 'owner-1',
+      owner_name: 'Sam Lee',
+    });
+    t.answer({ sandbox: rawSandbox, owner_name: 'Sam Lee', workspaces: [], agents: [] });
+    expect((await t.admin.readSandbox(sandbox.id)).owner_name).toBe('Sam Lee');
+    t.answer({
+      items: [
+        {
+          id: 'activity-one',
+          at: now,
+          actor: 'operator-one',
+          actor_name: 'Alex Chen',
+          action: 'read',
+          target: { kind: 'subject', id: 'owner-1' },
+          target_name: 'Sam Lee',
+          outcome: { status: 'succeeded' },
+          detail: {},
+        },
+      ],
+      next: null,
+    });
+    expect((await t.admin.listActivity()).items[0]).toMatchObject({
+      actor: 'operator-one',
+      actor_name: 'Alex Chen',
+      target_name: 'Sam Lee',
+    });
+  });
+
+  it('round-trips snapshot intervals and validates patches before sending', async () => {
+    const t = fixture();
+    const current = { ...settings, checkpoints: { interval_seconds: 1800, future: 'preserved' } };
+    t.answer({ revision: 1, settings: current });
+    expect((await t.admin.readSettings()).settings).toEqual(current);
+    await t.admin.patchSettings({ expected_revision: 1, checkpoints: { interval_seconds: 600 } });
+    expect(JSON.parse(String(t.calls[1]!.init.body))).toEqual({
+      expected_revision: 1,
+      checkpoints: { interval_seconds: 600 },
+    });
+    for (const interval_seconds of [0, 59, 86401, 1.5]) {
+      expect(() =>
+        t.admin.patchSettings({ expected_revision: 1, checkpoints: { interval_seconds } }),
+      ).toThrow(ValidationError);
+    }
+    expect(t.calls).toHaveLength(2);
+  });
   it('encodes Sandbox filters and accepts required nullable paging fields', async () => {
     const t = fixture();
     t.answer({ items: [summary], next: 'page/2' });

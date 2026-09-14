@@ -11,6 +11,9 @@ use super::{
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RuntimeBinding {
+    /// Process identity changes even when the provider reuses its runtime handle.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub boot_id: Option<String>,
     pub runtime_id: String,
     pub runtime_version: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -30,6 +33,15 @@ pub struct SandboxLimits {
 pub struct TypedFailure {
     pub class: String,
     pub detail: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SandboxLifecycleBlocker {
+    NotActive,
+    NotPaused,
+    CheckpointInProgress,
+    WorkInProgress,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -84,6 +96,7 @@ impl Sandbox {
                 "sandbox.credential_or_work",
             ));
         }
+        self.validate_service_access()?;
         self.lifecycle.validate(self)?;
         self.validate_runtime_generation()?;
         self.validate_checkpoint_capture()?;
@@ -138,14 +151,7 @@ impl Sandbox {
         at: String,
         notice: Option<String>,
     ) -> Result<(), SandboxModelError> {
-        if self.status != SandboxStatus::Active
-            || self.lifecycle.checkpoint_capture.is_some()
-            || self.work.lease.is_some()
-            || !matches!(
-                self.work.step,
-                SandboxWorkStep::None | SandboxWorkStep::WaitForCredentialRotation
-            )
-        {
+        if self.pause_eligibility().is_err() {
             return Err(SandboxModelError::invalid_value("sandbox.pause"));
         }
         let mut next = self.clone();
@@ -162,10 +168,7 @@ impl Sandbox {
         cause: SandboxReviveCause,
         at: String,
     ) -> Result<(), SandboxModelError> {
-        if self.status != SandboxStatus::Paused
-            || self.work.lease.is_some()
-            || self.work.step != SandboxWorkStep::None
-        {
+        if self.revive_eligibility().is_err() {
             return Err(SandboxModelError::invalid_value("sandbox.revive"));
         }
         let mut next = self.clone();
@@ -175,6 +178,84 @@ impl Sandbox {
             .schedule(SandboxWorkStep::RunLifecycleOperation, at);
         *self = next;
         Ok(())
+    }
+
+    /// Teardown is irreversible once admitted. A restarted capture authority
+    /// may already have parked agents, so it must finish pausing and revive.
+    pub fn can_cancel_pause(&self) -> bool {
+        self.status == SandboxStatus::Pausing
+            && self.runtime.is_some()
+            && matches!(
+                self.lifecycle.operation.as_ref(),
+                Some(super::SandboxLifecycleOperation::Pause { phase: super::SandboxPausePhase::CaptureAndPublishCheckpoint | super::SandboxPausePhase::PauseAgents, authority, .. })
+                    if authority.writer_resume_generation == 0
+            )
+    }
+
+    /// Fence the old pause worker before releasing its exact writer hold.
+    pub fn request_pause_cancellation(&mut self, at: String) -> Result<(), SandboxModelError> {
+        self.validate()?;
+        if !self.can_cancel_pause() || crate::seconds_from_rfc3339(&at).is_none() {
+            return Err(SandboxModelError::invalid_value(
+                "sandbox.pause_cancellation",
+            ));
+        }
+        let mut next = self.clone();
+        match next.lifecycle.operation.as_mut() {
+            Some(super::SandboxLifecycleOperation::Pause { phase, .. })
+                if matches!(
+                    *phase,
+                    super::SandboxPausePhase::CaptureAndPublishCheckpoint
+                        | super::SandboxPausePhase::PauseAgents
+                ) =>
+            {
+                *phase = super::SandboxPausePhase::ResumeWriters;
+            }
+            _ => {
+                return Err(SandboxModelError::invalid_value(
+                    "sandbox.pause_cancellation",
+                ))
+            }
+        }
+        next.work
+            .schedule(SandboxWorkStep::RunLifecycleOperation, at.clone());
+        next.revision = next
+            .revision
+            .checked_add(1)
+            .ok_or_else(|| SandboxModelError::invalid_value("sandbox.revision"))?;
+        next.updated_at = at;
+        next.validate()?;
+        *self = next;
+        Ok(())
+    }
+
+    /// Eligibility to begin a new pause, independent of command replay.
+    pub fn pause_eligibility(&self) -> Result<(), SandboxLifecycleBlocker> {
+        if self.status != SandboxStatus::Active {
+            Err(SandboxLifecycleBlocker::NotActive)
+        } else if self.lifecycle.checkpoint_capture.is_some() {
+            Err(SandboxLifecycleBlocker::CheckpointInProgress)
+        } else if self.work.lease.is_some()
+            || !matches!(
+                self.work.step,
+                SandboxWorkStep::None | SandboxWorkStep::WaitForCredentialRotation
+            )
+        {
+            Err(SandboxLifecycleBlocker::WorkInProgress)
+        } else {
+            Ok(())
+        }
+    }
+
+    /// Eligibility to begin a new revival, independent of command replay.
+    pub fn revive_eligibility(&self) -> Result<(), SandboxLifecycleBlocker> {
+        if self.status != SandboxStatus::Paused {
+            Err(SandboxLifecycleBlocker::NotPaused)
+        } else if self.work.lease.is_some() || self.work.step != SandboxWorkStep::None {
+            Err(SandboxLifecycleBlocker::WorkInProgress)
+        } else {
+            Ok(())
+        }
     }
 
     pub fn begin_image_rotation(

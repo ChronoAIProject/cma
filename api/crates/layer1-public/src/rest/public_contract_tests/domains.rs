@@ -29,6 +29,7 @@ pub(super) async fn scenario(name: &str) -> Option<Scenario> {
         | "instances_anonymous"
         | "instances_quota"
         | "instances_paused"
+        | "instances_not_paused"
         | "instances_corrupt"
         | "instances_trust"
         | "instances_capacity"
@@ -93,6 +94,12 @@ pub(super) async fn scenario(name: &str) -> Option<Scenario> {
             };
             if name == "instances_corrupt" {
                 sandbox.name.clear();
+            }
+            if name == "instances_not_paused" {
+                sandbox
+                    .begin_retirement("2026-09-05T00:00:00Z".into())
+                    .unwrap();
+                sandbox.revision = 1;
             }
             if name == "instances_capacity" {
                 sandbox.limits.max_workspaces = 1;

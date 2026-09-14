@@ -15,6 +15,7 @@ use super::live_agents::LiveAgentRegistry;
 #[cfg(test)]
 use layer2_core::sandbox::SandboxPolicy;
 
+mod home;
 mod lifecycle;
 mod provisioning;
 mod retirement;
@@ -83,6 +84,7 @@ pub(crate) struct SandboxWorkerDependencies {
 
 #[derive(Clone)]
 pub(crate) struct SandboxWorkerConfig {
+    pub home_policy: Option<layer3_adapter::HomeVolumePolicy>,
     pub execution: layer2_core::sandbox::ProvisioningExecution,
     pub holder: String,
     pub deployment_id: String,
@@ -110,6 +112,7 @@ impl SandboxWorkerConfig {
         policy: Arc<dyn SandboxPolicySource>,
     ) -> Self {
         Self {
+            home_policy: None,
             execution: Default::default(),
             holder: holder.into(),
             deployment_id: deployment_id.into(),
@@ -128,6 +131,11 @@ impl SandboxWorkerConfig {
         self.lease_duration = self.lease_duration.max(Duration::from_secs(
             layer3_adapter::DEFAULT_TOTAL_TIMEOUT_SECONDS + 60,
         ));
+        self
+    }
+
+    pub fn with_home_policy(mut self, policy: Option<layer3_adapter::HomeVolumePolicy>) -> Self {
+        self.home_policy = policy;
         self
     }
 }
@@ -155,7 +163,7 @@ impl SandboxWorker {
         let mut completed = 0;
         let mut first_error = None;
         for id in due {
-            match self.run_one(&id, now).await {
+            match self.run_scheduled(&id, now).await {
                 Ok(true) => completed += 1,
                 Ok(false) => {}
                 Err(error) => {
@@ -181,7 +189,39 @@ impl SandboxWorker {
         else {
             return Ok(false);
         };
-        self.execute(sandbox, now).await?;
+        Box::pin(self.execute(sandbox, now)).await?;
+        Ok(true)
+    }
+
+    async fn run_scheduled(
+        &self,
+        id: &SandboxId,
+        now: SystemTime,
+    ) -> Result<bool, SandboxStoreError> {
+        let started = tokio::time::Instant::now();
+        let progressed = self.run_one(id, now).await?;
+        if !progressed {
+            return Ok(false);
+        }
+        // Installation and credential binding need no polling delay between
+        // committed steps. Each step still acquires its own current lease.
+        for _ in 0..16 {
+            let Some(sandbox) = self.dependencies.store.get_sandbox(id).await? else {
+                break;
+            };
+            if !matches!(
+                sandbox.status,
+                layer2_core::sandbox::SandboxStatus::Provisioning
+                    | layer2_core::sandbox::SandboxStatus::Installing
+            ) || sandbox.runtime.is_none()
+                || !sandbox.work.is_due(&rfc3339_at(now + started.elapsed()))
+            {
+                break;
+            }
+            if !self.run_one(id, now + started.elapsed()).await? {
+                break;
+            }
+        }
         Ok(true)
     }
 
@@ -191,7 +231,7 @@ impl SandboxWorker {
         sandbox: Sandbox,
         now: SystemTime,
     ) -> Result<(), SandboxStoreError> {
-        self.execute(sandbox, now).await
+        Box::pin(self.execute(sandbox, now)).await
     }
 
     async fn execute(&self, sandbox: Sandbox, now: SystemTime) -> Result<(), SandboxStoreError> {

@@ -51,3 +51,18 @@ Service connections use `createConnection` and `readConnection` without exposing
 credentials. Launch `read`, `requirements`, `events`, `stream` and filtered `list`
 provide recorded progress. Cancellation does not prove in-flight resource work
 has finished; do not infer safe cleanup from a successful cancel alone.
+
+## Trigger Quick Messages
+
+The optional `quick_messages` array in Trigger content contains up to eight
+`{ name, description, text }` messages. Names must be nonempty and unique ignoring
+case and surrounding whitespace, with a maximum of 120 UTF-8 bytes. Descriptions
+are required and limited to 2,000 bytes; message text is required and limited to
+32,768 bytes. Save and publish use the existing draft-version and idempotency
+contracts. Omitted or empty arrays preserve older Trigger content digests.
+
+`client.agents.source(agentId)` reads original creation provenance and the current
+published Trigger shortcuts without starting work. Draft edits are not exposed;
+retired Triggers keep their attribution but return no shortcuts. Submit a chosen
+message through the ordinary Agent input or AG-UI operation only after the user
+clicks it. Reading this projection never sends a message or replays the first prompt.

@@ -1,9 +1,11 @@
+import { Presence } from '../ui/Presence';
 import { useEffect, useRef, useState } from 'react';
 import type { ProfileKind, ProfileReference } from '@chronoai/cma-sdk';
 import { Button } from '../ui/Button';
 import { IconRefreshOutline16 } from '../ui/icons';
 import type { PublisherProfile, PublisherProfileChoice, TriggerPublisherClient } from './client';
 import { profileSummary } from './model';
+import { ReferenceLink } from '../profiles/ReferenceLink';
 
 export function ProfilePicker({
   client,
@@ -148,26 +150,35 @@ export function ProfilePicker({
           ))}
         </select>
       </div>
+      {value === undefined ? null : (
+        <p>
+          <ReferenceLink kind={kind} id={value.id} name={value.name} />
+        </p>
+      )}
       <p id={`${id}-summary`} className="trigger-caption">
         {value === undefined ? 'No revision selected' : profileSummary(value)}
       </p>
-      {error === undefined ? null : (
-        <p id={`${id}-error`} className="trigger-error" role="alert">
-          {error}
-        </p>
-      )}
-      {failure === undefined ? null : (
-        <div role="alert">
-          <p>{failure}</p>
-          <Button
-            icon={<IconRefreshOutline16 />}
-            disabled={disabled || loading}
-            onClick={() => setReload((current) => current + 1)}
-          >
-            Try again
-          </Button>
-        </div>
-      )}
+      <Presence>
+        {error === undefined ? null : (
+          <p id={`${id}-error`} className="trigger-error" role="alert">
+            {error}
+          </p>
+        )}
+      </Presence>
+      <Presence>
+        {failure === undefined ? null : (
+          <div role="alert">
+            <p>{failure}</p>
+            <Button
+              icon={<IconRefreshOutline16 />}
+              disabled={disabled || loading}
+              onClick={() => setReload((current) => current + 1)}
+            >
+              Try again
+            </Button>
+          </div>
+        )}
+      </Presence>
       {next === undefined ? null : (
         <Button disabled={disabled || loading} onClick={() => void loadMore()}>
           Load more

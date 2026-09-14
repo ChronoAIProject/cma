@@ -16,11 +16,13 @@ import {
 } from './resources.js';
 import {
   createSandboxRequest,
+  grantSandboxServiceAccessRequest,
   sandbox,
   sandboxDetail,
   sandboxStatus,
   sandboxSummary,
   type CreateSandboxRequest,
+  type GrantSandboxServiceAccessRequest,
   type SandboxStatus,
 } from './instances/types.js';
 import { sandboxEvent } from './instances/events.js';
@@ -73,6 +75,20 @@ export class Sandboxes {
   }
   revive(id: string, options: CommandOptions) {
     return this.lifecycle(id, '/revive', 'POST', options);
+  }
+
+  grantServiceAccess(id: string, body: GrantSandboxServiceAccessRequest, options: CommandOptions) {
+    return read(
+      this.config,
+      `/api/v1/sandboxes/${segment(id)}/service-access`,
+      identity(sandbox, id),
+      {
+        ...command(options),
+        method: 'POST',
+        body: input(grantSandboxServiceAccessRequest, body),
+        expectedStatus: 200,
+      },
+    );
   }
 
   events(id: string, options: EventOptions = {}) {

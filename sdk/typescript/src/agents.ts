@@ -18,6 +18,7 @@ import { agentStatus, type AgentStatus } from './instances/types.js';
 import {
   agent,
   agentResources,
+  agentSource,
   agentSummary,
   agentTextRequest,
   agentTranscript,
@@ -132,6 +133,10 @@ export class Agents {
   }
   resources(id: string, options: OperationOptions = {}) {
     return this.readProjection(id, 'resources', agentResources, options);
+  }
+
+  source(id: string, options: OperationOptions = {}) {
+    return this.readProjection(id, 'source', agentSource, options);
   }
 
   /** Preserve the named terminal capability refusal; no attachment is available. */

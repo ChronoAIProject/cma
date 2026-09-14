@@ -29,6 +29,17 @@ export interface ProfileReference {
   readonly digest?: string;
 }
 
+export interface ConfiguredSandboxCapacity {
+  readonly cpuMillis: number;
+  readonly memoryBytes: number;
+}
+
+export interface SandboxProfileSettings {
+  readonly agentProvider: 'codex';
+  readonly modelAccess: 'chronoai_managed' | 'own_credentials';
+  readonly nyxidServices: readonly string[];
+}
+
 export interface Failure {
   readonly class: string;
   readonly detail: string;
@@ -40,10 +51,51 @@ export interface ResourcePage<T, Cursor = string> {
   readonly next?: Cursor;
 }
 
+export interface SandboxLifecycleEligibility {
+  readonly allowed: boolean;
+  readonly reason?: 'not_active' | 'not_paused' | 'checkpoint_in_progress' | 'work_in_progress';
+}
+
+export interface SandboxLifecycle {
+  readonly pause: SandboxLifecycleEligibility;
+  readonly revive: SandboxLifecycleEligibility;
+  readonly checkpoint?: {
+    readonly phase: 'capture' | 'resume_writers';
+    readonly startedAt: string;
+    readonly epoch: number;
+  };
+  readonly latestSnapshot?: {
+    readonly epoch: number;
+    readonly savedAt: string;
+    readonly downloadUrl: string;
+  };
+  readonly backgroundSave?: {
+    readonly phase:
+      | 'capturing'
+      | 'preparing_export'
+      | 'exporting'
+      | 'uploading'
+      | 'finishing'
+      | 'saved'
+      | 'cancelled';
+    readonly startedAt: string;
+    readonly capturedAt?: string;
+    readonly epoch: number;
+  };
+  readonly operation?: {
+    readonly purpose: 'pause' | 'revive' | 'image_rotation';
+    readonly phase: string;
+    readonly startedAt: string;
+  };
+}
+
 export interface SandboxSummary {
   readonly id: string;
+  readonly owner?: string;
+  readonly ownerName?: string;
   readonly name: string;
   readonly status: SandboxStatus;
+  readonly lifecycle?: SandboxLifecycle;
   readonly profile: ProfileReference;
   readonly lastActivityAt: string;
   readonly createdAt: string;
@@ -64,6 +116,7 @@ export interface WorkspaceSummary {
 }
 
 export interface SandboxDetail extends SandboxSummary {
+  readonly nyxidServices?: readonly string[];
   readonly limits: {
     readonly maxWorkspaces: number;
     readonly maxAgentsPerWorkspace: number;

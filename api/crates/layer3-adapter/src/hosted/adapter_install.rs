@@ -10,7 +10,7 @@ impl HostedAdapter {
         request: &InstallRequest,
     ) -> crate::Result<InstallReceipt> {
         validate_request(request)?;
-        self.known_state(handle).await?;
+        self.verify_bound_home(handle).await?;
         match self
             .exchange(handle, RequestFrame::Install(request.clone()))
             .await

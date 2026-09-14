@@ -169,7 +169,7 @@ async fn active_loss_fences_every_agent_and_preserves_checkpoint_lineage_and_own
         Some(SandboxLifecycleOperation::Revive {
             phase: SandboxRevivePhase::CheckpointVerification,
             cause: SandboxReviveCause::RuntimeLost,
-            checkpoint_epoch: 1,
+            checkpoint_epoch: Some(1),
             ..
         })
     ));

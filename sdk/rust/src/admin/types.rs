@@ -15,7 +15,9 @@ pub struct SandboxSummary {
     pub id: String,
     /// Owning subject.
     pub owner: String,
-    /// Owner display name.
+    /// Creator's retained public name; absent when unavailable or on older servers.
+    pub owner_name: Option<String>,
+    /// Sandbox display name.
     pub name: String,
     /// Runtime lifecycle.
     pub status: SandboxStatus,
@@ -115,6 +117,8 @@ pub struct AgentSummary {
 /// Operator Sandbox detail with bounded child summaries.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct SandboxDetail {
+    /// Creator's retained public name.
+    pub owner_name: Option<String>,
     /// Safe Sandbox projection.
     pub sandbox: Sandbox,
     /// Child Workspace summaries.
@@ -132,6 +136,8 @@ pub struct ProfileSummary {
     pub id: String,
     /// Owning subject.
     pub owner: String,
+    /// Creator's retained public name.
+    pub owner_name: Option<String>,
     /// Owner profile name.
     pub name: String,
     /// Public discoverability.
@@ -173,6 +179,10 @@ pub struct ActivityRecord {
     pub at: String,
     /// Acting subject, if authenticated.
     pub actor: Option<String>,
+    /// Acting user's retained public name.
+    pub actor_name: Option<String>,
+    /// Public name of a subject target, when available.
+    pub target_name: Option<String>,
     /// Operation action.
     pub action: ActivityAction,
     /// Operation target.

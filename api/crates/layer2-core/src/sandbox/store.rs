@@ -11,6 +11,7 @@ use super::{
 };
 
 mod agent_control;
+mod background_checkpoint;
 pub use agent_control::{
     AgentControlResult, AgentControlStore, AgentControlStoreError, AgentControlTarget,
     AgentDeleteRequest, AgentStopRequest,
@@ -43,7 +44,10 @@ mod agent_work_evidence_validation;
 mod agent_work_transition_validation;
 mod agent_work_validation;
 pub use agent_work_evidence_validation::{MAX_AGENT_CLEANUP_DEBT, MAX_AGENT_WORK_RECEIPTS};
-pub use agent_work_validation::validate_agent_work_mutation;
+pub use agent_work_validation::{
+    retired_sandbox_cleanup_is_absent, retiring_sandbox_process_is_absent,
+    validate_agent_work_mutation, validate_agent_work_mutation_with_sandbox,
+};
 mod sandbox_admission;
 pub use sandbox_admission::{
     allocated_sandbox_name, valid_admission_fingerprint, SandboxAdmission, SandboxAdmissionName,
@@ -106,6 +110,8 @@ pub enum SandboxStoreError {
     Duplicate,
     #[error("record revision changed")]
     Conflict,
+    #[error("sandbox checkpoint is in progress; input was not admitted")]
+    CheckpointInProgress,
     #[error("event sequence would not be gap-free")]
     SequenceConflict,
     #[error("agent log capacity exceeded")]
@@ -210,7 +216,7 @@ pub trait WorkspaceAdmissionStore: Send + Sync {
         admission: WorkspaceAdmission,
     ) -> Result<WorkspaceAdmissionResult, SandboxStoreError>;
 
-    /// Lock and rewrite the workspace row while checking that no agent is live.
+    /// Fence new child admission and durably schedule removal, including child cleanup.
     async fn begin_workspace_removal(
         &self,
         id: &WorkspaceId,
@@ -321,6 +327,26 @@ pub trait AgentLogStore: Send + Sync {
         after: u64,
         limit: u16,
     ) -> Result<Vec<AgentLogEntry>, SandboxStoreError>;
+
+    /// Read the exact prefix needed for a captured Agent projection.
+    async fn agent_log_prefix(
+        &self,
+        agent_id: &AgentId,
+        through_seq: u64,
+    ) -> Result<Vec<AgentLogEntry>, SandboxStoreError> {
+        let mut entries = Vec::new();
+        let mut after = 0;
+        while after < through_seq {
+            let limit = (through_seq - after).min(u64::from(MAX_PAGE_SIZE)) as u16;
+            let page = self.agent_log(agent_id, after, limit).await?;
+            if page.len() != usize::from(limit) {
+                return Err(SandboxStoreError::SequenceConflict);
+            }
+            after += u64::from(limit);
+            entries.extend(page);
+        }
+        Ok(entries)
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -381,7 +407,12 @@ impl<T> WorkspaceServiceStore for T where
 }
 
 pub trait WorkspaceLifecycleStore:
-    SandboxStore + WorkspaceStore + WorkspaceWorkerStore + SandboxTransactionStore
+    SandboxStore
+    + WorkspaceStore
+    + WorkspaceWorkerStore
+    + SandboxTransactionStore
+    + AgentStore
+    + AgentControlStore
 {
 }
 
@@ -444,13 +475,19 @@ impl<T> AgentServiceStore for T where
 }
 
 impl<T> WorkspaceLifecycleStore for T where
-    T: SandboxStore + WorkspaceStore + WorkspaceWorkerStore + SandboxTransactionStore
+    T: SandboxStore
+        + WorkspaceStore
+        + WorkspaceWorkerStore
+        + SandboxTransactionStore
+        + AgentStore
+        + AgentControlStore
 {
 }
 
 #[derive(Clone, Default)]
 pub struct InMemorySandboxStore {
     state: Arc<Mutex<State>>,
+    profiles: crate::profiles::InMemoryProfileStore,
 }
 
 #[derive(Clone, Default)]
@@ -459,6 +496,7 @@ struct State {
     workspaces: HashMap<WorkspaceId, Workspace>,
     worktrees: HashMap<WorktreeId, Worktree>,
     agents: HashMap<AgentId, Agent>,
+    agent_reuse_bindings: HashMap<(SubjectId, String), (AgentId, String)>,
     sandbox_admissions: HashMap<(SubjectId, String), (SandboxId, SandboxAdmissionName, String)>,
     sandbox_events: HashMap<SandboxId, Vec<SandboxEvent>>,
     agent_logs: HashMap<AgentId, Vec<AgentLogEntry>>,
@@ -466,6 +504,13 @@ struct State {
 }
 
 impl InMemorySandboxStore {
+    pub fn with_profiles(profiles: crate::profiles::InMemoryProfileStore) -> Self {
+        Self {
+            profiles,
+            ..Self::default()
+        }
+    }
+
     fn lock(&self) -> std::sync::MutexGuard<'_, State> {
         self.state
             .lock()

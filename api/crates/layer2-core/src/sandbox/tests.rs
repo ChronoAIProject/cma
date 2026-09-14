@@ -79,6 +79,7 @@ fn sandbox() -> Sandbox {
         failure: None,
         runtime: None,
         credential: SandboxCredentialState {
+            service_grants: Vec::new(),
             reaches: vec![],
             key_generation: 1,
             delivered: true,
@@ -208,8 +209,10 @@ fn every_status_pair_is_governed_by_an_explicit_whitelist() {
     ];
     let expected = [
         (SandboxStatus::Provisioning, SandboxStatus::Installing),
+        (SandboxStatus::Provisioning, SandboxStatus::Reviving),
         (SandboxStatus::Provisioning, SandboxStatus::Retiring),
         (SandboxStatus::Installing, SandboxStatus::Active),
+        (SandboxStatus::Installing, SandboxStatus::Reviving),
         (SandboxStatus::Installing, SandboxStatus::Retiring),
         (SandboxStatus::Active, SandboxStatus::Pausing),
         (SandboxStatus::Active, SandboxStatus::Reviving),
@@ -217,10 +220,13 @@ fn every_status_pair_is_governed_by_an_explicit_whitelist() {
         (SandboxStatus::Active, SandboxStatus::Rotating),
         (SandboxStatus::Active, SandboxStatus::Retiring),
         (SandboxStatus::Pausing, SandboxStatus::Paused),
+        (SandboxStatus::Pausing, SandboxStatus::Reviving),
+        (SandboxStatus::Pausing, SandboxStatus::Active),
         (SandboxStatus::Pausing, SandboxStatus::Retiring),
         (SandboxStatus::Paused, SandboxStatus::Reviving),
         (SandboxStatus::Paused, SandboxStatus::Retiring),
         (SandboxStatus::Reviving, SandboxStatus::Active),
+        (SandboxStatus::Reviving, SandboxStatus::Pausing),
         (SandboxStatus::Reviving, SandboxStatus::Retiring),
         (SandboxStatus::CredentialRotating, SandboxStatus::Active),
         (SandboxStatus::CredentialRotating, SandboxStatus::Reviving),

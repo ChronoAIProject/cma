@@ -33,6 +33,8 @@ pub struct SandboxMutationGuard {
     pub operation: Option<SandboxLifecycleOperation>,
     pub runtime: Option<RuntimeBinding>,
     pub checkpoint_capture: Option<crate::sandbox::SandboxCheckpointCapture>,
+    pub background_checkpoint: Option<Box<crate::sandbox::SandboxBackgroundCheckpoint>>,
+    pub checkpoint_epoch_high_water: u64,
 }
 
 impl SandboxMutationGuard {
@@ -47,6 +49,8 @@ impl SandboxMutationGuard {
             operation: sandbox.lifecycle.operation.clone(),
             runtime: sandbox.runtime.clone(),
             checkpoint_capture: sandbox.lifecycle.checkpoint_capture.clone(),
+            background_checkpoint: sandbox.lifecycle.background_checkpoint.clone(),
+            checkpoint_epoch_high_water: sandbox.lifecycle.checkpoint_epoch_high_water,
         }
     }
 
@@ -60,6 +64,8 @@ impl SandboxMutationGuard {
             && self.operation == sandbox.lifecycle.operation
             && self.runtime == sandbox.runtime
             && self.checkpoint_capture == sandbox.lifecycle.checkpoint_capture
+            && self.background_checkpoint == sandbox.lifecycle.background_checkpoint
+            && self.checkpoint_epoch_high_water == sandbox.lifecycle.checkpoint_epoch_high_water
     }
 }
 
@@ -68,6 +74,11 @@ impl SandboxMutationGuard {
 pub struct SandboxCheckpointMutation {
     pub guard: SandboxMutationGuard,
     pub agents: Vec<SandboxCheckpointAgentGuard>,
+    /// A checkpoint read from an immutable snapshot may finish after live
+    /// Agent rows advance. Such publication fences the current Sandbox only;
+    /// the captured Agent set belongs to the snapshot and is intentionally not
+    /// compared with today's rows.
+    pub nonblocking: bool,
     pub checkpoint: SandboxCheckpointRef,
     pub sandbox: Sandbox,
     pub appended_at: String,
@@ -188,35 +199,49 @@ pub fn validate_checkpoint_mutation(
         .checkpoint
         .validate()
         .map_err(|_| invalid("checkpoint reference is invalid"))?;
-    let live = agents.iter().filter(|(agent, _)| agent.status.is_live());
-    let expected = live
-        .clone()
-        .map(|(agent, _)| SandboxCheckpointAgentGuard::capture(agent))
-        .collect::<BTreeSet<_>>();
-    let captured = mutation.agents.iter().cloned().collect::<BTreeSet<_>>();
-    if live.count() != expected.len()
-        || captured.len() != mutation.agents.len()
-        || captured != expected
+    if !mutation.nonblocking {
+        let live = agents.iter().filter(|(agent, _)| agent.status.is_live());
+        let expected = live
+            .clone()
+            .map(|(agent, _)| SandboxCheckpointAgentGuard::capture(agent))
+            .collect::<BTreeSet<_>>();
+        let captured = mutation.agents.iter().cloned().collect::<BTreeSet<_>>();
+        if live.count() != expected.len()
+            || captured.len() != mutation.agents.len()
+            || captured != expected
+        {
+            return Err(SandboxStoreError::Conflict);
+        }
+        if agents.iter().any(|(agent, last_seq)| {
+            agent.status.is_live() && agent.conversation.last_seq != *last_seq
+        }) {
+            return Err(SandboxStoreError::SequenceConflict);
+        }
+    } else if !mutation.agents.is_empty()
+        || current
+            .lifecycle
+            .background_checkpoint
+            .as_ref()
+            .is_none_or(|capture| {
+                capture.progress.uploaded.is_none() || capture.work.lease.is_none()
+            })
     {
         return Err(SandboxStoreError::Conflict);
     }
-    if agents
-        .iter()
-        .any(|(agent, last_seq)| agent.status.is_live() && agent.conversation.last_seq != *last_seq)
-    {
-        return Err(SandboxStoreError::SequenceConflict);
+    if !mutation.nonblocking {
+        let rows = agents
+            .iter()
+            .map(|(agent, _)| agent.clone())
+            .collect::<Vec<_>>();
+        validate_checkpoint_agents(current, &rows, &mutation.checkpoint)?;
     }
-    let rows = agents
-        .iter()
-        .map(|(agent, _)| agent.clone())
-        .collect::<Vec<_>>();
-    validate_checkpoint_agents(current, &rows, &mutation.checkpoint)?;
 
     if !checkpoint_sandbox_advanced(
         current,
         &mutation.sandbox,
         &mutation.checkpoint,
         &mutation.appended_at,
+        mutation.nonblocking,
     ) {
         return Err(invalid(
             "checkpoint publication changed unrelated sandbox state",
@@ -232,6 +257,12 @@ pub fn validate_lifecycle_mutation(
     mutation: &SandboxLifecycleMutation,
 ) -> Result<(), SandboxStoreError> {
     validate_guard(current, &mutation.guard)?;
+    if current.lifecycle.background_checkpoint != mutation.sandbox.lifecycle.background_checkpoint
+        || current.lifecycle.checkpoint_epoch_high_water
+            != mutation.sandbox.lifecycle.checkpoint_epoch_high_water
+    {
+        return super::background_checkpoint::validate_background_mutation(current, mutation);
+    }
     if current.lifecycle.checkpoint_capture.is_some()
         || mutation.sandbox.lifecycle.checkpoint_capture.is_some()
     {
@@ -342,7 +373,17 @@ fn validate_next_sandbox(
         || next.profile != current.profile
         || next.limits != current.limits
         || next.created_at != current.created_at
-        || next.lifecycle.next_authority != current.lifecycle.next_authority
+        || (next.lifecycle.next_authority != current.lifecycle.next_authority
+            && !(current.lifecycle.next_authority.checked_add(1)
+                == Some(next.lifecycle.next_authority)
+                && matches!(
+                    current.lifecycle.operation,
+                    Some(SandboxLifecycleOperation::Revive { .. })
+                )
+                && matches!(
+                    next.lifecycle.operation,
+                    Some(SandboxLifecycleOperation::Pause { .. })
+                )))
         || next.work.execution != current.work.execution
     {
         return Err(invalid(

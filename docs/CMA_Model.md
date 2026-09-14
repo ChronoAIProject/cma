@@ -114,7 +114,7 @@ profile kind, readable by the publisher.
 |---|---|
 | `model` | Optional opaque nonempty model name; omission selects the deployment default during admission. |
 | `thinking_effort` | `minimal`, `low`, `medium`, `high`, `x_high`. |
-| `permission_level` | `guarded` or `autonomous`; no unrestricted mode. |
+| `permission_level` | `guarded` requests approval for privileged work; `autonomous` runs without provider approval prompts or an inner command sandbox inside the isolated CMA Sandbox. |
 | `skills` | At most 32 `{ source: "ornn", id, version? }` entries; per-Agent installation. |
 | `system_prompt` | Plain UTF-8 text, at most 32 KiB, installed verbatim in the Agent home. |
 
@@ -122,6 +122,14 @@ The profile prompt is standing guidance plus the repository's instructions,
 not a replacement for repository `AGENTS.md`. CMA does not edit repository files
 to install the profile prompt. Missing requested skills fail creation with a
 typed refusal; they are not silently omitted.
+
+For the supported Codex provider, `autonomous` is YOLO: `approval_policy =
+"never"`, `sandbox_mode = "danger-full-access"`, and ACP mode
+`agent-full-access`. `guarded` retains `on-request`, `read-only`, and ACP mode
+`read-only`. The outer CMA Sandbox and its pinned NyxID service scope remain
+the isolation and service-authority boundaries. Explicitly selected `nyxid`
+or `ornn-agent-manual-cli` skill revisions install into the Agent home in place
+of only their corresponding bundled fallback links.
 
 ### Workspace Profile
 
@@ -273,11 +281,31 @@ and seals verified content before publishing recovery authority. Restore checks
 the manifest, digests and exact operation identity before releasing the writer
 boundary. Partial objects are never advertised as usable checkpoints.
 
+After a pause checkpoint is durably published, subsequent teardown phases
+revalidate its exact writer hold through authenticated runtime control. They
+compare its epoch, object reference, digest and writer token with the pinned
+checkpoint without retransferring the archive. Initial capture still exports
+and independently validates the complete archive before publication; invalid
+or lost hold receipts retain the existing writer-recovery behavior.
+
+Periodic checkpoints wait until every live Agent's latest durable activity is at
+least 120 seconds old. The store enforces this quiet interval inside capture
+admission, so a concurrent message wins or the checkpoint wins, never both.
+Explicit Pause, runtime rotation, and recovery of an already admitted capture
+do not wait for this interval. This grace period permits follow-up work after a
+reply; it does not reduce the time needed to save a large home once capture starts.
+
 Runtime image drift performs a recorded rotation through this same boundary.
-Two checkpoints are retained; retention and eventual cleanup do not erase a
-currently referenced recovery point. Restart recovery resumes from database
+Only the latest completed checkpoint is retained; its replacement must commit
+before the previous archive is pruned. Restart recovery resumes from database
 authority rather than the memory of a former worker. A stale worker cannot
 resume writers or retire a replacement runtime under an expired fence.
+
+After restored Agents reopen, queue completion rechecks their internal metadata
+and lease settlement within five seconds (or the configured retry delay if
+shorter). External failures keep the normal retry delay, and an uncertain message
+dispatch retains its full grace period. A conflicting completion cannot replace
+a newer parent revision, release a replacement worker's lease or discard input.
 
 ## Trigger And Visitor Ownership
 

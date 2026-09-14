@@ -1,4 +1,8 @@
-import { useEffect, useRef } from 'react';
+import { Presence } from '../ui/Presence';
+import { useEffect, useRef, useState } from 'react';
+import { ConnectionWizard } from '../connections/ConnectionWizard';
+import { useConnectionGate } from '../connections/useConnectionGate';
+import { subscriptionService, type ConnectionReport } from '../connections/client';
 import type { AgentStatus } from '../api/types';
 import type { AppRoute } from '../routing/routes';
 import { routePath } from '../routing/routes';
@@ -12,8 +16,13 @@ import './Agent.css';
 import { statusLabel } from '../vocabulary/status';
 import { ProvisioningProgress } from '../sandbox/ProvisioningProgress';
 import { agentProgress } from '../sandbox/progress';
+import { Resources } from './Resources';
+import { BrandLoading } from '../landing/LandingCharacter';
+import { LifecycleProgress } from '../sandbox/LifecycleProgress';
+import { AgentSourceLabel, useAgentSource } from './source';
 
 interface AgentSurfaceProps {
+  readonly viewerId?: string;
   readonly agentId: string;
   readonly controller: AgentController;
   readonly detailsOpen: boolean;
@@ -59,14 +68,21 @@ export function AgentSurface({
   detailsOpen,
   onDetailsOpenChange,
   onNavigate,
+  viewerId,
 }: AgentSurfaceProps) {
   const headingRef = useRef<HTMLHeadingElement>(null);
+  const [verified, setVerified] = useState<ConnectionReport>();
+  const connections = useConnectionGate();
   const state: AgentResourceState =
     controller.state.status === 'ready' && controller.state.detail.id !== agentId
       ? { status: 'loading' }
       : controller.state;
   const documentTitle =
     state.status === 'ready' ? `${state.detail.title ?? 'Untitled agent'} · CMA` : undefined;
+  const source = useAgentSource(agentId, state.status === 'ready');
+  const sandboxOwner = controller.progressObservation?.sandbox.owner;
+  const readOnly =
+    viewerId !== undefined && sandboxOwner !== undefined && viewerId !== sandboxOwner;
 
   useEffect(() => {
     if (state.status !== 'ready') headingRef.current?.focus();
@@ -90,9 +106,7 @@ export function AgentSurface({
           </h1>
         </header>
         <div className="agent-loading">
-          <span className="skeleton agent-loading__row" />
-          <span className="skeleton agent-loading__row" />
-          <span className="skeleton agent-loading__row" />
+          <BrandLoading label="Opening your agent" />
         </div>
       </section>
     );
@@ -116,18 +130,27 @@ export function AgentSurface({
   }
 
   const { detail, conversation } = state;
-  const status = conversation.agentStatus ?? detail.status;
+  const status = detail.status;
   const title = detail.title?.trim() || 'Untitled agent';
   const pausedNotice =
     conversation.livePausedNotice === undefined
       ? detail.pausedNotice
       : (conversation.livePausedNotice ?? undefined);
-  const running =
-    status === 'working' || conversation.activeRunId !== undefined || controller.pending === 'send';
-  const approvalBusy = controller.pending === 'approval';
+  const running = conversation.activeRunId !== undefined;
+  const starting = controller.pending === 'send' && !running;
+  const historyIncomplete = state.historyLoading === true || state.historyUnavailable === true;
+  const approvalBusy =
+    controller.pending === 'approval' || historyIncomplete || !controller.inputAvailability.allowed;
+  const issue = state.historyLoading
+    ? 'Loading conversation activity.'
+    : state.historyUnavailable
+      ? 'Conversation activity is unavailable. Reconnecting.'
+      : controller.actionError;
+  const preparation = agentProgress({ ...detail, status }, state.sandboxEvents ?? []);
 
   return (
     <section className="agent-surface">
+      {connections.dialog}
       <header className="agent-header">
         <nav className="agent-header__lineage" aria-label="Agent location">
           <SandboxLink id={detail.sandbox.id} name={detail.sandbox.name} onNavigate={onNavigate} />
@@ -156,27 +179,48 @@ export function AgentSurface({
             onClick={() => onDetailsOpenChange(!detailsOpen)}
           />
         </div>
+        <AgentSourceLabel source={source} />
+        {verified?.services.some((service) => service.service === subscriptionService) ? (
+          <Button
+            onClick={() =>
+              connections.run(
+                { type: 'agent', id: agentId },
+                () => {
+                  controller.clearActionError();
+                  controller.reload();
+                },
+                true,
+              )
+            }
+          >
+            Re-login with Codex subscription
+          </Button>
+        ) : null}
       </header>
 
-      {controller.actionError === undefined ? null : (
-        <div className="agent-action-error" role="alert">
-          <span>{controller.actionError}</span>
-          <Button
-            size="sm"
-            icon={<IconCloseOutline16 />}
-            aria-label="Dismiss error"
-            onClick={controller.clearActionError}
-          />
-        </div>
-      )}
+      <Presence>
+        {issue === undefined ? null : (
+          <div className="agent-action-error" role={historyIncomplete ? 'status' : 'alert'}>
+            <span>{issue}</span>
+            {historyIncomplete ? null : (
+              <Button
+                size="sm"
+                icon={<IconCloseOutline16 />}
+                aria-label="Dismiss error"
+                onClick={controller.clearActionError}
+              />
+            )}
+          </div>
+        )}
+      </Presence>
 
       <div className="agent-surface__conversation">
         {status === 'starting' ||
         detail.failure !== undefined ||
-        state.sandboxEvents !== undefined ? (
+        preparation.some((step) => step.status !== 'Done') ? (
           <ProvisioningProgress
             title="Agent preparation"
-            steps={agentProgress(detail, state.sandboxEvents ?? [])}
+            steps={preparation}
             failure={detail.failure}
           />
         ) : null}
@@ -184,15 +228,59 @@ export function AgentSurface({
           conversation={conversation}
           approvalBusy={approvalBusy}
           onApproval={(id, decision) => void controller.approve(id, decision)}
-        />
+        >
+          {controller.progressObservation === undefined ? null : (
+            <LifecycleProgress {...controller.progressObservation} />
+          )}
+        </MessageStream>
       </div>
       <Composer
+        key={`composer:${agentId}`}
+        quickMessages={source.status === 'ready' ? source.value.trigger?.quick_messages : undefined}
         status={status}
         pausedNotice={pausedNotice}
         running={running}
-        busy={controller.pending !== undefined && controller.pending !== 'send'}
-        onSend={controller.send}
+        starting={starting}
+        inputAvailability={
+          readOnly
+            ? {
+                ...controller.inputAvailability,
+                allowed: false,
+                notice: 'Only the owner can send messages to this agent.',
+              }
+            : verified === undefined
+              ? {
+                  ...controller.inputAvailability,
+                  allowed: false,
+                  notice: 'Verify the required connections to continue.',
+                }
+              : controller.inputAvailability
+        }
+        busy={
+          historyIncomplete || (controller.pending !== undefined && controller.pending !== 'send')
+        }
+        onSend={async (content, onAccepted) => {
+          connections.run(
+            { type: 'agent', id: agentId },
+            () => void controller.send(content, onAccepted),
+          );
+        }}
         onStop={controller.interrupt}
+      />
+      {verified === undefined && !readOnly ? (
+        <ConnectionWizard
+          target={{ type: 'agent', id: agentId }}
+          onReady={setVerified}
+          onCancel={() => onNavigate({ kind: 'home' })}
+        />
+      ) : null}
+      <Resources
+        key={agentId}
+        agentId={agentId}
+        sandboxId={detail.sandbox.id}
+        sandboxProfile={detail.sandbox.profile}
+        availability={controller.resourceAvailability}
+        usage={conversation.usage}
       />
     </section>
   );

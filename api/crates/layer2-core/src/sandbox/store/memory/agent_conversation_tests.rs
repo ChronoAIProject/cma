@@ -22,6 +22,9 @@ use super::agent_admission_tests::*;
 #[path = "agent_live_tests.rs"]
 mod live_tests;
 
+#[path = "agent_tool_update_tests.rs"]
+mod tool_update_tests;
+
 async fn ready_agent(
     first_message: Option<&str>,
 ) -> (super::InMemorySandboxStore, crate::sandbox::Agent) {
@@ -553,6 +556,70 @@ async fn approval_requests_wait_and_can_be_reconstructed_after_restart() {
             ..
         }] if approval_id == "approval-1"
     ));
+}
+
+#[tokio::test]
+async fn concurrent_approval_requests_preserve_the_recorder_and_each_pending_identity() {
+    let (store, working, recorder) = working_agent().await;
+    let mut assembly = AgentMessageAssembly::default();
+    for id in ["approval-1", "approval-2"] {
+        let request = PermissionRequest {
+            id: id.into(),
+            locator: Some(PermissionLocator::new(format!("route-{id}"))),
+            request: RequestPermissionRequest::new(
+                "conversation-1",
+                ToolCallUpdate::new(id, ToolCallUpdateFields::new().title("Read guidance")),
+                vec![PermissionOption::new(
+                    "allow-once",
+                    "Allow once",
+                    PermissionOptionKind::AllowOnce,
+                )],
+            ),
+        };
+        recorder
+            .record_update(
+                &working.id,
+                1,
+                &mut assembly,
+                ConversationUpdate::Asked(request),
+                NOW.into(),
+            )
+            .await
+            .unwrap();
+    }
+    assert_eq!(
+        store.get_agent(&working.id).await.unwrap().unwrap().status,
+        AgentStatus::WaitingApproval
+    );
+    let pending = store.pending_agent_approvals(&working.id).await.unwrap();
+    assert_eq!(pending.len(), 2);
+    assert_eq!(
+        store
+            .agent_log(&working.id, 0, 200)
+            .await
+            .unwrap()
+            .iter()
+            .filter(|entry| matches!(
+                entry.kind,
+                AgentLogKind::StatusChanged {
+                    to: AgentStatus::WaitingApproval,
+                    ..
+                }
+            ))
+            .count(),
+        1
+    );
+    recorder
+        .record_update(
+            &working.id,
+            1,
+            &mut assembly,
+            message_chunk("reply", "Both requests are visible."),
+            NOW.into(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(assembly.content, "Both requests are visible.");
 }
 
 #[tokio::test]

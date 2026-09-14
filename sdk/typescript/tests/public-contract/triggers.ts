@@ -41,6 +41,8 @@ export const triggerDispatch: Record<string, Dispatch> = {
   'GET /api/v1/triggers/{id}/stats': ({ client, param }) => client.triggers.stats(param('id')),
   'GET /api/v1/triggers/public/{public_id}': ({ client, param }) =>
     client.launches.preview(param('public_id')),
+  'POST /api/v1/triggers/public/{public_id}/entry-intent': ({ client, param }) =>
+    client.launches.entryIntent(param('public_id')),
   'POST /api/v1/triggers/public/{public_id}/launches': ({ client, param, body, command }) =>
     client.launches.createOrResume(param('public_id'), body, command),
   'GET /api/v1/launches': ({ client, options }) => client.launches.list(options),

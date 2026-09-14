@@ -171,11 +171,75 @@ pub(super) fn turn_outcome(frame: serde_json::Value) -> Outcome {
             capability: None,
         };
     };
+    if let Some(failure) = result.pointer("/_meta/jetbrains/air/sessionFailure") {
+        if !failure.is_null()
+            && failure.get("severity").and_then(serde_json::Value::as_str) != Some("warning")
+        {
+            return Outcome::Failed {
+                message: failure
+                    .get("title")
+                    .and_then(serde_json::Value::as_str)
+                    .filter(|title| !title.trim().is_empty())
+                    .map(|title| title.chars().take(1024).collect())
+                    .unwrap_or_else(|| "The model could not complete this turn".into()),
+                capability: None,
+            };
+        }
+    }
     match serde_json::from_value::<PromptResponse>(result.clone()) {
         Ok(response) => Outcome::Ended(response),
         Err(error) => {
             tracing::warn!(%error, "turn ended in a newer ACP shape");
-            Outcome::Ended(PromptResponse::new(crate::TurnStopReason::EndTurn))
+            Outcome::Failed {
+                message: "The agent returned an unsupported turn result".into(),
+                capability: None,
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn provider_failure_metadata_overrides_end_turn() {
+        let frame = serde_json::json!({"result": {
+            "stopReason": "end_turn",
+            "_meta": {"jetbrains": {"air": {"version": 1, "sessionFailure": {
+                "id": "turn-1:error", "revision": 1, "severity": "error",
+                "category": "connection", "title": "The model stream disconnected", "actions": ["retry"]
+            }}}}
+        }});
+        assert!(matches!(turn_outcome(frame), Outcome::Failed {message, ..}
+            if message == "The model stream disconnected"));
+    }
+
+    #[test]
+    fn recovered_retry_warning_does_not_fail_a_completed_turn() {
+        let frame = serde_json::json!({"result": {
+            "stopReason": "end_turn",
+            "_meta": {"jetbrains": {"air": {"version": 1, "sessionFailure": {
+                "severity": "warning", "title": "Retrying connection"
+            }}}}
+        }});
+        assert!(matches!(turn_outcome(frame), Outcome::Ended(_)));
+        assert!(matches!(
+            turn_outcome(serde_json::json!({"result": {"stopReason": "end_turn"}})),
+            Outcome::Ended(_)
+        ));
+    }
+
+    #[test]
+    fn malformed_result_does_not_report_success() {
+        for result in [
+            serde_json::json!({}),
+            serde_json::json!({"stopReason": "new_unknown_reason"}),
+        ] {
+            assert!(matches!(
+                turn_outcome(serde_json::json!({"result": result})),
+                Outcome::Failed { .. }
+            ));
         }
     }
 }

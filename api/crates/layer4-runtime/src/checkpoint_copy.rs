@@ -4,6 +4,9 @@ use std::path::{Path, PathBuf};
 use crate::failure::{Result, RuntimeError};
 
 pub(crate) fn replace_home(home: &Path, staged: &Path, scratch: &Path) -> Result<()> {
+    // The supervisor holds its operation gate and all home writers throughout
+    // replacement. Files can share storage with the temporary rollback/staging
+    // trees until those trees are removed, before writers are resumed.
     validate_home(home)?;
     let backup = scratch.join(format!(
         ".restore-backup-{}-{}",
@@ -12,8 +15,7 @@ pub(crate) fn replace_home(home: &Path, staged: &Path, scratch: &Path) -> Result
     ));
     let mut cleanup = Cleanup(Some(backup.clone()));
     copy_tree(home, &backup)?;
-    clear_directory(home)?;
-    if let Err(error) = copy_contents(staged, home) {
+    if let Err(error) = clear_directory(home).and_then(|_| copy_contents(staged, home)) {
         let rollback = clear_directory(home).and_then(|_| copy_contents(&backup, home));
         return match rollback {
             Ok(()) => Err(error),
@@ -84,16 +86,18 @@ fn copy_contents(source: &Path, destination: &Path) -> Result<()> {
 }
 
 fn copy_file(source: &Path, destination: &Path, mode: u32) -> Result<()> {
-    let mut source = open_source(source).map_err(copy_io("open copied file"))?;
-    if !source
+    let mut opened = open_source(source).map_err(copy_io("open copied file"))?;
+    let metadata = opened
         .metadata()
-        .map_err(copy_io("inspect opened copied file"))?
-        .is_file()
-    {
+        .map_err(copy_io("inspect opened copied file"))?;
+    if !metadata.is_file() {
         return Err(RuntimeError::rejected(
             "restore_entry_unsupported",
             "home file changed to an unsupported filesystem entry",
         ));
+    }
+    if link_quiet_file(source, destination, &opened, &metadata, mode)? {
+        return Ok(());
     }
     let mut output = std::fs::OpenOptions::new()
         .create_new(true)
@@ -102,7 +106,7 @@ fn copy_file(source: &Path, destination: &Path, mode: u32) -> Result<()> {
         .map_err(copy_io("create copied file"))?;
     let mut buffer = [0_u8; 64 * 1024];
     loop {
-        let read = source
+        let read = opened
             .read(&mut buffer)
             .map_err(copy_io("read copied file"))?;
         if read == 0 {
@@ -115,6 +119,72 @@ fn copy_file(source: &Path, destination: &Path, mode: u32) -> Result<()> {
     set_mode(&output, mode)?;
     output.sync_all().map_err(copy_io("sync copied file"))?;
     crate::fs_durability::sync_parent(destination).map_err(copy_io("sync copied file parent"))
+}
+
+#[cfg(unix)]
+fn link_quiet_file(
+    source: &Path,
+    destination: &Path,
+    opened: &std::fs::File,
+    metadata: &std::fs::Metadata,
+    mode: u32,
+) -> Result<bool> {
+    use std::os::unix::fs::MetadataExt as _;
+
+    // Copy when sanitising special permission bits, without changing the
+    // source inode. Mounts that cannot link retain the streaming copy path.
+    if metadata.mode() & 0o7777 != mode {
+        return Ok(false);
+    }
+    match std::fs::hard_link(source, destination) {
+        Ok(()) => {}
+        Err(error)
+            if matches!(
+                error.raw_os_error(),
+                Some(libc::EXDEV | libc::EOPNOTSUPP | libc::EMLINK)
+            ) =>
+        {
+            return Ok(false);
+        }
+        Err(error) => return Err(copy_io("link restored file")(error)),
+    }
+    let linked =
+        std::fs::symlink_metadata(destination).map_err(copy_io("inspect linked restored file"))?;
+    if !linked.is_file() || linked.file_type().is_symlink() {
+        crate::fs_durability::remove_file(destination)
+            .map_err(copy_io("remove changed restore source link"))?;
+        return Err(RuntimeError::rejected(
+            "restore_entry_changed",
+            "restore source changed while linking its file",
+        ));
+    }
+    // Some sandbox filesystems successfully create a hard link but report a
+    // different device/inode for the destination (for example, overlay-backed
+    // gVisor mounts). That is a storage-layout difference, not evidence that
+    // the staged source changed. Fall back to the verified streaming copy so
+    // restore remains correct without requiring hard-link semantics.
+    if linked.dev() != metadata.dev() || linked.ino() != metadata.ino() {
+        crate::fs_durability::remove_file(destination)
+            .map_err(copy_io("remove incompatible restore source link"))?;
+        return Ok(false);
+    }
+    opened
+        .sync_all()
+        .map_err(copy_io("sync linked restored file"))?;
+    crate::fs_durability::sync_parent(destination)
+        .map_err(copy_io("sync linked restored file parent"))?;
+    Ok(true)
+}
+
+#[cfg(not(unix))]
+fn link_quiet_file(
+    _source: &Path,
+    _destination: &Path,
+    _opened: &std::fs::File,
+    _metadata: &std::fs::Metadata,
+    _mode: u32,
+) -> Result<bool> {
+    Ok(false)
 }
 
 fn open_source(path: &Path) -> std::io::Result<std::fs::File> {
@@ -166,8 +236,7 @@ fn clear_directory(root: &Path) -> Result<()> {
             .file_type()
             .map_err(copy_io("inspect home entry for replacement"))?;
         if kind.is_dir() && !kind.is_symlink() {
-            crate::fs_durability::remove_dir_all(&path)
-                .map_err(copy_io("remove old home directory"))?;
+            remove_tree(&path).map_err(copy_io("remove old home directory"))?;
         } else {
             crate::fs_durability::remove_file(&path).map_err(copy_io("remove old home entry"))?;
         }
@@ -188,6 +257,55 @@ fn validate_home(home: &Path) -> Result<()> {
         ));
     }
     Ok(())
+}
+
+/// Remove a supervisor-owned tree, including archived read-only directories.
+/// Only directory modes change: regular files may share inodes with live home.
+pub(crate) fn remove_tree(root: &Path) -> std::io::Result<()> {
+    match std::fs::symlink_metadata(root) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return crate::fs_durability::sync_parent(root);
+        }
+        Ok(metadata) if metadata.is_dir() && !metadata.file_type().is_symlink() => {}
+        Ok(_) => {
+            return Err(std::io::Error::other(
+                "removal root is not a real directory",
+            ))
+        }
+        Err(error) => return Err(error),
+    }
+    let mut pending = vec![root.to_path_buf()];
+    while let Some(path) = pending.pop() {
+        let mut options = std::fs::OpenOptions::new();
+        options.read(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt as _;
+            options.custom_flags(libc::O_CLOEXEC | libc::O_DIRECTORY | libc::O_NOFOLLOW);
+        }
+        let directory = options.open(&path)?;
+        let metadata = directory.metadata()?;
+        if !metadata.is_dir() {
+            return Err(std::io::Error::other(
+                "removal entry changed from a directory",
+            ));
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            let current = mode(&metadata);
+            if current & 0o700 != 0o700 {
+                directory.set_permissions(std::fs::Permissions::from_mode(current | 0o700))?;
+            }
+        }
+        for entry in std::fs::read_dir(path)? {
+            let entry = entry?;
+            if entry.file_type()?.is_dir() {
+                pending.push(entry.path());
+            }
+        }
+    }
+    crate::fs_durability::remove_dir_all(root)
 }
 
 #[cfg(unix)]
@@ -237,7 +355,7 @@ impl Cleanup {
         };
         match std::fs::symlink_metadata(path) {
             Ok(metadata) if metadata.is_dir() && !metadata.file_type().is_symlink() => {
-                crate::fs_durability::remove_dir_all(path)?;
+                remove_tree(path)?;
             }
             Ok(_) => {
                 return Err(std::io::Error::new(
@@ -260,3 +378,7 @@ impl Drop for Cleanup {
         let _ = self.remove_now();
     }
 }
+
+#[cfg(all(test, unix))]
+#[path = "checkpoint_copy_tests.rs"]
+mod tests;

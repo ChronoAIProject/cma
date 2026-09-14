@@ -228,6 +228,7 @@ pub(super) fn publication_metadata(
 pub(super) fn marketplace_summary(
     kind: MarketplaceKind,
     document: &Document,
+    authors: &std::collections::BTreeMap<String, String>,
 ) -> Result<MarketplaceSummary, MarketplaceError> {
     let profile = decode_profile(kind, document)?;
     if profile.visibility() != ProfileVisibility::Public || profile.retired_at().is_some() {
@@ -244,7 +245,16 @@ pub(super) fn marketplace_summary(
         id: profile.id().to_string(),
         name: profile.name().to_string(),
         description: profile.description().to_string(),
-        owner_display: profile.owner().to_string(),
+        owner_display: authors
+            .get(profile.owner().as_str())
+            .cloned()
+            .unwrap_or_else(|| {
+                if profile.owner().as_str() == super::default_profiles::SYSTEM_OWNER {
+                    "CMA".into()
+                } else {
+                    "Author unavailable".into()
+                }
+            }),
         latest_revision: publication.revision,
         published_at,
         uses_count: profile.uses_count(),

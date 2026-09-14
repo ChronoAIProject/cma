@@ -73,23 +73,36 @@ pub(super) fn memory_observation(
 pub(super) fn reclaim(
     runtimes: &mut BTreeMap<RuntimeHandle, MemoryRuntime>,
     observation: &RuntimeObservation,
-) -> crate::Result<()> {
+) -> crate::Result<Option<MemoryRuntime>> {
     let Some(runtime) = runtimes.get(&observation.handle) else {
-        return Ok(());
+        return Ok(None);
     };
     if memory_observation(&observation.handle, &runtime.request)? != *observation {
         return Err(AdapterError::Rejected(
             "provider runtime changed after it was observed".into(),
         ));
     }
-    runtimes.remove(&observation.handle);
-    Ok(())
+    Ok(runtimes.remove(&observation.handle))
 }
 
 pub(super) fn require_credential(
     runtime: &MemoryRuntime,
     operation: WireOperation,
 ) -> crate::Result<()> {
+    if runtime.install.is_some()
+        && runtime.restore_bootstrap.is_none()
+        && matches!(
+            operation,
+            WireOperation::PrepareWorkspace
+                | WireOperation::WorkspaceSetup
+                | WireOperation::AddWorktree
+                | WireOperation::MaterializeAgentHome
+                | WireOperation::OpenAgent
+                | WireOperation::CacheSkillArchive
+        )
+    {
+        return Ok(());
+    }
     if runtime.credential_delivered
         && (runtime.restore_bootstrap.is_none() || runtime.restored_object.is_some())
     {
@@ -112,7 +125,13 @@ pub(super) fn replay_operation(
         return Ok(None);
     };
     if stored.request_sha256 != request_sha256 || stored.payload_sha256 != payload_sha256 {
-        return refused(operation, "operation_replay_mismatch");
+        return if operation == WireOperation::OpenAgent {
+            Err(AdapterError::OperationIdentityConflict(format!(
+                "{operation:?}: operation_replay_mismatch"
+            )))
+        } else {
+            refused(operation, "operation_replay_mismatch")
+        };
     }
     Ok(Some(stored.response.clone()))
 }

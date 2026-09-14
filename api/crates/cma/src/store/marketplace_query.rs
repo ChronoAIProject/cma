@@ -64,6 +64,7 @@ fn cursor_filter(cursor: &MarketplaceCursor) -> Bson {
 }
 
 async fn query_collection(
+    store: &MongoProfileStore,
     target: ProfileCollections<'_>,
     query: &MarketplaceQuery,
     cursor: Option<&MarketplaceCursor>,
@@ -86,18 +87,35 @@ async fn query_collection(
     if let Some(cursor) = cursor {
         filter.insert("$and", [cursor_filter(cursor)]);
     }
-    let mut documents = target
+    let documents: Vec<_> = target
         .profiles
         .find(filter)
         .sort(doc! { "latest_published_at": -1, "name": 1, "_id": 1 })
         .limit(i64::from(query.limit) + 1)
         .await
+        .map_err(driver_error)?
+        .try_collect()
+        .await
         .map_err(driver_error)?;
-    let mut rows = Vec::new();
-    while let Some(document) = documents.try_next().await.map_err(driver_error)? {
-        rows.push(marketplace_summary(target.kind, &document)?);
-    }
-    Ok(rows)
+    let owners = documents
+        .iter()
+        .map(|document| {
+            decode_profile(target.kind, document).map(|profile| profile.owner().to_string())
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let authors = super::directory::public_display_names(
+        &store.client,
+        &target.profiles.namespace().db,
+        &owners,
+    )
+    .await
+    .map_err(|_| {
+        MarketplaceError::Unavailable("profile author names could not be loaded".into())
+    })?;
+    documents
+        .iter()
+        .map(|document| marketplace_summary(target.kind, document, &authors))
+        .collect()
 }
 
 pub(super) async fn list_marketplace(
@@ -116,7 +134,13 @@ pub(super) async fn list_marketplace(
     ] {
         if query.kind.is_none_or(|selected| selected == kind) {
             rows.extend(
-                query_collection(collections_for_kind(store, kind), query, cursor.as_ref()).await?,
+                query_collection(
+                    store,
+                    collections_for_kind(store, kind),
+                    query,
+                    cursor.as_ref(),
+                )
+                .await?,
             );
         }
     }
@@ -219,7 +243,16 @@ pub(super) async fn read_marketplace(
     if publication.revision == 0 {
         return Err(MarketplaceError::NotFound);
     }
-    let summary = marketplace_summary(target.kind, &document)?;
+    let authors = super::directory::public_display_names(
+        &store.client,
+        &target.profiles.namespace().db,
+        &[profile.owner().to_string()],
+    )
+    .await
+    .map_err(|_| {
+        MarketplaceError::Unavailable("profile author names could not be loaded".into())
+    })?;
+    let summary = marketplace_summary(target.kind, &document, &authors)?;
     let revision = find_revision(target, locator.as_str(), publication.revision).await?;
     if publication.published_at.as_deref() != Some(revision.published_at()) {
         return Err(MarketplaceError::Corrupt(

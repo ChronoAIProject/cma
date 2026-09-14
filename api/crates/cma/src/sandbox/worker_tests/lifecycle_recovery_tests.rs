@@ -201,8 +201,9 @@ fn image() -> String {
 }
 
 mod creation_revival;
+mod service_access;
 
-async fn restarted_worker(harness: &Harness, now: SystemTime) -> Arc<SandboxWorker> {
+pub(super) async fn restarted_worker(harness: &Harness, now: SystemTime) -> Arc<SandboxWorker> {
     let adapter: Arc<dyn SandboxAdapter> = Arc::new(CodexAdapter::with_backend(
         harness.backend.clone(),
         CodexSandboxSpec::default(),
@@ -231,6 +232,7 @@ async fn restarted_worker(harness: &Harness, now: SystemTime) -> Arc<SandboxWork
             }),
             checkpoints: Arc::new(CheckpointPurgeRecorder {
                 actions: harness.actions.clone(),
+                failures: harness.checkpoint_failures.clone(),
             }),
             registry: registry.clone(),
             updates: DurableAgentUpdateRecorder::new(harness.store.clone()),

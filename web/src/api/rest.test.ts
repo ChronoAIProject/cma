@@ -10,6 +10,7 @@ import {
   WIRE_SANDBOX_DETAIL,
   WIRE_WORKSPACE,
   WIRE_WORKSPACE_DETAIL,
+  wireRevision,
 } from '../test/rest';
 import { CreatedResourceReadError, createRestWebClient } from './rest';
 import { profileFailure } from '../profiles/failure';
@@ -17,6 +18,111 @@ import { profileFailure } from '../profiles/failure';
 const options = { idempotencyKey: 'command-819' };
 
 describe('public REST web binding', () => {
+  it('projects only safe access settings from the exact pinned Sandbox profile', async () => {
+    const test = restTransport();
+    test.reply(wireRevision('sandbox'));
+    expect(
+      await createRestWebClient(test.sdk).readSandboxProfileSettings({
+        id: 'sandbox-1',
+        revision: 1,
+        digest: 'digest-1',
+      }),
+    ).toEqual({
+      agentProvider: 'codex',
+      modelAccess: 'own_credentials',
+      nyxidServices: ['storage'],
+    });
+    test.reply({ ...wireRevision('sandbox'), revision: 2 });
+    await expect(
+      createRestWebClient(test.sdk).readSandboxProfileSettings({ id: 'sandbox-1', revision: 1 }),
+    ).rejects.toBeInstanceOf(ProtocolError);
+  });
+  it.each(['capture', 'resume_writers'] as const)(
+    'preserves public lifecycle eligibility and actual %s metadata in lists and details',
+    async (phase) => {
+      const test = restTransport();
+      const client = createRestWebClient(test.sdk);
+      const lifecycle = {
+        pause: { allowed: false, reason: 'checkpoint_in_progress' },
+        revive: { allowed: false, reason: 'not_paused' },
+        checkpoint: { phase, started_at: NOW, epoch: 7 },
+        latest_snapshot: {
+          epoch: 6,
+          saved_at: NOW,
+          download_url: '/api/v1/sandboxes/sandbox-1/snapshots/6/download',
+        },
+        operation: { purpose: 'pause', phase: 'capture_and_publish_checkpoint', started_at: NOW },
+      };
+      const expected = {
+        pause: lifecycle.pause,
+        revive: lifecycle.revive,
+        checkpoint: { phase, startedAt: NOW, epoch: 7 },
+        latestSnapshot: {
+          epoch: 6,
+          savedAt: NOW,
+          downloadUrl: '/api/v1/sandboxes/sandbox-1/snapshots/6/download',
+        },
+        operation: { purpose: 'pause', phase: 'capture_and_publish_checkpoint', startedAt: NOW },
+      };
+      test.reply({ items: [{ ...WIRE_SANDBOX_DETAIL, lifecycle }] });
+      expect(await client.listSandboxes()).toMatchObject({ items: [{ lifecycle: expected }] });
+      test.reply({ ...WIRE_SANDBOX_DETAIL, lifecycle });
+      expect(await client.readSandbox('sandbox-1')).toMatchObject({ lifecycle: expected });
+    },
+  );
+
+  it('keeps missing lifecycle data unknown for a mixed-version response', async () => {
+    const test = restTransport();
+    test.reply(WIRE_SANDBOX_DETAIL);
+    expect(
+      (await createRestWebClient(test.sdk).readSandbox('sandbox-1')).lifecycle,
+    ).toBeUndefined();
+  });
+
+  it.each([undefined, 'digest-1'])(
+    'reads configured capacity from the exact pinned revision with optional digest %s',
+    async (digest) => {
+      const test = restTransport();
+      const client = createRestWebClient(test.sdk);
+      const signal = new AbortController().signal;
+      test.reply(wireRevision('sandbox'));
+      expect(
+        await client.readSandboxProfileCapacity(
+          { id: 'sandbox-1', revision: 1, digest },
+          { signal },
+        ),
+      ).toEqual({ cpuMillis: 2000, memoryBytes: 4096 * 1024 ** 2 });
+      expect(test.fetch.mock.calls[0]?.[0]).toBe('/api/v1/sandbox-profiles/sandbox-1/revisions/1');
+      expect(test.fetch.mock.calls[0]?.[1]?.signal?.aborted).toBe(false);
+    },
+  );
+
+  it.each([
+    { profile_id: 'other' },
+    { revision: 2 },
+    { digest: 'different' },
+    { content: { ...wireRevision('sandbox').content, cpu_millis: 0 } },
+    { content: { ...wireRevision('sandbox').content, memory_mib: Number.MAX_SAFE_INTEGER } },
+  ])('refuses mismatched or invalid configured capacity: %j', async (change) => {
+    const test = restTransport();
+    test.reply({ ...wireRevision('sandbox'), ...change });
+    await expect(
+      createRestWebClient(test.sdk).readSandboxProfileCapacity({
+        id: 'sandbox-1',
+        revision: 1,
+        digest: 'digest-1',
+      }),
+    ).rejects.toBeInstanceOf(ProtocolError);
+  });
+
+  it.each([403, 404])('preserves a refused pinned profile read (%s)', async (status) => {
+    const test = restTransport();
+    test.reply({ status, code: 'not_found', detail: 'Unavailable' }, status);
+    await expect(
+      createRestWebClient(test.sdk).readSandboxProfileCapacity({ id: 'sandbox-1', revision: 1 }),
+    ).rejects.toBeInstanceOf(ApiError);
+  });
+
   it('maps public hierarchy and Agent lineage without losing nested settings', async () => {
     const test = restTransport();
     const client = createRestWebClient(test.sdk);
@@ -26,8 +132,12 @@ describe('public REST web binding', () => {
       items: [{ id: 'sandbox-1', workspaceCount: 1, lastActivityAt: NOW }],
     });
     expect(test.fetch.mock.calls.at(-1)?.[0]).toBe('/api/v1/sandboxes?cursor=first');
-    test.reply(WIRE_SANDBOX_DETAIL);
+    test.reply({
+      ...WIRE_SANDBOX_DETAIL,
+      nyxid_services: ['chrono-llm', 'ornn-api', 'api-github'],
+    });
     expect(await client.readSandbox('sandbox-1')).toMatchObject({
+      nyxidServices: ['chrono-llm', 'ornn-api', 'api-github'],
       limits: { maxWorkspaces: 4, maxAgentsPerWorkspace: 2 },
       runtimeVersion: 'runtime-1',
       workspaces: [{ sandboxId: 'sandbox-1', worktreeCount: 1 }],

@@ -1,5 +1,6 @@
 import type { TriggerPreview, LaunchTrustDisclosure } from '@chronoai/cma-sdk';
 import { publicCopy } from '../vocabulary/needs';
+import { ReferenceLink } from '../profiles/ReferenceLink';
 
 type Disclosure = TriggerPreview['trust']['disclosures'][number] | LaunchTrustDisclosure;
 
@@ -69,7 +70,19 @@ export function Details({
         </div>
         <div>
           <dt>{publicCopy.services}</dt>
-          <dd>{preview.technical.services.join(', ') || publicCopy.none}</dd>
+          <dd>
+            {preview.technical.services.length === 0 ? (
+              publicCopy.none
+            ) : (
+              <ul>
+                {preview.technical.services.map((service) => (
+                  <li key={service}>
+                    <ReferenceLink kind="service" id={service} />
+                  </li>
+                ))}
+              </ul>
+            )}
+          </dd>
         </div>
       </dl>
       {preview.trust.disclosures.length > 0 ? (

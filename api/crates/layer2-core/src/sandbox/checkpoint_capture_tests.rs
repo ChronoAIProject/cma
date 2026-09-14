@@ -1,9 +1,9 @@
 use crate::sandbox::lifecycle_test_support::{agent, checkpoint, sandbox, NOW};
 use crate::sandbox::store::{
-    checkpoint_capture::validate_checkpoint_capture_work, AgentStore, AgentWorkerStore,
-    SandboxLifecycleAgentScope, SandboxLifecycleExecutionStore, SandboxLifecycleMutation,
-    SandboxMutationGuard, SandboxStore, SandboxStoreError, SandboxTransaction,
-    SandboxTransactionStore, SandboxWorkerStore,
+    checkpoint_capture::validate_checkpoint_capture_work, AgentLogStore, AgentStore,
+    AgentWorkerStore, SandboxLifecycleAgentScope, SandboxLifecycleExecutionStore,
+    SandboxLifecycleMutation, SandboxMutationGuard, SandboxStore, SandboxStoreError,
+    SandboxTransaction, SandboxTransactionStore, SandboxWorkerStore, WorkspaceStore,
 };
 use crate::sandbox::*;
 
@@ -229,10 +229,7 @@ fn late_lifecycle_retry_requires_fresh_capture_for_pause_and_image_rotation() {
                     .checkpoint_epoch(),
                 Some(2)
             );
-            assert_eq!(
-                value.lifecycle.checkpoints.previous.as_ref().unwrap().epoch,
-                1
-            );
+            assert!(value.lifecycle.checkpoints.previous.is_none());
         }
     }
 }
@@ -346,6 +343,17 @@ async fn begin_rejects_busy_or_expired_writer_authority_and_blocks_child_claims(
         Err(SandboxStoreError::Conflict)
     );
     writer.work = AgentWorkState::new(AgentWorkStep::None, NOW.into());
+    writer.conversation.last_seq = 1;
+    store
+        .append_agent_log(
+            &writer.id,
+            "2026-09-05T00:28:00Z".into(),
+            AgentLogKind::WorkStepCompleted {
+                step: AgentWorkStep::None,
+            },
+        )
+        .await
+        .unwrap();
     writer.revision += 1;
     store.save_agent(1, writer.clone()).await.unwrap();
     let mut next = current.clone();
@@ -366,11 +374,244 @@ async fn begin_rejects_busy_or_expired_writer_authority_and_blocks_child_claims(
         .is_none());
 }
 
+#[tokio::test]
+async fn begin_waits_for_pinned_profile_agents_before_fencing_a_ready_workspace() {
+    let store = InMemorySandboxStore::default();
+    let mut current = active();
+    current.revision = 1;
+    let mut child = agent("agt_profile_capture", "profile-conversation", 0);
+    child.revision = 1;
+    let workspace = profile_workspace(&current, &child);
+    child.origin = AgentOrigin::WorkspaceProfile { index: 0 };
+    child.creation_key = crate::sandbox::agent::profile_agent_creation_key(&workspace.id, 0);
+    store.create_sandbox(current.clone()).await.unwrap();
+    store.create_workspace(workspace).await.unwrap();
+    let mut next = current.clone();
+    next.begin_checkpoint_capture(LATER.into()).unwrap();
+    assert_eq!(
+        store
+            .commit_sandbox_lifecycle(mutation(&current, next.clone()))
+            .await,
+        Err(SandboxStoreError::Conflict)
+    );
+    assert_eq!(
+        store.get_sandbox(&current.id).await.unwrap(),
+        Some(current.clone())
+    );
+    child.conversation.last_seq = 1;
+    store.create_agent(child.clone()).await.unwrap();
+    store
+        .append_agent_log(
+            &child.id,
+            "2026-09-05T00:28:00Z".into(),
+            AgentLogKind::WorkStepCompleted {
+                step: AgentWorkStep::None,
+            },
+        )
+        .await
+        .unwrap();
+    store
+        .commit_sandbox_lifecycle(mutation(&current, next))
+        .await
+        .unwrap();
+}
+
+#[test]
+fn profile_capture_readiness_accepts_trigger_reuse_but_not_unrelated_agents() {
+    let current = active();
+    let mut child = agent("agt_profile_capture", "profile-conversation", 0);
+    let workspace = profile_workspace(&current, &child);
+    let eligible = |child: &Agent, workspace: &Workspace| {
+        validate_checkpoint_capture_work(
+            &current,
+            std::slice::from_ref(child),
+            std::slice::from_ref(workspace),
+        )
+        .is_ok()
+    };
+    assert!(!eligible(&child, &workspace));
+    child.origin = AgentOrigin::Trigger {
+        trigger_id: "trg_profile".into(),
+        launch_id: "lch_profile".into(),
+    };
+    assert!(!eligible(&child, &workspace));
+    child.creation_key = "trigger-profile:launch:agent".into();
+    assert!(eligible(&child, &workspace));
+    child.profile.revision += 1;
+    assert!(!eligible(&child, &workspace));
+    child.profile.revision -= 1;
+    child.workspace_id = crate::WorkspaceId("wks_other".into());
+    assert!(!eligible(&child, &workspace));
+    child.workspace_id = workspace.id.clone();
+    let mut duplicate = workspace.clone();
+    duplicate
+        .profile
+        .content
+        .agent_profiles
+        .push(duplicate.profile.content.agent_profiles[0].clone());
+    assert!(!eligible(&child, &duplicate));
+    for origin in [
+        child.origin.clone(),
+        AgentOrigin::WorkspaceProfile { index: 0 },
+    ] {
+        child.origin = origin;
+        if matches!(child.origin, AgentOrigin::WorkspaceProfile { .. }) {
+            child.creation_key =
+                crate::sandbox::agent::profile_agent_creation_key(&workspace.id, 0);
+        }
+        for status in [AgentStatus::Stopped, AgentStatus::Deleted] {
+            child.status = status;
+            assert!(eligible(&child, &workspace));
+        }
+    }
+}
+
+fn profile_workspace(sandbox: &Sandbox, child: &Agent) -> Workspace {
+    use crate::profiles::{
+        AgentProfileRef, WorkspaceLocation, WorkspaceProfileContent, WorkspaceProfileSnapshot,
+    };
+    Workspace {
+        id: child.workspace_id.clone(),
+        sandbox_id: sandbox.id.clone(),
+        owner: sandbox.owner.clone(),
+        origin: WorkspaceOrigin::Manual,
+        profile: WorkspaceProfileSnapshot {
+            id: crate::WorkspaceProfileId("wkp_capture".into()),
+            revision: 1,
+            digest: "e".repeat(64),
+            content: WorkspaceProfileContent {
+                location: WorkspaceLocation::Directory {
+                    name: "capture".into(),
+                },
+                name: "capture".into(),
+                setup_commands: Vec::new(),
+                agent_profiles: vec![AgentProfileRef {
+                    id: child.profile.id.clone(),
+                    revision: child.profile.revision,
+                }],
+            },
+        },
+        name: "capture".into(),
+        path: "/home/cma/capture".into(),
+        source: WorkspaceSource::Empty,
+        resolved_commit: Some("f".repeat(40)),
+        status: WorkspaceStatus::Ready,
+        work: WorkspaceWorkState::new(WorkspaceWorkStep::None, NOW.into()),
+        next_worktree_number: 1,
+        created_at: NOW.into(),
+        ready_at: Some(NOW.into()),
+        failed: None,
+        removed_at: None,
+        revision: 1,
+    }
+}
+
 fn active() -> Sandbox {
     let mut value = sandbox();
     value.runtime.as_mut().unwrap().provision_generation = Some(1);
     value.lifecycle.runtime_generation_high_water = 1;
     value
+}
+
+#[tokio::test]
+async fn checkpoint_renewal_is_exact_fenced_unexpired_and_capture_only() {
+    let store = InMemorySandboxStore::default();
+    let mut current = active();
+    current.revision = 1;
+    store.create_sandbox(current.clone()).await.unwrap();
+    let mut begun = current.clone();
+    begun.begin_checkpoint_capture(LATER.into()).unwrap();
+    store
+        .commit_sandbox_lifecycle(mutation(&current, begun.clone()))
+        .await
+        .unwrap();
+    let mut claimed = begun.clone();
+    claim(&mut claimed);
+    store
+        .commit_sandbox_lifecycle(mutation(&begun, claimed.clone()))
+        .await
+        .unwrap();
+    let at = "2026-09-05T00:32:00Z";
+    let expires = "2026-09-05T00:37:00Z";
+    let mut renewed = claimed.clone();
+    renewed
+        .renew_checkpoint_capture(HOLDER, fence(&claimed), at.into(), expires.into())
+        .unwrap();
+    let mut valid = mutation(&claimed, renewed.clone());
+    valid.appended_at = at.into();
+    for change in [0, 1, 2] {
+        let mut invalid = valid.clone();
+        let capture = invalid
+            .sandbox
+            .lifecycle
+            .checkpoint_capture
+            .as_mut()
+            .unwrap();
+        match change {
+            0 => capture.phase = SandboxCheckpointCapturePhase::ResumeWriters,
+            1 => capture.authority.writer_resume_token = Some("a".repeat(64)),
+            _ => capture.work.attempts += 1,
+        }
+        assert!(store.commit_sandbox_lifecycle(invalid).await.is_err());
+        assert_eq!(
+            store.get_sandbox(&current.id).await.unwrap(),
+            Some(claimed.clone())
+        );
+    }
+    store.commit_sandbox_lifecycle(valid.clone()).await.unwrap();
+    assert_eq!(
+        store.commit_sandbox_lifecycle(valid).await,
+        Err(SandboxStoreError::Conflict)
+    );
+    assert_eq!(fence(&renewed), fence(&claimed));
+    assert_eq!(
+        renewed
+            .lifecycle
+            .checkpoint_capture
+            .as_ref()
+            .unwrap()
+            .authority,
+        claimed
+            .lifecycle
+            .checkpoint_capture
+            .as_ref()
+            .unwrap()
+            .authority
+    );
+    assert_eq!(
+        renewed
+            .lifecycle
+            .checkpoint_capture
+            .as_ref()
+            .unwrap()
+            .work
+            .attempts,
+        0
+    );
+    for (holder, lease_fence, at, until) in [
+        ("other", fence(&claimed), at, "2026-09-05T00:38:00Z"),
+        (HOLDER, fence(&claimed) + 1, at, "2026-09-05T00:38:00Z"),
+        (HOLDER, fence(&claimed), expires, "2026-09-05T00:38:00Z"),
+        (HOLDER, fence(&claimed), at, EXPIRES),
+    ] {
+        let mut value = renewed.clone();
+        assert!(value
+            .renew_checkpoint_capture(holder, lease_fence, at.into(), until.into())
+            .is_err());
+        assert_eq!(value, renewed);
+    }
+    let mut resuming = renewed.clone();
+    resuming
+        .require_checkpoint_writer_resume(HOLDER, fence(&renewed), at.into())
+        .unwrap();
+    resuming
+        .claim_checkpoint_capture(HOLDER.into(), at.into(), expires.into())
+        .unwrap();
+    let before = resuming.clone();
+    assert!(resuming
+        .renew_checkpoint_capture(HOLDER, fence(&before), at.into(), expires.into())
+        .is_err());
+    assert_eq!(resuming, before);
 }
 
 fn claim(value: &mut Sandbox) {

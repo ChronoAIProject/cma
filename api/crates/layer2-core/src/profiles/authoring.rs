@@ -17,6 +17,7 @@ pub const MAX_SKILL_VERSIONS: usize = 100;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AuthoringServiceEntry {
     pub id: ServiceId,
+    pub catalog_id: Option<String>,
     pub name: String,
     pub description: Option<String>,
 }

@@ -1,11 +1,11 @@
+import { Presence } from '../ui/Presence';
 import { useEffect, useRef, useState } from 'react';
 import type { AppRoute, ProfileKind } from '../routing/routes';
-import { routePath } from '../routing/routes';
 import { Button } from '../ui/Button';
-import { Pill } from '../ui/Pill';
 import { IconPlusOutline16 } from '../ui/icons';
 import type { ProfilesClient, ProfileSummary } from './client';
 import { PROFILE_KINDS, ProfileTabs } from './ProfileTabs';
+import { ProfileCard } from './ProfileCard';
 import './Profiles.css';
 
 interface ListState {
@@ -106,65 +106,50 @@ export function ProfilesHome({
         aria-labelledby={`profile-tab-${kind}`}
         aria-busy={state.loading}
       >
-        <ul className="profiles-home__list">
+        <ul className="profile-card-grid">
           {state.items.map((profile) => {
             const route: AppRoute = { kind: 'profile', profileKind: kind, profileId: profile.id };
             return (
               <li key={profile.id}>
-                <div>
-                  <a
-                    href={routePath(route)}
-                    onClick={(event) => {
-                      if (
-                        event.button !== 0 ||
-                        event.metaKey ||
-                        event.ctrlKey ||
-                        event.shiftKey ||
-                        event.altKey
-                      )
-                        return;
-                      event.preventDefault();
-                      onNavigate(route);
-                    }}
-                  >
-                    {profile.name}
-                  </a>
-                  {profile.description === '' ? null : <p>{profile.description}</p>}
-                  <span>
-                    {profile.latestRevision === undefined
-                      ? 'Unpublished'
-                      : `Revision ${String(profile.latestRevision.revision)}`}
-                    {profile.retiredAt === undefined ? '' : ' · Retired'}
-                  </span>
-                </div>
-                <div className="profiles-home__metadata">
-                  <Pill>{profile.visibility === 'public' ? 'Public' : 'Private'}</Pill>
-                  <time dateTime={profile.updatedAt}>
-                    {new Date(profile.updatedAt).toLocaleDateString()}
-                  </time>
-                </div>
+                <ProfileCard
+                  name={profile.name}
+                  description={profile.description}
+                  route={route}
+                  onNavigate={onNavigate}
+                  visibility={profile.visibility}
+                  revision={profile.latestRevision?.revision}
+                  retired={profile.retiredAt !== undefined}
+                  usesCount={profile.usesCount}
+                  timestamp={profile.updatedAt}
+                  timestampLabel="Updated"
+                />
               </li>
             );
           })}
         </ul>
         {state.loading ? <p role="status">Loading profiles</p> : null}
-        {state.error === undefined ? (
-          !state.loading && state.items.length === 0 ? (
-            <p>No {label.toLowerCase()} profiles yet.</p>
-          ) : null
-        ) : (
-          <div role="alert">
-            <p>{state.error}</p>
-            <Button
-              onClick={() => {
-                setState((previous) => ({ ...previous, loading: true, error: undefined }));
-                setRevision((value) => value + 1);
-              }}
-            >
-              Try again
-            </Button>
-          </div>
-        )}
+        <>
+          {state.error === undefined ? (
+            !state.loading && state.items.length === 0 ? (
+              <p>No {label.toLowerCase()} profiles yet.</p>
+            ) : null
+          ) : null}
+          <Presence>
+            {state.error === undefined ? null : (
+              <div role="alert">
+                <p>{state.error}</p>
+                <Button
+                  onClick={() => {
+                    setState((previous) => ({ ...previous, loading: true, error: undefined }));
+                    setRevision((value) => value + 1);
+                  }}
+                >
+                  Try again
+                </Button>
+              </div>
+            )}
+          </Presence>
+        </>
         {state.next === undefined ? null : (
           <Button
             disabled={state.loading}

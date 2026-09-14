@@ -22,7 +22,7 @@ const ADMISSION_TRANSACTION_ATTEMPTS: usize = 16;
 const ADMISSION_RETRY_MAX_DELAY_MILLIS: u64 = 32;
 const REPLAY_CANDIDATE_LIMIT: i64 = 2;
 
-enum AdmissionError {
+pub(super) enum AdmissionError {
     Domain(SandboxStoreError),
     Driver(mongodb::error::Error),
     Retry(mongodb::error::Error),
@@ -109,7 +109,10 @@ impl SandboxAdmissionStore for MongoSandboxStore {
                 }
             };
             match commit_transaction(&mut session).await {
-                CommitOutcome::Committed => return Ok(receipt.into_result()),
+                CommitOutcome::Committed => {
+                    self.warmup_changed.notify_one();
+                    return Ok(receipt.into_result());
+                }
                 CommitOutcome::Retry(error) => last_transient = Some(error.to_string()),
                 CommitOutcome::Unknown(error) => {
                     return reconcile(self, &admission, &receipt).await?.ok_or_else(|| {
@@ -181,6 +184,7 @@ async fn apply(
     }
     let mut sandbox = admission.sandbox.clone();
     sandbox.name = choose_name(store, session, owner, &admission.name).await?;
+    super::warm_sandboxes::claim_ready(store, &mut sandbox, &admission.event_at, session).await?;
     let event = SandboxEvent {
         sandbox_id: sandbox.id.clone(),
         seq: 1,

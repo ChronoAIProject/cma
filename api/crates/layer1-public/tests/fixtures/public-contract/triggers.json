@@ -483,6 +483,7 @@
           "description": "Public contract fixture",
           "button_label": "try_it",
           "theme": "dark",
+          "always_review": false,
           "publisher_display_name": "CMA publisher",
           "what_happens": [
             "A new Sandbox is created for you.",
@@ -501,7 +502,8 @@
               "memory_mib": 2048
             },
             "services": [
-              "github"
+              "github",
+              "chrono-llm-public"
             ]
           },
           "first_message": "Inspect the project."
@@ -599,6 +601,74 @@
       }
     },
     {
+      "id": "triggers-open-without-user-activation",
+      "operation": "GET /api/v1/triggers/public/{public_id}/open/{placement_id}",
+      "scenario": "trigger_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/triggers/public/$public_id/open/$placement_id",
+        "headers": {}
+      },
+      "response": {
+        "status": 303,
+        "headers": {
+          "cache-control": "private, no-store",
+          "location": "/t/$public_id/$placement_id",
+          "referrer-policy": "no-referrer",
+          "set-cookie": "__Host-cma_entry_$public_id=; Path=/; Max-Age=0; HttpOnly; SameSite=Strict; Secure"
+        },
+        "body": null,
+        "bodyKind": "empty"
+      },
+      "captures": {}
+    },
+    {
+      "id": "triggers-entry-intent-without-click-evidence",
+      "operation": "POST /api/v1/triggers/public/{public_id}/entry-intent",
+      "scenario": "trigger_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/triggers/public/$public_id/entry-intent",
+        "headers": {
+          "origin": "https://cma.example",
+          "sec-fetch-site": "same-origin"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json",
+          "referrer-policy": "no-referrer",
+          "set-cookie": "__Host-cma_entry_$public_id=; Path=/; Max-Age=0; HttpOnly; SameSite=Strict; Secure"
+        },
+        "body": {
+          "accepted": false
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "triggers-entry-intent-cross-origin",
+      "operation": "POST /api/v1/triggers/public/{public_id}/entry-intent",
+      "scenario": "trigger_anonymous",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/triggers/public/pub_contract/entry-intent",
+        "headers": {
+          "origin": "https://elsewhere.example"
+        }
+      },
+      "response": {
+        "status": 403,
+        "headers": {},
+        "body": null,
+        "bodyKind": "empty"
+      },
+      "captures": {}
+    },
+    {
       "id": "triggers-placements-list",
       "operation": "GET /api/v1/triggers/{id}/placements",
       "scenario": "trigger_owner",
@@ -672,20 +742,20 @@
           "x-content-type-options": "nosniff"
         },
         "body": {
-          "public_url": "https://cma.example/t/$public_id/$placement_id",
+          "public_url": "https://cma.example/api/v1/triggers/public/$public_id/open/$placement_id",
           "badge_url": "https://cma.example/api/v1/triggers/public/$public_id/badge.svg?label=try_it&theme=dark&placement=$placement_id",
           "label_text": "Try it",
-          "javascript_sri": "sha384-hyi+n+8axKIAw/N4+9hJAAoaeKrVpTkh2N9SWJ6vo8nIrP+K29nRGqzJ2VseOkJn",
+          "javascript_sri": "sha384-K56ODoEc3ZTiX/9Xfe3xk5PEm0Q+bQw5brGMyIfL3hGTeREM9Xf7zvR/7nn1XGuI",
           "content_security_policy": {
             "img_src": "img-src https://cma.example",
             "script_src": "script-src https://cma.example"
           },
           "snippets": {
-            "markdown": "[![Try it](https://cma.example/api/v1/triggers/public/$public_id/badge.svg?label=try_it&theme=dark&placement=$placement_id)](https://cma.example/t/$public_id/$placement_id)",
-            "html": "<a href=\"https://cma.example/t/$public_id/$placement_id\"><img src=\"https://cma.example/api/v1/triggers/public/$public_id/badge.svg?label=try_it&amp;theme=dark&amp;placement=$placement_id\" alt=\"Try it\"></a>",
-            "javascript": "<script src=\"https://cma.example/embed/v1.js\" integrity=\"sha384-hyi+n+8axKIAw/N4+9hJAAoaeKrVpTkh2N9SWJ6vo8nIrP+K29nRGqzJ2VseOkJn\" crossorigin=\"anonymous\"></script>\n<cma-trigger trigger=\"$public_id\" placement=\"$placement_id\" label=\"try_it\" theme=\"dark\" origin=\"https://cma.example\"></cma-trigger>",
+            "markdown": "[![Try it](https://cma.example/api/v1/triggers/public/$public_id/badge.svg?label=try_it&theme=dark&placement=$placement_id)](https://cma.example/api/v1/triggers/public/$public_id/open/$placement_id)",
+            "html": "<a href=\"https://cma.example/api/v1/triggers/public/$public_id/open/$placement_id\"><img src=\"https://cma.example/api/v1/triggers/public/$public_id/badge.svg?label=try_it&amp;theme=dark&amp;placement=$placement_id\" alt=\"Try it\"></a>",
+            "javascript": "<script src=\"https://cma.example/embed/v1.js\" integrity=\"sha384-K56ODoEc3ZTiX/9Xfe3xk5PEm0Q+bQw5brGMyIfL3hGTeREM9Xf7zvR/7nn1XGuI\" crossorigin=\"anonymous\"></script>\n<cma-trigger trigger=\"$public_id\" placement=\"$placement_id\" label=\"try_it\" theme=\"dark\" origin=\"https://cma.example\"></cma-trigger>",
             "react": "import { CmaTriggerButton } from '@chronoai/cma-sdk/react';\n\n<CmaTriggerButton triggerId=\"$public_id\" placementId=\"$placement_id\" label=\"try_it\" theme=\"dark\" baseUrl=\"https://cma.example\" />",
-            "url": "https://cma.example/t/$public_id/$placement_id"
+            "url": "https://cma.example/api/v1/triggers/public/$public_id/open/$placement_id"
           }
         },
         "bodyKind": "json"

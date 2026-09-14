@@ -295,6 +295,9 @@ impl MarketplaceStore for InMemoryProfileStore {
                     .get_mut(id)
                     .filter(|profile| &profile.owner == owner)
                     .ok_or(MarketplaceError::NotFound)?;
+                if visibility != ProfileVisibility::Public {
+                    profile.availability.warmup_enabled = false;
+                }
                 profile.visibility = visibility;
                 profile.updated_at = updated_at;
             }
@@ -388,6 +391,7 @@ impl MarketplaceStore for InMemoryProfileStore {
                     .ok_or(MarketplaceError::NotFound)?
                     .clone();
                 let profile = SandboxProfile {
+                    availability: Default::default(),
                     id: SandboxProfileId::generate(),
                     owner: owner.clone(),
                     name: fork_name(&source.name),

@@ -1,3 +1,4 @@
+import { Presence } from '../ui/Presence';
 import { useState } from 'react';
 import type { CmaWebClient } from '../api/client';
 import type { AgentDetail } from '../api/types';
@@ -10,6 +11,7 @@ import { NewWorkspaceCard } from './NewWorkspaceCard';
 import { ProfilePicker } from './ProfilePicker';
 import { WherePicker, type LocationChoice } from './WherePicker';
 import { useCreationCommand } from './transaction';
+import { useConnectionGate } from '../connections/useConnectionGate';
 import '../profiles/Profiles.css';
 import './Create.css';
 
@@ -40,6 +42,7 @@ export function NewAgentCard({
   const [title, setTitle] = useState('');
   const [firstMessage, setFirstMessage] = useState('');
   const command = useCreationCommand(onCreated);
+  const connections = useConnectionGate();
   const titleInvalid =
     [...title.trim()].length > 64 ||
     [...title].some(
@@ -57,8 +60,12 @@ export function NewAgentCard({
       title: title.trim() || undefined,
       firstMessage: firstMessage.trim() === '' ? undefined : firstMessage,
     };
-    void command.submit((options) => client.createAgent(id, input, options));
+    connections.run(
+      { type: 'workspace', id },
+      () => void command.submit((options) => client.createAgent(id, input, options)),
+    );
   };
+  if (connections.pending) return connections.dialog;
   if (inline === 'sandbox')
     return (
       <NewSandboxCard
@@ -137,9 +144,9 @@ export function NewAgentCard({
       <div className="create-form">
         <p>
           {step === 'where'
-            ? 'Where'
+            ? 'Choose where your agent will work'
             : step === 'profile'
-              ? 'Which agent profile'
+              ? 'Choose your agent settings'
               : 'Title and first message'}
         </p>
         {step === 'where' ? (
@@ -153,18 +160,26 @@ export function NewAgentCard({
           />
         ) : null}
         {step === 'profile' ? (
-          <ProfilePicker
-            client={catalog}
-            kind="agent"
-            value={profile}
-            disabled={command.locked}
-            onChange={(value) => setProfile(value?.kind === 'agent' ? value : undefined)}
-          />
+          <>
+            <p className="profile-field__help">
+              An agent profile sets the model, skills and how independently your agent can act.
+            </p>
+            <ProfilePicker
+              client={catalog}
+              kind="agent"
+              value={profile}
+              disabled={command.locked}
+              onChange={(value) => setProfile(value?.kind === 'agent' ? value : undefined)}
+            />
+          </>
         ) : null}
         {step === 'message' ? (
           <>
             <div className="create-form__field">
               <label htmlFor="new-agent-title">Title (optional)</label>
+              <p className="profile-field__help">
+                A name to help you find this agent in your sidebar.
+              </p>
               <Input
                 id="new-agent-title"
                 value={title}
@@ -178,6 +193,10 @@ export function NewAgentCard({
             </div>
             <div className="create-form__field">
               <label htmlFor="new-agent-message">First message (optional)</label>
+              <p className="profile-field__help">
+                The first task your agent will receive when it is ready. Leave this empty to start
+                the conversation later.
+              </p>
               <textarea
                 className="profile-textarea"
                 id="new-agent-message"
@@ -193,11 +212,13 @@ export function NewAgentCard({
             </div>
           </>
         ) : null}
-        {command.failure === undefined ? null : (
-          <p className="create-error" role="alert">
-            {command.failure.message}
-          </p>
-        )}
+        <Presence>
+          {command.failure === undefined ? null : (
+            <p className="create-error" role="alert">
+              {command.failure.message}
+            </p>
+          )}
+        </Presence>
       </div>
     </Modal>
   );

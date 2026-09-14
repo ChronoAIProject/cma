@@ -43,6 +43,13 @@ pub struct Inactivity {
     pub pause_after_seconds: u32,
 }
 
+/// Periodic snapshot capture policy.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Checkpoints {
+    /// Minimum age between completed snapshots, from 60 through 86400 seconds.
+    pub interval_seconds: u32,
+}
+
 /// Durable checkpoint and conversation retention.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Retention {
@@ -86,6 +93,9 @@ pub struct PlatformSettings {
     pub defaults: Section<SettingsDefaults>,
     /// Inactivity controls.
     pub inactivity: Section<Inactivity>,
+    /// Snapshot interval, absent only on older servers.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub checkpoints: Option<Section<Checkpoints>>,
     /// Retention controls.
     pub retention: Section<Retention>,
     /// Admission limits.
@@ -102,7 +112,11 @@ pub struct PlatformSettings {
 impl PlatformSettings {
     pub(crate) fn validate(&self) -> Result<()> {
         validate_defaults(&self.defaults.values)?;
-        validate_inactivity(&self.inactivity.values)
+        validate_inactivity(&self.inactivity.values)?;
+        if let Some(section) = &self.checkpoints {
+            validate_checkpoints(&section.values)?;
+        }
+        Ok(())
     }
 }
 
@@ -136,6 +150,9 @@ pub struct PatchSettingsRequest {
     /// Optional replacement inactivity section.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub inactivity: Option<Section<Inactivity>>,
+    /// Optional replacement snapshot policy.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub checkpoints: Option<Section<Checkpoints>>,
     /// Optional replacement retention section.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub retention: Option<Section<Retention>>,
@@ -154,6 +171,7 @@ impl PatchSettingsRequest {
     pub(crate) fn validate(&self) -> Result<()> {
         if self.defaults.is_none()
             && self.inactivity.is_none()
+            && self.checkpoints.is_none()
             && self.retention.is_none()
             && self.limits.is_none()
             && self.triggers.is_none()
@@ -169,6 +187,9 @@ impl PatchSettingsRequest {
         if let Some(section) = &self.inactivity {
             validate_inactivity(&section.values)?;
         }
+        if let Some(section) = &self.checkpoints {
+            validate_checkpoints(&section.values)?;
+        }
         Ok(())
     }
 }
@@ -177,6 +198,15 @@ fn validate_inactivity(value: &Inactivity) -> Result<()> {
     if !(60..=86_400).contains(&value.pause_after_seconds) {
         return Err(Error::validation(
             "pause_after_seconds must be between 60 and 86400",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_checkpoints(value: &Checkpoints) -> Result<()> {
+    if !(60..=86_400).contains(&value.interval_seconds) {
+        return Err(Error::validation(
+            "interval_seconds must be between 60 and 86400",
         ));
     }
     Ok(())
@@ -191,4 +221,30 @@ fn validate_defaults(value: &SettingsDefaults) -> Result<()> {
         crate::resources::positive(u64::from(reference.values.revision))?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn checkpoint_patch_enforces_bounds_and_preserves_additive_fields() {
+        for seconds in [60, 1800, 86400] {
+            let patch: PatchSettingsRequest = serde_json::from_value(serde_json::json!({"expected_revision": 4, "checkpoints": {"interval_seconds": seconds, "future_policy": "preserved"}})).unwrap();
+            patch.validate().unwrap();
+            assert_eq!(
+                serde_json::to_value(patch).unwrap()["checkpoints"]["future_policy"],
+                "preserved"
+            );
+        }
+        for seconds in [0, 59, 86401] {
+            let patch = PatchSettingsRequest {
+                checkpoints: Some(Section::new(Checkpoints {
+                    interval_seconds: seconds,
+                })),
+                ..Default::default()
+            };
+            assert!(patch.validate().is_err());
+        }
+    }
 }

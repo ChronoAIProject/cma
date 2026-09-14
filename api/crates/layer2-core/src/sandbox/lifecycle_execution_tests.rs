@@ -244,6 +244,7 @@ fn paused() -> Sandbox {
 
 fn runtime(version: &str) -> RuntimeBinding {
     RuntimeBinding {
+        boot_id: None,
         runtime_id: "runtime-replacement".into(),
         runtime_version: version.into(),
         provision_generation: Some(2),

@@ -1,9 +1,12 @@
 import { profileReference } from '../profiles/types.js';
+import { sandboxLifecycle } from './lifecycle.js';
+export type * from './lifecycle.js';
 import {
   array,
   boolean,
   enumeration,
   integer,
+  nullable,
   object,
   optional,
   positiveInteger,
@@ -47,10 +50,14 @@ export type Failure = Output<typeof failure>;
 
 const sandboxFields = {
   id: text,
+  owner: optional(text),
+  owner_name: optional(nullable(text)),
   name: text,
   status: sandboxStatus,
   profile: profileReference,
+  nyxid_services: optional(array(text)),
   limits: object({ max_workspaces: positiveInteger, max_agents_per_workspace: positiveInteger }),
+  lifecycle: optional(sandboxLifecycle),
   runtime_version: optional(text),
   failure: optional(failure),
   last_activity_at: text,
@@ -142,6 +149,8 @@ export const createSandboxRequest = object({
   commands_digest: optional(text),
 });
 export type CreateSandboxRequest = Output<typeof createSandboxRequest>;
+export const grantSandboxServiceAccessRequest = object({ services: array(text) });
+export type GrantSandboxServiceAccessRequest = Output<typeof grantSandboxServiceAccessRequest>;
 export const createWorkspaceRequest = object({
   workspace_profile: profileReference,
   trust_confirmed: optional(boolean),

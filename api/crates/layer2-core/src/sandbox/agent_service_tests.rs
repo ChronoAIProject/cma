@@ -1,6 +1,7 @@
 mod context;
 mod control;
 mod fixtures;
+mod profile_provisioning;
 
 use crate::profiles::store::AgentProfileStore;
 use crate::profiles::{content_digest, AgentProfileRef, AgentProfileRevision, ProfileVisibility};

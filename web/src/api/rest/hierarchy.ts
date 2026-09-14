@@ -12,8 +12,50 @@ import type {
 export function sandboxSummary(value: Wire.SandboxSummary): SandboxSummary {
   return {
     id: value.id,
+    owner: value.owner,
+    ownerName: value.owner_name ?? undefined,
     name: value.name,
     status: value.status,
+    lifecycle:
+      value.lifecycle === undefined
+        ? undefined
+        : {
+            pause: value.lifecycle.pause,
+            revive: value.lifecycle.revive,
+            backgroundSave:
+              value.lifecycle.background_save === undefined
+                ? undefined
+                : {
+                    phase: value.lifecycle.background_save.phase,
+                    startedAt: value.lifecycle.background_save.started_at,
+                    capturedAt: value.lifecycle.background_save.captured_at,
+                    epoch: value.lifecycle.background_save.epoch,
+                  },
+            latestSnapshot:
+              value.lifecycle.latest_snapshot === undefined
+                ? undefined
+                : {
+                    epoch: value.lifecycle.latest_snapshot.epoch,
+                    savedAt: value.lifecycle.latest_snapshot.saved_at,
+                    downloadUrl: value.lifecycle.latest_snapshot.download_url,
+                  },
+            checkpoint:
+              value.lifecycle.checkpoint === undefined
+                ? undefined
+                : {
+                    phase: value.lifecycle.checkpoint.phase,
+                    startedAt: value.lifecycle.checkpoint.started_at,
+                    epoch: value.lifecycle.checkpoint.epoch,
+                  },
+            operation:
+              value.lifecycle.operation === undefined
+                ? undefined
+                : {
+                    purpose: value.lifecycle.operation.purpose,
+                    phase: value.lifecycle.operation.phase,
+                    startedAt: value.lifecycle.operation.started_at,
+                  },
+          },
     profile: value.profile,
     lastActivityAt: value.last_activity_at,
     createdAt: value.created_at,
@@ -39,6 +81,7 @@ export function workspaceSummary(value: Wire.WorkspaceSummary): WorkspaceSummary
 export function sandboxDetail(value: Wire.SandboxDetail): SandboxDetail {
   return {
     ...sandboxSummary(value),
+    nyxidServices: value.nyxid_services,
     limits: {
       maxWorkspaces: value.limits.max_workspaces,
       maxAgentsPerWorkspace: value.limits.max_agents_per_workspace,

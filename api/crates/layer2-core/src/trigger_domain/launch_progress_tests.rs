@@ -389,6 +389,39 @@ fn agent_without_a_first_message_becomes_ready_immediately() {
 }
 
 #[test]
+fn queued_first_message_polling_does_not_consume_failure_attempts() {
+    let mut launch = launch();
+    let record = message();
+    let agent_id = enter_message_pending(&mut launch, &record);
+    for poll in 0..(MAX_LAUNCH_WORK_ATTEMPTS * 2) {
+        let at = crate::rfc3339_at(
+            std::time::SystemTime::UNIX_EPOCH
+                + std::time::Duration::from_secs(
+                    crate::seconds_from_rfc3339(NOW).unwrap() + u64::from(poll),
+                ),
+        );
+        let retry_at = crate::rfc3339_at(
+            std::time::SystemTime::UNIX_EPOCH
+                + std::time::Duration::from_secs(crate::seconds_from_rfc3339(&at).unwrap() + 1),
+        );
+        let fence = claim_at(&mut launch, "message-observer", &at, LATER);
+        launch
+            .record_worker_first_message(
+                "message-observer",
+                fence,
+                &agent_id,
+                &record,
+                retry_at,
+                at,
+            )
+            .unwrap();
+        assert_eq!(launch.work.attempts, 0);
+        assert_eq!(launch.state, LaunchState::MessagePending);
+        launch.validate().unwrap();
+    }
+}
+
+#[test]
 fn durable_first_message_evidence_advances_to_ready_in_event_order() {
     let mut launch = launch();
     let mut record = message();

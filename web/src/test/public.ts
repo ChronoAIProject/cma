@@ -78,6 +78,7 @@ export function publicClient(): PublicClient {
   return {
     requests: {
       preview: vi.fn().mockResolvedValue(PUBLIC_PREVIEW),
+      entryIntent: vi.fn().mockResolvedValue({ accepted: false }),
       createOrResume: vi.fn().mockResolvedValue(PUBLIC_RECORD),
       read: vi.fn().mockResolvedValue(PUBLIC_RECORD),
       start: vi.fn().mockResolvedValue(PUBLIC_RECORD),

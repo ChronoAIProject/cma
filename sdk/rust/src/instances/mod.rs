@@ -8,8 +8,10 @@ use crate::{
 };
 
 mod events;
+mod lifecycle;
 mod types;
 pub use events::*;
+pub use lifecycle::*;
 pub use types::*;
 
 /// Pagination and optional status filter for owned Sandboxes.
@@ -72,6 +74,26 @@ impl Sandboxes<'_> {
     pub async fn revive(&self, id: &str, key: &IdempotencyKey) -> Result<Sandbox> {
         self.lifecycle(id, &["sandboxes", id, "revive"], Method::POST, key)
             .await
+    }
+    /// Add explicit service access without changing the pinned profile or starting work.
+    pub async fn grant_service_access(
+        &self,
+        id: &str,
+        body: &GrantSandboxServiceAccessRequest,
+        key: &IdempotencyKey,
+    ) -> Result<Sandbox> {
+        let value: Sandbox = self
+            .client
+            .command(
+                Method::POST,
+                &["sandboxes", id, "service-access"],
+                Some(body),
+                key,
+                StatusCode::OK,
+            )
+            .await?;
+        identity(&value.id, id)?;
+        Ok(value)
     }
     /// Read a bounded array of durable Sandbox events, not a live stream.
     pub async fn events(&self, id: &str, options: EventOptions) -> Result<Vec<SandboxEvent>> {

@@ -188,6 +188,16 @@ impl Provider {
         });
         let app = Router::new()
             .route("/api/v1/user-services", get(user_services))
+            .route(
+                "/api/v1/keys/github",
+                get(|| async {
+                    Json(json!({
+                        "id":"github", "slug":"github", "is_active":true, "status":"active",
+                        "connected":true, "credential_missing":false,
+                        "credential_source":{"type":"personal"}, "credential_type":"oauth"
+                    }))
+                }),
+            )
             .route("/redirected-services", get(redirected_services))
             .with_state(Arc::clone(&state));
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")

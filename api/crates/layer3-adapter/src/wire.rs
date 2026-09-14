@@ -127,6 +127,8 @@ pub struct AgentHomeRemoveReceipt {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum WireOperation {
+    CacheSkillArchive,
+    RuntimeStatus,
     Install,
     BootstrapRestore,
     PrepareWorkspace,
@@ -157,10 +159,32 @@ pub struct WireFailure {
     pub retryable: bool,
 }
 
+/// Opt-in completion receipts keep long archive validation compatible with
+/// contract-3 clients that still require the legacy empty HTTP 204 response.
+pub const CHECKPOINT_UPLOAD_RECEIPT_MEDIA_TYPE: &str =
+    "application/vnd.cma.checkpoint-receipt+json";
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+pub enum CheckpointUploadResponse {
+    Committed {
+        object_reference: String,
+        sha256: String,
+        size_bytes: u64,
+    },
+    Failure {
+        code: String,
+        detail: String,
+        retryable: bool,
+    },
+}
+
 /// Requests accepted by a contract-3 runtime.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "t", rename_all = "snake_case")]
 pub enum RequestFrame {
+    CacheSkillArchive(crate::SkillArchive),
+    RuntimeStatus(crate::RuntimeStatusRequest),
     Install(InstallRequest),
     BootstrapRestore(RestoreBootstrapRequest),
     PrepareWorkspace(WorkspaceRequest),
@@ -184,6 +208,8 @@ pub enum RequestFrame {
 impl RequestFrame {
     pub const fn operation(&self) -> WireOperation {
         match self {
+            Self::CacheSkillArchive(_) => WireOperation::CacheSkillArchive,
+            Self::RuntimeStatus(_) => WireOperation::RuntimeStatus,
             Self::Install(_) => WireOperation::Install,
             Self::BootstrapRestore(_) => WireOperation::BootstrapRestore,
             Self::PrepareWorkspace(_) => WireOperation::PrepareWorkspace,
@@ -210,6 +236,8 @@ impl RequestFrame {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "t", rename_all = "snake_case")]
 pub enum ResponseFrame {
+    CacheSkillArchive { sha256: String },
+    RuntimeStatus(crate::RuntimeStatus),
     Install(InstallReceipt),
     BootstrapRestore(RestoreBootstrapReceipt),
     PrepareWorkspace(WorkspaceReceipt),

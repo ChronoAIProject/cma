@@ -362,6 +362,39 @@ boundary.
 
 ## 8. Agent home evidence
 
+### Untouched-conversation persistence correction
+
+On 2026-09-08 a production default Agent with no submitted prompt exposed an
+incomplete case in the original capture evidence: Codex 0.147.0 keeps a newly
+started conversation in memory until its first message or a metadata write.
+Whole-home capture succeeded, but the separate conversation capture correctly
+refused the absent rollout and manual pause failed before publication.
+
+The provider-specific compatibility patch in
+`api/crates/layer3-adapter/src/codex/persist_conversations.cjs` names each new
+conversation `New Agent` through `thread/name/set` before ACP reports success.
+This lets Codex itself persist its original metadata and conversation identity;
+it neither sends a prompt nor manufactures transcript entries. The upstream
+ACP 1.4.0 distribution hash remains
+`ba74f54f7c89ba61858e544eb3afefbb0c1b90f2b23a136664828816a8430dbf`.
+The patched executable hash is
+`c3cb7e54fb6a48f3091b97bed9f5243eaf7c3f3293fbd1b021e0faf41067cd2c`.
+Both are verified in the runtime build. Unexpected upstream bytes, repeated
+patching and ambiguous source matches fail closed.
+
+An offline Linux/amd64 test against the exact production runtime archive
+verified a single `session_meta` record after `session/new`, zero turns, a full
+provider-process restart, and `session/load` of the original identity. The
+runtime build repeats this proof. This local proof does not by itself claim
+production pause/resume acceptance; that is recorded separately in
+`CMA_Unattended_Acceptance.md` after deployment.
+
+The official app-server reference documents `thread/name/set` and the persisted
+thread lifecycle: <https://learn.chatgpt.com/docs/app-server.md>. The pinned
+binary and ACP process tests establish the exact empty-conversation behavior.
+
+### Original agent home evidence
+
 This record was captured on 2026-09-05 Asia/Singapore against the contract-2
 runtime. It establishes the per-agent Codex home capability; it does not rely
 on the older production-provider observations above.

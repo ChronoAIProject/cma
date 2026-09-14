@@ -8,6 +8,7 @@ mod agent;
 mod control;
 mod driver;
 mod effects;
+mod existing;
 mod sandbox;
 mod sandbox_progress;
 mod support;
@@ -21,12 +22,11 @@ pub(crate) use driver::{
     LaunchResourceDriver, LaunchResourceEffect, LaunchResourceError,
     ServiceLaunchResourceDependencies, ServiceLaunchResourceDriver,
 };
-use support::FrozenLaunchContext;
+use support::{FrozenContextCache, FrozenLaunchContext};
 
 const DEFAULT_LEASE: Duration = Duration::from_secs(15 * 60);
-const DEFAULT_POLL: Duration = Duration::from_secs(5);
+const DEFAULT_POLL: Duration = Duration::from_secs(1);
 const DEFAULT_RETRY: Duration = Duration::from_secs(5);
-const WORK_BATCH_SIZE: u16 = 50;
 
 #[derive(Clone)]
 pub(crate) struct LaunchWorkerConfig {
@@ -82,15 +82,21 @@ impl LaunchWorker {
         })
     }
 
+    pub(crate) async fn due_work(
+        &self,
+        now: SystemTime,
+        limit: u16,
+    ) -> Result<Vec<LaunchId>, LaunchWorkerError> {
+        Ok(self.launches.due_launches(&rfc3339_at(now), limit).await?)
+    }
+
+    #[cfg(test)]
     pub(crate) async fn run_due(&self, now: SystemTime) -> Result<usize, LaunchWorkerError> {
-        let due = self
-            .launches
-            .due_launches(&rfc3339_at(now), WORK_BATCH_SIZE)
-            .await?;
+        let due = self.due_work(now, 50).await?;
         let mut completed = 0;
         let mut first_error = None;
         for id in due {
-            match self.run_one(&id, now).await {
+            match self.run_scheduled(&id, now).await {
                 Ok(true) => completed += 1,
                 Ok(false) => {}
                 Err(error) => {
@@ -102,10 +108,21 @@ impl LaunchWorker {
         first_error.map_or(Ok(completed), Err)
     }
 
+    #[cfg(test)]
     pub(crate) async fn run_one(
         &self,
         id: &LaunchId,
         now: SystemTime,
+    ) -> Result<bool, LaunchWorkerError> {
+        self.run_cached(id, now, &mut FrozenContextCache::default())
+            .await
+    }
+
+    async fn run_cached(
+        &self,
+        id: &LaunchId,
+        now: SystemTime,
+        context: &mut FrozenContextCache,
     ) -> Result<bool, LaunchWorkerError> {
         let Some(claimed) = self
             .launches
@@ -119,18 +136,50 @@ impl LaunchWorker {
         else {
             return Ok(false);
         };
-        self.execute(claimed, now).await?;
+        let step = claimed.work.step;
+        let started = tokio::time::Instant::now();
+        self.execute(claimed, now, context).await?;
+        if step != LaunchWorkStep::Finish {
+            tracing::info!(launch_id = %id, ?step, elapsed_ms = started.elapsed().as_millis(), "Launch step completed");
+        }
         Ok(true)
     }
 
-    async fn execute(&self, launch: Launch, now: SystemTime) -> Result<(), LaunchWorkerError> {
+    pub(crate) async fn run_scheduled(
+        &self,
+        id: &LaunchId,
+        now: SystemTime,
+    ) -> Result<bool, LaunchWorkerError> {
+        let started = tokio::time::Instant::now();
+        let mut progressed = false;
+        let mut context = FrozenContextCache::default();
+        // Follow committed transitions immediately. A new durable claim on
+        // every step preserves cancellation, retry times and exclusive work.
+        for _ in 0..16 {
+            if !self
+                .run_cached(id, now + started.elapsed(), &mut context)
+                .await?
+            {
+                break;
+            }
+            progressed = true;
+        }
+        Ok(progressed)
+    }
+
+    async fn execute(
+        &self,
+        launch: Launch,
+        now: SystemTime,
+        cache: &mut FrozenContextCache,
+    ) -> Result<(), LaunchWorkerError> {
         let Some(launch) = self.prepare_boundary(launch, now).await? else {
             return Ok(());
         };
         if launch.work.step == LaunchWorkStep::Finish {
             return self.finish(launch, now).await;
         }
-        let Some((launch, context)) = self.load_frozen_context(launch, now).await? else {
+        let Some((launch, context)) = self.cached_frozen_context(launch, now, cache).await? else {
             return Ok(());
         };
         self.execute_step(launch, &context, now).await

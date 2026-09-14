@@ -15,7 +15,7 @@
 }
 .provisioning-progress li {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: 44px minmax(0, 1fr) auto;
   align-items: start;
   gap: 8px;
   padding: 12px 0;
@@ -34,6 +34,6 @@
   color: var(--dsw-alias-state-error-primary);
 }
 .provisioning-progress li p {
-  grid-column: 1 / -1;
+  grid-column: 2 / -1;
   margin: 0;
 }

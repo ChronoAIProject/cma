@@ -1,8 +1,8 @@
 import { Console } from './Console';
 import { useAuth } from './auth/context';
-import lockup from './assets/brand/cma-lockup-horizontal.svg';
+import { BrandLoading } from './landing/LandingCharacter';
+import { SignInLanding } from './landing/SignInLanding';
 import { useAppRouter } from './routing/routes';
-import { Button } from './ui/Button';
 import './styles/tokens.css';
 import './styles/design-platform.css';
 import './styles/effects-typography.css';
@@ -12,8 +12,10 @@ import './styles/base.css';
 import './styles/components.css';
 import './AppError.css';
 import { lazy, Suspense, useState } from 'react';
+import { Presence } from './ui/Presence';
 import { useCmaClient, useCreationClient, usePublicClient } from './api/context';
 import type { CreationRequest } from './create/CreationFlow';
+import { ReferenceProvider } from './profiles/ReferenceLink';
 
 const CreationFlow = lazy(() =>
   import('./create/CreationFlow').then((module) => ({ default: module.CreationFlow })),
@@ -40,14 +42,19 @@ export function App() {
     state.status !== 'error'
   ) {
     return (
-      <Suspense fallback={<div className="app-checking" aria-busy="true" />}>
-        <PublicJourney client={publicClient} route={router.route} onNavigate={router.navigate} />
-      </Suspense>
+      <ReferenceProvider
+        key={state.status === 'authenticated' ? state.user.id : 'anonymous'}
+        onNavigate={router.navigate}
+      >
+        <Suspense fallback={<BrandLoading />}>
+          <PublicJourney client={publicClient} route={router.route} onNavigate={router.navigate} />
+        </Suspense>
+      </ReferenceProvider>
     );
   }
 
   if (state.status === 'checking') {
-    return <div className="app-checking" aria-busy="true" />;
+    return <BrandLoading label="Signing you in" />;
   }
   if (state.status === 'error') {
     return (
@@ -58,17 +65,10 @@ export function App() {
     );
   }
   if (state.status === 'anonymous') {
-    return (
-      <main className="auth-gate">
-        <img className="auth-gate__brand" src={lockup} alt="CMA" />
-        <Button variant="primary" onClick={() => void signIn(window.location.pathname)}>
-          Sign in
-        </Button>
-      </main>
-    );
+    return <SignInLanding onSignIn={() => signIn(window.location.pathname)} />;
   }
   return (
-    <>
+    <ReferenceProvider key={state.user.id} onNavigate={router.navigate}>
       <Console
         key={state.user.id}
         user={state.user}
@@ -91,28 +91,30 @@ export function App() {
           void signOut();
         }}
       />
-      {request === undefined ||
-      request.owner !== state.user.id ||
-      creation === undefined ||
-      state.user.visitor ||
-      !state.user.capabilities.includes('use_own_sandboxes') ? null : (
-        <Suspense fallback={null}>
-          <CreationFlow
-            key={state.user.id}
-            request={request.value}
-            client={client}
-            catalog={creation}
-            canCreateSandbox={state.user.capabilities.includes('create_sandbox')}
-            onClose={() => setRequest(undefined)}
-            onChanged={() => setHierarchyRevision((value) => value + 1)}
-            onCreated={(route) => {
-              setRequest(undefined);
-              setHierarchyRevision((value) => value + 1);
-              router.navigate(route);
-            }}
-          />
-        </Suspense>
-      )}
-    </>
+      <Presence>
+        {request === undefined ||
+        request.owner !== state.user.id ||
+        creation === undefined ||
+        state.user.visitor ||
+        !state.user.capabilities.includes('use_own_sandboxes') ? null : (
+          <Suspense fallback={null}>
+            <CreationFlow
+              key={state.user.id}
+              request={request.value}
+              client={client}
+              catalog={creation}
+              canCreateSandbox={state.user.capabilities.includes('create_sandbox')}
+              onClose={() => setRequest(undefined)}
+              onChanged={() => setHierarchyRevision((value) => value + 1)}
+              onCreated={(route) => {
+                setRequest(undefined);
+                setHierarchyRevision((value) => value + 1);
+                router.navigate(route);
+              }}
+            />
+          </Suspense>
+        )}
+      </Presence>
+    </ReferenceProvider>
   );
 }

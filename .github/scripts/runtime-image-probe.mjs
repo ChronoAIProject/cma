@@ -6,14 +6,16 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { pathToFileURL } from 'node:url';
+import { githubProxyProbe } from './runtime-github-probe.mjs';
 
 export const checks = [
   'installed-artifacts', 'non-root-read-only', 'credential-before-install-refused',
-  'install-exact-replay', 'credential-after-install', 'daemon-writer-active',
-  'agent-home-helper-aliases', 'escaping-helper-refused',
+  'install-exact-replay', 'credential-after-install', 'github-api-proxy', 'daemon-writer-active',
+  'agent-home-helper-aliases', 'agent-shell-inherited-path', 'escaping-helper-refused',
   'checkpoint-writers-held', 'checkpoint-exact-replay', 'wrong-resume-token-refused',
   'mutation-while-held-refused', 'checkpoint-download-digest', 'writer-resumed',
-  'retired-hold-refused', 'whole-home-restore',
+  'checkpoint-local-release', 'retired-hold-refused', 'checkpoint-reimport',
+  'whole-home-restore', 'restore-local-release',
 ];
 const checkpointFailures = [
   'writer_fence_failed', 'checkpoint_io_failed', 'checkpoint_changed',
@@ -63,6 +65,29 @@ export function installedCodexVersion(home, command = execFileSync) {
     assert.equal(homeSnapshot(home), before);
     return version;
   } finally { rmSync(scratch, { recursive: true, force: true }); }
+}
+
+export function assertAgentShellPath(agentHome, toolDirectory, command = execFileSync) {
+  const executable = process.execPath;
+  const inspect = 'console.log(JSON.stringify({home:process.env.HOME,path:process.env.PATH,tool:require("node:child_process").execFileSync("cma-shell-path-fixture",{encoding:"utf8"})}))';
+  const shellCommand = `${executable} -e '${inspect}'`;
+  for (const path of [`${toolDirectory}:${process.env.PATH}`, `${process.env.PATH}:${toolDirectory}`]) {
+    for (const mode of ['-c', '-lc']) {
+      const actual = JSON.parse(command('/bin/bash', [mode, shellCommand], {
+        encoding: 'utf8', timeout: 10000, stdio: ['ignore', 'pipe', 'pipe'],
+        env: { ...process.env, HOME: agentHome, CODEX_HOME: agentHome, PATH: path },
+      }));
+      assert.deepEqual(actual, { home: agentHome, path, tool: 'cma-shell-path-ok\n' });
+    }
+  }
+  const fallback = '/usr/local/bin:/usr/bin:/bin:/usr/local/games:/usr/games';
+  for (const setup of ['PATH=""', 'unset PATH']) {
+    const actual = command('/bin/bash', ['--noprofile', '--norc', '-c', `${setup}\n. /etc/profile\n/usr/bin/printf '%s' "$PATH"`], {
+      encoding: 'utf8', timeout: 10000, stdio: ['ignore', 'pipe', 'pipe'],
+      env: { ...process.env, HOME: agentHome, CODEX_HOME: agentHome },
+    });
+    assert.equal(actual, fallback);
+  }
 }
 
 export function assertCheckpointHoldReceipt(receipt, hold, onStage) {
@@ -137,12 +162,15 @@ export async function probe(onStage = () => {}) {
   const artifacts = {};
   for (const [name, path] of Object.entries({
     runtime: '/usr/local/bin/layer4-runtime',
+    gh: '/usr/local/bin/gh',
     launcher: '/usr/local/lib/node_modules/@openai/codex/bin/codex.js',
     native: '/usr/local/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl/bin/codex',
     acp: '/usr/local/lib/node_modules/@agentclientprotocol/codex-acp/dist/index.js',
   })) artifacts[name] = sha256(readFileSync(path));
   artifacts.codexVersion = installedCodexVersion('/home/cma');
   artifacts.acpVersion = JSON.parse(readFileSync('/usr/local/lib/node_modules/@agentclientprotocol/codex-acp/package.json')).version;
+  const ghVersion = execFileSync('/usr/local/bin/gh', ['--version'], { encoding: 'utf8', timeout: 10000, stdio: ['ignore', 'pipe', 'pipe'] });
+  artifacts.ghVersion = /^gh version ([0-9]+\.[0-9]+\.[0-9]+) /.exec(ghVersion)?.[1];
   complete('installed-artifacts');
   assert.equal(process.getuid(), 10001);
   assert.throws(() => writeFileSync('/usr/local/cma-ci-write-refusal', 'refused'));
@@ -172,6 +200,8 @@ export async function probe(onStage = () => {}) {
   complete('install-exact-replay');
   assert.deepEqual(await control(credential), { t: 'credential', operation_id: credential.operation_id, installed: true });
   complete('credential-after-install');
+  await githubProxyProbe(secret);
+  complete('github-api-proxy');
   const counter = () => readFileSync('/home/cma/ci-writer', 'utf8');
   await delay(100);
   const before = counter();
@@ -201,6 +231,16 @@ export async function probe(onStage = () => {}) {
   assert.deepEqual(aliases.map((entry) => entry.name).sort(), ['apply_patch', 'applypatch', 'codex-execve-wrapper', 'codex-linux-sandbox']);
   for (const entry of aliases) assert.equal(readlinkSync(join(entry.parentPath, entry.name)), '/usr/local/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl/bin/codex');
   complete('agent-home-helper-aliases');
+  const toolDirectory = '/home/cma/ci-user-tools/bin with spaces';
+  mkdirSync(toolDirectory, { recursive: true });
+  writeFileSync(join(toolDirectory, 'cma-shell-path-fixture'), '#!/bin/sh\nprintf "cma-shell-path-ok\\n"\n', { mode: 0o700 });
+  assertAgentShellPath(agentHome, toolDirectory);
+  writeFileSync(join(agentHome, '.profile'), 'PATH="/home/cma/owner-profile-bin:$PATH"\nexport PATH\n');
+  assert.equal(execFileSync('/bin/bash', ['-lc', '/usr/bin/printf "%s" "$PATH"'], {
+    encoding: 'utf8', timeout: 10000, stdio: ['ignore', 'pipe', 'pipe'],
+    env: { ...process.env, HOME: agentHome, CODEX_HOME: agentHome },
+  }), `/home/cma/owner-profile-bin:${process.env.PATH}`);
+  complete('agent-shell-inherited-path');
   const rejectedHold = { t: 'checkpoint_for_teardown', checkpoint: { epoch: 1, exclusions: [] }, writer_resume_token: '0'.repeat(64) };
   assert.equal((await control(rejectedHold)).code, 'checkpoint_symlink_escape');
   const afterRefusal = counter();
@@ -226,15 +266,30 @@ export async function probe(onStage = () => {}) {
   assert.equal(receipt.checkpoint.object_reference, `home-${receipt.checkpoint.sha256}.cma`);
   const download = await fetch(`http://127.0.0.1:9090/runtime/checkpoints/${receipt.checkpoint.object_reference}`, { signal: AbortSignal.timeout(30000), redirect: 'error' });
   assert.equal(download.status, 200);
-  assert.equal(sha256(Buffer.from(await download.arrayBuffer())), receipt.checkpoint.sha256);
+  const retainedArchive = Buffer.from(await download.arrayBuffer());
+  assert.equal(sha256(retainedArchive), receipt.checkpoint.sha256);
   complete('checkpoint-download-digest');
   const resume = { t: 'resume_checkpoint_writers', writer_resume_token: hold.writer_resume_token };
   assert.equal((await control(resume)).writers_resumed, true);
   await delay(150);
   assert.notEqual(counter(), heldCounter);
   complete('writer-resumed');
+  const archiveUrl = `http://127.0.0.1:9090/runtime/checkpoints/${receipt.checkpoint.object_reference}`;
+  const archivePath = join(tmpdir(), 'cma-checkpoints', receipt.checkpoint.object_reference);
+  assert.equal(existsSync(archivePath), false);
+  assert.equal((await fetch(archiveUrl, { signal: AbortSignal.timeout(30000) })).status, 404);
+  complete('checkpoint-local-release');
   assert.equal((await control(hold)).code, 'checkpoint_hold_retired');
   complete('retired-hold-refused');
+  // Production imports the durable remote recovery point before each restore.
+  // The retired transfer itself must not stay on the outgoing runtime's disk.
+  const imported = await fetch(archiveUrl, {
+    method: 'PUT', headers: { 'content-type': 'application/octet-stream' },
+    body: retainedArchive, signal: AbortSignal.timeout(30000), redirect: 'error',
+  });
+  assert.equal(imported.status, 204);
+  assert.equal(existsSync(archivePath), true);
+  complete('checkpoint-reimport');
   for (const [path] of retained) writeFileSync(path, 'changed-after-checkpoint');
   assert.deepEqual(await control({ t: 'restore', object_reference: receipt.checkpoint.object_reference, sha256: receipt.checkpoint.sha256 }), { t: 'restore', accepted: true });
   for (const [path, bytes] of retained) assert.equal(readFileSync(path, 'utf8'), bytes);
@@ -242,6 +297,10 @@ export async function probe(onStage = () => {}) {
   assert.equal(readFileSync(`${agentHome}/auth.json`, 'utf8'), '{"fixture":"retained-auth-fixture"}');
   assert.equal(existsSync(aliasRoot), false);
   complete('whole-home-restore');
+  assert.equal(existsSync(archivePath), false);
+  assert.equal((await fetch(archiveUrl, { signal: AbortSignal.timeout(30000) })).status, 404);
+  assert.equal(readdirSync(join(tmpdir(), 'cma-checkpoints')).some(name => /^\.restore-(?:staging|backup)-/.test(name)), false);
+  complete('restore-local-release');
   assert.deepEqual(completed, checks);
   return { checks: completed, artifacts };
 }

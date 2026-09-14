@@ -11,7 +11,9 @@ pub const BRIDGE_PROGRAM: &str = "codex-acp";
 pub const SHARED_AUTH_PATH: &str = "/home/cma/.cma/provider/codex/auth.json";
 pub const AGENT_HOME_ROOT: &str = "/home/cma/.cma/agents";
 const HOME_ENVIRONMENT_NAME: &str = "CODEX_HOME";
-pub(crate) const RESERVED_ENVIRONMENT_NAMES: &[&str] = &[HOME_ENVIRONMENT_NAME];
+pub(super) const MANAGED_PROXY_ENVIRONMENT_NAME: &str = "CMA_MODEL_PROXY_PLACEHOLDER";
+pub(crate) const RESERVED_ENVIRONMENT_NAMES: &[&str] =
+    &[HOME_ENVIRONMENT_NAME, MANAGED_PROXY_ENVIRONMENT_NAME];
 const BASELINE_SKILLS: [(&str, &str); 2] = [
     ("nyxid", "/home/cma/.codex/skills/nyxid"),
     (
@@ -24,8 +26,9 @@ pub(crate) fn expected_home(slot: &crate::AgentSlot) -> String {
     format!("{AGENT_HOME_ROOT}/{}/home", slot.0)
 }
 
-pub(crate) fn checkpoint_exclusions(agents: &[crate::AgentSlot]) -> crate::Result<Vec<String>> {
-    let mut paths = BTreeSet::new();
+pub fn checkpoint_exclusions(agents: &[crate::AgentSlot]) -> crate::Result<Vec<String>> {
+    // The image's version checks also create aliases in the default home.
+    let mut paths = BTreeSet::from([".codex/tmp/arg0".to_string()]);
     for agent in agents {
         validate_slot(agent)?;
         // Codex 0.147 creates disposable executable aliases here, not conversation data.
@@ -46,12 +49,20 @@ pub fn render_agent_home(
         ));
     }
 
-    let mut ids: BTreeSet<&str> = BASELINE_SKILLS.iter().map(|(id, _)| *id).collect();
+    let mut ids: BTreeSet<&str> = BTreeSet::new();
+    let mut names: BTreeSet<&str> = BTreeSet::new();
     for skill in &request.skills {
         if !valid_component(&skill.id)
             || !ids.insert(&skill.id)
             || !valid_sha256(&skill.archive_sha256)
             || skill.source_url.trim().is_empty()
+            || skill.name.as_deref().is_some_and(|name| {
+                name.is_empty()
+                    || name.len() > 256
+                    || name.trim() != name
+                    || name.chars().any(char::is_control)
+                    || !names.insert(name)
+            })
         {
             return Err(AdapterError::Rejected(format!(
                 "invalid or duplicate agent skill {}",
@@ -64,10 +75,15 @@ pub fn render_agent_home(
         path: "auth.json".into(),
         target: SHARED_AUTH_PATH.into(),
     }];
-    symlinks.extend(BASELINE_SKILLS.iter().map(|(id, target)| HomeSymlink {
-        path: format!("skills/{id}"),
-        target: (*target).to_string(),
-    }));
+    symlinks.extend(
+        BASELINE_SKILLS
+            .iter()
+            .filter(|(id, _)| !ids.contains(id) && !names.contains(id))
+            .map(|(id, target)| HomeSymlink {
+                path: format!("skills/{id}"),
+                target: (*target).to_string(),
+            }),
+    );
 
     Ok(AgentHomePlan {
         operation_id: request.operation_id.clone(),
@@ -84,7 +100,16 @@ pub fn render_agent_home(
             },
         ],
         symlinks,
-        skills: request.skills.clone(),
+        // Names select provider fallbacks; the runtime installs immutable archives by ID.
+        skills: request
+            .skills
+            .iter()
+            .cloned()
+            .map(|mut skill| {
+                skill.name = None;
+                skill
+            })
+            .collect(),
     })
 }
 
@@ -105,7 +130,7 @@ pub fn render_launch(request: &AgentOpenRequest) -> crate::Result<AgentLaunch> {
     )]);
     if !request.options.own_credential {
         env.insert(
-            "CHRONO_UPSTREAM_PLACEHOLDER_KEY".into(),
+            MANAGED_PROXY_ENVIRONMENT_NAME.into(),
             crate::hosted::PLACEHOLDER_CREDENTIAL.into(),
         );
     }

@@ -65,10 +65,13 @@ describe('connection assistant', () => {
     );
     view.unmount();
     render(<ConnectAssistant {...props} />);
-    expect(screen.getByRole('button', { name: "I've connected it" })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Verify' })).toBeInTheDocument();
     await act(async () => {
       await vi.advanceTimersByTimeAsync(1500);
     });
+    expect(satisfied).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Verify' }));
+    await act(async () => undefined);
     expect(satisfied).toHaveBeenCalledWith('code');
     expect(client.requests.createConnection).toHaveBeenCalledOnce();
     expect(sessionStorage.getItem(`cma:connection-return:${PUBLIC_RECORD.id}:code`)).toBeNull();
@@ -127,6 +130,9 @@ describe('connection assistant', () => {
     await act(async () => {
       await vi.advanceTimersByTimeAsync(1500);
     });
+    expect(satisfied).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Verify' }));
+    await act(async () => undefined);
     expect(satisfied).toHaveBeenCalledOnce();
     expect(satisfied).toHaveBeenCalledWith('code');
     expect(popup.close).toHaveBeenCalled();
@@ -151,7 +157,7 @@ describe('connection assistant', () => {
       'href',
       'https://identity.example.test/connect',
     );
-    fireEvent.click(screen.getByRole('button', { name: "I've connected it" }));
+    fireEvent.click(screen.getByRole('button', { name: 'Verify' }));
     await act(async () => {
       await vi.advanceTimersByTimeAsync(1500);
     });
@@ -217,11 +223,11 @@ describe('connection assistant', () => {
         onRecheck={recheck}
       />,
     );
-    expect(screen.getByRole('link', { name: 'Open NyxID' })).toHaveAttribute(
+    expect(screen.getByRole('link', { name: 'Connect' })).toHaveAttribute(
       'href',
       'https://identity.example.test/services',
     );
-    fireEvent.click(screen.getByRole('button', { name: 'Check again' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Verify' }));
     expect(recheck).toHaveBeenCalledOnce();
     expect(client.requests.createConnection).not.toHaveBeenCalled();
     expect(screen.queryByRole('button', { name: 'Connect' })).not.toBeInTheDocument();

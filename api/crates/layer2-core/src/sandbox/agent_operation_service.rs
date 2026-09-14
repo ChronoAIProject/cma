@@ -47,6 +47,8 @@ pub enum AgentMessageOutcome {
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum AgentOperationError {
+    #[error(transparent)]
+    Connection(#[from] super::SandboxCredentialPrerequisiteError),
     #[error("forbidden")]
     Forbidden,
     #[error("agent not found")]
@@ -73,6 +75,8 @@ pub enum AgentOperationError {
     InvalidRequest(String),
     #[error("agent changed while the operation was being fenced")]
     Conflict,
+    #[error("sandbox checkpoint is in progress; input was not admitted")]
+    CheckpointInProgress,
     #[error("the previous turn does not match the conversation's latest turn")]
     PreviousTurnConflict,
     #[error("agent log capacity exceeded")]
@@ -95,6 +99,7 @@ pub enum AgentOperationError {
 impl AgentOperationError {
     pub const fn code(&self) -> &'static str {
         match self {
+            Self::Connection(error) => error.code(),
             Self::Forbidden => "forbidden",
             Self::NotFound => "agent_not_found",
             Self::StatusConflict { .. } => "agent_status_conflict",
@@ -108,6 +113,7 @@ impl AgentOperationError {
             Self::StaleWorkAuthority => "agent_work_authority_stale",
             Self::InvalidRequest(_) => "invalid_agent_operation",
             Self::Conflict => "agent_operation_conflict",
+            Self::CheckpointInProgress => "sandbox_checkpoint_in_progress",
             Self::PreviousTurnConflict => "agent_previous_turn_conflict",
             Self::LogCapacityExceeded => "agent_log_capacity_exceeded",
             Self::Corrupt(_) => "stored_agent_corrupt",
@@ -120,6 +126,7 @@ impl AgentOperationError {
 }
 
 pub struct AgentOperationService {
+    pub(super) connections: Arc<dyn super::SandboxCredentialPrerequisite>,
     pub(super) store: Arc<dyn AgentOperationStore>,
     pub(super) runtimes: Arc<dyn AgentRuntimeRegistry>,
 }
@@ -130,7 +137,37 @@ impl AgentOperationService {
         S: AgentOperationStore + 'static,
         R: AgentRuntimeRegistry + 'static,
     {
-        Arc::new(Self { store, runtimes })
+        Arc::new(Self {
+            store,
+            runtimes,
+            connections: Arc::new(super::FixedSandboxCredentialPrerequisite::Ready),
+        })
+    }
+
+    pub fn with_connections(
+        &self,
+        connections: Arc<dyn super::SandboxCredentialPrerequisite>,
+    ) -> Arc<Self> {
+        Arc::new(Self {
+            connections,
+            store: self.store.clone(),
+            runtimes: self.runtimes.clone(),
+        })
+    }
+
+    pub(super) async fn require_agent_connections(
+        &self,
+        agent: &Agent,
+    ) -> Result<(), AgentOperationError> {
+        let sandbox = SandboxStore::get_sandbox(self.store.as_ref(), &agent.sandbox_id)
+            .await
+            .map_err(operation_store_error)?
+            .filter(|sandbox| sandbox.owner == agent.owner)
+            .ok_or_else(|| {
+                AgentOperationError::Corrupt("agent sandbox ownership is inconsistent".into())
+            })?;
+        self.connections.check_sandbox(&sandbox).await?;
+        Ok(())
     }
 
     pub async fn send_message(
@@ -151,6 +188,7 @@ impl AgentOperationService {
                     status: current.status,
                 });
             }
+            self.require_agent_connections(&current).await?;
             let (parent, queues) = self.parent_admission(&current).await?;
             match current.status {
                 AgentStatus::Ready if queues => {
@@ -200,7 +238,7 @@ impl AgentOperationService {
             ));
         }
         if sandbox.lifecycle.checkpoint_capture.is_some() {
-            return Err(AgentOperationError::Conflict);
+            return Err(AgentOperationError::CheckpointInProgress);
         }
         let queues = match sandbox.status {
             SandboxStatus::Pausing | SandboxStatus::Paused => Ok(true),
@@ -421,6 +459,7 @@ pub(super) fn operation_store_error(error: SandboxStoreError) -> AgentOperationE
     match error {
         SandboxStoreError::NotFound => AgentOperationError::NotFound,
         SandboxStoreError::Conflict => AgentOperationError::Conflict,
+        SandboxStoreError::CheckpointInProgress => AgentOperationError::CheckpointInProgress,
         SandboxStoreError::SequenceConflict => {
             AgentOperationError::Corrupt("agent log sequence is inconsistent".into())
         }

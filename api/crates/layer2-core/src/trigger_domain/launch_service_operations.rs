@@ -28,35 +28,45 @@ impl LaunchService {
             return Err(LaunchServiceError::NotStartable);
         }
         let revision = self.launch_revision(&launch).await?;
+        let consent_recorded = !launch.confirmations.is_empty();
+        if consent_recorded && revision.content.consent.always_review {
+            return Err(LaunchServiceError::Corrupt(
+                "Publisher-required review was not completed".into(),
+            ));
+        }
+        if consent_recorded && !request.acknowledgements.is_empty() {
+            return Err(LaunchServiceError::InvalidRequest(
+                "Start cannot replace the recorded landing confirmation".into(),
+            ));
+        }
+        let unconfirmed_digest = if consent_recorded {
+            None
+        } else {
+            launch.trust.confirmation_digest.clone()
+        };
         let profiles = self
             .profile_reader
             .read_trigger_profiles(&revision.content.target)
             .await
             .map_err(|error| LaunchServiceError::Unavailable(error.to_string()))?;
-        let requirements = if launch.resolution.sandbox.is_pending() {
+        if launch.resolution.sandbox.is_pending() {
             self.require_sandbox_credentials(&caller.subject).await?;
-            RequirementsSnapshot {
-                services: self
-                    .connections
-                    .requirements(&caller.subject, &profiles.sandbox.content.nyxid_services)
-                    .await
-                    .map_err(connection_error)?,
-                checked_at: now_rfc3339(),
-            }
-        } else {
-            RequirementsSnapshot {
-                services: Vec::new(),
-                checked_at: now_rfc3339(),
-            }
+        }
+        let required_services = self
+            .required_services(&caller.subject, &launch.resolution, &profiles)
+            .await?;
+        let requirements = RequirementsSnapshot {
+            services: self
+                .connections
+                .requirements(&caller.subject, &required_services)
+                .await
+                .map_err(connection_error)?,
+            checked_at: now_rfc3339(),
         };
         requirements
             .validate()
             .map_err(|error| LaunchServiceError::Corrupt(error.to_string()))?;
-        validate_requirement_identity(
-            &profiles.sandbox.content.nyxid_services,
-            &requirements,
-            launch.resolution.sandbox.is_pending(),
-        )?;
+        validate_requirement_identity(&required_services, &requirements)?;
         let changed_events = changed_requirement_events(&launch.requirements, &requirements);
         let missing = requirements
             .services
@@ -66,7 +76,7 @@ impl LaunchService {
             .collect::<Vec<_>>();
         let refreshed_review = ReviewRequirements::build(
             &requirements,
-            launch.trust.confirmation_digest.clone(),
+            unconfirmed_digest.clone(),
             revision.content.consent.always_review,
             false,
         )
@@ -76,7 +86,7 @@ impl LaunchService {
                 .await?;
             return Err(LaunchServiceError::RequirementsNotMet { services: missing });
         }
-        if launch.review.trust_digest() != launch.trust.confirmation_digest.as_deref() {
+        if launch.review.trust_digest() != unconfirmed_digest.as_deref() {
             return Err(LaunchServiceError::Corrupt(
                 "Launch review does not match its trust manifest".into(),
             ));
@@ -108,27 +118,32 @@ impl LaunchService {
             can_start_now: true,
         };
         let now = now_rfc3339();
-        let confirmation = LaunchConfirmation {
-            surface: LaunchConsentSurface::Review,
-            trust_confirmed_digest: request.trust_confirmed_digest,
-            acknowledgements: request.acknowledgements,
-            confirmed_at: now.clone(),
-        };
-        let target = if matches!(launch.resolution.agent, super::ResolvedResource::Reused(_)) {
+        events.extend(
             launch
-                .start_existing(confirmation)
-                .map(|()| LaunchState::Ready)
+                .sync_requirement_step(&now)
+                .map_err(|error| LaunchServiceError::Corrupt(error.to_string()))?,
+        );
+        let started = if consent_recorded {
+            launch.start_confirmed(now.clone())
         } else {
-            launch.start(confirmation).map(|()| LaunchState::Resolving)
-        }
-        .map_err(|_| LaunchServiceError::NotStartable)?;
-        events.extend([
-            LaunchEventKind::ConfirmationRecorded,
-            LaunchEventKind::StateChanged {
-                from: LaunchState::Draft,
-                to: target,
-            },
-        ]);
+            let confirmation = LaunchConfirmation {
+                surface: LaunchConsentSurface::Review,
+                trust_confirmed_digest: request.trust_confirmed_digest,
+                acknowledgements: request.acknowledgements,
+                confirmed_at: now.clone(),
+            };
+            events.push(LaunchEventKind::ConfirmationRecorded);
+            if matches!(launch.resolution.agent, super::ResolvedResource::Reused(_)) {
+                launch.start_existing(confirmation)
+            } else {
+                launch.start(confirmation)
+            }
+        };
+        started.map_err(|_| LaunchServiceError::NotStartable)?;
+        events.push(LaunchEventKind::StateChanged {
+            from: LaunchState::Draft,
+            to: LaunchState::Resolving,
+        });
         self.launches
             .commit_launch(LaunchCommit {
                 expected_revision: expected,
@@ -250,13 +265,14 @@ impl LaunchService {
         mut launch: Launch,
         requirements: RequirementsSnapshot,
         review: ReviewRequirements,
-        events: Vec<LaunchEventKind>,
+        mut events: Vec<LaunchEventKind>,
     ) -> Result<Launch, LaunchServiceError> {
         let expected_revision = launch.revision;
         let now = now_rfc3339();
-        launch
+        let progress = launch
             .refresh_review(requirements, review, now.clone())
             .map_err(|error| LaunchServiceError::Corrupt(error.to_string()))?;
+        events.extend(progress);
         self.launches
             .commit_launch(LaunchCommit {
                 expected_revision,
@@ -276,9 +292,14 @@ fn changed_requirement_events(
     refreshed
         .services
         .iter()
-        .zip(&previous.services)
-        .filter(|(refreshed, previous)| refreshed.state != previous.state)
-        .map(|(refreshed, _)| LaunchEventKind::RequirementChanged {
+        .filter(|refreshed| {
+            previous
+                .services
+                .iter()
+                .find(|previous| previous.service == refreshed.service)
+                .is_none_or(|previous| previous.state != refreshed.state)
+        })
+        .map(|refreshed| LaunchEventKind::RequirementChanged {
             service: refreshed.service.clone(),
             state: refreshed.state,
         })

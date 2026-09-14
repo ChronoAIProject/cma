@@ -196,6 +196,13 @@ impl SandboxCredentialController for ManagedSandboxCredentials {
         generation: u64,
         now: SystemTime,
     ) -> Result<CredentialMaterial, CredentialError> {
+        if sandbox.validate().is_err()
+            || generation <= sandbox.credential.service_access_generation_floor()
+        {
+            return Err(CredentialError::Security(
+                "credential generation does not cover the current service access".into(),
+            ));
+        }
         self.settle_queued(sandbox).await?;
         if let Some(existing) = self.material(&sandbox.id, generation).await? {
             return owned_material(existing, &sandbox.owner);
@@ -206,7 +213,7 @@ impl SandboxCredentialController for ManagedSandboxCredentials {
             .mint(
                 sandbox.id.as_str(),
                 token.expose(),
-                &sandbox.credential.reaches,
+                &sandbox.credential.effective_reaches(),
             )
             .await
             .map_err(classify_issuer)?;

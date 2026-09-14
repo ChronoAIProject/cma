@@ -34,6 +34,7 @@ pub(super) fn services(values: &[ProfileAuthoringService]) -> bool {
     values.len() <= 1000
         && values.iter().all(|entry| {
             text(&entry.id, 128)
+                && entry.catalog_id.as_deref().is_none_or(|id| text(id, 128))
                 && seen.insert(&entry.id)
                 && text(&entry.name, 256)
                 && description(entry.description.as_deref())

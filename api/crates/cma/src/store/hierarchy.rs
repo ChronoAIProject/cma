@@ -144,6 +144,50 @@ async fn workspace_agents(
 
 #[async_trait::async_trait]
 impl HierarchyReadStore for MongoSandboxStore {
+    async fn read_snapshot_archive(
+        &self,
+        sandbox_id: &SandboxId,
+        checkpoint: &layer2_core::sandbox::SandboxCheckpointRef,
+    ) -> Result<layer2_core::sandbox::SandboxSnapshotDownload, SandboxStoreError> {
+        let objects = self
+            .checkpoint_objects
+            .for_sandbox(sandbox_id.as_str())
+            .map_err(|_| {
+                SandboxStoreError::Corrupt("snapshot storage identity is invalid".into())
+            })?;
+        let mut archive = objects
+            .download(&checkpoint.object_reference)
+            .await
+            .map_err(|_| {
+                SandboxStoreError::Unavailable("snapshot archive is unavailable".into())
+            })?;
+        if archive.object_reference != checkpoint.object_reference
+            || archive.sha256 != checkpoint.sha256
+        {
+            return Err(SandboxStoreError::Corrupt(
+                "snapshot archive identity does not match the completed snapshot".into(),
+            ));
+        }
+        let (send, chunks) = tokio::sync::mpsc::channel(2);
+        tokio::spawn(async move {
+            loop {
+                tokio::select! {
+                    _ = send.closed() => break,
+                    chunk = archive.chunks.recv() => {
+                        let Some(chunk) = chunk else { break; };
+                        let failed = chunk.is_err();
+                        let chunk = chunk.map_err(|_| SandboxStoreError::Unavailable("snapshot download failed integrity verification or transport".into()));
+                        if send.send(chunk).await.is_err() || failed { break; }
+                    }
+                }
+            }
+        });
+        Ok(layer2_core::sandbox::SandboxSnapshotDownload {
+            size_bytes: archive.size_bytes,
+            chunks,
+        })
+    }
+
     async fn list_owner_sandbox_inventory(
         &self,
         owner: &SubjectId,

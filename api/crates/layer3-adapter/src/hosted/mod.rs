@@ -10,12 +10,16 @@ mod checkpoint_store;
 mod checkpoint_transport;
 mod control_correlation;
 mod deployment;
+mod home;
+#[cfg(test)]
+mod home_tests;
 mod memory;
 mod provider_backend;
 mod provider_endpoint;
 mod provider_http;
 mod provider_transport;
 mod reply;
+mod subscriptions;
 mod update_relay;
 
 pub use adapter::HostedAdapter;
@@ -30,6 +34,7 @@ pub use deployment::{
 pub use memory::{InMemoryHostedBackend, InMemoryRuntimeSnapshot};
 pub use provider_backend::{HostedControlTransport, ProviderHostedBackend};
 pub use provider_transport::ProviderHostedControlTransport;
+pub use subscriptions::{HostedSubscriptionCredential, HostedSubscriptionSource};
 
 #[cfg(test)]
 #[path = "lifecycle_tests.rs"]

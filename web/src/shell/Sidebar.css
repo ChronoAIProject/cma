@@ -22,6 +22,7 @@
   align-items: center;
   justify-content: space-between;
   min-height: 44px;
+  flex: none;
 }
 
 .sidebar--collapsed .sidebar__head {
@@ -29,6 +30,7 @@
 }
 
 .sidebar__brand,
+.sidebar__new,
 .sidebar__toggle {
   display: inline-flex;
   align-items: center;
@@ -39,7 +41,7 @@
 
 .sidebar__brand {
   gap: 8px;
-  flex: 1;
+  flex: none;
   min-width: 0;
   padding: 3px 4px;
   text-align: left;
@@ -71,11 +73,18 @@
 }
 
 .sidebar__new {
-  margin-left: auto;
+  justify-content: center;
+  flex: none;
+  width: 32px;
+  height: 36px;
+  padding: 0;
+  border-radius: 7px;
+  cursor: pointer;
   color: var(--dsw-alias-label-tertiary);
 }
 
 .sidebar__toggle {
+  flex: none;
   justify-content: center;
   width: 36px;
   height: 36px;
@@ -84,27 +93,49 @@
   cursor: pointer;
 }
 
-.sidebar__toggle:hover {
+.sidebar__toggle:hover,
+.sidebar__new:hover {
   background: var(--dsw-alias-interactive-bg-hover);
 }
 
-.sidebar__toggle:focus-visible {
+.sidebar__toggle:focus-visible,
+.sidebar__new:focus-visible,
+.sidebar__brand:focus-visible {
   outline: none;
   box-shadow: var(--focus-ring);
 }
 
 .sidebar__build {
-  align-self: flex-start;
-  margin: 4px 8px;
-  color: var(--dsw-alias-label-tertiary);
+  min-width: 0;
+  max-width: 11ch;
+  padding: 2px 4px;
+  overflow: hidden;
+  color: var(--dsw-alias-label-secondary);
+  background: var(--dsw-alias-bg-layer-2);
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 4px;
   font-family: var(--ds-font-family-code);
   font-size: 11px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
-.sidebar__space {
+.sidebar__navigation {
+  display: flex;
+  flex-direction: column;
   flex: 1;
+  min-height: 0;
 }
 
 .sidebar__account {
   min-width: 0;
+  flex: none;
+}
+
+@media (max-width: 30rem) {
+  .sidebar__brand,
+  .sidebar__new,
+  .sidebar__toggle {
+    min-height: 44px;
+  }
 }

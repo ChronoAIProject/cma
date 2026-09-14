@@ -248,6 +248,7 @@ impl AgentOperationService {
             AgentConversationStore::pending_agent_approvals(self.store.as_ref(), &current.id)
                 .await
                 .map_err(operation_store_error)?;
+        let approvals_remain = pending.len() > 1;
         let snapshot = pending
             .into_iter()
             .find_map(|entry| match entry.kind {
@@ -282,19 +283,21 @@ impl AgentOperationService {
             intent,
             &at,
         )?);
-        next.transition(AgentStatus::Working, at.clone(), None)
-            .map_err(|error| AgentOperationError::Corrupt(error.to_string()))?;
-        let logs = vec![
+        let mut logs = vec![
             operation_log(&next, operation_sequence)?,
             AgentLogKind::ApprovalResolved {
                 approval_id: approval_id.clone(),
                 decision: decision.as_str().into(),
             },
-            AgentLogKind::StatusChanged {
+        ];
+        if !approvals_remain {
+            next.transition(AgentStatus::Working, at.clone(), None)
+                .map_err(|error| AgentOperationError::Corrupt(error.to_string()))?;
+            logs.push(AgentLogKind::StatusChanged {
                 from: AgentStatus::WaitingApproval,
                 to: AgentStatus::Working,
-            },
-        ];
+            });
+        }
         self.commit_admission(&current, next, logs, at, parent)
             .await?;
         let locator = snapshot

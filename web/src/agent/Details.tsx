@@ -1,3 +1,4 @@
+import { Presence } from '../ui/Presence';
 import { useEffect, useRef, useState } from 'react';
 import type { AgentDetail, WorkspaceDetail } from '../api/types';
 import type { AppRoute } from '../routing/routes';
@@ -8,11 +9,13 @@ import { RiskConfirmation } from '../ui/RiskConfirmation';
 import { IconCloseOutline16, IconStopFill16, IconTrashOutline16 } from '../ui/icons';
 import type { AgentCommand } from './controller';
 import './Details.css';
+import { ReferenceLink } from '../profiles/ReferenceLink';
 
 interface AgentDetailsProps {
   readonly detail?: AgentDetail;
   readonly workspace?: WorkspaceDetail;
   readonly pending?: AgentCommand;
+  readonly historyLoading?: boolean;
   readonly actionError?: string;
   readonly open?: boolean;
   readonly onClose?: () => void;
@@ -71,6 +74,7 @@ export function AgentDetails({
   detail,
   workspace,
   pending,
+  historyLoading = false,
   actionError,
   open = false,
   onClose,
@@ -126,13 +130,30 @@ export function AgentDetails({
               </ResourceLink>
             </Fact>
             <Fact term="Status">{label(detail.sandbox.status)}</Fact>
-            <Fact term="Profile">{`${detail.sandbox.profile.id} @ ${String(detail.sandbox.profile.revision)}`}</Fact>
-            <Fact term="Reach">{detail.reach.length === 0 ? 'None' : detail.reach.join(', ')}</Fact>
+            <Fact term="Profile">
+              <ReferenceLink kind="sandbox" id={detail.sandbox.profile.id} />
+            </Fact>
+            <Fact term="NyxID services">
+              {detail.reach.length === 0 ? (
+                'None'
+              ) : (
+                <ul>
+                  {detail.reach.map((id) => (
+                    <li key={id}>
+                      <ReferenceLink kind="service" id={id} />
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </Fact>
           </dl>
         </Band>
         <Band title="Workspace">
           <dl>
             <Fact term="Name">{detail.workspace.name}</Fact>
+            <Fact term="Profile">
+              <ReferenceLink kind="workspace" id={detail.workspace.profile.id} />
+            </Fact>
             <Fact term="Path">
               <code>{detail.workspace.path}</code>
             </Fact>
@@ -170,25 +191,23 @@ export function AgentDetails({
         <Band title="Agent profile">
           <dl>
             <Fact term="Profile">
-              <ResourceLink
-                route={{ kind: 'profile', profileKind: 'agent', profileId: detail.profile.id }}
-                onNavigate={onNavigate}
-              >
-                {`${detail.profile.id} @ ${String(detail.profile.revision)}`}
-              </ResourceLink>
+              <ReferenceLink kind="agent" id={detail.profile.id} />
             </Fact>
             <Fact term="Model">{detail.profile.model ?? 'Provider default'}</Fact>
             <Fact term="Thinking">{label(detail.profile.thinkingEffort)}</Fact>
             <Fact term="Permission">{label(detail.profile.permissionLevel)}</Fact>
             <Fact term="Skills">
-              {detail.profile.skills.length === 0
-                ? 'None'
-                : detail.profile.skills
-                    .map(
-                      (skill) =>
-                        `${skill.source}:${skill.id}${skill.version === undefined ? '' : `@${skill.version}`}`,
-                    )
-                    .join(', ')}
+              {detail.profile.skills.length === 0 ? (
+                'None'
+              ) : (
+                <ul>
+                  {detail.profile.skills.map((skill) => (
+                    <li key={skill.id}>
+                      <ReferenceLink kind="skill" id={skill.id} version={skill.version} />
+                    </li>
+                  ))}
+                </ul>
+              )}
             </Fact>
           </dl>
         </Band>
@@ -212,16 +231,23 @@ export function AgentDetails({
           )}
         </Band>
         <Band title="Agent controls">
-          {actionError === undefined ? null : (
-            <p className="agent-details__failure" role="alert">
-              {actionError}
+          {historyLoading ? (
+            <p className="agent-details__control-reason" role="status">
+              Loading conversation activity.
             </p>
-          )}
+          ) : null}
+          <Presence>
+            {actionError === undefined ? null : (
+              <p className="agent-details__failure" role="alert">
+                {actionError}
+              </p>
+            )}
+          </Presence>
           {confirmStop ? (
             <InlineConfirm
               question="Stop this Agent?"
               confirmLabel="Stop"
-              busy={pending === 'stop'}
+              busy={historyLoading || pending === 'stop'}
               onCancel={() => setConfirmStop(false)}
               onConfirm={() => {
                 setConfirmStop(false);
@@ -232,7 +258,7 @@ export function AgentDetails({
             <div className="agent-details__actions">
               <Button
                 icon={<IconStopFill16 />}
-                disabled={!live || pending !== undefined}
+                disabled={historyLoading || !live || pending !== undefined}
                 onClick={() => setConfirmStop(true)}
               >
                 Stop
@@ -240,7 +266,7 @@ export function AgentDetails({
               <Button
                 variant="danger"
                 icon={<IconTrashOutline16 />}
-                disabled={!deletable || pending !== undefined}
+                disabled={historyLoading || !deletable || pending !== undefined}
                 onClick={() => setConfirmDelete(true)}
               >
                 Delete
@@ -258,7 +284,7 @@ export function AgentDetails({
         description={`Delete ${detail.title ?? detail.id} and its Worktree. This cannot be undone.`}
         acknowledgeLabel="I understand this Agent and Worktree will be deleted."
         confirmLabel="Delete Agent"
-        busy={pending === 'delete'}
+        busy={historyLoading || pending === 'delete'}
         failure={actionError}
         onCancel={() => setConfirmDelete(false)}
         onConfirm={() => void onDelete()}

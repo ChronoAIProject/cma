@@ -76,6 +76,7 @@ fn workspace() -> RequestFrame {
 async fn bootstrap_requires_credential_and_exact_restore_again_after_restart() {
     let config = config("restart");
     let restore = sealed_restore(&config);
+    let archived = std::fs::read(config.checkpoint_root.join(&restore.object_reference)).unwrap();
     std::fs::create_dir_all(&config.home).unwrap();
     std::fs::write(config.home.join("replace-me"), "new runtime\n").unwrap();
     let supervisor = Supervisor::new(config.clone(), SupervisorBoundary::default()).unwrap();
@@ -164,6 +165,24 @@ async fn bootstrap_requires_credential_and_exact_restore_again_after_restart() {
         restarted.dispatch(credential()).await,
         ResponseFrame::Credential(_)
     ));
+    assert_eq!(
+        failure(
+            restarted
+                .dispatch(RequestFrame::Restore(restore.clone()))
+                .await
+        )
+        .code,
+        "checkpoint_not_found"
+    );
+    // The production transport imports the exact durable object before every
+    // restore request, including retries after a supervisor restart.
+    let store = restarted.checkpoint_store();
+    let (temporary, expected) = store.upload_path(&restore.object_reference).unwrap();
+    std::fs::write(&temporary, archived).unwrap();
+    store
+        .commit_upload(temporary, restore.object_reference.clone(), expected)
+        .await
+        .unwrap();
     assert!(matches!(
         restarted.dispatch(RequestFrame::Restore(restore)).await,
         ResponseFrame::Restore(_)

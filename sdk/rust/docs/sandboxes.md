@@ -2,10 +2,30 @@
 
 <!-- nav: 4 Sandboxes -->
 
+`lifecycle.latest_snapshot` reports the latest completed snapshot's `epoch`,
+`saved_at`, and owner-authenticated `download_url`. Fetch the relative URL against
+the same CMA origin with the owner's credentials to download the whole-home
+archive. Old epoch URLs return 404 after replacement; snapshots are never public.
+
+A Trigger can cancel a pause before agent parking and teardown are admitted.
+The `pause` operation reports `ResumeWriters` until the exact hold is released.
+If teardown may already have started, the Launch waits for pause completion and
+revives automatically. Navigation away does not cancel an admitted Launch.
+
 A Sandbox pins its profile, provider, resource limits, service scope, commands,
 and environment at admission. It contains Workspaces, each with allocated
 Worktrees and Agents. A successful create response records work; it does not
 assert that the runtime or any nested Agent is ready.
+
+`sandboxes().grant_service_access(id, &GrantSandboxServiceAccessRequest, &key)`
+records explicit owner authorization for additional NyxID services while fully
+paused. Original profile pins and creation scope remain unchanged. The optional
+`nyxid_services` field reports effective scope, including these grants. Revival
+obtains a new scoped credential before delivering it; the owner's connected
+accounts must authorize every service. New grants while Live return HTTP 409
+`sandbox_service_access_requires_pause`. Repeating existing grants is a no-op,
+including after revival. This operation only adds services; it does not revoke
+existing access.
 
 ```rust,no_run
 use cma_sdk::{Client, EventOptions, IdempotencyKey};
@@ -40,3 +60,13 @@ Worktree mutation helper. Sandbox `pause`, `revive`, and `delete`, and Workspace
 `delete`, return recorded lifecycle state. Poll events and resources until the
 requested outcome is observed. Deletion and retirement are explicit owner
 actions, not cleanup implied by a dropped stream or failed Launch.
+
+The optional `Sandbox.lifecycle` contains authoritative `pause` and `revive`
+eligibility for beginning a new transition. An active Sandbox can be busy with
+`checkpoint_in_progress` or `work_in_progress`. Recorded checkpoint progress
+contains the `capture` or `resume_writers` phase, request timestamp and epoch;
+the optional operation records a pause, revival or image rotation phase without
+worker or writer credentials. Missing lifecycle data from an older server means
+eligibility is unavailable, not that status alone authorizes an action. A race
+with new work can return HTTP 409 `sandbox_lifecycle_busy`; refresh before
+retrying. Existing command replay semantics are unchanged.

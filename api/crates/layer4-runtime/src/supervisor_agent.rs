@@ -362,7 +362,11 @@ impl Supervisor {
         let mut environment = self.config.process_env.clone();
         for (name, value) in &launch.env {
             super::validate_environment(name, value)?;
-            if super::reserved(name) && environment.get(name) != Some(value) {
+            if (super::reserved(name)
+                || (self.config.github_proxy.is_some()
+                    && crate::github_proxy::reserved_environment(name)))
+                && environment.get(name) != Some(value)
+            {
                 return Err(RuntimeError::rejected(
                     "agent_environment_conflict",
                     format!("agent environment cannot override reserved variable {name}"),

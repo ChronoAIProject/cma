@@ -3,8 +3,8 @@ use std::collections::BTreeMap;
 use layer2_core::trigger_domain::{ServiceConnectionMetadata, ServiceConnectionMode};
 
 use super::{
-    decode, malformed, Deserialize, NyxidServiceConnectionBroker, ServiceConnectionError,
-    ServiceId, SubjectId,
+    decode, malformed, matching_services, Deserialize, NyxidServiceConnectionBroker,
+    ServiceConnectionError, ServiceId, SubjectId,
 };
 
 const CATALOG_PATH: &str = "/api/v1/services";
@@ -44,6 +44,7 @@ impl NyxidServiceConnectionBroker {
             )
             .await?;
         let catalog: Catalog = decode(response).await?;
+        let connections = self.user_services(&credential).await?;
         if catalog.services.len() > MAX_CATALOG_ROWS {
             return Err(malformed());
         }
@@ -62,12 +63,34 @@ impl NyxidServiceConnectionBroker {
             }
         }
         let mut setup_url = self.browser_origin.clone();
-        // NyxID's /services route redirects non-administrators to their /keys surface.
-        setup_url.set_path("/services");
+        setup_url.set_path("/keys");
         Ok(services
             .iter()
             .map(|service| {
-                let row = by_slug.get(service.as_str());
+                let matches = matching_services(service, &connections);
+                let existing = match matches.as_slice() {
+                    [connection] => Some(*connection),
+                    _ => None,
+                };
+                let slug = existing.map_or(service.as_str(), |connection| connection.slug.as_str());
+                let row = by_slug.get(slug);
+                if let Some(connection) = existing {
+                    // Repair the exact binding used by this launch. Creating another
+                    // hosted connection could leave the broken binding in place.
+                    let mut repair = setup_url.clone();
+                    repair
+                        .path_segments_mut()
+                        .expect("HTTPS browser origin")
+                        .push(&connection.id);
+                    return ServiceConnectionMetadata {
+                        service: service.clone(),
+                        display_name: row
+                            .map(|row| row.name.clone())
+                            .or_else(|| Some(slug.to_owned())),
+                        connection_mode: ServiceConnectionMode::Manual,
+                        setup_url: Some(repair.to_string()),
+                    };
+                }
                 let connection_mode = match row
                     .filter(|row| row.is_active == Some(true))
                     .and_then(|row| row.service_type.as_deref())

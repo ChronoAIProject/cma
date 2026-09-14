@@ -30,7 +30,11 @@ impl SandboxLifecycleExecutionStore for InMemorySandboxStore {
             .sandboxes
             .get(&mutation.guard.sandbox_id)
             .ok_or(SandboxStoreError::NotFound)?;
-        let agents = sandbox_agent_log_rows(&state, &current.id);
+        let agents = if mutation.nonblocking {
+            Vec::new()
+        } else {
+            sandbox_agent_log_rows(&state, &current.id)
+        };
         for (agent, _) in agents.iter().filter(|(agent, _)| agent.status.is_live()) {
             let logs = state
                 .agent_logs
@@ -90,6 +94,7 @@ impl SandboxLifecycleExecutionStore for InMemorySandboxStore {
             .get(&mutation.guard.sandbox_id)
             .ok_or(SandboxStoreError::NotFound)?;
         let agents = sandbox_agent_log_rows(&state, &current.id);
+        validate_lifecycle_mutation(current, &agents, &mutation)?;
         if current.lifecycle.checkpoint_capture.is_none()
             && mutation.sandbox.lifecycle.checkpoint_capture.is_some()
         {
@@ -108,9 +113,13 @@ impl SandboxLifecycleExecutionStore for InMemorySandboxStore {
                 &rows,
                 &workspaces,
             )?;
+            let activities = super::maintenance::live_agent_activities(&state, &current.id)?;
+            super::super::checkpoint_capture::validate_checkpoint_capture_quiet(
+                current,
+                &activities,
+                &mutation.appended_at,
+            )?;
         }
-        validate_lifecycle_mutation(current, &agents, &mutation)?;
-
         let mut candidate = state.clone();
         save_record!(
             candidate,

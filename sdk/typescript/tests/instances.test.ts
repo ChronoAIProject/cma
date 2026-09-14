@@ -13,6 +13,59 @@ import {
 } from './resource-fixtures.js';
 
 describe('Sandbox hierarchy resources', () => {
+  it('retains authoritative lifecycle eligibility and recorded phases without status inference', async () => {
+    const test = transport();
+    const base = {
+      ...sandbox,
+      workspace_count: 0,
+      worktree_count: 0,
+      agent_count: 0,
+      workspaces: [],
+    };
+    for (const phase of ['capture', 'resume_writers']) {
+      const lifecycle = {
+        pause: { allowed: false, reason: 'checkpoint_in_progress' },
+        revive: { allowed: false, reason: 'not_paused' },
+        checkpoint: { phase, started_at: now, epoch: 6 },
+      };
+      test.answer({ ...base, lifecycle });
+      expect((await test.client.sandboxes.read(sandbox.id)).lifecycle).toEqual(lifecycle);
+    }
+    for (const operation of [
+      { purpose: 'pause', phase: 'pause_agents', started_at: now },
+      { purpose: 'revive', phase: 'conversation_reopen', started_at: now },
+      { purpose: 'image_rotation', phase: 'home_restore', started_at: now },
+    ]) {
+      const lifecycle = {
+        pause: { allowed: false, reason: 'not_active' },
+        revive: { allowed: false, reason: 'not_paused' },
+        operation,
+      };
+      test.answer({ ...base, lifecycle });
+      expect((await test.client.sandboxes.read(sandbox.id)).lifecycle).toEqual(lifecycle);
+    }
+    test.answer(base);
+    expect((await test.client.sandboxes.read(sandbox.id)).lifecycle).toBeUndefined();
+    for (const malformed of [
+      { pause: { allowed: true } },
+      { pause: { allowed: 'yes' }, revive: { allowed: false } },
+      { pause: { allowed: false, reason: 'unknown' }, revive: { allowed: false } },
+      {
+        pause: { allowed: false },
+        revive: { allowed: false },
+        checkpoint: { phase: 'unknown', started_at: now, epoch: 6 },
+      },
+      {
+        pause: { allowed: false },
+        revive: { allowed: false },
+        operation: { purpose: 'pause', phase: 'home_restore', started_at: now },
+      },
+    ]) {
+      test.answer({ ...base, lifecycle: malformed });
+      await expect(test.client.sandboxes.read(sandbox.id)).rejects.toBeInstanceOf(ProtocolError);
+    }
+  });
+
   it('uses the public owner lists, details and asynchronous lifecycle routes', async () => {
     const test = transport();
     const summary = { ...sandbox, workspace_count: 1, worktree_count: 1, agent_count: 1 };

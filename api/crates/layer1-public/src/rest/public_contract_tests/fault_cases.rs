@@ -103,3 +103,10 @@ pub(super) async fn scenario(name: &str) -> Option<Scenario> {
         symbols: Default::default(),
     })
 }
+pub(super) fn unavailable_instance_reads() -> std::sync::Arc<layer2_core::sandbox::AgentReadService>
+{
+    layer2_core::sandbox::AgentReadService::new(
+        std::sync::Arc::new(instance_store::UnavailableInstances),
+        std::sync::Arc::new(super::super::agents_tests::TestResources),
+    )
+}

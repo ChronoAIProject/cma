@@ -9,6 +9,18 @@ use super::{
 impl Sandbox {
     /// Unbound provisioning/recovery steps are intentional and are not runtime loss.
     pub fn requires_runtime_loss_recovery(&self) -> bool {
+        // A just-assigned warm runtime has not delivered user credentials or
+        // started child creation. Its provisioning worker reserves a replacement
+        // generation; checkpoint-based recovery would incorrectly fail it.
+        if self.status == SandboxStatus::Provisioning
+            && self.work.step == super::SandboxWorkStep::ProvisionRuntime
+            && self.credential.key_generation == 0
+            && !self.credential.delivered
+            && self.credential.current.is_none()
+            && self.credential.pending.is_none()
+        {
+            return false;
+        }
         self.status == SandboxStatus::Active
             || (self.runtime.is_some()
                 && matches!(
@@ -37,6 +49,14 @@ impl Sandbox {
         next.runtime = None;
         next.work
             .schedule(SandboxWorkStep::RunLifecycleOperation, at.clone());
+        if self.lifecycle.home.is_some() && self.credential.current.is_some() {
+            next.recover_retained_home(self, recovered_agents, &at)?;
+            next.updated_at = at;
+            next.revision = self.revision.checked_add(1).ok_or_else(invalid_recovery)?;
+            next.validate()?;
+            *self = next;
+            return Ok(());
+        }
         match next.lifecycle.checkpoints.latest.as_ref() {
             None => {
                 next.lifecycle.cancel_operation();
@@ -112,6 +132,77 @@ impl Sandbox {
         next.revision = self.revision.checked_add(1).ok_or_else(invalid_recovery)?;
         next.validate()?;
         *self = next;
+        Ok(())
+    }
+}
+
+impl Sandbox {
+    fn recover_retained_home(
+        &mut self,
+        previous: &Sandbox,
+        agents: &[Agent],
+        at: &str,
+    ) -> Result<(), SandboxModelError> {
+        match &previous.lifecycle.operation {
+            Some(SandboxLifecycleOperation::ImageRotation {
+                target_runtime_version,
+                ..
+            }) => {
+                let identity = SandboxRotationIdentity::capture(self, agents)?;
+                self.lifecycle.start_image_rotation(
+                    &self.id,
+                    at.into(),
+                    target_runtime_version.clone(),
+                    identity,
+                )?;
+                if let Some(SandboxLifecycleOperation::ImageRotation {
+                    phase,
+                    checkpoint_epoch,
+                    ..
+                }) = self.lifecycle.operation.as_mut()
+                {
+                    *phase = SandboxImageRotationPhase::CheckpointVerification;
+                    *checkpoint_epoch = previous
+                        .lifecycle
+                        .checkpoints
+                        .latest
+                        .as_ref()
+                        .map(|checkpoint| checkpoint.epoch);
+                }
+            }
+            _ => {
+                let resume_pause = match &previous.lifecycle.operation {
+                    Some(SandboxLifecycleOperation::Pause { phase, .. })
+                        if *phase != SandboxPausePhase::ResumeWriters =>
+                    {
+                        Some(super::SandboxRecoveryPause {
+                            notice: previous.lifecycle.paused_notice.clone(),
+                        })
+                    }
+                    _ => previous
+                        .lifecycle
+                        .home_recovery
+                        .as_ref()
+                        .and_then(|source| source.resume_pause.clone()),
+                };
+                self.lifecycle.start_revive(
+                    &self.id,
+                    at.into(),
+                    SandboxReviveCause::RuntimeLost,
+                )?;
+                self.lifecycle
+                    .home_recovery
+                    .as_mut()
+                    .ok_or_else(invalid_recovery)?
+                    .resume_pause = resume_pause;
+                if self.status != SandboxStatus::Reviving {
+                    self.transition(SandboxStatus::Reviving, at.into(), None)?;
+                }
+            }
+        }
+        self.lifecycle.paused_notice = Some(
+            "Your sandbox runtime was interrupted. Your saved environment and original conversations are being reconnected.".into(),
+        );
         Ok(())
     }
 }

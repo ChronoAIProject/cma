@@ -31,6 +31,12 @@ the exact server-issued approval identifier with `Allow`, `Deny`, or `Abort`.
 `stop` and `delete` are distinct explicit lifecycle operations. Do not substitute
 either for cancellation of local observation.
 
+While a Sandbox checkpoint is active, input is refused before admission with
+HTTP 409 `sandbox_checkpoint_in_progress`. No prompt is queued for later execution.
+Refresh the Sandbox and submit again after `lifecycle.checkpoint` clears. This
+also applies to AG-UI and Responses input; paused conversations still revive
+automatically, and durable Trigger provisioning retains its own retry flow.
+
 Durable transcripts and usage survive reconnects. Live reasoning and text
 deltas are not durable transcript evidence. Resource counters are Sandbox-wide
 and may be unavailable; `None` is not a zero measurement. The terminal helper

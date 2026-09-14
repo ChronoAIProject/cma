@@ -14,8 +14,14 @@ actual scoped credential. None is a substitute for the others.
 
 A Sandbox Profile records `nyxid_services`. Admission unions that set with
 `CHRONO_BASELINE_SERVICES` and pins the resulting scope on the Sandbox. The
-checked-in baseline is `chrono-llm,ornn-api,ornn`. Later profile edits, retirement,
+checked-in baseline is `chrono-llm-public,ornn-api`. Later profile edits, retirement,
 publication or operator-default changes do not rewrite the instance's grant.
+
+Managed Codex model calls use the `chrono-llm-public` NyxID proxy by default.
+When rendering either an initial runtime or a revived one, CMA selects the
+public or legacy Chrono LLM route from that Sandbox's pinned service scope.
+This keeps older `chrono-llm`-only credentials usable without widening them.
+Custom model endpoints and own-account model access keep their configured route.
 
 ```text
 Sandbox profile scope + deployment baseline
@@ -54,6 +60,14 @@ publisher. Its `services` list retains each required service id and a typed
 state. Active usable grants satisfy requirements; inactive, ambiguous, missing
 or unknown provider rows do not. A provider outage must not be converted into
 an empty successful grant list.
+
+Launch admission and explicit Start both recheck the service list in the
+Launch's frozen Trigger Sandbox Profile, including when reusing a live or
+paused Sandbox or an existing Agent. An unmet connection keeps the same Draft
+and resolved hierarchy available for connection assist. A revoked connection
+between admission and Start blocks work until a successful recheck. Replaying
+an already admitted command returns its recorded result without starting or
+checking again. These checks do not broaden an existing Sandbox's pinned grant.
 
 Current optional guidance appears **inside each service entry**:
 
@@ -106,6 +120,15 @@ must not mint another link automatically. Stop polling at expiry, cancellation,
 route change or a terminal outcome; bound in-flight reads and let the visitor
 initiate a supported new attempt when necessary. On return, refresh requirements
 and continue the same Draft through its explicit Start operation.
+
+Pending hosted setup keeps Connect and Verify available. Connect reopens the
+current unexpired in-memory link without minting another handoff. Verify reads
+the exact handoff immediately and reports when access is still pending; popup
+closure alone is never success. After reload, the hosted URL is intentionally
+absent from storage, so another explicit Connect can request a new link. Starting
+that replacement aborts the previous poll, and late results cannot satisfy the
+new attempt. Simultaneous satisfaction of several services continues the same
+Draft once; the backend still rechecks every service before admitting work.
 
 ## Connection Outcomes
 

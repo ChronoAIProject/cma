@@ -361,6 +361,7 @@ async fn runtime_loss_resumes_mid_pause_revive_and_rotation_without_replaying_ol
                     .begin_revive(SandboxReviveCause::ExplicitRequest, BEFORE.into())
                     .unwrap();
                 sandbox.runtime = Some(RuntimeBinding {
+                    boot_id: None,
                     runtime_id: "lost-replacement".into(),
                     runtime_version: "image-v1".into(),
                     provision_generation: Some(2),
@@ -605,6 +606,7 @@ async fn runtime_loss_rolls_back_failed_log_writes_and_reconciles_ambiguous_comm
                 .begin_revive(SandboxReviveCause::ExplicitRequest, BEFORE.into())
                 .unwrap();
             sandbox.runtime = Some(RuntimeBinding {
+                boot_id: None,
                 runtime_id: "replacement".into(),
                 runtime_version: "image-v2".into(),
                 provision_generation: Some(2),

@@ -13,6 +13,18 @@ import { command, transport } from './resource-fixtures.js';
 import { launchFixture, previewFixture } from './launch-fixtures.js';
 
 describe('public entry resources', () => {
+  it('consumes browser click evidence without launching or resolving bearer credentials', async () => {
+    const test = transport();
+    const api = test.client.launches;
+    test.answer({ accepted: true, placement_id: 'plc_readme' });
+    expect(await api.entryIntent('pub_readme')).toEqual({
+      accepted: true,
+      placement_id: 'plc_readme',
+    });
+    expect(test.calls.at(-1)?.url).toContain('/public/pub_readme/entry-intent');
+    expect(test.calls.at(-1)?.init.method).toBe('POST');
+    expect(new Headers(test.calls.at(-1)?.init.headers).has('authorization')).toBe(false);
+  });
   it('binds preview, admission, owner reads, review, connections and command keys', async () => {
     const test = transport();
     const api = new Launches(test.client.config);

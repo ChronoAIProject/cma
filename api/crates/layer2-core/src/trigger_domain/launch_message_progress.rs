@@ -12,6 +12,36 @@ use super::{
 };
 
 impl Launch {
+    pub fn record_worker_existing_conversation_ready(
+        &mut self,
+        holder: &str,
+        fence: u64,
+        agent_id: &AgentId,
+        at: String,
+    ) -> Result<Vec<LaunchEventKind>, TriggerError> {
+        let original = self.clone();
+        let result = (|| {
+            if !matches!(&self.resolution.agent, super::ResolvedResource::Reused(id) if id == agent_id)
+            {
+                return Err(progress_error());
+            }
+            self.first_message = FirstMessageDelivery::Completed;
+            let step = self.set_step(
+                LaunchStepKey::FirstMessage,
+                LaunchStepStatus::Completed,
+                "Existing conversation preserved",
+                &at,
+            )?;
+            let mut events = self.record_worker_agent_ready(holder, fence, agent_id, None, at)?;
+            events.insert(0, step);
+            Ok(events)
+        })();
+        if result.is_err() {
+            *self = original;
+        }
+        result
+    }
+
     pub fn record_worker_agent_ready(
         &mut self,
         holder: &str,
@@ -252,7 +282,7 @@ fn settle_observed_message(
                     retry_at,
                 )?;
             } else {
-                launch.work.retry(holder, fence, retry_at)?;
+                launch.work.defer(holder, fence, retry_at)?;
             }
             let (status, detail) = if record.attempt == 0 {
                 (LaunchStepStatus::Running, "Waiting for the first message")

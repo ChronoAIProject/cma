@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { expect, it, vi } from 'vitest';
 import {
@@ -87,7 +87,8 @@ it('invalidates repository verification when the branch changes and validates di
   await actor.click(screen.getByRole('button', { name: 'Verify repository' }));
   await screen.findByText('Repository verified');
   fireEvent.change(screen.getByLabelText('Branch or tag'), { target: { value: 'next' } });
-  expect(screen.queryByText('Repository verified')).not.toBeInTheDocument();
+  expect(screen.getByText('Repository verified')).toHaveAttribute('aria-hidden', 'true');
+  await waitFor(() => expect(screen.queryByText('Repository verified')).not.toBeInTheDocument());
   fireEvent.change(screen.getByLabelText('Directory name'), { target: { value: '../escape' } });
   expect(screen.getByLabelText('Directory name')).toHaveAttribute('aria-invalid', 'true');
   await actor.click(screen.getByRole('button', { name: 'Save draft' }));

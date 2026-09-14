@@ -82,6 +82,22 @@ build layer; final images contain neither compiler nor cache. Cached artifacts
 are not acceptance evidence. Build, identity, runtime and vulnerability gates
 apply to the resulting immutable image on every delivery.
 
+### Lifecycle Scheduling
+
+Sandbox lifecycle scheduling permits at most four concurrent sweeps, with
+one new sweep offered per second while capacity remains. Durable per-Sandbox
+claims and revision fences, not the scheduler's task list, grant authority.
+A slow restore therefore does not monopolize all lifecycle work, and a new
+pause-cancellation fence can be claimed while its superseded capture unwinds.
+Four simultaneous long operations can still consume all slots; this is a
+bounded concurrency improvement, not an unbounded latency guarantee.
+
+Workspace, periodic checkpoint maintenance, and checkpoint-object cleanup
+sweeps remain serial. Shutdown stops admitting sweeps, permits a 25-second
+drain, and cancels remaining child tasks without clearing their durable leases.
+The API requests 256 MiB and is limited to 1 GiB to accommodate the existing
+bounded multipart buffers across concurrent lifecycle transfers.
+
 ## NyxID Prerequisites
 
 CMA uses two independent origins. `CHRONO_NYXID_BASE_URL` is the API/OAuth
@@ -209,10 +225,14 @@ are referenced in `infra/api/secret.yaml`, never stored in ConfigMaps.
 | `CHRONO_SANDBOX_API_KEY_FILE` | Required readable nonempty mounted provider key; never a ConfigMap value |
 | `CHRONO_SANDBOX_NAMESPACE` | Required DNS-label namespace for CMA-owned provider resources |
 | `CHRONO_SANDBOX_IMAGE` | Required immutable OCI reference ending in `@sha256:<64 lowercase hex digits>` |
+| `CHRONO_SANDBOX_HOME_STORAGE_CLASS` | Durable home StorageClass; configure all four home fields together, or omit all for legacy ephemeral operation |
+| `CHRONO_SANDBOX_HOME_CAPACITY_GIB` | Home disk capacity, integer 1-1024 GiB; production 64 |
+| `CHRONO_SANDBOX_HOME_TEMPLATE` | Ready, credential-free seed VolumeSnapshot in the Sandbox namespace; initialized with `infra/storage/home-seed.yaml` and `home-template.yaml` |
+| `CHRONO_SANDBOX_HOME_TEMPLATE_UID` | Exact immutable Kubernetes UID of the seed snapshot; startup rejects a missing, replaced or unready seed |
 | `CHRONO_UPSTREAM_BASE_URL` | Required canonical HTTPS model API base without trailing slash |
 | `CHRONO_UPSTREAM_WIRE_API` | Exactly `responses` |
-| `CHRONO_PLATFORM_BASE_URL` | Required canonical HTTPS platform proxy origin |
-| `CHRONO_BASELINE_SERVICES` | Default `chrono-llm,ornn-api,ornn`; unioned into newly admitted Sandbox scope |
+| `CHRONO_PLATFORM_BASE_URL` | Required canonical HTTPS platform proxy origin; also the upstream for the runtime's explicitly granted GitHub API proxy |
+| `CHRONO_BASELINE_SERVICES` | Default `chrono-llm-public,ornn-api`; unioned into newly admitted Sandbox scope |
 | `CHRONO_SANDBOX_CPU` | Seed default Sandbox Profile size; default `1`, accepts positive cores or millicores |
 | `CHRONO_SANDBOX_MEMORY` | Seed default size; default `1Gi`, accepts positive whole Mi/Gi |
 | `CHRONO_DEFAULT_AGENT_MODEL` | Seed default Agent model; default `gpt-5.6-sol`, nonblank |
@@ -451,6 +471,34 @@ under its new checkpoint configuration name. MongoDB owns checkpoint manifests,
 writer fences, publication authority and deletion intents; external objects own
 the bytes. GridFS is not an acceptable substitute for the required external
 persistence boundary.
+
+Archives above 32 MiB use bounded 32 MiB physical objects through that same
+authenticated storage route. The Mongo stage's opaque key records the versioned
+part layout and total size before any upload; cleanup can therefore enumerate
+every part after an interrupted upload, even if no part manifest was published.
+A bounded manifest is uploaded only after every part is readable and both the
+part digests and whole-archive digest match. Restore verifies the manifest,
+each part and the complete archive. Existing single-object checkpoints remain
+readable. Do not roll back to an API that cannot read the part layout after a
+multipart checkpoint is published. This avoids the production ingress's HTTP
+413 limit without changing runtime archive bytes or writer-fence authority.
+
+New upload stages record a fixed 1,200-second (20-minute) client transfer budget
+in `cleanup_after`, increased from 600 seconds after a still-progressing
+6.26 GB upload exhausted that shorter budget. This is a CMA-owned bound, not an
+expiry sent to the external storage service. Existing stages keep their exact
+recorded deadlines across upgrades; never extend a live stage by editing its
+record. Transfer cancellation and cleanup both use the stored deadline.
+
+The 180-second per-request timeout, four concurrent 32 MiB parts, three bounded
+immutable-part attempts, exact readback checks and Retry-After handling remain
+unchanged. Storage credentials are refreshed between requests when needed.
+Both periodic and explicit lifecycle captures still have a 1,800-second total
+bound, including archive creation and publication, so a 20-minute upload budget
+leaves less than ten minutes for the remaining work and does not guarantee every
+large home can finish. Periodic capture claims renew every minute; the explicit
+lifecycle worker retains its configured 31-minute lease. Timeout preserves
+writer-recovery and cleanup authority rather than claiming publication.
 
 Publish only after bounded upload, size/digest verification and readable bytes.
 Use immutable physical object identities so cleanup of a losing upload cannot

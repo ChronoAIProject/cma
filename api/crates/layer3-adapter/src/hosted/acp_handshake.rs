@@ -23,11 +23,22 @@ impl Bridge {
                 "clientCapabilities": {
                     "fs": { "readTextFile": false, "writeTextFile": false },
                     "elicitation": { "url": {} },
+                    // Codex ACP otherwise emits provider failures as assistant text
+                    // followed by end_turn. Negotiate its structured failure result.
+                    "_meta": {
+                        "jetbrains": { "air": { "version": 1, "capabilities": ["sessionFailure"] } }
+                    },
                 },
             }))
             .await?;
 
-        if settings.own_credential && resume.is_none() && matches!(greeting, Greeting::Fresh(_)) {
+        if settings.own_credential && self.subscription.is_some() {
+            self.call("cma/codex/authenticate", serde_json::json!({}))
+                .await?;
+        } else if settings.own_credential
+            && resume.is_none()
+            && matches!(greeting, Greeting::Fresh(_))
+        {
             let Greeting::Fresh(hello) = &greeting else {
                 unreachable!("fresh greeting was matched")
             };

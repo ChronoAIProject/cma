@@ -46,6 +46,7 @@ event_enum! { "type";
         AgentStatusChanged => "agent_status_changed" { agent_id: String, from: AgentStatus, to: AgentStatus },
         AgentDeleted => "agent_deleted" { agent_id: String },
         CredentialChanged => "credential_changed" { key_generation: u64 },
+        ServiceAccessGranted => "service_access_granted" { grant: SandboxServiceGrant },
         CheckpointSealed => "checkpoint_sealed" { object_reference: String },
         Revived => "revived" {},
         Rotated => "rotated" { runtime_version: String },
@@ -64,4 +65,17 @@ pub struct SandboxEvent {
     pub appended_at: String,
     /// Typed durable payload.
     pub kind: SandboxEventKind,
+}
+
+/// Durable, non-secret authorization for additional Sandbox services.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct SandboxServiceGrant {
+    /// Newly added service identifiers.
+    pub services: Vec<String>,
+    /// Sandbox owner who authorized the addition.
+    pub authorized_by: String,
+    /// Authorization timestamp.
+    pub authorized_at: String,
+    /// Credentials at or below this reservation predate the added services.
+    pub credential_generation_floor: u64,
 }

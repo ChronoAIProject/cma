@@ -198,7 +198,7 @@ pub(super) async fn scenario(name: &str) -> Option<Scenario> {
         });
     }
     let (status, ambiguous) = match name {
-        "agents_operating" => (AgentStatus::Ready, false),
+        "agents_operating" | "agents_checkpoint" => (AgentStatus::Ready, false),
         "agents_approval" => (AgentStatus::WaitingApproval, false),
         "agents_paused" => (AgentStatus::Paused, false),
         "agents_ambiguous" => (AgentStatus::Ready, true),
@@ -236,7 +236,10 @@ pub(super) async fn scenario(name: &str) -> Option<Scenario> {
         2 + logs.len() as u64,
         (status == AgentStatus::WaitingApproval).then_some(3),
     );
-    agents::insert_agent(&fixture.store, agent, logs).await;
+    let agent = agents::insert_agent(&fixture.store, agent, logs).await;
+    if name == "agents_checkpoint" {
+        super::experience_cases::begin_checkpoint(&fixture.store, &agent.sandbox_id).await;
+    }
     Some(Scenario {
         router: fixture.router,
         subject: Some("owner-a"),

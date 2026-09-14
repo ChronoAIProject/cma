@@ -218,6 +218,26 @@ pub(crate) fn load(config: &RuntimeConfig) -> Result<Option<InstallRecord>> {
     reconcile(config, files)
 }
 
+/// Inspect published installation authority without recovering journals or running work.
+pub(crate) fn inspect(config: &RuntimeConfig) -> Result<Option<InstallRecord>> {
+    let Some(files) = scan(config)? else {
+        return Ok(None);
+    };
+    let mut canonical = None;
+    for file in files {
+        crate::install_state_validation::validate_record(config, &file.record)?;
+        if file.kind == FileKind::Canonical {
+            canonical = Some(file.record);
+        } else {
+            return Err(RuntimeError::unavailable(
+                "install_state_recovery_pending",
+                "installation state publication requires journal recovery",
+            ));
+        }
+    }
+    Ok(canonical)
+}
+
 pub(crate) fn write_initial(config: &RuntimeConfig, record: &InstallRecord) -> Result<bool> {
     crate::install_state_validation::validate_record(config, record)?;
     if !matches!(

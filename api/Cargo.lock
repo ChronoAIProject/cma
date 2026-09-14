@@ -340,6 +340,7 @@ dependencies = [
  "flate2",
  "futures-util",
  "governor",
+ "httpdate",
  "ipnet",
  "layer1-public",
  "layer2-core",
@@ -1602,6 +1603,7 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.20",
  "tokio",
+ "tokio-tungstenite 0.29.0",
  "tokio-util",
  "tower",
  "tower-http",
@@ -1678,6 +1680,7 @@ dependencies = [
  "agent-client-protocol-schema",
  "async-trait",
  "base64",
+ "flate2",
  "futures-util",
  "k8s-openapi",
  "kube",
@@ -1697,6 +1700,7 @@ name = "layer4-runtime"
 version = "0.1.0"
 dependencies = [
  "axum",
+ "flate2",
  "futures-util",
  "layer3-adapter",
  "libc",
@@ -1709,6 +1713,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "url",
+ "uuid",
  "zip",
 ]
 

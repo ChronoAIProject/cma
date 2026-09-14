@@ -215,6 +215,9 @@ pub enum SandboxEventKind {
     CredentialChanged {
         key_generation: u64,
     },
+    ServiceAccessGranted {
+        grant: super::SandboxServiceGrant,
+    },
     CheckpointSealed {
         object_reference: String,
     },

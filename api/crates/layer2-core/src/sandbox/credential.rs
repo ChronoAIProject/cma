@@ -1,6 +1,17 @@
 use serde::{Deserialize, Serialize};
 
-use crate::ids::ServiceId;
+use crate::ids::{ServiceId, SubjectId};
+
+/// Explicit owner authorization added after the immutable creation scope.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SandboxServiceGrant {
+    pub services: Vec<ServiceId>,
+    pub authorized_by: SubjectId,
+    pub authorized_at: String,
+    /// Credentials at or below this reservation predate the expanded scope.
+    pub credential_generation_floor: u64,
+}
 
 /// Non-secret evidence for one NyxID key minted for a sandbox.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -38,6 +49,8 @@ pub enum SandboxSignInState {
 pub struct SandboxCredentialState {
     #[serde(default)]
     pub reaches: Vec<ServiceId>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub service_grants: Vec<SandboxServiceGrant>,
     /// Highest custody generation reserved for this sandbox.
     pub key_generation: u64,
     pub delivered: bool,
@@ -51,6 +64,22 @@ pub struct SandboxCredentialState {
 }
 
 impl SandboxCredentialState {
+    pub fn service_access_generation_floor(&self) -> u64 {
+        self.service_grants
+            .last()
+            .map_or(0, |grant| grant.credential_generation_floor)
+    }
+
+    pub fn effective_reaches(&self) -> Vec<ServiceId> {
+        self.reaches
+            .iter()
+            .chain(self.service_grants.iter().flat_map(|grant| &grant.services))
+            .cloned()
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .collect()
+    }
+
     pub fn validate(&self) -> bool {
         let authority_valid = |authority: &SandboxCredentialAuthority| {
             authority.generation > 0

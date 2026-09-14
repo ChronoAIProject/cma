@@ -16,6 +16,64 @@ pub struct LaunchRequirementRefresh {
 }
 
 impl Launch {
+    pub fn defer_worker_for_checkpoint(
+        &mut self,
+        sandbox: &crate::sandbox::Sandbox,
+        holder: &str,
+        fence: u64,
+        retry_at: String,
+        at: String,
+    ) -> Result<Vec<LaunchEventKind>, TriggerError> {
+        let command_at = at.clone();
+        let original = self.clone();
+        require_command_time(&original, &command_at)?;
+        require_bounded_retry_time(&command_at, &retry_at)?;
+        let result = (|| {
+            self.require_worker(holder, fence, self.work.step)?;
+            if self.resolution.sandbox.id() != Some(&sandbox.id)
+                || self.owner != sandbox.owner
+                || sandbox.status != crate::sandbox::SandboxStatus::Active
+                || sandbox.lifecycle.checkpoint_capture.is_none()
+                || sandbox.validate().is_err()
+                || !matches!(
+                    self.work.step,
+                    LaunchWorkStep::ResolveWorkspace
+                        | LaunchWorkStep::WaitForWorkspace
+                        | LaunchWorkStep::ResolveAgent
+                )
+                || self
+                    .work
+                    .effect
+                    .as_ref()
+                    .is_some_and(|effect| effect.state == super::LaunchEffectState::Applied)
+            {
+                return Err(progress_error());
+            }
+            if self
+                .work
+                .effect
+                .as_ref()
+                .is_some_and(|effect| effect.state == super::LaunchEffectState::Executing)
+            {
+                self.work
+                    .mark_effect_recovery_required(holder, fence, at.clone())
+                    .map_err(|_| progress_error())?;
+            }
+            // The effect identity and recovery debt survive the wait; no attempt is spent.
+            self.work.ready_at = retry_at.clone();
+            self.work.lease = None;
+            let step = self.set_step(
+                worker_step_key(self.work.step)?,
+                LaunchStepStatus::Running,
+                "Waiting for Sandbox checkpoint",
+                &at,
+            )?;
+            finish_in_place(self, at)?;
+            Ok(vec![step, LaunchEventKind::Deferred { retry_at }])
+        })();
+        settle_worker_command(self, original, &command_at, result)
+    }
+
     pub fn defer_worker_launch(
         &mut self,
         holder: &str,
@@ -33,7 +91,13 @@ impl Launch {
                 .defer(holder, fence, retry_at.clone())
                 .map_err(|_| progress_error())?;
             finish_in_place(self, at)?;
-            Ok(vec![LaunchEventKind::Deferred { retry_at }])
+            // Monitoring a ready conversation is scheduling metadata. Repeated
+            // unchanged observations must not grow the user's event history.
+            Ok(if self.state == LaunchState::Ready {
+                Vec::new()
+            } else {
+                vec![LaunchEventKind::Deferred { retry_at }]
+            })
         })();
         settle_worker_command(self, original, &command_at, result)
     }
@@ -59,6 +123,7 @@ impl Launch {
             let mut events = requirement_event(self, &reason, requirement, false, &at)?
                 .into_iter()
                 .collect::<Vec<_>>();
+            events.extend(self.sync_requirement_step(&at)?);
             let step = self.work.step;
             self.work
                 .defer(holder, fence, retry_at.clone())
@@ -101,6 +166,7 @@ impl Launch {
             let mut events = requirement_event(self, &expected_reason, requirement, true, &at)?
                 .into_iter()
                 .collect::<Vec<_>>();
+            events.extend(self.sync_requirement_step(&at)?);
             self.blocked_reason = None;
             events.push(self.set_step(
                 worker_step_key(self.work.step)?,

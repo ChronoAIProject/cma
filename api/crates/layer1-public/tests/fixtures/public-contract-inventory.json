@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "openapi_operations": 114,
+  "openapi_operations": 119,
   "operations": {
     "GET /api/v1/profile-authoring/bounds": {
       "classification": "openapi",
@@ -108,10 +108,10 @@
         "missing_idempotency_key",
         "not_authenticated",
         "store_failed",
-        "workspace_has_live_agents",
         "workspace_not_found"
       ],
       "unreachable_problems": {
+        "workspace_has_live_agents": "api/crates/layer2-core/src/sandbox/store/memory/workspace_lifecycle.rs# Workspace removal now fences new admission and schedules durable child cleanup, including live Agents. The legacy typed refusal is retained for compatibility but neither production nor in-memory admission emits it.",
         "invalid_json": "api/crates/layer1-public/src/rest/workspaces.rs# This bodyless command has no RequestBody or Json extractor and calls execute_empty_command; request bytes and Content-Type are not decoded or subject to an extractor body limit.",
         "json_content_type_required": "api/crates/layer1-public/src/rest/workspaces.rs# This bodyless command has no RequestBody or Json extractor and calls execute_empty_command; request bytes and Content-Type are not decoded or subject to an extractor body limit.",
         "request_too_large": "api/crates/layer1-public/src/rest/workspaces.rs# This bodyless command has no RequestBody or Json extractor and calls execute_empty_command; request bytes and Content-Type are not decoded or subject to an extractor body limit.",
@@ -267,6 +267,17 @@
         "forbidden",
         "instance_service_unavailable",
         "not_authenticated"
+      ]
+    },
+    "GET /api/v1/agents/{id}/source": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/agent_source.rs# Owner-scoped provenance and published shortcut projection, independent of conversation reads.",
+      "required_problems": [
+        "agent_not_found",
+        "forbidden",
+        "instance_service_unavailable",
+        "not_authenticated",
+        "trigger_service_unavailable"
       ]
     },
     "GET /api/v1/agents/{id}/terminal": {
@@ -555,6 +566,16 @@
         "sandbox_not_found"
       ]
     },
+    "GET /api/v1/sandboxes/{id}/snapshots/{epoch}/download": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/sandboxes.rs# Owner authentication and current snapshot epoch gate streamed archive downloads.",
+      "required_problems": [
+        "forbidden",
+        "hierarchy_service_unavailable",
+        "not_authenticated",
+        "sandbox_not_found"
+      ]
+    },
     "GET /api/v1/sandboxes/{id}/workspaces": {
       "classification": "openapi",
       "source": "api/crates/layer1-public/src/rest/workspaces.rs# Public handler and typed error projection define the operation contract.",
@@ -600,6 +621,15 @@
         "badge-unavailable",
         "invalid-badge-query"
       ]
+    },
+    "GET /api/v1/triggers/public/{public_id}/open/{placement_id}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/trigger_entry.rs# External navigation records deliberate click evidence without creating a Launch or resources.",
+      "required_problems": [],
+      "non_problem_statuses": {
+        "404": "api/crates/layer1-public/src/rest/trigger_entry.rs# Invalid, unpublished or retired destinations return an empty not-found response.",
+        "503": "api/crates/layer1-public/src/rest/trigger_entry.rs# Unavailable Trigger or Placement storage returns an empty service-unavailable response."
+      }
     },
     "GET /api/v1/triggers/{id}": {
       "classification": "openapi",
@@ -941,6 +971,7 @@
         "json_content_type_required",
         "missing_idempotency_key",
         "not_authenticated",
+        "sandbox_checkpoint_in_progress",
         "store_failed"
       ]
     },
@@ -1027,6 +1058,7 @@
         "invalid_run_request",
         "not_authenticated",
         "provisioning_timeout",
+        "sandbox_checkpoint_in_progress",
         "thread_not_found"
       ],
       "required_protocol_failures": [
@@ -1142,7 +1174,8 @@
         "not_authenticated",
         "previous_response_id_conflict",
         "response_in_progress",
-        "responses_field_unsupported"
+        "responses_field_unsupported",
+        "sandbox_checkpoint_in_progress"
       ],
       "required_protocol_failures": [
         "agent_turn_failed",
@@ -1304,6 +1337,17 @@
         "idempotency_key_reused": "api/crates/layer1-public/src/rest/idempotency.rs# required_empty_command always fingerprints SHA256(empty). Current operation scopes isolate fixed command names and opaque resource IDs, so same-subject/key/scope requests cannot disagree on body fingerprint; pending, recovery and storage failures remain reachable."
       }
     },
+    "POST /api/v1/sandboxes/{id}/service-access": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/sandbox_service_access.rs# Owner-only service access uses the shared durable command admission and typed refusals.",
+      "required_problems": [
+        "forbidden", "hierarchy_service_unavailable", "idempotency_in_flight",
+        "idempotency_key_reused", "idempotency_recovery_required", "invalid_idempotency_key",
+        "invalid_json", "invalid_sandbox_service_access", "json_content_type_required",
+        "missing_idempotency_key", "not_authenticated",
+        "sandbox_not_found", "sandbox_service_access_requires_pause", "store_failed"
+      ]
+    },
     "POST /api/v1/sandboxes/{id}/workspaces": {
       "classification": "openapi",
       "source": "api/crates/layer1-public/src/rest/workspaces.rs# Public handler and typed error projection define the operation contract.",
@@ -1375,6 +1419,15 @@
         "trigger_already_exists",
         "trigger_service_unavailable"
       ]
+    },
+    "POST /api/v1/triggers/public/{public_id}/entry-intent": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/trigger_entry.rs# Same-origin consumption clears bounded browser evidence and returns its acceptance and Placement.",
+      "required_problems": [],
+      "non_problem_statuses": {
+        "403": "api/crates/layer1-public/src/rest/trigger_entry.rs# Missing or cross-origin Origin and cross-site fetch metadata cannot consume click evidence.",
+        "404": "api/crates/layer1-public/src/rest/trigger_entry.rs# Malformed public identifiers return an empty not-found response."
+      }
     },
     "POST /api/v1/triggers/public/{public_id}/launches": {
       "classification": "openapi",

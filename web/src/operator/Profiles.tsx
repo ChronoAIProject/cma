@@ -1,3 +1,4 @@
+import { Presence } from '../ui/Presence';
 import { useCallback, useRef, useState } from 'react';
 import type { AdminProfileSummary, ProfileKind, ProfileVisibility } from '@chronoai/cma-sdk';
 import { Button } from '../ui/Button';
@@ -14,6 +15,7 @@ import {
   useRecords,
 } from './records';
 import { operatorFailure, type OperatorFailure } from './failure';
+import { ReferenceLink } from '../profiles/ReferenceLink';
 
 const defaultIds = new Set(['sbp_default', 'wkp_default', 'agp_default']);
 
@@ -182,16 +184,14 @@ function ProfileRecords({
               <Timestamp value={row.updated_at} />
               <div>
                 <p>
-                  {row.name} {row.retired_at === null ? null : <span>Retired</span>}
+                  <ReferenceLink kind={row.kind} id={row.id} name={row.name} />{' '}
+                  {row.retired_at === null ? null : <span>Retired</span>}
                 </p>
                 <p className="operator-meta">
                   <span>{stateWord(row.kind)}</span>
                   <span>{row.visibility}</span>
-                  <span>
-                    Owner <code>{row.owner}</code>
-                  </span>
+                  <span>Owner {row.owner_name?.trim() || 'Name unavailable'}</span>
                 </p>
-                <code>{row.id}</code>
               </div>
               <div>
                 <Button
@@ -212,34 +212,36 @@ function ProfileRecords({
           );
         })}
       </Records>
-      {target === undefined || !canControl ? null : (
-        <RiskConfirmation
-          open
-          title={`Retire ${target.name}`}
-          description={`Retire ${target.kind} profile ${target.id}. New creation from this profile will be refused; existing resources and published history remain. The operator action is audited.`}
-          acknowledgeLabel="I understand this profile will no longer be available for new resources."
-          confirmLabel={uncertain ? 'Check current state' : 'Retire profile'}
-          busy={busy}
-          dismissible={!busy}
-          failure={
-            failure === undefined
-              ? undefined
-              : `${failure.message}${failure.code === undefined ? '' : ` (${failure.code})`}`
-          }
-          status={
-            uncertain
-              ? 'The previous outcome is unknown. Only a read will be sent next.'
-              : busy
-                ? 'Submitting'
-                : undefined
-          }
-          onCancel={() => {
-            setTarget(undefined);
-            if (uncertain) records.refresh();
-          }}
-          onConfirm={() => void retire()}
-        />
-      )}
+      <Presence>
+        {target === undefined || !canControl ? null : (
+          <RiskConfirmation
+            open
+            title={`Retire ${target.name}`}
+            description={`Retire ${target.kind} profile ${target.name}. New creation from this profile will be refused; existing resources and published history remain. The operator action is audited.`}
+            acknowledgeLabel="I understand this profile will no longer be available for new resources."
+            confirmLabel={uncertain ? 'Check current state' : 'Retire profile'}
+            busy={busy}
+            dismissible={!busy}
+            failure={
+              failure === undefined
+                ? undefined
+                : `${failure.message}${failure.code === undefined ? '' : ` (${failure.code})`}`
+            }
+            status={
+              uncertain
+                ? 'The previous outcome is unknown. Only a read will be sent next.'
+                : busy
+                  ? 'Submitting'
+                  : undefined
+            }
+            onCancel={() => {
+              setTarget(undefined);
+              if (uncertain) records.refresh();
+            }}
+            onConfirm={() => void retire()}
+          />
+        )}
+      </Presence>
     </>
   );
 }

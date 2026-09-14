@@ -20,6 +20,8 @@ export const triggerButtonLabel = enumeration(
 export type TriggerButtonLabel = Output<typeof triggerButtonLabel>;
 export const triggerTheme = enumeration('auto', 'light', 'dark');
 export type TriggerTheme = Output<typeof triggerTheme>;
+export const triggerQuickMessage = object({ name: text, description: text, text });
+export type TriggerQuickMessage = Output<typeof triggerQuickMessage>;
 export const triggerContent = object({
   presentation: object({
     title: text,
@@ -39,6 +41,7 @@ export const triggerContent = object({
     agent: enumeration('resume_existing', 'always_new', 'ask'),
   }),
   first_message: text,
+  quick_messages: optional(array(triggerQuickMessage)),
   consent: object({ always_review: boolean }),
 });
 export type TriggerContent = Output<typeof triggerContent>;

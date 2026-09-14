@@ -15,6 +15,7 @@ fn request() -> ProviderSandboxRequest {
             ("memory".into(), "1024Mi".into()),
         ]),
         timeout: Some(3_600),
+        volumes: Vec::new(),
         metadata: BTreeMap::from([
             (SANDBOX_METADATA.into(), "sandbox-1".into()),
             ("cma/runtime-contract".into(), "2".into()),
@@ -24,11 +25,115 @@ fn request() -> ProviderSandboxRequest {
 }
 
 #[test]
+fn managed_llm_route_follows_pinned_service_scope_during_creation_and_revival() {
+    for configured_service in ["chrono-llm", "chrono-llm-public"] {
+        let deployment = HostedDeployment {
+            upstream_base_url: format!("https://nyx.example/api/v1/proxy/s/{configured_service}"),
+            platform_base_url: "https://nyx.example".into(),
+            ..HostedDeployment::default()
+        };
+        for (services, expected) in [
+            (vec!["chrono-llm", "ornn-api", "api-github"], "chrono-llm"),
+            (
+                vec!["chrono-llm-public", "ornn-api", "api-github"],
+                "chrono-llm-public",
+            ),
+            (vec!["chrono-llm", "chrono-llm-public"], "chrono-llm-public"),
+        ] {
+            let spec = SandboxSpec {
+                sandbox_id: "sandbox-model-scope".into(),
+                reaches: services.into_iter().map(str::to_owned).collect(),
+                ..SandboxSpec::default()
+            };
+            for generation in [1, 2] {
+                let rendered = deployment.render_runtime(&spec, generation).unwrap();
+                assert_eq!(
+                    rendered.env["CHRONO_UPSTREAM_BASE_URL"],
+                    format!("https://nyx.example/api/v1/proxy/s/{expected}")
+                );
+                assert_eq!(
+                    rendered.env["CHRONO_SANDBOX_REACHES"],
+                    spec.reaches.join(",")
+                );
+            }
+            let own = SandboxSpec {
+                own_credential: true,
+                ..spec
+            };
+            assert_eq!(
+                deployment.render(&own).unwrap().env["CHRONO_UPSTREAM_BASE_URL"],
+                ""
+            );
+        }
+    }
+}
+
+#[test]
+fn public_llm_selection_preserves_custom_upstreams() {
+    let spec = SandboxSpec {
+        sandbox_id: "sandbox-model-scope".into(),
+        reaches: vec!["chrono-llm-public".into()],
+        ..SandboxSpec::default()
+    };
+    for upstream in [
+        "https://models.example/v1",
+        "https://other.example/api/v1/proxy/s/chrono-llm",
+        "https://nyx.example/api/v1/proxy/s/custom-model",
+    ] {
+        let deployment = HostedDeployment {
+            upstream_base_url: upstream.into(),
+            platform_base_url: "https://nyx.example".into(),
+            ..HostedDeployment::default()
+        };
+        assert_eq!(
+            deployment.render(&spec).unwrap().env["CHRONO_UPSTREAM_BASE_URL"],
+            upstream
+        );
+    }
+}
+
+#[test]
 fn provider_fingerprint_has_a_stable_golden_encoding() {
     assert_eq!(
         provider_request_fingerprint(&request()).unwrap(),
         "vhTpfKGCsjfSjaATszKeZPGILJ9GDZqjjDNnDtxLpi0"
     );
+}
+
+#[test]
+fn persistent_mount_identity_cannot_be_replayed_with_another_claim_or_path() {
+    use crate::provider::{ProviderPersistentVolumeClaim, ProviderVolume};
+
+    let mut original = request();
+    let without_volume = provider_request_fingerprint(&original).unwrap();
+    original.volumes.push(ProviderVolume {
+        name: "home".into(),
+        pvc: ProviderPersistentVolumeClaim {
+            claim_name: "home-one".into(),
+            create_if_not_exists: false,
+            delete_on_sandbox_termination: false,
+        },
+        mount_path: "/home/cma".into(),
+        read_only: false,
+        sub_path: Some("home".into()),
+    });
+    let expected = provider_request_fingerprint(&original).unwrap();
+    assert_ne!(expected, without_volume);
+    for field in 0..6 {
+        let mut changed = original.clone();
+        let volume = &mut changed.volumes[0];
+        match field {
+            0 => volume.pvc.claim_name = "home-two".into(),
+            1 => volume.name = "different".into(),
+            2 => volume.mount_path = "/different".into(),
+            3 => volume.read_only = true,
+            4 => volume.sub_path = Some("other".into()),
+            _ => volume.sub_path = None,
+        }
+        assert_ne!(provider_request_fingerprint(&changed).unwrap(), expected);
+    }
+    original.volumes[0].pvc.create_if_not_exists = true;
+    assert!(provider_request_fingerprint(&original).is_err());
 }
 
 #[test]

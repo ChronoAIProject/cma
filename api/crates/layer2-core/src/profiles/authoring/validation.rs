@@ -22,6 +22,7 @@ pub(super) fn services(entries: &[AuthoringServiceEntry]) -> bool {
     entries.len() <= 1000
         && entries.iter().all(|entry| {
             text(entry.id.as_str(), 128)
+                && entry.catalog_id.as_deref().is_none_or(|id| text(id, 128))
                 && seen.insert(&entry.id)
                 && text(&entry.name, 256)
                 && description(entry.description.as_deref())

@@ -6,6 +6,8 @@ export const browserOperations = new Set([
   'GET /auth/login',
   'GET /auth/logout',
   'GET /auth/callback',
+  'GET /api/v1/sandboxes/{id}/snapshots/{epoch}/download',
+  'GET /api/v1/triggers/public/{public_id}/open/{placement_id}',
 ]);
 
 /** Navigation URLs are SDK output; browser redirects and callback handling remain composition-only. */
@@ -15,6 +17,22 @@ export async function verifyNavigation(
   response: Response,
 ): Promise<void> {
   const url = new URL(fixture.request.path, client.config.baseUrl);
+  if (fixture.operation === 'GET /api/v1/sandboxes/{id}/snapshots/{epoch}/download') {
+    // The browser follows the owner-authenticated URL supplied in lifecycle.latest_snapshot.
+    expect(url.pathname).toMatch(/^\/api\/v1\/sandboxes\/[^/]+\/snapshots\/\d+\/download$/);
+    if (fixture.response.status >= 400) {
+      expect(await errorFromResponse(response)).toMatchObject({
+        status: fixture.response.status,
+        code: (fixture.response.body as { code: string }).code,
+      });
+    } else {
+      expect(response.headers.get('content-type')).toBe('application/octet-stream');
+      expect(response.headers.get('cache-control')).toBe('private, no-store');
+      expect(response.headers.get('content-disposition')).toContain('attachment;');
+      expect(await response.text()).toBe(fixture.response.body);
+    }
+    return;
+  }
   if (fixture.operation === 'GET /auth/login') {
     const build = () =>
       client.auth.loginUrl({
@@ -32,6 +50,14 @@ export async function verifyNavigation(
     }
   } else if (fixture.operation === 'GET /auth/logout') {
     expect(new URL(client.auth.logoutUrl()).pathname).toBe('/auth/logout');
+  } else if (fixture.operation === 'GET /api/v1/triggers/public/{public_id}/open/{placement_id}') {
+    const parts = url.pathname.split('/');
+    expect(parts[5]).toBeTruthy();
+    expect(parts[6]).toBe('open');
+    expect(parts[7]).toMatch(/^plc_/);
+    expect(fixture.response.headers.location).toBe(`/t/${parts[5]}/${parts[7]}`);
+    expect(fixture.response.headers['cache-control']).toBe('private, no-store');
+    expect(fixture.response.headers['set-cookie']).toContain('Max-Age=0');
   } else {
     expect(fixture.operation).toBe('GET /auth/callback');
     // The callback is consumed by CMA's server, never by an SDK-issued token exchange.

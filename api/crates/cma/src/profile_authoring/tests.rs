@@ -255,7 +255,7 @@ async fn public_authoring_routes_reach_production_adapters_through_core_and_cma_
             "GET",
             "services",
             None,
-            json!([{"id":"research","name":"Research"}]),
+            json!([{"id":"research","catalog_id":"service-a","name":"Research"}]),
         ),
         (
             "GET",
@@ -475,6 +475,7 @@ async fn services_use_owner_authority_and_project_only_catalogue_metadata() {
         result,
         vec![AuthoringServiceEntry {
             id: layer2_core::ServiceId::new("research"),
+            catalog_id: Some("service-uuid".into()),
             name: "Research".into(),
             description: Some("Read papers".into())
         }]

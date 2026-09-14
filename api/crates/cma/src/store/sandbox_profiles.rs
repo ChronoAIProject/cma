@@ -46,6 +46,7 @@ pub(super) fn document(profile: &SandboxProfile) -> Result<Document, ProfileStor
 
 pub(super) fn read_profile(document: &Document) -> Result<SandboxProfile, ProfileStoreError> {
     let profile: SandboxProfile = decode_record(document)?;
+    profile.availability.validate(profile.visibility)?;
     let visibility = record_bson(&profile.visibility).map_err(ProfileStoreError::Corrupt)?;
     let draft_version = signed(profile.draft_version, "sandbox profile draft version")
         .map_err(ProfileStoreError::Corrupt)?;
@@ -91,6 +92,14 @@ impl SandboxProfileStore for MongoProfileStore {
         &self,
         profile: SandboxProfile,
     ) -> Result<(), ProfileStoreError> {
+        profile.availability.validate(profile.visibility)?;
+        if profile.availability.warmup_enabled {
+            return Err(layer2_core::profiles::ProfileError::new(
+                "warmup_requires_published_profile",
+                "availability.warmup_enabled",
+            )
+            .into());
+        }
         if profile.draft_version != 1 || profile.forked_from.is_some() {
             return Err(ProfileStoreError::Conflict);
         }
@@ -119,6 +128,7 @@ impl SandboxProfileStore for MongoProfileStore {
         expected: u64,
         profile: SandboxProfile,
     ) -> Result<(), ProfileStoreError> {
+        profile.availability.validate(profile.visibility)?;
         save_draft(&self.sandbox_profiles, expected, input(&profile)).await
     }
 

@@ -8,6 +8,13 @@ use layer2_core::sandbox::{
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
+#[path = "sandbox_lifecycle_view.rs"]
+mod lifecycle;
+pub use lifecycle::{
+    SandboxBackgroundSaveView, SandboxCheckpointView, SandboxCompletedSnapshotView,
+    SandboxLifecycleEligibilityView, SandboxLifecycleOperationView, SandboxLifecycleView,
+};
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ProfileReferenceView {
@@ -25,6 +32,13 @@ pub struct CreateSandboxRequest {
     pub trust_confirmed: bool,
     #[serde(default)]
     pub commands_digest: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct GrantSandboxServiceAccessRequest {
+    /// Exact NyxID service identifiers authorized by the Sandbox owner.
+    pub services: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, ToSchema)]
@@ -63,11 +77,16 @@ pub struct SandboxLimitsView {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
 pub struct SandboxView {
     pub id: String,
+    pub owner: String,
+    pub owner_name: Option<String>,
     pub name: String,
     #[schema(value_type = String)]
     pub status: SandboxStatus,
     pub profile: ProfileReferenceView,
+    /// Creation scope plus explicitly authorized instance services.
+    pub nyxid_services: Vec<String>,
     pub limits: SandboxLimitsView,
+    pub lifecycle: SandboxLifecycleView,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub runtime_version: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -84,16 +103,25 @@ impl From<&Sandbox> for SandboxView {
     fn from(value: &Sandbox) -> Self {
         Self {
             id: value.id.to_string(),
+            owner: value.owner.0.clone(),
+            owner_name: None,
             name: value.name.clone(),
             status: value.status,
             profile: ProfileReferenceView {
                 id: value.profile.id.to_string(),
                 revision: value.profile.revision,
             },
+            nyxid_services: value
+                .credential
+                .effective_reaches()
+                .iter()
+                .map(ToString::to_string)
+                .collect(),
             limits: SandboxLimitsView {
                 max_workspaces: value.limits.max_workspaces,
                 max_agents_per_workspace: value.limits.max_agents_per_workspace,
             },
+            lifecycle: SandboxLifecycleView::from(value),
             runtime_version: value
                 .runtime
                 .as_ref()

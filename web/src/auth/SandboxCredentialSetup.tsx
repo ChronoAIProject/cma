@@ -1,3 +1,4 @@
+import { Presence, usePresenceExiting } from '../ui/Presence';
 import { useEffect, useRef, useState } from 'react';
 import { createClient } from '@chronoai/cma-sdk';
 import { Button } from '../ui/Button';
@@ -13,6 +14,7 @@ export function SandboxCredentialSetup({
   readonly expectedSubject?: string;
   readonly onChecked: (subject: string) => void;
 }) {
+  const exiting = usePresenceExiting();
   const { state } = useAuth();
   const [owner] = useState(
     expectedSubject ?? (state.status === 'authenticated' ? state.user.id : undefined),
@@ -25,13 +27,13 @@ export function SandboxCredentialSetup({
   const popup = useRef<Window | null>(null);
   const request = useRef<AbortController | undefined>(undefined);
   const login = auth.loginUrl({ returnTo });
-  useEffect(
-    () => () => {
+  useEffect(() => {
+    if (exiting) return;
+    return () => {
       request.current?.abort();
       popup.current?.close();
-    },
-    [],
-  );
+    };
+  }, [exiting]);
   const open = () => {
     popup.current?.close();
     popup.current = window.open('about:blank', '_blank', 'popup,width=520,height=720');
@@ -83,7 +85,7 @@ export function SandboxCredentialSetup({
           {busy ? 'Checking account' : 'Check signed-in account'}
         </Button>
       ) : null}
-      {error === undefined ? null : <p role="alert">{error}</p>}
+      <Presence>{error === undefined ? null : <p role="alert">{error}</p>}</Presence>
     </section>
   );
 }

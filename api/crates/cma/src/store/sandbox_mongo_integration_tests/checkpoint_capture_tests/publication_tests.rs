@@ -62,6 +62,7 @@ async fn active_checkpoint_publication_preserves_the_exact_writer_resume_debt() 
         .publish_sandbox_checkpoint(SandboxCheckpointMutation {
             guard: SandboxMutationGuard::capture(&current),
             agents: vec![SandboxCheckpointAgentGuard::capture(&agent)],
+            nonblocking: false,
             checkpoint: checkpoint.clone(),
             sandbox: next.clone(),
             appended_at: NOW.into(),

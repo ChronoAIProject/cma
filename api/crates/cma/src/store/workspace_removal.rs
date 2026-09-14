@@ -54,7 +54,7 @@ pub(super) async fn apply_removal(
 
     let expected = workspace.revision;
     lock_workspace(store, id, expected, session).await?;
-    reject_live_agents(store, id, session).await?;
+    validate_agents(store, &workspace, session).await?;
     workspace
         .transition(WorkspaceStatus::Removing, now.to_string(), None)
         .map_err(|error| ApplyError::Domain(SandboxStoreError::Corrupt(error.to_string())))?;
@@ -99,14 +99,14 @@ async fn lock_workspace(
     }
 }
 
-async fn reject_live_agents(
+async fn validate_agents(
     store: &MongoSandboxStore,
-    id: &WorkspaceId,
+    workspace: &Workspace,
     session: &mut mongodb::ClientSession,
 ) -> Result<(), ApplyError> {
     let mut cursor = store
         .agents
-        .find(doc! { "workspace_id": id.as_str() })
+        .find(doc! { "workspace_id": workspace.id.as_str() })
         .session(&mut *session)
         .await
         .map_err(ApplyError::Driver)?;
@@ -117,10 +117,13 @@ async fn reject_live_agents(
         .map_err(ApplyError::Driver)?;
     for document in documents {
         let agent = read_agent(&document).map_err(ApplyError::Domain)?;
-        if agent.status.is_live() {
-            return Err(ApplyError::Domain(
-                SandboxStoreError::WorkspaceHasLiveAgents,
-            ));
+        if agent.workspace_id != workspace.id
+            || agent.owner != workspace.owner
+            || agent.sandbox_id != workspace.sandbox_id
+        {
+            return Err(ApplyError::Domain(SandboxStoreError::Corrupt(
+                "workspace child lineage is inconsistent".into(),
+            )));
         }
     }
     Ok(())

@@ -26,6 +26,7 @@ pub struct MongoStores {
     #[allow(dead_code)] // Opened and validated here; #824 composes the public routes.
     pub trigger_definitions: Arc<MongoTriggerDefinitionStore>,
     pub auth: Arc<MongoAuthStore>,
+    pub(crate) codex_subscriptions: Arc<super::MongoSubscriptionStore>,
     pub activity: Arc<MongoActivityStore>,
     pub users: Arc<MongoUserDirectoryStore>,
     pub settings: Arc<MongoPlatformSettingsStore>,
@@ -42,13 +43,16 @@ impl MongoStores {
         auth_encryption_key: &AuthEncryptionKey,
         activity_retention: Duration,
         checkpoint_storage: Arc<dyn super::CheckpointBlobStore>,
+        runtime: (&str, Option<&layer3_adapter::HomeVolumePolicy>),
     ) -> Result<Self, StoreError> {
         let client = Client::with_uri_str(uri)
             .await
             .map_err(|error| StoreError::Unavailable(format!("connect to MongoDB: {error}")))?;
-        let sandbox_model = Arc::new(
-            MongoSandboxStore::open_with_storage(&client, database, checkpoint_storage).await?,
-        );
+        let mut sandbox_model =
+            MongoSandboxStore::open_with_storage(&client, database, checkpoint_storage).await?;
+        sandbox_model.warm_runtime_version = Some(runtime.0.to_owned());
+        sandbox_model.warm_home_policy = runtime.1.cloned();
+        let sandbox_model = Arc::new(sandbox_model);
         let checkpoint_objects = Arc::new(sandbox_model.checkpoint_objects.clone());
         let sandbox_profiles = Arc::new(MongoProfileStore::open(&client, database).await?);
         let sandbox_credentials = Arc::new(
@@ -62,6 +66,10 @@ impl MongoStores {
         let auth = Arc::new(
             MongoAuthStore::open(&client, database, deployment, auth_encryption_key).await?,
         );
+        let codex_subscriptions = Arc::new(
+            super::MongoSubscriptionStore::open(&client, database, deployment, auth_encryption_key)
+                .await?,
+        );
         let activity =
             Arc::new(MongoActivityStore::open(&client, database, activity_retention).await?);
         let users = Arc::new(MongoUserDirectoryStore::open(&client, database).await?);
@@ -74,6 +82,7 @@ impl MongoStores {
             checkpoint_objects,
             trigger_definitions,
             auth,
+            codex_subscriptions,
             activity,
             users,
             settings,

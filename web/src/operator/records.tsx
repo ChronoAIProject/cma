@@ -1,4 +1,5 @@
 import { useEffect, useState, type ReactNode } from 'react';
+import { Presence } from '../ui/Presence';
 import { Button } from '../ui/Button';
 import {
   IconChevronLeftOutline14,
@@ -61,21 +62,25 @@ export function useRecords<T>(
 }
 
 export function FailureNotice({ failure }: { readonly failure?: OperatorFailure }) {
-  return failure === undefined ? null : (
-    <div className="operator-failure" role="alert">
-      <p>{failure.message}</p>
-      {failure.field === undefined ? null : (
-        <p>
-          Field: <code>{failure.field}</code>
-        </p>
+  return (
+    <Presence>
+      {failure === undefined ? null : (
+        <div className="operator-failure" role="alert">
+          <p>{failure.message}</p>
+          {failure.field === undefined ? null : (
+            <p>
+              Field: <code>{failure.field}</code>
+            </p>
+          )}
+          {failure.code === undefined ? null : <code>{failure.code}</code>}
+          {failure.requestId === undefined ? null : (
+            <p>
+              Request <code>{failure.requestId}</code>
+            </p>
+          )}
+        </div>
       )}
-      {failure.code === undefined ? null : <code>{failure.code}</code>}
-      {failure.requestId === undefined ? null : (
-        <p>
-          Request <code>{failure.requestId}</code>
-        </p>
-      )}
-    </div>
+    </Presence>
   );
 }
 

@@ -14,6 +14,86 @@ const MAX_ARCHIVE_BYTES: usize = 64 * 1024 * 1024;
 const MAX_EXPANDED_BYTES: u64 = 256 * 1024 * 1024;
 const MAX_ENTRIES: usize = 4_096;
 
+pub(crate) fn cache_archive(
+    config: &crate::config::RuntimeConfig,
+    archive: &layer3_adapter::SkillArchive,
+) -> Result<()> {
+    archive.validate().map_err(|_| {
+        RuntimeError::rejected(
+            "skill_checksum_mismatch",
+            "cached skill size or digest is invalid",
+        )
+    })?;
+    let root = config.state_root.join("warm-skills");
+    crate::fs_durability::create_dir_all(&root).map_err(extract_io("create warm skill cache"))?;
+    if !std::fs::symlink_metadata(&root).is_ok_and(|entry| entry.is_dir() && !entry.is_symlink()) {
+        return Err(RuntimeError::rejected(
+            "skill_cache_invalid",
+            "skill cache must be a real directory",
+        ));
+    }
+    let destination = root.join(&archive.sha256);
+    if let Ok(entry) = std::fs::symlink_metadata(&destination) {
+        if !entry.is_file() || entry.is_symlink() {
+            return Err(RuntimeError::rejected(
+                "skill_cache_invalid",
+                "skill cache entry must be a regular file",
+            ));
+        }
+        if std::fs::read(&destination).is_ok_and(|bytes| bytes == archive.bytes) {
+            return Ok(());
+        }
+    }
+    // Control operations are serialized. Interrupted writes are replaced only
+    // after the entire content-addressed request has passed checksum validation.
+    crate::fs_durability::write(&destination, &archive.bytes)
+        .map_err(extract_io("cache public skill archive"))
+}
+
+pub(crate) async fn install_prepared(
+    config: &crate::config::RuntimeConfig,
+    client: &reqwest::Client,
+    skill: &AgentSkill,
+    destination: &Path,
+) -> Result<()> {
+    require_sha256(&skill.archive_sha256)?;
+    let path = config
+        .state_root
+        .join("warm-skills")
+        .join(&skill.archive_sha256);
+    match std::fs::symlink_metadata(&path) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            install(client, config.nyxid_url.as_deref(), skill, destination).await
+        }
+        Ok(entry)
+            if entry.is_file()
+                && !entry.is_symlink()
+                && entry.len() <= MAX_ARCHIVE_BYTES as u64 =>
+        {
+            let bytes = std::fs::read(path).map_err(extract_io("read cached skill archive"))?;
+            if hex(&Sha256::digest(&bytes)) != skill.archive_sha256 {
+                return Err(RuntimeError::rejected(
+                    "skill_checksum_mismatch",
+                    "cached public skill changed",
+                ));
+            }
+            let destination = destination.to_owned();
+            tokio::task::spawn_blocking(move || extract(&bytes, &destination))
+                .await
+                .map_err(|_| {
+                    RuntimeError::unavailable(
+                        "skill_extract_failed",
+                        "cached skill extraction failed",
+                    )
+                })?
+        }
+        _ => Err(RuntimeError::rejected(
+            "skill_cache_invalid",
+            "cached skill entry is not usable",
+        )),
+    }
+}
+
 pub(crate) async fn install(
     client: &reqwest::Client,
     nyxid_url: Option<&str>,

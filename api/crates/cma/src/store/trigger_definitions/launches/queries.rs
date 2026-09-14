@@ -121,6 +121,41 @@ pub(super) async fn list_owner(
     })
 }
 
+pub(super) async fn source_launch(
+    store: &MongoTriggerDefinitionStore,
+    owner: &SubjectId,
+    agent_id: &layer2_core::AgentId,
+    trigger: Option<&TriggerId>,
+) -> Result<Option<Launch>, LaunchStoreError> {
+    let mut query = doc! {
+        "owner": owner.as_str(),
+        "record.resolution.agent.id": agent_id.as_str(),
+    };
+    if let Some(trigger) = trigger {
+        query.insert("trigger_id", trigger.as_str());
+    }
+    let document = store
+        .launch_data
+        .launches
+        .find_one(query)
+        .sort(doc! { "created_at": 1, "_id": 1 })
+        .await
+        .map_err(unavailable)?;
+    let Some(document) = document else {
+        return Ok(None);
+    };
+    let launch = read_launch(&document)?.launch;
+    if launch.owner != *owner
+        || launch.resolution.agent.id() != Some(agent_id)
+        || trigger.is_some_and(|id| *id != launch.trigger_id)
+    {
+        return Err(corrupt(
+            "Agent source query crossed its owned Agent boundary",
+        ));
+    }
+    Ok(Some(launch))
+}
+
 pub(super) async fn placement_stats(
     store: &MongoTriggerDefinitionStore,
     trigger_id: &TriggerId,

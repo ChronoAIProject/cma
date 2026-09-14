@@ -1,4 +1,6 @@
 # syntax=docker/dockerfile:1
+# CMA_MODEL_PROXY_PLACEHOLDER is supplied only in managed Agent launch plans,
+# not in the Sandbox environment, so existing runtime identities stay stable.
 # Bot-pod image for a contract-3 CMA Sandbox.
 #
 # The sandbox provider schedules this image and starts the kernel-neutral Layer
@@ -17,6 +19,48 @@ RUN --mount=type=cache,id=cma-runtime-registry,target=/usr/local/cargo/registry,
     && mkdir /out \
     && cp /build/target/release/layer4-runtime /out/layer4-runtime
 
+# Build the upstream GitHub release with its one vulnerable indirect module
+# refreshed. No CLI source or transport code is patched.
+FROM debian:trixie-slim@sha256:d7e12182ce18b85b93007c1dedf31f2d29e01ccf3182cc4017c709b6259bc132 AS github-build
+ARG TARGETARCH
+ARG GH_VERSION=2.100.0
+ARG GH_SOURCE_COMMIT=45437bc7eeeb3359bbfddd1742f79de7652fd3e2
+ARG GH_SOURCE_SHA256=e16749bc0d99dc0633a3d5ebadf48ffff1c24beb1ce83e8f6a71bb64ce477e9a
+ARG GH_GO_VERSION=1.26.8
+ARG GH_GO_SHA256_AMD64=d0f743b33e8d8945e6b1f432edd15785c70507121d6e2a723b21285eddf8b57b
+ARG GH_GO_SHA256_ARM64=211ffced9dcb9633a55eac6364816ec0ddd951389a740e88fa8b3337971bdda0
+ARG GH_X_MOD_VERSION=0.40.0
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates curl \
+    && rm -rf /var/lib/apt/lists/*
+RUN set -eux; \
+    case "${TARGETARCH}" in \
+      amd64) want="${GH_GO_SHA256_AMD64}" ;; \
+      arm64) want="${GH_GO_SHA256_ARM64}" ;; \
+      *) echo "unsupported TARGETARCH: ${TARGETARCH}" >&2; exit 1 ;; \
+    esac; \
+    curl -fsSL -o /tmp/go.tar.gz "https://go.dev/dl/go${GH_GO_VERSION}.linux-${TARGETARCH}.tar.gz"; \
+    echo "${want}  /tmp/go.tar.gz" | sha256sum -c -; \
+    tar xzf /tmp/go.tar.gz -C /usr/local; \
+    rm /tmp/go.tar.gz; \
+    mkdir /source; \
+    curl -fsSL -o /tmp/gh-source.tar.gz "https://github.com/cli/cli/archive/${GH_SOURCE_COMMIT}.tar.gz"; \
+    echo "${GH_SOURCE_SHA256}  /tmp/gh-source.tar.gz" | sha256sum -c -; \
+    tar xzf /tmp/gh-source.tar.gz -C /source --strip-components=1; \
+    rm /tmp/gh-source.tar.gz
+WORKDIR /source
+ENV GOTOOLCHAIN=local CGO_ENABLED=0
+RUN --mount=type=cache,id=cma-gh-modules,target=/root/go/pkg/mod,sharing=locked \
+    --mount=type=cache,id=cma-gh-build-${TARGETARCH},target=/root/.cache/go-build,sharing=locked \
+    /usr/local/go/bin/go mod edit -require="golang.org/x/mod@v${GH_X_MOD_VERSION}" \
+    && /usr/local/go/bin/go mod download golang.org/x/mod \
+    && /usr/local/go/bin/go mod download \
+    && /usr/local/go/bin/go mod verify \
+    && test "$(/usr/local/go/bin/go list -m -f '{{.Version}}' golang.org/x/mod)" = "v${GH_X_MOD_VERSION}" \
+    && /usr/local/go/bin/go build -mod=readonly -trimpath \
+        -ldflags="-s -w -X github.com/cli/cli/v2/internal/build.Version=${GH_VERSION} -X github.com/cli/cli/v2/internal/build.Date=2026-09-09" \
+        -o /out/gh ./cmd/gh
+
 # The NyxID CLI is published as a *-unknown-linux-gnu binary.
 FROM debian:trixie-slim@sha256:d7e12182ce18b85b93007c1dedf31f2d29e01ccf3182cc4017c709b6259bc132 AS runtime
 
@@ -26,7 +70,8 @@ ARG CODEX_NATIVE_SHA256_AMD64=cb0a15567e9a60a5820d54b0f6ae86d504dc3805c1eab21a47
 ARG CODEX_NATIVE_SHA256_ARM64=e23d0be344d2496986c985cd3db61e6f649b1ddd900e6afc1b5aaabbffcbb4e2
 ARG CODEX_LAUNCHER_SHA256=134063e133f0b4244fa3b251acf973d4fe4b4aeeacbdc135211bf480f59f1477
 ARG CODEX_ACP_VERSION=1.4.0
-ARG CODEX_ACP_SHA256=ba74f54f7c89ba61858e544eb3afefbb0c1b90f2b23a136664828816a8430dbf
+ARG CODEX_ACP_UPSTREAM_SHA256=ba74f54f7c89ba61858e544eb3afefbb0c1b90f2b23a136664828816a8430dbf
+ARG CODEX_ACP_SHA256=d43c6cbda951f3f8f08a1ef1063803e703bf20c4167b2b2cd876c6f5a5a4cb0a
 
 # Node is downloaded from upstream and verified against digests recorded here.
 # Both Codex packages are JavaScript launchers for pinned native/runtime code.
@@ -46,14 +91,23 @@ RUN apt-get update \
         bubblewrap \
         ca-certificates \
         curl \
+        build-essential \
         git \
         gzip \
         libdbus-1-3 \
+        libgmp-dev \
+        libgssapi-krb5-2 \
+        libicu76 \
+        libssl3t64 \
+        libunwind8 \
         ncurses-term \
         python3 \
+        ripgrep \
         tar \
         unzip \
         xz-utils \
+        zlib1g \
+        zstd \
     && git --version \
     && rm -rf /var/lib/apt/lists/*
 
@@ -105,7 +159,7 @@ RUN set -eux; \
     test "$(node -p "require('/usr/local/lib/node_modules/@agentclientprotocol/codex-acp/package.json').version")" = "${CODEX_ACP_VERSION}"; \
     test "$(codex --version)" = "codex-cli ${CODEX_VERSION}"; \
     echo "${CODEX_LAUNCHER_SHA256}  /usr/local/lib/node_modules/@openai/codex/bin/codex.js" | sha256sum -c -; \
-    echo "${CODEX_ACP_SHA256}  /usr/local/lib/node_modules/@agentclientprotocol/codex-acp/dist/index.js" | sha256sum -c -; \
+    echo "${CODEX_ACP_UPSTREAM_SHA256}  /usr/local/lib/node_modules/@agentclientprotocol/codex-acp/dist/index.js" | sha256sum -c -; \
     case "${TARGETARCH}" in \
       amd64) native="/usr/local/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl/bin/codex"; want="${CODEX_NATIVE_SHA256_AMD64}" ;; \
       arm64) native="/usr/local/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-arm64/vendor/aarch64-unknown-linux-musl/bin/codex"; want="${CODEX_NATIVE_SHA256_ARM64}" ;; \
@@ -131,6 +185,12 @@ RUN set -eux; \
     rm -rf /tmp/nyxid-cli; \
     nyxid --version
 
+# Use the genuine upstream CLI. The supervisor supplies an inert GH_TOKEN and
+# its local Unix-socket transport only when api-github is in the Sandbox grant;
+# the scoped NyxID credential remains in the supervisor, outside the home.
+COPY --from=github-build /out/gh /usr/local/bin/gh
+RUN gh --version
+
 # Baseline skills are part of the runtime contract, so their source revisions
 # and source archives are pinned just like executable dependencies. Additional
 # skills are materialized per agent by the supervisor.
@@ -146,7 +206,7 @@ RUN set -eux; \
         /home/cma/.cma/provider/codex \
         /home/cma/.cma/checkpoints \
         /home/cma/.codex/skills \
-        /var/lib/cma-runtime; \
+        /var/lib/cma-runtime /var/lib/cma-transfer; \
     mkdir /tmp/baseline-skills; \
     curl -fsSL -o /tmp/nyxid-source.tar.gz \
         "https://github.com/ChronoAIProject/NyxID/archive/${NYXID_SKILL_COMMIT}.tar.gz"; \
@@ -164,10 +224,18 @@ RUN set -eux; \
     test -s /home/cma/.codex/skills/nyxid/SKILL.md; \
     test -s /home/cma/.codex/skills/ornn-agent-manual-cli/SKILL.md; \
     test "$(find /home/cma/.codex/skills -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | sort | paste -sd, -)" = "nyxid,ornn-agent-manual-cli"; \
-    chown -R 10001:10001 /home/cma /var/lib/cma-runtime; \
+    chown -R 10001:10001 /home/cma /var/lib/cma-runtime /var/lib/cma-transfer; \
     rm -rf /tmp/baseline-skills /tmp/nyxid-source.tar.gz /tmp/ornn-source.tar.gz
 
 COPY --from=build /out/layer4-runtime /usr/local/bin/layer4-runtime
+
+# Persist untouched provider conversations before publishing an Agent as Ready.
+# This exact-source patch and restart proof use no credential or model request.
+RUN --mount=type=bind,source=api/crates/layer3-adapter/src/codex,target=/tmp/cma-codex-source,readonly \
+    node /tmp/cma-codex-source/persist_conversations.cjs \
+    && node /tmp/cma-codex-source/subscription_auth.cjs \
+    && echo "${CODEX_ACP_SHA256}  /usr/local/lib/node_modules/@agentclientprotocol/codex-acp/dist/index.js" | sha256sum -c - \
+    && node --test /tmp/cma-codex-source/persist_conversations.test.cjs /tmp/cma-codex-source/subscription_auth.test.cjs
 
 # Refresh the final filesystem after expensive dependency layers are cached.
 # CI and release builds vary this value so cached OS packages cannot hide a
@@ -178,9 +246,36 @@ RUN test -n "${OS_SECURITY_REFRESH}" \
     && apt-get upgrade -y \
     && rm -rf /var/lib/apt/lists/*
 
+# Login shells keep the Sandbox Profile PATH even with a distinct Agent home.
+# Match the pinned Debian stanza exactly so base-file drift fails the build.
+RUN node <<'NODE'
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const profile = fs.readFileSync('/etc/profile', 'utf8');
+const defaults = [
+  'if [ "$(id -u)" -eq 0 ]; then',
+  '  PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"',
+  'else',
+  '  PATH="/usr/local/bin:/usr/bin:/bin:/usr/local/games:/usr/games"',
+  'fi',
+  'export PATH',
+].join('\n');
+assert.equal(profile.split(defaults).length, 2, 'unexpected Debian login PATH defaults');
+const fallback = [
+  'if [ -z "${PATH:-}" ]; then',
+  ...defaults.split('\n').slice(0, -1).map((line) => `  ${line.replace('$(id -u)', '$(/usr/bin/id -u)')}`),
+  'fi',
+  'export PATH',
+].join('\n');
+fs.writeFileSync('/etc/profile', profile.replace(defaults, fallback));
+NODE
+
 WORKDIR /home/cma
 USER 10001:10001
 ENV HOME=/home/cma \
+    CHRONO_RUNTIME_GENERATION=1 \
+    CHRONO_RUNTIME_HOME_IDENTITY="" \
+    PATH=/home/cma/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
     CHRONO_RUNTIME_BIND=0.0.0.0:9090 \
     TERM=xterm-256color
 EXPOSE 9090

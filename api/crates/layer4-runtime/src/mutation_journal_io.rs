@@ -127,6 +127,7 @@ pub(super) fn reconcile(files: Vec<JournalFile>) -> Result<Vec<JournalFile>> {
 fn same_operation(left: &Record, right: &Record) -> bool {
     left.version == right.version
         && left.sandbox_id == right.sandbox_id
+        && left.runtime_generation == right.runtime_generation
         && left.operation_id == right.operation_id
         && left.request_sha256 == right.request_sha256
         && left.payload_sha256 == right.payload_sha256

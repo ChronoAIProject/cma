@@ -102,7 +102,7 @@ async fn lifecycle_commands_are_owner_bound_gap_free_and_concurrently_idempotent
     assert!(matches!(
         revived.sandbox.lifecycle.operation,
         Some(SandboxLifecycleOperation::Revive {
-            checkpoint_epoch: 7,
+            checkpoint_epoch: Some(7),
             ..
         })
     ));
@@ -590,6 +590,7 @@ async fn claimed_pause_fixture(store: &MongoSandboxStore, suffix: &str) -> (Sand
     let mut value = sandbox(&format!("sbx_lifecycle_{suffix}"));
     value.name = format!("lifecycle-{suffix}");
     value.runtime = Some(RuntimeBinding {
+        boot_id: None,
         runtime_id: format!("runtime-{suffix}"),
         runtime_version: "image-v1".into(),
         provision_generation: Some(1),
@@ -706,6 +707,7 @@ fn checkpoint_mutation(
             .iter()
             .map(SandboxCheckpointAgentGuard::capture)
             .collect(),
+        nonblocking: false,
         checkpoint,
         sandbox: next,
         appended_at: NOW.into(),

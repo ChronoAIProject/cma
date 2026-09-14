@@ -214,6 +214,34 @@ fn apply_revive(
     current: Sandbox,
     command: &SandboxLaunchCommand,
 ) -> Result<PendingApplication, SandboxStoreError> {
+    if current.status == SandboxStatus::Pausing {
+        let mut sandbox = current.clone();
+        if sandbox
+            .request_pause_cancellation(command.requested_at.clone())
+            .is_ok()
+        {
+            return Ok(PendingApplication::Commit {
+                expected_revision: current.revision,
+                sandbox,
+                event: SandboxEventKind::WorkStepCompleted {
+                    step: SandboxWorkStep::RunLifecycleOperation,
+                },
+            });
+        }
+        if matches!(
+            current.lifecycle.operation,
+            Some(SandboxLifecycleOperation::Pause {
+                phase: crate::sandbox::SandboxPausePhase::ResumeWriters,
+                ..
+            })
+        ) {
+            return Ok(accepted(
+                current,
+                SandboxLaunchCommandDisposition::AlreadyScheduled,
+            ));
+        }
+        return Ok(PendingApplication::NotEligible(current));
+    }
     if current.status == SandboxStatus::Reviving
         && current.work.step == SandboxWorkStep::RunLifecycleOperation
         && current.has_structurally_valid_work()
@@ -222,6 +250,19 @@ fn apply_revive(
             Some(SandboxLifecycleOperation::Revive { .. })
         )
     {
+        let mut sandbox = current.clone();
+        if sandbox
+            .cancel_recovery_pause(&command.requested_at)
+            .map_err(|error| SandboxStoreError::Corrupt(error.to_string()))?
+        {
+            return Ok(PendingApplication::Commit {
+                expected_revision: current.revision,
+                sandbox,
+                event: SandboxEventKind::WorkStepCompleted {
+                    step: SandboxWorkStep::RunLifecycleOperation,
+                },
+            });
+        }
         return Ok(accepted(
             current,
             SandboxLaunchCommandDisposition::AlreadyScheduled,

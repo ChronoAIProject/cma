@@ -6,7 +6,7 @@ use mongodb::bson::doc;
 use mongodb::ClientSession;
 
 use super::super::sandbox_mongo::{signed, MongoSandboxStore, DOCUMENT_SCHEMA_VERSION};
-use super::super::sandboxes::read_sandbox;
+use super::super::sandboxes::{read_sandbox, sandbox_replacement_fields};
 use super::ApplyError;
 
 pub(super) async fn validate_and_fence(
@@ -30,9 +30,20 @@ pub(super) async fn validate_and_fence(
     };
     validate_agent_conversation_admission(current, parent.as_ref(), mutation)
         .map_err(ApplyError::Domain)?;
-    let Some(parent) = parent else {
+    let Some(mut parent) = parent else {
         return Ok(());
     };
+    let expected_revision = parent.revision;
+    let mut update = doc! { "$inc": { "agent_conversation_admission_fence": 1_i64 } };
+    if parent
+        .cancel_recovery_pause(&mutation.appended_at)
+        .map_err(|error| ApplyError::Domain(SandboxStoreError::Corrupt(error.to_string())))?
+    {
+        update.insert(
+            "$set",
+            sandbox_replacement_fields(&parent).map_err(ApplyError::Domain)?,
+        );
+    }
     // A real parent write serializes the phase check with maintenance and lifecycle commits.
     let locked = store
         .sandboxes
@@ -40,10 +51,10 @@ pub(super) async fn validate_and_fence(
             doc! {
                 "_id": parent.id.as_str(),
                 "document_schema_version": DOCUMENT_SCHEMA_VERSION,
-                "revision": signed(parent.revision, "Agent admission Sandbox revision")
+                "revision": signed(expected_revision, "Agent admission Sandbox revision")
                     .map_err(|_| ApplyError::Domain(SandboxStoreError::Conflict))?,
             },
-            doc! { "$inc": { "agent_conversation_admission_fence": 1_i64 } },
+            update,
         )
         .session(session)
         .await

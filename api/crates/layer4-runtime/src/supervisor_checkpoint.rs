@@ -110,6 +110,18 @@ impl Supervisor {
                 },
             ));
         };
+        // The retired token cannot replay a hold/export. Release its potentially
+        // multi-gigabyte local archive before waking the Sandbox's processes.
+        // A failed export also retires this token and will recapture under new
+        // authority; its incomplete remote upload has separate durable cleanup.
+        if let Err(error) = self
+            .checkpoint
+            .discard(&existing.receipt.checkpoint.object_reference)
+            .await
+        {
+            *held = Some(existing);
+            return Err(error);
+        }
         if let Err(error) = existing.fence.resume() {
             *held = Some(existing);
             return Err(RuntimeError::unavailable("writer_resume_failed", error));
@@ -150,6 +162,13 @@ impl Supervisor {
                 "restore request does not match the inherited installation checkpoint",
             ));
         }
+        let already_restored = crate::persistent_home::begin_restore(&self.config, request)?;
+        if already_restored {
+            // A retried transport may have reimported the archive. Acknowledge
+            // the durable completion while preserving all subsequent user work.
+            self.checkpoint.discard(&request.object_reference).await?;
+            return Ok(ResponseFrame::Restore(Acknowledgement::default()));
+        }
         if !self.agents.read().await.is_empty() {
             return Err(RuntimeError::rejected(
                 "restore_agents_open",
@@ -159,6 +178,11 @@ impl Supervisor {
         let mut fence = WriterFence::quiesce([], self.writer_boundary)
             .map_err(|error| RuntimeError::unavailable("writer_fence_failed", error))?;
         self.checkpoint.restore(request).await?;
+        // The durable remote recovery point remains available for retries.
+        // Keeping its local compressed transfer after extraction needlessly
+        // competes with restored files and the Agents that are about to start.
+        self.checkpoint.discard(&request.object_reference).await?;
+        crate::persistent_home::complete_restore(&self.config, request)?;
         fence
             .resume()
             .map_err(|error| RuntimeError::unavailable("writer_resume_failed", error))?;

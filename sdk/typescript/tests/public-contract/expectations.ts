@@ -85,7 +85,9 @@ export function expectation(
     if (fixture.request.rawBodyRepeat !== undefined && fixture.response.status === 413) {
       assert.equal(
         body.code,
-        fixture.id === 'authoring-resolve-body-too-large' ? 'invalid_json' : 'request_too_large',
+        ['authoring-resolve-body-too-large', 'sandbox-service-access-oversize'].includes(fixture.id)
+          ? 'invalid_json'
+          : 'request_too_large',
       );
       assert(Buffer.byteLength(fixture.request.rawBody, 'utf8') > 2_097_152);
       return 'raw-wire-only';

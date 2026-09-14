@@ -122,7 +122,14 @@ pub(super) async fn save_draft<T: Serialize>(
     filter.insert("record.forked_from", optional_field(&record, "forked_from"));
     filter.insert("record.retired_at", Bson::Null);
 
-    let update = doc! {
+    if input.kind == "sandbox"
+        && record
+            .get_document("availability")
+            .is_ok_and(|policy| matches!(policy.get_bool("warmup_enabled"), Ok(true)))
+    {
+        filter.insert("last_revision", doc! { "$gt": 0_i64 });
+    }
+    let mut update = doc! {
         "$set": {
             "name": input.name,
             "description": input.description,
@@ -136,6 +143,15 @@ pub(super) async fn save_draft<T: Serialize>(
             "record.updated_at": required_field(&record, "updated_at")?,
         }
     };
+    if input.kind == "sandbox" {
+        update
+            .get_document_mut("$set")
+            .map_err(|error| ProfileStoreError::Corrupt(error.to_string()))?
+            .insert(
+                "record.availability",
+                required_field(&record, "availability")?,
+            );
+    }
     let result = collection
         .update_one(filter, update)
         .await

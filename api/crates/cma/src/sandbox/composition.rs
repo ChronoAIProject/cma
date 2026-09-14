@@ -3,8 +3,8 @@
 use std::sync::Arc;
 
 use layer2_core::sandbox::{
-    AgentOperationService, AgentTitleService, AgentUpdateRecorder, DurableAgentUpdateRecorder,
-    SandboxPolicySource, WorkspaceService,
+    AgentOperationService, AgentService, AgentTitleService, AgentUpdateRecorder,
+    DurableAgentUpdateRecorder, SandboxPolicySource, WorkspaceService,
 };
 use layer3_adapter::SandboxAdapter;
 
@@ -38,6 +38,7 @@ pub(crate) struct SandboxLifecycleDependencies {
     pub checkpoints: Arc<dyn CheckpointObjectPurger>,
     pub registry: Arc<LiveAgentRegistry>,
     pub workspaces: Arc<WorkspaceService>,
+    pub agents: Arc<AgentService>,
     pub operations: Arc<AgentOperationService>,
     pub policy: Arc<dyn SandboxPolicySource>,
     pub skills: Arc<dyn AgentSkillResolver>,
@@ -45,14 +46,17 @@ pub(crate) struct SandboxLifecycleDependencies {
 }
 
 pub(crate) struct SandboxLifecycleConfig {
+    pub home_policy: Option<layer3_adapter::HomeVolumePolicy>,
     pub execution: layer2_core::sandbox::ProvisioningExecution,
     pub holder: String,
     pub deployment_id: String,
     pub runtime_version: String,
     pub title_model: String,
+    pub checkpoint_export: Option<super::checkpoint_maintenance::ExportDependencies>,
 }
 
 pub(crate) struct SandboxLifecycleComposition {
+    warmup: super::warmup::WarmSandboxWorker,
     reconciliation: SandboxReconciler,
     sandbox: SandboxScheduler,
     workspace: SandboxScheduler,
@@ -68,19 +72,44 @@ impl SandboxLifecycleComposition {
         dependencies: SandboxLifecycleDependencies,
         config: SandboxLifecycleConfig,
     ) -> Self {
+        let warmup = super::warmup::WarmSandboxWorker {
+            skills: dependencies.skills.clone(),
+            home_policy: config.home_policy.clone(),
+            store: dependencies.store.clone(),
+            adapter: dependencies.adapter.clone(),
+            policy: dependencies.policy.clone(),
+            execution: config.execution,
+            deployment_id: config.deployment_id.clone(),
+            runtime_version: config.runtime_version.clone(),
+        };
         let reconciliation = SandboxReconciler::new(
             dependencies.store.clone(),
             Arc::clone(&dependencies.adapter),
             Arc::clone(&dependencies.policy),
             config.deployment_id.clone(),
             config.runtime_version.clone(),
+        )
+        .with_profile_agents(Arc::clone(&dependencies.agents));
+        let checkpoints = SandboxScheduler::for_checkpoints(
+            if let Some(export) = config.checkpoint_export.clone() {
+                SandboxCheckpointMaintenance::with_export_dependencies(
+                    dependencies.store.clone(),
+                    Arc::clone(&dependencies.adapter),
+                    config.deployment_id.clone(),
+                    format!("{}:checkpoint", config.holder),
+                    Arc::clone(&dependencies.policy),
+                    export,
+                )
+            } else {
+                SandboxCheckpointMaintenance::with_policy_source(
+                    dependencies.store.clone(),
+                    Arc::clone(&dependencies.adapter),
+                    config.deployment_id.clone(),
+                    format!("{}:checkpoint", config.holder),
+                    Arc::clone(&dependencies.policy),
+                )
+            },
         );
-        let checkpoints = SandboxScheduler::for_checkpoints(SandboxCheckpointMaintenance::new(
-            dependencies.store.clone(),
-            Arc::clone(&dependencies.adapter),
-            config.deployment_id.clone(),
-            format!("{}:checkpoint", config.holder),
-        ));
         let updates = DurableAgentUpdateRecorder::new(Arc::clone(&dependencies.store));
         let registry = Arc::clone(&dependencies.registry);
         let titles = AgentTitleScheduler::new(AgentTitleWorker::new(
@@ -143,10 +172,12 @@ impl SandboxLifecycleComposition {
                 config.runtime_version,
                 dependencies.policy,
             )
-            .with_execution(config.execution),
+            .with_execution(config.execution)
+            .with_home_policy(config.home_policy),
         );
 
         Self {
+            warmup,
             checkpoint_cleanup: SandboxScheduler::for_checkpoint_cleanup(
                 dependencies.checkpoint_objects,
             ),
@@ -172,6 +203,7 @@ impl SandboxLifecycleComposition {
     }
 
     pub(crate) fn spawn(self, shutdown: &mut ShutdownCoordinator) {
+        shutdown.push(self.warmup.spawn(shutdown.subscribe()));
         let signal = shutdown.subscribe();
         shutdown.push(self.reconciliation.spawn(signal));
         shutdown.push(self.agent.spawn(shutdown.subscribe()));

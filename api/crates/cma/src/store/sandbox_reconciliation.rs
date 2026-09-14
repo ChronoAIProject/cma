@@ -23,6 +23,41 @@ mod transaction;
 
 #[async_trait::async_trait]
 impl SandboxReconciliationStore for MongoSandboxStore {
+    async fn unowned_home_authority(
+        &self,
+        request: &layer3_adapter::HomeVolumeRequest,
+    ) -> Result<bool, SandboxStoreError> {
+        let Some(reservation) = self
+            .warm_sandbox(&layer2_core::SandboxId(request.sandbox_id.clone()))
+            .await?
+        else {
+            return Ok(false);
+        };
+        reservation.validate()?;
+        Ok(reservation.state.owns_runtime()
+            && reservation
+                .home
+                .as_ref()
+                .is_some_and(|home| !home.released && home.request == *request))
+    }
+
+    async fn unowned_runtime_authority(
+        &self,
+        id: &layer2_core::SandboxId,
+        generation: u64,
+        runtime_id: &str,
+    ) -> Result<bool, SandboxStoreError> {
+        let Some(reservation) = self.warm_sandbox(id).await? else {
+            return Ok(false);
+        };
+        Ok(reservation.state.owns_runtime()
+            && generation == 1
+            && reservation
+                .runtime
+                .as_ref()
+                .is_none_or(|binding| binding.runtime_id == runtime_id))
+    }
+
     async fn sandbox_runtime_authority(
         &self,
         page: &PageRequest,

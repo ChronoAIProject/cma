@@ -117,7 +117,33 @@ export class LocalStartup {
         url.pathname === `/api/v1/workspaces/${this.createdWorkspace.id}`
       )
         return reply(this.createdWorkspace);
+      const profile =
+        /^\/api\/v1\/(sandbox|workspace|agent)-profiles\/([^/]+)(?:\/revisions\/(\d+))?$/.exec(
+          url.pathname,
+        );
+      if (profile) {
+        const [, kind, id, revision] = profile;
+        return reply(
+          revision === undefined
+            ? {
+                ...recorded<object>('profiles.json', `${kind}-profile-read`),
+                id,
+                name: `${kind} profile`,
+              }
+            : {
+                ...recorded<object>('profiles.json', `${kind}-profile-exact-revision`),
+                profile_id: id,
+                revision: Number(revision),
+              },
+        );
+      }
       switch (url.pathname) {
+        case '/api/v1/profile-authoring/services':
+          return reply([{ id: 'api-github', catalog_id: 'catalog-github', name: 'GitHub' }]);
+        case '/api/v1/profile-authoring/skills':
+          return reply({
+            items: [{ id: url.searchParams.get('q'), name: 'TypeScript', versions: ['1.2'] }],
+          });
         case '/api/v1/agent-profiles':
         case '/api/v1/workspace-profiles':
           return reply({ items: [] });
