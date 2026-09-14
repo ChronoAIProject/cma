@@ -195,7 +195,8 @@ jobs:
           curl -sSL -o "$RUNNER_TEMP/gitleaks.tar.gz" \
             https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz
           tar xzf "$RUNNER_TEMP/gitleaks.tar.gz" -C "$RUNNER_TEMP" gitleaks
-          "$RUNNER_TEMP/gitleaks" detect --source . --redact --verbose --exit-code 1
+          bash .github/scripts/scan-secret-history-tests.sh "$RUNNER_TEMP/gitleaks"
+          bash .github/scripts/scan-secret-history.sh "$RUNNER_TEMP/gitleaks"
       - name: Reject any gitleaks allowlist
         run: |
           if find . -name '.gitleaks.toml' -o -name 'gitleaks.toml' | grep -q .; then
@@ -211,6 +212,10 @@ jobs:
   backend:
     name: Backend
     runs-on: ubuntu-latest
+    env:
+      # Large unoptimized lifecycle test futures need the same stack budget
+      # on Linux as the documented production-source verification suite.
+      RUST_MIN_STACK: 33554432
     defaults:
       run:
         working-directory: api
