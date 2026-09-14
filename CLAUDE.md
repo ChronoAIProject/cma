@@ -458,7 +458,11 @@ The merge is the release. Nothing is tagged or published before it, and nothing 
 
 The tag is the version of record. `api/Cargo.toml` and `web/package.json` are not bumped: a bot writing to `main` would put it ahead of `develop` for no gain, and the version those files carry is not what anything deploys.
 
-Publishing is not deploying. `infra/` is untouched by a release, and a new image becomes live only when someone changes a manifest to name it. `CHRONO_SANDBOX_IMAGE` is the sharpest case: under §5 it is the runtime version every live Sandbox is measured against, so moving it rotates every Sandbox, and that has to be a decision rather than a consequence of merging.
+Publishing is not deploying. `infra/` is untouched by a release, and a new image
+becomes live only when someone changes a manifest to name it.
+`CHRONO_SANDBOX_IMAGE` selects the image for new allocations. Under §5, existing
+live Sandboxes retain their recorded runtime images across control-plane
+upgrades and rollbacks; changing this default never admits image-drift rotation.
 
 Full procedure in `docs/Release.md`.
 
