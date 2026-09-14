@@ -90,7 +90,9 @@ pub async fn dispatch(c: &Context<'_>) -> Result<()> {
                 })
                 .await,
         ),
-        "GET /api/v1/sandboxes/{id}" => c.check(client.sandboxes().read(c.param("id")).await),
+        "GET /api/v1/sandboxes/{id}" => {
+            c.check(client.sandboxes().read_accessible(c.param("id")).await)
+        }
         "GET /api/v1/sandboxes/{id}/events" => {
             c.check(client.sandboxes().events(c.param("id"), c.events()?).await)
         }
@@ -111,7 +113,7 @@ pub async fn dispatch(c: &Context<'_>) -> Result<()> {
                 .await,
         ),
         "GET /api/v1/sandboxes/{id}/workspaces" => {
-            c.check(client.workspaces().list(c.param("id")).await)
+            c.check(client.workspaces().list_accessible(c.param("id")).await)
         }
         "POST /api/v1/sandboxes/{id}/workspaces" => c.check(
             client
@@ -119,14 +121,18 @@ pub async fn dispatch(c: &Context<'_>) -> Result<()> {
                 .create(c.param("id"), &c.body()?, &c.key()?)
                 .await,
         ),
-        "GET /api/v1/workspaces/{id}" => c.check(client.workspaces().read(c.param("id")).await),
+        "GET /api/v1/workspaces/{id}" => {
+            c.check(client.workspaces().read_accessible(c.param("id")).await)
+        }
         "DELETE /api/v1/workspaces/{id}" => {
             c.check(client.workspaces().delete(c.param("id"), &c.key()?).await)
         }
         "GET /api/v1/workspaces/{id}/worktrees" => {
-            c.check(client.worktrees().list(c.param("id")).await)
+            c.check(client.worktrees().list_accessible(c.param("id")).await)
         }
-        "GET /api/v1/worktrees/{id}" => c.check(client.worktrees().read(c.param("id")).await),
+        "GET /api/v1/worktrees/{id}" => {
+            c.check(client.worktrees().read_accessible(c.param("id")).await)
+        }
         "GET /api/v1/agents" => c.check(
             client
                 .agents()

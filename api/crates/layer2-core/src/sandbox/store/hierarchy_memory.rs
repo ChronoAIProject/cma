@@ -55,22 +55,25 @@ impl HierarchyReadStore for InMemorySandboxStore {
         request: &PageRequest,
     ) -> Result<Page<SandboxInventoryRecord>, SandboxStoreError> {
         let state = self.lock();
-        let values = state
-            .sandboxes
-            .values()
-            .filter(|sandbox| {
-                &sandbox.owner == owner && status.is_none_or(|expected| sandbox.status == expected)
-            })
-            .map(|sandbox| {
-                (
-                    sandbox.id.to_string(),
-                    SandboxInventoryRecord {
-                        sandbox: sandbox.clone(),
-                        counts: counts(&state, &sandbox.id),
-                    },
-                )
-            })
-            .collect();
+        let mut values = Vec::new();
+        for sandbox in state.sandboxes.values().filter(|sandbox| {
+            &sandbox.owner == owner && status.is_none_or(|expected| sandbox.status == expected)
+        }) {
+            if let Some(policy) = state.resource_policies.get(&sandbox.id) {
+                if !policy.personal_owner_of(sandbox).map_err(|_| {
+                    SandboxStoreError::Corrupt("invalid inventory ownership policy".into())
+                })? {
+                    continue;
+                }
+            }
+            values.push((
+                sandbox.id.to_string(),
+                SandboxInventoryRecord {
+                    sandbox: sandbox.clone(),
+                    counts: counts(&state, &sandbox.id),
+                },
+            ));
+        }
         page(values, request)
     }
 

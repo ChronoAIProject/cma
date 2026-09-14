@@ -1,0 +1,2116 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "shared-hierarchy-0-whole",
+      "operation": "GET /api/v1/sandboxes/{id}",
+      "scenario": "shared_hierarchy_whole",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/sandboxes/sbx_route",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "access": "shared",
+          "id": "sbx_route",
+          "name": "research",
+          "status": "active",
+          "created_at": "2026-09-05T00:00:00Z",
+          "updated_at": "2026-09-05T00:00:00Z",
+          "last_activity_at": "2026-09-05T00:00:00Z",
+          "workspace_count": 1,
+          "worktree_count": 2,
+          "agent_count": 2,
+          "workspaces": [
+            {
+              "access": "shared",
+              "id": "wks_route",
+              "sandbox_id": "sbx_route",
+              "name": "project",
+              "status": "ready",
+              "worktree_count": 2,
+              "agent_count": 2
+            }
+          ]
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "shared-hierarchy-0-narrow",
+      "operation": "GET /api/v1/sandboxes/{id}",
+      "scenario": "shared_hierarchy_narrow",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/sandboxes/sbx_route",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource-not-found",
+          "title": "resource not found",
+          "status": 404,
+          "detail": "No resource matches this request.",
+          "code": "sandbox_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "shared-hierarchy-0-owner",
+      "operation": "GET /api/v1/sandboxes/{id}",
+      "scenario": "shared_hierarchy_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/sandboxes/sbx_route",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "id": "sbx_route",
+          "owner": "owner-a",
+          "owner_name": "Alex Chen",
+          "name": "research",
+          "status": "active",
+          "profile": {
+            "id": "sbp_route",
+            "revision": 3
+          },
+          "nyxid_services": [
+            "api-github"
+          ],
+          "limits": {
+            "max_workspaces": 4,
+            "max_agents_per_workspace": 4
+          },
+          "lifecycle": {
+            "pause": {
+              "allowed": true
+            },
+            "revive": {
+              "allowed": false,
+              "reason": "not_paused"
+            }
+          },
+          "runtime_version": "sha256:runtime",
+          "last_activity_at": "2026-09-05T00:00:00Z",
+          "created_at": "2026-09-05T00:00:00Z",
+          "updated_at": "2026-09-05T00:00:00Z",
+          "revision": 1,
+          "workspaces": [
+            {
+              "id": "wks_route",
+              "sandbox_id": "sbx_route",
+              "name": "project",
+              "status": "ready",
+              "profile": {
+                "id": "wkp_route",
+                "revision": 2
+              },
+              "worktree_count": 2,
+              "agent_count": 2
+            }
+          ],
+          "workspace_count": 1,
+          "worktree_count": 2,
+          "agent_count": 2
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "shared-hierarchy-0-owner-outage",
+      "operation": "GET /api/v1/sandboxes/{id}",
+      "scenario": "shared_hierarchy_owner_outage",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/sandboxes/sbx_route",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "id": "sbx_route",
+          "owner": "owner-a",
+          "owner_name": "Alex Chen",
+          "name": "research",
+          "status": "active",
+          "profile": {
+            "id": "sbp_route",
+            "revision": 3
+          },
+          "nyxid_services": [
+            "api-github"
+          ],
+          "limits": {
+            "max_workspaces": 4,
+            "max_agents_per_workspace": 4
+          },
+          "lifecycle": {
+            "pause": {
+              "allowed": true
+            },
+            "revive": {
+              "allowed": false,
+              "reason": "not_paused"
+            }
+          },
+          "runtime_version": "sha256:runtime",
+          "last_activity_at": "2026-09-05T00:00:00Z",
+          "created_at": "2026-09-05T00:00:00Z",
+          "updated_at": "2026-09-05T00:00:00Z",
+          "revision": 1,
+          "workspaces": [
+            {
+              "id": "wks_route",
+              "sandbox_id": "sbx_route",
+              "name": "project",
+              "status": "ready",
+              "profile": {
+                "id": "wkp_route",
+                "revision": 2
+              },
+              "worktree_count": 2,
+              "agent_count": 2
+            }
+          ],
+          "workspace_count": 1,
+          "worktree_count": 2,
+          "agent_count": 2
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "shared-hierarchy-0-missing",
+      "operation": "GET /api/v1/sandboxes/{id}",
+      "scenario": "shared_hierarchy_missing",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/sandboxes/sbx_route",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource-not-found",
+          "title": "resource not found",
+          "status": 404,
+          "detail": "No resource matches this request.",
+          "code": "sandbox_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "shared-hierarchy-0-outage",
+      "operation": "GET /api/v1/sandboxes/{id}",
+      "scenario": "shared_hierarchy_outage",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/sandboxes/sbx_route",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/organization_authority_unavailable",
+          "title": "organization_authority_unavailable",
+          "status": 503,
+          "detail": "Current organization authorization is unavailable. Retry after the identity provider recovers.",
+          "code": "organization_authority_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "shared-hierarchy-0-revoked",
+      "operation": "GET /api/v1/sandboxes/{id}",
+      "scenario": "shared_hierarchy_revoked",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/sandboxes/sbx_route",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource-not-found",
+          "title": "resource not found",
+          "status": 404,
+          "detail": "No resource matches this request.",
+          "code": "sandbox_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "shared-hierarchy-0-invalid-context",
+      "operation": "GET /api/v1/sandboxes/{id}",
+      "scenario": "shared_hierarchy_invalid_context",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/sandboxes/sbx_route",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "shared-hierarchy-0-anonymous",
+      "operation": "GET /api/v1/sandboxes/{id}",
+      "scenario": "shared_hierarchy_anonymous",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/sandboxes/sbx_route",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "shared-hierarchy-0-forbidden",
+      "operation": "GET /api/v1/sandboxes/{id}",
+      "scenario": "shared_hierarchy_forbidden",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/sandboxes/sbx_route",
+        "headers": {}
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/forbidden",
+          "title": "forbidden",
+          "status": 403,
+          "detail": "This caller is not allowed to use this resource.",
+          "code": "forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "shared-hierarchy-0-no-credential",
+      "operation": "GET /api/v1/sandboxes/{id}",
+      "scenario": "shared_hierarchy_no_credential",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/sandboxes/sbx_route",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/organization_authority_unavailable",
+          "title": "organization_authority_unavailable",
+          "status": 503,
+          "detail": "Current organization authorization is unavailable. Retry after the identity provider recovers.",
+          "code": "organization_authority_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "shared-hierarchy-0-legacy",
+      "operation": "GET /api/v1/sandboxes/{id}",
+      "scenario": "shared_hierarchy_legacy",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/sandboxes/sbx_route",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource-not-found",
+          "title": "resource not found",
+          "status": 404,
+          "detail": "No resource matches this request.",
+          "code": "sandbox_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "shared-hierarchy-0-changed",
+      "operation": "GET /api/v1/sandboxes/{id}",
+      "scenario": "shared_hierarchy_changed",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/sandboxes/sbx_route",
+        "headers": {}
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource_access_changed",
+          "title": "resource_access_changed",
+          "status": 409,
+          "detail": "Resource access changed. Read current access and retry with the current revision.",
+          "code": "resource_access_changed"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "shared-hierarchy-0-unavailable",
+      "operation": "GET /api/v1/sandboxes/{id}",
+      "scenario": "shared_hierarchy_unavailable",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/sandboxes/sbx_route",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource_access_unavailable",
+          "title": "resource_access_unavailable",
+          "status": 503,
+          "detail": "Resource access is temporarily unavailable. Retry the same command key to recover an unacknowledged result.",
+          "code": "resource_access_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "shared-hierarchy-1-whole",
+      "operation": "GET /api/v1/sandboxes/{id}/workspaces",
+      "scenario": "shared_hierarchy_whole",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/sandboxes/sbx_route/workspaces",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "items": [
+            {
+              "access": "shared",
+              "id": "wks_route",
+              "sandbox_id": "sbx_route",
+              "name": "project",
+              "status": "ready",
+              "worktree_count": 2,
+              "agent_count": 2
+            }
+          ]
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "shared-hierarchy-1-narrow",
+      "operation": "GET /api/v1/sandboxes/{id}/workspaces",
+      "scenario": "shared_hierarchy_narrow",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/sandboxes/sbx_route/workspaces",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource-not-found",
+          "title": "resource not found",
+          "status": 404,
+          "detail": "No resource matches this request.",
+          "code": "sandbox_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "shared-hierarchy-1-owner",
+      "operation": "GET /api/v1/sandboxes/{id}/workspaces",
+      "scenario": "shared_hierarchy_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/sandboxes/sbx_route/workspaces",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "items": [
+            {
+              "id": "wks_route",
+              "sandbox_id": "sbx_route",
+              "name": "project",
+              "status": "ready",
+              "profile": {
+                "id": "wkp_route",
+                "revision": 2
+              },
+              "worktree_count": 2,
+              "agent_count": 2
+            }
+          ]
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "shared-hierarchy-1-owner-outage",
+      "operation": "GET /api/v1/sandboxes/{id}/workspaces",
+      "scenario": "shared_hierarchy_owner_outage",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/sandboxes/sbx_route/workspaces",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "items": [
+            {
+              "id": "wks_route",
+              "sandbox_id": "sbx_route",
+              "name": "project",
+              "status": "ready",
+              "profile": {
+                "id": "wkp_route",
+                "revision": 2
+              },
+              "worktree_count": 2,
+              "agent_count": 2
+            }
+          ]
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "shared-hierarchy-1-missing",
+      "operation": "GET /api/v1/sandboxes/{id}/workspaces",
+      "scenario": "shared_hierarchy_missing",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/sandboxes/sbx_route/workspaces",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource-not-found",
+          "title": "resource not found",
+          "status": 404,
+          "detail": "No resource matches this request.",
+          "code": "sandbox_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "shared-hierarchy-1-outage",
+      "operation": "GET /api/v1/sandboxes/{id}/workspaces",
+      "scenario": "shared_hierarchy_outage",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/sandboxes/sbx_route/workspaces",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/organization_authority_unavailable",
+          "title": "organization_authority_unavailable",
+          "status": 503,
+          "detail": "Current organization authorization is unavailable. Retry after the identity provider recovers.",
+          "code": "organization_authority_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "shared-hierarchy-1-revoked",
+      "operation": "GET /api/v1/sandboxes/{id}/workspaces",
+      "scenario": "shared_hierarchy_revoked",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/sandboxes/sbx_route/workspaces",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource-not-found",
+          "title": "resource not found",
+          "status": 404,
+          "detail": "No resource matches this request.",
+          "code": "sandbox_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "shared-hierarchy-1-invalid-context",
+      "operation": "GET /api/v1/sandboxes/{id}/workspaces",
+      "scenario": "shared_hierarchy_invalid_context",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/sandboxes/sbx_route/workspaces",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "shared-hierarchy-1-anonymous",
+      "operation": "GET /api/v1/sandboxes/{id}/workspaces",
+      "scenario": "shared_hierarchy_anonymous",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/sandboxes/sbx_route/workspaces",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "shared-hierarchy-1-forbidden",
+      "operation": "GET /api/v1/sandboxes/{id}/workspaces",
+      "scenario": "shared_hierarchy_forbidden",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/sandboxes/sbx_route/workspaces",
+        "headers": {}
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/forbidden",
+          "title": "forbidden",
+          "status": 403,
+          "detail": "This caller is not allowed to use this resource.",
+          "code": "forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "shared-hierarchy-1-no-credential",
+      "operation": "GET /api/v1/sandboxes/{id}/workspaces",
+      "scenario": "shared_hierarchy_no_credential",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/sandboxes/sbx_route/workspaces",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/organization_authority_unavailable",
+          "title": "organization_authority_unavailable",
+          "status": 503,
+          "detail": "Current organization authorization is unavailable. Retry after the identity provider recovers.",
+          "code": "organization_authority_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "shared-hierarchy-1-legacy",
+      "operation": "GET /api/v1/sandboxes/{id}/workspaces",
+      "scenario": "shared_hierarchy_legacy",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/sandboxes/sbx_route/workspaces",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource-not-found",
+          "title": "resource not found",
+          "status": 404,
+          "detail": "No resource matches this request.",
+          "code": "sandbox_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "shared-hierarchy-1-changed",
+      "operation": "GET /api/v1/sandboxes/{id}/workspaces",
+      "scenario": "shared_hierarchy_changed",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/sandboxes/sbx_route/workspaces",
+        "headers": {}
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource_access_changed",
+          "title": "resource_access_changed",
+          "status": 409,
+          "detail": "Resource access changed. Read current access and retry with the current revision.",
+          "code": "resource_access_changed"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "shared-hierarchy-1-unavailable",
+      "operation": "GET /api/v1/sandboxes/{id}/workspaces",
+      "scenario": "shared_hierarchy_unavailable",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/sandboxes/sbx_route/workspaces",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource_access_unavailable",
+          "title": "resource_access_unavailable",
+          "status": 503,
+          "detail": "Resource access is temporarily unavailable. Retry the same command key to recover an unacknowledged result.",
+          "code": "resource_access_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "shared-hierarchy-2-whole",
+      "operation": "GET /api/v1/workspaces/{id}",
+      "scenario": "shared_hierarchy_whole",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/workspaces/wks_route",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "access": "shared",
+          "id": "wks_route",
+          "sandbox_id": "sbx_route",
+          "name": "project",
+          "status": "ready",
+          "created_at": "2026-09-05T00:00:00Z",
+          "ready_at": "2026-09-05T00:00:00Z",
+          "worktree_count": 2,
+          "agent_count": 2,
+          "worktrees": [
+            {
+              "access": "shared",
+              "id": "wkt_agt_contract",
+              "workspace_id": "wks_route",
+              "sandbox_id": "sbx_route",
+              "name": "agt_contract",
+              "status": "ready",
+              "agent_id": "agt_contract"
+            },
+            {
+              "access": "shared",
+              "id": "wkt_agt_sibling",
+              "workspace_id": "wks_route",
+              "sandbox_id": "sbx_route",
+              "name": "agt_sibling",
+              "status": "ready",
+              "agent_id": "agt_sibling"
+            }
+          ],
+          "agents": [
+            {
+              "id": "agt_contract",
+              "worktree_id": "wkt_agt_contract",
+              "workspace_id": "wks_route",
+              "sandbox_id": "sbx_route",
+              "status": "ready",
+              "title": "Agent agt_contract",
+              "updated_at": "2026-09-05T00:00:00Z"
+            },
+            {
+              "id": "agt_sibling",
+              "worktree_id": "wkt_agt_sibling",
+              "workspace_id": "wks_route",
+              "sandbox_id": "sbx_route",
+              "status": "ready",
+              "title": "Agent agt_sibling",
+              "updated_at": "2026-09-05T00:00:00Z"
+            }
+          ]
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "shared-hierarchy-2-narrow",
+      "operation": "GET /api/v1/workspaces/{id}",
+      "scenario": "shared_hierarchy_narrow",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/workspaces/wks_route",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource-not-found",
+          "title": "resource not found",
+          "status": 404,
+          "detail": "No resource matches this request.",
+          "code": "workspace_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "shared-hierarchy-2-owner",
+      "operation": "GET /api/v1/workspaces/{id}",
+      "scenario": "shared_hierarchy_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/workspaces/wks_route",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "id": "wks_route",
+          "sandbox_id": "sbx_route",
+          "name": "project",
+          "path": "/home/cma/project",
+          "source": {
+            "type": "empty"
+          },
+          "resolved_commit": "cccccccccccccccccccccccccccccccccccccccc",
+          "status": "ready",
+          "profile": {
+            "id": "wkp_route",
+            "revision": 2
+          },
+          "created_at": "2026-09-05T00:00:00Z",
+          "ready_at": "2026-09-05T00:00:00Z",
+          "revision": 1,
+          "worktrees": [
+            {
+              "id": "wkt_agt_contract",
+              "workspace_id": "wks_route",
+              "sandbox_id": "sbx_route",
+              "name": "agt_contract",
+              "path": "/home/cma/project/.worktrees/agt_contract",
+              "branch": "cma/agt_contract",
+              "base_commit": "cccccccccccccccccccccccccccccccccccccccc",
+              "status": "ready",
+              "agent_id": "agt_contract"
+            },
+            {
+              "id": "wkt_agt_sibling",
+              "workspace_id": "wks_route",
+              "sandbox_id": "sbx_route",
+              "name": "agt_sibling",
+              "path": "/home/cma/project/.worktrees/agt_sibling",
+              "branch": "cma/agt_sibling",
+              "base_commit": "cccccccccccccccccccccccccccccccccccccccc",
+              "status": "ready",
+              "agent_id": "agt_sibling"
+            }
+          ],
+          "agents": [
+            {
+              "id": "agt_contract",
+              "worktree_id": "wkt_agt_contract",
+              "workspace_id": "wks_route",
+              "sandbox_id": "sbx_route",
+              "status": "ready",
+              "profile": {
+                "id": "agp_route",
+                "revision": 1
+              },
+              "title": "Agent agt_contract",
+              "updated_at": "2026-09-05T00:00:00Z"
+            },
+            {
+              "id": "agt_sibling",
+              "worktree_id": "wkt_agt_sibling",
+              "workspace_id": "wks_route",
+              "sandbox_id": "sbx_route",
+              "status": "ready",
+              "profile": {
+                "id": "agp_route",
+                "revision": 1
+              },
+              "title": "Agent agt_sibling",
+              "updated_at": "2026-09-05T00:00:00Z"
+            }
+          ],
+          "worktree_count": 2,
+          "agent_count": 2
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "shared-hierarchy-2-owner-outage",
+      "operation": "GET /api/v1/workspaces/{id}",
+      "scenario": "shared_hierarchy_owner_outage",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/workspaces/wks_route",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "id": "wks_route",
+          "sandbox_id": "sbx_route",
+          "name": "project",
+          "path": "/home/cma/project",
+          "source": {
+            "type": "empty"
+          },
+          "resolved_commit": "cccccccccccccccccccccccccccccccccccccccc",
+          "status": "ready",
+          "profile": {
+            "id": "wkp_route",
+            "revision": 2
+          },
+          "created_at": "2026-09-05T00:00:00Z",
+          "ready_at": "2026-09-05T00:00:00Z",
+          "revision": 1,
+          "worktrees": [
+            {
+              "id": "wkt_agt_contract",
+              "workspace_id": "wks_route",
+              "sandbox_id": "sbx_route",
+              "name": "agt_contract",
+              "path": "/home/cma/project/.worktrees/agt_contract",
+              "branch": "cma/agt_contract",
+              "base_commit": "cccccccccccccccccccccccccccccccccccccccc",
+              "status": "ready",
+              "agent_id": "agt_contract"
+            },
+            {
+              "id": "wkt_agt_sibling",
+              "workspace_id": "wks_route",
+              "sandbox_id": "sbx_route",
+              "name": "agt_sibling",
+              "path": "/home/cma/project/.worktrees/agt_sibling",
+              "branch": "cma/agt_sibling",
+              "base_commit": "cccccccccccccccccccccccccccccccccccccccc",
+              "status": "ready",
+              "agent_id": "agt_sibling"
+            }
+          ],
+          "agents": [
+            {
+              "id": "agt_contract",
+              "worktree_id": "wkt_agt_contract",
+              "workspace_id": "wks_route",
+              "sandbox_id": "sbx_route",
+              "status": "ready",
+              "profile": {
+                "id": "agp_route",
+                "revision": 1
+              },
+              "title": "Agent agt_contract",
+              "updated_at": "2026-09-05T00:00:00Z"
+            },
+            {
+              "id": "agt_sibling",
+              "worktree_id": "wkt_agt_sibling",
+              "workspace_id": "wks_route",
+              "sandbox_id": "sbx_route",
+              "status": "ready",
+              "profile": {
+                "id": "agp_route",
+                "revision": 1
+              },
+              "title": "Agent agt_sibling",
+              "updated_at": "2026-09-05T00:00:00Z"
+            }
+          ],
+          "worktree_count": 2,
+          "agent_count": 2
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "shared-hierarchy-2-missing",
+      "operation": "GET /api/v1/workspaces/{id}",
+      "scenario": "shared_hierarchy_missing",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/workspaces/wks_route",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource-not-found",
+          "title": "resource not found",
+          "status": 404,
+          "detail": "No resource matches this request.",
+          "code": "workspace_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "shared-hierarchy-2-outage",
+      "operation": "GET /api/v1/workspaces/{id}",
+      "scenario": "shared_hierarchy_outage",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/workspaces/wks_route",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/organization_authority_unavailable",
+          "title": "organization_authority_unavailable",
+          "status": 503,
+          "detail": "Current organization authorization is unavailable. Retry after the identity provider recovers.",
+          "code": "organization_authority_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "shared-hierarchy-2-revoked",
+      "operation": "GET /api/v1/workspaces/{id}",
+      "scenario": "shared_hierarchy_revoked",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/workspaces/wks_route",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource-not-found",
+          "title": "resource not found",
+          "status": 404,
+          "detail": "No resource matches this request.",
+          "code": "workspace_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "shared-hierarchy-2-invalid-context",
+      "operation": "GET /api/v1/workspaces/{id}",
+      "scenario": "shared_hierarchy_invalid_context",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/workspaces/wks_route",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "shared-hierarchy-2-anonymous",
+      "operation": "GET /api/v1/workspaces/{id}",
+      "scenario": "shared_hierarchy_anonymous",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/workspaces/wks_route",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "shared-hierarchy-2-forbidden",
+      "operation": "GET /api/v1/workspaces/{id}",
+      "scenario": "shared_hierarchy_forbidden",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/workspaces/wks_route",
+        "headers": {}
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/forbidden",
+          "title": "forbidden",
+          "status": 403,
+          "detail": "This caller is not allowed to use this resource.",
+          "code": "forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "shared-hierarchy-2-no-credential",
+      "operation": "GET /api/v1/workspaces/{id}",
+      "scenario": "shared_hierarchy_no_credential",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/workspaces/wks_route",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/organization_authority_unavailable",
+          "title": "organization_authority_unavailable",
+          "status": 503,
+          "detail": "Current organization authorization is unavailable. Retry after the identity provider recovers.",
+          "code": "organization_authority_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "shared-hierarchy-2-legacy",
+      "operation": "GET /api/v1/workspaces/{id}",
+      "scenario": "shared_hierarchy_legacy",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/workspaces/wks_route",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource-not-found",
+          "title": "resource not found",
+          "status": 404,
+          "detail": "No resource matches this request.",
+          "code": "workspace_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "shared-hierarchy-2-changed",
+      "operation": "GET /api/v1/workspaces/{id}",
+      "scenario": "shared_hierarchy_changed",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/workspaces/wks_route",
+        "headers": {}
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource_access_changed",
+          "title": "resource_access_changed",
+          "status": 409,
+          "detail": "Resource access changed. Read current access and retry with the current revision.",
+          "code": "resource_access_changed"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "shared-hierarchy-2-unavailable",
+      "operation": "GET /api/v1/workspaces/{id}",
+      "scenario": "shared_hierarchy_unavailable",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/workspaces/wks_route",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource_access_unavailable",
+          "title": "resource_access_unavailable",
+          "status": 503,
+          "detail": "Resource access is temporarily unavailable. Retry the same command key to recover an unacknowledged result.",
+          "code": "resource_access_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "shared-hierarchy-3-whole",
+      "operation": "GET /api/v1/workspaces/{id}/worktrees",
+      "scenario": "shared_hierarchy_whole",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/workspaces/wks_route/worktrees",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "items": [
+            {
+              "access": "shared",
+              "id": "wkt_agt_contract",
+              "workspace_id": "wks_route",
+              "sandbox_id": "sbx_route",
+              "name": "agt_contract",
+              "status": "ready",
+              "agent_id": "agt_contract"
+            },
+            {
+              "access": "shared",
+              "id": "wkt_agt_sibling",
+              "workspace_id": "wks_route",
+              "sandbox_id": "sbx_route",
+              "name": "agt_sibling",
+              "status": "ready",
+              "agent_id": "agt_sibling"
+            }
+          ]
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "shared-hierarchy-3-narrow",
+      "operation": "GET /api/v1/workspaces/{id}/worktrees",
+      "scenario": "shared_hierarchy_narrow",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/workspaces/wks_route/worktrees",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource-not-found",
+          "title": "resource not found",
+          "status": 404,
+          "detail": "No resource matches this request.",
+          "code": "workspace_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "shared-hierarchy-3-owner",
+      "operation": "GET /api/v1/workspaces/{id}/worktrees",
+      "scenario": "shared_hierarchy_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/workspaces/wks_route/worktrees",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "items": [
+            {
+              "id": "wkt_agt_contract",
+              "workspace_id": "wks_route",
+              "sandbox_id": "sbx_route",
+              "name": "agt_contract",
+              "path": "/home/cma/project/.worktrees/agt_contract",
+              "branch": "cma/agt_contract",
+              "base_commit": "cccccccccccccccccccccccccccccccccccccccc",
+              "status": "ready",
+              "agent_id": "agt_contract"
+            },
+            {
+              "id": "wkt_agt_sibling",
+              "workspace_id": "wks_route",
+              "sandbox_id": "sbx_route",
+              "name": "agt_sibling",
+              "path": "/home/cma/project/.worktrees/agt_sibling",
+              "branch": "cma/agt_sibling",
+              "base_commit": "cccccccccccccccccccccccccccccccccccccccc",
+              "status": "ready",
+              "agent_id": "agt_sibling"
+            }
+          ]
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "shared-hierarchy-3-owner-outage",
+      "operation": "GET /api/v1/workspaces/{id}/worktrees",
+      "scenario": "shared_hierarchy_owner_outage",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/workspaces/wks_route/worktrees",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "items": [
+            {
+              "id": "wkt_agt_contract",
+              "workspace_id": "wks_route",
+              "sandbox_id": "sbx_route",
+              "name": "agt_contract",
+              "path": "/home/cma/project/.worktrees/agt_contract",
+              "branch": "cma/agt_contract",
+              "base_commit": "cccccccccccccccccccccccccccccccccccccccc",
+              "status": "ready",
+              "agent_id": "agt_contract"
+            },
+            {
+              "id": "wkt_agt_sibling",
+              "workspace_id": "wks_route",
+              "sandbox_id": "sbx_route",
+              "name": "agt_sibling",
+              "path": "/home/cma/project/.worktrees/agt_sibling",
+              "branch": "cma/agt_sibling",
+              "base_commit": "cccccccccccccccccccccccccccccccccccccccc",
+              "status": "ready",
+              "agent_id": "agt_sibling"
+            }
+          ]
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "shared-hierarchy-3-missing",
+      "operation": "GET /api/v1/workspaces/{id}/worktrees",
+      "scenario": "shared_hierarchy_missing",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/workspaces/wks_route/worktrees",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource-not-found",
+          "title": "resource not found",
+          "status": 404,
+          "detail": "No resource matches this request.",
+          "code": "workspace_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "shared-hierarchy-3-outage",
+      "operation": "GET /api/v1/workspaces/{id}/worktrees",
+      "scenario": "shared_hierarchy_outage",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/workspaces/wks_route/worktrees",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/organization_authority_unavailable",
+          "title": "organization_authority_unavailable",
+          "status": 503,
+          "detail": "Current organization authorization is unavailable. Retry after the identity provider recovers.",
+          "code": "organization_authority_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "shared-hierarchy-3-revoked",
+      "operation": "GET /api/v1/workspaces/{id}/worktrees",
+      "scenario": "shared_hierarchy_revoked",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/workspaces/wks_route/worktrees",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource-not-found",
+          "title": "resource not found",
+          "status": 404,
+          "detail": "No resource matches this request.",
+          "code": "workspace_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "shared-hierarchy-3-invalid-context",
+      "operation": "GET /api/v1/workspaces/{id}/worktrees",
+      "scenario": "shared_hierarchy_invalid_context",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/workspaces/wks_route/worktrees",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "shared-hierarchy-3-anonymous",
+      "operation": "GET /api/v1/workspaces/{id}/worktrees",
+      "scenario": "shared_hierarchy_anonymous",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/workspaces/wks_route/worktrees",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "shared-hierarchy-3-forbidden",
+      "operation": "GET /api/v1/workspaces/{id}/worktrees",
+      "scenario": "shared_hierarchy_forbidden",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/workspaces/wks_route/worktrees",
+        "headers": {}
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/forbidden",
+          "title": "forbidden",
+          "status": 403,
+          "detail": "This caller is not allowed to use this resource.",
+          "code": "forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "shared-hierarchy-3-no-credential",
+      "operation": "GET /api/v1/workspaces/{id}/worktrees",
+      "scenario": "shared_hierarchy_no_credential",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/workspaces/wks_route/worktrees",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/organization_authority_unavailable",
+          "title": "organization_authority_unavailable",
+          "status": 503,
+          "detail": "Current organization authorization is unavailable. Retry after the identity provider recovers.",
+          "code": "organization_authority_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "shared-hierarchy-3-legacy",
+      "operation": "GET /api/v1/workspaces/{id}/worktrees",
+      "scenario": "shared_hierarchy_legacy",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/workspaces/wks_route/worktrees",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource-not-found",
+          "title": "resource not found",
+          "status": 404,
+          "detail": "No resource matches this request.",
+          "code": "workspace_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "shared-hierarchy-3-changed",
+      "operation": "GET /api/v1/workspaces/{id}/worktrees",
+      "scenario": "shared_hierarchy_changed",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/workspaces/wks_route/worktrees",
+        "headers": {}
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource_access_changed",
+          "title": "resource_access_changed",
+          "status": 409,
+          "detail": "Resource access changed. Read current access and retry with the current revision.",
+          "code": "resource_access_changed"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "shared-hierarchy-3-unavailable",
+      "operation": "GET /api/v1/workspaces/{id}/worktrees",
+      "scenario": "shared_hierarchy_unavailable",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/workspaces/wks_route/worktrees",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource_access_unavailable",
+          "title": "resource_access_unavailable",
+          "status": 503,
+          "detail": "Resource access is temporarily unavailable. Retry the same command key to recover an unacknowledged result.",
+          "code": "resource_access_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "shared-hierarchy-4-whole",
+      "operation": "GET /api/v1/worktrees/{id}",
+      "scenario": "shared_hierarchy_whole",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/worktrees/wkt_agt_contract",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "access": "shared",
+          "id": "wkt_agt_contract",
+          "workspace_id": "wks_route",
+          "sandbox_id": "sbx_route",
+          "name": "agt_contract",
+          "status": "ready",
+          "agent_id": "agt_contract"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "shared-hierarchy-4-narrow",
+      "operation": "GET /api/v1/worktrees/{id}",
+      "scenario": "shared_hierarchy_narrow",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/worktrees/wkt_agt_contract",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource-not-found",
+          "title": "resource not found",
+          "status": 404,
+          "detail": "No resource matches this request.",
+          "code": "worktree_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "shared-hierarchy-4-owner",
+      "operation": "GET /api/v1/worktrees/{id}",
+      "scenario": "shared_hierarchy_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/worktrees/wkt_agt_contract",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "id": "wkt_agt_contract",
+          "workspace_id": "wks_route",
+          "sandbox_id": "sbx_route",
+          "name": "agt_contract",
+          "path": "/home/cma/project/.worktrees/agt_contract",
+          "branch": "cma/agt_contract",
+          "base_commit": "cccccccccccccccccccccccccccccccccccccccc",
+          "status": "ready",
+          "agent_id": "agt_contract"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "shared-hierarchy-4-owner-outage",
+      "operation": "GET /api/v1/worktrees/{id}",
+      "scenario": "shared_hierarchy_owner_outage",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/worktrees/wkt_agt_contract",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "id": "wkt_agt_contract",
+          "workspace_id": "wks_route",
+          "sandbox_id": "sbx_route",
+          "name": "agt_contract",
+          "path": "/home/cma/project/.worktrees/agt_contract",
+          "branch": "cma/agt_contract",
+          "base_commit": "cccccccccccccccccccccccccccccccccccccccc",
+          "status": "ready",
+          "agent_id": "agt_contract"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "shared-hierarchy-4-missing",
+      "operation": "GET /api/v1/worktrees/{id}",
+      "scenario": "shared_hierarchy_missing",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/worktrees/wkt_agt_contract",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource-not-found",
+          "title": "resource not found",
+          "status": 404,
+          "detail": "No resource matches this request.",
+          "code": "worktree_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "shared-hierarchy-4-outage",
+      "operation": "GET /api/v1/worktrees/{id}",
+      "scenario": "shared_hierarchy_outage",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/worktrees/wkt_agt_contract",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/organization_authority_unavailable",
+          "title": "organization_authority_unavailable",
+          "status": 503,
+          "detail": "Current organization authorization is unavailable. Retry after the identity provider recovers.",
+          "code": "organization_authority_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "shared-hierarchy-4-revoked",
+      "operation": "GET /api/v1/worktrees/{id}",
+      "scenario": "shared_hierarchy_revoked",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/worktrees/wkt_agt_contract",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource-not-found",
+          "title": "resource not found",
+          "status": 404,
+          "detail": "No resource matches this request.",
+          "code": "worktree_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "shared-hierarchy-4-invalid-context",
+      "operation": "GET /api/v1/worktrees/{id}",
+      "scenario": "shared_hierarchy_invalid_context",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/worktrees/wkt_agt_contract",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "shared-hierarchy-4-anonymous",
+      "operation": "GET /api/v1/worktrees/{id}",
+      "scenario": "shared_hierarchy_anonymous",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/worktrees/wkt_agt_contract",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "shared-hierarchy-4-forbidden",
+      "operation": "GET /api/v1/worktrees/{id}",
+      "scenario": "shared_hierarchy_forbidden",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/worktrees/wkt_agt_contract",
+        "headers": {}
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/forbidden",
+          "title": "forbidden",
+          "status": 403,
+          "detail": "This caller is not allowed to use this resource.",
+          "code": "forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "shared-hierarchy-4-no-credential",
+      "operation": "GET /api/v1/worktrees/{id}",
+      "scenario": "shared_hierarchy_no_credential",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/worktrees/wkt_agt_contract",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/organization_authority_unavailable",
+          "title": "organization_authority_unavailable",
+          "status": 503,
+          "detail": "Current organization authorization is unavailable. Retry after the identity provider recovers.",
+          "code": "organization_authority_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "shared-hierarchy-4-legacy",
+      "operation": "GET /api/v1/worktrees/{id}",
+      "scenario": "shared_hierarchy_legacy",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/worktrees/wkt_agt_contract",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource-not-found",
+          "title": "resource not found",
+          "status": 404,
+          "detail": "No resource matches this request.",
+          "code": "worktree_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "shared-hierarchy-4-changed",
+      "operation": "GET /api/v1/worktrees/{id}",
+      "scenario": "shared_hierarchy_changed",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/worktrees/wkt_agt_contract",
+        "headers": {}
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource_access_changed",
+          "title": "resource_access_changed",
+          "status": 409,
+          "detail": "Resource access changed. Read current access and retry with the current revision.",
+          "code": "resource_access_changed"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "shared-hierarchy-4-unavailable",
+      "operation": "GET /api/v1/worktrees/{id}",
+      "scenario": "shared_hierarchy_unavailable",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/worktrees/wkt_agt_contract",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource_access_unavailable",
+          "title": "resource_access_unavailable",
+          "status": 503,
+          "detail": "Resource access is temporarily unavailable. Retry the same command key to recover an unacknowledged result.",
+          "code": "resource_access_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    }
+  ]
+}

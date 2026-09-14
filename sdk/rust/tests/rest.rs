@@ -1,5 +1,7 @@
 mod support;
 
+#[path = "rest/hierarchy.rs"]
+mod hierarchy;
 #[path = "rest/lifecycle.rs"]
 mod lifecycle;
 #[path = "rest/source.rs"]

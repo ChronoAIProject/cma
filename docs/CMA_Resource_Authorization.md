@@ -3,10 +3,9 @@
 Milestone 17 separates retained resource ownership from the principal executing
 an action. The implementation in `layer2-core::resource_access` defines the
 policy, transactional ownership/share stores, and authenticated share-management
-and effective-access routes. General shared reads, interaction, stream/ticket
+and effective-access routes. Shared Agent and hierarchy REST reads are composed. Interaction, stream/ticket
 revalidation, and the complete background command scheduler are still being
-connected. These management routes do not yet make shared Agents usable by
-recipients across the existing interfaces.
+connected; shared access is not yet available across every existing interface.
 
 ## Ownership and attribution
 
@@ -154,8 +153,8 @@ actor, membership and policy-fence fields using the existing 422 contract.
 Effective permissions describe policy; lifecycle, runtime support and each
 operation's authorization still apply. Agent REST detail/history/usage readers
 now enforce these permissions. Organization Agent inventory and safe source
-categories are also composed. Shared hierarchy views, streams,
-artifacts and interactions remain required across the rest of the product.
+categories and hierarchy views are also composed. Streams, artifacts and
+interactions remain required across the rest of the product.
 
 OpenAPI and repository TypeScript/Rust SDKs expose all six operations. The SDKs
 retain explicit keys/revisions and never automatically resend an uncertain
@@ -235,6 +234,38 @@ Membership and current policy fences are checked again before release, including
 the lookahead that determines `next`. Database/validation IO has bounded deadlines
 and at most eight concurrent final policy reads. An unavailable or changed page
 returns a typed error without partial results or stale `next` metadata.
+
+## Shared hierarchy projections
+
+The five hierarchy GETs (Sandbox detail and Workspace list, Workspace detail
+and Worktree list, Worktree detail) now use the same authenticated policy service.
+A narrow Agent grant never authorizes a parent or its counts. Whole-Sandbox
+visibility, current organization ownership and explicit global capabilities
+supply hierarchy access under the established policy. Owners retain the exact
+personal JSON; other readers receive safe `access: "shared"` shapes with IDs of
+the authorized hierarchy, display names, statuses, timestamps and child counts.
+No owner identity, profiles, source configuration, repository paths or branches,
+runtime bindings, credentials, lifecycle internals or failure diagnostics leave
+these shared projections. Worktree assignment checks resolve the Agent in the
+same policy snapshot and refuse foreign, missing or inconsistent assignments.
+
+Mongo reads each complete hierarchy under one read-only snapshot transaction,
+then aborts it to release the session. L2 validates root identity/incarnation,
+all child ownership/ancestry, duplicate IDs, Agent conversation integrity and
+bidirectional Worktree assignments before projecting counts. After IO, both
+successful results and stored dependency failures pass current policy and held
+membership checks. Authorization, hierarchy IO and final policy IO each have a
+15-second bound; an expired held decision is never silently renewed.
+
+The personal Sandbox collection excludes explicit organization ownership before
+pagination and checks the hidden lookahead's policy. Composed detail reads
+supply validated counts, with at most eight concurrent roots and a 30-second
+page deadline. No new organization Sandbox discovery/admission route is claimed.
+Snapshot archive export remains personal-only because it contains a whole home.
+SDK `readAccessible` / `read_accessible` and subordinate `listAccessible` /
+`list_accessible` methods expose the typed personal/shared unions; older personal
+methods retain their full types. Seventy actual-handler fixtures replay through
+both SDKs, alongside read-only retained-state and disposable Mongo regressions.
 
 ## Deferred personal commands
 

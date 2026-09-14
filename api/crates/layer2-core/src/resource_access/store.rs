@@ -41,6 +41,26 @@ pub struct ResourcePolicyRecord {
 }
 
 impl ResourcePolicyRecord {
+    /// Inventory selectors must distinguish an explicit organization before
+    /// pagination, including the hidden lookahead used to produce a cursor.
+    pub fn personal_owner_of(
+        &self,
+        sandbox: &crate::sandbox::Sandbox,
+    ) -> Result<bool, ResourceAccessStoreError> {
+        self.validate()?;
+        let (subject, personal) = match &self.owner {
+            ResourceOwner::Person { subject } => (subject, true),
+            ResourceOwner::Organization { subject } => (subject, false),
+        };
+        if self.sandbox_id != sandbox.id
+            || self.sandbox_created_at != sandbox.created_at
+            || subject != &sandbox.owner
+        {
+            return Err(ResourceAccessStoreError::Corrupt);
+        }
+        Ok(personal)
+    }
+
     pub fn validate(&self) -> Result<(), ResourceAccessStoreError> {
         let subject = match &self.owner {
             ResourceOwner::Person { subject } if self.organization_evidence.is_none() => subject,

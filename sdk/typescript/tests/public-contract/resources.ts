@@ -25,7 +25,7 @@ export const resourceDispatch: Record<string, Dispatch> = {
   'GET /api/v1/defaults': ({ client }) => client.readDefaults(),
   'GET /api/v1/sandboxes': ({ client, options }) => client.sandboxes.list(options),
   'POST /api/v1/sandboxes': ({ client, body, command }) => client.sandboxes.create(body, command),
-  'GET /api/v1/sandboxes/{id}': ({ client, param }) => client.sandboxes.read(param('id')),
+  'GET /api/v1/sandboxes/{id}': ({ client, param }) => client.sandboxes.readAccessible(param('id')),
   'DELETE /api/v1/sandboxes/{id}': ({ client, param, command }) =>
     client.sandboxes.delete(param('id'), command),
   'POST /api/v1/sandboxes/{id}/pause': ({ client, param, command }) =>
@@ -37,15 +37,16 @@ export const resourceDispatch: Record<string, Dispatch> = {
   'GET /api/v1/sandboxes/{id}/events': ({ client, param, options }) =>
     client.sandboxes.events(param('id'), options),
   'GET /api/v1/sandboxes/{id}/workspaces': ({ client, param, options }) =>
-    client.workspaces.list(param('id'), options),
+    client.workspaces.listAccessible(param('id'), options),
   'POST /api/v1/sandboxes/{id}/workspaces': ({ client, param, body, command }) =>
     client.workspaces.create(param('id'), body, command),
-  'GET /api/v1/workspaces/{id}': ({ client, param }) => client.workspaces.read(param('id')),
+  'GET /api/v1/workspaces/{id}': ({ client, param }) =>
+    client.workspaces.readAccessible(param('id')),
   'DELETE /api/v1/workspaces/{id}': ({ client, param, command }) =>
     client.workspaces.delete(param('id'), command),
   'GET /api/v1/workspaces/{id}/worktrees': ({ client, param, options }) =>
-    client.worktrees.list(param('id'), options),
-  'GET /api/v1/worktrees/{id}': ({ client, param }) => client.worktrees.read(param('id')),
+    client.worktrees.listAccessible(param('id'), options),
+  'GET /api/v1/worktrees/{id}': ({ client, param }) => client.worktrees.readAccessible(param('id')),
   'GET /api/v1/agents': ({ client, options }) => client.agents.listAccessible(options),
   'GET /api/v1/agents/{id}': ({ client, param }) => client.agents.readAccessible(param('id')),
   'GET /api/v1/agents/{id}/source': ({ client, param }) =>

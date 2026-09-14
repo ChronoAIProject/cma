@@ -9,9 +9,11 @@ use crate::{
 
 mod events;
 mod lifecycle;
+mod shared;
 mod types;
 pub use events::*;
 pub use lifecycle::*;
+pub use shared::*;
 pub use types::*;
 
 /// Pagination and optional status filter for owned Sandboxes.
@@ -29,6 +31,12 @@ pub struct Sandboxes<'a> {
 }
 
 impl Sandboxes<'_> {
+    /// Read personal detail or shared metadata and authorized child counts.
+    pub async fn read_accessible(&self, id: &str) -> Result<AccessibleSandboxDetail> {
+        let value: AccessibleSandboxDetail = self.client.get(&["sandboxes", id], &[]).await?;
+        identity(value.id(), id)?;
+        Ok(value)
+    }
     /// List owned Sandboxes with hierarchy counts.
     pub async fn list(&self, options: &SandboxListOptions) -> Result<ResourcePage<SandboxSummary>> {
         let mut query = options.page.query();
@@ -128,6 +136,21 @@ pub struct Workspaces<'a> {
 }
 
 impl Workspaces<'_> {
+    /// List personal/shared summaries under current parent Sandbox access.
+    pub async fn list_accessible(
+        &self,
+        sandbox_id: &str,
+    ) -> Result<ResourceList<AccessibleWorkspaceSummary>> {
+        self.client
+            .get(&["sandboxes", sandbox_id, "workspaces"], &[])
+            .await
+    }
+    /// Read personal detail or a safe shared Workspace hierarchy.
+    pub async fn read_accessible(&self, id: &str) -> Result<AccessibleWorkspaceDetail> {
+        let value: AccessibleWorkspaceDetail = self.client.get(&["workspaces", id], &[]).await?;
+        identity(value.id(), id)?;
+        Ok(value)
+    }
     /// List Workspace summaries in an owned Sandbox.
     pub async fn list(&self, sandbox_id: &str) -> Result<ResourceList<WorkspaceSummary>> {
         self.client
@@ -181,6 +204,21 @@ pub struct Worktrees<'a> {
 }
 
 impl Worktrees<'_> {
+    /// List personal/shared metadata under current parent Workspace access.
+    pub async fn list_accessible(
+        &self,
+        workspace_id: &str,
+    ) -> Result<ResourceList<AccessibleWorktree>> {
+        self.client
+            .get(&["workspaces", workspace_id, "worktrees"], &[])
+            .await
+    }
+    /// Read a personal Worktree or safe shared metadata.
+    pub async fn read_accessible(&self, id: &str) -> Result<AccessibleWorktree> {
+        let value: AccessibleWorktree = self.client.get(&["worktrees", id], &[]).await?;
+        identity(value.id(), id)?;
+        Ok(value)
+    }
     /// List Worktrees allocated within an owned Workspace.
     pub async fn list(&self, workspace_id: &str) -> Result<ResourceList<Worktree>> {
         self.client

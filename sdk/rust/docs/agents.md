@@ -81,7 +81,7 @@ Sandbox resource counters require a separate Sandbox authorization.
 Reads obtain current membership and reject buffered results after a policy
 change or expiration. Organization outages return the named
 `organization_authority_unavailable` problem, and inaccessible Agents retain
-`agent_not_found`. Shared hierarchy, live, file and interaction interfaces
+`agent_not_found`. Live, file and interaction interfaces
 remain under development.
 
 `resource_access().organizations()` returns canonical organization choices and

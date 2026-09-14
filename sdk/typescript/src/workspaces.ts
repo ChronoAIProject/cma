@@ -1,5 +1,10 @@
 import type { ResolvedConfig } from './config.js';
 import type { OperationOptions } from './http.js';
+import {
+  accessibleWorkspaceDetail,
+  accessibleWorkspaceSummary,
+  accessibleWorktree,
+} from './instances/shared.js';
 import { array, object } from './schema.js';
 import { command, identity, input, read, segment, type CommandOptions } from './resources.js';
 import {
@@ -14,6 +19,24 @@ import {
 /** Workspaces always belong to a Sandbox; a created Workspace is still preparing. */
 export class Workspaces {
   constructor(private readonly config: ResolvedConfig) {}
+
+  /** Requires visibility of the parent Sandbox under current policy. */
+  listAccessible(sandboxId: string, options: OperationOptions = {}) {
+    return read(
+      this.config,
+      `/api/v1/sandboxes/${segment(sandboxId)}/workspaces`,
+      object({ items: array(accessibleWorkspaceSummary) }),
+      options,
+    );
+  }
+  readAccessible(id: string, options: OperationOptions = {}) {
+    return read(
+      this.config,
+      `/api/v1/workspaces/${segment(id)}`,
+      identity(accessibleWorkspaceDetail, id),
+      options,
+    );
+  }
 
   list(sandboxId: string, options: OperationOptions = {}) {
     return read(
@@ -54,6 +77,24 @@ export class Workspaces {
 /** Read-only owner projection of the Worktrees allocated for Agents. */
 export class Worktrees {
   constructor(private readonly config: ResolvedConfig) {}
+
+  /** Requires visibility of the parent Workspace under current policy. */
+  listAccessible(workspaceId: string, options: OperationOptions = {}) {
+    return read(
+      this.config,
+      `/api/v1/workspaces/${segment(workspaceId)}/worktrees`,
+      object({ items: array(accessibleWorktree) }),
+      options,
+    );
+  }
+  readAccessible(id: string, options: OperationOptions = {}) {
+    return read(
+      this.config,
+      `/api/v1/worktrees/${segment(id)}`,
+      identity(accessibleWorktree, id),
+      options,
+    );
+  }
 
   list(workspaceId: string, options: OperationOptions = {}) {
     return read(

@@ -18,6 +18,7 @@ export * from './launch/index.js';
 export type { CommandOptions, EventOptions, PageOptions, ResourcePage } from './resources.js';
 export type * from './agents/types.js';
 export type * from './agents/shared.js';
+export type * from './instances/shared.js';
 export type * from './agents/events.js';
 export type * from './instances/types.js';
 export type * from './instances/events.js';
