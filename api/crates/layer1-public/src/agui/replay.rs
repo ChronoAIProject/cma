@@ -8,8 +8,8 @@ use axum::{
 use futures_util::stream;
 use layer2_core::{
     sandbox::{
-        Agent, AgentLiveFragment, AgentLiveFragmentKind, AgentLiveSubscription, AgentLogEntry,
-        AgentLogKind, AgentStatus, PendingAgentApprovals,
+        Agent, AgentEventStreamAuthorization, AgentLiveFragment, AgentLiveFragmentKind,
+        AgentLiveSubscription, AgentLogEntry, AgentLogKind, AgentStatus, PendingAgentApprovals,
     },
     AgentId, Caller,
 };
@@ -19,10 +19,13 @@ use serde::Deserialize;
 #[path = "replay_tests.rs"]
 mod tests;
 
+#[path = "replay_authorized.rs"]
+mod authorized;
+
 use super::events::{ending, project, AguiEvent};
 use crate::{
     conversation::{failure, read_failure},
-    AgentConversationState, AuthenticatedCaller,
+    AgentConversationState, AuthenticatedCaller, AuthenticatedResourceCaller,
 };
 
 #[derive(Deserialize)]
@@ -42,6 +45,7 @@ pub(super) struct ReplayQuery {
 pub(super) async fn replay(
     State(state): State<AgentConversationState>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
+    resource: Option<AuthenticatedResourceCaller>,
     query: Result<Query<ReplayQuery>, axum::extract::rejection::QueryRejection>,
 ) -> Response {
     let Query(query) = match query {
@@ -56,6 +60,17 @@ pub(super) async fn replay(
     };
     let id = AgentId(query.thread_id);
     let watching = state.watch(&id);
+    if let Some(resource) = resource {
+        return authorized::open(
+            state,
+            resource,
+            id,
+            query.starting_after.unwrap_or(0),
+            query.follow.unwrap_or(true),
+            watching,
+        )
+        .await;
+    }
     open(
         state,
         caller,
@@ -104,6 +119,7 @@ pub(super) async fn open(
         watching,
         committed_message_seq: 0,
         held: None,
+        authorization: None,
     };
     for entry in &history {
         if entry.seq > after {
@@ -135,15 +151,43 @@ pub(super) async fn open(
     open.queue(&history);
     open.interrupt_pending(&agent, &history);
     open.queue_live(&agent);
+    response(open)
+}
+
+fn response(open: Following) -> Response {
     let stream = stream::unfold(open, |mut open| async move {
         loop {
             if let Some(event) = open.pending.pop_front() {
+                if let Some(authorization) = &open.authorization {
+                    if open
+                        .state
+                        .reads
+                        .validate_event_stream(authorization)
+                        .await
+                        .is_err()
+                    {
+                        return None;
+                    }
+                }
                 return Some((Ok::<_, Infallible>(event.sse()), open));
             }
             if open.ended || !open.follow {
                 return None;
             }
-            tokio::time::sleep(Duration::from_millis(100)).await;
+            let wake = tokio::time::Instant::now() + Duration::from_millis(100);
+            let wake = open
+                .authorization
+                .as_ref()
+                .and_then(AgentEventStreamAuthorization::revalidation_deadline)
+                .map_or(wake, |deadline| deadline.min(wake));
+            tokio::time::sleep_until(wake).await;
+            if let Some(authorization) = &open.authorization {
+                match open.state.reads.event_stream_snapshot(authorization).await {
+                    Ok(snapshot) => open.queue_authorized(snapshot),
+                    Err(_) => return None,
+                }
+                continue;
+            }
             match open.state.reads.log_snapshot(&open.caller, &open.id).await {
                 Ok((agent, history)) => {
                     open.queue(&history);
@@ -179,6 +223,7 @@ struct Following {
     watching: Option<AgentLiveSubscription>,
     committed_message_seq: u64,
     held: Option<AgentLiveFragment>,
+    authorization: Option<AgentEventStreamAuthorization>,
 }
 
 impl Following {
@@ -256,6 +301,21 @@ impl Following {
     }
 
     fn queue_live(&mut self, agent: &Agent) {
+        self.queue_fragments(
+            &agent.id,
+            agent.conversation.runtime_generation,
+            agent.conversation.active_turn,
+            agent.conversation.last_seq,
+        );
+    }
+
+    fn queue_fragments(
+        &mut self,
+        id: &AgentId,
+        generation: Option<u64>,
+        turn: Option<u64>,
+        head: u64,
+    ) {
         if self.ended || !self.follow {
             return;
         }
@@ -270,14 +330,13 @@ impl Following {
                 .unwrap_or_else(|| watching.try_recv())
             {
                 Ok(fragment)
-                    if fragment.agent_id == agent.id
-                        && Some(fragment.runtime_generation)
-                            == agent.conversation.runtime_generation
-                        && Some(fragment.turn_sequence) == agent.conversation.active_turn
+                    if &fragment.agent_id == id
+                        && Some(fragment.runtime_generation) == generation
+                        && Some(fragment.turn_sequence) == turn
                         && (fragment.kind == AgentLiveFragmentKind::Thought
                             || fragment.after_seq >= self.committed_message_seq) =>
                 {
-                    if fragment.after_seq > agent.conversation.last_seq {
+                    if fragment.after_seq > head {
                         self.held = Some(fragment);
                         break;
                     }
