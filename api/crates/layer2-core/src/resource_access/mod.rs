@@ -5,8 +5,11 @@
 mod authority;
 mod context;
 mod identity;
+mod lineage;
 mod policy;
 mod share;
+mod share_command;
+mod store;
 
 pub use authority::{OrganizationAuthority, OrganizationChoice};
 pub use context::{
@@ -14,8 +17,17 @@ pub use context::{
     MAX_MEMBERSHIP_AGE,
 };
 pub use identity::{ResourceActor, ResourceOwner};
+pub use lineage::ResourceLineage;
 pub use policy::{AccessDecision, AccessError, AccessPurpose, ResourceCapability, ResourceScope};
 pub use share::{ResourceSelector, ResourceShare, ShareMode, SharingIsolation};
+pub use share_command::{
+    plan_share_mutation, ResourceShareStore, ShareChange, ShareMutation, ShareMutationPlan,
+    ShareMutationReceipt, MAX_ACTIVE_RESOURCE_SHARES,
+};
+pub use store::{
+    OrganizationOwnershipEvidence, ResourceAccessSnapshot, ResourceAccessStore,
+    ResourceAccessStoreError, ResourcePolicyFence, ResourcePolicyRecord, ResourceTarget,
+};
 
 #[cfg(test)]
 mod tests;

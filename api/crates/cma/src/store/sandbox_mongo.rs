@@ -34,6 +34,9 @@ pub(super) const AGENT_REUSE_BINDINGS: &str = "agent_reuse_bindings";
 pub(super) const AGENT_LOG: &str = "agent_log";
 pub(super) const AGENT_COMMANDS: &str = "agent_commands";
 pub(super) const AGENT_COMMAND_ORDERS: &str = "agent_command_orders";
+pub(super) const RESOURCE_POLICIES: &str = "resource_policies";
+pub(super) const RESOURCE_SHARE_COMMANDS: &str = "resource_share_commands";
+pub(super) const RESOURCE_SHARES: &str = "resource_shares";
 pub(super) const SANDBOX_EVENTS: &str = "sandbox_events";
 pub(super) const SANDBOX_ADMISSIONS: &str = "sandbox_admissions";
 pub(super) const CHECKPOINTS: &str = "checkpoints";
@@ -54,6 +57,9 @@ const SANDBOX_COLLECTIONS: &[&str] = &[
     AGENT_LOG,
     AGENT_COMMANDS,
     AGENT_COMMAND_ORDERS,
+    RESOURCE_POLICIES,
+    RESOURCE_SHARES,
+    RESOURCE_SHARE_COMMANDS,
     SANDBOX_EVENTS,
     SANDBOX_ADMISSIONS,
     CHECKPOINTS,
@@ -82,6 +88,9 @@ pub struct MongoSandboxStore {
     pub(super) agent_log: Collection<Document>,
     pub(super) agent_commands: Collection<Document>,
     pub(super) agent_command_orders: Collection<Document>,
+    pub(super) resource_policies: Collection<Document>,
+    pub(super) resource_share_commands: Collection<Document>,
+    pub(super) resource_shares: Collection<Document>,
     pub(super) sandbox_events: Collection<Document>,
     pub(super) sandbox_admissions: Collection<Document>,
     pub(super) checkpoints: Collection<Document>,
@@ -122,6 +131,9 @@ impl MongoSandboxStore {
             agent_log: majority_collection(&database, AGENT_LOG),
             agent_commands: majority_collection(&database, AGENT_COMMANDS),
             agent_command_orders: majority_collection(&database, AGENT_COMMAND_ORDERS),
+            resource_policies: majority_collection(&database, RESOURCE_POLICIES),
+            resource_share_commands: majority_collection(&database, RESOURCE_SHARE_COMMANDS),
+            resource_shares: majority_collection(&database, RESOURCE_SHARES),
             sandbox_events: majority_collection(&database, SANDBOX_EVENTS),
             sandbox_admissions: majority_collection(&database, SANDBOX_ADMISSIONS),
             checkpoints: majority_collection(&database, CHECKPOINTS),
@@ -140,6 +152,7 @@ impl MongoSandboxStore {
         super::agents::ensure_indexes(&store.agents).await?;
         super::agent_log::ensure_indexes(&store.agent_log).await?;
         super::agent_commands::ensure_indexes(&store.agent_commands).await?;
+        super::resource_access::ensure_indexes(&store).await?;
         super::sandbox_events::ensure_indexes(&store.sandbox_events).await?;
         super::checkpoints::ensure_indexes(&store.checkpoints).await?;
         super::warm_sandboxes::ensure_indexes(&store.warm_sandboxes).await?;
