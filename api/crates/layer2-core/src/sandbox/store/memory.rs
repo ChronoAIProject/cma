@@ -36,6 +36,7 @@ macro_rules! save_record {
 mod agent_admission;
 #[cfg(test)]
 mod agent_admission_tests;
+mod agent_commands;
 #[cfg(test)]
 mod agent_connection_recovery_tests;
 mod agent_control;
