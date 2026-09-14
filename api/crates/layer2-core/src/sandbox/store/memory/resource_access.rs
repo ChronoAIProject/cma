@@ -6,6 +6,46 @@ use crate::sandbox::store::InMemorySandboxStore;
 
 #[async_trait::async_trait]
 impl ResourceAccessStore for InMemorySandboxStore {
+    async fn organization_sandboxes(
+        &self,
+        organization: &crate::SubjectId,
+        query: &crate::sandbox::OwnerSandboxQuery,
+    ) -> Result<Vec<ResourceAccessSnapshot>, ResourceAccessStoreError> {
+        crate::sandbox::store::PageRequest::new(query.page.limit, query.page.cursor.clone())
+            .map_err(|_| ResourceAccessStoreError::Invalid)?;
+        let state = self.lock();
+        let mut candidates: Vec<_> = state.sandboxes.values().filter(|sandbox| {
+            if query.status.is_some_and(|status| sandbox.status != status)
+                || query.page.cursor.as_deref().is_some_and(|id| sandbox.id.as_str() <= id) {
+                return false;
+            }
+            let owned = state.resource_policies.get(&sandbox.id).is_some_and(|policy| {
+                matches!(&policy.owner, ResourceOwner::Organization { subject } if subject == organization)
+            });
+            owned || state.resource_shares.values().any(|receipt| {
+                receipt.sandbox_id == sandbox.id
+                    && receipt.share.target_org_id == *organization
+                    && receipt.share.revoked_at.is_none()
+                    && matches!(&receipt.share.selector, ResourceSelector::Sandbox { sandbox_id } if sandbox_id == &sandbox.id)
+            })
+        }).collect();
+        candidates.sort_by(|left, right| left.id.as_str().cmp(right.id.as_str()));
+        candidates
+            .into_iter()
+            .take(usize::from(query.page.limit) + 1)
+            .map(|sandbox| {
+                let value = snapshot(
+                    &state,
+                    &ResourceTarget::Sandbox {
+                        sandbox_id: sandbox.id.clone(),
+                    },
+                )?;
+                value.organization_sandbox(organization)?;
+                Ok(value)
+            })
+            .collect()
+    }
+
     async fn organization_agents(
         &self,
         organization: &crate::SubjectId,
@@ -237,9 +277,10 @@ impl crate::resource_access::ResourceShareStore for InMemorySandboxStore {
     }
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 impl InMemorySandboxStore {
-    pub(crate) fn set_resource_policy_for_test(
+    #[doc(hidden)]
+    pub fn set_resource_policy_for_test(
         &self,
         policy: crate::resource_access::ResourcePolicyRecord,
     ) {

@@ -17,6 +17,7 @@ mod fault_cases;
 mod inventory;
 mod inventory_cases;
 mod replay;
+mod sandbox_inventory_cases;
 mod share_cases;
 mod shared_agent_cases;
 mod shared_hierarchy_cases;
@@ -112,6 +113,9 @@ fn paths() -> Vec<PathBuf> {
 }
 
 async fn scenario(name: &str) -> Scenario {
+    if let Some(scenario) = sandbox_inventory_cases::scenario(name).await {
+        return scenario;
+    }
     if let Some(scenario) = shared_hierarchy_cases::scenario(name).await {
         return scenario;
     }

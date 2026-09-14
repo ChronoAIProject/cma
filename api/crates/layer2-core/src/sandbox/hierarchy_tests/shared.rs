@@ -3,6 +3,8 @@ use super::*;
 mod buffered;
 use crate::resource_access::*;
 use buffered::BufferedStore;
+#[path = "inventory.rs"]
+mod inventory;
 use std::sync::Mutex;
 use std::time::{Duration, SystemTime};
 

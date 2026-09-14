@@ -1,0 +1,1105 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "sandbox-inventory-whole",
+      "operation": "GET /api/v1/sandboxes",
+      "scenario": "sandbox_inventory_whole",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/sandboxes?organization=org",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "items": [
+            {
+              "access": "shared",
+              "id": "sbx_route",
+              "name": "research",
+              "status": "active",
+              "created_at": "2026-09-05T00:00:00Z",
+              "updated_at": "2026-09-05T00:00:00Z",
+              "last_activity_at": "2026-09-05T00:00:00Z",
+              "workspace_count": 1,
+              "worktree_count": 2,
+              "agent_count": 2
+            }
+          ]
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-inventory-narrow",
+      "operation": "GET /api/v1/sandboxes",
+      "scenario": "sandbox_inventory_narrow",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/sandboxes?organization=org",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "items": []
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-inventory-overlap",
+      "operation": "GET /api/v1/sandboxes",
+      "scenario": "sandbox_inventory_overlap",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/sandboxes?organization=org",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "items": [
+            {
+              "access": "shared",
+              "id": "sbx_route",
+              "name": "research",
+              "status": "active",
+              "created_at": "2026-09-05T00:00:00Z",
+              "updated_at": "2026-09-05T00:00:00Z",
+              "last_activity_at": "2026-09-05T00:00:00Z",
+              "workspace_count": 1,
+              "worktree_count": 2,
+              "agent_count": 2
+            }
+          ]
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-inventory-owner",
+      "operation": "GET /api/v1/sandboxes",
+      "scenario": "sandbox_inventory_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/sandboxes?organization=org",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "items": [
+            {
+              "id": "sbx_route",
+              "owner": "owner-a",
+              "owner_name": "Alex Chen",
+              "name": "research",
+              "status": "active",
+              "profile": {
+                "id": "sbp_route",
+                "revision": 3
+              },
+              "nyxid_services": [
+                "api-github"
+              ],
+              "limits": {
+                "max_workspaces": 4,
+                "max_agents_per_workspace": 4
+              },
+              "lifecycle": {
+                "pause": {
+                  "allowed": true
+                },
+                "revive": {
+                  "allowed": false,
+                  "reason": "not_paused"
+                }
+              },
+              "runtime_version": "sha256:runtime",
+              "last_activity_at": "2026-09-05T00:00:00Z",
+              "created_at": "2026-09-05T00:00:00Z",
+              "updated_at": "2026-09-05T00:00:00Z",
+              "revision": 1,
+              "workspace_count": 1,
+              "worktree_count": 2,
+              "agent_count": 2
+            }
+          ]
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-inventory-missing",
+      "operation": "GET /api/v1/sandboxes",
+      "scenario": "sandbox_inventory_missing",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/sandboxes?organization=org",
+        "headers": {}
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource_forbidden",
+          "title": "resource_forbidden",
+          "status": 403,
+          "detail": "Current authority does not permit this operation.",
+          "code": "resource_forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-inventory-outage",
+      "operation": "GET /api/v1/sandboxes",
+      "scenario": "sandbox_inventory_outage",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/sandboxes?organization=org",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/organization_authority_unavailable",
+          "title": "organization_authority_unavailable",
+          "status": 503,
+          "detail": "Current organization authorization is unavailable. Retry after the identity provider recovers.",
+          "code": "organization_authority_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-inventory-revoked",
+      "operation": "GET /api/v1/sandboxes",
+      "scenario": "sandbox_inventory_revoked",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/sandboxes?organization=org",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "items": []
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-inventory-invalid-context",
+      "operation": "GET /api/v1/sandboxes",
+      "scenario": "sandbox_inventory_invalid_context",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/sandboxes?organization=org",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-inventory-anonymous",
+      "operation": "GET /api/v1/sandboxes",
+      "scenario": "sandbox_inventory_anonymous",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/sandboxes?organization=org",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-inventory-forbidden",
+      "operation": "GET /api/v1/sandboxes",
+      "scenario": "sandbox_inventory_forbidden",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/sandboxes?organization=org",
+        "headers": {}
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/forbidden",
+          "title": "forbidden",
+          "status": 403,
+          "detail": "This caller is not allowed to use this resource.",
+          "code": "forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-inventory-no-credential",
+      "operation": "GET /api/v1/sandboxes",
+      "scenario": "sandbox_inventory_no_credential",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/sandboxes?organization=org",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/organization_authority_unavailable",
+          "title": "organization_authority_unavailable",
+          "status": 503,
+          "detail": "Current organization authorization is unavailable. Retry after the identity provider recovers.",
+          "code": "organization_authority_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-inventory-legacy",
+      "operation": "GET /api/v1/sandboxes",
+      "scenario": "sandbox_inventory_legacy",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/sandboxes?organization=org",
+        "headers": {}
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/forbidden",
+          "title": "forbidden",
+          "status": 403,
+          "detail": "This caller is not allowed to use this resource.",
+          "code": "forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-inventory-changed",
+      "operation": "GET /api/v1/sandboxes",
+      "scenario": "sandbox_inventory_changed",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/sandboxes?organization=org",
+        "headers": {}
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource_access_changed",
+          "title": "resource_access_changed",
+          "status": 409,
+          "detail": "Resource access changed. Read current access and retry with the current revision.",
+          "code": "resource_access_changed"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-inventory-unavailable",
+      "operation": "GET /api/v1/sandboxes",
+      "scenario": "sandbox_inventory_unavailable",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/sandboxes?organization=org",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource_access_unavailable",
+          "title": "resource_access_unavailable",
+          "status": 503,
+          "detail": "Resource access is temporarily unavailable. Retry the same command key to recover an unacknowledged result.",
+          "code": "resource_access_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-inventory-first",
+      "operation": "GET /api/v1/sandboxes",
+      "scenario": "sandbox_inventory_two",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/sandboxes?organization=org&limit=1",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "items": [
+            {
+              "access": "shared",
+              "id": "sbx_route",
+              "name": "research",
+              "status": "active",
+              "created_at": "2026-09-05T00:00:00Z",
+              "updated_at": "2026-09-05T00:00:00Z",
+              "last_activity_at": "2026-09-05T00:00:00Z",
+              "workspace_count": 1,
+              "worktree_count": 2,
+              "agent_count": 2
+            }
+          ],
+          "next": "sbx_route"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-inventory-last",
+      "operation": "GET /api/v1/sandboxes",
+      "scenario": "sandbox_inventory_two",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/sandboxes?organization=org&limit=1&cursor=sbx_route",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "items": [
+            {
+              "access": "shared",
+              "id": "z_other",
+              "name": "z_other",
+              "status": "active",
+              "created_at": "2026-09-05T00:00:00Z",
+              "updated_at": "2026-09-05T00:00:00Z",
+              "last_activity_at": "2026-09-05T00:00:00Z",
+              "workspace_count": 0,
+              "worktree_count": 0,
+              "agent_count": 0
+            }
+          ]
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-inventory-empty",
+      "operation": "GET /api/v1/sandboxes",
+      "scenario": "sandbox_inventory_two",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/sandboxes?organization=org&cursor=z_other",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "items": []
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-inventory-status",
+      "operation": "GET /api/v1/sandboxes",
+      "scenario": "sandbox_inventory_two",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/sandboxes?organization=org&status=paused",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "items": []
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-inventory-other-org",
+      "operation": "GET /api/v1/sandboxes",
+      "scenario": "sandbox_inventory_two",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/sandboxes?organization=other-org",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "items": []
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-inventory-personal-owner",
+      "operation": "GET /api/v1/sandboxes",
+      "scenario": "sandbox_inventory_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/sandboxes",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "items": [
+            {
+              "id": "a_private",
+              "owner": "owner-a",
+              "owner_name": "Alex Chen",
+              "name": "a_private",
+              "status": "active",
+              "profile": {
+                "id": "sbp_route",
+                "revision": 3
+              },
+              "nyxid_services": [
+                "api-github"
+              ],
+              "limits": {
+                "max_workspaces": 4,
+                "max_agents_per_workspace": 4
+              },
+              "lifecycle": {
+                "pause": {
+                  "allowed": true
+                },
+                "revive": {
+                  "allowed": false,
+                  "reason": "not_paused"
+                }
+              },
+              "runtime_version": "sha256:runtime",
+              "last_activity_at": "2026-09-05T00:00:00Z",
+              "created_at": "2026-09-05T00:00:00Z",
+              "updated_at": "2026-09-05T00:00:00Z",
+              "revision": 1,
+              "workspace_count": 0,
+              "worktree_count": 0,
+              "agent_count": 0
+            },
+            {
+              "id": "sbx_route",
+              "owner": "owner-a",
+              "owner_name": "Alex Chen",
+              "name": "research",
+              "status": "active",
+              "profile": {
+                "id": "sbp_route",
+                "revision": 3
+              },
+              "nyxid_services": [
+                "api-github"
+              ],
+              "limits": {
+                "max_workspaces": 4,
+                "max_agents_per_workspace": 4
+              },
+              "lifecycle": {
+                "pause": {
+                  "allowed": true
+                },
+                "revive": {
+                  "allowed": false,
+                  "reason": "not_paused"
+                }
+              },
+              "runtime_version": "sha256:runtime",
+              "last_activity_at": "2026-09-05T00:00:00Z",
+              "created_at": "2026-09-05T00:00:00Z",
+              "updated_at": "2026-09-05T00:00:00Z",
+              "revision": 1,
+              "workspace_count": 1,
+              "worktree_count": 2,
+              "agent_count": 2
+            },
+            {
+              "id": "z_other",
+              "owner": "owner-a",
+              "owner_name": "Alex Chen",
+              "name": "z_other",
+              "status": "active",
+              "profile": {
+                "id": "sbp_route",
+                "revision": 3
+              },
+              "nyxid_services": [
+                "api-github"
+              ],
+              "limits": {
+                "max_workspaces": 4,
+                "max_agents_per_workspace": 4
+              },
+              "lifecycle": {
+                "pause": {
+                  "allowed": true
+                },
+                "revive": {
+                  "allowed": false,
+                  "reason": "not_paused"
+                }
+              },
+              "runtime_version": "sha256:runtime",
+              "last_activity_at": "2026-09-05T00:00:00Z",
+              "created_at": "2026-09-05T00:00:00Z",
+              "updated_at": "2026-09-05T00:00:00Z",
+              "revision": 1,
+              "workspace_count": 0,
+              "worktree_count": 0,
+              "agent_count": 0
+            }
+          ]
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-inventory-personal-owner-outage",
+      "operation": "GET /api/v1/sandboxes",
+      "scenario": "sandbox_inventory_owner_outage",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/sandboxes",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "items": [
+            {
+              "id": "a_private",
+              "owner": "owner-a",
+              "owner_name": "Alex Chen",
+              "name": "a_private",
+              "status": "active",
+              "profile": {
+                "id": "sbp_route",
+                "revision": 3
+              },
+              "nyxid_services": [
+                "api-github"
+              ],
+              "limits": {
+                "max_workspaces": 4,
+                "max_agents_per_workspace": 4
+              },
+              "lifecycle": {
+                "pause": {
+                  "allowed": true
+                },
+                "revive": {
+                  "allowed": false,
+                  "reason": "not_paused"
+                }
+              },
+              "runtime_version": "sha256:runtime",
+              "last_activity_at": "2026-09-05T00:00:00Z",
+              "created_at": "2026-09-05T00:00:00Z",
+              "updated_at": "2026-09-05T00:00:00Z",
+              "revision": 1,
+              "workspace_count": 0,
+              "worktree_count": 0,
+              "agent_count": 0
+            },
+            {
+              "id": "sbx_route",
+              "owner": "owner-a",
+              "owner_name": "Alex Chen",
+              "name": "research",
+              "status": "active",
+              "profile": {
+                "id": "sbp_route",
+                "revision": 3
+              },
+              "nyxid_services": [
+                "api-github"
+              ],
+              "limits": {
+                "max_workspaces": 4,
+                "max_agents_per_workspace": 4
+              },
+              "lifecycle": {
+                "pause": {
+                  "allowed": true
+                },
+                "revive": {
+                  "allowed": false,
+                  "reason": "not_paused"
+                }
+              },
+              "runtime_version": "sha256:runtime",
+              "last_activity_at": "2026-09-05T00:00:00Z",
+              "created_at": "2026-09-05T00:00:00Z",
+              "updated_at": "2026-09-05T00:00:00Z",
+              "revision": 1,
+              "workspace_count": 1,
+              "worktree_count": 2,
+              "agent_count": 2
+            },
+            {
+              "id": "z_other",
+              "owner": "owner-a",
+              "owner_name": "Alex Chen",
+              "name": "z_other",
+              "status": "active",
+              "profile": {
+                "id": "sbp_route",
+                "revision": 3
+              },
+              "nyxid_services": [
+                "api-github"
+              ],
+              "limits": {
+                "max_workspaces": 4,
+                "max_agents_per_workspace": 4
+              },
+              "lifecycle": {
+                "pause": {
+                  "allowed": true
+                },
+                "revive": {
+                  "allowed": false,
+                  "reason": "not_paused"
+                }
+              },
+              "runtime_version": "sha256:runtime",
+              "last_activity_at": "2026-09-05T00:00:00Z",
+              "created_at": "2026-09-05T00:00:00Z",
+              "updated_at": "2026-09-05T00:00:00Z",
+              "revision": 1,
+              "workspace_count": 0,
+              "worktree_count": 0,
+              "agent_count": 0
+            }
+          ]
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-inventory-personal-recipient",
+      "operation": "GET /api/v1/sandboxes",
+      "scenario": "sandbox_inventory_whole",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/sandboxes",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "items": []
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-inventory-explicit-owner",
+      "operation": "GET /api/v1/sandboxes",
+      "scenario": "sandbox_inventory_org_owned",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/sandboxes?organization=owner-a",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "items": [
+            {
+              "access": "shared",
+              "id": "sbx_route",
+              "name": "research",
+              "status": "active",
+              "created_at": "2026-09-05T00:00:00Z",
+              "updated_at": "2026-09-05T00:00:00Z",
+              "last_activity_at": "2026-09-05T00:00:00Z",
+              "workspace_count": 1,
+              "worktree_count": 2,
+              "agent_count": 2
+            }
+          ]
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-inventory-explicit-owner-is-not-personal",
+      "operation": "GET /api/v1/sandboxes",
+      "scenario": "sandbox_inventory_org_owned",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/sandboxes",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "items": [
+            {
+              "id": "a_private",
+              "owner": "owner-a",
+              "owner_name": "Alex Chen",
+              "name": "a_private",
+              "status": "active",
+              "profile": {
+                "id": "sbp_route",
+                "revision": 3
+              },
+              "nyxid_services": [
+                "api-github"
+              ],
+              "limits": {
+                "max_workspaces": 4,
+                "max_agents_per_workspace": 4
+              },
+              "lifecycle": {
+                "pause": {
+                  "allowed": true
+                },
+                "revive": {
+                  "allowed": false,
+                  "reason": "not_paused"
+                }
+              },
+              "runtime_version": "sha256:runtime",
+              "last_activity_at": "2026-09-05T00:00:00Z",
+              "created_at": "2026-09-05T00:00:00Z",
+              "updated_at": "2026-09-05T00:00:00Z",
+              "revision": 1,
+              "workspace_count": 0,
+              "worktree_count": 0,
+              "agent_count": 0
+            },
+            {
+              "id": "z_other",
+              "owner": "owner-a",
+              "owner_name": "Alex Chen",
+              "name": "z_other",
+              "status": "active",
+              "profile": {
+                "id": "sbp_route",
+                "revision": 3
+              },
+              "nyxid_services": [
+                "api-github"
+              ],
+              "limits": {
+                "max_workspaces": 4,
+                "max_agents_per_workspace": 4
+              },
+              "lifecycle": {
+                "pause": {
+                  "allowed": true
+                },
+                "revive": {
+                  "allowed": false,
+                  "reason": "not_paused"
+                }
+              },
+              "runtime_version": "sha256:runtime",
+              "last_activity_at": "2026-09-05T00:00:00Z",
+              "created_at": "2026-09-05T00:00:00Z",
+              "updated_at": "2026-09-05T00:00:00Z",
+              "revision": 1,
+              "workspace_count": 0,
+              "worktree_count": 0,
+              "agent_count": 0
+            }
+          ]
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-inventory-empty-org",
+      "operation": "GET /api/v1/sandboxes",
+      "scenario": "sandbox_inventory_whole",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/sandboxes?organization=",
+        "headers": {}
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-query",
+          "title": "invalid query",
+          "status": 400,
+          "detail": "The query parameters are not valid.",
+          "code": "invalid_query"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-inventory-space-org",
+      "operation": "GET /api/v1/sandboxes",
+      "scenario": "sandbox_inventory_whole",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/sandboxes?organization=%20org",
+        "headers": {}
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-query",
+          "title": "invalid query",
+          "status": 400,
+          "detail": "The query parameters are not valid.",
+          "code": "invalid_query"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-inventory-long-org",
+      "operation": "GET /api/v1/sandboxes",
+      "scenario": "sandbox_inventory_whole",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/sandboxes?organization=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        "headers": {}
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-query",
+          "title": "invalid query",
+          "status": 400,
+          "detail": "The query parameters are not valid.",
+          "code": "invalid_query"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-inventory-status-invalid",
+      "operation": "GET /api/v1/sandboxes",
+      "scenario": "sandbox_inventory_whole",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/sandboxes?organization=org&status=unknown",
+        "headers": {}
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-query",
+          "title": "invalid query",
+          "status": 400,
+          "detail": "The query parameters are not valid.",
+          "code": "invalid_query"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-inventory-invalid-owner",
+      "operation": "GET /api/v1/sandboxes",
+      "scenario": "sandbox_inventory_whole",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/sandboxes?organization=org&owner=owner-a",
+        "headers": {}
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-query",
+          "title": "invalid query",
+          "status": 400,
+          "detail": "The query parameters are not valid.",
+          "code": "invalid_query"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-inventory-limit-zero",
+      "operation": "GET /api/v1/sandboxes",
+      "scenario": "sandbox_inventory_whole",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/sandboxes?organization=org&limit=0",
+        "headers": {}
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-page",
+          "title": "invalid page",
+          "status": 400,
+          "detail": "The page or event cursor parameters are not valid.",
+          "code": "invalid_page"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-inventory-empty-cursor",
+      "operation": "GET /api/v1/sandboxes",
+      "scenario": "sandbox_inventory_whole",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/sandboxes?organization=org&cursor=",
+        "headers": {}
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-page",
+          "title": "invalid page",
+          "status": 400,
+          "detail": "The page or event cursor parameters are not valid.",
+          "code": "invalid_page"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    }
+  ]
+}

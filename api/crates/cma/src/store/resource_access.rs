@@ -15,6 +15,7 @@ use super::sandbox_mongo::{
 mod inventory;
 mod mutation;
 mod records;
+mod sandbox_inventory;
 mod snapshot;
 
 pub(super) fn read_inventory_policy(
@@ -40,6 +41,32 @@ impl From<mongodb::error::Error> for ReadError {
 
 #[async_trait::async_trait]
 impl ResourceAccessStore for MongoSandboxStore {
+    async fn organization_sandboxes(
+        &self,
+        organization: &layer2_core::SubjectId,
+        query: &layer2_core::sandbox::OwnerSandboxQuery,
+    ) -> Result<Vec<ResourceAccessSnapshot>, ResourceAccessStoreError> {
+        for _ in 0..TRANSACTION_ATTEMPTS {
+            let mut session = self
+                .client
+                .start_session()
+                .await
+                .map_err(|_| ResourceAccessStoreError::Unavailable)?;
+            start_transaction(&mut session)
+                .await
+                .map_err(|_| ResourceAccessStoreError::Unavailable)?;
+            let result = sandbox_inventory::read(self, organization, query, &mut session).await;
+            let _ = session.abort_transaction().await;
+            match result {
+                Ok(page) => return Ok(page),
+                Err(ReadError::Domain(error)) => return Err(error),
+                Err(ReadError::Driver(error)) if is_transient(&error) => continue,
+                Err(ReadError::Driver(_)) => return Err(ResourceAccessStoreError::Unavailable),
+            }
+        }
+        Err(ResourceAccessStoreError::Unavailable)
+    }
+
     async fn organization_agents(
         &self,
         organization: &layer2_core::SubjectId,

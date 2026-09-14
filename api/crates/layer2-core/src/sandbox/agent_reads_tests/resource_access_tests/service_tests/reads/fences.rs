@@ -8,6 +8,14 @@ struct PolicyStore {
 }
 #[async_trait]
 impl ResourceAccessStore for PolicyStore {
+    async fn organization_sandboxes(
+        &self,
+        organization: &crate::SubjectId,
+        query: &crate::sandbox::OwnerSandboxQuery,
+    ) -> Result<Vec<ResourceAccessSnapshot>, ResourceAccessStoreError> {
+        self.inner.organization_sandboxes(organization, query).await
+    }
+
     async fn organization_agents(
         &self,
         organization: &SubjectId,

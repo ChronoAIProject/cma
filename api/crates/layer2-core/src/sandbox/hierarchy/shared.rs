@@ -18,6 +18,38 @@ pub enum WorktreeHierarchyReading {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SandboxInventoryReading {
+    Personal(Box<SandboxHierarchySummary>),
+    Shared(SharedSandboxSummary),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SharedSandboxSummary {
+    pub id: SandboxId,
+    pub name: String,
+    pub status: SandboxStatus,
+    pub created_at: String,
+    pub updated_at: String,
+    pub last_activity_at: String,
+    pub retired_at: Option<String>,
+    pub counts: HierarchyCounts,
+}
+impl From<SandboxHierarchyView> for SharedSandboxSummary {
+    fn from(value: SandboxHierarchyView) -> Self {
+        Self {
+            id: value.sandbox.id,
+            name: value.sandbox.name,
+            status: value.sandbox.status,
+            created_at: value.sandbox.created_at,
+            updated_at: value.sandbox.updated_at,
+            last_activity_at: value.sandbox.last_activity_at,
+            retired_at: value.sandbox.retired_at,
+            counts: value.counts,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SharedSandboxHierarchy {
     pub id: SandboxId,
     pub name: String,
