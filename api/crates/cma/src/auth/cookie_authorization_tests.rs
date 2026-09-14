@@ -16,6 +16,8 @@ use crate::auth::{profile::Profile, AuthMode};
 
 #[path = "cookie_authorization_tests/concurrency_tests.rs"]
 mod concurrency_tests;
+#[path = "cookie_authorization_tests/deferred_command_tests.rs"]
+mod deferred_command_tests;
 
 #[derive(Default)]
 struct Gate {

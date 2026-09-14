@@ -5,6 +5,7 @@
 //! and event variants remain readable by previous releases during rollback.
 
 mod admission;
+mod authorization;
 mod binding;
 mod capabilities;
 mod claimed_service;
@@ -21,6 +22,10 @@ mod worker_store;
 pub use admission::{
     AdmissionReceipt, AgentActor, AgentAuthorizationRevision, AgentCommandEnvelope,
     AgentCommandSource, AgentOwner, AgentResponseStatus, AgentSourceKind,
+};
+pub use authorization::{
+    AgentCommandAuthorizer, CommandAuthorizationError, DeferredCommandError,
+    PersonalCommandAdmissionAuthority,
 };
 pub use binding::bind_command_dispatch;
 pub use capabilities::AgentInterfaceCapabilities;

@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use crate::resource_access::{AccessDecision, ResourceCapability};
 use crate::{AgentId, Caller, Capability, RuntimeCapability};
 
 use super::store::{
@@ -382,7 +383,11 @@ impl AgentOperationService {
         let agent = AgentStore::get_agent(self.store.as_ref(), id)
             .await
             .map_err(operation_store_error)?
-            .filter(|agent| agent.id == *id && agent.owner == caller.subject)
+            .filter(|agent| {
+                agent.id == *id
+                    && AccessDecision::personal(caller, &agent.owner)
+                        .allows(ResourceCapability::Interact)
+            })
             .ok_or(AgentOperationError::NotFound)?;
         if agent.requested_stop_reason.is_some() {
             return Err(AgentOperationError::StatusConflict {
