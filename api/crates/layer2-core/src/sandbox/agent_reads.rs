@@ -23,6 +23,9 @@ pub struct AgentReadService {
 #[path = "agent_reads/authorized.rs"]
 mod authorized;
 pub use authorized::{AgentDetailReading, SharedAgentDetail};
+#[path = "agent_reads/source.rs"]
+mod source;
+pub use source::{AgentSourceReadError, AgentSourceReading, SharedAgentOrigin};
 #[path = "agent_reads/visibility.rs"]
 mod visibility;
 pub use visibility::AgentVisibleLogEntry;

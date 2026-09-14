@@ -53,6 +53,8 @@ mod resource_access_shapes;
 mod resource_access_tests;
 #[cfg(test)]
 mod shared_agent_tests;
+#[cfg(test)]
+mod shared_source_tests;
 pub use resource_access::resource_access_router;
 #[cfg(test)]
 mod trigger_assets_test_support;
