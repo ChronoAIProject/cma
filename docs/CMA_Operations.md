@@ -99,8 +99,17 @@ expiry or release. Existing queued messages and Trigger first-message delivery
 retain priority. The preliminary execution service accepts matching personal
 callers only; a channel envelope does not establish a personal caller.
 
-Background execution, fresh bridge/organization authorization, authoritative
-completion recovery and public admission wiring remain rollout prerequisites.
+Command outcome recovery reads the complete authoritative Agent log in one
+snapshot and records the observed cursor and delivery separately from the
+immutable dispatch binding. It reconstructs turn completion, interruption and
+approval waits, retains unresolved delivery until runtime evidence arrives, and
+never clears a newer command's lease. Runtime loss preserves uncertain writes
+as typed failures even when retirement logs the turn interruption first. The
+durable Agent log provides the recovery source if the response projection write
+is interrupted; live fragments cannot establish completion.
+
+Background execution, fresh bridge/organization authorization and public
+admission wiring remain rollout prerequisites.
 The ledger alone does not make busy queues or durable Responses available.
 
 The disposable cluster bootstrap is

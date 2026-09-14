@@ -10,6 +10,7 @@ use super::super::sandbox_mongo::{
 use super::ApplyError;
 
 pub(super) enum Change {
+    Reconcile(layer2_core::ids::AgentCommandId),
     Claim(CommandClaimRequest),
     Renew {
         claim: CommandClaim,
@@ -29,6 +30,15 @@ pub(super) enum Change {
 
 #[async_trait::async_trait]
 impl AgentCommandWorkerStore for MongoSandboxStore {
+    async fn reconcile_command(
+        &self,
+        id: &layer2_core::ids::AgentCommandId,
+    ) -> Result<AdmittedAgentCommand, CommandLedgerError> {
+        transaction(self, Change::Reconcile(id.clone()))
+            .await?
+            .ok_or(CommandLedgerError::NotFound)
+    }
+
     async fn claim_next_command(
         &self,
         request: CommandClaimRequest,

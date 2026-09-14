@@ -16,6 +16,9 @@ pub(super) async fn apply(
     session: &mut ClientSession,
 ) -> Result<Option<AdmittedAgentCommand>, ApplyError> {
     let (claim, now) = match change {
+        Change::Reconcile(id) => {
+            return super::reconcile::apply(store, id, session).await.map(Some)
+        }
         Change::Claim(request) => return claim_next(store, request, session).await,
         Change::Renew { claim, now, .. }
         | Change::Release { claim, now }
@@ -42,7 +45,7 @@ pub(super) async fn apply(
             command.reject_before_dispatch(claim, *code, now.clone())?;
             lane.lease = None;
         }
-        Change::Claim(_) => unreachable!(),
+        Change::Claim(_) | Change::Reconcile(_) => unreachable!(),
     }
     command.revision = revision.checked_add(1).ok_or(CommandLedgerError::Corrupt)?;
     write(store, &command, revision, &lane, session).await?;

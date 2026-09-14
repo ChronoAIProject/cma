@@ -10,6 +10,7 @@ mod capabilities;
 mod claimed_service;
 mod command;
 mod event;
+mod evidence;
 mod input;
 mod lane;
 mod ledger;
@@ -27,6 +28,7 @@ pub use command::{AgentCommand, AgentInputOrder};
 pub use event::{
     AgentEphemeralEvent, AgentEvent, AgentEventKind, AgentMessageRole, AGENT_IO_SCHEMA_VERSION,
 };
+pub use evidence::CommandEvidence;
 pub use input::{AgentAttachmentReference, AgentContent, AgentInput};
 pub use lane::{command_ready_for_claim, CommandLane};
 pub use ledger::{
@@ -35,7 +37,7 @@ pub use ledger::{
 };
 pub use work::{
     CommandClaim, CommandClaimRequest, CommandDispatch, CommandFailure, CommandFailureCode,
-    CommandLease, CommandWorkState,
+    CommandLease, CommandObservation, CommandWorkState,
 };
 pub use worker_store::AgentCommandWorkerStore;
 

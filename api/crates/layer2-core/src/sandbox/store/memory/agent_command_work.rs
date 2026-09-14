@@ -53,6 +53,42 @@ pub(super) fn bind_dispatch(
 
 #[async_trait]
 impl AgentCommandWorkerStore for InMemorySandboxStore {
+    async fn reconcile_command(
+        &self,
+        id: &crate::ids::AgentCommandId,
+    ) -> Result<AdmittedAgentCommand, CommandLedgerError> {
+        use crate::sandbox::agent_io::CommandEvidence;
+        let mut state = self.lock();
+        let mut command = state
+            .agent_commands
+            .get(id)
+            .cloned()
+            .ok_or(CommandLedgerError::NotFound)?;
+        command.validate()?;
+        if command.work.dispatch.is_none() || command.status.is_terminal() {
+            return Ok(command);
+        }
+        let agent_id = command.receipt.envelope.agent_id.clone();
+        let agent = state
+            .agents
+            .get(&agent_id)
+            .ok_or(CommandLedgerError::NotFound)?;
+        let mut lane = state
+            .agent_command_orders
+            .get(&agent_id)
+            .cloned()
+            .ok_or(CommandLedgerError::Corrupt)?;
+        let mut evidence = CommandEvidence::new(&command)?;
+        for entry in state.agent_logs.get(&agent_id).into_iter().flatten() {
+            evidence.observe(entry)?;
+        }
+        if evidence.apply(&mut command, &mut lane, agent)? {
+            state.agent_commands.insert(id.clone(), command.clone());
+            state.agent_command_orders.insert(agent_id, lane);
+        }
+        Ok(command)
+    }
+
     async fn claim_next_command(
         &self,
         request: CommandClaimRequest,
