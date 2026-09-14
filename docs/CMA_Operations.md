@@ -29,6 +29,54 @@ readiness or call the milestone complete while any required gate is unproved.
 Controlled test enablement for the final journeys is distinct from public
 publication and must be withdrawn if verification fails.
 
+## Bridge Continuity Observation
+
+Issue #850 is a prerequisite for enabling milestone 17. Use
+`.github/scripts/cma-bridge-continuity-observer.mjs` to capture read-only public
+Agent and Kubernetes evidence for exact selected Agents. The observer issues no
+Agent commands, runtime exec, lifecycle calls, credential changes or cleanup.
+It stores hashes of durable events instead of message/tool bodies, and refuses
+gaps, duplicate sequences, incomplete pagination and unavailable observations.
+
+Keep the configuration and receipts outside Git. The saved NyxID access-token
+file must be owned by the operator and inaccessible to other users. Configuration
+selects the exact verified cluster context, namespace and deployment identity:
+
+```json
+{
+  "schema": "cma-bridge-continuity-config-v1",
+  "origin": "https://your-cma-origin.example",
+  "context": "your-verified-kubernetes-context",
+  "namespace": "your-cma-namespace",
+  "deploymentId": "your-cma-deployment-id",
+  "tokenFile": "/absolute/private/nyxid/access_token",
+  "agentIds": ["agt_selected_existing_agent"]
+}
+```
+
+```sh
+node .github/scripts/cma-bridge-continuity-observer.mjs capture /private/continuity.json /private/before.json
+node .github/scripts/cma-bridge-continuity-observer.mjs capture /private/continuity.json /private/after.json
+node .github/scripts/cma-bridge-continuity-observer.mjs compare /private/before.json /private/after.json
+```
+
+Capture refuses to overwrite receipts. A comparison fails on changed Agent
+ancestry, creation identity or profile pin, lost/changed historical event prefix,
+loss of live availability, replaced Pod, changed container/image or restart count.
+Normal appended history and transitions among Ready, Working and Waiting for
+approval are permitted. A failure aborts rollout; it never authorizes repairs or
+cleanup against the observed user resources. Record a failed command separately
+and use new receipt paths for its corrected rerun.
+
+Successful sampled observations prove only their declared coverage. They do not
+prove availability between samples, native conversation identity, dirty-file
+preservation, exactly one runtime input, old-tab drafts, stream reconnect or safe
+cleanup. The result names these unproved properties explicitly. Complete them
+with the disposable previous-version live Agent upgrade/rollback campaign in
+#850/#873, including approval waits, sibling Agents, paused history and Trigger
+origin, before deploying or enabling bridge changes. Keep accepted work and
+existing runtime cohorts intact through both feature disable and rollback.
+
 ## Prerequisites
 
 - Verify the exact cluster context, namespace, deployment id, database and bucket
