@@ -17,6 +17,7 @@ import { TriggerAuthoring } from './trigger-authoring/index.js';
 import { AgentConversations } from './agui/index.js';
 import { Launches } from './launch/index.js';
 import { Authentication } from './auth.js';
+import { ResponsesV2 } from './responses-v2.js';
 import { Responses } from './responses.js';
 import { UnsupportedInterfaces } from './unsupported.js';
 import { ProfileAuthoring } from './profile-authoring/index.js';
@@ -36,6 +37,7 @@ export class Cma {
   readonly triggers: TriggerAuthoring;
   readonly auth: Authentication;
   readonly responses: Responses;
+  readonly responsesV2: ResponsesV2;
   readonly unsupported: UnsupportedInterfaces;
   readonly agui: AgentConversations;
   readonly launches: Launches;
@@ -61,6 +63,7 @@ export class Cma {
     this.triggers = this.triggerAuthoring;
     this.auth = new Authentication(this.#config);
     this.responses = new Responses(this.#config);
+    this.responsesV2 = new ResponsesV2(this.#config);
     this.unsupported = new UnsupportedInterfaces(this.#config);
     this.agui = new AgentConversations(this.#config);
     this.launches = new Launches(this.#config);

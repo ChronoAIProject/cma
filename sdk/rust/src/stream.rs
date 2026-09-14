@@ -8,7 +8,11 @@ use crate::{
 use eventsource_stream::{EventStreamError, Eventsource};
 use futures_util::{Stream, StreamExt};
 use reqwest::{StatusCode, header};
-use std::pin::Pin;
+use std::{
+    pin::Pin,
+    sync::{Arc, Mutex},
+};
+mod envelope;
 
 const MAX_FRAME_BYTES: usize = 1024 * 1024;
 const MAX_ERROR_BYTES: usize = 8 * 1024 * 1024;
@@ -20,6 +24,8 @@ pub struct ServerEvent {
     pub event: String,
     /// Standard inherited last-event ID, not necessarily an ID on this frame.
     pub last_event_id: String,
+    /// ID explicitly present on this frame, absent on connection-only errors.
+    pub explicit_id: Option<String>,
     /// JSON data carried by this event.
     pub data: serde_json::Value,
 }
@@ -28,9 +34,14 @@ pub struct ServerEvent {
 pub struct EventStream {
     inner: Pin<Box<dyn Stream<Item = Result<ServerEvent>> + Send>>,
     ended: bool,
+    headers: header::HeaderMap,
 }
 
 impl EventStream {
+    /// HTTP handshake metadata, including durable receipt IDs when provided.
+    pub fn headers(&self) -> &header::HeaderMap {
+        &self.headers
+    }
     /// Read the next event without reconnecting or retrying an admitted command.
     pub async fn next(&mut self) -> Option<Result<ServerEvent>> {
         if self.ended {
@@ -97,13 +108,23 @@ pub(crate) async fn open(client: &ClientInner, mut request: Request<'_>) -> Resu
         return Err(Error::protocol("event stream requires text/event-stream"));
     }
     // Bound incomplete frames before the parser can accumulate arbitrary remote data.
+    let headers = response.headers().clone();
+    let envelopes = Arc::new(Mutex::new(envelope::Envelopes::default()));
+    let received = envelopes.clone();
     let mut guard = FrameBound::default();
     let bytes = response.bytes_stream().map(move |chunk| {
         let chunk = chunk.map_err(|_| Error::transport("event stream body was interrupted"))?;
+        if chunk.len() > 4 * 1024 * 1024 {
+            return Err(Error::protocol("event stream chunk exceeded its bound"));
+        }
         guard.inspect(&chunk)?;
+        received
+            .lock()
+            .map_err(|_| Error::protocol("event envelope lock failed"))?
+            .inspect(&chunk)?;
         Ok::<_, Error>(chunk)
     });
-    let parsed = bytes.eventsource().map(|event| {
+    let parsed = bytes.eventsource().map(move |event| {
         let event = event.map_err(|error| match error {
             EventStreamError::Transport(error) => error,
             _ => Error::protocol("event stream contained invalid framing"),
@@ -113,12 +134,17 @@ pub(crate) async fn open(client: &ClientInner, mut request: Request<'_>) -> Resu
         Ok(ServerEvent {
             event: event.event,
             last_event_id: event.id,
+            explicit_id: envelopes
+                .lock()
+                .map_err(|_| Error::protocol("event envelope lock failed"))?
+                .next()?,
             data,
         })
     });
     Ok(EventStream {
         inner: Box::pin(parsed),
         ended: false,
+        headers,
     })
 }
 

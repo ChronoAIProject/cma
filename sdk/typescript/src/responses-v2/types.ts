@@ -1,0 +1,141 @@
+import {
+  array,
+  boolean,
+  enumeration,
+  integer,
+  nullable,
+  object,
+  tagged,
+  text,
+  variant,
+  type Output,
+} from '../schema.js';
+import { conversation, outputMessage, outputText, responseFields } from '../responses/types.js';
+
+export const v2ResponseStatus = enumeration(
+  'queued',
+  'in_progress',
+  'completed',
+  'failed',
+  'incomplete',
+);
+export const v2ResponseObject = object({
+  ...responseFields,
+  status: v2ResponseStatus,
+  conversation: object({ id: text }),
+  completed_at: nullable(integer),
+});
+export type V2ResponseObject = Output<typeof v2ResponseObject>;
+export type V2ResponseStatus = Output<typeof v2ResponseStatus>;
+export { conversation as v2Conversation };
+export type V2Conversation = Output<typeof conversation>;
+const message = tagged(
+  {
+    user: object({
+      type: enumeration('message'),
+      id: text,
+      status: enumeration('completed'),
+      role: enumeration('user'),
+      content: array(variant('input_text', { text })),
+    }),
+    assistant: outputMessage,
+  },
+  'role',
+);
+export const v2ConversationItemPage = object({
+  object: enumeration('list'),
+  data: array(message),
+  first_id: nullable(text),
+  last_id: nullable(text),
+  has_more: boolean,
+});
+export type V2ConversationItemPage = Output<typeof v2ConversationItemPage>;
+const sequence = { sequence_number: integer };
+const output = { ...sequence, output_index: integer };
+const content = { ...output, item_id: text, content_index: integer };
+const lifecycle = { ...sequence, response: v2ResponseObject };
+export const v2ResponseEvent = tagged({
+  'response.created': variant('response.created', lifecycle),
+  'response.in_progress': variant('response.in_progress', lifecycle),
+  'response.completed': variant('response.completed', lifecycle),
+  'response.failed': variant('response.failed', lifecycle),
+  'response.incomplete': variant('response.incomplete', lifecycle),
+  'response.output_item.added': variant('response.output_item.added', {
+    ...output,
+    item: outputMessage,
+  }),
+  'response.output_item.done': variant('response.output_item.done', {
+    ...output,
+    item: outputMessage,
+  }),
+  'response.content_part.added': variant('response.content_part.added', {
+    ...content,
+    part: outputText,
+  }),
+  'response.content_part.done': variant('response.content_part.done', {
+    ...content,
+    part: outputText,
+  }),
+  'response.output_text.delta': variant('response.output_text.delta', {
+    ...content,
+    delta: text,
+    logprobs: array((value: unknown) => value),
+  }),
+  'response.output_text.done': variant('response.output_text.done', {
+    ...content,
+    text,
+    logprobs: array((value: unknown) => value),
+  }),
+  error: variant('error', { ...sequence, code: text, message: text, param: nullable(text) }),
+});
+export type V2ResponseEvent = Output<typeof v2ResponseEvent>;
+export const v2Capabilities = object({
+  object: enumeration('cma.responses.capabilities'),
+  version: integer,
+  create: text,
+  agent_alias: text,
+  retrieve: text,
+  conversation: text,
+  items: text,
+  replay: object({ path: text, cursor: text, header: text, durable: boolean }),
+  creation: object({
+    stream: boolean,
+    conversation: text,
+    previous_response_id: boolean,
+    store: boolean,
+    input: text,
+    model: text,
+    idempotency_header: text,
+  }),
+  output: object({ standard_items: array(text), text_deltas: text, tools: text }),
+  companion: text,
+  documentation: text,
+});
+export type V2Capabilities = Output<typeof v2Capabilities>;
+export interface V2ResponseInput {
+  readonly input:
+    | string
+    | readonly [
+        {
+          readonly role: 'user';
+          readonly type?: 'message';
+          readonly content:
+            string | readonly { readonly type: 'input_text'; readonly text: string }[];
+        },
+      ];
+  readonly stream: true;
+  readonly metadata?: Readonly<Record<string, string>> | null;
+  readonly model?: string;
+  readonly store?: true;
+  readonly previous_response_id?: null;
+}
+export interface CreateV2ResponseRequest extends V2ResponseInput {
+  readonly conversation: string | { readonly id: string };
+}
+export interface CreateV2AgentResponseRequest extends V2ResponseInput {
+  readonly conversation?: string | { readonly id: string };
+}
+export interface V2ResponseReceipt {
+  readonly responseId: string;
+  readonly commandId: string;
+}

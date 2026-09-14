@@ -1,0 +1,71 @@
+//! Versioned streaming Responses subset backed by durable Agent commands.
+
+use axum::{
+    routing::{get, post},
+    Router,
+};
+use layer2_core::sandbox::{agent_io::AgentCommandService, AgentReadService};
+use std::sync::Arc;
+
+mod conversation;
+mod error;
+mod parse;
+mod projection;
+mod routes;
+mod stream;
+#[cfg(test)]
+pub(crate) mod tests;
+
+pub use projection::{ResponseConversation, V2ResponseObject, V2ResponseStatus};
+
+#[derive(Clone)]
+pub struct ResponsesV2State {
+    commands: Arc<AgentCommandService>,
+    reads: Arc<AgentReadService>,
+}
+impl ResponsesV2State {
+    pub fn new(commands: Arc<AgentCommandService>, reads: Arc<AgentReadService>) -> Self {
+        Self { commands, reads }
+    }
+}
+pub fn router(state: ResponsesV2State) -> Router {
+    Router::new()
+        .route("/api/v2", get(routes::capabilities))
+        .route("/api/v2/responses", post(routes::create))
+        .route(
+            "/api/v2/agents/{agent_id}/responses",
+            post(routes::create_alias),
+        )
+        .route("/api/v2/responses/{response_id}", get(routes::retrieve))
+        .route(
+            "/api/v2/responses/{response_id}/events",
+            get(routes::replay),
+        )
+        .route(
+            "/api/v2/conversations/{conversation_id}",
+            get(conversation::retrieve),
+        )
+        .route(
+            "/api/v2/conversations/{conversation_id}/items",
+            get(conversation::items),
+        )
+        .with_state(state)
+}
+pub(super) fn document() -> utoipa::openapi::OpenApi {
+    use utoipa::OpenApi;
+    #[derive(OpenApi)]
+    #[openapi(
+        paths(
+            routes::capabilities,
+            routes::create,
+            routes::create_alias,
+            routes::retrieve,
+            routes::replay,
+            conversation::retrieve,
+            conversation::items
+        ),
+        components(schemas(V2ResponseObject))
+    )]
+    struct Api;
+    Api::openapi()
+}

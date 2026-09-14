@@ -239,6 +239,48 @@ pub(crate) fn problem_error(
             status.as_u16()
         ));
     }
+    if problem
+        .detail
+        .as_ref()
+        .is_none_or(|value| value.trim().is_empty())
+        && problem
+            .title
+            .as_ref()
+            .is_none_or(|value| value.trim().is_empty())
+        && let Some(error) = problem.extensions.remove("error")
+    {
+        let Some(value) = error.as_object() else {
+            return Error::protocol("Responses error envelope is invalid");
+        };
+        let field = |name| {
+            value
+                .get(name)
+                .and_then(serde_json::Value::as_str)
+                .filter(|value| !value.trim().is_empty())
+        };
+        let (Some(code), Some(message), Some(kind), Some(param)) = (
+            field("code"),
+            field("message"),
+            field("type"),
+            value.get("param"),
+        ) else {
+            return Error::protocol("Responses error fields are invalid");
+        };
+        if !param.is_null() && !param.is_string() {
+            return Error::protocol("Responses error param is invalid");
+        }
+        return Error::Api {
+            status: status.as_u16(),
+            code: Some(code.into()),
+            message: message.into(),
+            request_id,
+            retry_after,
+            extensions: BTreeMap::from([
+                ("type".into(), kind.into()),
+                ("param".into(), param.clone()),
+            ]),
+        };
+    }
     let message = problem
         .detail
         .filter(|value| !value.trim().is_empty())

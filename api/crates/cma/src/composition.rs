@@ -309,12 +309,24 @@ impl ControlPlaneComposition {
         )
         .map_err(|error| format!("Agent command worker is not usable: {error}"))?;
         let command_scheduler = crate::commands::CommandScheduler::new(command_worker);
+        let command_service = layer2_core::sandbox::agent_io::AgentCommandService::new(
+            stores.sandbox_model.clone(),
+            resource_access.clone(),
+            auth.clone(),
+        );
+        let responses_v2 = layer1_public::responses::v2::router(
+            layer1_public::responses::v2::ResponsesV2State::new(
+                command_service,
+                projections.reads(),
+            ),
+        );
         let resource_routes = profiles_router(profiles)
             .merge(layer1_public::rest::resource_access_router(resource_access))
             .merge(profile_authoring_router(profile_authoring))
             .merge(hierarchy_router(hierarchy))
             .merge(projections.router(Arc::clone(&operations)))
             .merge(projections.conversation_router(context, sandbox_lifecycle.updates()))
+            .merge(responses_v2)
             .merge(trigger_routes)
             .merge(layer1_public::rest::admin::router(admin));
         let public = super::rest_router(resource_routes)

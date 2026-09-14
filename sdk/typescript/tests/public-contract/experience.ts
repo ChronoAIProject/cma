@@ -1,6 +1,43 @@
 import type { Dispatch } from './context.js';
 
 export const experienceDispatch: Record<string, Dispatch> = {
+  'GET /api/v2': ({ client }) => client.responsesV2.readCapabilities(),
+  'GET /api/v2/conversations/{conversation_id}': ({ client, param }) =>
+    client.responsesV2.readConversation(param('conversation_id')),
+  'GET /api/v2/conversations/{conversation_id}/items': ({ client, param, options }) =>
+    client.responsesV2.listConversationItems(param('conversation_id'), options),
+  'GET /api/v2/responses/{response_id}': ({ client, param }) =>
+    client.responsesV2.read(param('response_id')),
+  'GET /api/v2/responses/{response_id}/events': async ({ client, param, query }) => {
+    const events: unknown[] = [];
+    await client.responsesV2.replay(param('response_id'), {
+      startingAfter: query.has('starting_after') ? Number(query.get('starting_after')) : undefined,
+      onEvent: (event) => {
+        events.push(event);
+      },
+    });
+    return events;
+  },
+  'POST /api/v2/responses': async ({ client, body, command }) => {
+    const events: unknown[] = [];
+    await client.responsesV2.create(body, {
+      idempotencyKey: command.idempotencyKey,
+      onEvent: (event) => {
+        events.push(event);
+      },
+    });
+    return events;
+  },
+  'POST /api/v2/agents/{agent_id}/responses': async ({ client, body, command, param }) => {
+    const events: unknown[] = [];
+    await client.responsesV2.createForAgent(param('agent_id'), body, {
+      idempotencyKey: command.idempotencyKey,
+      onEvent: (event) => {
+        events.push(event);
+      },
+    });
+    return events;
+  },
   'GET /api/v1/agui/capabilities': ({ client }) => client.agui.readCapabilities(),
   'GET /api/v1/agui/agents/{id}/sandbox': ({ client, param }) =>
     client.agui.readSandboxSnapshot(param('id')),
