@@ -309,12 +309,15 @@
     },
     "GET /api/v1/agents/{id}/source": {
       "classification": "openapi",
-      "source": "api/crates/layer1-public/src/rest/agent_source.rs# Owner-scoped provenance and published shortcut projection, independent of conversation reads.",
+      "source": "api/crates/layer1-public/src/rest/agent_source.rs# Current-authority personal provenance and safe shared creation categories, fenced after IO.",
       "required_problems": [
         "agent_not_found",
         "forbidden",
         "instance_service_unavailable",
         "not_authenticated",
+        "organization_authority_unavailable",
+        "resource_access_changed",
+        "resource_access_unavailable",
         "trigger_service_unavailable"
       ]
     },

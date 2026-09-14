@@ -305,7 +305,7 @@ correlation metadata, sign-in secrets and private runtime diagnostics. The
 stored log is unchanged and complete-log validation still applies. Buffered
 results are refused when access changes or expires during IO. Organization
 outages return 503 `organization_authority_unavailable`; inaccessible Agents
-retain 404 `agent_not_found`. Shared hierarchy, provenance, live and interaction
+retain 404 `agent_not_found`. Shared hierarchy, live and interaction
 interfaces remain under development.
 
 `GET /api/v1/organizations` returns `{ items: [{ id, role, display_name? }] }`
@@ -326,7 +326,8 @@ safe Agent-only fields as shared detail; personal owners retain their full list
 summary. The SDK methods are TypeScript `agents.listAccessible` and Rust
 `agents().list_accessible` with `AccessibleAgentListOptions`.
 
-`GET /api/v1/agents/{id}/source` returns owner-scoped creation provenance:
+`GET /api/v1/agents/{id}/source` returns current-authority creation provenance.
+Personal owners retain the existing source document:
 `manual`, `workspace_profile`, or `trigger`. Trigger-created Agents also include
 the published Trigger title, public id, revision and quick messages when the
 source remains resolvable. Quick messages follow the latest published revision;
@@ -335,6 +336,15 @@ Reading source never sends a message or replays the first prompt. Each optional
 Trigger content `quick_messages` entry has a required unique name (120 UTF-8
 bytes), description (2,000 bytes) and text (32,768 bytes), with at most eight
 entries. Missing or empty arrays preserve legacy content digests.
+
+Other authorized readers receive `{ access: "shared", agent_id, origin: { type } }`
+with the same three creation categories. Private Trigger/Launch IDs, profile
+indexes and published shortcuts are withheld. Shared reads do not consult the
+owner's Launch or Trigger dependencies. Success and dependency errors are fenced
+against current Agent policy and evidence lifetime after IO. TypeScript
+`agents.sourceAccessible` and Rust `agents().source_accessible` return explicit
+personal/shared unions. Existing `source` methods retain their personal types
+and reject a shared projection.
 
 `GET /api/v1/agents/{id}/events` is a **JSON page**, not SSE. It accepts `after`
 and `limit` (1-200, default 200), returns `items` and optional `next`, and omits
@@ -478,7 +488,7 @@ above applies even when an operation annotates only its principal responses.
 | `GET /api/v1/agents/{id}` | - | - | 200 AccessibleAgentView |
 | `DELETE /api/v1/agents/{id}` | -; key | - | 202 empty |
 | `GET /api/v1/agents/{id}/events` | - | after, limit | 200 AgentEventPageView |
-| `GET /api/v1/agents/{id}/source` | - | - | 200 AgentSourceView |
+| `GET /api/v1/agents/{id}/source` | - | - | 200 AccessibleAgentSourceView |
 | `POST /api/v1/agents/{id}/stop` | StopAgentRequest; key | - | 202 empty |
 | `GET /api/v1/agents/{id}/terminal` | - | - | 404 ProblemDocument; 501 ProblemDocument |
 | `GET /api/v1/agents/{id}/transcript` | - | - | 200 AgentTranscriptView |
