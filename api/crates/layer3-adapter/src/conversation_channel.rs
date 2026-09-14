@@ -1,4 +1,8 @@
 use std::future::Future;
+use std::sync::{
+    atomic::{AtomicU8, Ordering},
+    Arc,
+};
 use std::time::Duration;
 
 use tokio::sync::{mpsc, oneshot};
@@ -9,7 +13,21 @@ const DELIVERY_DEADLINE: Duration = Duration::from_secs(2);
 
 struct PendingInput {
     input: ConversationInput,
-    delivered: oneshot::Sender<crate::Result<()>>,
+    guard: Option<Arc<dyn ConversationInputGuard>>,
+    state: Arc<AtomicU8>,
+    delivered: oneshot::Sender<ConversationSendOutcome>,
+}
+
+const PENDING: u8 = 0;
+const WRITING: u8 = 1;
+const CANCELLED: u8 = 2;
+
+/// Recheck held authority after queueing, immediately before the ordered writer
+/// invokes its runtime handler. Implementations must not renew expired evidence
+/// or perform runtime effects. A refusal leaves this conversation usable.
+#[async_trait::async_trait]
+pub trait ConversationInputGuard: Send + Sync {
+    async fn check(&self) -> crate::Result<()>;
 }
 
 /// What is known about one attempt to hand input to the runtime link.
@@ -22,12 +40,13 @@ pub enum ConversationSendOutcome {
 
 struct AbortOnDrop {
     handle: tokio::task::AbortHandle,
+    state: Arc<AtomicU8>,
     armed: bool,
 }
 
 impl Drop for AbortOnDrop {
     fn drop(&mut self) {
-        if self.armed {
+        if self.armed && !cancel_pending(&self.state) {
             self.handle.abort();
         }
     }
@@ -59,10 +78,42 @@ impl ConversationInputSender {
     {
         let (inner, mut pending) = mpsc::channel::<PendingInput>(capacity);
         let task = tokio::spawn(async move {
-            while let Some(PendingInput { input, delivered }) = pending.recv().await {
+            while let Some(PendingInput {
+                input,
+                guard,
+                state,
+                mut delivered,
+            }) = pending.recv().await
+            {
+                if delivered.is_closed() || state.load(Ordering::Acquire) == CANCELLED {
+                    continue;
+                }
+                if let Some(guard) = guard {
+                    let checked = tokio::select! {
+                        biased;
+                        _ = delivered.closed() => continue,
+                        checked = guard.check() => checked,
+                    };
+                    if let Err(error) = checked {
+                        let _ = delivered.send(ConversationSendOutcome::PreWriteFailure(error));
+                        continue;
+                    }
+                }
+                // Cancellation wins only while no handler can have run. This
+                // CAS makes a timeout/refusal safe even after queue admission.
+                if state
+                    .compare_exchange(PENDING, WRITING, Ordering::AcqRel, Ordering::Acquire)
+                    .is_err()
+                {
+                    continue;
+                }
                 let result = handler(input).await;
                 let failed = result.is_err();
-                let _ = delivered.send(result);
+                let outcome = match result {
+                    Ok(()) => ConversationSendOutcome::WriteConfirmed,
+                    Err(error) => ConversationSendOutcome::Ambiguous(error),
+                };
+                let _ = delivered.send(outcome);
                 if failed {
                     pending.close();
                     break;
@@ -84,18 +135,35 @@ impl ConversationInputSender {
         }
     }
 
-    /// Preserve the only retry-safe boundary: rejection before queue admission.
+    /// Distinguish refusal before handler invocation from uncertain delivery.
     pub async fn send_classified(&self, input: ConversationInput) -> ConversationSendOutcome {
-        self.send_with_deadline(input, DELIVERY_DEADLINE).await
+        self.send_with_deadline(input, None, DELIVERY_DEADLINE)
+            .await
+    }
+
+    pub async fn send_guarded(
+        &self,
+        input: ConversationInput,
+        guard: Arc<dyn ConversationInputGuard>,
+    ) -> ConversationSendOutcome {
+        self.send_with_deadline(input, Some(guard), DELIVERY_DEADLINE)
+            .await
     }
 
     async fn send_with_deadline(
         &self,
         input: ConversationInput,
+        guard: Option<Arc<dyn ConversationInputGuard>>,
         deadline: Duration,
     ) -> ConversationSendOutcome {
         let (delivered, receipt) = oneshot::channel();
-        if let Err(error) = self.inner.try_send(PendingInput { input, delivered }) {
+        let state = Arc::new(AtomicU8::new(PENDING));
+        if let Err(error) = self.inner.try_send(PendingInput {
+            input,
+            guard,
+            state: state.clone(),
+            delivered,
+        }) {
             let error = match error {
                 mpsc::error::TrySendError::Full(_) => AdapterError::Unavailable(
                     "the conversation input queue is not being consumed".into(),
@@ -107,27 +175,44 @@ impl ConversationInputSender {
             return ConversationSendOutcome::PreWriteFailure(error);
         }
 
-        // Cancellation after queue admission makes delivery ambiguous. Retire
-        // this writer generation so a caller cannot continue through it.
+        // Once handler invocation starts, cancellation is ambiguous and retires
+        // the generation. A still-pending request can be cancelled independently.
         let mut abort = AbortOnDrop {
             handle: self.abort.clone(),
+            state: state.clone(),
             armed: true,
         };
         let outcome = match tokio::time::timeout(deadline, receipt).await {
-            Ok(Ok(Ok(()))) => ConversationSendOutcome::WriteConfirmed,
-            Ok(Ok(Err(error))) => ConversationSendOutcome::Ambiguous(error),
-            Ok(Err(_)) => ConversationSendOutcome::Ambiguous(AdapterError::Unavailable(
-                "the conversation input task ended before delivery".into(),
-            )),
-            Err(_) => ConversationSendOutcome::Ambiguous(AdapterError::Unavailable(
-                "the conversation input task did not deliver the operation".into(),
-            )),
+            Ok(Ok(outcome)) => outcome,
+            Ok(Err(_)) => {
+                incomplete_delivery(&state, "the conversation input task ended before delivery")
+            }
+            Err(_) => incomplete_delivery(
+                &state,
+                "the conversation input task did not deliver the operation",
+            ),
         };
-        if !matches!(outcome, ConversationSendOutcome::WriteConfirmed) {
+        if matches!(outcome, ConversationSendOutcome::Ambiguous(_)) {
             self.abort.abort();
         }
         abort.armed = false;
         outcome
+    }
+}
+
+fn cancel_pending(state: &AtomicU8) -> bool {
+    state
+        .compare_exchange(PENDING, CANCELLED, Ordering::AcqRel, Ordering::Acquire)
+        .is_ok()
+        || state.load(Ordering::Acquire) == CANCELLED
+}
+
+fn incomplete_delivery(state: &AtomicU8, detail: &str) -> ConversationSendOutcome {
+    let error = AdapterError::Unavailable(detail.into());
+    if cancel_pending(state) {
+        ConversationSendOutcome::PreWriteFailure(error)
+    } else {
+        ConversationSendOutcome::Ambiguous(error)
     }
 }
 
@@ -137,3 +222,7 @@ pub struct ConversationChannel {
     pub input: ConversationInputSender,
     pub conversation_id: Option<String>,
 }
+
+#[cfg(test)]
+#[path = "conversation_guard_tests.rs"]
+mod guard_tests;

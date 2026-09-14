@@ -247,7 +247,7 @@ pub(super) async fn bounded<T>(
         .map_err(|_| CommandLedgerError::Unavailable.into())
 }
 
-fn command_capability(command: &AgentCommand) -> ResourceCapability {
+pub(super) fn command_capability(command: &AgentCommand) -> ResourceCapability {
     match command {
         AgentCommand::Message { .. } => ResourceCapability::Interact,
         AgentCommand::Steer { .. } | AgentCommand::Interrupt => ResourceCapability::OperateAgent,

@@ -36,6 +36,11 @@ impl AgentConversationStore for InMemorySandboxStore {
             mutation.appended_at,
             mutation.agent_logs,
         )?;
+        if let Some(fence) = &mutation.execution_fence {
+            fence
+                .require_current()
+                .map_err(|_| SandboxStoreError::Conflict)?;
+        }
         *state = candidate;
         Ok(appended)
     }
