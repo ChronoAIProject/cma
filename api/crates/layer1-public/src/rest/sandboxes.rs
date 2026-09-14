@@ -1,0 +1,363 @@
+//! Owner-facing Sandbox routes.
+
+use axum::{
+    extract::{Path, Query, State},
+    http::StatusCode,
+    response::{IntoResponse, Response},
+    routing::{get, post},
+    Json, Router,
+};
+use layer2_core::profiles::SandboxProfileRef;
+use layer2_core::sandbox::store::PageRequest;
+use layer2_core::sandbox::{CreateSandbox, OwnerSandboxQuery, SandboxOrigin, SandboxStatus};
+use layer2_core::{Capability, SandboxId, SandboxProfileId};
+use serde::Deserialize;
+
+use crate::AuthenticatedCaller;
+
+use super::idempotency::{IdempotencyKey, RequestBody};
+use super::instances::{confirmed_digest, execute_command, execute_empty_command, HierarchyState};
+use super::instances_openapi_shapes::{
+    CreateSandboxRequest, OwnerSandboxDetailView, OwnerSandboxPageView, OwnerSandboxSummaryView,
+    SandboxEventView, SandboxView,
+};
+use super::instances_problem::HierarchyProblem;
+use super::BodyProblem;
+
+const DEFAULT_PAGE_LIMIT: u16 = 100;
+const DEFAULT_EVENT_LIMIT: u16 = 200;
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct SandboxPageParams {
+    status: Option<SandboxStatus>,
+    cursor: Option<String>,
+    limit: Option<u16>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct EventParams {
+    after: Option<u64>,
+    limit: Option<u16>,
+}
+
+pub(super) fn routes() -> Router<HierarchyState> {
+    Router::new()
+        .route("/api/v1/sandboxes", post(create).get(list))
+        .route("/api/v1/sandboxes/{id}", get(read).delete(remove))
+        .route("/api/v1/sandboxes/{id}/pause", post(pause))
+        .route("/api/v1/sandboxes/{id}/revive", post(revive))
+        .route(
+            "/api/v1/sandboxes/{id}/service-access",
+            post(super::sandbox_service_access::grant),
+        )
+        .route("/api/v1/sandboxes/{id}/events", get(events))
+        .route(
+            "/api/v1/sandboxes/{id}/snapshots/{epoch}/download",
+            get(download_snapshot),
+        )
+}
+
+#[utoipa::path(get, path = "/api/v1/sandboxes/{id}/snapshots/{epoch}/download", tag = "sandboxes", params(("id" = String, Path), ("epoch" = u64, Path)), responses((status = 200, content_type = "application/octet-stream"), (status = 404, body = crate::rest::ProblemDocument)))]
+pub(super) async fn download_snapshot(
+    State(state): State<HierarchyState>,
+    AuthenticatedCaller(caller): AuthenticatedCaller,
+    Path((id, epoch)): Path<(String, u64)>,
+) -> Result<Response, HierarchyProblem> {
+    let snapshot = state
+        .hierarchy
+        .snapshot(&caller, &SandboxId(id), epoch)
+        .await
+        .map_err(HierarchyProblem::sandbox_read)?;
+    let stream = futures_util::stream::unfold(snapshot.chunks, |mut chunks| async move {
+        chunks
+            .recv()
+            .await
+            .map(|chunk| (chunk.map_err(std::io::Error::other), chunks))
+    });
+    Ok((
+        [
+            (
+                axum::http::header::CONTENT_TYPE,
+                "application/octet-stream".to_owned(),
+            ),
+            (
+                axum::http::header::CONTENT_LENGTH,
+                snapshot.size_bytes.to_string(),
+            ),
+            (
+                axum::http::header::CONTENT_DISPOSITION,
+                format!("attachment; filename=\"cma-snapshot-{epoch}.cma\""),
+            ),
+            (
+                axum::http::header::CACHE_CONTROL,
+                "private, no-store".to_owned(),
+            ),
+        ],
+        axum::body::Body::from_stream(stream),
+    )
+        .into_response())
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/v1/sandboxes",
+    tag = "sandboxes",
+    params(("Idempotency-Key" = String, Header)),
+    request_body = CreateSandboxRequest,
+    responses(
+        (status = 201, body = SandboxView),
+        (status = 409, body = crate::rest::ProblemDocument),
+        (status = 429, body = crate::rest::ProblemDocument)
+    )
+)]
+pub(super) async fn create(
+    State(state): State<HierarchyState>,
+    AuthenticatedCaller(caller): AuthenticatedCaller,
+    key: IdempotencyKey,
+    body: Result<RequestBody<CreateSandboxRequest>, BodyProblem>,
+) -> Response {
+    let command_state = state.clone();
+    let command_caller = caller.clone();
+    execute_command(
+        &state,
+        &caller,
+        Capability::CreateSandbox,
+        key,
+        "sandbox:create".into(),
+        body,
+        move |body| async move {
+            let confirmed_digest = confirmed_digest(body.trust_confirmed, body.commands_digest)?;
+            let sandbox = command_state
+                .sandboxes
+                .create(
+                    &command_caller,
+                    CreateSandbox {
+                        profile: SandboxProfileRef::new(
+                            SandboxProfileId(body.sandbox_profile.id),
+                            body.sandbox_profile.revision,
+                        ),
+                        name: body.name,
+                        confirmed_digest,
+                        origin: SandboxOrigin::Manual,
+                    },
+                )
+                .await
+                .map_err(HierarchyProblem::sandbox)?;
+            Ok((StatusCode::CREATED, Json(SandboxView::from(&sandbox))).into_response())
+        },
+    )
+    .await
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/v1/sandboxes",
+    tag = "sandboxes",
+    params(
+        ("status" = Option<String>, Query),
+        ("cursor" = Option<String>, Query),
+        ("limit" = Option<u16>, Query)
+    ),
+    responses((status = 200, body = OwnerSandboxPageView))
+)]
+pub(super) async fn list(
+    State(state): State<HierarchyState>,
+    AuthenticatedCaller(caller): AuthenticatedCaller,
+    params: Result<Query<SandboxPageParams>, axum::extract::rejection::QueryRejection>,
+) -> Result<Json<OwnerSandboxPageView>, HierarchyProblem> {
+    let params = params.map_err(|_| HierarchyProblem::InvalidQuery)?.0;
+    if params.cursor.as_ref().is_some_and(String::is_empty) {
+        return Err(HierarchyProblem::InvalidPage);
+    }
+    let page = PageRequest::new(params.limit.unwrap_or(DEFAULT_PAGE_LIMIT), params.cursor)
+        .map_err(|_| HierarchyProblem::InvalidPage)?;
+    let page = state
+        .hierarchy
+        .list_sandboxes(
+            &caller,
+            &OwnerSandboxQuery {
+                status: params.status,
+                page,
+            },
+        )
+        .await
+        .map_err(HierarchyProblem::sandbox_read)?;
+    let subjects: Vec<_> = page
+        .items
+        .iter()
+        .map(|row| row.sandbox.owner.clone())
+        .collect();
+    let names = super::public_names::resolve(&state.users, &subjects).await;
+    Ok(Json(OwnerSandboxPageView {
+        items: page
+            .items
+            .into_iter()
+            .map(|row| {
+                let mut view = OwnerSandboxSummaryView::from(row);
+                view.sandbox.owner_name = names.get(&view.sandbox.owner).cloned();
+                view
+            })
+            .collect(),
+        next: page.next,
+    }))
+}
+
+#[utoipa::path(get, path = "/api/v1/sandboxes/{id}", tag = "sandboxes", params(("id" = String, Path)), responses((status = 200, body = OwnerSandboxDetailView), (status = 404, body = crate::rest::ProblemDocument)))]
+pub(super) async fn read(
+    State(state): State<HierarchyState>,
+    AuthenticatedCaller(caller): AuthenticatedCaller,
+    Path(id): Path<String>,
+) -> Result<Json<OwnerSandboxDetailView>, HierarchyProblem> {
+    let value = state
+        .hierarchy
+        .sandbox(&caller, &SandboxId(id))
+        .await
+        .map_err(HierarchyProblem::sandbox_read)?;
+    let names =
+        super::public_names::resolve(&state.users, std::slice::from_ref(&value.sandbox.owner))
+            .await;
+    let mut view = OwnerSandboxDetailView::from(value);
+    view.sandbox.owner_name = names.get(&view.sandbox.owner).cloned();
+    Ok(Json(view))
+}
+
+#[utoipa::path(delete, path = "/api/v1/sandboxes/{id}", tag = "sandboxes", params(("id" = String, Path), ("Idempotency-Key" = String, Header)), responses((status = 202, body = SandboxView), (status = 404, body = crate::rest::ProblemDocument)))]
+pub(super) async fn remove(
+    State(state): State<HierarchyState>,
+    AuthenticatedCaller(caller): AuthenticatedCaller,
+    Path(id): Path<String>,
+    key: IdempotencyKey,
+) -> Response {
+    let command_state = state.clone();
+    let command_caller = caller.clone();
+    execute_empty_command(
+        &state,
+        &caller,
+        Capability::DeleteOwnSandbox,
+        key,
+        format!("sandbox:delete:{id}"),
+        move || async move {
+            let sandbox = command_state
+                .sandboxes
+                .delete(&command_caller, &SandboxId(id))
+                .await
+                .map_err(HierarchyProblem::sandbox)?;
+            Ok((StatusCode::ACCEPTED, Json(SandboxView::from(&sandbox))).into_response())
+        },
+    )
+    .await
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/v1/sandboxes/{id}/pause",
+    tag = "sandboxes",
+    params(("id" = String, Path), ("Idempotency-Key" = String, Header)),
+    responses(
+        (status = 202, description = "Sandbox pause scheduled", body = SandboxView),
+        (status = 400, description = "missing_idempotency_key or invalid_idempotency_key", body = crate::rest::ProblemDocument, content_type = "application/problem+json"),
+        (status = 401, description = "not_authenticated", body = crate::rest::ProblemDocument, content_type = "application/problem+json"),
+        (status = 403, description = "forbidden", body = crate::rest::ProblemDocument, content_type = "application/problem+json"),
+        (status = 404, description = "sandbox_not_found", body = crate::rest::ProblemDocument, content_type = "application/problem+json"),
+        (status = 409, description = "sandbox_not_active, sandbox_lifecycle_busy, or idempotency operation conflict", body = crate::rest::ProblemDocument, content_type = "application/problem+json"),
+        (status = 422, description = "idempotency_key_reused", body = crate::rest::ProblemDocument, content_type = "application/problem+json"),
+        (status = 503, description = "Sandbox lifecycle unavailable", body = crate::rest::ProblemDocument, content_type = "application/problem+json")
+    )
+)]
+pub(super) async fn pause(
+    State(state): State<HierarchyState>,
+    AuthenticatedCaller(caller): AuthenticatedCaller,
+    Path(id): Path<String>,
+    key: IdempotencyKey,
+) -> Response {
+    let command_state = state.clone();
+    let command_caller = caller.clone();
+    execute_empty_command(
+        &state,
+        &caller,
+        Capability::UseOwnSandboxes,
+        key,
+        format!("sandbox:pause:{id}"),
+        move || async move {
+            let outcome = command_state
+                .sandboxes
+                .pause(&command_caller, &SandboxId(id))
+                .await
+                .map_err(HierarchyProblem::sandbox_lifecycle)?;
+            Ok((
+                StatusCode::ACCEPTED,
+                Json(SandboxView::from(&outcome.sandbox)),
+            )
+                .into_response())
+        },
+    )
+    .await
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/v1/sandboxes/{id}/revive",
+    tag = "sandboxes",
+    params(("id" = String, Path), ("Idempotency-Key" = String, Header)),
+    responses(
+        (status = 202, description = "Sandbox revival scheduled", body = SandboxView),
+        (status = 400, description = "missing_idempotency_key or invalid_idempotency_key", body = crate::rest::ProblemDocument, content_type = "application/problem+json"),
+        (status = 401, description = "not_authenticated", body = crate::rest::ProblemDocument, content_type = "application/problem+json"),
+        (status = 403, description = "forbidden", body = crate::rest::ProblemDocument, content_type = "application/problem+json"),
+        (status = 404, description = "sandbox_not_found", body = crate::rest::ProblemDocument, content_type = "application/problem+json"),
+        (status = 409, description = "sandbox_not_paused, sandbox_lifecycle_busy, or idempotency operation conflict", body = crate::rest::ProblemDocument, content_type = "application/problem+json"),
+        (status = 422, description = "idempotency_key_reused", body = crate::rest::ProblemDocument, content_type = "application/problem+json"),
+        (status = 503, description = "Sandbox lifecycle unavailable", body = crate::rest::ProblemDocument, content_type = "application/problem+json")
+    )
+)]
+pub(super) async fn revive(
+    State(state): State<HierarchyState>,
+    AuthenticatedCaller(caller): AuthenticatedCaller,
+    Path(id): Path<String>,
+    key: IdempotencyKey,
+) -> Response {
+    let command_state = state.clone();
+    let command_caller = caller.clone();
+    execute_empty_command(
+        &state,
+        &caller,
+        Capability::UseOwnSandboxes,
+        key,
+        format!("sandbox:revive:{id}"),
+        move || async move {
+            let outcome = command_state
+                .sandboxes
+                .revive(&command_caller, &SandboxId(id))
+                .await
+                .map_err(HierarchyProblem::sandbox_lifecycle)?;
+            Ok((
+                StatusCode::ACCEPTED,
+                Json(SandboxView::from(&outcome.sandbox)),
+            )
+                .into_response())
+        },
+    )
+    .await
+}
+
+#[utoipa::path(get, path = "/api/v1/sandboxes/{id}/events", tag = "sandboxes", params(("id" = String, Path), ("after" = Option<u64>, Query), ("limit" = Option<u16>, Query)), responses((status = 200, body = [SandboxEventView]), (status = 404, body = crate::rest::ProblemDocument)))]
+pub(super) async fn events(
+    State(state): State<HierarchyState>,
+    AuthenticatedCaller(caller): AuthenticatedCaller,
+    Path(id): Path<String>,
+    params: Result<Query<EventParams>, axum::extract::rejection::QueryRejection>,
+) -> Result<Json<Vec<SandboxEventView>>, HierarchyProblem> {
+    let params = params.map_err(|_| HierarchyProblem::InvalidQuery)?.0;
+    let limit = params.limit.unwrap_or(DEFAULT_EVENT_LIMIT);
+    if !(1..=DEFAULT_EVENT_LIMIT).contains(&limit) {
+        return Err(HierarchyProblem::InvalidPage);
+    }
+    state
+        .sandboxes
+        .events(&caller, &SandboxId(id), params.after.unwrap_or(0), limit)
+        .await
+        .map(|events| Json(events.into_iter().map(Into::into).collect()))
+        .map_err(HierarchyProblem::sandbox)
+}

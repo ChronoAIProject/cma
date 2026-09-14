@@ -110,13 +110,13 @@ describe('the button', () => {
     // made every disabled control taller than its enabled neighbour.
     render(
       <div>
-        <Button disabled>Pause session</Button>
-        <span className="control-reason">This session is not running</span>
+        <Button disabled>Pause resource</Button>
+        <span className="control-reason">This resource is not running</span>
       </div>,
     );
-    const button = screen.getByRole('button', { name: 'Pause session' });
+    const button = screen.getByRole('button', { name: 'Pause resource' });
     expect(button).toBeDisabled();
-    expect(button.textContent).not.toContain('This session is not running');
+    expect(button.textContent).not.toContain('This resource is not running');
 
     // Dimmed rather than recoloured, so a primary button that cannot be
     // pressed is still recognisably the one somebody is looking for.
@@ -208,9 +208,9 @@ describe('the shared component vocabulary', () => {
 
 describe('the value picker', () => {
   const OPTIONS = [
-    { value: 'a', label: 'Codex' },
-    { value: 'b', label: 'Claude Code' },
-    { value: 'c', label: 'DeepSeek Harness', unavailable: 'no terminal plane' },
+    { value: 'a', label: 'First option' },
+    { value: 'b', label: 'Second option' },
+    { value: 'c', label: 'Unavailable option', unavailable: 'not available' },
   ] as const;
 
   function renderPicker(onChange = vi.fn()) {
@@ -237,7 +237,7 @@ describe('the value picker', () => {
 
     await user.click(screen.getByRole('button', { name: 'Agent' }));
     // Focus lands on the selected row, so arrows move from where you are.
-    expect(screen.getByRole('menuitemradio', { name: 'Codex' })).toHaveFocus();
+    expect(screen.getByRole('menuitemradio', { name: 'First option' })).toHaveFocus();
 
     await user.keyboard('{ArrowDown}{Enter}');
     expect(onChange).toHaveBeenCalledWith('b');
@@ -251,7 +251,7 @@ describe('the value picker', () => {
     await user.click(screen.getByRole('button', { name: 'Agent' }));
 
     await user.keyboard('{ArrowUp}');
-    expect(screen.getByRole('menuitemradio', { name: /DeepSeek Harness/ })).toHaveFocus();
+    expect(screen.getByRole('menuitemradio', { name: /Unavailable option/ })).toHaveFocus();
   });
 
   it('closes on Escape without choosing', async () => {
@@ -272,9 +272,9 @@ describe('the value picker', () => {
     renderPicker();
     await user.click(screen.getByRole('button', { name: 'Agent' }));
 
-    const unavailable = screen.getByRole('menuitemradio', { name: /DeepSeek Harness/ });
+    const unavailable = screen.getByRole('menuitemradio', { name: /Unavailable option/ });
     expect(unavailable).toHaveAttribute('aria-disabled', 'true');
-    expect(unavailable.textContent).toContain('no terminal plane');
+    expect(unavailable.textContent).toContain('not available');
 
     // Still reachable, so the reason can actually be read. Choosing it does
     // nothing — the row is listed, not offered.

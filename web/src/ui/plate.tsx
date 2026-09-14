@@ -50,7 +50,11 @@ export function PlateScrim({
  * Trap focus inside the plate, close on Escape, and put focus back where it
  * came from when the plate leaves.
  */
-export function usePlateFocus(panelRef: RefObject<HTMLElement | null>, onClose: () => void): void {
+export function usePlateFocus(
+  panelRef: RefObject<HTMLElement | null>,
+  onClose: () => void,
+  enabled = true,
+): void {
   const closeRef = useRef(onClose);
 
   useEffect(() => {
@@ -58,6 +62,7 @@ export function usePlateFocus(panelRef: RefObject<HTMLElement | null>, onClose: 
   }, [onClose]);
 
   useEffect(() => {
+    if (!enabled) return;
     // Remembered before focus moves, so closing returns the user to the
     // control they opened this from rather than the top of the document.
     const opener = document.activeElement as HTMLElement | null;
@@ -90,5 +95,5 @@ export function usePlateFocus(panelRef: RefObject<HTMLElement | null>, onClose: 
       document.removeEventListener('keydown', onKeyDown);
       opener?.focus();
     };
-  }, [panelRef]);
+  }, [panelRef, enabled]);
 }

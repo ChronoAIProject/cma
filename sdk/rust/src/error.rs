@@ -1,55 +1,102 @@
 //! Public SDK failures.
 
+use std::collections::BTreeMap;
 use std::fmt;
+use std::time::Duration;
 
 /// A result returned by this SDK.
 pub type Result<T> = std::result::Result<T, Error>;
 
-/// Every failure a CMA client can act on.
-///
-/// Capability refusals are permanent for the current session. API failures are
-/// structured service responses. Transport failures may succeed when retried,
-/// while protocol failures mean the received boundary did not satisfy the wire
-/// contract and are never silently discarded.
+/// Every failure returned by the CMA client.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum Error {
-    /// The session was never granted a required capability.
-    CapabilityRefused {
-        /// The server's machine-readable capability name.
-        capability: String,
-        /// Usable `X-Request-Id` response value, when present.
-        request_id: Option<String>,
-    },
-    /// The service refused a request with a machine-readable problem document.
+    /// The service returned a structured non-success response.
     Api {
         /// HTTP response status.
         status: u16,
-        /// Stable machine-readable problem code.
-        code: String,
+        /// Stable machine-readable code, when supplied.
+        code: Option<String>,
         /// Human-readable problem detail.
         message: String,
-        /// Usable `X-Request-Id` response value, when present.
+        /// Usable response correlation id, when supplied.
         request_id: Option<String>,
+        /// Positive `Retry-After` delay supplied as seconds or an HTTP date.
+        retry_after: Option<Duration>,
+        /// Structured problem extensions, preserved without interpreting prose.
+        extensions: BTreeMap<String, serde_json::Value>,
     },
-    /// The request could not cross the HTTP boundary.
+    /// The request could not obtain an HTTP answer.
     Transport {
-        /// A secret-free description of the transport failure.
+        /// Secret-free transport failure detail.
         message: String,
     },
-    /// The peer's response did not satisfy the CMA wire contract.
+    /// The peer's answer violated the expected wire boundary.
     Protocol {
-        /// A description of the violated boundary rule.
+        /// Description of the invalid boundary.
         message: String,
     },
-    /// Response observation failed before retry or body handling.
-    Observer {
-        /// A description of the observer failure.
+    /// Caller input cannot be represented safely on the wire.
+    Validation {
+        /// Description of the invalid request value.
         message: String,
     },
 }
 
 impl Error {
+    /// Decode an already-observed HTTP problem using the same boundary as SDK operations.
+    ///
+    /// This performs no transport and does not decide whether retrying a command is safe.
+    pub fn from_http_problem(
+        status: u16,
+        request_id: Option<String>,
+        retry_after: Option<&str>,
+        body: &[u8],
+    ) -> Self {
+        let Ok(status) = reqwest::StatusCode::from_u16(status) else {
+            return Self::protocol("invalid HTTP problem status");
+        };
+        if status.is_success() {
+            return Self::protocol("successful HTTP status cannot describe an API refusal");
+        }
+        crate::http::problem_error(
+            status,
+            request_id,
+            retry_after.and_then(crate::http::parse_retry_after),
+            body,
+        )
+    }
+
+    pub(crate) fn validation(message: impl Into<String>) -> Self {
+        Self::Validation {
+            message: message.into(),
+        }
+    }
+
+    /// Whether a failed request might succeed later; the SDK never retries mutations.
+    pub fn is_retryable(&self) -> bool {
+        matches!(
+            self,
+            Self::Transport { .. }
+                | Self::Api {
+                    status: 429 | 500..=599,
+                    ..
+                }
+        )
+    }
+
+    /// Whether the service requires a fresh authentication credential.
+    pub fn is_unauthenticated(&self) -> bool {
+        matches!(self, Self::Api { status: 401, .. })
+    }
+
+    /// A string-valued problem extension such as `field`, `path`, or `reason`.
+    pub fn extension(&self, name: &str) -> Option<&str> {
+        match self {
+            Self::Api { extensions, .. } => extensions.get(name)?.as_str(),
+            _ => None,
+        }
+    }
     pub(crate) fn transport(message: impl Into<String>) -> Self {
         Self::Transport {
             message: message.into(),
@@ -61,29 +108,26 @@ impl Error {
             message: message.into(),
         }
     }
-
-    pub(crate) fn observer(message: impl Into<String>) -> Self {
-        Self::Observer {
-            message: message.into(),
-        }
-    }
 }
 
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::CapabilityRefused { capability, .. } => {
-                write!(f, "session capability refused: {capability}")
-            }
             Self::Api {
                 status,
                 code,
                 message,
                 ..
-            } => write!(f, "CMA API error {status} ({code}): {message}"),
+            } => {
+                if let Some(code) = code {
+                    write!(f, "CMA API error {status} ({code}): {message}")
+                } else {
+                    write!(f, "CMA API error {status}: {message}")
+                }
+            }
             Self::Transport { message } => write!(f, "CMA transport error: {message}"),
             Self::Protocol { message } => write!(f, "CMA protocol error: {message}"),
-            Self::Observer { message } => write!(f, "CMA response observer error: {message}"),
+            Self::Validation { message } => write!(f, "CMA validation error: {message}"),
         }
     }
 }
@@ -95,21 +139,26 @@ mod tests {
     use super::*;
 
     #[test]
-    fn every_public_variant_has_a_useful_display_message() {
+    fn every_variant_has_a_useful_display_message() {
         let errors = [
-            Error::CapabilityRefused {
-                capability: "steer".into(),
-                request_id: Some("req-capability".into()),
+            Error::Api {
+                status: 503,
+                code: Some("rebuilding".into()),
+                message: "not ready".into(),
+                request_id: Some("request-801".into()),
+                retry_after: None,
+                extensions: BTreeMap::new(),
             },
             Error::Api {
-                status: 409,
-                code: "invalid_state".into(),
-                message: "session is rotating".into(),
-                request_id: Some("req-api".into()),
+                status: 404,
+                code: None,
+                message: "not found".into(),
+                request_id: None,
+                retry_after: None,
+                extensions: BTreeMap::new(),
             },
             Error::transport("connection closed"),
-            Error::protocol("bad frame"),
-            Error::observer("sink unavailable"),
+            Error::protocol("bad document"),
         ];
         for error in errors {
             assert!(!error.to_string().is_empty());

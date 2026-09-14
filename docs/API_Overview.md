@@ -1,276 +1,157 @@
 # API Overview
 
-CMA (ChronoAI Managed Agent) serves four public interfaces: AG-UI, Responses, REST, and PTY. MCP and A2A are designed but not built; their documented entry points refuse with `501 Not Implemented` instead of presenting a missing route as a deployment failure. Every served interface and future design is a **projection** of one core session model — never a separate product with its own semantics.
+CMA exposes one Sandbox model through public interfaces. A Sandbox contains
+Workspaces, each Workspace contains Worktrees, and each Worktree has exactly one
+Agent. The Agent owns the conversation; there is no separate Chat resource,
+terminal plane or Session resource. The retained `/auth/session` route refers
+only to browser identity.
 
-This document defines the shared vocabulary. The six interface documents describe four served protocols and two future designs:
+The [CMA Model](CMA_Model.md) defines ownership, lifecycle states, profiles,
+trust and recovery. The [REST contract](API_REST.md) covers every operation in
+the served `/openapi.json`; protocol-specific contracts are below.
 
-| Priority | Interface | Client | Document |
+| Priority | Interface | Current purpose | Contract |
 |---|---|---|---|
-| 1 | AG-UI | frontend clients | [API_AGUI.md](./API_AGUI.md) |
-| 2 | Responses (standard OpenAI Responses API) | frontend chat clients | [API_Responses.md](./API_Responses.md) |
-| 3 | REST | backend server clients | [API_REST.md](./API_REST.md) |
-| 4 | PTY | CLI-like streaming clients | [API_PTY.md](./API_PTY.md) |
-| 5 | MCP — designed, not yet served | agent clients | [API_MCP.md](./API_MCP.md) |
-| 6 | A2A — designed, not yet served | agent clients | [API_A2A.md](./API_A2A.md) |
+| 1 | AG-UI | Existing Agent turns, approval answers and replayable SSE | [AG-UI](API_AGUI.md) |
+| 2 | Responses | Stateful streaming conversation projection of an Agent | [Responses](API_Responses.md) |
+| 3 | REST | Profiles, Marketplace, instances, Triggers, Launches and operations | [REST](API_REST.md) |
+| 4 | PTY | Absent; owned Agent terminal request has a typed refusal | [PTY](API_PTY.md) |
+| 5 | MCP | Not implemented; endpoint has a typed refusal | [MCP](API_MCP.md) |
+| 6 | A2A | Not implemented; endpoint and discovery have typed refusals | [A2A](API_A2A.md) |
 
----
+## Identifiers And Ownership
 
-## 1. The core operation set
-
-Ten semantic operations. Layer 2 owns them; Layer 1 projects them.
-
-| Operation | Meaning |
+| Identifier | Meaning |
 |---|---|
-| `create_session` | Provision a session bound to a kernel and an environment |
-| `send_input` | Deliver a user turn to the session |
-| `stream_events` | Receive the session's event stream, resumable from a cursor |
-| `resolve_approval` | Answer a pending permission request |
-| `interrupt` | Stop the in-flight turn |
-| `steer` | Redirect a turn already in progress |
-| `resize_terminal` | Inform the runtime its terminal geometry changed |
-| `screen_snapshot` | Fetch the current rendered terminal screen |
-| `get_usage` | Read token, time, and cost accounting for a session |
-| `change_plane` | Move a session onto the other plane, as a rotation |
-
-**The core is the union of what every interface and every kernel needs, never the intersection.** `resize_terminal` exists in exactly one interface and still belongs in the core.
-
-### Which interface projects which operation
-
-| Operation | AG-UI | Responses | REST | PTY | MCP[^designed-only] | A2A[^designed-only] |
-|---|:---:|:---:|:---:|:---:|:---:|:---:|
-| `create_session` | ● implicit | ● via conversations | ● | — | ● implicit | ● implicit |
-| `send_input` | ● | ● | ● | ● | ● | ● |
-| `stream_events` | ● | ● | ● | ● | — | ● |
-| `resolve_approval` | ● | — | ● | ● at the TUI | ● | ● |
-| `interrupt` | ● | — | ● | ● | — | ● |
-| `steer` | ● | — | ● | — | — | — |
-| `resize_terminal` | — | — | ● | ● | — | — |
-| `screen_snapshot` | — | — | ● | ● | — | — |
-| `get_usage` | ● | ● on response | ● | — | — | ● |
-| `change_plane` | ○ observed | — | ● | ○ observed | — | — |
-
-● projected · ○ observed but not initiated · — absent
-
-[^designed-only]: MCP and A2A are designed, not yet served. Their documented endpoints refuse with `501` until the interfaces are implemented.
-
-The Responses interface serves conversation sessions created for the chat surface in v1. Its
-declared subset is closed: operations absent from the Responses column refuse by name rather than
-being accepted and dropped. The field-level accepted, ignored, and refused policy is fixed in
-[API_Responses.md](./API_Responses.md).
-
-**`change_plane` is administration, not conversation.** AG-UI and PTY are told when it happens — a state delta carrying both planes and the snapshot moment, and a typed close frame naming where the session went — and neither offers a way to ask for it. That is a declared subset under rule 3, not an omission: a protocol whose vocabulary is runs and messages has no honest shape for "stop being a terminal", and a terminal that could talk itself out of existence would be a control with nothing left to draw its answer on. REST serves it, as the superset facade serves everything.
-
-**REST is the superset facade.** It has no structural constraint and serves every operation, so it is the reference realisation of the core. Every other interface is a projection of the same model, not of REST.
-
-A dot above means the interface projects the operation. Whether a *particular session* can be asked for it is a second question, answered by that session's capabilities: `steer`, `interrupt` and `get_usage` depend on what the kernel behind it actually offers, and `resize_terminal` and `screen_snapshot` on whether it has a terminal at all. An operation the session cannot honour is refused by name — never with a 404, and never accepted and dropped.
-
-Capabilities are one half of what a session is; **reach** is the other. Capabilities say what a session can *do*; its reach says what it can *touch* — the services its credential may call on its owner's behalf. Both are decided when the session is created and recorded on it, so neither follows a later edit to the profile it was started from — and the granted set moves only when the owner moves the session between planes, which is a rotation and is written to the session's log, and REST projects both on the session object (`docs/API_REST.md`, `docs/Services.md`).
-
-`send_input` is one operation with two projections, decided by the session rather than by the caller: keystrokes to a terminal, a prompt turn to a conversation. On the terminal plane it is also how that kernel's own on-screen approvals are answered and how a turn is steered, which is why `resolve_approval` reads "at the TUI" for PTY and why `steer` is not a separate call there.
-
-An interface exposing a subset is expected. An interface inventing an operation absent from the core is a defect.
-
-### Trigger and Launch workflow projection
-
-Trigger and Launch resources form a control-plane workflow around a session;
-they do not turn a Launch identifier into a session identifier or add hidden
-session operations. Their public projection is fixed as follows:
-
-| Capability | AG-UI | Responses | REST/SDK | PTY | MCP | A2A |
-|---|---|---|---|---|---|---|
-| Anonymous Trigger preview | Read-only `cma:trigger` companion | Absent | Public read | Absent | Absent | Absent |
-| Launch, repository, and pull-request snapshot | Owner-only `cma:trigger` companion | Absent | Owner read | Absent | Absent | Absent |
-| Launch progress replay | Owner-only cursor replay | Absent | Owner cursor replay | Absent | Absent | Absent |
-| Diff review and artifact read | Owner-only `cma:trigger` companion | Absent | Owner read | Absent | Absent | Absent |
-| Draft, Start, cancel, retry, publish, pull-request confirmation/status refresh, and finish | Absent | Absent | Owner mutation through the shared idempotency store | Absent | Absent | Absent |
-
-AG-UI declares its closed read-only subset under `features.custom["cma:trigger"]`.
-The companion resources do not use `threadId` or `runId`: those fields continue
-to mean a CMA session and one session turn. REST is the sole mutation projection
-and the dashboard calls the same TypeScript SDK contract available to external
-clients. PTY cannot represent the workflow, while the unserved MCP and A2A
-designs acquire no Trigger operations in this MVP.
-
-Repository publishers and contributors should use
-[CMA_Trigger_Publishing.md](./CMA_Trigger_Publishing.md). The complete authority
-and recovery contracts are [CMA_Trigger.md](./CMA_Trigger.md) and
-[CMA_Trigger_Recovery.md](./CMA_Trigger_Recovery.md); public-exposure evidence
-is tracked separately in
-[CMA_Trigger_Release_Readiness.md](./CMA_Trigger_Release_Readiness.md), so a
-passing local projection test is never presented as GitHub or NyxID proof.
-
----
-
-## 2. Session model
-
-### Lifecycle
-
-```
-provisioning ──► ready ──► running ⇄ idle ──► terminated
-                    ▲          │
-                    └─ rotating ┘
-```
-
-| State | Meaning |
-|---|---|
-| `provisioning` | Runtime is being created |
-| `ready` | Runtime is up, awaiting input |
-| `running` | A turn is in progress |
-| `rotating` | **Being carried onto an updated runtime.** Not usable, not stopped, and coming back on its own |
-| `idle` | **Runtime reclaimed; the session is intact and revivable.** Not an error, not termination |
-| `terminated` | Terminal. Carries a `stop_reason` |
-
-`idle` is the state most often misread. A session whose bot pod was reclaimed to save resources is `idle`, and it revives under the same session id.
-
-`rotating` is the second. It means the runtime image has moved on and this session is being carried onto the current one: its conversation is captured, the sandbox is replaced, and the agent resumes from the capture. **The server refuses input while it lasts with `409 session-rotating`**, so nothing can reach the sandbox being torn down. Clients should also disable input during this window for a clear experience, but correctness does not depend on them doing so. It is not a failure, it needs no action from the owner, and it ends on its own.
-
-### Runtime version
-
-A session carries the runtime version serving it, how many times it has been carried onto a newer one, and the moment of the snapshot the current runtime resumed from:
-
-```json
-{ "runtime_version": "…/cma-runtime:8dbd315", "rotations": 1, "rotated_at": "2026-08-14T00:31:10Z" }
-```
-
-`rotated_at` is the honest part and clients should show it. Anything the agent did after that moment did not travel, so an owner who can see the boundary can recognise a gap rather than puzzle over one.
-
-Sessions that have never been moved omit all three.
-
-### Recovery state
-
-Alongside lifecycle, a session projects a typed recovery state with a reason, matching the vocabulary used by fkst-hosted so operators read both control planes the same way:
-
-`normal` · `idle` · `recovering` · `degraded` · `unknown` · `retired` · `invalid`
-
-Two are routinely misread and clients must not treat either as failure:
-
-- `recovering` with reason `runtime_absent` is **normal** during an idle-to-revive cycle.
-- `unknown` with reason `runtime_observation_unavailable` means the control plane cannot observe the runtime right now — **not** that the session is dead.
-
-### `stop_reason`
-
-Every terminal or paused state carries one: `end_turn`, `user_terminated`, `idle_timeout`, `lifetime_cap`, `requires_action`, `revoked`, `budget_reached`, `error`.
-
-`requires_action` means the session is waiting on the client — an approval, a tool result — and is **not** terminal.
-
----
-
-## 3. Events
-
-The event log is the single source of truth and the reason every interface can be a lossless projection.
-
-- **Append-only**, with a **monotonic `seq` per session**. Not a global sequence. Per session, new events are committed and become readable in strictly increasing, contiguous `seq` order. A state-changing batch becomes durable atomically with its session record; retrying an uncertain result exposes neither a partial batch nor a repeated semantic event. A position already advertised by a deployment predating atomic commits remains reserved if its event was lost, so an upgrade never reuses a cursor a client may already hold.
-- **Resumable.** `?starting_after=<seq>` means “send durable events after this sequence.” REST also accepts `?after=<seq>` as a compatibility alias. On `GET /api/v1/sessions/{id}/events`, a valid `Last-Event-ID` header takes precedence over either query spelling, so an automatically reconnecting browser continues after the last frame it received.
-- **REST replay is SSE, not a separate JSON page.** The events route replays and then follows the same stream; it has no `Link`-paged history surface. Each durable frame uses SSE's default event type, carries its sequence as `id`, and carries `data` keyed `{seq, session_id, event}`. An `EventSource` client receives these frames through `onmessage`, not a named-event listener.
-- **Durable events are semantic.** The complete set, which is what `EventKind` holds and nothing more:
-
-  | | |
-  |---|---|
-  | `session_created` · `progress` · `status_changed` | a session coming into being, and how it is getting on |
-  | `turn_started` · `turn_completed` | turn boundaries |
-  | `message_committed` | what the agent finished saying |
-  | `tool_call_started` · `tool_call_updated` | what it did, and where that got to |
-  | `usage_reported` | totals, not deltas — a lost total is corrected by the next one |
-  | `conversation_gap` | the boundary where part of a conversation was dropped rather than recorded |
-  | `runtime_lost` | the runtime under a session died, and why where the provider said |
-  | `approval_requested` · `approval_resolved` | what it was blocked on, and how that was answered |
-  | `terminal_attached` · `terminal_detached` · `terminal_resized` | who held the terminal, and at what size |
-
-  A client must tolerate a discriminator it does not know: this set grows, and a control plane mid-rollout reads events a newer one wrote.
-
-- **Ephemeral events are deltas.** Token-level message pieces and terminal bytes are streamed for liveness and never persisted — deliberately, because numbering them would punch permanent holes in the sequence a resuming client cursors on, and replaying them would show somebody their conversation being typed a second time. A client that misses them recovers from the committed message, or from a screen snapshot.
-
-Clients reconnect the interface's event stream from the last durable cursor and deduplicate on that cursor. REST's one events route performs both the replay and the follow; it does not require a second history request.
-
----
-
-## 4. Approvals
-
-Every interface carries approvals through **one shared shape**: the runtime blocks, the session goes idle with `stop_reason: requires_action`, and the client answers by referencing the request id.
-
-```
-runtime blocks
-  → event: approval_requested { request_id, action, detail }
-  → session status: idle, stop_reason: requires_action
-  → client answers: resolve_approval { request_id, allow | deny, reason? }
-  → session resumes
-```
-
-There is no separate approvals resource. Approvals ride the event stream, so they inherit replay for free — a client that disconnects mid-approval finds the request waiting on reconnect.
-
----
-
-## 5. Capability declaration
-
-No specification defines a named conformance profile for agent services. CMA therefore defines its own. The four served interfaces publish it through each protocol's **native** mechanism; the A2A and MCP rows record future declaration mechanisms and are not live discovery surfaces:
-
-| Interface | Declaration surface |
-|---|---|
-| AG-UI | `GET /agui/capabilities`, plus `AgentCapabilities` on the SDK object |
-| Responses | `GET /api/v1/conformance`, with the Responses interface profile and operation list |
-| REST | `GET /api/v1/conformance` returning `conformsTo[]` of class URIs |
-| PTY | the `ready` control frame |
-| MCP (designed, not yet served) | Future `ServerCapabilities` from `server/discover`, extensions under `ai.chrono/` |
-| A2A (designed, not yet served) | Future Agent Card `capabilities`, with CMA-specific operations in one extension |
-
-The same class URIs appear in every served declaration surface, and the future interfaces must use them when implemented, so the vocabulary stays consistent. If a standard later emerges, a new major contract version may adopt it without changing this version's identifiers in place.
-
-The capability classes, plus the Responses interface-profile class:
-
-| Class | It is declared when |
-|---|---|
-| `…/conf/core` | always — every session has a lifecycle, a log and a status |
-| `…/conf/conversation` | its kernel holds a structured conversation and it was created for one |
-| `…/conf/terminal` | its kernel renders a terminal and it was created for one |
-| `…/conf/steering` | its kernel accepts input while a turn is in flight |
-| `…/conf/interrupt` | its kernel can abandon a turn without ending the session |
-| `…/conf/usage` | its kernel reports what it has spent |
-| `…/conf/approvals` · `…/conf/events-replay` | the service does, for every session |
-| `…/conf/responses-chat` | the Responses interface serves its declared v1 chat subset |
-
-`https://spec.chrono-ai.fun/cma/1.0/conf/responses-chat` is an interface-profile claim, not an
-additional capability silently granted to a session. It joins the frozen 1.0 conformance namespace;
-clients tolerate unknown future classes, but this identifier's spelling and meaning do not move.
-
-**Two claims, and they are not the same.** What an *interface* declares is what it could project for some session — the vocabulary a client must be ready for. What a *session* carries is its granted set, decided when it was created from what its kernel can actually do, and reported on the session itself. It changes only where its owner asks for `change_plane`, and that change is recorded rather than quiet. A service that renders terminals still cannot render one for a session that has none.
-
-The two planes are exclusive: a session holds `conversation` or `terminal`, never both. Every interface dispatches on that to decide what an operation means, and a session claiming both would make "send input" ambiguous — keystrokes or a prompt, with no way to tell which was meant.
-
-**Invoking an operation a session does not hold returns a typed error naming the missing capability**, never a generic 404 or a silent no-op. MCP's `-32021` carrying `data.requiredCapabilities` is the shape every interface mirrors.
-
-A capability is declared only where it has been demonstrated against the kernel behind it. Kernels differ more than they look: one accepts input mid-turn and cannot be interrupted, another the reverse, and a third can do neither. Each absence is stated rather than discovered.
-
----
-
-## 6. Rules for all six interface designs
-
-These rules govern the four served implementations and are obligations for future MCP and A2A implementations.
-
-1. **One core.** Every implemented interface calls Layer 2 and only Layer 2. No interface talks to a kernel adapter.
-2. **No business logic in Layer 1.** An interface translates; it does not decide.
-3. **Subsets are declared, not discovered.** Before an interface is served, its client must be able to ask what it projects.
-4. **Errors are typed and name what is missing.** Never a bare status code.
-5. **Concurrent input has one answer.** A second turn arriving while one is in flight must resolve identically on every implemented interface. The policy is `reject`, `enqueue`, `interrupt`, or `rollback`, selected per session at creation and reported in its capability document.
-6. **Identity is NyxID.** Every implemented interface authenticates the same subject and scopes every operation to it. No interface has its own user model. What a session may reach on that subject's behalf, and how the credential gets there without entering the sandbox, is `docs/Services.md`.
-
----
-
-## 7. Literal identifier stability
-
-The conformance and problem URIs under `https://spec.chrono-ai.fun/cma/1.0/` and the AG-UI extension vocabulary under `cma:*` are protocol identifiers, not display names. Clients compare them literally. Their spelling is frozen for the 1.0 contract; changing either family requires a new major contract version and a compatibility plan.
-
-Clients must still tolerate identifiers they do not recognise. Freezing existing names prevents an old meaning from moving, while accepting unknown names lets the vocabulary grow without making a newer server unreadable to an older client.
-
-NyxID grants issued for this product use the canonical `cma:*` permission vocabulary. During the compatibility window, the control plane accepts each exact historical `chrono-bot:*` grant as an alias for its `cma:*` counterpart, including the product wildcard. This is an exact translation table, not prefix matching: an unknown or nearly matching grant still confers nothing. New roles and integrations must use `cma:*`; the old aliases remain only until provider inventory proves that no stored role or active authorization depends on them.
-
-New per-session credential names use `cma:{deployment}:{session}` as their ownership record. Reclamation reads that form first and the historical `chrono-bot:{deployment}:{session}` form second because those credentials have no expiry backstop. `CHRONO_DEPLOYMENT_ID` is a state identity inside both forms, not a display name: existing deployments keep their explicit value unchanged, while the fallback for a new deployment is `cma`. The old prefix remains readable until complete provider listings for every session owner show that no matching key survives.
-
-New browser sign-ins write only the `cma_session` cookie. During the compatibility window, authentication checks `cma_session` first and the historical `chrono_bot_session` second regardless of browser header order. Logout revokes every presented generation and expires both cookie names, so clearing the new cookie cannot expose a still-live old cookie on the next request. The old reader remains for one measured deployment cycle and is retired separately only after the maximum legacy-cookie lifetime and production observations show that it is no longer used.
-
-New sandboxes carry the canonical correlation keys `cma/control-plane`, `cma/session`, and `cma/kernel`, alongside the exact historical `chrono-bot/*` counterparts with identical values. Reconciliation resolves the canonical session and control-plane values first and falls back independently to the historical values, so an old-only sandbox remains owned and cannot be mistaken for an orphan during the migration. The old readers remain until a complete, paginated provider inventory proves that no live pre-rename sandbox depends on them; runtime rotation supplies new sandboxes but is not itself that proof.
-
-Tracing targets follow Rust source module paths rather than a wire identifier. The source rename therefore adopts `cma::*` for the control-plane crate without a `chrono_bot::*` alias. A repository-wide sweep found no explicit historical target in tracing calls, manifests, workflows, documentation, or runbooks: the deployment uses the broad `RUST_LOG=info` directive, and both binaries read `RUST_LOG` with an `info` fallback. No manifest transition or dual-read path is required. Any future target-specific filter must use the emitted canonical module target and be updated deliberately alongside a future source rename.
-
-Browser-owned state writes only the canonical keys `cma:appearance`, `cma:terminal-theme`, `cma:view-mode`, `cma:pending-turn`, and `cma:rail-collapsed`. Persistent preferences read the canonical value first, fall back only to valid data under the corresponding historical `chrono-bot:*` key, and copy that value forward; the product terminal-theme ids similarly migrate from `chronobot-dark` and `chronobot-light` to `cma-dark` and `cma-light`. Pending turns remain per-tab in `sessionStorage`: consumption prefers valid canonical content and clears both names together, including when it falls back to historical content, so an old prompt is neither lost nor replayed. The historical readers remain separately gated until the browser compatibility window has been measured.
-
-The A2A Agent Card name is `cma`, and CMA-specific task metadata is keyed by the permanent extension URI `https://w3id.org/chrono/a2a/cma/v1`. Both spellings are frozen before the interface is implemented. The earlier `chrono-bot` card name and extension URI existed only in an unserved design document, so no client or external state can depend on them and no compatibility alias is emitted. Any breaking extension change mints a new versioned URI.
+| Sandbox id | Isolated runtime and pinned Sandbox Profile |
+| Workspace id | Main checkout or git-initialized directory inside a Sandbox |
+| Worktree id | Dedicated working directory and branch for exactly one Agent |
+| Agent id | Conversation and Agent Profile snapshot |
+| AG-UI `threadId` | The Agent id, not a Sandbox or Launch id |
+| AG-UI response `runId` | The durable Agent turn sequence rendered as a string |
+| Responses `conversation` | The same Agent id |
+| Responses response id | `resp_<agent-id>_<turn-sequence>` |
+| Trigger public id | Stable public entry point; publication changes its current revision |
+| Launch id | One visitor's durable request to obtain their own Agent |
+
+Treat identifiers as opaque. Names, titles, slugs and referrers are not
+authorization or reuse keys. Owner routes conceal missing and foreign resources
+with the same `404`. An operator capability grants only its explicitly named
+administration surface, not arbitrary owner impersonation.
+
+## Authentication And Visitors
+
+Production uses NyxID. A backend sends a bearer credential; the same-origin web
+client uses CMA's HttpOnly browser cookie. `GET /auth/login` begins OAuth,
+`GET /auth/callback` finishes identity exchange, `GET /auth/session` reads the
+authenticated subject and capabilities, and `POST /auth/logout` ends browser
+sign-in. Do not put a bearer credential in URLs, local storage or embed markup.
+
+`GET /auth/signup-options` is anonymous and returns exactly
+`email_signup`, `social_providers`, `invite_code_required` and
+`register_available`. It reports availability, not a CMA registration endpoint.
+Registration takes place at the configured NyxID public origin. An unavailable
+or malformed identity-provider response closes registration availability.
+
+Visitors are callers with `LaunchTriggers` and without `CreateSandbox`.
+They can launch and use/delete their own Sandboxes, but cannot directly create
+Sandboxes, manage profiles, publish Triggers or use administration routes.
+Capabilities, not the role's display name or slug, determine access.
+
+Only explicitly anonymous discovery, signup options, public Trigger preview and
+badge routes bypass owner authentication. A public Trigger URL does not make
+Launch creation anonymous. Shared rate limits and origin checks still apply.
+See [Operations](CMA_Operations.md) for the NyxID prerequisites.
+
+## Profiles And Instances
+
+Agent Profiles configure model, thinking effort, permissions, skills and system
+prompt. Workspace Profiles configure repository/directory, setup and Agent
+Profile references. Sandbox Profiles configure resources, provider, model
+access, services, software, environment, limits and Workspace Profile references.
+
+Profiles have editable drafts and immutable published revisions. Instance
+creation pins `{ id, revision, digest, content }`; later profile changes do not
+change a running instance. Foreign executable configuration requires explicit
+trust over the server-provided commands digest. Marketplace visibility is not
+a safety endorsement.
+
+An Agent Profile prompt is written verbatim to `AGENTS.md` in that Agent's own
+`CODEX_HOME`, without editing repository files. Repository instructions also
+apply. Skills are installed in each Agent's home before first use; the pinned
+bridge can discover later filesystem changes. Profile immutability is a CMA
+rule, not an assumption about provider caching. Historical evidence and its
+revalidation boundary are in [Sandbox Provider](Sandbox_Provider.md#8-agent-home-evidence).
+
+## Conversation And Replay
+
+REST creates and manages resources. AG-UI submits to an existing Agent;
+Responses conversation creation resolves an Agent context from platform defaults
+and optional owned identifiers. Both protocols use the same durable Agent
+log and operation service. Neither creates a hidden frontend-only conversation.
+
+Agent logs, Sandbox events and Launch events have independent monotonic
+sequences. REST exposes JSON event pages. AG-UI exposes SSE with a durable
+cursor only on the last frame projecting a committed log entry. Live text and
+reasoning have no durable SSE id and cannot be recovered after disconnect.
+Do not count frames as durable events or exchange cursors between resources.
+
+Read current resource state and complete durable history when opening a view,
+then follow from the acknowledged cursor. Advance only after applying a whole
+durable projection. A replay connection failure is not an Agent turn failure.
+Disconnecting a streaming POST does not cancel its admitted work; replay reads,
+not repeated input POSTs, are the recovery path.
+
+The Responses subset has no stream-resume operation. Its response and item
+reads recover retained output, while its strict predecessor fence prevents a
+caller from silently forking the Agent's linear conversation.
+
+## Lifecycle And Availability
+
+Sandbox lifecycle is distinct from Agent activity. Software installation
+precedes credential delivery; Workspace preparation follows it. Agent readiness
+and first-message admission/delivery/completion are separately recorded facts.
+Do not enable input merely because one earlier provisioning step completed.
+
+Idle Sandboxes pause when every Agent is quiet. A later admitted operation
+revives the Sandbox when needed. Runtime-image drift triggers writer-fenced
+whole-home checkpoint and restore, preserving hierarchy, dirty work, Agent
+homes and conversation identity. A temporarily unavailable observation does not
+prove resource death. Render recorded recovery state and keep history visible.
+
+Each capability must be proved against the pinned runtime contract. This
+release uses contract **3**. Unsupported operations are refused by name, never
+accepted and dropped. Resource limits, availability and idempotency conflicts
+are typed failures, not strings for clients to interpret heuristically.
+
+## Triggers And Connections
+
+A Trigger selects three published profile revisions and reuse policies. A
+Launch creates or reuses only the visitor's own resources. GET, navigation and
+OAuth return never begin work. An explicit action supplies consent; the
+authenticated creation POST may start immediately when `start_if_ready` is true
+and current requirements permit it. Otherwise the retained Draft is reviewed
+through the separate Start operation.
+
+Launch state, requirements and progress are public owner-scoped REST resources.
+The AG-UI Launch companion is read-only and does not turn a Launch into an
+Agent `threadId`. Service connection assist creates a short-lived handoff and
+polls its state; a successful redirect alone is not proof of an active grant.
+There is no worker-retry, pull-request or contribution workflow in this model.
+
+The complete publishing and visitor contract, including Markdown/HTML/script
+snippets, is [CMA Trigger](CMA_Trigger.md). Service scope and connection outcomes
+are documented in [Services](Services.md).
+
+## Client Rules
+
+- Use the deployed OpenAPI document and its typed request/response schemas.
+- Preserve a mutation's idempotency key and exact body until its result settles.
+- Handle `application/problem+json` by status and `code`; retain request ids for support.
+- Respect capability, quota and availability refusals. Do not invent alternate private routes.
+- Render unknown optional fields safely; reject identity or cursor contradictions.
+- Keep credentials out of logs, errors, profile content, markup and browser state.
+
+The repository-only [TypeScript SDK](../sdk/typescript/docs/README.md) and
+[Rust SDK](../sdk/rust/docs/README.md) share the public boundary. SDK documentation
+declares each package's implemented subset; neither package is registry-published.

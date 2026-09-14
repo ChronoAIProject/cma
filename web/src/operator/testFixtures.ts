@@ -1,0 +1,147 @@
+import { vi } from 'vitest';
+import type {
+  AdminProfileSummary,
+  AdminSandboxDetail,
+  AdminSandboxSummary,
+  PlatformSettings,
+  ProfileKind,
+  StoredPlatformSettings,
+} from '@chronoai/cma-sdk';
+import type { OperatorClient } from './client';
+
+export const now = '2026-09-06T01:00:00Z';
+export const sandboxRow: AdminSandboxSummary = {
+  id: 'sbx-1',
+  name: 'Research Sandbox',
+  owner: 'owner-1',
+  owner_name: 'Alex Chen',
+  status: 'active',
+  runtime_version: 'runtime-2',
+  agent_count: 1,
+  last_activity_at: now,
+  retired_at: null,
+};
+export const profileRow: AdminProfileSummary = {
+  id: 'agp-1',
+  kind: 'agent',
+  name: 'Research Agent',
+  owner: 'owner-1',
+  owner_name: 'Alex Chen',
+  visibility: 'public',
+  updated_at: now,
+  retired_at: null,
+};
+export const detail: AdminSandboxDetail = {
+  owner_name: 'Alex Chen',
+  sandbox: {
+    id: sandboxRow.id,
+    name: sandboxRow.name,
+    owner: sandboxRow.owner,
+    status: 'active',
+    profile: { id: 'sbp-1', revision: 1, digest: 'digest' },
+    runtime: { runtime_version: 'runtime-2' },
+    limits: { max_workspaces: 2, max_agents_per_workspace: 2 },
+    last_activity_at: now,
+    created_at: now,
+    updated_at: now,
+    revision: 1,
+  },
+  workspaces: [
+    {
+      id: 'wks-1',
+      name: 'Research Workspace',
+      status: 'ready',
+      profile_id: 'wkp-1',
+      profile_revision: 1,
+    },
+  ],
+  agents: [
+    {
+      id: 'agt-1',
+      title: 'Research assistant',
+      workspace_id: 'wks-1',
+      worktree_id: 'wkt-1',
+      status: 'ready',
+      profile_id: 'agp-1',
+      profile_revision: 1,
+      updated_at: now,
+    },
+  ],
+};
+export const settings: PlatformSettings = {
+  defaults: {
+    sandbox_profile: { id: 'sbp_default', revision: 1 },
+    workspace_profile: { id: 'wkp_default', revision: 2 },
+    agent_profile: { id: 'agp_default', revision: 3 },
+  },
+  inactivity: { pause_after_seconds: 900 },
+  retention: { checkpoint_grace_days: 7, agent_log_days: 30 },
+  limits: { max_sandboxes_per_user: 10, visitor_max_sandboxes: 1, visitor_max_launches_per_day: 5 },
+  triggers: { enabled: true, orchestration_paused: false },
+  marketplace: { enabled: true },
+  future: { preserved: true },
+};
+export const stored: StoredPlatformSettings = { revision: 4, settings };
+export const publicProfile = (kind: ProfileKind) => ({
+  kind,
+  id: `${kind}-public`,
+  name: `Public ${kind}`,
+  description: 'Published profile',
+  owner_display: 'Owner',
+  latest_revision: 7,
+  published_at: now,
+  uses_count: 1,
+});
+export function operatorClient() {
+  const admin = {
+    listSandboxes: vi
+      .fn<OperatorClient['admin']['listSandboxes']>()
+      .mockResolvedValue({ items: [sandboxRow], next: null }),
+    readSandbox: vi.fn<OperatorClient['admin']['readSandbox']>().mockResolvedValue(detail),
+    sandboxEvents: vi.fn<OperatorClient['admin']['sandboxEvents']>().mockResolvedValue([
+      {
+        sandbox_id: sandboxRow.id,
+        seq: 1,
+        appended_at: now,
+        kind: { type: 'status_changed', from: 'installing', to: 'active' },
+      },
+    ]),
+    retireSandbox: vi
+      .fn<OperatorClient['admin']['retireSandbox']>()
+      .mockResolvedValue({ ...detail.sandbox, status: 'retiring' }),
+    listProfiles: vi
+      .fn<OperatorClient['admin']['listProfiles']>()
+      .mockResolvedValue({ items: [profileRow], next: null }),
+    retireProfile: vi
+      .fn<OperatorClient['admin']['retireProfile']>()
+      .mockResolvedValue({ ...profileRow, retired_at: now }),
+    readSettings: vi.fn<OperatorClient['admin']['readSettings']>().mockResolvedValue(stored),
+    replaceSettings: vi
+      .fn<OperatorClient['admin']['replaceSettings']>()
+      .mockImplementation(async (body) => ({
+        revision: body.expected_revision + 1,
+        settings: body.settings,
+      })),
+    listActivity: vi.fn<OperatorClient['admin']['listActivity']>().mockResolvedValue({
+      items: [
+        {
+          id: 'act-1',
+          at: now,
+          actor: 'operator-1',
+          actor_name: 'Morgan Park',
+          action: 'configure',
+          target: { kind: 'resource', id: 'platform' },
+          outcome: { status: 'succeeded' },
+          detail: { internal: 'must not render' },
+        },
+      ],
+      next: null,
+    }),
+  };
+  return {
+    admin,
+    listPublicProfiles: vi
+      .fn<OperatorClient['listPublicProfiles']>()
+      .mockImplementation(async (kind) => ({ items: [publicProfile(kind)] })),
+  };
+}

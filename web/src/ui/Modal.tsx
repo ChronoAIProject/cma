@@ -4,6 +4,7 @@ import { createPortal } from 'react-dom';
 import { IconCloseOutline16 } from './icons';
 import { Button } from './Button';
 import { usePlateFocus } from './plate';
+import { Presence, presenceAttributes } from './Presence';
 import './Modal.css';
 
 /**
@@ -62,20 +63,24 @@ export function Modal({
 }: ModalProps) {
   const panelRef = useRef<HTMLDivElement>(null);
 
-  return open ? (
-    <ModalBody
-      onClose={onClose}
-      title={title}
-      description={description}
-      footer={footer}
-      dismissible={dismissible}
-      headless={headless}
-      placement={placement}
-      panelRef={panelRef}
-    >
-      {children}
-    </ModalBody>
-  ) : null;
+  return (
+    <Presence>
+      {open ? (
+        <ModalBody
+          onClose={onClose}
+          title={title}
+          description={description}
+          footer={footer}
+          dismissible={dismissible}
+          headless={headless}
+          placement={placement}
+          panelRef={panelRef}
+        >
+          {children}
+        </ModalBody>
+      ) : null}
+    </Presence>
+  );
 }
 
 /**
@@ -94,17 +99,21 @@ function ModalBody({
   headless,
   placement,
   panelRef,
+  'data-presence': presence,
 }: Omit<ModalProps, 'open' | 'headless' | 'dismissible'> & {
   readonly headless: boolean;
   readonly dismissible: boolean;
   readonly panelRef: React.RefObject<HTMLDivElement | null>;
+  readonly 'data-presence'?: 'visible' | 'exiting';
 }) {
+  const exiting = presence === 'exiting';
   const close = () => {
-    if (dismissible) onClose();
+    if (dismissible && !exiting) onClose();
   };
-  usePlateFocus(panelRef, close);
+  usePlateFocus(panelRef, close, !exiting);
 
   useEffect(() => {
+    if (exiting) return;
     /*
      * The page behind a modal does not scroll. Without this the mask stays
      * put while the page moves under it, which reads as the dialog sliding.
@@ -114,10 +123,10 @@ function ModalBody({
     return () => {
       document.body.style.overflow = previous;
     };
-  }, []);
+  }, [exiting]);
 
   return createPortal(
-    <div className="modal" role="presentation">
+    <div className="modal" role="presentation" {...presenceAttributes(exiting)}>
       <div className="modal__mask" aria-hidden="true" onClick={close} />
       <div
         className={['modal__card', placement ?? ''].filter(Boolean).join(' ')}

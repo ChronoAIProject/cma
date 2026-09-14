@@ -1,313 +1,230 @@
-import { readFileSync } from 'node:fs';
-import { describe, expect, it, vi } from 'vitest';
-import { Cma } from '../src/client.js';
-import { resolveConfig } from '../src/config.js';
-import { ProtocolError, RequestAborted } from '../src/errors.js';
+import { describe, expect, it } from 'vitest';
+import { ApiError, ProtocolError, ValidationError } from '../src/index.js';
+import { responseEvent } from '../src/responses/events.js';
+import { transport } from './resource-fixtures.js';
 import {
-  createResponse,
-  parseResponsesEventStream,
-  toConversation,
-  toConversationItemList,
-  toResponse,
-  type ResponsesResponse,
-} from '../src/responses.js';
+  agentId,
+  responseId,
+  response,
+  completed,
+  frame,
+  opening,
+  sse,
+  harness,
+  request,
+} from './responses-fixtures.js';
 
-/** @vitest-environment node */
-
-const SERVER_FIXTURES = new URL(
-  '../../../api/crates/layer1-public/tests/fixtures/responses-sdk/',
-  import.meta.url,
-);
-
-function fixtureText(name: string): string {
-  return readFileSync(new URL(name, SERVER_FIXTURES), 'utf8');
-}
-
-function fixture(name: string): unknown {
-  return JSON.parse(fixtureText(name)) as unknown;
-}
-
-function jsonResponse(body: unknown): Response {
-  return new Response(JSON.stringify(body), {
-    status: 200,
-    headers: { 'content-type': 'application/json' },
-  });
-}
-
-function streamResponse(body: string): Response {
-  return new Response(body, {
-    status: 200,
-    headers: { 'content-type': 'text/event-stream; charset=utf-8' },
-  });
-}
-
-function responseConfig(fetch: typeof globalThis.fetch) {
-  return resolveConfig({ fetch, requestIdProvider: () => 'responses-sdk-test' });
-}
-
-describe('server-owned Responses fixtures', () => {
-  it('decodes conversation, item, response, and stream shapes', () => {
-    expect(toConversation(fixture('conversation.json'))).toMatchObject({
-      id: 'sesn_fixture',
-      metadata: { title: 'Fixture chat' },
+describe('Responses public SDK', () => {
+  it('creates and reads the same Agent conversation, with exact metadata and no invented command key', async () => {
+    const t = transport();
+    const conversation = {
+      id: agentId,
+      object: 'conversation',
+      created_at: 1,
+      metadata: { agent_profile: 'agp_default', workspace: 'wks_example', sandbox: 'sbx_example' },
+    };
+    t.answer(conversation);
+    expect(
+      await t.client.responses.createConversation({ metadata: { workspace: 'wks_example' } }),
+    ).toEqual(conversation);
+    expect(t.calls[0]!.init.method).toBe('POST');
+    expect(JSON.parse(String(t.calls[0]!.init.body))).toEqual({
+      metadata: { workspace: 'wks_example' },
     });
-    expect(toConversationItemList(fixture('items.json')).data.map((item) => item.type)).toEqual([
-      'message',
-      'cma_chat.tool_activity',
-      'message',
-    ]);
-    expect(toResponse(fixture('response.json'))).toMatchObject({
-      id: 'resp_sesn_fixture_1',
-      model: 'chat-model-fixture',
+    expect(new Headers(t.calls[0]!.init.headers).has('idempotency-key')).toBe(false);
+    expect(await t.client.responses.readConversation(agentId)).toEqual(conversation);
+    await expect(t.client.responses.readConversation('different')).rejects.toBeInstanceOf(
+      ProtocolError,
+    );
+  });
+
+  it('retrieves durable responses and validates identity and output state', async () => {
+    const t = transport();
+    t.answer(completed);
+    expect(await t.client.responses.read(responseId)).toEqual(completed);
+    await expect(t.client.responses.read('different')).rejects.toBeInstanceOf(ProtocolError);
+    t.answer({ ...completed, status: 'invented' });
+    await expect(t.client.responses.read(responseId)).rejects.toBeInstanceOf(ProtocolError);
+    t.answer({ ...completed, temperature: 'wrong' });
+    await expect(t.client.responses.read(responseId)).rejects.toBeInstanceOf(ProtocolError);
+  });
+
+  it('reads newest-first conversation items with nullable bounds and provider tool activity', async () => {
+    const t = transport();
+    const message = {
+      id: `msg_${agentId}_1`,
+      type: 'message',
       status: 'completed',
-      usage: { total_tokens: 16 },
-    });
-
-    const events = parseResponsesEventStream(fixtureText('projection.sse'));
-    expect(events.map((event) => event.sequence_number)).toEqual(
-      Array.from({ length: 16 }, (_unused, index) => index),
+      role: 'user',
+      content: [{ type: 'input_text', text: 'Hello' }],
+    };
+    const tool = {
+      id: `tool_${agentId}_2`,
+      type: 'cma_chat.tool_activity',
+      call_id: 'call-1',
+      kind: 'read',
+      target: null,
+      status: 'completed',
+      duration_ms: null,
+    };
+    const page = {
+      object: 'list',
+      data: [tool, message],
+      first_id: tool.id,
+      last_id: message.id,
+      has_more: true,
+    };
+    t.answer(page);
+    expect(
+      await t.client.responses.listConversationItems(agentId, {
+        after: 'previous/item',
+        limit: 100,
+      }),
+    ).toEqual(page);
+    expect(new URL(t.calls[0]!.url).searchParams.get('after')).toBe('previous/item');
+    t.answer({ object: 'list', data: [], first_id: null, last_id: null, has_more: false });
+    expect((await t.client.responses.listConversationItems(agentId)).data).toEqual([]);
+    t.answer({ ...page, first_id: 'wrong' });
+    await expect(t.client.responses.listConversationItems(agentId)).rejects.toBeInstanceOf(
+      ProtocolError,
     );
-    expect(events.at(-1)?.type).toBe('response.completed');
+    for (const limit of [0, 101, 1.5])
+      await expect(
+        t.client.responses.listConversationItems(agentId, { limit }),
+      ).rejects.toBeInstanceOf(ValidationError);
   });
 
-  it('decodes partial assistant output while a response is still in progress', () => {
-    const partial = structuredClone(fixture('response.json')) as Record<string, unknown>;
-    partial.status = 'in_progress';
-    partial.usage = null;
-    const message = (partial.output as Record<string, unknown>[])[0];
-    if (message === undefined) {
-      throw new Error('response fixture output is empty');
-    }
-    message.status = 'in_progress';
-
-    expect(toResponse(partial)).toMatchObject({
-      status: 'in_progress',
-      output: [{ status: 'in_progress', content: [{ text: 'Hello from CMA' }] }],
-    });
-  });
-});
-
-describe('Responses resources', () => {
-  it('creates and reads conversations, lists items, and retrieves responses', async () => {
-    const fetch = vi
-      .fn()
-      .mockResolvedValueOnce(jsonResponse(fixture('conversation.json')))
-      .mockResolvedValueOnce(jsonResponse(fixture('conversation.json')))
-      .mockResolvedValueOnce(jsonResponse(fixture('items.json')))
-      .mockResolvedValueOnce(jsonResponse(fixture('response.json')));
-    const client = new Cma({
-      fetch: fetch as unknown as typeof globalThis.fetch,
-      requestIdProvider: () => 'responses-resources-test',
-    });
-
-    await expect(client.createConversation()).resolves.toMatchObject({ id: 'sesn_fixture' });
-    await expect(client.readConversation('sesn/fixture')).resolves.toMatchObject({
-      id: 'sesn_fixture',
-    });
-    await expect(
-      client.listConversationItems('sesn/fixture', { after: 'msg/next', limit: 7 }),
-    ).resolves.toMatchObject({ first_id: 'msg_sesn_fixture_1', has_more: false });
-    await expect(client.readResponse('resp/sesn/fixture/1')).resolves.toMatchObject({
-      model: 'chat-model-fixture',
-    });
-
-    const calls = fetch.mock.calls as unknown as [string, RequestInit][];
-    expect(calls.map(([url]) => url)).toEqual([
-      '/api/v1/conversations',
-      '/api/v1/conversations/sesn%2Ffixture',
-      '/api/v1/conversations/sesn%2Ffixture/items?after=msg%2Fnext&limit=7',
-      '/api/v1/responses/resp%2Fsesn%2Ffixture%2F1',
+  it('submits one stream and acknowledges each event before returning the terminal response', async () => {
+    const t = harness();
+    t.fetch.mockResolvedValueOnce(sse());
+    expect(await t.client.responses.create(request, { onEvent: t.onEvent })).toEqual(completed);
+    expect(t.onEvent.mock.calls.map(([event]) => event.type)).toEqual([
+      'response.created',
+      'response.completed',
     ]);
-    expect(calls[0]?.[1]).toMatchObject({ method: 'POST', body: '{}' });
+    expect(t.fetch).toHaveBeenCalledTimes(1);
+    const [url, init] = t.fetch.mock.calls[0]!;
+    expect(url).toBe('https://cma.example/api/v1/responses');
+    expect(init!.method).toBe('POST');
+    expect(JSON.parse(String(init!.body))).toEqual(request);
+    expect(new Headers(init!.headers).has('idempotency-key')).toBe(false);
   });
 
-  it('rejects invalid item pagination before fetch', async () => {
-    const fetch = vi.fn();
-    const client = new Cma({ fetch: fetch as unknown as typeof globalThis.fetch });
-    await expect(client.listConversationItems('sesn_fixture', { limit: 0 })).rejects.toThrow(
-      'from 1 through 100',
-    );
-    await expect(client.listConversationItems('sesn_fixture', { after: '' })).rejects.toThrow(
-      'must not be empty',
-    );
-    expect(fetch).not.toHaveBeenCalled();
-  });
-});
-
-describe('ResponsesConnection', () => {
-  it('folds text, live reasoning, current tool state, and configured-model completion', async () => {
-    const fetch = vi.fn(() => Promise.resolve(streamResponse(fixtureText('projection.sse'))));
-    const connection = await createResponse(
-      responseConfig(fetch as unknown as typeof globalThis.fetch),
-      {
-        conversation: 'sesn_fixture',
-        input: 'Open the contract',
-        metadata: { trace: 'sdk-fixture' },
-        model: 'caller-model-is-ignored',
-      },
-    );
-    const state = await connection.fold();
-
-    expect(state).toMatchObject({
-      outputText: 'Hello from CMA',
-      reasoningText: 'checking the contract',
-      terminal: {
-        id: 'resp_sesn_fixture_1',
-        model: 'chat-model-fixture',
-        status: 'completed',
-      },
-    });
-    expect(state.toolActivities).toEqual([
-      expect.objectContaining({ call_id: 'call_fixture', status: 'completed', duration_ms: 1000 }),
-    ]);
-
-    const [[url, init]] = fetch.mock.calls as unknown as [[string, RequestInit]];
-    expect(url).toBe('/api/v1/responses');
-    expect(init.method).toBe('POST');
-    expect(JSON.parse(String(init.body))).toEqual({
-      conversation: 'sesn_fixture',
-      input: 'Open the contract',
-      metadata: { trace: 'sdk-fixture' },
-      model: 'caller-model-is-ignored',
-      stream: true,
-    });
-  });
-
-  it.each(['completed', 'failed', 'incomplete'] as const)(
-    'folds a %s terminal event',
+  it.each(['failed', 'incomplete'] as const)(
+    'returns the authoritative %s outcome, not a transport error',
     async (status) => {
-      const response = structuredClone(fixture('response.json')) as ResponsesResponse;
-      const terminal: ResponsesResponse = {
+      const t = harness();
+      const outcome = {
         ...response,
         status,
-        error:
-          status === 'failed' ? { code: 'fixture_failure', message: 'The fixture failed.' } : null,
-        incomplete_details: status === 'incomplete' ? { reason: 'max_output_tokens' } : null,
+        error: status === 'failed' ? { code: 'runtime_failure', message: 'Turn failed.' } : null,
+        incomplete_details: status === 'incomplete' ? { reason: 'interrupted' } : null,
       };
-      const type = `response.${status}`;
-      const body = `event: ${type}\ndata: ${JSON.stringify({
-        type,
-        sequence_number: 0,
-        response: terminal,
-      })}\n\n`;
-      const fetch = vi.fn(() => Promise.resolve(streamResponse(body)));
-      const connection = await createResponse(
-        responseConfig(fetch as unknown as typeof globalThis.fetch),
-        { conversation: 'sesn_fixture', input: 'continue' },
+      t.fetch.mockResolvedValueOnce(
+        sse(opening + frame(`response.${status}`, 1, { response: outcome })),
       );
-      await expect(connection.fold()).resolves.toMatchObject({
-        outputText: 'Hello from CMA',
-        terminal: { status },
-      });
+      expect(await t.client.responses.create(request, { onEvent: t.onEvent })).toEqual(outcome);
     },
   );
 
-  it('rejects malformed JSON and missing or non-contiguous sequence numbers', () => {
-    expect(() =>
-      parseResponsesEventStream('event: response.created\ndata: {not json}\n\n'),
-    ).toThrow(ProtocolError);
-    expect(() =>
-      parseResponsesEventStream(
-        'event: response.output_item.added\ndata: {"type":"response.output_item.added"}\n\n',
-      ),
-    ).toThrow(/sequence_number/);
-    expect(() =>
-      parseResponsesEventStream(
-        [
-          'event: response.output_item.added',
-          'data: {"type":"response.output_item.added","sequence_number":0}',
-          '',
-          'event: response.output_item.done',
-          'data: {"type":"response.output_item.done","sequence_number":2}',
-          '',
-        ].join('\n') + '\n',
-      ),
-    ).toThrow('expected sequence 1 but received 2');
+  it('accepts a standalone provisioning failure at sequence zero', async () => {
+    const t = harness();
+    const outcome = {
+      ...response,
+      id: `resp_${agentId}_0`,
+      status: 'failed',
+      error: { code: 'provisioning_timeout', message: 'Agent not ready.' },
+    };
+    t.fetch.mockResolvedValueOnce(sse(frame('response.failed', 0, { response: outcome })));
+    expect((await t.client.responses.create(request, { onEvent: t.onEvent })).error?.code).toBe(
+      'provisioning_timeout',
+    );
   });
 
-  it('cancels only the local reader and reports the caller-visible abort', async () => {
-    const encoded = new TextEncoder().encode(
-      `event: response.created\ndata: ${JSON.stringify({
-        type: 'response.created',
-        sequence_number: 0,
-        response: {
-          ...(fixture('response.json') as object),
-          status: 'in_progress',
-          output: [],
-          usage: null,
-        },
-      })}\n\n`,
-    );
-    const readerCancelled = vi.fn();
-    const body = new ReadableStream<Uint8Array>({
-      start(controller) {
-        controller.enqueue(encoded);
+  it.each([
+    'hello',
+    [{ role: 'user', content: 'hello' }],
+    [{ type: 'message', role: 'user', content: [{ type: 'input_text', text: 'hello' }] }],
+  ])('supports the server text input form %j', async (input) => {
+    const t = harness();
+    t.fetch.mockResolvedValueOnce(sse());
+    await t.client.responses.create({ ...request, input } as never, { onEvent: t.onEvent });
+    expect(t.fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    { stream: false },
+    { store: false },
+    { conversation: '' },
+    { tools: [] },
+    { model: 1 },
+    { input: '' },
+    { input: [] },
+    { input: [{ role: 'assistant', content: 'hello' }] },
+    { input: [{ role: 'user', content: [], unexpected: true }] },
+    { input: [{ role: 'user', type: 'unknown', content: 'hello' }] },
+    { input: [{ role: 'user', content: [{ type: 'input_image', text: 'hello' }] }] },
+    { input: [{ role: 'user', content: [{ type: 'input_text', text: '' }] }] },
+    { metadata: Object.fromEntries(Array.from({ length: 17 }, (_, i) => [String(i), 'value'])) },
+    { metadata: { ['x'.repeat(65)]: 'value' } },
+    { metadata: { key: 'x'.repeat(513) } },
+  ])('refuses unsupported or malformed input without sending: %j', async (override) => {
+    const t = harness();
+    await expect(
+      t.client.responses.create({ ...request, ...override } as never, { onEvent: t.onEvent }),
+    ).rejects.toBeInstanceOf(ValidationError);
+    expect(t.fetch).not.toHaveBeenCalled();
+  });
+
+  it('preserves typed unsupported-operation refusals and never retries them', async () => {
+    const t = transport();
+    t.answer(
+      {
+        status: 422,
+        code: 'responses_field_unsupported',
+        field: 'delete',
+        detail: 'Durable response deletion is unsupported.',
       },
-      cancel: readerCancelled,
-    });
-    const fetch = vi.fn(() =>
-      Promise.resolve(
-        new Response(body, { status: 200, headers: { 'content-type': 'text/event-stream' } }),
-      ),
+      422,
     );
-    const connection = await createResponse(
-      responseConfig(fetch as unknown as typeof globalThis.fetch),
-      { conversation: 'sesn_fixture', input: 'continue' },
-    );
-    const iterator = connection[Symbol.asyncIterator]();
-    await expect(iterator.next()).resolves.toMatchObject({
-      done: false,
-      value: { type: 'response.created' },
+    await expect(t.client.responses.delete(responseId)).rejects.toMatchObject({
+      code: 'responses_field_unsupported',
+      field: 'delete',
     });
-    connection.cancel('window closed');
-    await expect(iterator.next()).rejects.toBeInstanceOf(RequestAborted);
-    expect(readerCancelled).toHaveBeenCalled();
-    expect(fetch).toHaveBeenCalledTimes(1);
-    expect((fetch.mock.calls[0] as unknown as [string])[0]).toBe('/api/v1/responses');
+    await expect(t.client.responses.cancel(responseId)).rejects.toBeInstanceOf(ApiError);
+    expect(t.calls.map((call) => call.init.method)).toEqual(['DELETE', 'POST']);
+    t.fetch.mockResolvedValueOnce(new Response(null, { status: 204 }));
+    await expect(t.client.responses.delete(responseId)).rejects.toBeInstanceOf(ProtocolError);
+    t.fetch.mockResolvedValueOnce(new Response(null, { status: 204 }));
+    await expect(t.client.responses.cancel(responseId)).rejects.toBeInstanceOf(ProtocolError);
   });
 
-  it('dropping iteration closes the body but never calls the server cancellation route', async () => {
-    const encoded = new TextEncoder().encode(
-      `event: response.created\ndata: ${JSON.stringify({
-        type: 'response.created',
-        sequence_number: 0,
-        response: {
-          ...(fixture('response.json') as object),
-          status: 'in_progress',
-          output: [],
-          usage: null,
-        },
-      })}\n\n`,
-    );
-    const readerCancelled = vi.fn();
-    const fetch = vi.fn(() =>
-      Promise.resolve(
-        new Response(
-          new ReadableStream<Uint8Array>({
-            start(controller) {
-              controller.enqueue(encoded);
-            },
-            cancel: readerCancelled,
-          }),
-          { status: 200, headers: { 'content-type': 'text/event-stream' } },
-        ),
-      ),
-    );
-    const connection = await createResponse(
-      responseConfig(fetch as unknown as typeof globalThis.fetch),
-      { conversation: 'sesn_fixture', input: 'continue' },
-    );
-    for await (const event of connection) {
-      expect(event.type).toBe('response.created');
-      break;
-    }
-
-    expect(readerCancelled).toHaveBeenCalled();
-    expect(fetch).toHaveBeenCalledTimes(1);
+  it('decodes typed live reasoning and tool extensions without treating them as durable output', () => {
+    const item = {
+      id: 'rs_example',
+      type: 'reasoning',
+      status: 'completed',
+      summary: [{ type: 'summary_text', text: 'Thought' }],
+      'cma:live': true,
+    };
     expect(
-      (fetch.mock.calls as unknown as [string, RequestInit][]).some(([url]) =>
-        url.endsWith('/cancel'),
-      ),
-    ).toBe(false);
+      responseEvent({
+        type: 'response.output_item.done',
+        sequence_number: 2,
+        output_index: 0,
+        item,
+      }),
+    ).toHaveProperty('item', item);
+    expect(
+      responseEvent({
+        type: 'response.reasoning_summary_text.done',
+        sequence_number: 3,
+        output_index: 0,
+        item_id: item.id,
+        summary_index: 0,
+        text: 'Thought',
+        'cma:truncated': true,
+      }),
+    ).toHaveProperty('cma:truncated', true);
   });
 });

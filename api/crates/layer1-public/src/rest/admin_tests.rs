@@ -1,424 +1,897 @@
-//! Tests for the operator surface's rendering and its refusals.
-//!
-//! What is asserted here is what reaches a client: which refusal shape a
-//! caller sees, and — most importantly — that a provider nobody could ask is
-//! never rendered as a provider running nothing.
+use std::sync::{Arc, Mutex};
+
+use async_trait::async_trait;
+use axum::{
+    body::{to_bytes, Body},
+    http::{header, Method, Request, StatusCode},
+    response::Response,
+    Router,
+};
+use layer2_core::profiles::store::{AgentProfileStore, InMemoryProfileStore};
+use layer2_core::profiles::{
+    AgentProfile, AgentProfileContent, PermissionLevel, ProfileVisibility, SandboxProfileContent,
+    SandboxProfileSnapshot, ThinkingEffort,
+};
+use layer2_core::sandbox::store::{InMemorySandboxStore, SandboxEventStore, SandboxStore};
+use layer2_core::sandbox::{
+    RuntimeBinding, Sandbox, SandboxCredentialState, SandboxEventKind, SandboxLimits,
+    SandboxOrigin, SandboxSignInState, SandboxStatus, SandboxWorkState, SandboxWorkStep,
+    StoredSandboxRetirement,
+};
+use layer2_core::{
+    ActivityAction, ActivityOutcome, ActivityQuery, ActivityRecord, ActivityService, ActivityStore,
+    Authorization, Capability, Page, PlatformSettings, PlatformSettingsService,
+    PlatformSettingsStore, ProviderInventory, RuntimeEntry, RuntimeInventory, RuntimeStatus,
+    SandboxId, StoreError, StoredPlatformSettings, SubjectId,
+};
+use serde_json::{json, Value};
+use tower::ServiceExt;
 
 use super::*;
+use crate::auth::AuthenticatedSubject;
 
-use layer2_core::{
-    ActivityAction, ActivityId, ActivityOutcome, ActivityTarget, DetailKey, EnvironmentProfileId,
-    KernelId, ProviderInventory, ProviderRuntimeGeneration, RuntimeAuthority,
-    RuntimeAuthorityComparison, RuntimeCleanupReason, RuntimeEntry, SessionStatus,
-};
+const NOW: &str = "2026-09-05T00:00:00Z";
 
-fn inventory(providers: Vec<ProviderInventory>) -> RuntimeInventory {
-    RuntimeInventory { providers }
+#[derive(Default)]
+struct MemoryActivity {
+    records: Mutex<Vec<ActivityRecord>>,
 }
 
-fn observed_provider() -> ProviderInventory {
-    ProviderInventory {
-        kernel: KernelId::new("example-runtime"),
-        view: ProviderView::Observed(vec![RuntimeEntry {
-            created_by: Some("plane-a".into()),
-            runtime: "runtime-1".into(),
-            generation: ProviderRuntimeGeneration::Recorded(7),
-            durable_authority: Some(RuntimeAuthority {
-                generation: 7,
-                runtime_id: Some("runtime-1".into()),
-            }),
-            authority_comparison: RuntimeAuthorityComparison::Matches,
-            cleanup_reason: None,
-            session: Some(SessionId("sesn_1".into())),
-            owner: Some(SubjectId("subject-a".into())),
-            status: Some(SessionStatus::Ready),
-        }]),
+#[async_trait]
+impl ActivityStore for MemoryActivity {
+    async fn append(&self, record: &ActivityRecord) -> Result<(), StoreError> {
+        self.records.lock().unwrap().push(record.clone());
+        Ok(())
     }
-}
 
-#[test]
-fn a_provider_that_could_not_be_asked_renders_with_no_runtime_list_at_all() {
-    // The single most important line in this file. If the unobservable case
-    // rendered an empty array, a client would draw an idle namespace and an
-    // operator would believe it.
-    let view = InventoryView::render(inventory(vec![ProviderInventory {
-        kernel: KernelId::new("example-runtime"),
-        view: ProviderView::Unobservable("cannot enumerate".into()),
-    }]));
-    let json = serde_json::to_value(&view).expect("serialises");
-
-    assert_eq!(json["providers"][0]["observable"], false);
-    assert_eq!(json["providers"][0]["reason"], "cannot enumerate");
-    assert!(
-        json["providers"][0].get("runtimes").is_none(),
-        "an empty array here would read as nothing running: {json}"
-    );
-    assert!(
-        json.get("running").is_none(),
-        "a total that omits a provider nobody could ask is not a total: {json}"
-    );
-    assert_eq!(json["fully_observed"], false);
-}
-
-#[test]
-fn a_provider_running_nothing_renders_an_empty_list_and_a_total_of_zero() {
-    // The other half: an answer of zero is an answer, and must be visibly
-    // different from not having asked.
-    let view = InventoryView::render(inventory(vec![ProviderInventory {
-        kernel: KernelId::new("example-runtime"),
-        view: ProviderView::Observed(Vec::new()),
-    }]));
-    let json = serde_json::to_value(&view).expect("serialises");
-
-    assert_eq!(json["providers"][0]["observable"], true);
-    assert!(json["providers"][0]["runtimes"]
-        .as_array()
-        .expect("an array")
-        .is_empty());
-    assert_eq!(json["running"], 0);
-    assert_eq!(json["fully_observed"], true);
-}
-
-#[test]
-fn a_running_runtime_renders_with_the_session_and_the_owner_it_belongs_to() {
-    let view = InventoryView::render(inventory(vec![observed_provider()]));
-    let json = serde_json::to_value(&view).expect("serialises");
-    let runtime = &json["providers"][0]["runtimes"][0];
-
-    assert_eq!(runtime["runtime"], "runtime-1");
-    assert_eq!(runtime["generation"], 7);
-    assert_eq!(runtime["generation_state"], "recorded");
-    assert_eq!(runtime["durable_runtime"], "runtime-1");
-    assert_eq!(runtime["durable_generation"], 7);
-    assert_eq!(runtime["authority_state"], "matches");
-    assert_eq!(runtime["created_by"], "plane-a");
-    assert_eq!(runtime["session"], "sesn_1");
-    assert_eq!(runtime["owner"], "subject-a");
-    assert_eq!(runtime["status"], "ready");
-    assert_eq!(runtime["unaccounted"], false);
-    assert_eq!(json["running"], 1);
-}
-
-#[test]
-fn stale_provider_generation_is_rendered_against_durable_authority() {
-    let mut provider = observed_provider();
-    let ProviderView::Observed(runtimes) = &mut provider.view else {
-        unreachable!("the fixture is observed")
-    };
-    runtimes[0].generation = ProviderRuntimeGeneration::Recorded(6);
-    runtimes[0].authority_comparison = RuntimeAuthorityComparison::Mismatch;
-
-    let view = InventoryView::render(inventory(vec![provider]));
-    let json = serde_json::to_value(&view).expect("serialises");
-    let runtime = &json["providers"][0]["runtimes"][0];
-
-    assert_eq!(runtime["generation"], 6);
-    assert_eq!(runtime["durable_generation"], 7);
-    assert_eq!(runtime["authority_state"], "mismatch");
-}
-
-#[test]
-fn durable_cleanup_debt_is_visible_until_it_is_acknowledged() {
-    let mut provider = observed_provider();
-    let ProviderView::Observed(runtimes) = &mut provider.view else {
-        unreachable!("the fixture is observed")
-    };
-    runtimes[0].cleanup_reason = Some(RuntimeCleanupReason::RetiredAuthority);
-
-    let view = InventoryView::render(inventory(vec![provider]));
-    let json = serde_json::to_value(&view).expect("serialises");
-    assert_eq!(
-        json["providers"][0]["runtimes"][0]["cleanup_reason"],
-        "retired_authority"
-    );
-}
-
-#[test]
-fn a_runtime_nothing_accounts_for_says_so() {
-    let view = InventoryView::render(inventory(vec![ProviderInventory {
-        kernel: KernelId::new("example-runtime"),
-        view: ProviderView::Observed(vec![RuntimeEntry {
-            created_by: None,
-            runtime: "runtime-stray".into(),
-            generation: ProviderRuntimeGeneration::Legacy,
-            durable_authority: None,
-            authority_comparison: RuntimeAuthorityComparison::Unaccounted,
-            cleanup_reason: None,
-            session: Some(SessionId("sesn_forgotten".into())),
-            owner: None,
-            status: None,
-        }]),
-    }]));
-    let json = serde_json::to_value(&view).expect("serialises");
-    let runtime = &json["providers"][0]["runtimes"][0];
-
-    assert_eq!(runtime["unaccounted"], true);
-    assert_eq!(runtime["generation_state"], "legacy");
-    assert_eq!(runtime["authority_state"], "unaccounted");
-    assert!(runtime.get("owner").is_none(), "got {runtime}");
-}
-
-#[test]
-fn malformed_generation_metadata_is_not_rendered_as_legacy_absence() {
-    let view = InventoryView::render(inventory(vec![ProviderInventory {
-        kernel: KernelId::new("example-runtime"),
-        view: ProviderView::Observed(vec![RuntimeEntry {
-            created_by: Some("plane-a".into()),
-            runtime: "runtime-corrupt".into(),
-            generation: ProviderRuntimeGeneration::Malformed,
-            durable_authority: None,
-            authority_comparison: RuntimeAuthorityComparison::Unaccounted,
-            cleanup_reason: None,
-            session: None,
-            owner: None,
-            status: None,
-        }]),
-    }]));
-    let json = serde_json::to_value(&view).expect("serialises");
-    let runtime = &json["providers"][0]["runtimes"][0];
-
-    assert_eq!(runtime["generation_state"], "malformed");
-    assert_eq!(runtime["authority_state"], "unaccounted");
-    assert!(runtime.get("generation").is_none(), "got {runtime}");
-}
-
-#[test]
-fn a_person_renders_by_name_with_the_identifier_alongside_it() {
-    let view = UserView::from(RegisteredUser {
-        subject: SubjectId("76fe9d91".into()),
-        display_name: Some("Ada Lovelace".into()),
-        email: Some("ada@example.com".into()),
-        avatar_url: None,
-        first_seen: "2026-08-01T00:00:00Z".into(),
-        last_seen: "2026-08-14T00:00:00Z".into(),
-    });
-    let json = serde_json::to_value(&view).expect("serialises");
-
-    assert_eq!(json["label"], "Ada Lovelace");
-    assert_eq!(json["email"], "ada@example.com");
-    assert_eq!(
-        json["subject"], "76fe9d91",
-        "clients key on the identifier, they simply must not display it as a name"
-    );
-}
-
-#[test]
-fn a_person_the_provider_named_nothing_for_carries_no_label_to_render() {
-    let view = UserView::from(RegisteredUser {
-        subject: SubjectId("76fe9d91".into()),
-        display_name: None,
-        email: None,
-        avatar_url: None,
-        first_seen: "2026-08-01T00:00:00Z".into(),
-        last_seen: "2026-08-14T00:00:00Z".into(),
-    });
-    let json = serde_json::to_value(&view).expect("serialises");
-    assert!(json.get("label").is_none(), "got {json}");
-    assert!(json.get("display_name").is_none(), "got {json}");
-}
-
-#[test]
-fn a_session_renders_with_its_owner_named_where_the_directory_knows_one() {
-    let mut names = HashMap::new();
-    names.insert(SubjectId("subject-a".into()), "Ada Lovelace".to_string());
-    let session = Session {
-        id: SessionId("sesn_1".into()),
-        owner: SubjectId("subject-a".into()),
-        kernel: KernelId::new("example-runtime"),
-        status: SessionStatus::Ready,
-        recovery_state: layer2_core::RecoveryState::Normal,
-        stop_reason: None,
-        options: layer2_core::AgentOptions::default(),
-        environment_profile: None,
-        geometry: layer2_core::TerminalGeometry::default(),
-        last_seq: 4,
-        runtime_version: None,
-        rotations: 0,
-        rotated_at: None,
-        capabilities: Default::default(),
-        granted_services: None,
-        granted_skills: None,
-        pricing: None,
-        chat: None,
-        created_at: "2026-08-14T00:00:00Z".into(),
-    };
-
-    let json = serde_json::to_value(AdminSessionView::render(session.clone(), &names))
-        .expect("serialises");
-    assert_eq!(json["owner"], "subject-a");
-    assert_eq!(json["owner_label"], "Ada Lovelace");
-
-    // A session whose owner the directory has never seen still renders; the
-    // absence is what tells a client to fall back rather than draw a blank.
-    let json = serde_json::to_value(AdminSessionView::render(session, &HashMap::new()))
-        .expect("serialises");
-    assert!(json.get("owner_label").is_none(), "got {json}");
-    assert_eq!(json["owner"], "subject-a");
-}
-
-#[test]
-fn a_recorded_action_renders_with_who_did_what_to_what_and_how_it_went() {
-    let view = ActivityView::from(
-        ActivityRecord {
-            id: ActivityId("actv_1".into()),
-            at: "2026-08-14T00:00:00Z".into(),
-            actor: Some(SubjectId("operator".into())),
-            action: ActivityAction::SessionTerminate,
-            target: Some(ActivityTarget::Session(SessionId("sesn_1".into()))),
-            outcome: ActivityOutcome::Succeeded,
-            detail: layer2_core::ActivityDetail::new(),
+    async fn list(&self, query: &ActivityQuery) -> Result<Page<ActivityRecord>, StoreError> {
+        let mut records: Vec<_> = self
+            .records
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|record| {
+                query
+                    .actor
+                    .as_ref()
+                    .is_none_or(|actor| record.actor.as_ref() == Some(actor))
+                    && query.action.is_none_or(|action| record.action == action)
+            })
+            .take(query.limit as usize)
+            .cloned()
+            .collect();
+        if query.cursor.as_deref() == Some("after-first") && !records.is_empty() {
+            records.remove(0);
         }
-        .with(DetailKey::Runtime, "example-runtime"),
-    );
-    let json = serde_json::to_value(&view).expect("serialises");
-
-    assert_eq!(json["actor"], "operator");
-    assert_eq!(json["action"], "session_terminate");
-    assert_eq!(json["target"]["kind"], "session");
-    assert_eq!(json["target"]["id"], "sesn_1");
-    assert_eq!(json["outcome"], "succeeded");
-    assert_eq!(json["detail"]["runtime"], "example-runtime");
-}
-
-#[test]
-fn an_unattributed_action_renders_without_an_actor_rather_than_a_null() {
-    let view = ActivityView::from(ActivityRecord::new(
-        ActivityAction::SessionList,
-        ActivityOutcome::Denied,
-    ));
-    let json = serde_json::to_value(&view).expect("serialises");
-    assert!(json.get("actor").is_none(), "got {json}");
-    assert!(json.get("target").is_none(), "got {json}");
-    assert_eq!(json["outcome"], "denied");
-}
-
-#[test]
-fn trigger_support_renders_only_the_closed_lease_projection() {
-    let view = TriggerSupportView::from(layer2_core::TriggerSupportSnapshot {
-        launch_id: layer2_core::LaunchId("launch-support".into()),
-        owner: SubjectId("owner".into()),
-        revision_digest: "sha256:revision".into(),
-        publisher: SubjectId("publisher".into()),
-        upstream_repository_id: 101,
-        fork_repository_id: Some(202),
-        github_account_id: Some(303),
-        service_id: Some("userservice-github".into()),
-        session_id: Some("session-support".into()),
-        state: layer2_core::LaunchState::Ready,
-        blocked_reason: None,
-        created_at: "2026-08-27T00:00:00Z".into(),
-        updated_at: "2026-08-27T00:00:02Z".into(),
-        started_at: Some("2026-08-27T00:00:01Z".into()),
-        terminal_at: None,
-        lease: Some(layer2_core::TriggerSupportLease {
-            fence: 17,
-            acquired_at: "2026-08-27T00:00:01Z".into(),
-            expires_at: "2026-08-27T00:02:01Z".into(),
-        }),
-        cleanup: None,
-        effects: Vec::new(),
-        timeline: Vec::new(),
-    });
-
-    let json = serde_json::to_value(view).expect("support response serialises");
-    let lease = json["lease"]
-        .as_object()
-        .expect("the active lease is represented");
-    assert_eq!(
-        lease
-            .keys()
-            .map(String::as_str)
-            .collect::<std::collections::BTreeSet<_>>(),
-        std::collections::BTreeSet::from(["acquired_at", "expires_at", "fence"])
-    );
-    assert_eq!(lease["fence"], 17);
-    assert_eq!(lease["acquired_at"], "2026-08-27T00:00:01Z");
-    assert_eq!(lease["expires_at"], "2026-08-27T00:02:01Z");
-}
-
-#[tokio::test]
-async fn cross_owner_effect_recovery_returns_only_empty_acceptance_and_audit_ownership() {
-    let caller = Caller::new(SubjectId("operator".into()), Default::default());
-    let owner = SubjectId("contributor".into());
-    let response = effect_reconciliation_accepted(&caller, owner.clone());
-
-    assert_eq!(response.status(), StatusCode::ACCEPTED);
-    assert_eq!(
-        response.extensions().get::<ActedUpon>(),
-        Some(&ActedUpon(owner))
-    );
-    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
-        .await
-        .expect("the empty acceptance body is readable");
-    assert!(
-        body.is_empty(),
-        "a cross-owner Launch projection must not escape"
-    );
-}
-
-#[test]
-fn a_target_of_any_kind_renders_with_the_kind_it_is() {
-    let view = ActivityView::from(
-        ActivityRecord::new(
-            ActivityAction::EnvironmentProfileDelete,
-            ActivityOutcome::Succeeded,
-        )
-        .on(ActivityTarget::EnvironmentProfile(EnvironmentProfileId(
-            "envp_1".into(),
-        ))),
-    );
-    let json = serde_json::to_value(&view).expect("serialises");
-    assert_eq!(json["target"]["kind"], "environment_profile");
-    assert_eq!(json["target"]["id"], "envp_1");
-}
-
-#[test]
-fn a_caller_who_is_not_an_operator_is_told_so_rather_than_told_nothing_exists() {
-    // These collections are addressed by nothing, so there is no identifier to
-    // protect by pretending it is missing.
-    let response = AdminProblem::from(CoreError::Forbidden).into_response();
-    assert_eq!(response.status(), StatusCode::FORBIDDEN);
-}
-
-#[test]
-fn an_unreachable_store_is_not_flattened_into_a_refusal() {
-    // The failure a reader most needs to tell apart from an empty answer.
-    let response =
-        AdminProblem::from(CoreError::RuntimeUnavailable("store down".into())).into_response();
-    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
-}
-
-#[tokio::test]
-async fn acting_on_a_session_keeps_the_session_surfaces_refusal() {
-    // These routes do address an identifier, so a refusal must not reveal
-    // whether the session exists — and "must not reveal" means the whole
-    // document, not the status line. An operator control route is reachable
-    // by any caller entitled to end their own session, so the caller who
-    // would exploit a difference here is an ordinary one.
-    let mut bodies = Vec::new();
-    for error in [CoreError::Forbidden, CoreError::SessionNotFound] {
-        let response = Problem(error).into_response();
-        assert_eq!(response.status(), StatusCode::NOT_FOUND);
-        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
-            .await
-            .expect("problem documents are small");
-        bodies.push(bytes);
+        Ok(Page::new(records, None))
     }
-    assert_eq!(
-        bodies[0], bodies[1],
-        "a refusal that reads differently confirms the identifier exists"
-    );
 }
 
-#[test]
-fn every_operator_route_is_under_one_segment_a_gateway_can_restrict() {
-    // The reason these live at their own address rather than beside the
-    // owner's own routes. Asserted against the list because a route added
-    // outside the segment would quietly escape whatever protects it.
-    for path in OPERATOR_ROUTES {
-        assert!(
-            path.starts_with("/api/v1/admin/"),
-            "{path} escapes the segment the whole surface is restricted by"
+struct MemorySettings {
+    stored: Mutex<StoredPlatformSettings>,
+}
+
+impl Default for MemorySettings {
+    fn default() -> Self {
+        Self {
+            stored: Mutex::new(StoredPlatformSettings {
+                revision: 0,
+                settings: PlatformSettings::default(),
+            }),
+        }
+    }
+}
+
+#[async_trait]
+impl PlatformSettingsStore for MemorySettings {
+    async fn read(&self) -> Result<StoredPlatformSettings, StoreError> {
+        Ok(self.stored.lock().unwrap().clone())
+    }
+
+    async fn replace(
+        &self,
+        expected_revision: u64,
+        settings: &PlatformSettings,
+    ) -> Result<StoredPlatformSettings, StoreError> {
+        let mut stored = self.stored.lock().unwrap();
+        if stored.revision != expected_revision {
+            return Err(StoreError::RevisionConflict {
+                expected: expected_revision,
+                actual: stored.revision,
+            });
+        }
+        *stored = StoredPlatformSettings {
+            revision: expected_revision + 1,
+            settings: settings.clone(),
+        };
+        Ok(stored.clone())
+    }
+}
+
+struct FixedInventory;
+
+#[async_trait]
+impl RuntimeInventory for FixedInventory {
+    async fn snapshot(&self) -> Result<ProviderInventory, StoreError> {
+        Ok(ProviderInventory {
+            observed_at: NOW.into(),
+            runtimes: vec![RuntimeEntry {
+                runtime_id: "runtime-a".into(),
+                generation: 3,
+                owner_reference: Some("sbx_a".into()),
+                status: RuntimeStatus::Ready,
+            }],
+        })
+    }
+}
+
+pub(crate) struct Fixture {
+    pub(crate) app: Router,
+    pub(crate) sandboxes: Arc<InMemorySandboxStore>,
+    pub(crate) profiles: Arc<InMemoryProfileStore>,
+    activity: Arc<MemoryActivity>,
+    names: Arc<crate::rest::public_names::tests::Names>,
+}
+
+pub(crate) fn fixture(inventory: bool) -> Fixture {
+    let activity = Arc::new(MemoryActivity::default());
+    let activity_service = ActivityService::new(activity.clone());
+    let settings = Arc::new(PlatformSettingsService::new(
+        Arc::new(MemorySettings::default()),
+        Arc::clone(&activity_service),
+    ));
+    let sandboxes = Arc::new(InMemorySandboxStore::default());
+    let profiles = Arc::new(InMemoryProfileStore::default());
+    let retirement = Arc::new(StoredSandboxRetirement::new(sandboxes.clone()));
+    let operators = Arc::new(layer2_core::sandbox::SandboxOperatorService::new(
+        sandboxes.clone(),
+        profiles.clone(),
+        retirement,
+        Arc::clone(&activity_service),
+    ));
+    let names = crate::rest::public_names::tests::Names::seeded();
+    let mut state = AdminState::new(settings, operators, activity_service)
+        .with_user_directory(layer2_core::UserDirectory::new(names.clone()));
+    if inventory {
+        state = state.with_runtime_inventory(Arc::new(FixedInventory));
+    }
+    Fixture {
+        app: router(state),
+        sandboxes,
+        profiles,
+        activity,
+        names,
+    }
+}
+
+#[tokio::test]
+async fn owner_names_follow_authorized_cross_owner_reads_and_never_grant_control() {
+    use std::sync::atomic::Ordering;
+    let fixture = fixture(false);
+    fixture
+        .sandboxes
+        .create_sandbox(sandbox("sbx_names", "owner-b", "runtime-a"))
+        .await
+        .unwrap();
+    for path in [
+        "/api/v1/admin/sandboxes",
+        "/api/v1/admin/sandboxes/sbx_names",
+        "/api/v1/admin/activity",
+    ] {
+        let response = send(&fixture.app, Method::GET, path, None, []).await;
+        assert!(matches!(
+            response.status(),
+            StatusCode::FORBIDDEN | StatusCode::NOT_FOUND
+        ));
+        assert!(!String::from_utf8(body_bytes(response).await)
+            .unwrap()
+            .contains("Sam Lee"));
+    }
+    assert_eq!(fixture.names.calls.load(Ordering::SeqCst), 0);
+    let page = send(
+        &fixture.app,
+        Method::GET,
+        "/api/v1/admin/sandboxes",
+        None,
+        [Capability::ReadAllSandboxes],
+    )
+    .await;
+    assert_eq!(page.status(), StatusCode::OK);
+    let page = response_json(page).await;
+    assert_eq!(page["items"][0]["owner"], "owner-b");
+    assert_eq!(page["items"][0]["owner_name"], "Sam Lee");
+    let detail = send(
+        &fixture.app,
+        Method::GET,
+        "/api/v1/admin/sandboxes/sbx_names",
+        None,
+        [Capability::ReadAllSandboxes],
+    )
+    .await;
+    let detail = response_json(detail).await;
+    assert_eq!(detail["owner_name"], "Sam Lee");
+    assert_eq!(detail["sandbox"]["owner"], "owner-b");
+    let activity = send(
+        &fixture.app,
+        Method::GET,
+        "/api/v1/admin/activity",
+        None,
+        [Capability::ReadActivityLog],
+    )
+    .await;
+    assert_eq!(
+        response_json(activity).await["items"][0]["actor_name"],
+        "Morgan Park"
+    );
+    let refused = send(
+        &fixture.app,
+        Method::POST,
+        "/api/v1/admin/sandboxes/sbx_names/retire",
+        None,
+        [Capability::ReadAllSandboxes],
+    )
+    .await;
+    assert_eq!(refused.status(), StatusCode::NOT_FOUND);
+}
+
+fn request(
+    method: Method,
+    path: &str,
+    body: Option<Value>,
+    capabilities: impl IntoIterator<Item = Capability>,
+) -> Request<Body> {
+    let mut builder = Request::builder().method(method).uri(path);
+    let body = if let Some(body) = body {
+        builder = builder.header(header::CONTENT_TYPE, "application/json");
+        Body::from(body.to_string())
+    } else {
+        Body::empty()
+    };
+    authenticated(builder.body(body).unwrap(), capabilities)
+}
+
+fn raw_request(
+    method: Method,
+    path: &str,
+    body: &'static str,
+    capabilities: impl IntoIterator<Item = Capability>,
+) -> Request<Body> {
+    authenticated(
+        Request::builder()
+            .method(method)
+            .uri(path)
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(body))
+            .unwrap(),
+        capabilities,
+    )
+}
+
+fn authenticated(
+    mut request: Request<Body>,
+    capabilities: impl IntoIterator<Item = Capability>,
+) -> Request<Body> {
+    request
+        .extensions_mut()
+        .insert(AuthenticatedSubject(SubjectId::new("operator-a")));
+    request
+        .extensions_mut()
+        .insert(Authorization::new(capabilities));
+    request
+}
+
+async fn body_bytes(response: Response) -> Vec<u8> {
+    to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap()
+        .to_vec()
+}
+
+async fn response_json(response: Response) -> Value {
+    serde_json::from_slice(&body_bytes(response).await).unwrap()
+}
+
+pub(crate) fn sandbox(id: &str, owner: &str, version: &str) -> Sandbox {
+    Sandbox {
+        id: SandboxId(id.into()),
+        owner: SubjectId::new(owner),
+        name: format!("Sandbox {id}"),
+        origin: SandboxOrigin::Manual,
+        profile: SandboxProfileSnapshot {
+            id: layer2_core::SandboxProfileId("sbp_test".into()),
+            revision: 1,
+            digest: "a".repeat(64),
+            content: SandboxProfileContent {
+                cpu_millis: 1_000,
+                memory_mib: 2_048,
+                nyxid_services: vec![],
+                agent_provider: layer2_core::profiles::AgentProvider::Codex,
+                model_access: layer2_core::profiles::ModelAccess::ChronoaiManaged,
+                max_workspaces: 4,
+                max_agents_per_workspace: 4,
+                workspace_profiles: vec![],
+                software_install_commands: vec![],
+                environment_variables: vec![],
+            },
+        },
+        status: SandboxStatus::Active,
+        failure: None,
+        runtime: Some(RuntimeBinding {
+            boot_id: None,
+            provision_generation: Some(1),
+            runtime_id: format!("runtime-{id}"),
+            runtime_version: version.into(),
+            bound_at: NOW.into(),
+        }),
+        credential: SandboxCredentialState {
+            service_grants: Vec::new(),
+            reaches: vec![],
+            key_generation: 0,
+            delivered: false,
+            current: None,
+            pending: None,
+            revoke_debt: Vec::new(),
+            sign_in: SandboxSignInState::NotRequired,
+        },
+        work: SandboxWorkState::new(SandboxWorkStep::WaitForCredentialRotation, NOW.into()),
+        limits: SandboxLimits {
+            max_workspaces: 4,
+            max_agents_per_workspace: 4,
+        },
+        lifecycle: layer2_core::sandbox::SandboxLifecycleState {
+            runtime_generation_high_water: 1,
+            ..Default::default()
+        },
+        last_activity_at: NOW.into(),
+        created_at: NOW.into(),
+        updated_at: NOW.into(),
+        retired_at: None,
+        purge_after: None,
+        revision: 1,
+    }
+}
+
+pub(crate) fn agent_profile(id: &str, owner: &str, visibility: ProfileVisibility) -> AgentProfile {
+    AgentProfile {
+        id: layer2_core::AgentProfileId(id.into()),
+        owner: SubjectId::new(owner),
+        name: format!("Agent {id}"),
+        description: String::new(),
+        visibility,
+        forked_from: None,
+        uses_count: 0,
+        draft: AgentProfileContent {
+            model: None,
+            thinking_effort: ThinkingEffort::Medium,
+            permission_level: PermissionLevel::Guarded,
+            skills: vec![],
+            system_prompt: String::new(),
+        },
+        draft_version: 1,
+        created_at: NOW.into(),
+        updated_at: NOW.into(),
+        retired_at: None,
+    }
+}
+
+async fn send(
+    app: &Router,
+    method: Method,
+    path: &str,
+    body: Option<Value>,
+    capabilities: impl IntoIterator<Item = Capability>,
+) -> Response {
+    app.clone()
+        .oneshot(request(method, path, body, capabilities))
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn settings_support_read_replace_presence_aware_patch_and_reset() {
+    let fixture = fixture(false);
+    let capability = [Capability::ConfigurePlatform];
+    let initial = send(
+        &fixture.app,
+        Method::GET,
+        "/api/v1/admin/settings",
+        None,
+        capability,
+    )
+    .await;
+    assert_eq!(initial.status(), StatusCode::OK);
+    let initial = response_json(initial).await;
+    assert_eq!(initial["revision"], 0);
+    assert_eq!(initial["settings"]["checkpoints"]["interval_seconds"], 1800);
+
+    let changed = send(
+        &fixture.app,
+        Method::PATCH,
+        "/api/v1/admin/settings",
+        Some(json!({
+            "expected_revision": 0,
+            "marketplace": {"enabled": false},
+            "checkpoints": {"interval_seconds": 600}
+        })),
+        capability,
+    )
+    .await;
+    assert_eq!(changed.status(), StatusCode::OK);
+    let changed = response_json(changed).await;
+    assert_eq!(changed["revision"], 1);
+    assert_eq!(changed["settings"]["marketplace"]["enabled"], false);
+    assert_eq!(changed["settings"]["checkpoints"]["interval_seconds"], 600);
+    assert_eq!(
+        changed["settings"]["inactivity"],
+        initial["settings"]["inactivity"]
+    );
+
+    let mut replacement = changed["settings"].clone();
+    replacement["limits"]["max_sandboxes_per_user"] = 9.into();
+    let replaced = send(
+        &fixture.app,
+        Method::PUT,
+        "/api/v1/admin/settings",
+        Some(json!({"expected_revision": 1, "settings": replacement})),
+        capability,
+    )
+    .await;
+    assert_eq!(replaced.status(), StatusCode::OK);
+    assert_eq!(
+        response_json(replaced).await["settings"]["limits"]["max_sandboxes_per_user"],
+        9
+    );
+
+    let reset = send(
+        &fixture.app,
+        Method::POST,
+        "/api/v1/admin/settings/reset",
+        Some(json!({"expected_revision": 2})),
+        capability,
+    )
+    .await;
+    assert_eq!(reset.status(), StatusCode::OK);
+    let reset = response_json(reset).await;
+    assert_eq!(reset["revision"], 3);
+    assert_eq!(reset["settings"], initial["settings"]);
+    assert_eq!(fixture.activity.records.lock().unwrap().len(), 4);
+}
+
+#[tokio::test]
+async fn settings_refusals_are_confidential_specific_and_revision_safe() {
+    let fixture = fixture(false);
+    let capability = [Capability::ConfigurePlatform];
+    let unknown = send(
+        &fixture.app,
+        Method::PATCH,
+        "/api/v1/admin/settings",
+        Some(json!({
+            "expected_revision": 0,
+            "marketplace": {"enabled": true, "private_token": "must-not-return"}
+        })),
+        capability,
+    )
+    .await;
+    assert_eq!(unknown.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let unknown = response_json(unknown).await;
+    assert_eq!(unknown["field"], "private_token");
+    assert_eq!(unknown["path"], "marketplace.private_token");
+    assert!(!unknown.to_string().contains("must-not-return"));
+
+    for body in [
+        json!({"expected_revision": 0}),
+        json!({"expected_revision": 0, "marketplace": null}),
+        json!({"expected_revision": 0, "inactivity": {"pause_after_seconds": 59}}),
+        json!({"expected_revision": 0, "checkpoints": {"interval_seconds": 59}}),
+        json!({"expected_revision": 0, "checkpoints": {"interval_seconds": 86401}}),
+        json!({"expected_revision": 0, "checkpoints": null}),
+    ] {
+        let response = send(
+            &fixture.app,
+            Method::PATCH,
+            "/api/v1/admin/settings",
+            Some(body),
+            capability,
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+        assert_eq!(response_json(response).await["code"], "invalid_request");
+    }
+
+    let malformed = fixture
+        .app
+        .clone()
+        .oneshot(raw_request(
+            Method::PATCH,
+            "/api/v1/admin/settings",
+            r#"{"expected_revision":0,"marketplace":"credential-value""#,
+            capability,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(malformed.status(), StatusCode::BAD_REQUEST);
+    let malformed = response_json(malformed).await;
+    assert_eq!(malformed["code"], "malformed_json");
+    assert!(!malformed.to_string().contains("credential-value"));
+
+    let written = send(
+        &fixture.app,
+        Method::PATCH,
+        "/api/v1/admin/settings",
+        Some(json!({
+            "expected_revision": 0,
+            "marketplace": {"enabled": false}
+        })),
+        capability,
+    )
+    .await;
+    assert_eq!(written.status(), StatusCode::OK);
+    let stale = send(
+        &fixture.app,
+        Method::PATCH,
+        "/api/v1/admin/settings",
+        Some(json!({
+            "expected_revision": 0,
+            "marketplace": {"enabled": true}
+        })),
+        capability,
+    )
+    .await;
+    assert_eq!(stale.status(), StatusCode::CONFLICT);
+    assert_eq!(response_json(stale).await["code"], "settings_conflict");
+}
+
+#[tokio::test]
+async fn collection_operations_return_the_explicit_operator_refusal() {
+    let fixture = fixture(true);
+    for (method, path, body) in [
+        (Method::GET, "/api/v1/admin/settings", None),
+        (
+            Method::PUT,
+            "/api/v1/admin/settings",
+            Some(json!({
+                "expected_revision": 0,
+                "settings": PlatformSettings::default()
+            })),
+        ),
+        (
+            Method::PATCH,
+            "/api/v1/admin/settings",
+            Some(json!({
+                "expected_revision": 0,
+                "marketplace": {"enabled": false}
+            })),
+        ),
+        (
+            Method::POST,
+            "/api/v1/admin/settings/reset",
+            Some(json!({"expected_revision": 0})),
+        ),
+        (Method::GET, "/api/v1/admin/sandboxes", None),
+        (Method::GET, "/api/v1/admin/profiles", None),
+        (Method::GET, "/api/v1/admin/runtime-inventory", None),
+        (Method::GET, "/api/v1/admin/activity", None),
+        (Method::POST, "/api/v1/admin/triggers/pause", None),
+        (Method::POST, "/api/v1/admin/triggers/resume", None),
+    ] {
+        let response = send(&fixture.app, method, path, body, []).await;
+        assert_eq!(response.status(), StatusCode::FORBIDDEN, "{path}");
+        let body = response_json(response).await;
+        assert!(body["type"].as_str().unwrap().ends_with("/not-an-operator"));
+    }
+}
+
+#[tokio::test]
+async fn trigger_controls_project_the_platform_kill_switch() {
+    let fixture = fixture(false);
+    let paused = send(
+        &fixture.app,
+        Method::POST,
+        "/api/v1/admin/triggers/pause",
+        None,
+        [Capability::ConfigurePlatform],
+    )
+    .await;
+    assert_eq!(paused.status(), StatusCode::OK);
+    let paused = response_json(paused).await;
+    assert_eq!(paused["revision"], 1);
+    assert_eq!(paused["settings"]["triggers"]["orchestration_paused"], true);
+
+    let resumed = send(
+        &fixture.app,
+        Method::POST,
+        "/api/v1/admin/triggers/resume",
+        None,
+        [Capability::ConfigurePlatform],
+    )
+    .await;
+    assert_eq!(resumed.status(), StatusCode::OK);
+    let resumed = response_json(resumed).await;
+    assert_eq!(resumed["revision"], 2);
+    assert_eq!(
+        resumed["settings"]["triggers"]["orchestration_paused"],
+        false
+    );
+    assert_eq!(fixture.activity.records.lock().unwrap().len(), 2);
+}
+
+#[tokio::test]
+async fn identifier_refusals_are_byte_identical_to_missing_targets() {
+    let fixture = fixture(false);
+    fixture
+        .sandboxes
+        .create_sandbox(sandbox("sbx_exists", "owner-a", "v2"))
+        .await
+        .unwrap();
+    fixture
+        .profiles
+        .create_agent_profile(agent_profile(
+            "agp_exists",
+            "owner-a",
+            ProfileVisibility::Private,
+        ))
+        .await
+        .unwrap();
+
+    for (method, existing, missing, capability) in [
+        (
+            Method::GET,
+            "/api/v1/admin/sandboxes/sbx_exists",
+            "/api/v1/admin/sandboxes/sbx_missing",
+            Capability::ReadAllSandboxes,
+        ),
+        (
+            Method::GET,
+            "/api/v1/admin/sandboxes/sbx_exists/events",
+            "/api/v1/admin/sandboxes/sbx_missing/events",
+            Capability::ReadAllSandboxes,
+        ),
+        (
+            Method::POST,
+            "/api/v1/admin/sandboxes/sbx_exists/retire",
+            "/api/v1/admin/sandboxes/sbx_missing/retire",
+            Capability::ControlAnySandbox,
+        ),
+        (
+            Method::POST,
+            "/api/v1/admin/profiles/agent/agp_exists/retire",
+            "/api/v1/admin/profiles/agent/agp_missing/retire",
+            Capability::ControlAnySandbox,
+        ),
+    ] {
+        let hidden = send(&fixture.app, method.clone(), existing, None, []).await;
+        let absent = send(&fixture.app, method, missing, None, [capability]).await;
+        assert_eq!(hidden.status(), StatusCode::NOT_FOUND, "{existing}");
+        assert_eq!(absent.status(), StatusCode::NOT_FOUND, "{missing}");
+        assert_eq!(
+            body_bytes(hidden).await,
+            body_bytes(absent).await,
+            "{existing}"
         );
     }
+}
+
+#[tokio::test]
+async fn sandbox_routes_filter_read_events_and_retire_idempotently() {
+    let fixture = fixture(false);
+    let wanted = sandbox("sbx_wanted", "owner-a", "v2");
+    fixture
+        .sandboxes
+        .create_sandbox(wanted.clone())
+        .await
+        .unwrap();
+    fixture
+        .sandboxes
+        .create_sandbox(sandbox("sbx_other", "owner-b", "v1"))
+        .await
+        .unwrap();
+    fixture
+        .sandboxes
+        .append_sandbox_event(&wanted.id, NOW.into(), SandboxEventKind::Created)
+        .await
+        .unwrap();
+
+    let listed = send(
+        &fixture.app,
+        Method::GET,
+        "/api/v1/admin/sandboxes?owner=owner-a&status=active&runtime_version=v2",
+        None,
+        [Capability::ReadAllSandboxes],
+    )
+    .await;
+    assert_eq!(listed.status(), StatusCode::OK);
+    let listed = response_json(listed).await;
+    assert_eq!(listed["items"].as_array().unwrap().len(), 1);
+    assert_eq!(listed["items"][0]["id"], "sbx_wanted");
+    assert_eq!(listed["items"][0]["agent_count"], 0);
+
+    let detail = send(
+        &fixture.app,
+        Method::GET,
+        "/api/v1/admin/sandboxes/sbx_wanted",
+        None,
+        [Capability::ReadAllSandboxes],
+    )
+    .await;
+    assert_eq!(detail.status(), StatusCode::OK);
+    let detail = response_json(detail).await;
+    assert_eq!(detail["sandbox"]["owner"], "owner-a");
+    assert_eq!(detail["workspaces"], json!([]));
+    assert_eq!(detail["agents"], json!([]));
+
+    let events = send(
+        &fixture.app,
+        Method::GET,
+        "/api/v1/admin/sandboxes/sbx_wanted/events?after=0&limit=10",
+        None,
+        [Capability::ReadAllSandboxes],
+    )
+    .await;
+    assert_eq!(events.status(), StatusCode::OK);
+    assert_eq!(response_json(events).await[0]["kind"]["type"], "created");
+
+    let first = send(
+        &fixture.app,
+        Method::POST,
+        "/api/v1/admin/sandboxes/sbx_wanted/retire",
+        None,
+        [Capability::ControlAnySandbox],
+    )
+    .await;
+    assert_eq!(first.status(), StatusCode::OK);
+    let first = body_bytes(first).await;
+    let repeated = send(
+        &fixture.app,
+        Method::POST,
+        "/api/v1/admin/sandboxes/sbx_wanted/retire",
+        None,
+        [Capability::ControlAnySandbox],
+    )
+    .await;
+    assert_eq!(repeated.status(), StatusCode::OK);
+    assert_eq!(first, body_bytes(repeated).await);
+    let events = fixture
+        .sandboxes
+        .sandbox_events(&wanted.id, 0, 10)
+        .await
+        .unwrap();
+    assert_eq!(events.len(), 2);
+    assert_eq!(fixture.activity.records.lock().unwrap().len(), 5);
+}
+
+#[tokio::test]
+async fn profile_routes_filter_retire_and_protect_deployment_defaults() {
+    let fixture = fixture(false);
+    for profile in [
+        agent_profile("agp_public", "owner-a", ProfileVisibility::Public),
+        agent_profile("agp_private", "owner-b", ProfileVisibility::Private),
+        agent_profile(
+            layer2_core::DEFAULT_AGENT_PROFILE_ID,
+            "system",
+            ProfileVisibility::Public,
+        ),
+    ] {
+        fixture
+            .profiles
+            .create_agent_profile(profile)
+            .await
+            .unwrap();
+    }
+    let listed = send(
+        &fixture.app,
+        Method::GET,
+        "/api/v1/admin/profiles?kind=agent&visibility=public&owner=owner-a",
+        None,
+        [Capability::ReadAllSandboxes],
+    )
+    .await;
+    assert_eq!(listed.status(), StatusCode::OK);
+    let listed = response_json(listed).await;
+    assert_eq!(listed["items"].as_array().unwrap().len(), 1);
+    assert_eq!(listed["items"][0]["id"], "agp_public");
+
+    let first = send(
+        &fixture.app,
+        Method::POST,
+        "/api/v1/admin/profiles/agent/agp_public/retire",
+        None,
+        [Capability::ControlAnySandbox],
+    )
+    .await;
+    assert_eq!(first.status(), StatusCode::OK);
+    let first = body_bytes(first).await;
+    let repeated = send(
+        &fixture.app,
+        Method::POST,
+        "/api/v1/admin/profiles/agent/agp_public/retire",
+        None,
+        [Capability::ControlAnySandbox],
+    )
+    .await;
+    assert_eq!(repeated.status(), StatusCode::OK);
+    assert_eq!(first, body_bytes(repeated).await);
+
+    let protected = send(
+        &fixture.app,
+        Method::POST,
+        "/api/v1/admin/profiles/agent/agp_default/retire",
+        None,
+        [Capability::ControlAnySandbox],
+    )
+    .await;
+    assert_eq!(protected.status(), StatusCode::CONFLICT);
+    assert_eq!(response_json(protected).await["code"], "profile_protected");
+
+    let system = fixture
+        .profiles
+        .list_agent_profiles(
+            Some(&SubjectId::new("system")),
+            false,
+            &layer2_core::profiles::ProfilePageRequest::default(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(system.items[0].retired_at, None);
+    assert_eq!(fixture.activity.records.lock().unwrap().len(), 3);
+}
+
+#[tokio::test]
+async fn runtime_inventory_and_activity_each_require_their_exact_capability() {
+    let available = fixture(true);
+    available
+        .activity
+        .append(
+            &ActivityRecord::new(ActivityAction::Configure, ActivityOutcome::Succeeded)
+                .by(SubjectId::new("operator-a"))
+                .on(ActivityTarget::Subject(SubjectId::new("owner-b"))),
+        )
+        .await
+        .unwrap();
+
+    let wrong = send(
+        &available.app,
+        Method::GET,
+        "/api/v1/admin/runtime-inventory",
+        None,
+        [Capability::ReadAllSandboxes],
+    )
+    .await;
+    assert_eq!(wrong.status(), StatusCode::FORBIDDEN);
+    let inventory = send(
+        &available.app,
+        Method::GET,
+        "/api/v1/admin/runtime-inventory",
+        None,
+        [Capability::ReadRuntimeInventory],
+    )
+    .await;
+    assert_eq!(inventory.status(), StatusCode::OK);
+    let inventory = response_json(inventory).await;
+    assert_eq!(inventory["runtimes"][0]["generation"], 3);
+    assert_eq!(inventory["runtimes"][0]["status"], "ready");
+
+    let activity = send(
+        &available.app,
+        Method::GET,
+        "/api/v1/admin/activity?action=configure&limit=1",
+        None,
+        [Capability::ReadActivityLog],
+    )
+    .await;
+    assert_eq!(activity.status(), StatusCode::OK);
+    let activity = response_json(activity).await;
+    assert_eq!(activity["items"][0]["action"], "configure");
+    assert_eq!(activity["items"][0]["actor_name"], "Morgan Park");
+    assert_eq!(activity["items"][0]["target_name"], "Sam Lee");
+
+    let unavailable = fixture(false);
+    let response = send(
+        &unavailable.app,
+        Method::GET,
+        "/api/v1/admin/runtime-inventory",
+        None,
+        [Capability::ReadRuntimeInventory],
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
 }

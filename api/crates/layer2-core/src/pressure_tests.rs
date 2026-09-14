@@ -415,7 +415,7 @@ fn the_pressure_module_contains_only_core_vocabulary() {
         "pty",
         concat!("co", "dex"),
         concat!("claude", "_code"),
-        "dsh",
+        "example-runtime",
     ] {
         assert!(!source.contains(foreign), "pressure.rs contains {foreign}");
     }

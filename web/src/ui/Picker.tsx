@@ -34,6 +34,7 @@ interface PickerProps<Value extends string> {
   readonly filter?: boolean;
   /** Associates the control with a label rendered outside it. */
   readonly id?: string;
+  readonly describedBy?: string;
   /**
    * A class for placing this picker in its row.
    *
@@ -52,6 +53,7 @@ export function Picker<Value extends string>({
   disabled = false,
   filter = false,
   id,
+  describedBy,
   placement,
 }: PickerProps<Value>) {
   const [open, setOpen] = useState(false);
@@ -98,6 +100,7 @@ export function Picker<Value extends string>({
           aria-haspopup="menu"
           aria-expanded={open}
           aria-label={label}
+          aria-describedby={describedBy}
           disabled={disabled}
           onClick={() => {
             setOpen((was) => !was);

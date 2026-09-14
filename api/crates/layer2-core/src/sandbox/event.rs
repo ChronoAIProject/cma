@@ -1,0 +1,240 @@
+use serde::{Deserialize, Serialize};
+
+use crate::ids::{AgentId, SandboxId, WorkspaceId, WorktreeId};
+
+use super::{
+    AgentOperationDelivery, AgentOperationKind, AgentStatus, AgentWorkStep, SandboxStatus,
+    SandboxWorkStep, TypedFailure,
+};
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AgentPlanStep {
+    pub title: String,
+    pub status: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AgentConfigOption {
+    pub id: String,
+    pub name: String,
+    pub kind: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AgentAvailableCommand {
+    pub name: String,
+    pub description: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+pub enum AgentLogKind {
+    Created {
+        workspace_id: WorkspaceId,
+        worktree_id: WorktreeId,
+    },
+    ConversationOpened {
+        conversation_id: String,
+        runtime_generation: u64,
+    },
+    RuntimeGenerationRetired {
+        previous_generation: u64,
+        runtime_generation: u64,
+    },
+    WorkStepCompleted {
+        step: AgentWorkStep,
+    },
+    WorkStepFailed {
+        step: AgentWorkStep,
+        failure: TypedFailure,
+    },
+    TurnStarted {
+        turn_sequence: u64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        origin_key: Option<String>,
+    },
+    TurnMetadataSet {
+        turn_sequence: u64,
+        metadata: std::collections::BTreeMap<String, String>,
+    },
+    OwnerMessage {
+        content: String,
+    },
+    AgentMessage {
+        content: String,
+    },
+    TurnCompleted {
+        turn_sequence: u64,
+    },
+    TurnFailed {
+        turn_sequence: u64,
+        failure: TypedFailure,
+    },
+    TurnInterrupted {
+        turn_sequence: u64,
+    },
+    ToolCallStarted {
+        call_id: String,
+        title: String,
+        kind: String,
+        status: String,
+    },
+    ToolCallUpdated {
+        call_id: String,
+        status: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        title: Option<String>,
+    },
+    ApprovalRequested {
+        approval_id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        action: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        detail: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        runtime_locator: Option<String>,
+    },
+    ApprovalResolved {
+        approval_id: String,
+        decision: String,
+    },
+    OperationDeliveryChanged {
+        operation_sequence: u64,
+        operation: AgentOperationKind,
+        state: AgentOperationDelivery,
+    },
+    Usage {
+        input_tokens: u64,
+        output_tokens: u64,
+        context_used: u64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        context_window: Option<u64>,
+    },
+    ModeChanged {
+        mode: String,
+    },
+    PlanSet {
+        entries: Vec<AgentPlanStep>,
+    },
+    ConfigOptionsSet {
+        options: Vec<AgentConfigOption>,
+    },
+    AvailableCommandsSet {
+        commands: Vec<AgentAvailableCommand>,
+    },
+    ConversationGap {
+        frames: u64,
+    },
+    SignInRequired {
+        url: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        code: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        message: Option<String>,
+    },
+    StatusChanged {
+        from: AgentStatus,
+        to: AgentStatus,
+    },
+    FirstMessageChanged {
+        state: super::FirstMessageDelivery,
+        recovery_generation: u32,
+    },
+    TitleSet {
+        title: String,
+        source: String,
+    },
+    Stopped {
+        reason: String,
+    },
+    Deleted,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AgentLogEntry {
+    pub agent_id: AgentId,
+    pub seq: u64,
+    pub appended_at: String,
+    pub kind: AgentLogKind,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+pub enum SandboxEventKind {
+    Created,
+    WorkStepCompleted {
+        step: SandboxWorkStep,
+    },
+    WorkStepFailed {
+        step: SandboxWorkStep,
+        failure: TypedFailure,
+    },
+    StatusChanged {
+        from: SandboxStatus,
+        to: SandboxStatus,
+    },
+    WorkspaceCreated {
+        workspace_id: WorkspaceId,
+    },
+    WorkspaceReady {
+        workspace_id: WorkspaceId,
+        resolved_commit: String,
+    },
+    WorkspaceFailed {
+        workspace_id: WorkspaceId,
+        failure: TypedFailure,
+    },
+    WorkspaceRemoved {
+        workspace_id: WorkspaceId,
+    },
+    WorktreeCreated {
+        workspace_id: WorkspaceId,
+        worktree_id: WorktreeId,
+    },
+    WorktreeRemoved {
+        workspace_id: WorkspaceId,
+        worktree_id: WorktreeId,
+    },
+    AgentCreated {
+        workspace_id: WorkspaceId,
+        worktree_id: WorktreeId,
+        agent_id: AgentId,
+    },
+    AgentStatusChanged {
+        agent_id: AgentId,
+        from: AgentStatus,
+        to: AgentStatus,
+    },
+    AgentDeleted {
+        agent_id: AgentId,
+    },
+    CredentialChanged {
+        key_generation: u64,
+    },
+    ServiceAccessGranted {
+        grant: super::SandboxServiceGrant,
+    },
+    CheckpointSealed {
+        object_reference: String,
+    },
+    Revived,
+    Rotated {
+        runtime_version: String,
+    },
+    Failed {
+        failure: TypedFailure,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SandboxEvent {
+    pub sandbox_id: SandboxId,
+    pub seq: u64,
+    pub appended_at: String,
+    pub kind: SandboxEventKind,
+}

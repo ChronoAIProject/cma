@@ -1,0 +1,713 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "sandbox-service-access-grant",
+      "operation": "POST /api/v1/sandboxes/{id}/service-access",
+      "scenario": "instances_paused",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/sandboxes/sbx_route/service-access",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "grant-grant"
+        },
+        "body": {
+          "services": [
+            "api-github"
+          ]
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "id": "sbx_route",
+          "owner": "owner-a",
+          "owner_name": null,
+          "name": "sandbox-sbx_route",
+          "status": "paused",
+          "profile": {
+            "id": "sbp_stored",
+            "revision": 1
+          },
+          "nyxid_services": [
+            "api-github"
+          ],
+          "limits": {
+            "max_workspaces": 4,
+            "max_agents_per_workspace": 4
+          },
+          "lifecycle": {
+            "pause": {
+              "allowed": false,
+              "reason": "not_active"
+            },
+            "revive": {
+              "allowed": true
+            },
+            "latest_snapshot": {
+              "epoch": 1,
+              "saved_at": "2026-09-05T00:29:00Z",
+              "download_url": "/api/v1/sandboxes/sbx_route/snapshots/1/download"
+            }
+          },
+          "last_activity_at": "2026-09-05T00:00:00Z",
+          "created_at": "2026-09-05T00:00:00Z",
+          "updated_at": "2026-09-05T01:00:00Z",
+          "revision": 2
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "grant_at": "/updated_at"
+      }
+    },
+    {
+      "id": "sandbox-service-access-replay",
+      "operation": "POST /api/v1/sandboxes/{id}/service-access",
+      "scenario": "instances_paused",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/sandboxes/sbx_route/service-access",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "grant-grant"
+        },
+        "body": {
+          "services": [
+            "api-github"
+          ]
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "id": "sbx_route",
+          "owner": "owner-a",
+          "owner_name": null,
+          "name": "sandbox-sbx_route",
+          "status": "paused",
+          "profile": {
+            "id": "sbp_stored",
+            "revision": 1
+          },
+          "nyxid_services": [
+            "api-github"
+          ],
+          "limits": {
+            "max_workspaces": 4,
+            "max_agents_per_workspace": 4
+          },
+          "lifecycle": {
+            "pause": {
+              "allowed": false,
+              "reason": "not_active"
+            },
+            "revive": {
+              "allowed": true
+            },
+            "latest_snapshot": {
+              "epoch": 1,
+              "saved_at": "2026-09-05T00:29:00Z",
+              "download_url": "/api/v1/sandboxes/sbx_route/snapshots/1/download"
+            }
+          },
+          "last_activity_at": "2026-09-05T00:00:00Z",
+          "created_at": "2026-09-05T00:00:00Z",
+          "updated_at": "2026-09-05T01:00:00Z",
+          "revision": 2
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-service-access-already-granted",
+      "operation": "POST /api/v1/sandboxes/{id}/service-access",
+      "scenario": "instances_paused",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/sandboxes/sbx_route/service-access",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "grant-already-granted"
+        },
+        "body": {
+          "services": [
+            "api-github"
+          ]
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "id": "sbx_route",
+          "owner": "owner-a",
+          "owner_name": null,
+          "name": "sandbox-sbx_route",
+          "status": "paused",
+          "profile": {
+            "id": "sbp_stored",
+            "revision": 1
+          },
+          "nyxid_services": [
+            "api-github"
+          ],
+          "limits": {
+            "max_workspaces": 4,
+            "max_agents_per_workspace": 4
+          },
+          "lifecycle": {
+            "pause": {
+              "allowed": false,
+              "reason": "not_active"
+            },
+            "revive": {
+              "allowed": true
+            },
+            "latest_snapshot": {
+              "epoch": 1,
+              "saved_at": "2026-09-05T00:29:00Z",
+              "download_url": "/api/v1/sandboxes/sbx_route/snapshots/1/download"
+            }
+          },
+          "last_activity_at": "2026-09-05T00:00:00Z",
+          "created_at": "2026-09-05T00:00:00Z",
+          "updated_at": "2026-09-05T01:00:00Z",
+          "revision": 2
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-service-access-different-body",
+      "operation": "POST /api/v1/sandboxes/{id}/service-access",
+      "scenario": "instances_paused",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/sandboxes/sbx_route/service-access",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "grant-grant"
+        },
+        "body": {
+          "services": [
+            "another-service"
+          ]
+        }
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/idempotency-key-reused",
+          "title": "idempotency key reused",
+          "status": 422,
+          "detail": "This Idempotency-Key already names a different request.",
+          "code": "idempotency_key_reused"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-service-access-event",
+      "operation": "GET /api/v1/sandboxes/{id}/events",
+      "scenario": "instances_paused",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/sandboxes/sbx_route/events",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": [
+          {
+            "sandbox_id": "sbx_route",
+            "seq": 1,
+            "appended_at": "2026-09-05T01:00:00Z",
+            "kind": {
+              "type": "service_access_granted",
+              "grant": {
+                "services": [
+                  "api-github"
+                ],
+                "authorized_by": "owner-a",
+                "authorized_at": "2026-09-05T01:00:00Z",
+                "credential_generation_floor": 1
+              }
+            }
+          }
+        ],
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-service-access-anonymous",
+      "operation": "POST /api/v1/sandboxes/{id}/service-access",
+      "scenario": "instances_anonymous",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/sandboxes/sbx_route/service-access",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "grant-anonymous"
+        },
+        "body": {
+          "services": [
+            "api-github"
+          ]
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-service-access-forbidden",
+      "operation": "POST /api/v1/sandboxes/{id}/service-access",
+      "scenario": "instances_forbidden",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/sandboxes/sbx_route/service-access",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "grant-forbidden"
+        },
+        "body": {
+          "services": [
+            "api-github"
+          ]
+        }
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/forbidden",
+          "title": "forbidden",
+          "status": 403,
+          "detail": "This caller is not allowed to use this resource.",
+          "code": "forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-service-access-not-found",
+      "operation": "POST /api/v1/sandboxes/{id}/service-access",
+      "scenario": "instances_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/sandboxes/sbx_missing/service-access",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "grant-not-found"
+        },
+        "body": {
+          "services": [
+            "api-github"
+          ]
+        }
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource-not-found",
+          "title": "resource not found",
+          "status": 404,
+          "detail": "No resource matches this request.",
+          "code": "sandbox_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-service-access-live",
+      "operation": "POST /api/v1/sandboxes/{id}/service-access",
+      "scenario": "instances_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/sandboxes/sbx_route/service-access",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "grant-live"
+        },
+        "body": {
+          "services": [
+            "another-service"
+          ]
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource-conflict",
+          "title": "resource conflict",
+          "status": 409,
+          "detail": "The operation conflicts with current resource state.",
+          "code": "sandbox_service_access_requires_pause"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-service-access-invalid-services",
+      "operation": "POST /api/v1/sandboxes/{id}/service-access",
+      "scenario": "instances_paused",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/sandboxes/sbx_route/service-access",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "grant-invalid-services"
+        },
+        "body": {
+          "services": []
+        }
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-resource-request",
+          "title": "invalid resource request",
+          "status": 422,
+          "detail": "The request does not satisfy the resource contract.",
+          "code": "invalid_sandbox_service_access"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-service-access-corrupt",
+      "operation": "POST /api/v1/sandboxes/{id}/service-access",
+      "scenario": "instances_corrupt",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/sandboxes/sbx_route/service-access",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "grant-corrupt"
+        },
+        "body": {
+          "services": [
+            "api-github"
+          ]
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/hierarchy-service-unavailable",
+          "title": "hierarchy service unavailable",
+          "status": 503,
+          "detail": "The resource service could not complete this operation.",
+          "code": "hierarchy_service_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-service-access-missing-key",
+      "operation": "POST /api/v1/sandboxes/{id}/service-access",
+      "scenario": "instances_paused",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/sandboxes/sbx_route/service-access",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "services": [
+            "api-github"
+          ]
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/missing-idempotency-key",
+          "title": "missing idempotency key",
+          "status": 400,
+          "detail": "This operation requires an Idempotency-Key header.",
+          "code": "missing_idempotency_key"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-service-access-invalid-key",
+      "operation": "POST /api/v1/sandboxes/{id}/service-access",
+      "scenario": "instances_paused",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/sandboxes/sbx_route/service-access",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": ""
+        },
+        "body": {
+          "services": [
+            "api-github"
+          ]
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-idempotency-key",
+          "title": "invalid idempotency key",
+          "status": 400,
+          "detail": "Idempotency-Key must contain between 1 and 255 visible ASCII bytes.",
+          "code": "invalid_idempotency_key"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-service-access-invalid-json",
+      "operation": "POST /api/v1/sandboxes/{id}/service-access",
+      "scenario": "instances_paused",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/sandboxes/sbx_route/service-access",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "grant-invalid-json"
+        },
+        "rawBody": "{"
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid_json",
+          "title": "invalid_json",
+          "status": 400,
+          "detail": "Failed to parse the request body as JSON: EOF while parsing an object at line 1 column 1",
+          "code": "invalid_json"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-service-access-content-type",
+      "operation": "POST /api/v1/sandboxes/{id}/service-access",
+      "scenario": "instances_paused",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/sandboxes/sbx_route/service-access",
+        "headers": {
+          "idempotency-key": "grant-content-type"
+        },
+        "body": {
+          "services": [
+            "api-github"
+          ]
+        }
+      },
+      "response": {
+        "status": 415,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/json_content_type_required",
+          "title": "json_content_type_required",
+          "status": 415,
+          "detail": "The request body must use an application/json content type.",
+          "code": "json_content_type_required"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-service-access-oversize",
+      "operation": "POST /api/v1/sandboxes/{id}/service-access",
+      "scenario": "instances_paused",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/sandboxes/sbx_route/service-access",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "grant-oversize"
+        },
+        "rawBody": " ",
+        "rawBodyRepeat": 2097153
+      },
+      "response": {
+        "status": 413,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid_json",
+          "title": "invalid_json",
+          "status": 413,
+          "detail": "Failed to buffer the request body: length limit exceeded",
+          "code": "invalid_json"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-service-access-pending",
+      "operation": "POST /api/v1/sandboxes/{id}/service-access",
+      "scenario": "instances_operation_pending",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/sandboxes/sbx_route/service-access",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "grant-pending"
+        },
+        "body": {
+          "services": [
+            "api-github"
+          ]
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/idempotency-in-flight",
+          "title": "idempotency in flight",
+          "status": 409,
+          "detail": "An operation with this Idempotency-Key is still in progress. Retry shortly.",
+          "code": "idempotency_in_flight"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-service-access-recovery",
+      "operation": "POST /api/v1/sandboxes/{id}/service-access",
+      "scenario": "instances_operation_recovery",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/sandboxes/sbx_route/service-access",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "grant-recovery"
+        },
+        "body": {
+          "services": [
+            "api-github"
+          ]
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/idempotency-recovery-required",
+          "title": "idempotency recovery required",
+          "status": 409,
+          "detail": "The previous execution ended without a replay receipt. This Idempotency-Key remains fenced unless the original execution records its exact result; manual review of durable state is required.",
+          "code": "idempotency_recovery_required"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-service-access-store-unavailable",
+      "operation": "POST /api/v1/sandboxes/{id}/service-access",
+      "scenario": "instances_operation_unavailable",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/sandboxes/sbx_route/service-access",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "grant-store-unavailable"
+        },
+        "body": {
+          "services": [
+            "api-github"
+          ]
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/store-failed",
+          "title": "store failed",
+          "status": 503,
+          "detail": "store unavailable: contract operation store unavailable",
+          "code": "store_failed"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    }
+  ]
+}

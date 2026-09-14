@@ -8,33 +8,9 @@ metadata:
     app.kubernetes.io/part-of: cma
 spec:
   replicas: 1
-  # Never two control planes at once, even for a moment.
-  #
-  # The default RollingUpdate brings the replacement to Ready before the
-  # outgoing pod is sent SIGTERM, and /ready answers only while a bounded
-  # session-store ping succeeds. The new process then runs its boot reconcile,
-  # which for every live conversation session opens a second link to the same
-  # bot pod.
-  # The runtime's bridge is a broadcast that holds frames only when nobody is
-  # subscribed, so with two links every frame is delivered to both — and the
-  # outgoing process keeps folding until it exits, which the event stream's own
-  # keepalive delays to the end of the grace period.
-  #
-  # Both would then append the same agent message under their own sequence
-  # allocators. The uniqueness constraint is on (session, seq), not on content,
-  # so both persist and the owner's conversation permanently shows the reply
-  # twice.
-  #
-  # Recreate costs a short window where the API is unreachable, and that is the
-  # cheaper side of the trade: §5's whole design is that a control plane holds
-  # no state that matters, the bot pods keep running, the bridge holds frames
-  # while nothing is attached, and a client resumes on its cursor. Nothing a
-  # session owns is lost by the gap. A duplicated log is permanent.
-  #
-  # This makes the deployment safe; it does not make the control plane
-  # horizontally scalable, which §1 says it should be. That needs cross-process
-  # exclusion on a runtime attachment, which nothing here provides — see the
-  # issue this comment was written alongside.
+  # Quota reservations and rate counters are process-local. Keep one replica
+  # and no rollout overlap until those authorities have shared coordination.
+  # Durable worker leases and resume cursors survive the brief Recreate gap.
   strategy:
     type: Recreate
   selector:
@@ -42,21 +18,16 @@ spec:
       app.kubernetes.io/name: cma-api
   template:
     metadata:
+      annotations:
+        # Reload the environment-bound runtime pin when its ConfigMap changes.
+        cma.chronoai.dev/runtime-image: "sha256:5541f5a711d90c61824fe6a55b4c762d21a37cb2a63574f552390520eabf5ee4"
       labels:
         app.kubernetes.io/name: cma-api
         app.kubernetes.io/part-of: cma
     spec:
-      # Bounded so a rollout is not held open by the event stream's keepalive.
-      #
-      # Graceful shutdown waits on open connections, and a subscribed client's
-      # stream does not close on its own, so the default 30s was spent in full
-      # on every deploy. Nothing is lost by cutting it shorter: an unwritten
-      # frame is held by the runtime's bridge while nothing is attached and
-      # delivered to the next process that attaches, which is the same path a
-      # lost control plane already relies on.
-      # CMA bounds concurrent HTTP/worker drain to 15s and cancels recovery
-      # lanes after 10s, leaving five seconds for runtime and kubelet teardown.
-      terminationGracePeriodSeconds: 20
+      # Shutdown drains HTTP for up to 30s, then background workers for up to
+      # 30s. Leave another five seconds for process and kubelet teardown.
+      terminationGracePeriodSeconds: 65
       # The sandbox key is delivered by the platform's secret provider, which
       # identifies the workload by its service account. Running as "default"
       # would present the wrong principal and the mount would be refused
@@ -84,7 +55,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: api
-          image: us-central1-docker.pkg.dev/example-project-01/example-registry-02/cma-api:v0.10.0@sha256:88c87b3625d193712d2f0fb5bda057f1d7a5cd570ea9159d3bf78cf1fcbc65d4
+          image: us-central1-docker.pkg.dev/example-project-01/example-registry-02/cma-api@sha256:8eba12c107b5823573b129b4fb00b99114da731141ebb116078e47acf0c48d87
           imagePullPolicy: IfNotPresent
           ports:
             - name: http
@@ -105,16 +76,15 @@ spec:
           resources:
             requests:
               cpu: 100m
-              memory: 128Mi
+              memory: 256Mi
             limits:
               cpu: 1000m
-              memory: 512Mi
-          # The legacy cutover stage deliberately binds only after migration,
-          # verification, and explicit MongoDB client shutdown. Suppress both
-          # liveness and readiness until that boundary exists so kubelet cannot
-          # restart the one-shot migration merely because its audit takes more
-          # than the ordinary liveness window. The budget stays finite: a pod
-          # that cannot expose /livez within 30 minutes is restarted.
+              # Four lifecycle sweeps can each hold bounded upload buffers.
+              # All restore downloads share a four-part (128 MiB) buffer cap.
+              memory: 1Gi
+          # Startup validates MongoDB schema/indexes and composes provider
+          # authorities before binding. The existing 30-minute budget is
+          # finite; readiness separately checks the composed dependencies.
           startupProbe:
             httpGet:
               path: /livez
@@ -139,9 +109,6 @@ spec:
           volumeMounts:
             - name: tmp
               mountPath: /tmp
-            # Sponsorship is dormant: there is deliberately no encryption-keyring
-            # or audit-HMAC mount until separately reviewed Secret Manager
-            # resources, IAM, and real store/adapter composition exist.
             # Read-only so a compromised process cannot rewrite the credential
             # it authenticates with.
             - name: opensandbox-api-key
@@ -150,9 +117,6 @@ spec:
       volumes:
         - name: tmp
           emptyDir: {}
-        # Do not add sponsorship files to this existing provider authority. Its
-        # future keyring and audit-HMAC projections must be separate read-only
-        # volumes so neither secret class can alias this provider credential.
         # The OpenSandbox API key arrives as a file rather than an environment
         # variable, keeping it out of the pod spec and the process environment.
         # It is delivered by the cluster's secret provider straight from the
