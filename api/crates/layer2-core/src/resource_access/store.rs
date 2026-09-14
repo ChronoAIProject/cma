@@ -197,6 +197,15 @@ pub enum ResourceAccessStoreError {
 
 #[async_trait::async_trait]
 pub trait ResourceAccessStore: Send + Sync {
+    /// Sandbox-ID ordered candidates covered by explicit organization ownership
+    /// or whole-Sandbox grants. Filter/deduplicate before returning limit + 1;
+    /// narrow Agent grants must never supply parent inventory candidates.
+    async fn organization_sandboxes(
+        &self,
+        organization: &SubjectId,
+        query: &crate::sandbox::OwnerSandboxQuery,
+    ) -> Result<Vec<ResourceAccessSnapshot>, ResourceAccessStoreError>;
+
     /// Agent-ID ordered organization inventory, filtered before pagination and
     /// deduplicated across org ownership and overlapping grants. Return at most
     /// limit + 1 snapshots so the service can authorize the lookahead too. These

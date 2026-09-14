@@ -323,6 +323,14 @@ struct GatedInventory {
 }
 #[async_trait]
 impl ResourceAccessStore for GatedInventory {
+    async fn organization_sandboxes(
+        &self,
+        organization: &crate::SubjectId,
+        query: &crate::sandbox::OwnerSandboxQuery,
+    ) -> Result<Vec<ResourceAccessSnapshot>, ResourceAccessStoreError> {
+        self.store.organization_sandboxes(organization, query).await
+    }
+
     async fn organization_agents(
         &self,
         organization: &SubjectId,

@@ -3,6 +3,7 @@ import type { ContractCase } from './context.js';
 import { browserOperations } from './navigation.js';
 
 export const localCodes = new Map([
+  ['sandbox-inventory-status-invalid', 'invalid_query'],
   ['authoring-skills-limit-zero', 'invalid_profile_authoring_query'],
   ['authoring-skills-limit-overflow', 'invalid_profile_authoring_query'],
   ['authoring-skills-limit-too-large', 'invalid_profile_authoring_query'],
@@ -46,6 +47,7 @@ export const localCodes = new Map([
 ]);
 
 const protectedQueries = new Map([
+  ['sandbox-inventory-invalid-owner', ['owner']],
   ['agui-invalid-replay-query', ['unexpected']],
   ['responses-items-bad-query', ['unknown']],
   ['responses-read-bad-query', ['unknown']],

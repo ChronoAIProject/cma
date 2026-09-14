@@ -2,7 +2,7 @@ use super::context::{Context, invalid};
 use cma_sdk::{
     Result,
     agents::{AccessibleAgentListOptions, AgentListOptions},
-    instances::SandboxListOptions,
+    instances::{AccessibleSandboxListOptions, SandboxListOptions},
     profiles::{
         AgentProfileContent, MarketplaceListOptions, ProfileContent, Profiles,
         SandboxProfileContent, WorkspaceProfileContent,
@@ -84,9 +84,12 @@ pub async fn dispatch(c: &Context<'_>) -> Result<()> {
         "GET /api/v1/sandboxes" => c.check(
             client
                 .sandboxes()
-                .list(&SandboxListOptions {
-                    status: c.tag("status")?,
-                    page: c.page()?,
+                .list_accessible(&AccessibleSandboxListOptions {
+                    organization: c.q("organization"),
+                    filters: SandboxListOptions {
+                        status: c.tag("status")?,
+                        page: c.page()?,
+                    },
                 })
                 .await,
         ),

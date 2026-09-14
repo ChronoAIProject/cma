@@ -25,12 +25,36 @@ pub struct SandboxListOptions {
     pub status: Option<SandboxStatus>,
 }
 
+/// Personal or explicit current organization Sandbox inventory.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct AccessibleSandboxListOptions {
+    /// Canonical organization ID; omission selects personal resources.
+    pub organization: Option<String>,
+    /// Pagination and status filters.
+    pub filters: SandboxListOptions,
+}
+
 /// Owner-facing Sandbox resources and lifecycle commands.
 pub struct Sandboxes<'a> {
     client: &'a Client,
 }
 
 impl Sandboxes<'_> {
+    /// List personally owned Sandboxes or current organization-visible metadata.
+    pub async fn list_accessible(
+        &self,
+        options: &AccessibleSandboxListOptions,
+    ) -> Result<ResourcePage<AccessibleSandboxSummary>> {
+        let mut query = options.filters.page.query();
+        if let Some(status) = options.filters.status {
+            query.push(("status", status.as_str().into()));
+        }
+        if let Some(organization) = &options.organization {
+            query.push(("organization", organization.clone()));
+        }
+        self.client.get(&["sandboxes"], &query).await
+    }
+
     /// Read personal detail or shared metadata and authorized child counts.
     pub async fn read_accessible(&self, id: &str) -> Result<AccessibleSandboxDetail> {
         let value: AccessibleSandboxDetail = self.client.get(&["sandboxes", id], &[]).await?;

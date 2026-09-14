@@ -260,12 +260,40 @@ membership checks. Authorization, hierarchy IO and final policy IO each have a
 The personal Sandbox collection excludes explicit organization ownership before
 pagination and checks the hidden lookahead's policy. Composed detail reads
 supply validated counts, with at most eight concurrent roots and a 30-second
-page deadline. No new organization Sandbox discovery/admission route is claimed.
+page deadline. Organization Sandbox discovery uses the explicit collection filter below;
+organization ownership admission remains to implement.
 Snapshot archive export remains personal-only because it contains a whole home.
 SDK `readAccessible` / `read_accessible` and subordinate `listAccessible` /
 `list_accessible` methods expose the typed personal/shared unions; older personal
 methods retain their full types. Seventy actual-handler fixtures replay through
 both SDKs, alongside read-only retained-state and disposable Mongo regressions.
+
+## Organization Sandbox inventory
+
+`GET /api/v1/sandboxes?organization=<canonical ID>` uses fresh evidence from the
+actual request credential and the same role/capability intersection as Agent
+inventory. The default personal collection remains independent of organization
+lookup availability. A selected organization contributes only explicit valid
+organization ownership or current whole-Sandbox grants. A narrow Agent share
+cannot reveal its parent, count or pagination metadata.
+
+Mongo reads two indexed candidate branches in one read-only snapshot transaction,
+deduplicates before the limit and returns at most `limit + 1` exact root snapshots.
+Memory applies the same scope before pagination. L2 checks the candidate policy,
+query, identity and ordering, then obtains validated hierarchy counts for visible
+rows with at most eight concurrent reads. The entire count phase has a 15-second
+bound. After this IO, success, dependency errors and timeouts pass current policy
+checks for all candidates, including hidden lookahead, plus the original held
+membership deadline. An empty page also needs unexpired membership. Caller-name
+lookup finishes before acquiring organization evidence; no directory IO occurs
+between the final authorization check and the HTTP projection.
+
+Personal owners retain the existing full summary JSON, while others receive
+safe `SharedSandboxSummary` metadata/counts with an explicit shared marker. Both
+SDKs expose `listAccessible` / `list_accessible` with an optional organization
+selector. Legacy personal `list` types remain intact and refuse reduced shared
+responses. This adds discovery only; organization ownership admission and
+organization credential custody remain separate requirements.
 
 ## Deferred personal commands
 

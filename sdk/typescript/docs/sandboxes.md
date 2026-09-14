@@ -104,4 +104,25 @@ A narrow Agent grant cannot reveal any parent or its counts. Each hierarchy read
 requires current parent visibility; revoked, expired or unavailable authority
 can refuse a later request. Snapshot archives remain personal-only. The default
 Sandbox collection excludes explicit organization ownership before pagination;
-organization Sandbox discovery is not yet exposed.
+use `listAccessible({ organization })` for explicit organization discovery.
+
+## Organization inventory
+
+```ts
+import { createClient } from '@chronoai/cma-sdk';
+
+export async function organizationSandboxes(organization: string) {
+  const cma = createClient();
+  const page = await cma.sandboxes.listAccessible({ organization, limit: 20 });
+  return page.items.map((sandbox) => ({ id: sandbox.id, agents: sandbox.agent_count }));
+}
+```
+
+The organization must be a current canonical choice from `resourceAccess.organizations()`.
+Each page obtains new membership evidence. Organization-owned resources and
+whole-Sandbox grants are filtered before pagination; narrow Agent grants cannot
+reveal a parent or its counts. Shared summaries include `access: 'shared'` and safe
+metadata/counts. Personal owners retain the full personal summary. Omit the
+organization for personal inventory. Existing `sandboxes.list()` retains its
+personal type and refuses shared summaries. A changed policy or unavailable
+membership yields a typed error without partial rows or a stale `next` cursor.

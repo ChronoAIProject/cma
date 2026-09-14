@@ -109,3 +109,65 @@ async fn accessible_hierarchy_requires_explicit_shapes_and_exact_identity() {
     ));
     server.assert_drained();
 }
+
+#[tokio::test]
+async fn shared_sandbox_inventory_preserves_safe_summaries_and_personal_method_types() {
+    let server = Server::new().await;
+    let summary = json!({"access":"shared","id":"sandbox-1","name":"Project","status":"active","created_at":NOW,"updated_at":NOW,"last_activity_at":NOW,"workspace_count":1,"worktree_count":2,"agent_count":2});
+    let options = AccessibleSandboxListOptions {
+        organization: Some("org".into()),
+        filters: SandboxListOptions {
+            status: Some(SandboxStatus::Active),
+            page: PageOptions {
+                cursor: None,
+                limit: Some(1),
+            },
+        },
+    };
+    server.expect(
+        "GET",
+        "/sandboxes?limit=1&status=active&organization=org",
+        None,
+        200,
+        Some(json!({"items":[summary],"next":"sandbox-1"})),
+    );
+    let page = server
+        .client
+        .sandboxes()
+        .list_accessible(&options)
+        .await
+        .unwrap();
+    assert!(matches!(page.items[0], AccessibleSandboxSummary::Shared(_)));
+    assert_eq!(page.next.as_deref(), Some("sandbox-1"));
+    server.expect(
+        "GET",
+        "/sandboxes",
+        None,
+        200,
+        Some(json!({"items":[summary]})),
+    );
+    assert!(matches!(
+        server
+            .client
+            .sandboxes()
+            .list(&SandboxListOptions::default())
+            .await,
+        Err(Error::Protocol { .. })
+    ));
+    for access in [json!("future"), Value::Null] {
+        let mut invalid = summary.clone();
+        invalid["access"] = access;
+        server.expect(
+            "GET",
+            "/sandboxes?limit=1&status=active&organization=org",
+            None,
+            200,
+            Some(json!({"items":[invalid]})),
+        );
+        assert!(matches!(
+            server.client.sandboxes().list_accessible(&options).await,
+            Err(Error::Protocol { .. })
+        ));
+    }
+    server.assert_drained();
+}
