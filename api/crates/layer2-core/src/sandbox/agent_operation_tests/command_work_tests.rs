@@ -15,7 +15,7 @@ fn after(at: &str, seconds: u64) -> String {
     )
 }
 
-fn request(agent: &Agent, holder: &str, now: &str) -> CommandClaimRequest {
+pub(super) fn request(agent: &Agent, holder: &str, now: &str) -> CommandClaimRequest {
     CommandClaimRequest {
         agent_id: agent.id.clone(),
         holder: holder.into(),
@@ -24,7 +24,7 @@ fn request(agent: &Agent, holder: &str, now: &str) -> CommandClaimRequest {
     }
 }
 
-async fn fixture(status: AgentStatus) -> (Arc<InMemorySandboxStore>, Agent, Sandbox) {
+pub(super) async fn fixture(status: AgentStatus) -> (Arc<InMemorySandboxStore>, Agent, Sandbox) {
     let store = Arc::new(InMemorySandboxStore::default());
     let parent = seed_active_parent(&store).await;
     let agent = test_agent(status, None);
@@ -32,7 +32,7 @@ async fn fixture(status: AgentStatus) -> (Arc<InMemorySandboxStore>, Agent, Sand
     (store, agent, parent)
 }
 
-async fn admit(
+pub(super) async fn admit(
     store: &InMemorySandboxStore,
     agent: &Agent,
     parent: &Sandbox,
