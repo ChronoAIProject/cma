@@ -65,6 +65,10 @@ pub(super) async fn verify_subject(
     metadata: &ProviderMetadata,
     access_token: &str,
 ) -> Result<VerifiedSubject, String> {
+    if !super::bearer::permits_ambient_auth(access_token) {
+        verification_failure("userinfo", "restricted_credential", None);
+        return Err("credential is restricted to its dedicated channel interface".into());
+    }
     let endpoint = metadata
         .userinfo_endpoint
         .as_ref()
