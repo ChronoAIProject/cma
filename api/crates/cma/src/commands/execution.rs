@@ -1,16 +1,15 @@
 use std::sync::Arc;
 
+use layer2_core::now_rfc3339;
 use layer2_core::resource_access::{
     AccessError, ResourceAccessError, ResourceAccessService, ResourceAccessStoreError,
-    ResourceCapability, ResourceTarget,
 };
 use layer2_core::sandbox::agent_io::*;
 use layer2_core::sandbox::{
     AgentContextService, AgentOperationError, AgentOperationService, SandboxStatus,
 };
-use layer2_core::{now_rfc3339, Caller};
 
-pub(crate) struct PersonalCommandExecution {
+pub(crate) struct ResourceCommandExecution {
     pub authority: Arc<dyn AgentCommandAuthorizer>,
     pub access: Arc<ResourceAccessService>,
     pub store: Arc<dyn AgentCommandWorkerStore>,
@@ -18,64 +17,31 @@ pub(crate) struct PersonalCommandExecution {
     pub context: Arc<AgentContextService>,
 }
 
-impl PersonalCommandExecution {
-    async fn checked(&self, command: &AdmittedAgentCommand) -> Result<Caller, CommandReadiness> {
+impl ResourceCommandExecution {
+    async fn checked(
+        &self,
+        command: &AdmittedAgentCommand,
+    ) -> Result<CommandExecutionAuthorization, CommandReadiness> {
         command.validate().map_err(|_| CommandReadiness::Retry)?;
-        let envelope = &command.receipt.envelope;
-        let caller = self
+        let authority = self
             .authority
-            .authorize_command(envelope)
+            .authorize_resource_command(&self.access, &command.receipt.envelope)
             .await
-            .map_err(|error| {
-                CommandReadiness::Reject(match error {
-                    CommandAuthorizationError::Revoked => CommandFailureCode::AuthorityRevoked,
-                    CommandAuthorizationError::Unavailable => {
-                        CommandFailureCode::AuthorityUnavailable
-                    }
-                })
-            })?;
-        if envelope.owner
-            != (AgentOwner::Person {
-                subject: caller.subject.clone(),
-            })
-            || !matches!(&envelope.actor,
-                AgentActor::Human { subject } | AgentActor::Api { subject, delegation_id: None }
-                if subject == &caller.subject)
-        {
-            return Err(CommandReadiness::Reject(
-                CommandFailureCode::AuthorityRevoked,
-            ));
-        }
-        self.inspect_target(&caller, command).await?;
-        Ok(caller)
+            .map_err(authority_readiness)?;
+        self.inspect_target(&authority, command).await?;
+        Ok(authority)
     }
 
     async fn inspect_target(
         &self,
-        caller: &Caller,
+        authority: &CommandExecutionAuthorization,
         command: &AdmittedAgentCommand,
     ) -> Result<(), CommandReadiness> {
-        let authorized = self
-            .access
-            .authorize_personal(
-                caller,
-                &ResourceTarget::Agent {
-                    agent_id: command.receipt.envelope.agent_id.clone(),
-                },
-                ResourceCapability::Interact,
-            )
+        let lineage = authority
+            .current_snapshot()
             .await
-            .map_err(|error| match error {
-                ResourceAccessError::Access(AccessError::NotFound)
-                | ResourceAccessError::Store(ResourceAccessStoreError::NotFound) => {
-                    CommandReadiness::Reject(CommandFailureCode::AgentUnavailable)
-                }
-                ResourceAccessError::Access(_) => {
-                    CommandReadiness::Reject(CommandFailureCode::AuthorityRevoked)
-                }
-                _ => CommandReadiness::Retry,
-            })?;
-        let lineage = authorized.snapshot.lineage;
+            .map_err(|error| authority_readiness(error.into()))?
+            .lineage;
         let agent = lineage.agent.ok_or(CommandReadiness::Retry)?;
         if !agent.status.is_live()
             || agent.requested_stop_reason.is_some()
@@ -103,7 +69,7 @@ impl PersonalCommandExecution {
 }
 
 #[async_trait::async_trait]
-impl AgentCommandExecution for PersonalCommandExecution {
+impl AgentCommandExecution for ResourceCommandExecution {
     async fn check_queued(&self, command: &AdmittedAgentCommand) -> CommandReadiness {
         match self.checked(command).await {
             Ok(_) => CommandReadiness::Ready,
@@ -118,7 +84,7 @@ impl AgentCommandExecution for PersonalCommandExecution {
         ) {
             return;
         }
-        let Ok(caller) = self.checked(command).await else {
+        let Ok(_) = self.checked(command).await else {
             return;
         };
         // Provider and policy IO can overlap another replica's claim. Recheck
@@ -137,15 +103,19 @@ impl AgentCommandExecution for PersonalCommandExecution {
         {
             return;
         }
-        let _ = self
-            .context
-            .await_input_ready(&caller, &command.receipt.envelope.agent_id)
-            .await;
+        let Ok(authority) = self
+            .authority
+            .authorize_command_revival(&self.access, &current)
+            .await
+        else {
+            return;
+        };
+        let _ = self.context.prepare_command_input(authority).await;
     }
 
     async fn execute(&self, command: &AdmittedAgentCommand) -> CommandAttempt {
-        let caller = match self.checked(command).await {
-            Ok(caller) => caller,
+        let authority = match self.checked(command).await {
+            Ok(authority) => authority,
             Err(CommandReadiness::Reject(code)) => return CommandAttempt::Reject(code),
             Err(_) => return CommandAttempt::Retry,
         };
@@ -169,21 +139,6 @@ impl AgentCommandExecution for PersonalCommandExecution {
         {
             return CommandAttempt::Retry;
         }
-        let authority = match self
-            .authority
-            .authorize_resource_command(&self.access, &current.receipt.envelope)
-            .await
-        {
-            Ok(authority) => authority,
-            Err(
-                ResourceCommandAuthorizationError::Custody(CommandAuthorizationError::Revoked)
-                | ResourceCommandAuthorizationError::Resource(ResourceAccessError::Access(_)),
-            ) => return CommandAttempt::Reject(CommandFailureCode::AuthorityRevoked),
-            Err(ResourceCommandAuthorizationError::Custody(
-                CommandAuthorizationError::Unavailable,
-            )) => return CommandAttempt::Reject(CommandFailureCode::AuthorityUnavailable),
-            Err(_) => return CommandAttempt::Retry,
-        };
         match self
             .operations
             .execute_resource_claim(&authority, &current)
@@ -191,7 +146,7 @@ impl AgentCommandExecution for PersonalCommandExecution {
         {
             Ok(_) => CommandAttempt::Finished,
             Err(AgentOperationError::Conflict) => {
-                match self.inspect_target(&caller, &current).await {
+                match self.inspect_target(&authority, &current).await {
                     Err(CommandReadiness::Reject(code)) => CommandAttempt::Reject(code),
                     _ => CommandAttempt::Retry,
                 }
@@ -220,5 +175,24 @@ fn classify(error: AgentOperationError) -> CommandAttempt {
         | InvalidRequest(_)
         | LogCapacityExceeded => CommandAttempt::Reject(Failure::ExecutionFailed),
         _ => CommandAttempt::Retry,
+    }
+}
+
+fn authority_readiness(error: ResourceCommandAuthorizationError) -> CommandReadiness {
+    match error {
+        ResourceCommandAuthorizationError::Resource(ResourceAccessError::Access(
+            AccessError::NotFound,
+        )) => CommandReadiness::Reject(CommandFailureCode::AgentUnavailable),
+        ResourceCommandAuthorizationError::Custody(CommandAuthorizationError::Revoked)
+        | ResourceCommandAuthorizationError::Resource(ResourceAccessError::Access(_)) => {
+            CommandReadiness::Reject(CommandFailureCode::AuthorityRevoked)
+        }
+        ResourceCommandAuthorizationError::Custody(CommandAuthorizationError::Unavailable) => {
+            CommandReadiness::Reject(CommandFailureCode::AuthorityUnavailable)
+        }
+        ResourceCommandAuthorizationError::Resource(ResourceAccessError::Store(
+            ResourceAccessStoreError::NotFound,
+        )) => CommandReadiness::Reject(CommandFailureCode::AgentUnavailable),
+        _ => CommandReadiness::Retry,
     }
 }

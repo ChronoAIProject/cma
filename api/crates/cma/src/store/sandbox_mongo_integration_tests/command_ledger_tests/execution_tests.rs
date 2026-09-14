@@ -127,7 +127,7 @@ async fn composed(
     Arc<MongoSandboxStore>,
     Agent,
     Sandbox,
-    Arc<crate::commands::PersonalCommandExecution>,
+    Arc<crate::commands::ResourceCommandExecution>,
     Arc<Authority>,
     Arc<AtomicUsize>,
 ) {
@@ -169,7 +169,7 @@ async fn composed(
         profiles,
         Arc::new(PlatformDefaults::default()),
     );
-    let execution = Arc::new(crate::commands::PersonalCommandExecution {
+    let execution = Arc::new(crate::commands::ResourceCommandExecution {
         authority: authority.clone(),
         access: Arc::new(ResourceAccessService::new(store.clone(), authority.clone())),
         store: store.clone(),

@@ -5,6 +5,33 @@ use super::*;
 use crate::auth::refresh;
 
 impl AuthState {
+    pub(super) async fn retained_command_revival(
+        &self,
+        access: &ResourceAccessService,
+        command: &layer2_core::sandbox::agent_io::AdmittedAgentCommand,
+    ) -> Result<
+        std::sync::Arc<layer2_core::sandbox::agent_io::CommandRevivalAuthorization>,
+        ResourceCommandAuthorizationError,
+    > {
+        let envelope = &command.receipt.envelope;
+        let state = self.retained_command_state(envelope).await?;
+        let request = self.verify_human_state(state.clone()).await?;
+        let mut context = self.resource_request_context(&request);
+        context.actor = envelope.actor.clone();
+        let credential = request
+            .delegated_credential
+            .as_deref()
+            .ok_or(CommandAuthorizationError::Revoked)?;
+        let proof = access
+            .authorize_command_revival(&context, credential, command)
+            .await?;
+        cookie_authorization::require_current_custody(self, &state)
+            .await
+            .map_err(|_| CommandAuthorizationError::Unavailable)?;
+        proof.require_current()?;
+        Ok(proof)
+    }
+
     /// Refresh only the sign-in that admitted the command. The revision is
     /// credential custody, independent of resource ownership and sharing policy.
     pub(super) async fn retained_command_state(

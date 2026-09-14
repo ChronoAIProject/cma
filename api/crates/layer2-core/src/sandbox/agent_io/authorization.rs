@@ -59,10 +59,40 @@ pub trait AgentCommandAuthorizer: Send + Sync {
         envelope: &AgentCommandEnvelope,
     ) -> Result<CommandExecutionAuthorization, ResourceCommandAuthorizationError> {
         let caller = self.authorize_command(envelope).await?;
+        require_personal_actor(&caller, envelope)?;
         Ok(access
             .authorize_personal_command_execution(&caller, envelope)
             .await?)
     }
+
+    async fn authorize_command_revival(
+        &self,
+        access: &ResourceAccessService,
+        command: &AdmittedAgentCommand,
+    ) -> Result<std::sync::Arc<super::CommandRevivalAuthorization>, ResourceCommandAuthorizationError>
+    {
+        let caller = self.authorize_command(&command.receipt.envelope).await?;
+        require_personal_actor(&caller, &command.receipt.envelope)?;
+        Ok(access
+            .authorize_personal_command_revival(&caller, command)
+            .await?)
+    }
+}
+
+fn require_personal_actor(
+    caller: &Caller,
+    envelope: &AgentCommandEnvelope,
+) -> Result<(), CommandAuthorizationError> {
+    if envelope.owner
+        != (super::AgentOwner::Person {
+            subject: caller.subject.clone(),
+        })
+        || !matches!(&envelope.actor, super::AgentActor::Human { subject }
+            | super::AgentActor::Api { subject, delegation_id: None } if subject == &caller.subject)
+    {
+        return Err(CommandAuthorizationError::Revoked);
+    }
+    Ok(())
 }
 
 #[derive(Debug, thiserror::Error)]

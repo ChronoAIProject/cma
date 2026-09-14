@@ -3,5 +3,5 @@
 mod execution;
 mod scheduler;
 
-pub(crate) use execution::PersonalCommandExecution;
+pub(crate) use execution::ResourceCommandExecution;
 pub(crate) use scheduler::CommandScheduler;

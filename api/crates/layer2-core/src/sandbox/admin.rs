@@ -198,6 +198,7 @@ impl SandboxRetirement for StoredSandboxRetirement {
             .map_err(|error| OperatorError::InvalidState(error.to_string()))?;
         self.store
             .commit(SandboxTransaction::SaveSandboxAndAppend {
+                command_revival: None,
                 expected_revision,
                 sandbox: Box::new(sandbox.clone()),
                 event_at: requested_at,
@@ -429,7 +430,8 @@ impl SandboxOperatorService {
             .retire_profile(locator, now_rfc3339())
             .await
             .map_err(OperatorError::from_profile_store)?;
-        let mut record = activity(caller, ActivityAction::Delete, &profile_target(locator));
+        let target = format!("profile:{}:{}", locator.kind().as_str(), locator.as_str());
+        let mut record = activity(caller, ActivityAction::Delete, &target);
         record
             .detail
             .record(DetailKey::Subject, summary.owner.as_str());
@@ -490,10 +492,6 @@ fn record_optional_filters(
 
 fn sandbox_target(id: &SandboxId) -> String {
     format!("sandbox:{id}")
-}
-
-fn profile_target(locator: &ProfileLocator) -> String {
-    format!("profile:{}:{}", locator.kind().as_str(), locator.as_str())
 }
 
 #[cfg(test)]

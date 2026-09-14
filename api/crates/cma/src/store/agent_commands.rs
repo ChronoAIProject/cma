@@ -22,6 +22,7 @@ mod worker;
 mod worker_apply;
 
 pub(super) use records::ensure_indexes;
+pub(super) use records::read as read_command;
 
 pub(super) enum ApplyError {
     Domain(CommandLedgerError),
