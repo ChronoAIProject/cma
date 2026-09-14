@@ -2,6 +2,150 @@
 
 **Priority 2 - for chat clients and OpenAI-compatible SDKs.**
 
+The canonical contract for new clients is `/api/v2`. It accepts an existing
+Agent as `conversation` on every turn and admits input to a durable command
+ledger before opening SSE. Existing `/api/v1` clients keep their original
+conversation creation and predecessor rules. The v1 contract below continues
+to apply to those routes; changing a client's base URL requires adopting the
+v2 rules in this section.
+
+## Responses v2
+
+All v2 endpoints belong to the control plane. No Responses server runs inside
+an Agent Sandbox. Creation requires a current authenticated credential in CMA's
+durable custody, bound to the requesting sign-in incarnation. Current history
+authorization is sufficient for reads, even when the command's original execution
+credential has been revoked. Shared history is supported; shared/organization
+command execution is not enabled until its separate custody adapter is composed.
+
+| Method and route | Behavior |
+|---|---|
+| `GET /api/v2` | Discover the supported subset, replay extension and companion stream |
+| `POST /api/v2/responses` | Admit text input for `conversation=AgentId`; require `stream=true` |
+| `POST /api/v2/agents/{agent_id}/responses` | Same admission, receipt and events; optional `conversation` must match the URL |
+| `GET /api/v2/responses/{response_id}` | Retrieve a queued, active or terminal durable response as JSON |
+| `GET /api/v2/responses/{response_id}/events` | CMA extension: replay and follow deterministic durable Responses events |
+| `GET /api/v2/conversations/{conversation_id}` | Read the existing Agent as a conversation, with empty metadata |
+| `GET /api/v2/conversations/{conversation_id}/items` | Read standard user/assistant message items under current history authority |
+
+Creating conversations, stateless Agent auto-creation, response deletion and
+response cancellation are outside v2. Select an existing Agent using CMA's
+resource APIs. A conversation ID can be a string or `{ "id": "agt_..." }`.
+The model pinned in the Agent Profile remains authoritative.
+
+| Request field | V2 policy |
+|---|---|
+| `conversation` | Required on the canonical route; an existing authorized Agent |
+| `input` | Required nonempty text, or one user message with string content or one or more `input_text` parts; adjacent text parts canonicalize |
+| `stream` | Literal `true` required; absent/false returns `stream_required` |
+| `model` | Optional nonempty string; mismatch returns `model_mismatch` |
+| `metadata` | Optional object/null; 16 string pairs, 64 characters per key, 512 per value; visible only to the personal owner |
+| `store` | Omitted or literal `true`; data is retained under Agent history policy |
+| `previous_response_id` | Omitted/null only; predecessor continuation is unsupported; combining a nonnull predecessor with conversation returns `conversation_previous_response_conflict` |
+| `instructions`, `reasoning`, `tools`, `tool_choice` | Refused by name; execution configuration belongs to the pinned profile |
+| `background`, `include`, `stream_options`, sampling fields, file/media parts, all other fields | Unsupported; named validation refusal |
+
+Use the `Idempotency-Key` header for retry recovery. It allows 1–256 bytes without
+control characters. The scope includes the actual custody authority, Agent and
+command kind. Equivalent retries return the original command/response identity;
+changed input or metadata returns `409 agent_command_key_conflict`. If the header
+is absent, the server creates a fresh key. A client that loses that first reply
+must have supplied its own stable key to recover by retry.
+
+A `200 text/event-stream` handshake identifies a durably admitted response through
+`X-CMA-Response-ID` and `X-CMA-Command-ID`. The response ID is opaque and retained
+from admission onward; it is not derived from a not-yet-assigned turn. An Agent
+can be queued, busy, paused or reviving. Server-owned execution continues after a
+stream disconnect. The queue holds at most 64 waiting commands, with a five-minute
+admission deadline. Queue expiry or lost execution authority produces a durable
+failed response. A lost reply does not revoke already-admitted work.
+
+| Event | V2 behavior |
+|---|---|
+| `response.created` | Exactly once in a full replay; stable ID, creation time and initial queued status |
+| `response.in_progress` | Once execution is bound to a durable turn |
+| `response.output_item.added`, `response.output_item.done` | Standard assistant message items with stable indexes and IDs |
+| `response.content_part.added`, `response.content_part.done` | Standard `output_text` parts |
+| `response.output_text.delta`, `response.output_text.done` | Text emitted at durable message commit boundaries; done contains the complete text |
+| `response.completed`, `response.failed`, `response.incomplete` | Terminal projection from durable command/turn state |
+| `error` | Observation failure after headers; does not change the command's durable outcome |
+
+This version streams committed messages, not transient provider token fragments.
+Tool activity, reasoning fragments, approval and steer details stay in the
+separately authorized AG-UI companion discovered by `GET /api/v2`; v2 does not
+mislabel them as standard output items. `GET` and terminal SSE output agree on
+response IDs, item IDs, metadata, text and usage. `previous_response_id` in v2
+response objects is null because the primary mode uses conversation identity.
+
+The replay extension accepts `starting_after=<sequence_number>` or `Last-Event-ID`.
+Both, when supplied, must agree. Sequence numbers and SSE `id` values start at zero
+and are deterministic for durable events, independent of aliases or reconnects.
+Unknown/future cursors are refused. Connection `error` events have no SSE `id`, so
+an observation failure cannot skip future durable output on reconnect. Standard
+response retrieval accepts no stream/include/replay query parameters.
+
+Streams retain opaque, nonrenewing authorization, with no request credential.
+Every buffered frame passes a current policy check before release. Membership
+expiry or revocation ends observation; reconnect obtains fresh current authority.
+Shared response metadata is empty, private events are omitted, and private runtime
+failure text is sanitized. Conversation items accept `limit=1..100`, `order=asc|desc`
+(default desc), and one of `after` or `before`, scoped to that conversation.
+
+Before SSE, v2 route errors have JSON `{ "error": { "type", "code", "message", "param" } }`.
+Malformed JSON returns 400; missing authentication 401; unsupported fields 422;
+current visible interaction refusal 403; missing/inaccessible IDs the same 404;
+key/resource conflicts 409; full queues 429; unavailable authority/storage 503.
+429 and 503 route responses include `Retry-After: 1`. Deployment-wide middleware
+authentication/dependency failures and limits retain the shared REST problem
+envelope; both CMA SDKs accept both error shapes. After headers, a connection error instructs
+the client to retrieve/reconnect; only durable execution failures emit `response.failed`.
+
+```python
+from openai import OpenAI
+client = OpenAI(base_url="https://cma.example/api/v2", api_key="CURRENT_CMA_CREDENTIAL")
+for prompt, key in [("First question", "turn-one"), ("Follow up", "turn-two")]:
+    for event in client.responses.create(
+        conversation="agt_EXISTING", input=prompt, stream=True,
+        extra_headers={"Idempotency-Key": key},
+    ):
+        if event.type == "response.output_text.delta":
+            print(event.delta, end="")
+```
+
+This subset follows the official OpenAI
+[create contract](https://developers.openai.com/api/reference/resources/responses/methods/create)
+and [streaming event shapes](https://developers.openai.com/api/reference/resources/responses/streaming-events).
+Pinned official-client fixtures for v2 are
+[`openai_python_v2.py`](../api/crates/cma/tests/official_responses/openai_python_v2.py)
+and [`openai_node_v2.mjs`](../api/crates/cma/tests/official_responses/openai_node_v2.mjs).
+The pinned `openai-node` 7.10.0 (Node 25.5.0) and `openai-python` 3.8.0
+(Python 3.13) fixtures completed two conversation-only turns through a disposable
+CMA HTTP server, the real command scheduler and personal execution adapter, and a
+fixture runtime that commits output. Each exercised nine raw/helper events, four
+conversation items, alias retries, retrieval, replay and named refusals. Python's
+aggregate helper requires a model argument; the fixture uses the first response's
+pinned model. The unchanged v1 fixtures also passed on that server.
+
+An initial Python v2 run returned `503 response_unavailable`; subsequent concurrent
+Node/Python runs and 80 turns across four concurrent disposable conversations
+passed without retry. That initial transient remains unexplained. An earlier
+eight-Agent probe hit the fixture's Agent-creation capacity (429). These are local
+fixture results, not real-provider or production continuity evidence. V2 production
+rollout and previous-version live-session continuity remain release gates.
+
+CMA SDKs expose this contract separately as TypeScript `responsesV2` and Rust
+`responses_v2()`. Their stream receipt callbacks/accessors expose durable IDs
+before frames; replay is explicit and never resubmits input. The v1 SDK methods
+retain their previous behavior. Both CMA SDKs also completed two turns with receipt,
+alias, retrieval, mid-message replay and item checks concurrently with the pinned
+official clients on the disposable worker fixture. Reproduce with
+[`responses-v2-fixture.mjs`](../sdk/typescript/scripts/responses-v2-fixture.mjs) and
+[`responses_v2_fixture.rs`](../sdk/rust/tests/responses_v2_fixture.rs), setting
+`CMA_SDK_FIXTURE_ROOT` to the loopback server root; Rust requires `--ignored`.
+See the SDK streaming guides for recovery examples.
+
+## Retained Responses v1 contract
+
 CMA serves a stateful, streaming subset of the OpenAI Responses API at
 `/api/v1`. It is a Layer 1 projection of the same durable Agents used by
 the other interfaces: creating a conversation creates an Agent context, and

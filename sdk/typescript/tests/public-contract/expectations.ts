@@ -3,6 +3,16 @@ import type { ContractCase } from './context.js';
 import { browserOperations } from './navigation.js';
 
 export const localCodes = new Map([
+  ['responses-v2-field-stream', 'stream_required'],
+  ['responses-v2-field-previous_response_id', 'conversation_previous_response_conflict'],
+  ['responses-v2-field-tools', 'responses_field_unsupported'],
+  ['responses-v2-field-store', 'store_required'],
+  ['responses-v2-field-metadata', 'invalid_metadata'],
+  ['responses-v2-field-input', 'invalid_response_input'],
+  ['responses-v2-field-conversation', 'invalid_conversation'],
+  ['responses-v2-alias-mismatch', 'conversation_alias_mismatch'],
+  ['responses-v2-items-limit', 'invalid_items_limit'],
+  ['responses-v2-items-order', 'invalid_items_order'],
   ['sandbox-inventory-status-invalid', 'invalid_query'],
   ['authoring-skills-limit-zero', 'invalid_profile_authoring_query'],
   ['authoring-skills-limit-overflow', 'invalid_profile_authoring_query'],
@@ -47,6 +57,7 @@ export const localCodes = new Map([
 ]);
 
 const protectedQueries = new Map([
+  ['responses-v2-retrieve-query', ['stream']],
   ['sandbox-inventory-invalid-owner', ['owner']],
   ['agui-invalid-replay-query', ['unexpected']],
   ['responses-items-bad-query', ['unknown']],
@@ -61,7 +72,7 @@ export function expectation(
   fixture: ContractCase,
 ): 'wire' | 'preflight-validation' | 'serializer-protection' | 'browser-only' | 'raw-wire-only' {
   if (browserOperations.has(fixture.operation)) return 'browser-only';
-  const body = fixture.response.body as Record<string, unknown>;
+  const body = problemBody(fixture);
   if (['authoring-skills-unknown-query', 'authoring-skills-duplicate-query'].includes(fixture.id)) {
     assert.equal(fixture.operation, 'GET /api/v1/profile-authoring/skills');
     assert.equal(body.code, 'invalid_profile_authoring_query');
@@ -238,4 +249,21 @@ export function expectedProjection(fixture: ContractCase): unknown {
     return detail ? { ...body, sandbox: projected } : projected;
   }
   return fixture.response.body;
+}
+
+/** Both public error envelopes retain their exact machine code and extensions. */
+export function problemBody(fixture: ContractCase): Record<string, unknown> {
+  const body = fixture.response.body as Record<string, unknown>;
+  return fixture.operation.includes('/api/v2') && fixture.response.status >= 400
+    ? (body.error as Record<string, unknown>)
+    : body;
+}
+export function problemExtensions(fixture: ContractCase): Record<string, unknown> {
+  const body = problemBody(fixture);
+  if (fixture.operation.includes('/api/v2')) return { type: body.type, param: body.param };
+  return Object.fromEntries(
+    Object.entries(body).filter(
+      ([key]) => !['type', 'title', 'status', 'detail', 'instance', 'code'].includes(key),
+    ),
+  );
 }

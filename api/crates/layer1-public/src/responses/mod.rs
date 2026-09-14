@@ -9,6 +9,8 @@ use axum::{
     Router,
 };
 
+pub mod v2;
+
 mod conversations;
 mod create;
 mod items;
@@ -38,7 +40,9 @@ pub(crate) fn document() -> utoipa::openapi::OpenApi {
         components(schemas(Conversation, ResponseObject))
     )]
     struct Api;
-    Api::openapi()
+    let mut document = Api::openapi();
+    document.merge(v2::document());
+    document
 }
 
 pub fn router(state: crate::AgentConversationState) -> Router {

@@ -548,6 +548,13 @@ above applies even when an operation annotates only its principal responses.
 | `POST /api/v1/conversations` | CreateConversationRequest | - | 200 Conversation |
 | `GET /api/v1/conversations/{id}` | - | - | 200 Conversation |
 | `GET /api/v1/conversations/{id}/items` | - | after, limit | 200 ConversationItemList |
+| `GET /api/v2` | - | - | 200 JSON capabilities |
+| `POST /api/v2/responses` | CreateV2ResponseRequest | - | 200 SSE |
+| `POST /api/v2/agents/{agent_id}/responses` | CreateV2ResponseRequest | - | 200 SSE |
+| `GET /api/v2/responses/{response_id}` | - | - | 200 V2ResponseObject |
+| `GET /api/v2/responses/{response_id}/events` | - | starting_after | 200 SSE |
+| `GET /api/v2/conversations/{conversation_id}` | - | - | 200 Conversation |
+| `GET /api/v2/conversations/{conversation_id}/items` | - | after, before, limit, order | 200 JSON items |
 | `POST /api/v1/responses` | CreateResponseRequest | - | 200 SSE |
 | `GET /api/v1/responses/{response_id}` | - | - | 200 ResponseObject |
 | `DELETE /api/v1/responses/{response_id}` | - | - | 422 ProblemDocument |

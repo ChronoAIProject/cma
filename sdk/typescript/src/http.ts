@@ -292,6 +292,33 @@ export function errorFromBody(
       `problem status ${String(body.status)} did not match HTTP ${String(response.status)}`,
     );
   }
+  if (
+    'error' in body &&
+    nonEmptyText(body.detail) === undefined &&
+    nonEmptyText(body.title) === undefined
+  ) {
+    const error = body.error;
+    if (typeof error !== 'object' || error === null || Array.isArray(error))
+      return new ProtocolError('Responses error envelope is invalid');
+    const value = error as Record<string, unknown>;
+    const message = nonEmptyText(value.message);
+    const code = nonEmptyText(value.code);
+    if (
+      message === undefined ||
+      code === undefined ||
+      nonEmptyText(value.type) === undefined ||
+      (value.param !== null && typeof value.param !== 'string')
+    )
+      return new ProtocolError('Responses error fields are invalid');
+    return new ApiError(
+      response.status,
+      message,
+      code,
+      requestId,
+      retryAfterMilliseconds(response),
+      Object.freeze({ type: value.type, param: value.param }),
+    );
+  }
   const code = nonEmptyText(body.code);
   const detail = nonEmptyText(body.detail) ?? nonEmptyText(body.title);
   if (detail === undefined) {

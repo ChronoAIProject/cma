@@ -48,13 +48,13 @@ Launch progress has its own event sequence, independent of Agent conversation
 cursors. Persist those cursors separately. `launches.events` provides bounded
 pages when a live stream is unnecessary.
 
-AG-UI and Responses return after their terminal event is acknowledged and cancel
+AG-UI and legacy Responses v1 return after their terminal event is acknowledged and cancel
 the reader without waiting for server EOF. An Agent failure event is different
 from a transport error. `timeoutMs` bounds the initial response handshake;
 `signal` can bound the entire stream. Use `readCapabilities` before assuming
 support, and preserve the user's existing history during recovery.
 
-The Responses subset accepts one nonempty user text input with `stream: true`
+The legacy Responses v1 subset accepts one nonempty user text input with `stream: true`
 and an existing `conversation`. Unsupported fields and delete/cancel operations
 produce named problems. See [Reference](reference.md) for exact request shapes.
 
@@ -66,3 +66,61 @@ the membership deadline (at most 60 seconds). Reconnect with the actual request
 credential and the last fully acknowledged cursor; the new request checks
 current membership again. Stream closure never submits another Agent input.
 Personal-owner replay remains available during organization-provider outages.
+
+## Responses v2
+
+`responsesV2` admits input durably and exposes the retained receipt before any
+frames. Persist a stable key before sending. The SDK never retries a POST or
+reconnects automatically. `createForAgent` selects the same Agent by URL;
+`read`, `readConversation`, `listConversationItems` and `readCapabilities` use
+current authorization for recovery and discovery.
+
+```ts
+import { createClient, type V2ResponseEvent, type V2ResponseReceipt } from '@chronoai/cma-sdk';
+
+const cma = createClient();
+export async function submit(
+  agentId: string,
+  input: string,
+  stableKey: string,
+  saveReceipt: (receipt: V2ResponseReceipt) => Promise<void>,
+  saveEvent: (event: V2ResponseEvent) => Promise<void>,
+) {
+  return cma.responsesV2.create(
+    { conversation: agentId, input, stream: true },
+    {
+      idempotencyKey: stableKey,
+      onReceipt: saveReceipt,
+      onEvent: saveEvent,
+    },
+  );
+}
+export async function reconnect(
+  responseId: string,
+  lastAcknowledged: number,
+  saveEvent: (event: V2ResponseEvent) => Promise<void>,
+) {
+  await cma.responsesV2.replay(responseId, {
+    startingAfter: lastAcknowledged,
+    onEvent: saveEvent,
+  });
+}
+```
+
+For v2, persist `sequence_number` after processing each standard event. A flat
+`error` event has no durable SSE ID: record the observation error without
+advancing the saved replay cursor. It is followed by `TransportError`; retrieve
+or replay the same response with current authorization. The parser also rejects
+premature EOF, changed identities, inconsistent item indexes/text, and events
+after the terminal response. Replaying after the terminal cursor returns no
+events. The stream waits for EOF to detect invalid trailing frames; use `signal`
+to bound observation. `timeoutMs` bounds the handshake.
+
+V2 uses opaque response IDs, a queued lifecycle, conversation on each turn,
+and no predecessor. Text is emitted at durable message commit boundaries. Shared
+readers receive empty metadata, and membership expiry can end their connection.
+Provider tools and approval details use the independently authorized AG-UI
+companion. Nested v2 HTTP errors become `ApiError` with their exact code,
+`extensions.type`, `extensions.param`, request ID and retry delay. Deployment
+middleware may still return the shared REST problem envelope, which is also
+supported. See the [API contract](../../../docs/API_Responses.md).

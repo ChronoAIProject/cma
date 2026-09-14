@@ -300,7 +300,9 @@ pub fn invalid(message: impl Into<String>) -> Error {
 pub fn wire(case: &Case) -> Expected {
     let stream = case.operation.contains("/agui/")
         && (case.operation.ends_with("/events") || case.operation.ends_with("/run"))
-        || case.operation == "POST /api/v1/responses";
+        || case.operation == "POST /api/v1/responses"
+        || case.operation.contains("/api/v2")
+            && (case.operation.starts_with("POST ") || case.operation.ends_with("/events"));
     let mut request_headers = headers(
         false,
         if stream {

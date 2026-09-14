@@ -39,7 +39,7 @@ while let Some(event) = response.next().await { println!("{}", event?.kind.as_st
 # }
 ```
 
-Responses sequence numbers are connection-local, starting at zero, not replay
+Legacy Responses v1 sequence numbers are connection-local, starting at zero, not replay
 cursors. Event names must agree with JSON types, and the stream must end with
 `response.completed`, `response.failed`, or `response.incomplete`. On an early
 disconnect, retrieve the known response or read durable Agent history before
@@ -55,3 +55,49 @@ the membership deadline (at most 60 seconds). Reconnect with the actual request
 credential and the last fully acknowledged cursor; the new request checks
 current membership again. Stream closure never submits another Agent input.
 Personal-owner replay remains available during organization-provider outages.
+
+## Responses v2
+
+`responses_v2()` uses durable command admission, opaque response IDs and
+conversation on every turn without a predecessor. Persist a stable key before
+sending to recover a lost first reply. `create_for_agent` is the per-Agent alias
+with identical receipts and events. `read`, `read_conversation`, `list_items`
+and `read_capabilities` provide authorized recovery and discovery.
+
+```rust,no_run
+use cma_sdk::{Client, responses_v2::{CreateResponseRequest, ResponseEventPayload}};
+# async fn run(client: Client) -> Result<(), Box<dyn std::error::Error>> {
+let agent = std::env::var("CMA_AGENT_ID")?;
+let stable_key = std::env::var("CMA_DURABLE_REQUEST_KEY")?;
+let request = CreateResponseRequest::new(agent, "Review the project");
+let mut stream = client.responses_v2().create(&request, Some(&stable_key)).await?;
+let receipt = stream.receipt().clone(); // Persist before reading frames.
+let mut acknowledged = None;
+while let Some(event) = stream.next().await {
+    let event = event?;
+    // Process and persist the event before advancing the durable cursor.
+    if !matches!(event.payload, ResponseEventPayload::Error { .. }) {
+        acknowledged = Some(event.sequence_number);
+    }
+}
+let mut replay = client.responses_v2().replay(&receipt.response_id, acknowledged).await?;
+while let Some(event) = replay.next().await { let _event = event?; }
+# Ok(())
+# }
+```
+
+Dropping the reader cancels observation only. No method reconnects or resubmits
+input automatically. A connection `Error` payload has no explicit SSE ID and
+must not advance the durable cursor. The next read returns a transport error;
+retrieve or reconnect the retained response under current authorization. V2
+checks exact per-frame IDs, contiguous sequences, lifecycle identity, output
+indexes and assembled text. It rejects premature EOF and trailing events;
+replay after a terminal cursor legitimately has no frames. The configured
+finite timeout covers the entire observation; choose it for the expected turn.
+
+Text is projected when messages commit. Provider tools and approvals remain in
+the independently authorized AG-UI companion. Shared history redacts metadata
+and closes on lost authority. Nested v2 HTTP errors retain their code,
+`extensions["type"]`, `extensions["param"]`, request ID and retry delay; the
+shared REST middleware envelope remains supported as well. See the
+[API contract](../../../docs/API_Responses.md).

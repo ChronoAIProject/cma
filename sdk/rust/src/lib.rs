@@ -34,6 +34,7 @@ pub mod profiles;
 pub mod resource_access;
 mod resources;
 pub mod responses;
+pub mod responses_v2;
 pub mod stream;
 pub mod triggers;
 

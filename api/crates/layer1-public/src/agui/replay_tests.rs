@@ -111,6 +111,8 @@ async fn authorized_snapshot_keeps_live_identity_generation_turn_and_commit_fenc
         }
         open.held = Some(candidate);
         open.queue_authorized(layer2_core::sandbox::AgentEventStreamSnapshot {
+            created_at: "2026-09-05T00:00:00Z".into(),
+            model: None,
             id: agent.id.clone(),
             runtime_generation: Some(1),
             active_turn: Some(3),

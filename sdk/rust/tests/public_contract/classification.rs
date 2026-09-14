@@ -13,6 +13,20 @@ pub enum Classification {
 // Exact backend-invalid cases not claimed as typed HTTP replay. Each is checked
 // against its source shape or the SDK's real preflight, then its shared error is decoded.
 pub const LOCAL_CASES: &[(&str, Classification)] = &[
+    ("responses-v2-field-stream", Classification::Local),
+    (
+        "responses-v2-field-previous_response_id",
+        Classification::Local,
+    ),
+    ("responses-v2-field-tools", Classification::TypedShape),
+    ("responses-v2-field-store", Classification::Local),
+    ("responses-v2-field-metadata", Classification::TypedShape),
+    ("responses-v2-field-input", Classification::TypedShape),
+    ("responses-v2-field-conversation", Classification::Local),
+    ("responses-v2-alias-mismatch", Classification::Local),
+    ("responses-v2-items-limit", Classification::Local),
+    ("responses-v2-items-order", Classification::TypedShape),
+    ("responses-v2-retrieve-query", Classification::QueryShape),
     (
         "sandbox-inventory-status-invalid",
         Classification::TypedShape,
@@ -792,7 +806,9 @@ pub fn assert_unrepresentable(case: &Case, class: Classification) {
                 "GET /api/v1/conversations/{id}/items" => &["after", "limit"],
                 "GET /api/v1/triggers/{id}/embed" => &["placement_id"],
                 "GET /api/v1/agui/launches/{id}/events" => &["starting_after", "limit", "follow"],
-                "GET /api/v1/responses/{response_id}" => &[],
+                "GET /api/v1/responses/{response_id}" | "GET /api/v2/responses/{response_id}" => {
+                    &[]
+                }
                 _ => panic!("unclassified query shape {}", case.id),
             };
             assert!(
