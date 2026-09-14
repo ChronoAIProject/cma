@@ -1,0 +1,960 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "org-inventory-member",
+      "operation": "GET /api/v1/agents",
+      "scenario": "inventory_member",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents?organization=org&limit=1",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "items": [
+            {
+              "access": "shared",
+              "id": "agt_shared_read",
+              "status": "ready",
+              "title": "Agent agt_shared_read",
+              "model": "gpt-proof",
+              "created_at": "2026-09-05T00:00:00Z",
+              "updated_at": "2026-09-05T00:00:00Z",
+              "ready_at": "2026-09-05T00:00:00Z"
+            }
+          ]
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "org-inventory-two",
+      "operation": "GET /api/v1/agents",
+      "scenario": "inventory_two",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents?organization=org&limit=1",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "items": [
+            {
+              "access": "shared",
+              "id": "agt_shared_read",
+              "status": "ready",
+              "title": "Agent agt_shared_read",
+              "model": "gpt-proof",
+              "created_at": "2026-09-05T00:00:00Z",
+              "updated_at": "2026-09-05T00:00:00Z",
+              "ready_at": "2026-09-05T00:00:00Z"
+            }
+          ],
+          "next": "agt_shared_read"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "org-inventory-overlap",
+      "operation": "GET /api/v1/agents",
+      "scenario": "inventory_overlap",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents?organization=org&limit=1",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "items": [
+            {
+              "access": "shared",
+              "id": "agt_shared_read",
+              "status": "ready",
+              "title": "Agent agt_shared_read",
+              "model": "gpt-proof",
+              "created_at": "2026-09-05T00:00:00Z",
+              "updated_at": "2026-09-05T00:00:00Z",
+              "ready_at": "2026-09-05T00:00:00Z"
+            }
+          ]
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "org-inventory-parent",
+      "operation": "GET /api/v1/agents",
+      "scenario": "inventory_parent",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents?organization=org&limit=1",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "items": [
+            {
+              "access": "shared",
+              "id": "agt_shared_read",
+              "status": "ready",
+              "title": "Agent agt_shared_read",
+              "model": "gpt-proof",
+              "created_at": "2026-09-05T00:00:00Z",
+              "updated_at": "2026-09-05T00:00:00Z",
+              "ready_at": "2026-09-05T00:00:00Z"
+            }
+          ],
+          "next": "agt_shared_read"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "org-inventory-owner",
+      "operation": "GET /api/v1/agents",
+      "scenario": "inventory_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents?organization=org&limit=1",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "items": [
+            {
+              "id": "agt_shared_read",
+              "sandbox_id": "sbx_route",
+              "workspace_id": "wks_route",
+              "worktree_id": "wkt_agt_shared_read",
+              "status": "ready",
+              "profile": {
+                "id": "agp_route",
+                "revision": 1,
+                "digest": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+                "model": "gpt-proof",
+                "thinking_effort": "high",
+                "permission_level": "guarded",
+                "skills": []
+              },
+              "title": "Agent agt_shared_read",
+              "created_at": "2026-09-05T00:00:00Z",
+              "updated_at": "2026-09-05T00:00:00Z"
+            }
+          ]
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "org-inventory-second",
+      "operation": "GET /api/v1/agents",
+      "scenario": "inventory_two",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents?organization=org&limit=1&cursor=agt_shared_read",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "items": [
+            {
+              "access": "shared",
+              "id": "agt_sibling",
+              "status": "ready",
+              "title": "Agent agt_sibling",
+              "model": "gpt-proof",
+              "created_at": "2026-09-05T00:00:00Z",
+              "updated_at": "2026-09-05T00:00:00Z",
+              "ready_at": "2026-09-05T00:00:00Z"
+            }
+          ]
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "org-inventory-empty-after",
+      "operation": "GET /api/v1/agents",
+      "scenario": "inventory_member",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents?organization=org&cursor=agt_shared_read",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "items": []
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "org-inventory-empty-org",
+      "operation": "GET /api/v1/agents",
+      "scenario": "inventory_member",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents?organization=other-org",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "items": []
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "org-inventory-empty-status",
+      "operation": "GET /api/v1/agents",
+      "scenario": "inventory_member",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents?organization=org&status=paused",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "items": []
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "org-inventory-parent-filter",
+      "operation": "GET /api/v1/agents",
+      "scenario": "inventory_parent",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents?organization=org&sandbox=sbx_route&workspace=wks_route",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "items": [
+            {
+              "access": "shared",
+              "id": "agt_shared_read",
+              "status": "ready",
+              "title": "Agent agt_shared_read",
+              "model": "gpt-proof",
+              "created_at": "2026-09-05T00:00:00Z",
+              "updated_at": "2026-09-05T00:00:00Z",
+              "ready_at": "2026-09-05T00:00:00Z"
+            },
+            {
+              "access": "shared",
+              "id": "agt_sibling",
+              "status": "ready",
+              "title": "Agent agt_sibling",
+              "model": "gpt-proof",
+              "created_at": "2026-09-05T00:00:00Z",
+              "updated_at": "2026-09-05T00:00:00Z",
+              "ready_at": "2026-09-05T00:00:00Z"
+            }
+          ]
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "org-inventory-private-parent",
+      "operation": "GET /api/v1/agents",
+      "scenario": "inventory_member",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents?organization=org&sandbox=sbx_route",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent-not-found",
+          "title": "agent not found",
+          "status": 404,
+          "detail": "No agent matches this request.",
+          "code": "agent_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "org-inventory-absent-parent",
+      "operation": "GET /api/v1/agents",
+      "scenario": "inventory_member",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents?organization=org&sandbox=absent",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent-not-found",
+          "title": "agent not found",
+          "status": 404,
+          "detail": "No agent matches this request.",
+          "code": "agent_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "org-inventory-private-workspace",
+      "operation": "GET /api/v1/agents",
+      "scenario": "inventory_member",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents?organization=org&workspace=wks_route",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent-not-found",
+          "title": "agent not found",
+          "status": 404,
+          "detail": "No agent matches this request.",
+          "code": "agent_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "org-inventory-default-personal",
+      "operation": "GET /api/v1/agents",
+      "scenario": "inventory_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "items": [
+            {
+              "id": "agt_shared_read",
+              "sandbox_id": "sbx_route",
+              "workspace_id": "wks_route",
+              "worktree_id": "wkt_agt_shared_read",
+              "status": "ready",
+              "profile": {
+                "id": "agp_route",
+                "revision": 1,
+                "digest": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+                "model": "gpt-proof",
+                "thinking_effort": "high",
+                "permission_level": "guarded",
+                "skills": []
+              },
+              "title": "Agent agt_shared_read",
+              "created_at": "2026-09-05T00:00:00Z",
+              "updated_at": "2026-09-05T00:00:00Z"
+            },
+            {
+              "id": "agt_sibling",
+              "sandbox_id": "sbx_route",
+              "workspace_id": "wks_route",
+              "worktree_id": "wkt_agt_sibling",
+              "status": "ready",
+              "profile": {
+                "id": "agp_route",
+                "revision": 1,
+                "digest": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+                "model": "gpt-proof",
+                "thinking_effort": "high",
+                "permission_level": "guarded",
+                "skills": []
+              },
+              "title": "Agent agt_sibling",
+              "created_at": "2026-09-05T00:00:00Z",
+              "updated_at": "2026-09-05T00:00:00Z"
+            }
+          ]
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "org-inventory-personal-outage",
+      "operation": "GET /api/v1/agents",
+      "scenario": "inventory_owner_outage",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "items": [
+            {
+              "id": "agt_shared_read",
+              "sandbox_id": "sbx_route",
+              "workspace_id": "wks_route",
+              "worktree_id": "wkt_agt_shared_read",
+              "status": "ready",
+              "profile": {
+                "id": "agp_route",
+                "revision": 1,
+                "digest": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+                "model": "gpt-proof",
+                "thinking_effort": "high",
+                "permission_level": "guarded",
+                "skills": []
+              },
+              "title": "Agent agt_shared_read",
+              "created_at": "2026-09-05T00:00:00Z",
+              "updated_at": "2026-09-05T00:00:00Z"
+            },
+            {
+              "id": "agt_sibling",
+              "sandbox_id": "sbx_route",
+              "workspace_id": "wks_route",
+              "worktree_id": "wkt_agt_sibling",
+              "status": "ready",
+              "profile": {
+                "id": "agp_route",
+                "revision": 1,
+                "digest": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+                "model": "gpt-proof",
+                "thinking_effort": "high",
+                "permission_level": "guarded",
+                "skills": []
+              },
+              "title": "Agent agt_sibling",
+              "created_at": "2026-09-05T00:00:00Z",
+              "updated_at": "2026-09-05T00:00:00Z"
+            }
+          ]
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "org-inventory-outage",
+      "operation": "GET /api/v1/agents",
+      "scenario": "inventory_outage",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents?organization=org",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/organization_authority_unavailable",
+          "title": "organization_authority_unavailable",
+          "status": 503,
+          "detail": "Current organization authorization is unavailable. Retry after the identity provider recovers.",
+          "code": "organization_authority_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "org-inventory-missing",
+      "operation": "GET /api/v1/agents",
+      "scenario": "inventory_missing",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents?organization=org",
+        "headers": {}
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource_forbidden",
+          "title": "resource_forbidden",
+          "status": 403,
+          "detail": "Current authority does not permit this operation.",
+          "code": "resource_forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "org-inventory-anonymous",
+      "operation": "GET /api/v1/agents",
+      "scenario": "inventory_anonymous",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents?organization=org",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "org-inventory-forbidden",
+      "operation": "GET /api/v1/agents",
+      "scenario": "inventory_forbidden",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents?organization=org",
+        "headers": {}
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/sandbox-use-forbidden",
+          "title": "sandbox use forbidden",
+          "status": 403,
+          "detail": "This operation requires authority to use the caller's sandboxes.",
+          "code": "forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "org-inventory-no_credential",
+      "operation": "GET /api/v1/agents",
+      "scenario": "inventory_no_credential",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents?organization=org",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/organization_authority_unavailable",
+          "title": "organization_authority_unavailable",
+          "status": 503,
+          "detail": "Current organization authorization is unavailable. Retry after the identity provider recovers.",
+          "code": "organization_authority_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "org-inventory-invalid_context",
+      "operation": "GET /api/v1/agents",
+      "scenario": "inventory_invalid_context",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents?organization=org",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "org-inventory-invalid-empty",
+      "operation": "GET /api/v1/agents",
+      "scenario": "inventory_member",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents?organization=",
+        "headers": {}
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-instance-query",
+          "title": "invalid instance query",
+          "status": 400,
+          "detail": "The instance query parameters are not valid.",
+          "code": "invalid_instance_query"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "org-inventory-invalid-authority-injection",
+      "operation": "GET /api/v1/agents",
+      "scenario": "inventory_member",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents?organization=org&owner=owner-a",
+        "headers": {}
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-instance-query",
+          "title": "invalid instance query",
+          "status": 400,
+          "detail": "The instance query parameters are not valid.",
+          "code": "invalid_instance_query"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "org-inventory-invalid-zero-page",
+      "operation": "GET /api/v1/agents",
+      "scenario": "inventory_member",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents?organization=org&limit=0",
+        "headers": {}
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-instance-query",
+          "title": "invalid instance query",
+          "status": 400,
+          "detail": "The instance query parameters are not valid.",
+          "code": "invalid_instance_query"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "org-inventory-choices",
+      "operation": "GET /api/v1/organizations",
+      "scenario": "inventory_member",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/organizations",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "items": [
+            {
+              "id": "org",
+              "role": "viewer",
+              "display_name": "Example organization"
+            },
+            {
+              "id": "org-two",
+              "role": "member"
+            }
+          ]
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "org-inventory-choices-empty",
+      "operation": "GET /api/v1/organizations",
+      "scenario": "inventory_missing",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/organizations",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "items": []
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "org-inventory-choices-outage",
+      "operation": "GET /api/v1/organizations",
+      "scenario": "inventory_outage",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/organizations",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/organization_authority_unavailable",
+          "title": "organization_authority_unavailable",
+          "status": 503,
+          "detail": "Current organization authorization is unavailable. Retry after the identity provider recovers.",
+          "code": "organization_authority_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "org-inventory-choices-anonymous",
+      "operation": "GET /api/v1/organizations",
+      "scenario": "inventory_anonymous",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/organizations",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "org-inventory-choices-forbidden",
+      "operation": "GET /api/v1/organizations",
+      "scenario": "inventory_forbidden",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/organizations",
+        "headers": {}
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource_forbidden",
+          "title": "resource_forbidden",
+          "status": 403,
+          "detail": "Current authority does not permit this operation.",
+          "code": "resource_forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "org-inventory-choices-no_credential",
+      "operation": "GET /api/v1/organizations",
+      "scenario": "inventory_no_credential",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/organizations",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/organization_authority_unavailable",
+          "title": "organization_authority_unavailable",
+          "status": 503,
+          "detail": "Current organization authorization is unavailable. Retry after the identity provider recovers.",
+          "code": "organization_authority_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "org-inventory-choices-invalid_context",
+      "operation": "GET /api/v1/organizations",
+      "scenario": "inventory_invalid_context",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/organizations",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "org-inventory-changed",
+      "operation": "GET /api/v1/agents",
+      "scenario": "inventory_changed",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents?organization=org",
+        "headers": {}
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource_access_changed",
+          "title": "resource_access_changed",
+          "status": 409,
+          "detail": "Resource access changed. Read current access and retry with the current revision.",
+          "code": "resource_access_changed"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "org-inventory-store_unavailable",
+      "operation": "GET /api/v1/agents",
+      "scenario": "inventory_store_unavailable",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents?organization=org",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource_access_unavailable",
+          "title": "resource_access_unavailable",
+          "status": 503,
+          "detail": "Resource access is temporarily unavailable. Retry the same command key to recover an unacknowledged result.",
+          "code": "resource_access_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    }
+  ]
+}
