@@ -3,6 +3,7 @@
 pub mod activity;
 mod agent_admission;
 mod agent_admission_records;
+mod agent_commands;
 mod agent_control_lineage;
 mod agent_control_receipt;
 mod agent_control_store;

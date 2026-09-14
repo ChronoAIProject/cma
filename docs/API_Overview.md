@@ -104,8 +104,12 @@ ids, approval locators and sign-in credentials are absent from this projection.
 Live fragments have a separate type with no durable cursor. New command-envelope
 and admission-receipt types distinguish owner, actor, source and grant revision;
 they are separate ledger contracts and do not alter retained Agent records.
-Persisting these receipts and enabling common idempotent busy queues remain the
-next admission work; the new types do not advertise those capabilities as live.
+The additive command ledger reserves these receipts, a response identity and a
+per-Agent order atomically. Its key scope combines verified authority, Agent and
+command kind; identical retries return the original receipt and changed input
+conflicts. No expiration index silently makes an old key reusable. Runtime
+dispatch, worker leases and the public admission adapters are still being
+connected, so common idempotent busy queues are not advertised as live.
 
 Agent logs, Sandbox events and Launch events have independent monotonic
 sequences. REST exposes JSON event pages. AG-UI exposes SSE with a durable

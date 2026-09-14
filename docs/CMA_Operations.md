@@ -77,6 +77,16 @@ with the disposable previous-version live Agent upgrade/rollback campaign in
 origin, before deploying or enabling bridge changes. Keep accepted work and
 existing runtime cohorts intact through both feature disable and rollback.
 
+The shared IO admission ledger adds `agent_commands` and
+`agent_command_orders` collections without changing the retained Agent or log
+record schemas. Command input, response identity, immutable acceptance facts and
+queue order commit in one Mongo transaction, with unique authority/key and
+Agent/order indexes. Resource observations are fenced in the same transaction.
+There is no TTL on command keys. An unknown commit returns an unavailable
+outcome; only a retry with the same key may resolve that reservation. No runtime
+input is sent by the reservation adapter. Worker dispatch and recovery remain
+separate rollout prerequisites before the public adapters can admit this work.
+
 The disposable cluster bootstrap is
 `.github/tools/cma-bridge-continuity/bootstrap.py`. Install its pinned Python
 requirements, then supply the repository, a fresh private directory outside Git,
