@@ -6,6 +6,15 @@ use super::*;
 use crate::sandbox::AgentOperationError;
 
 #[test]
+fn schema_one_fingerprint_keeps_its_persisted_canonical_encoding() {
+    // Independently encoded with sorted JSON object keys and UTF-8 text.
+    assert_eq!(
+        AgentCommand::message("hello").fingerprint().unwrap(),
+        "59caf2610b09b536f3056230ea497b355e3c287f421549172bdb34fa6dae6a67"
+    );
+}
+
+#[test]
 fn canonical_text_partitions_and_metadata_order_share_a_fingerprint() {
     let simple = AgentCommand::message("hello world");
     let partitioned = AgentCommand::Message {

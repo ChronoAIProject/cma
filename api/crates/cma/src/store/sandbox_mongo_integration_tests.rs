@@ -80,10 +80,10 @@ use super::DefaultProfileSpec;
 
 const NOW: &str = "2026-09-05T00:00:00Z";
 mod background_checkpoint_tests;
+mod command_ledger_tests;
 const MINUTE: &str = "2026-09-05T00:01:00Z";
 const TWO_MINUTES: &str = "2026-09-05T00:02:00Z";
 static DATABASE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
-
 #[derive(Clone, Default)]
 struct CommandTrace {
     started: Vec<(String, Document)>,
