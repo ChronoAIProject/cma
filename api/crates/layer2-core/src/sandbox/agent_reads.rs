@@ -29,6 +29,9 @@ pub use source::{AgentSourceReadError, AgentSourceReading, SharedAgentOrigin};
 #[path = "agent_reads/visibility.rs"]
 mod visibility;
 pub use visibility::AgentVisibleLogEntry;
+#[path = "agent_reads/stream.rs"]
+mod stream;
+pub use stream::{AgentEventStreamAuthorization, AgentEventStreamSnapshot};
 
 impl AgentReadService {
     pub fn new<S, R>(store: Arc<S>, resources: Arc<R>) -> Arc<Self>

@@ -46,3 +46,12 @@ disconnect, retrieve the known response or read durable Agent history before
 deciding whether another message is appropriate. Streaming rejects oversized
 frames at 1 MiB before the parser can accumulate unbounded data; HTTP problem
 bodies are bounded at 8 MiB.
+
+Agent replay accepts current organization/shared history access. Shared readers
+receive approved events; private sign-in/configuration records become empty
+`STATE_DELTA` patches with durable cursors. Acknowledge these cursors without
+changing application state. Shared connections close on policy changes or at
+the membership deadline (at most 60 seconds). Reconnect with the actual request
+credential and the last fully acknowledged cursor; the new request checks
+current membership again. Stream closure never submits another Agent input.
+Personal-owner replay remains available during organization-provider outages.
