@@ -99,8 +99,8 @@ a confirmed commit. Ambiguous-commit verification includes the exact command
 binding, since identical controls can otherwise have identical Agent/log facts.
 A bound command cannot be claimed for dispatch again, including after lease
 expiry or release. Existing queued messages and Trigger first-message delivery
-retain priority. The preliminary execution service accepts matching personal
-callers only; a channel envelope does not establish a personal caller.
+retain priority. Production admission and credential custody currently accept
+matching personal callers; a channel envelope does not establish a personal caller.
 
 Command outcome recovery reads the complete authoritative Agent log in one
 snapshot and records the observed cursor and delivery separately from the
@@ -110,6 +110,14 @@ never clears a newer command's lease. Runtime loss preserves uncertain writes
 as typed failures even when retirement logs the turn interruption first. The
 durable Agent log provides the recovery source if the response projection write
 is interrupted; live fragments cannot establish completion.
+
+Initial conversation opening persists the native identity and its open receipt
+before Ready publication appends `ConversationOpened`. History readers accept
+that unpublished generation only when the completion log matches the exact
+Agent's durable open receipt and no Ready state or turn has been published. This
+keeps early Responses admission observable across that startup boundary without
+changing retained identities, log order or worker recovery. Published conversation
+identity and generation still have to match their semantic log.
 
 The production command scheduler scans nonterminal records in stable ID pages
 of 50 through the additive `agent_command_work_scan` index. Successful pages
@@ -127,12 +135,32 @@ record again before entering the existing Sandbox revival pipeline. It holds no
 short dispatch lease and sends no input. Preparation is bounded to 15 seconds;
 an admitted revival remains durable if the attempt is cancelled. The personal
 execution adapter checks current owner kind and target state, rereads the renewed
-claim after credential IO, and retains the actual actor. Personal owner kind is
-also checked inside the binding transaction under the parent write fence.
+claim after credential IO, and retains the actual actor. It obtains an opaque
+resource execution proof before dispatch. The proof binds the exact command,
+owner, policy revision, ancestry and pinned profile and has a monotonic lifetime
+of at most 60 seconds. Membership-dependent proof expires at the earlier
+membership deadline. Reads and retries cannot renew an existing proof.
 
-Fresh bridge/organization execution authorization and public admission wiring
-remain rollout prerequisites.
-The ledger alone does not make busy queues or durable Responses available.
+Both in-memory and Mongo conversation commits verify that proof against their
+own current resource snapshot. Mongo retains the real parent write that
+serializes policy changes with dispatch, and checks expiry again before commit.
+The ordered runtime writer checks held policy, lifetime, target conversation,
+runtime generation, operation and turn after queueing and before invoking the
+runtime handler. Refusal before handler invocation returns a pre-write failure
+and leaves the writer usable. Cancelling a pending send also prevents later
+handler invocation without retiring the writer; if its caller disappeared before
+recording the result, the durable binding still requires reconciliation. Once
+handler invocation begins, uncertain delivery retires the writer generation and
+requires reconciliation. Outcome evidence can commit after authority expires or
+is revoked.
+
+The core execution boundary supports an independently authorized human actor on
+a shared or organization-owned Agent, preserving the resource owner's runtime
+credentials. Production shared admission still requires fresh human credential
+custody and authorized Sandbox revival; organization credential provisioning and
+bridge delegation also remain incomplete. These internal execution foundations
+do not enable those public mutation paths. Durable personal admission and replay
+are available through the source-level [Responses v2 contract](API_Responses.md).
 
 Ordinary CMA provider authentication refuses NyxID relay access, callback and
 reply tokens, including relay key/scope claims. NyxID userinfo can project the

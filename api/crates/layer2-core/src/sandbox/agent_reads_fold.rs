@@ -1,5 +1,8 @@
 use std::collections::BTreeMap;
 
+#[path = "agent_reads_identity.rs"]
+mod identity;
+
 use crate::seconds_from_rfc3339;
 
 use super::queued_message::queued_message_origin_sequence;
@@ -184,7 +187,7 @@ pub(super) fn fold_agent_log(
         }
     }
 
-    validate_conversation_identity(agent, latest_conversation.as_ref())?;
+    identity::validate(agent, latest_conversation.as_ref(), entries)?;
     let active_turn = transcript.active.as_ref().map(|turn| turn.turn_sequence);
     if active_turn != agent.conversation.active_turn {
         return Err("agent active turn disagrees with its log".into());
@@ -204,25 +207,6 @@ pub(super) fn fold_agent_log(
             usage: usage.reading(),
         },
     })
-}
-
-fn validate_conversation_identity(
-    agent: &Agent,
-    latest: Option<&(String, u64)>,
-) -> Result<(), String> {
-    match (
-        agent.conversation.conversation_id.as_deref(),
-        agent.conversation.runtime_generation,
-        latest,
-    ) {
-        (None, None, None) => Ok(()),
-        (Some(id), Some(generation), Some((logged_id, logged_generation)))
-            if id == logged_id && generation == *logged_generation =>
-        {
-            Ok(())
-        }
-        _ => Err("agent conversation identity disagrees with its log".into()),
-    }
 }
 
 #[derive(Default)]
