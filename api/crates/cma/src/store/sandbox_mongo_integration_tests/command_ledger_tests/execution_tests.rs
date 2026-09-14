@@ -285,52 +285,60 @@ async fn execution_uses_current_renewed_expiry_without_adopting_a_replacement_cl
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
 async fn replaced_control_turn_has_typed_refusal_before_runtime_or_lifecycle_work() {
-    let (client, name) = database("command_execution_control").await;
-    let (store, mut agent, parent, execution, _, sends) = composed(&client, &name).await;
-    agent.status = AgentStatus::Working;
-    agent.capabilities = RuntimeCapabilities::new([
-        RuntimeCapability::Conversation,
-        RuntimeCapability::Interrupt,
-    ]);
-    agent.conversation.active_turn = Some(1);
-    store
-        .agents
-        .replace_one(
-            doc! { "_id": agent.id.as_str() },
-            crate::store::agents::agent_document(&agent).unwrap(),
-        )
-        .await
-        .unwrap();
-    let mut reservation = live_request(&agent, &parent, "control");
-    reservation.envelope.command = AgentCommand::Interrupt;
-    reservation.response_id = None;
-    reservation.envelope.request_fingerprint = reservation.envelope.command.fingerprint().unwrap();
-    let command = record(store.reserve_command(reservation).await.unwrap());
-    agent.conversation.active_turn = Some(2);
-    agent.revision += 1;
-    store
-        .agents
-        .replace_one(
-            doc! { "_id": agent.id.as_str() },
-            crate::store::agents::agent_document(&agent).unwrap(),
-        )
-        .await
-        .unwrap();
-    AgentCommandWorker::new(store.clone(), execution, "worker".into())
-        .unwrap()
-        .run_one(&command.receipt.envelope.command_id)
-        .await
-        .unwrap();
-    let refused = store
-        .get_command(&command.receipt.envelope.command_id)
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(
-        refused.work.failure.unwrap().code,
-        CommandFailureCode::TargetTurnChanged
-    );
-    assert_eq!(sends.load(Ordering::SeqCst), 0);
-    assert_eq!(store.get_agent(&agent.id).await.unwrap(), Some(agent));
-    client.database(&name).drop().await.unwrap();
+    for original_turn in [None, Some(1)] {
+        let (client, name) = database("command_execution_control").await;
+        let (store, mut agent, parent, execution, _, sends) = composed(&client, &name).await;
+        agent.status = if original_turn.is_some() {
+            AgentStatus::Working
+        } else {
+            AgentStatus::Ready
+        };
+        agent.capabilities = RuntimeCapabilities::new([
+            RuntimeCapability::Conversation,
+            RuntimeCapability::Interrupt,
+        ]);
+        agent.conversation.active_turn = original_turn;
+        store
+            .agents
+            .replace_one(
+                doc! { "_id": agent.id.as_str() },
+                crate::store::agents::agent_document(&agent).unwrap(),
+            )
+            .await
+            .unwrap();
+        let mut reservation = live_request(&agent, &parent, "control");
+        reservation.envelope.command = AgentCommand::Interrupt;
+        reservation.response_id = None;
+        reservation.envelope.request_fingerprint =
+            reservation.envelope.command.fingerprint().unwrap();
+        let command = record(store.reserve_command(reservation).await.unwrap());
+        agent.conversation.active_turn = Some(2);
+        agent.status = AgentStatus::Working;
+        agent.revision += 1;
+        store
+            .agents
+            .replace_one(
+                doc! { "_id": agent.id.as_str() },
+                crate::store::agents::agent_document(&agent).unwrap(),
+            )
+            .await
+            .unwrap();
+        AgentCommandWorker::new(store.clone(), execution, "worker".into())
+            .unwrap()
+            .run_one(&command.receipt.envelope.command_id)
+            .await
+            .unwrap();
+        let refused = store
+            .get_command(&command.receipt.envelope.command_id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            refused.work.failure.unwrap().code,
+            CommandFailureCode::TargetTurnChanged
+        );
+        assert_eq!(sends.load(Ordering::SeqCst), 0);
+        assert_eq!(store.get_agent(&agent.id).await.unwrap(), Some(agent));
+        client.database(&name).drop().await.unwrap();
+    }
 }

@@ -88,7 +88,12 @@ impl PersonalCommandExecution {
                 CommandFailureCode::AgentUnavailable,
             ));
         }
-        if command.target_turn.is_some() && command.target_turn != agent.conversation.active_turn {
+        if !matches!(
+            command.receipt.envelope.command,
+            AgentCommand::Message { .. }
+        ) && (command.target_turn.is_none()
+            || command.target_turn != agent.conversation.active_turn)
+        {
             return Err(CommandReadiness::Reject(
                 CommandFailureCode::TargetTurnChanged,
             ));
