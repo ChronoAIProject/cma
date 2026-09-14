@@ -1,0 +1,259 @@
+import { Presence } from '../ui/Presence';
+import type { ProfileKind, TriggerContent } from '@chronoai/cma-sdk';
+import { Input } from '../ui/Input';
+import { ChoiceGroup } from '../profiles/ChoiceGroup';
+import type { PublisherProfileChoice, TriggerPublisherClient } from './client';
+import { DraftBadge } from './BadgePreview';
+import { LABELS, resultSentence, reuseExplanation, type SelectedProfiles } from './model';
+import { ProfilePicker } from './ProfilePicker';
+import { QuickMessageFields } from './QuickMessageFields';
+
+export function TargetStep({
+  client,
+  profiles,
+  errors,
+  disabled,
+  onSelect,
+}: {
+  readonly client: TriggerPublisherClient;
+  readonly profiles: SelectedProfiles;
+  readonly errors: Readonly<Record<string, string>>;
+  readonly disabled: boolean;
+  readonly onSelect: (kind: ProfileKind, choice: PublisherProfileChoice) => void;
+}) {
+  const sandbox = profiles.sandbox;
+  const sentence = resultSentence(profiles);
+  return (
+    <>
+      {(['sandbox', 'workspace', 'agent'] as const).map((kind) => (
+        <ProfilePicker
+          key={kind}
+          client={client}
+          kind={kind}
+          value={profiles[kind]}
+          references={
+            kind === 'workspace' && sandbox?.kind === 'sandbox'
+              ? sandbox.content.workspace_profiles
+              : undefined
+          }
+          disabled={disabled}
+          error={errors[`target.${kind}_profile`]}
+          onSelect={(choice) => onSelect(kind, choice)}
+        />
+      ))}
+      <Presence>
+        {sentence === '' ? null : (
+          <p className="trigger-result" role="status">
+            {sentence}
+          </p>
+        )}
+      </Presence>
+      <TrustDisclosures profiles={profiles} />
+    </>
+  );
+}
+
+export function ReuseStep({
+  value,
+  disabled,
+  onChange,
+}: {
+  readonly value: TriggerContent['reuse'];
+  readonly disabled: boolean;
+  readonly onChange: (value: TriggerContent['reuse']) => void;
+}) {
+  return (
+    <>
+      {(['sandbox', 'workspace'] as const).map((kind) => (
+        <div className="trigger-field" key={kind}>
+          <span className="trigger-field__label">{kind}</span>
+          <ChoiceGroup
+            label={`${kind} reuse`}
+            value={value[kind]}
+            disabled={disabled}
+            options={[
+              { value: 'reuse_existing', label: 'Use their existing one' },
+              { value: 'always_new', label: 'Always create a new one' },
+            ]}
+            onChange={(next) => onChange({ ...value, [kind]: next })}
+          />
+        </div>
+      ))}
+      <div className="trigger-field">
+        <span className="trigger-field__label">Agent</span>
+        <ChoiceGroup
+          label="Agent reuse"
+          value={value.agent}
+          disabled={disabled}
+          options={[
+            { value: 'resume_existing', label: 'Continue the previous agent' },
+            { value: 'always_new', label: 'Always start a new one' },
+            { value: 'ask', label: 'Ask them' },
+          ]}
+          onChange={(agent) => onChange({ ...value, agent })}
+        />
+      </div>
+      <p className="trigger-result" role="status">
+        {reuseExplanation(value)}
+      </p>
+    </>
+  );
+}
+
+export function PresentationStep({
+  value,
+  disabled,
+  errors,
+  onChange,
+}: {
+  readonly value: TriggerContent;
+  readonly disabled: boolean;
+  readonly errors: Readonly<Record<string, string>>;
+  readonly onChange: (value: TriggerContent) => void;
+}) {
+  const presentation = value.presentation;
+  const field = (name: 'title' | 'description' | 'signup_hint', text: string) =>
+    onChange({ ...value, presentation: { ...presentation, [name]: text } });
+  return (
+    <>
+      {(['title', 'description', 'first_message', 'signup_hint'] as const).map((name) => {
+        const label =
+          name === 'first_message'
+            ? 'First message'
+            : name === 'signup_hint'
+              ? 'Sign-up hint (optional)'
+              : name;
+        const error = errors[name === 'first_message' ? name : `presentation.${name}`];
+        const text = name === 'first_message' ? value.first_message : (presentation[name] ?? '');
+        const change = (text: string) =>
+          name === 'first_message'
+            ? onChange({ ...value, first_message: text })
+            : field(name, text);
+        return (
+          <div key={name} className="trigger-field">
+            <label htmlFor={`trigger-${name}`}>{label}</label>
+            {name === 'title' || name === 'signup_hint' ? (
+              <Input
+                id={`trigger-${name}`}
+                value={text}
+                disabled={disabled}
+                aria-invalid={error !== undefined}
+                onChange={(event) => change(event.target.value)}
+              />
+            ) : (
+              <textarea
+                id={`trigger-${name}`}
+                rows={name === 'first_message' ? 5 : 3}
+                value={text}
+                disabled={disabled}
+                aria-invalid={error !== undefined}
+                onChange={(event) => change(event.target.value)}
+              />
+            )}
+            <Presence>
+              {error === undefined ? null : (
+                <p className="trigger-error" role="alert">
+                  {error}
+                </p>
+              )}
+            </Presence>
+          </div>
+        );
+      })}
+      <QuickMessageFields
+        value={value.quick_messages ?? []}
+        disabled={disabled}
+        error={errors.quick_messages}
+        onChange={(quick_messages) => onChange({ ...value, quick_messages })}
+      />
+      <fieldset className="trigger-badge-options" disabled={disabled}>
+        <legend>Button label</legend>
+        {(Object.keys(LABELS) as (keyof typeof LABELS)[]).map((label) => (
+          <label key={label}>
+            <input
+              type="radio"
+              name="trigger-button-label"
+              value={label}
+              checked={presentation.button_label === label}
+              onChange={() =>
+                onChange({ ...value, presentation: { ...presentation, button_label: label } })
+              }
+            />
+            <DraftBadge label={label} theme={presentation.theme} />
+          </label>
+        ))}
+      </fieldset>
+      <div className="trigger-field">
+        <label htmlFor="trigger-theme">Theme</label>
+        <select
+          id="trigger-theme"
+          value={presentation.theme}
+          disabled={disabled}
+          onChange={(event) =>
+            onChange({
+              ...value,
+              presentation: {
+                ...presentation,
+                theme: event.target.value as typeof presentation.theme,
+              },
+            })
+          }
+        >
+          <option value="auto">Match the visitor</option>
+          <option value="light">Light</option>
+          <option value="dark">Dark</option>
+        </select>
+      </div>
+      <label className="trigger-checkbox">
+        <input
+          type="checkbox"
+          checked={value.consent.always_review}
+          disabled={disabled}
+          onChange={(event) =>
+            onChange({ ...value, consent: { always_review: event.target.checked } })
+          }
+        />
+        Show a review page first
+      </label>
+    </>
+  );
+}
+
+export function TrustDisclosures({ profiles }: { readonly profiles: SelectedProfiles }) {
+  return (
+    <>
+      {Object.values(profiles).flatMap((profile) => {
+        if (profile.kind === 'agent' || !profile.public) return [];
+        const commands =
+          profile.kind === 'sandbox'
+            ? profile.content.software_install_commands
+            : profile.content.setup_commands;
+        const environment = profile.kind === 'sandbox' ? profile.content.environment_variables : [];
+        if (commands.length === 0 && environment.length === 0) return [];
+        return [
+          <details className="trigger-trust" key={`${profile.kind}:${profile.id}`}>
+            <summary>{profile.name}: commands and environment</summary>
+            <p className="trigger-caption">
+              Revision {profile.revision}; {profile.digest}
+            </p>
+            {commands.map((command, index) => (
+              <pre key={index}>
+                <code>{command}</code>
+              </pre>
+            ))}
+            {environment.length === 0 ? null : (
+              <dl>
+                {environment.map((variable) => (
+                  <div key={variable.name}>
+                    <dt>{variable.name}</dt>
+                    <dd>{variable.value}</dd>
+                  </div>
+                ))}
+              </dl>
+            )}
+          </details>,
+        ];
+      })}
+    </>
+  );
+}

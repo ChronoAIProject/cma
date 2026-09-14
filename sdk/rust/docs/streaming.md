@@ -1,69 +1,48 @@
-# Rust Streaming
+# Streaming
 
-<!-- nav: 50 Streaming -->
+<!-- nav: 7 Streaming -->
 
-`Client::stream_events` returns a cancellation-safe `EventStream` over CMA's
-durable REST log. Its optional cursor means strictly after that per-session
-sequence. Persist a sequence only after committing the event's effect.
+Streams are pull-based: `next().await` reads one complete event. Dropping a
+reader cancels observation only. No reader reconnects or retries admission.
+The configured request timeout covers headers and the full observation body;
+choose a suitable finite bound for a followed stream and reconnect explicitly.
 
 ```rust,no_run
-use cma_sdk::{Client, EventKind, SessionId};
-
-async fn consume(client: &Client, session_id: &SessionId) -> cma_sdk::Result<u64> {
-    let mut cursor = 0;
-    let mut stream = client.stream_events(session_id, Some(cursor)).await?;
-
-    while let Some(event) = stream.next().await {
-        let event = event?;
-        cursor = event.seq;
-        match event.kind {
-            EventKind::Unknown {
-                event_type,
-                payload,
-            } => println!("future event {event_type}: {payload}"),
-            EventKind::TurnCompleted => break,
-            _ => {}
-        }
-    }
-    Ok(cursor)
+use cma_sdk::{Client, agui::ReplayOptions, launches::LaunchReplayOptions};
+# async fn run(client: Client) -> Result<(), Box<dyn std::error::Error>> {
+let agent = std::env::var("CMA_AGENT_ID")?;
+let mut replay = client.agui().events(&agent, ReplayOptions { after: Some(0), follow: false }).await?;
+while let Some(event) = replay.next().await {
+    let event = event?;
+    if let Some(cursor) = event.cursor { println!("complete durable record: {cursor}"); }
 }
+let launch = std::env::var("CMA_LAUNCH_ID")?;
+let mut progress = client.launches().stream(&launch, LaunchReplayOptions::default()).await?;
+while let Some(event) = progress.next().await { println!("{}", event?.seq); }
+# Ok(())
+# }
 ```
 
-Reconnects send the last validated cursor in both REST's canonical
-`starting_after` query and `Last-Event-ID`. One overlapping frame is deduplicated.
-A frame with no positive SSE id, a mismatched payload sequence, another session
-id, invalid UTF-8, malformed SSE, an oversized body, or a malformed known event
-returns `Error::Protocol`.
+AG-UI can project one durable record into multiple frames. Only the final frame
+advances its durable cursor. Standard SSE inherited IDs do not acknowledge
+later live frames. Persist a cursor after application processing succeeds, not
+merely after receiving bytes. Launch frames each carry one durable event and
+must match both the requested Launch identity and the exact SSE sequence ID.
 
-## Reconnect and cancellation
+```rust,no_run
+use cma_sdk::{Client, responses::CreateResponseRequest};
+# async fn run(client: Client) -> Result<(), Box<dyn std::error::Error>> {
+let request = CreateResponseRequest::new(std::env::var("CMA_AGENT_ID")?, std::env::var("CMA_INPUT")?);
+let mut response = client.responses().create(&request).await?;
+while let Some(event) = response.next().await { println!("{}", event?.kind.as_str()); }
+# Ok(())
+# }
+```
 
-- A transport disconnect reconnects after the client's bounded exponential delay.
-- An SSE `retry` value takes precedence after a connected stream closes.
-- Repeated empty connections stop at the configured retry-policy attempt count.
-- The credential provider runs again for every reconnect.
-- Dropping `EventStream` drops the active response, reconnect timer, and pending
-  work without poisoning cloned clients.
-
-An unrecognised event discriminator becomes `EventKind::Unknown` with the complete
-JSON payload, so an older client can advance its cursor without pretending it
-understood the event. Known discriminators remain strict. The full vocabulary and
-replay rules are in [REST Events](../../../docs/API_REST.md#6-events).
-
-`EventKind::RuntimeHandoverStarted` is a unit event written immediately before
-every marker-aware handover enters `Rotating`. It permanently enables
-marker-based usage accounting for the session, so rollback and readoption status
-changes do not split the outgoing runtime's cumulative counter. History without
-this discriminator retains its legacy `Rotating` boundaries.
-
-`EventKind::RuntimeIncarnationStarted` is a unit event for compatibility stores
-without durable fencing generations. It is committed atomically with the record
-that names a newly provisioned runtime, and every such marker separates
-cumulative token counters. A provider attempt that never gets a durable handle
-writes none; an idempotently retried commit writes the unit once.
-
-`EventKind::RuntimeStarted` carries a positive durable `generation`. It marks a
-committed runtime-authority change, not a candidate start; duplicate or older
-generations do not begin another incarnation. Usage readers use strictly newer
-markers to separate cumulative token counters that restart on replacement. A
-runtime-start marker also enables exact accounting when no handover marker
-preceded it.
+Responses sequence numbers are connection-local, starting at zero, not replay
+cursors. Event names must agree with JSON types, and the stream must end with
+`response.completed`, `response.failed`, or `response.incomplete`. On an early
+disconnect, retrieve the known response or read durable Agent history before
+deciding whether another message is appropriate. Streaming rejects oversized
+frames at 1 MiB before the parser can accumulate unbounded data; HTTP problem
+bodies are bounded at 8 MiB.

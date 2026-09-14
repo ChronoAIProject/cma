@@ -1,64 +1,99 @@
-# Rust Reference
+# Reference
 
-<!-- nav: 80 Reference -->
+<!-- nav: 11 Reference -->
 
-The API reference is generated from the crate's rustdoc and types; signatures are
-not copied into this guide. Generate and open it locally with:
+`Client::builder(base_url)` returns a `ClientBuilder`. The builder accepts an
+optional request timeout and bearer token, and produces a cloneable `Client`.
+The timeout covers both response headers and the complete body. Reverse-proxy
+path prefixes are retained; resource identifiers and query values are encoded
+as data, not interpolated into request URLs.
 
-```sh
-cargo doc --no-deps --open
-```
+`Client::read_conformance()` performs `GET /api/v1/conformance` anonymously and
+returns `Conformance`, containing `service`, `status`, and the currently exposed
+`interfaces`.
 
-The crate is repository-only and carries `publish = false`, so it has no crates.io
-release or docs.rs page. The integration files in this directory appear under
-`cma_sdk::guides`, and their code fences run during `cargo test --doc`.
+| Resource Group | Operations |
+| --- | --- |
+| `agent_profiles()`, `workspace_profiles()`, `sandbox_profiles()` | `list`, `read`, `create`, `save`, `publish`, `list_revisions`, `read_revision`, `set_visibility`, `retire` |
+| `profile_authoring()` | `bounds`, `services`, `search_skills`, read-only `resolve_repository` |
+| `marketplace::<C>()` | `list`, `read`, `fork` |
+| `sandboxes()` | `list`, `read`, `create`, `delete`, `pause`, `revive`, `events` |
+| `workspaces()` | `list`, `read`, `create`, `delete` |
+| `worktrees()` | `list`, `read` |
+| `agents()` | `list`, `read`, `create`, `input`, `steer`, `interrupt`, `answer_approval`, `stop`, `delete`, `events`, `transcript`, `usage`, `resources` |
+| `auth()` | `read_session`, anonymous `read_signup_options`, navigation-only `login_url`, `logout_url` |
+| `triggers()` | `list`, `read`, `create`, `save`, `delete`, `publish`, `retire`, `list_revisions`, `list_placements`, `create_placement`, `retire_placement`, `embed`, `stats` |
+| `launches()` | `create_or_resume`, `list`, `read`, `start`, `cancel`, `requirements`, `events`, `stream`, `create_connection`, `read_connection` |
+| `agui()` | `read_capabilities`, `read_sandbox`, `run`, `events` |
+| `responses()` | `create_conversation`, `read_conversation`, `list_items`, `create`, `read`, unsupported `delete`, `cancel` |
+| `admin()` | `list_sandboxes`, `read_sandbox`, `sandbox_events`, `retire_sandbox`, `list_profiles`, `retire_profile`, `read_settings`, `replace_settings`, `patch_settings`, `reset_settings`, `pause_triggers`, `resume_triggers`, `read_runtime_inventory`, `list_activity` |
+| `Client` reads | `read_conformance`, `read_openapi`, `read_defaults`, `read_trigger_preview`, `read_trigger_badge` |
+| Explicit refusals | `agents().terminal`, `unsupported().mcp`, `unsupported().a2a`, `unsupported().agent_card` |
 
-The public export list is in [`src/lib.rs`](../src/lib.rs). `Client` and
-`ClientBuilder` own transport configuration, `ResponseMetadata` is the
-pre-decoding response-correlation projection, `Conformance` is anonymous
-deployment discovery, `EventStream` owns the reconnecting durable stream,
-`ResponsesStream` owns one non-reconnecting response turn, `types` are wire
-projections, and `Error` is the non-exhaustive failure boundary. The crate
-intentionally does not expose its internal HTTP, decoding, or stream-parser
-modules.
+`C` is one of `AgentProfileContent`, `WorkspaceProfileContent`, or
+`SandboxProfileContent` from `cma_sdk::profiles`. Profile drafts and immutable
+revisions keep the corresponding content type. `save` requires the exact
+`draft_version`, replaces content, and retains omitted name or description.
+`publish` requires the exact draft version. `fork` requires an explicit immutable
+revision rather than selecting a moving latest revision implicitly.
 
-## Responses chat
+Owned profile drafts require profile-management authority. Exact published
+revision reads also support accessible public and owner revisions with the
+service's resource-use authority; authorization is always decided by CMA.
+Marketplace reads validate the requested kind, identity, revision consistency,
+and required Sandbox trust metadata.
 
-```rust,no_run
-use cma_sdk::{Client, CreateResponseRequest, ResponsesEvent};
+`PageOptions` holds an opaque `cursor` and optional `limit`. Owner lists and
+marketplace results return `ResourcePage<T>`, whose `next` is the exclusive
+cursor for the next call. Child Workspace and Worktree lists return
+`ResourceList<T>`. `SandboxListOptions` and `AgentListOptions` add typed filters;
+`MarketplaceListOptions` adds search text.
 
-async fn chat(client: &Client) -> cma_sdk::Result<()> {
-    let conversation = client.create_conversation().await?;
-    let request = CreateResponseRequest::text(
-        conversation.id.clone(),
-        "Summarise this repository",
-    )?;
-    let mut stream = client.create_response(request).await?;
-    let mut terminal = None;
+`EventOptions` holds an exclusive durable sequence `after` and optional `limit`.
+Sandbox events return `Vec<SandboxEvent>`; Agent events return
+`ResourcePage<AgentEvent, u64>`. Persist processed sequence numbers before
+advancing a polling cursor. These are bounded durable reads, not live feeds.
 
-    while let Some(event) = stream.next().await {
-        match event? {
-            ResponsesEvent::Completed { response, .. }
-            | ResponsesEvent::Failed { response, .. }
-            | ResponsesEvent::Incomplete { response, .. } => terminal = Some(response),
-            _ => {}
-        }
-    }
+Creation returns HTTP 201 resources without claiming readiness. Sandbox
+lifecycle and Workspace deletion return HTTP 202 resources. Agent input returns
+HTTP 202 with `InputAccepted { queued }`; other Agent commands accept an empty
+HTTP 202 response. Agent resources report Sandbox-wide counters, with `None`
+when a counter is unavailable.
 
-    if let Some(response) = terminal {
-        let durable = client.read_response(&response.id).await?;
-        println!("{}: {:?}", durable.id, durable.status);
-    }
-    Ok(())
-}
-```
+Keyed owner REST mutations require `&IdempotencyKey`. The constructor accepts 1 to 255 visible
+ASCII characters without spaces. Invalid identifiers, zero revision numbers,
+and zero Sandbox profile resource allocations are refused before HTTP.
+Unknown status or event tags, malformed JSON, wrong resource identities, and
+unexpected success statuses are protocol errors. Response bodies are limited
+to 8 MiB even when the peer omits `Content-Length`.
 
-Response creation makes one POST and never reconnects or retries an ambiguous
-handshake. Dropping `ResponsesStream` closes the local body without calling the
-unsupported server cancellation route; recover retained output with
-`read_response` and `list_conversation_items`. The exact supported field and
-event policy is in the [Responses contract](../../../docs/API_Responses.md).
+Trigger and Launch list responses normalize the backend's `next_cursor` into
+`ResourcePage::next`. Launch REST events instead expose their exact numeric
+`next_cursor`; `LaunchReplayOptions` configures the owner-only AG-UI companion
+at `GET /api/v1/agui/launches/{id}/events`. Stream `cursor()` returns the last
+complete event, without implying the application has persisted it.
 
-Unknown event discriminators are retained in `EventKind::Unknown`; malformed known
-events and unknown session enum values fail as `Error::Protocol`. See
-[Sessions](sessions.md) and [Streaming](streaming.md) for those compatibility rules.
+`ReplayOptions` controls AG-UI finite history or follow mode. `RunRequest` admits
+one user message or approval answer. `AgentEvent::cursor` is set only at a new
+durable record boundary; live frames never acknowledge one. `SandboxCompanion`
+has typed Sandbox, Workspace, Worktree, and first-message lifecycle snapshots.
+
+Responses uses Agent identity as `conversation`; `CreateResponseRequest` accepts
+plain text or exactly one user message with plain text or one `input_text` part.
+Streaming and durable storage are required. Standard tools, background work,
+stateless generation, and conversation deletion are not invented. Response
+event names and connection-local sequences are checked before yielding.
+
+Badge retrieval returns a typed modified SVG or not-modified result, retaining
+the required nonempty ETag. A 304 requires an explicit request validator. Markup
+is returned as inert text, not parsed or sanitized for DOM insertion. It sends
+no configured bearer credential. Auth and
+OpenAPI root paths preserve any configured deployment prefix, as do versioned
+API routes. OAuth callback is browser-owned and has no SDK exchange method.
+
+`read_embed_script(&EmbedScriptOptions)` retrieves the supplemental anonymous
+`/embed/v1.js` browser asset, retaining exact JavaScript and conditional 304
+semantics. It does not execute the script and is not a Layer1 API operation.
+Chronological transcript `messages` are required typed entries with sequence,
+user/assistant role, content, and append timestamp; preserve this order rather
+than concatenating the owner/Agent summary fields.

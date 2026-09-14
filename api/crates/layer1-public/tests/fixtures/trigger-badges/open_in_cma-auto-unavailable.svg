@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="126" height="32" viewBox="0 0 126 32" role="img" aria-labelledby="cma-title">
+<title id="cma-title">Unavailable</title>
+<style>:root{--badge-bg:#f6f8fa;--badge-border:#d8dee4;--badge-text:#6e7781;--badge-mark:#8c959f}@media (prefers-color-scheme:dark){:root{--badge-bg:#21262d;--badge-border:#30363d;--badge-text:#8b949e;--badge-mark:#6e7681}}</style>
+<rect x="0.5" y="0.5" width="125" height="31" rx="6" fill="var(--badge-bg)" stroke="var(--badge-border)"/>
+<g color="var(--badge-mark)" transform="translate(2 4) scale(0.24)">
+<path d="M71 71 A30 30 0 1 0 29 71" fill="none" stroke="currentColor" stroke-width="11" stroke-linecap="round"/>
+<path d="M71 71 L61 59 L50 71 L39 59 L29 71" fill="none" stroke="currentColor" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="30" y="38" width="17" height="12" rx="4" fill="currentColor"/>
+<rect x="53" y="38" width="17" height="12" rx="4" fill="currentColor"/>
+<path d="M46 44 L54 44" fill="none" stroke="currentColor" stroke-width="4"/>
+</g>
+<text x="38" y="21" fill="var(--badge-text)" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif" font-size="13" font-weight="600" textLength="78" lengthAdjust="spacingAndGlyphs">Open in CMA</text>
+</svg>

@@ -1,5 +1,3 @@
-//! Contract tests for the declaration-only MCP surface.
-
 use axum::{
     body::{to_bytes, Body},
     http::{header, Request, StatusCode},
@@ -9,47 +7,38 @@ use tower::ServiceExt;
 use super::*;
 
 #[test]
-fn projection_matches_the_documented_matrix() {
-    assert_eq!(
-        McpInterface.operations(),
-        &[
-            Operation::CreateSession,
-            Operation::SendInput,
-            Operation::ResolveApproval,
-        ]
-    );
+fn unavailable_projection_does_not_advertise_operations() {
+    assert_eq!(McpInterface.interface_id(), "mcp");
+    assert!(McpInterface.operations().is_empty());
 }
 
 #[tokio::test]
-async fn documented_endpoint_refuses_by_name() {
+async fn documented_endpoint_preserves_the_named_refusal_shape() {
     let response = router()
         .oneshot(Request::post("/api/v1/mcp").body(Body::empty()).unwrap())
         .await
         .unwrap();
-
     assert_eq!(response.status(), StatusCode::NOT_IMPLEMENTED);
     assert_eq!(
-        response.headers().get(header::CONTENT_TYPE),
-        Some(&"application/problem+json".parse().unwrap())
+        response.headers().get(header::CONTENT_TYPE).unwrap(),
+        "application/problem+json"
     );
     assert_eq!(
-        response.headers().get(header::CACHE_CONTROL),
-        Some(&"no-store".parse().unwrap())
+        response.headers().get(header::CACHE_CONTROL).unwrap(),
+        "no-store"
     );
-    let body: serde_json::Value = serde_json::from_slice(
-        &to_bytes(response.into_body(), 64 * 1024)
-            .await
-            .expect("the problem document is bounded"),
-    )
-    .expect("the problem document is JSON");
-    assert_eq!(body["status"], 501);
-    assert_eq!(body["code"], "interface_not_available");
-    assert_eq!(body["interface"], "mcp");
-    assert!(
-        body["detail"]
-            .as_str()
-            .is_some_and(|detail| detail.contains("mcp interface")),
-        "the refusal must name the unavailable interface: {body}"
+    let body: serde_json::Value =
+        serde_json::from_slice(&to_bytes(response.into_body(), 64 * 1024).await.unwrap()).unwrap();
+    assert_eq!(
+        body,
+        serde_json::json!({
+            "type": "https://spec.chrono-ai.fun/cma/1.0/problems/interface-not-available",
+            "title": "interface not available",
+            "status": 501,
+            "detail": "The mcp interface is not yet available.",
+            "code": "interface_not_available",
+            "interface": "mcp",
+        })
     );
 }
 
@@ -59,12 +48,11 @@ async fn only_post_is_claimed_at_the_documented_endpoint() {
         .oneshot(Request::get("/api/v1/mcp").body(Body::empty()).unwrap())
         .await
         .unwrap();
-
     assert_eq!(response.status(), StatusCode::METHOD_NOT_ALLOWED);
 }
 
 #[tokio::test]
-async fn an_undocumented_mcp_subpath_remains_not_found() {
+async fn an_undocumented_subpath_remains_not_found() {
     let response = router()
         .oneshot(
             Request::post("/api/v1/mcp/unknown")
@@ -73,6 +61,5 @@ async fn an_undocumented_mcp_subpath_remains_not_found() {
         )
         .await
         .unwrap();
-
     assert_eq!(response.status(), StatusCode::NOT_FOUND);
 }

@@ -1,95 +1,56 @@
-# Rust Operations
+# Operations
 
-<!-- nav: 60 Operations -->
+<!-- nav: 9 Operations -->
 
-Every method borrows `&Client`, so cloned clients and independent operations share
-configuration rather than mutable session state. Unary requests have the builder's
-request timeout; the event-stream timeout covers each connection handshake.
+`read_defaults()` returns deployment defaults available to the authenticated
+caller. `admin()` uses public capability-gated routes for Sandbox and profile
+inventory, durable events, runtime inventory, activity, and platform settings.
+The SDK has no private operator channel.
 
-## Input and turn control
-
-```rust,no_run
-use cma_sdk::{Client, SessionId, SessionInput};
-
-async fn drive(client: &Client, session_id: &SessionId) -> cma_sdk::Result<()> {
-    client
-        .send_input(session_id, SessionInput::text("Run the tests"))
-        .await?;
-    client
-        .steer(session_id, "Run the integration tests first")
-        .await?;
-    client.interrupt(session_id).await?;
-    Ok(())
-}
-```
-
-`SessionInput::text` uses the line-submission default. Use
-`text_without_newline` for terminal text that must not submit a line, and `bytes`
-for raw terminal input. Check `Session::conforms_to` before exposing an operation.
-Input is deliberately refused while a session rotates.
-
-## Approvals
-
-Resolve an `EventKind::ApprovalRequested` identifier with one typed decision:
+Sandbox and Profile inventory rows include `owner_name`, and Sandbox detail
+includes `owner_name` beside `sandbox`. Activity includes `actor_name` and a
+`target_name` for user targets. These public names are `Option<String>`; a missing
+name must not be replaced by an owner or actor subject identifier. The ordinary
+Sandbox read also includes immutable `owner` and its current `owner_name`, with
+absence supported for older servers. Names never grant resource authority.
 
 ```rust,no_run
-use cma_sdk::{ApprovalDecision, Client, SessionId};
-
-async fn deny(client: &Client, session_id: &SessionId) -> cma_sdk::Result<()> {
-    client
-        .resolve_approval(session_id, "approval_example", ApprovalDecision::Deny)
-        .await
-}
+use cma_sdk::{Client, admin::{ActivityListOptions, SandboxListOptions}};
+# async fn run(client: Client) -> Result<(), Box<dyn std::error::Error>> {
+let defaults = client.read_defaults().await?;
+let sandboxes = client.admin().list_sandboxes(&SandboxListOptions::default()).await?;
+let activity = client.admin().list_activity(&ActivityListOptions::default()).await?;
+let inventory = client.admin().read_runtime_inventory().await?;
+let settings = client.admin().read_settings().await?;
+# let _ = (defaults, sandboxes, activity, inventory, settings);
+# Ok(())
+# }
 ```
 
-`Allow` permits the action, `Deny` refuses it while letting the turn continue, and
-`Abort` refuses it and asks the runtime to abandon the turn.
+Settings `replace_settings`, `patch_settings`, and `reset_settings` require the
+current `expected_revision`. On CAS conflict, reread and evaluate the intervening
+change rather than overwriting it automatically. `Section<T>` retains additive
+settings fields, so editing a known field does not discard newer deployment
+configuration. Patch replaces only supplied sections; it is not an arbitrary
+deep merge. Server validation remains authoritative.
 
-## Terminal REST and usage
+`checkpoints.interval_seconds` controls periodic snapshots globally (60 through
+86400 seconds, default 1800), using `Section<Checkpoints>`. Workers reread the
+setting without a restart. Manual and inactivity pauses still require a fresh
+completed snapshot. Only the latest completed snapshot is retained; replacement
+commits before old archives are removed. Older APIs can omit the section.
 
-```rust,no_run
-use cma_sdk::{Client, SessionId, TerminalGeometry};
+`pause_triggers` and `resume_triggers` change orchestration controls. They do not
+cancel admitted Launches or authorize deleting their resources. Operator
+`retire_sandbox` and `retire_profile` are explicit mutations under their own
+capabilities, not keyed owner-resource commands. Inventory and activity pages
+use opaque cursors with an inclusive 1 through 200 bound.
 
-async fn inspect_terminal(client: &Client, session_id: &SessionId) -> cma_sdk::Result<()> {
-    client
-        .resize_terminal(session_id, TerminalGeometry::new(120, 32)?)
-        .await?;
-    let screen = client.screen_snapshot(session_id).await?;
-    let usage = client.get_usage(session_id).await?;
+The pause control sets `triggers.orchestration_paused`, freezing orchestration
+of admitted work. It does not disable new admission. `triggers.enabled` is the
+separate admission setting; changing either control must preserve the other's
+recorded value and the authority of already admitted Launches.
 
-    println!("{} rows, {} input tokens", screen.rows, usage.input_tokens);
-    Ok(())
-}
-```
-
-Resize and screen snapshot are REST projections. This crate does not expose the
-live bidirectional PTY WebSocket, transcript download, pricing, resource readings,
-or environment administration. The live terminal contract is
-[API_PTY.md](../../../docs/API_PTY.md).
-
-## Administrative chat hosts
-
-Callers with the deployment's administrative session-read capability can walk
-the bounded, newest-first shared-host inventory. Retirement additionally needs
-cross-owner session control:
-
-```rust,no_run
-use cma_sdk::{ChatHostId, Client};
-
-async fn retire_owner_host(client: &Client) -> cma_sdk::Result<()> {
-    let hosts = client.list_chat_hosts().await?;
-    if let Some(host) = hosts.first() {
-        let id = ChatHostId::new(host.id.as_str())?;
-        let retired = client.retire_chat_host(&id).await?;
-        assert_eq!(retired.id, id);
-    }
-    Ok(())
-}
-```
-
-Use `list_chat_host_page` for manual continuation and
-`list_chat_hosts_with_limits` to choose finite page and retained-row ceilings.
-Continuation links are bound to `/api/v1/admin/chat/hosts`; the client refuses
-an absolute, cross-origin, or different-collection target before sending a
-credential. Repeating `retire_chat_host` after retirement remains a `200`
-success.
+`read_openapi` and `read_conformance` inspect anonymous deployment declarations.
+`unsupported().mcp()`, `a2a()`, and `agent_card()` expose named refusal evidence;
+they do not invent Agent tools, tasks, or an executable terminal plane.

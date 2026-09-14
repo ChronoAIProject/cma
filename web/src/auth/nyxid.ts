@@ -2,7 +2,7 @@
  * The real identity provider adapter.
  *
  * Sign-in is a full-page navigation to the control plane, which begins the
- * OIDC exchange and comes back having set a session cookie. The browser never
+ * OIDC exchange and comes back having set an identity cookie. The browser never
  * sees a token, which is the property the auth contract exists to preserve:
  * there is no value here that could be written to storage, so no code path can
  * grow into doing it.
@@ -11,11 +11,12 @@
  * a single line in main.tsx, which is what the seam was for.
  */
 
-import type { AuthProvider, AuthState, Capability } from './types';
+import type { AuthProvider, AuthState, Capability, SignInOptions } from './types';
 import { isCapability } from './types';
+import { parseRoute, routePath } from '../routing/routes';
 
-/** Where the control plane answers questions about the current session. */
-const SESSION_ENDPOINT = '/auth/session';
+/** Where the control plane answers questions about the current browser identity. */
+const IDENTITY_ENDPOINT = '/auth/session';
 
 /**
  * How long the identity check may take before it is called a failure.
@@ -31,13 +32,14 @@ const LOGIN_ENDPOINT = '/auth/login';
 const LOGOUT_ENDPOINT = '/auth/logout';
 
 /** What the control plane reports for the current cookie. */
-interface SessionResponse {
+interface IdentityResponse {
   authenticated?: unknown;
   subject?: unknown;
   display_name?: unknown;
   email?: unknown;
   avatar_url?: unknown;
   capabilities?: unknown;
+  visitor?: unknown;
 }
 
 /**
@@ -74,6 +76,18 @@ export function handleFor(subject: string, displayName?: string, email?: string)
   return subject;
 }
 
+export function signInPath(returnTo?: string, options?: SignInOptions): string {
+  const target = new URL(LOGIN_ENDPOINT, window.location.origin);
+  if (returnTo !== undefined) {
+    const route = parseRoute(returnTo);
+    if (route.kind === 'not_found' || routePath(route) !== returnTo)
+      throw new Error('The sign-in destination is not a CMA page.');
+    target.searchParams.set('return_to', returnTo);
+  }
+  if (options?.screen === 'register') target.searchParams.set('screen', 'register');
+  return `${target.pathname}${target.search}`;
+}
+
 /** Read a claim the provider may have omitted. */
 function optionalText(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim() !== '' ? value.trim() : undefined;
@@ -85,7 +99,7 @@ export function createNyxidAuthProvider(): AuthProvider {
       let response: Response;
       const timeout = AbortSignal.timeout(IDENTITY_TIMEOUT_MS);
       try {
-        response = await fetch(SESSION_ENDPOINT, {
+        response = await fetch(IDENTITY_ENDPOINT, {
           credentials: 'include',
           signal: timeout,
         });
@@ -108,16 +122,16 @@ export function createNyxidAuthProvider(): AuthProvider {
         return { status: 'error', message: `identity check failed with ${response.status}` };
       }
 
-      let body: SessionResponse;
+      let body: IdentityResponse;
       try {
-        body = (await response.json()) as SessionResponse;
+        body = (await response.json()) as IdentityResponse;
       } catch {
         return { status: 'error', message: 'identity response was not readable' };
       }
 
       if (body.authenticated !== true || typeof body.subject !== 'string' || body.subject === '') {
         // A 200 that does not actually name a subject is treated as signed
-        // out, never as an anonymous session with a blank identity.
+        // out, never as an anonymous identity with a blank subject.
         return { status: 'anonymous' };
       }
 
@@ -132,18 +146,15 @@ export function createNyxidAuthProvider(): AuthProvider {
           email,
           avatarUrl: optionalText(body.avatar_url),
           capabilities: capabilitiesFrom(body.capabilities),
+          visitor: body.visitor === true,
         },
       };
     },
 
-    async signIn(returnTo?: string): Promise<void> {
+    async signIn(returnTo, options): Promise<void> {
       // A navigation, not a fetch: the provider needs to run its own redirects
       // and may show a login page, neither of which survives XHR.
-      const target = new URL(LOGIN_ENDPOINT, window.location.origin);
-      if (returnTo !== undefined) {
-        target.searchParams.set('return_to', returnTo);
-      }
-      window.location.assign(`${target.pathname}${target.search}`);
+      window.location.assign(signInPath(returnTo, options));
     },
 
     async signOut(): Promise<void> {

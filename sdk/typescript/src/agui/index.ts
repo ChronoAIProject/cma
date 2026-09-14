@@ -1,76 +1,200 @@
-/**
- * The AG-UI client — `docs/API_AGUI.md`.
- *
- * This package is the one place that understands the protocol: its event
- * types, cursor, reconnect order, and typed refusals. Consumers use what is
- * exported here and never implement the wire beside it.
- */
+import type { ResolvedConfig } from '../config.js';
+import { resolveRequestId } from '../config.js';
+import {
+  ApiError,
+  ProtocolError,
+  RequestAborted,
+  TransportError,
+  ValidationError,
+} from '../errors.js';
+import { raceWithAbortSignal, type OperationOptions } from '../http.js';
+import { read, segment } from '../resources.js';
+import { streamLaunchEvents, type LaunchStreamOptions } from '../launch/stream.js';
+import { agentSandboxSnapshot, aguiCapabilities } from './companions.js';
+import { connection } from './transport.js';
+import type {
+  AgentConversationEvent,
+  AgentReplayOptions,
+  AgentRunRequest,
+  AgentStreamOptions,
+} from './types.js';
 
-export {
-  AguiConnection,
-  type AguiTransport,
-  type ConnectionOptions,
-  type LinkFailure,
-  type LinkStatus,
-} from './connection.js';
-export {
-  readAguiCapabilities,
-  toAguiCapabilities,
-  type AguiCapabilityDocument,
-} from './capabilities.js';
-export {
-  toEvent,
-  type AguiEvent,
-  type Interrupt,
-  type InterruptOption,
-  type JsonPatch,
-  type KnownEventType,
-  type RunError,
-  type RunFinished,
-  type RunOutcome,
-  type RunStarted,
-  type StateDelta,
-  type TextMessageContent,
-  type TextMessageEnd,
-  type TextMessageStart,
-  type ToolCallEnd,
-  type ToolCallStart,
-  type UnknownEvent,
-} from './events.js';
-export { applyStateDelta } from './state.js';
-export {
-  AguiOperations,
-  NO_CAPABILITIES,
-  createOperationTransport,
-  fetchTransport,
-  toCapabilities,
-  type ConcurrentInput,
-  type OperationTransport,
-  type SessionCapabilities,
-} from './operations.js';
-export { createAguiTransport, parseEventStream, wireTransport } from './wire.js';
+export type {
+  AgentConversationEvent,
+  AgentReplayOptions,
+  AgentRunRequest,
+  AgentStreamOptions,
+} from './types.js';
+export type { AgentSandboxSnapshot, AguiCapabilities } from './companions.js';
 
-/**
- * Recorded conversations and the driver that replays them.
- *
- * Exported from the client's own index because a driver is how this client is
- * used in development, not a separate thing beside it — the same arrangement
- * `terminal/drivers/` already has.
- */
-export { MockSession, type MockOptions } from '../testing/mock.js';
-export {
-  TRANSCRIPTS,
-  transcriptNamed,
-  APPROVAL_DENIED,
-  APPROVAL_GRANTED,
-  FAILED_TOOL_CALL,
-  FULL_CONVERSATION,
-  INTERRUPTED_TURN,
-  NO_USAGE,
-  PLAIN_TURN,
-  REPORTS_USAGE,
-  ROTATES,
-  TWO_TOOL_CALLS,
-  UNKNOWN_KIND,
-} from '../testing/transcripts.js';
-export type { Frame, Provenance, Transcript } from '../testing/types.js';
+/** Agent conversation streaming through the public AG-UI projection. */
+export class AgentConversations {
+  constructor(private readonly config: ResolvedConfig) {}
+
+  readCapabilities(options: OperationOptions = {}) {
+    return read(this.config, '/api/v1/agui/capabilities', aguiCapabilities, options);
+  }
+
+  readSandboxSnapshot(threadId: string, options: OperationOptions = {}) {
+    return read(
+      this.config,
+      `/api/v1/agui/agents/${segment(threadId)}/sandbox`,
+      (value) => {
+        const snapshot = agentSandboxSnapshot(value);
+        if (snapshot.threadId !== threadId)
+          throw new ProtocolError('AG-UI Sandbox snapshot belongs to another Agent');
+        return snapshot;
+      },
+      options,
+    );
+  }
+
+  streamLaunchEvents(launchId: string, options: LaunchStreamOptions) {
+    return streamLaunchEvents(this.config, launchId, options);
+  }
+
+  /** A run is submitted exactly once. A disconnect never resubmits its input. */
+  async run(request: AgentRunRequest, options: AgentStreamOptions): Promise<void> {
+    validateThread(request?.threadId);
+    const stream = connection(
+      this.config,
+      '/api/v1/agui/run',
+      request.threadId,
+      {
+        ...options,
+        timeoutMs: options.timeoutMs ?? 605_000,
+      },
+      request,
+    );
+    let ended = false;
+    for await (const events of completeProjections(stream, true)) {
+      for (const event of events) {
+        await acknowledge(options, event);
+        if (event.type === 'RUN_FINISHED' || event.type === 'RUN_ERROR') ended = true;
+      }
+    }
+    if (!ended)
+      throw new TransportError('The Agent run stream closed before its outcome was known.');
+  }
+
+  /** Only read-only replay reconnects, from the last fully delivered durable projection. */
+  async replay(threadId: string, options: AgentReplayOptions): Promise<void> {
+    validateThread(threadId);
+    let cursor = options.after ?? 0;
+    const maxReconnects = options.maxReconnects ?? 4;
+    if (
+      !Number.isSafeInteger(cursor) ||
+      cursor < 0 ||
+      !Number.isSafeInteger(maxReconnects) ||
+      maxReconnects < 0 ||
+      maxReconnects > 20
+    ) {
+      throw new ValidationError(
+        'Replay cursor and reconnect count must be bounded non-negative integers',
+      );
+    }
+    const follow = options.follow ?? true;
+    const requestId = await resolveRequestId(this.config, options.requestId);
+    let failures = 0;
+    while (true) {
+      if (options.signal?.aborted === true) throw new RequestAborted();
+      const query = new URLSearchParams({
+        thread_id: threadId,
+        starting_after: String(cursor),
+        follow: String(follow),
+      });
+      try {
+        const stream = connection(
+          this.config,
+          `/api/v1/agui/events?${query.toString()}`,
+          threadId,
+          { ...options, requestId },
+        );
+        for await (const events of completeProjections(stream, false)) {
+          const nextCursor = events.at(-1)?.cursor;
+          if (nextCursor !== undefined && nextCursor <= cursor) {
+            throw new ProtocolError('AG-UI replay did not advance its durable cursor');
+          }
+          for (const event of events) await acknowledge(options, event);
+          if (nextCursor !== undefined) {
+            cursor = nextCursor;
+            failures = 0;
+          }
+        }
+        if (!follow) return;
+      } catch (cause) {
+        if (
+          !follow ||
+          !(cause instanceof TransportError || (cause instanceof ApiError && cause.isRetryable))
+        )
+          throw cause;
+      }
+      if (failures >= maxReconnects)
+        throw new TransportError('The Agent replay closed repeatedly without durable progress.');
+      failures += 1;
+      await pause(Math.min(500 * 2 ** (failures - 1), 15_000), options.signal);
+    }
+  }
+}
+
+async function acknowledge(
+  options: AgentStreamOptions,
+  event: AgentConversationEvent,
+): Promise<void> {
+  try {
+    await options.onEvent(event);
+  } catch (cause) {
+    throw new ProtocolError('The Agent event consumer did not acknowledge a frame', { cause });
+  }
+}
+
+async function* completeProjections(
+  stream: AsyncIterable<AgentConversationEvent>,
+  allowBoundary: boolean,
+): AsyncGenerator<readonly AgentConversationEvent[]> {
+  let pending: AgentConversationEvent[] = [];
+  let bytes = 0;
+  for await (const event of stream) {
+    if (
+      event['cma:live'] === true ||
+      (allowBoundary && event.type === 'RUN_STARTED' && event.cursor === undefined)
+    ) {
+      yield [event];
+      continue;
+    }
+    bytes += new TextEncoder().encode(JSON.stringify(event)).byteLength;
+    if (pending.length >= 32 || bytes > 4 * 1024 * 1024)
+      throw new ProtocolError('AG-UI durable projection exceeds its boundary');
+    pending.push(event);
+    if (event.cursor !== undefined) {
+      yield pending;
+      pending = [];
+      bytes = 0;
+    }
+  }
+  if (pending.length > 0)
+    throw new TransportError('AG-UI disconnected during a durable projection');
+}
+
+function validateThread(thread: unknown): asserts thread is string {
+  if (typeof thread !== 'string' || !thread.trim() || thread.length > 256)
+    throw new ValidationError('An existing Agent id is required');
+}
+
+async function pause(milliseconds: number, signal?: AbortSignal): Promise<void> {
+  const local = signal ?? new AbortController().signal;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await raceWithAbortSignal(
+      local,
+      () =>
+        new Promise<void>((resolve) => {
+          timer = setTimeout(resolve, milliseconds);
+        }),
+    );
+  } catch (cause) {
+    throw new RequestAborted(undefined, { cause });
+  } finally {
+    clearTimeout(timer);
+  }
+}

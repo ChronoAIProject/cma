@@ -32,6 +32,10 @@ use std::{
     },
 };
 
+use crate::{
+    config::{RateLimitConfig, TrustedProxyConfig},
+    is_cors_preflight, REST_LINKS,
+};
 use axum::{
     extract::{ConnectInfo, MatchedPath, Request, State},
     http::{header, HeaderMap, Method},
@@ -41,10 +45,11 @@ use axum::{
 use governor::{clock::Clock, DefaultKeyedRateLimiter, Quota, RateLimiter};
 use layer1_public::{rest::HttpProblem, AuthenticatedSubject};
 
-use crate::{
-    config::{RateLimitConfig, TrustedProxyConfig},
-    is_cors_preflight, REST_LINKS,
-};
+mod visitor;
+
+#[allow(unused_imports)] // Consumed by the Trigger route composition that injects this slice.
+pub(crate) use visitor::CmaLaunchQuota;
+use visitor::VisitorLaunchQuota;
 
 const RETAIN_RECENT_EVERY: u64 = 1024;
 
@@ -97,6 +102,7 @@ pub(crate) struct RateLimiters {
     default: KeyedLimiter,
     create: KeyedLimiter,
     input: KeyedLimiter,
+    visitor_launches: VisitorLaunchQuota,
     trusted_proxies: TrustedProxyConfig,
     decisions: AtomicU64,
     rejections: AtomicU64,
@@ -132,41 +138,11 @@ impl RateLimiters {
             default: RateLimiter::keyed(default),
             create: RateLimiter::keyed(create),
             input: RateLimiter::keyed(input),
+            visitor_launches: VisitorLaunchQuota::default(),
             trusted_proxies,
             decisions: AtomicU64::new(0),
             rejections: AtomicU64::new(0),
         }
-    }
-
-    #[cfg(test)]
-    pub(crate) fn for_test(default: Quota, create: Quota, input: Quota) -> Arc<Self> {
-        Self::for_test_complete(
-            generous_test_quota(),
-            generous_test_quota(),
-            default,
-            create,
-            input,
-            TrustedProxyConfig::sample(),
-        )
-    }
-
-    #[cfg(test)]
-    pub(crate) fn for_test_complete(
-        admission: Quota,
-        health: Quota,
-        default: Quota,
-        create: Quota,
-        input: Quota,
-        trusted_proxies: TrustedProxyConfig,
-    ) -> Arc<Self> {
-        Arc::new(Self::from_quotas(
-            admission,
-            health,
-            default,
-            create,
-            input,
-            trusted_proxies,
-        ))
     }
 
     fn check(&self, budget: Budget, key: &RateKey) -> Result<(), u64> {
@@ -313,57 +289,18 @@ fn request_tier(request: &Request) -> RequestTier {
     {
         return RequestTier::Health;
     }
-    if request.method() != Method::POST {
+    if request.method() != Method::POST
+        || matches!(
+            path,
+            "/api/v1/profile-authoring/repositories/resolve" | "/auth/connections/check"
+        )
+    {
         return RequestTier::Default;
     }
-    if path == "/api/v1/sessions"
-        || path == "/api/v1/conversations"
-        || path == "/api/v1/agui/run"
-        || is_session_operation(path, "plane")
-        || is_session_operation(path, "revive")
-        || is_launch_operation(path, "start")
-    {
-        return RequestTier::Create;
-    }
-    if path == "/api/v1/responses"
-        || is_session_operation(path, "input")
-        || is_session_operation(path, "steer")
-    {
+    if path.split('/').rfind(|segment| !segment.is_empty()) == Some("input") {
         return RequestTier::Input;
     }
-    RequestTier::Default
-}
-
-fn is_session_operation(path: &str, operation: &str) -> bool {
-    let mut segments = path.split('/').filter(|segment| !segment.is_empty());
-    matches!(
-        (
-            segments.next(),
-            segments.next(),
-            segments.next(),
-            segments.next(),
-            segments.next(),
-            segments.next(),
-        ),
-        (Some("api"), Some("v1"), Some("sessions"), Some(_), Some(found), None)
-            if found == operation
-    )
-}
-
-fn is_launch_operation(path: &str, operation: &str) -> bool {
-    let mut segments = path.split('/').filter(|segment| !segment.is_empty());
-    matches!(
-        (
-            segments.next(),
-            segments.next(),
-            segments.next(),
-            segments.next(),
-            segments.next(),
-            segments.next(),
-        ),
-        (Some("api"), Some("v1"), Some("launches"), Some(_), Some(found), None)
-            if found == operation
-    )
+    RequestTier::Create
 }
 
 /// Routes that never require identity keep a network budget even when a
@@ -371,13 +308,17 @@ fn is_launch_operation(path: &str, operation: &str) -> bool {
 /// changes buckets based on ambient credentials and can be used to exhaust a
 /// subject's protected-route allowance.
 fn uses_client_operation_key(path: &str) -> bool {
+    // These authenticated endpoints coordinate one owner's connections. Keep
+    // users behind the same network from consuming each other's login budget.
+    if matches!(
+        path,
+        "/auth/connections/check" | "/auth/connections/start" | "/auth/connections/cancel"
+    ) {
+        return false;
+    }
     path == "/openapi.json"
         || path == "/api/v1/conformance"
-        || path == "/api/v1/agui/capabilities"
-        || path == "/api/v1/mcp"
-        || path == "/api/v1/a2a"
         || is_public_trigger_preview(path)
-        || is_agui_trigger_preview(path)
         || path == "/.well-known/agent-card.json"
         || path == "/auth"
         || path.starts_with("/auth/")
@@ -394,18 +335,12 @@ fn is_rest_path(path: &str) -> bool {
         && !path.starts_with("/api/v1/agui/")
         && path != "/api/v1/mcp"
         && path != "/api/v1/a2a"
-        && path
-            .strip_prefix("/api/v1/sessions/")
-            .and_then(|tail| tail.split_once('/'))
-            .is_none_or(|(id, tail)| id.is_empty() || tail != "terminal")
+        && path != "/api/v1/responses"
 }
 
 fn is_public_trigger_preview(path: &str) -> bool {
     exact_path_segments(path, &["api", "v1", "triggers", "public", "*"])
-}
-
-fn is_agui_trigger_preview(path: &str) -> bool {
-    exact_path_segments(path, &["api", "v1", "agui", "triggers", "*"])
+        || exact_path_segments(path, &["api", "v1", "triggers", "public", "*", "badge.svg"])
 }
 
 fn exact_path_segments(path: &str, expected: &[&str]) -> bool {
@@ -523,6 +458,5 @@ fn retry_after_seconds(wait: std::time::Duration) -> u64 {
 }
 
 #[cfg(test)]
-fn generous_test_quota() -> Quota {
-    Quota::per_second(std::num::NonZeroU32::new(1_000_000).unwrap())
-}
+#[path = "rate_limit_tests.rs"]
+mod tests;

@@ -16,8 +16,8 @@
 
 /*
  * Web_Style.md section 5: the page does not scroll. The app fills exactly the
- * viewport and the terminal owns its own scrollback. dvh rather than vh so the
- * iOS toolbar collapsing does not leave the prompt under the fold.
+ * viewport. dvh rather than vh so the iOS toolbar collapsing does not leave
+ * content under the fold.
  */
 html,
 body,

@@ -1,0 +1,2286 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "trigger-errors-setup-create",
+      "operation": "POST /api/v1/triggers",
+      "scenario": "trigger_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/triggers",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "trigger-errors-setup-create"
+        },
+        "body": {
+          "content": {
+            "presentation": {
+              "title": "Contract Agent",
+              "description": "Public contract fixture",
+              "button_label": "open_in_cma",
+              "theme": "auto"
+            },
+            "target": {
+              "sandbox_profile": {
+                "id": "sbp_route_sandbox",
+                "revision": 1
+              },
+              "workspace_profile": {
+                "id": "wkp_route_workspace",
+                "revision": 1
+              },
+              "agent_profile": {
+                "id": "agp_route_agent",
+                "revision": 1
+              }
+            },
+            "reuse": {
+              "sandbox": "always_new",
+              "workspace": "always_new",
+              "agent": "always_new"
+            },
+            "first_message": "Inspect the project.",
+            "consent": {
+              "always_review": false
+            }
+          }
+        }
+      },
+      "response": {
+        "status": 201,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "id": "trg_contract",
+          "draft": {
+            "presentation": {
+              "title": "Contract Agent",
+              "description": "Public contract fixture",
+              "button_label": "open_in_cma",
+              "theme": "auto"
+            },
+            "target": {
+              "sandbox_profile": {
+                "id": "sbp_route_sandbox",
+                "revision": 1
+              },
+              "workspace_profile": {
+                "id": "wkp_route_workspace",
+                "revision": 1
+              },
+              "agent_profile": {
+                "id": "agp_route_agent",
+                "revision": 1
+              }
+            },
+            "reuse": {
+              "sandbox": "always_new",
+              "workspace": "always_new",
+              "agent": "always_new"
+            },
+            "first_message": "Inspect the project.",
+            "consent": {
+              "always_review": false
+            }
+          },
+          "draft_version": 1,
+          "availability": "draft",
+          "revision_count": 0,
+          "placements": [],
+          "stats": {
+            "launches_total": 0,
+            "agents_ready_total": 0
+          },
+          "created_at": "2026-09-07T00:00:00Z",
+          "updated_at": "2026-09-07T00:00:00Z"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "created_at": "/created_at",
+        "trigger_id": "/id",
+        "updated_at": "/updated_at"
+      }
+    },
+    {
+      "id": "trigger-errors-setup-publish",
+      "operation": "POST /api/v1/triggers/{id}/publish",
+      "scenario": "trigger_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/triggers/$trigger_id/publish",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "trigger-errors-setup-publish"
+        },
+        "body": {
+          "draft_version": 1
+        }
+      },
+      "response": {
+        "status": 201,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "trigger_id": "trg_contract",
+          "public_id": "public_contract",
+          "availability": "published",
+          "revision": 1,
+          "content": {
+            "presentation": {
+              "title": "Contract Agent",
+              "description": "Public contract fixture",
+              "button_label": "open_in_cma",
+              "theme": "auto"
+            },
+            "target": {
+              "sandbox_profile": {
+                "id": "sbp_route_sandbox",
+                "revision": 1
+              },
+              "workspace_profile": {
+                "id": "wkp_route_workspace",
+                "revision": 1
+              },
+              "agent_profile": {
+                "id": "agp_route_agent",
+                "revision": 1
+              }
+            },
+            "reuse": {
+              "sandbox": "always_new",
+              "workspace": "always_new",
+              "agent": "always_new"
+            },
+            "first_message": "Inspect the project.",
+            "consent": {
+              "always_review": false
+            }
+          },
+          "digest": "c371d5947a81dfa100ea83b8995c81d921dc5ab80d88c776cd0fb942a77139e7",
+          "published_at": "2026-09-07T00:00:00Z"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "public_id": "/public_id",
+        "published_at": "/published_at"
+      }
+    },
+    {
+      "id": "trigger-errors-setup-placement-create",
+      "operation": "POST /api/v1/triggers/{id}/placements",
+      "scenario": "trigger_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/triggers/$trigger_id/placements",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "trigger-errors-setup-placement-create"
+        },
+        "body": {
+          "source_url": "https://source.example/docs",
+          "label": "Documentation"
+        }
+      },
+      "response": {
+        "status": 201,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "id": "plc_contract",
+          "source_url": "https://source.example/docs",
+          "label": "Documentation"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "placement_id": "/id"
+      }
+    },
+    {
+      "id": "trigger-error-create-anonymous",
+      "operation": "POST /api/v1/triggers",
+      "scenario": "trigger_anonymous",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/triggers",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "trigger-error-create-anonymous"
+        },
+        "body": {
+          "content": {
+            "presentation": {
+              "title": "Contract Agent",
+              "description": "Public contract fixture",
+              "button_label": "open_in_cma",
+              "theme": "auto"
+            },
+            "target": {
+              "sandbox_profile": {
+                "id": "sbp_route_sandbox",
+                "revision": 1
+              },
+              "workspace_profile": {
+                "id": "wkp_route_workspace",
+                "revision": 1
+              },
+              "agent_profile": {
+                "id": "agp_route_agent",
+                "revision": 1
+              }
+            },
+            "reuse": {
+              "sandbox": "always_new",
+              "workspace": "always_new",
+              "agent": "always_new"
+            },
+            "first_message": "Inspect the project.",
+            "consent": {
+              "always_review": false
+            }
+          }
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "trigger-error-create-forbidden",
+      "operation": "POST /api/v1/triggers",
+      "scenario": "trigger_forbidden",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/triggers",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "trigger-error-create-forbidden"
+        },
+        "body": {
+          "content": {
+            "presentation": {
+              "title": "Contract Agent",
+              "description": "Public contract fixture",
+              "button_label": "open_in_cma",
+              "theme": "auto"
+            },
+            "target": {
+              "sandbox_profile": {
+                "id": "sbp_route_sandbox",
+                "revision": 1
+              },
+              "workspace_profile": {
+                "id": "wkp_route_workspace",
+                "revision": 1
+              },
+              "agent_profile": {
+                "id": "agp_route_agent",
+                "revision": 1
+              }
+            },
+            "reuse": {
+              "sandbox": "always_new",
+              "workspace": "always_new",
+              "agent": "always_new"
+            },
+            "first_message": "Inspect the project.",
+            "consent": {
+              "always_review": false
+            }
+          }
+        }
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/forbidden",
+          "title": "forbidden",
+          "status": 403,
+          "detail": "This caller is not allowed to publish or manage Triggers.",
+          "code": "forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "trigger-error-create-missing-key",
+      "operation": "POST /api/v1/triggers",
+      "scenario": "trigger_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/triggers",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "content": {
+            "presentation": {
+              "title": "Contract Agent",
+              "description": "Public contract fixture",
+              "button_label": "open_in_cma",
+              "theme": "auto"
+            },
+            "target": {
+              "sandbox_profile": {
+                "id": "sbp_route_sandbox",
+                "revision": 1
+              },
+              "workspace_profile": {
+                "id": "wkp_route_workspace",
+                "revision": 1
+              },
+              "agent_profile": {
+                "id": "agp_route_agent",
+                "revision": 1
+              }
+            },
+            "reuse": {
+              "sandbox": "always_new",
+              "workspace": "always_new",
+              "agent": "always_new"
+            },
+            "first_message": "Inspect the project.",
+            "consent": {
+              "always_review": false
+            }
+          }
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/missing-idempotency-key",
+          "title": "missing idempotency key",
+          "status": 400,
+          "detail": "This operation requires an Idempotency-Key header.",
+          "code": "missing_idempotency_key"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "trigger-error-create-invalid-key",
+      "operation": "POST /api/v1/triggers",
+      "scenario": "trigger_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/triggers",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "contains spaces"
+        },
+        "body": {
+          "content": {
+            "presentation": {
+              "title": "Contract Agent",
+              "description": "Public contract fixture",
+              "button_label": "open_in_cma",
+              "theme": "auto"
+            },
+            "target": {
+              "sandbox_profile": {
+                "id": "sbp_route_sandbox",
+                "revision": 1
+              },
+              "workspace_profile": {
+                "id": "wkp_route_workspace",
+                "revision": 1
+              },
+              "agent_profile": {
+                "id": "agp_route_agent",
+                "revision": 1
+              }
+            },
+            "reuse": {
+              "sandbox": "always_new",
+              "workspace": "always_new",
+              "agent": "always_new"
+            },
+            "first_message": "Inspect the project.",
+            "consent": {
+              "always_review": false
+            }
+          }
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-idempotency-key",
+          "title": "invalid idempotency key",
+          "status": 400,
+          "detail": "Idempotency-Key must contain between 1 and 255 visible ASCII bytes.",
+          "code": "invalid_idempotency_key"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "trigger-error-create-invalid-body",
+      "operation": "POST /api/v1/triggers",
+      "scenario": "trigger_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/triggers",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "trigger-error-create-invalid-body"
+        },
+        "body": "not-an-object"
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid_json",
+          "title": "invalid_json",
+          "status": 422,
+          "detail": "Failed to deserialize the JSON body into the target type: invalid type: string \"not-an-object\", expected struct CreateTriggerRequest at line 1 column 15",
+          "code": "invalid_json"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "trigger-error-create-missing-media-type",
+      "operation": "POST /api/v1/triggers",
+      "scenario": "trigger_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/triggers",
+        "headers": {
+          "idempotency-key": "trigger-error-create-missing-media-type"
+        },
+        "body": {
+          "content": {
+            "presentation": {
+              "title": "Contract Agent",
+              "description": "Public contract fixture",
+              "button_label": "open_in_cma",
+              "theme": "auto"
+            },
+            "target": {
+              "sandbox_profile": {
+                "id": "sbp_route_sandbox",
+                "revision": 1
+              },
+              "workspace_profile": {
+                "id": "wkp_route_workspace",
+                "revision": 1
+              },
+              "agent_profile": {
+                "id": "agp_route_agent",
+                "revision": 1
+              }
+            },
+            "reuse": {
+              "sandbox": "always_new",
+              "workspace": "always_new",
+              "agent": "always_new"
+            },
+            "first_message": "Inspect the project.",
+            "consent": {
+              "always_review": false
+            }
+          }
+        }
+      },
+      "response": {
+        "status": 415,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/json_content_type_required",
+          "title": "json_content_type_required",
+          "status": 415,
+          "detail": "The request body must use an application/json content type.",
+          "code": "json_content_type_required"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "trigger-error-list-anonymous",
+      "operation": "GET /api/v1/triggers",
+      "scenario": "trigger_anonymous",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/triggers?limit=10",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "trigger-error-list-forbidden",
+      "operation": "GET /api/v1/triggers",
+      "scenario": "trigger_forbidden",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/triggers?limit=10",
+        "headers": {}
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/forbidden",
+          "title": "forbidden",
+          "status": 403,
+          "detail": "This caller is not allowed to publish or manage Triggers.",
+          "code": "forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "trigger-error-read-anonymous",
+      "operation": "GET /api/v1/triggers/{id}",
+      "scenario": "trigger_anonymous",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/triggers/trg_contract",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "trigger-error-read-missing",
+      "operation": "GET /api/v1/triggers/{id}",
+      "scenario": "trigger_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/triggers/trg_missing",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/trigger-not-found",
+          "title": "trigger not found",
+          "status": 404,
+          "detail": "No Trigger matches this request.",
+          "code": "trigger_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "trigger-error-save-anonymous",
+      "operation": "PUT /api/v1/triggers/{id}",
+      "scenario": "trigger_anonymous",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/triggers/trg_contract",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "trigger-error-save-anonymous"
+        },
+        "body": {
+          "draft_version": 1,
+          "content": {
+            "presentation": {
+              "title": "Contract Agent",
+              "description": "Public contract fixture",
+              "button_label": "try_it",
+              "theme": "dark"
+            },
+            "target": {
+              "sandbox_profile": {
+                "id": "sbp_route_sandbox",
+                "revision": 1
+              },
+              "workspace_profile": {
+                "id": "wkp_route_workspace",
+                "revision": 1
+              },
+              "agent_profile": {
+                "id": "agp_route_agent",
+                "revision": 1
+              }
+            },
+            "reuse": {
+              "sandbox": "always_new",
+              "workspace": "always_new",
+              "agent": "always_new"
+            },
+            "first_message": "Inspect the project.",
+            "consent": {
+              "always_review": false
+            }
+          }
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "trigger-error-save-missing",
+      "operation": "PUT /api/v1/triggers/{id}",
+      "scenario": "trigger_owner",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/triggers/trg_missing",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "trigger-error-save-missing"
+        },
+        "body": {
+          "draft_version": 1,
+          "content": {
+            "presentation": {
+              "title": "Contract Agent",
+              "description": "Public contract fixture",
+              "button_label": "try_it",
+              "theme": "dark"
+            },
+            "target": {
+              "sandbox_profile": {
+                "id": "sbp_route_sandbox",
+                "revision": 1
+              },
+              "workspace_profile": {
+                "id": "wkp_route_workspace",
+                "revision": 1
+              },
+              "agent_profile": {
+                "id": "agp_route_agent",
+                "revision": 1
+              }
+            },
+            "reuse": {
+              "sandbox": "always_new",
+              "workspace": "always_new",
+              "agent": "always_new"
+            },
+            "first_message": "Inspect the project.",
+            "consent": {
+              "always_review": false
+            }
+          }
+        }
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/trigger-not-found",
+          "title": "trigger not found",
+          "status": 404,
+          "detail": "No Trigger matches this request.",
+          "code": "trigger_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "trigger-error-save-missing-key",
+      "operation": "PUT /api/v1/triggers/{id}",
+      "scenario": "trigger_owner",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/triggers/$trigger_id",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "draft_version": 1,
+          "content": {
+            "presentation": {
+              "title": "Contract Agent",
+              "description": "Public contract fixture",
+              "button_label": "try_it",
+              "theme": "dark"
+            },
+            "target": {
+              "sandbox_profile": {
+                "id": "sbp_route_sandbox",
+                "revision": 1
+              },
+              "workspace_profile": {
+                "id": "wkp_route_workspace",
+                "revision": 1
+              },
+              "agent_profile": {
+                "id": "agp_route_agent",
+                "revision": 1
+              }
+            },
+            "reuse": {
+              "sandbox": "always_new",
+              "workspace": "always_new",
+              "agent": "always_new"
+            },
+            "first_message": "Inspect the project.",
+            "consent": {
+              "always_review": false
+            }
+          }
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/missing-idempotency-key",
+          "title": "missing idempotency key",
+          "status": 400,
+          "detail": "This operation requires an Idempotency-Key header.",
+          "code": "missing_idempotency_key"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "trigger-error-save-invalid-key",
+      "operation": "PUT /api/v1/triggers/{id}",
+      "scenario": "trigger_owner",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/triggers/$trigger_id",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "contains spaces"
+        },
+        "body": {
+          "draft_version": 1,
+          "content": {
+            "presentation": {
+              "title": "Contract Agent",
+              "description": "Public contract fixture",
+              "button_label": "try_it",
+              "theme": "dark"
+            },
+            "target": {
+              "sandbox_profile": {
+                "id": "sbp_route_sandbox",
+                "revision": 1
+              },
+              "workspace_profile": {
+                "id": "wkp_route_workspace",
+                "revision": 1
+              },
+              "agent_profile": {
+                "id": "agp_route_agent",
+                "revision": 1
+              }
+            },
+            "reuse": {
+              "sandbox": "always_new",
+              "workspace": "always_new",
+              "agent": "always_new"
+            },
+            "first_message": "Inspect the project.",
+            "consent": {
+              "always_review": false
+            }
+          }
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-idempotency-key",
+          "title": "invalid idempotency key",
+          "status": 400,
+          "detail": "Idempotency-Key must contain between 1 and 255 visible ASCII bytes.",
+          "code": "invalid_idempotency_key"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "trigger-error-save-invalid-body",
+      "operation": "PUT /api/v1/triggers/{id}",
+      "scenario": "trigger_owner",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/triggers/$trigger_id",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "trigger-error-save-invalid-body"
+        },
+        "body": "not-an-object"
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid_json",
+          "title": "invalid_json",
+          "status": 422,
+          "detail": "Failed to deserialize the JSON body into the target type: invalid type: string \"not-an-object\", expected struct UpdateTriggerRequest at line 1 column 15",
+          "code": "invalid_json"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "trigger-error-save-missing-media-type",
+      "operation": "PUT /api/v1/triggers/{id}",
+      "scenario": "trigger_owner",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/triggers/$trigger_id",
+        "headers": {
+          "idempotency-key": "trigger-error-save-missing-media-type"
+        },
+        "body": {
+          "draft_version": 1,
+          "content": {
+            "presentation": {
+              "title": "Contract Agent",
+              "description": "Public contract fixture",
+              "button_label": "try_it",
+              "theme": "dark"
+            },
+            "target": {
+              "sandbox_profile": {
+                "id": "sbp_route_sandbox",
+                "revision": 1
+              },
+              "workspace_profile": {
+                "id": "wkp_route_workspace",
+                "revision": 1
+              },
+              "agent_profile": {
+                "id": "agp_route_agent",
+                "revision": 1
+              }
+            },
+            "reuse": {
+              "sandbox": "always_new",
+              "workspace": "always_new",
+              "agent": "always_new"
+            },
+            "first_message": "Inspect the project.",
+            "consent": {
+              "always_review": false
+            }
+          }
+        }
+      },
+      "response": {
+        "status": 415,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/json_content_type_required",
+          "title": "json_content_type_required",
+          "status": 415,
+          "detail": "The request body must use an application/json content type.",
+          "code": "json_content_type_required"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "trigger-error-publish-anonymous",
+      "operation": "POST /api/v1/triggers/{id}/publish",
+      "scenario": "trigger_anonymous",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/triggers/trg_contract/publish",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "trigger-error-publish-anonymous"
+        },
+        "body": {
+          "draft_version": 2
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "trigger-error-publish-missing",
+      "operation": "POST /api/v1/triggers/{id}/publish",
+      "scenario": "trigger_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/triggers/trg_missing/publish",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "trigger-error-publish-missing"
+        },
+        "body": {
+          "draft_version": 2
+        }
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/trigger-not-found",
+          "title": "trigger not found",
+          "status": 404,
+          "detail": "No Trigger matches this request.",
+          "code": "trigger_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "trigger-error-publish-missing-key",
+      "operation": "POST /api/v1/triggers/{id}/publish",
+      "scenario": "trigger_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/triggers/$trigger_id/publish",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "draft_version": 2
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/missing-idempotency-key",
+          "title": "missing idempotency key",
+          "status": 400,
+          "detail": "This operation requires an Idempotency-Key header.",
+          "code": "missing_idempotency_key"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "trigger-error-publish-invalid-key",
+      "operation": "POST /api/v1/triggers/{id}/publish",
+      "scenario": "trigger_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/triggers/$trigger_id/publish",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "contains spaces"
+        },
+        "body": {
+          "draft_version": 2
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-idempotency-key",
+          "title": "invalid idempotency key",
+          "status": 400,
+          "detail": "Idempotency-Key must contain between 1 and 255 visible ASCII bytes.",
+          "code": "invalid_idempotency_key"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "trigger-error-publish-invalid-body",
+      "operation": "POST /api/v1/triggers/{id}/publish",
+      "scenario": "trigger_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/triggers/$trigger_id/publish",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "trigger-error-publish-invalid-body"
+        },
+        "body": "not-an-object"
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid_json",
+          "title": "invalid_json",
+          "status": 422,
+          "detail": "Failed to deserialize the JSON body into the target type: invalid type: string \"not-an-object\", expected struct PublishTriggerRequest at line 1 column 15",
+          "code": "invalid_json"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "trigger-error-publish-missing-media-type",
+      "operation": "POST /api/v1/triggers/{id}/publish",
+      "scenario": "trigger_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/triggers/$trigger_id/publish",
+        "headers": {
+          "idempotency-key": "trigger-error-publish-missing-media-type"
+        },
+        "body": {
+          "draft_version": 2
+        }
+      },
+      "response": {
+        "status": 415,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/json_content_type_required",
+          "title": "json_content_type_required",
+          "status": 415,
+          "detail": "The request body must use an application/json content type.",
+          "code": "json_content_type_required"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "trigger-error-revisions-anonymous",
+      "operation": "GET /api/v1/triggers/{id}/revisions",
+      "scenario": "trigger_anonymous",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/triggers/trg_contract/revisions",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "trigger-error-revisions-missing",
+      "operation": "GET /api/v1/triggers/{id}/revisions",
+      "scenario": "trigger_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/triggers/trg_missing/revisions",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/trigger-not-found",
+          "title": "trigger not found",
+          "status": 404,
+          "detail": "No Trigger matches this request.",
+          "code": "trigger_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "trigger-error-placement-create-anonymous",
+      "operation": "POST /api/v1/triggers/{id}/placements",
+      "scenario": "trigger_anonymous",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/triggers/trg_contract/placements",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "trigger-error-placement-create-anonymous"
+        },
+        "body": {
+          "source_url": "https://source.example/docs",
+          "label": "Documentation"
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "trigger-error-placement-create-missing",
+      "operation": "POST /api/v1/triggers/{id}/placements",
+      "scenario": "trigger_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/triggers/trg_missing/placements",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "trigger-error-placement-create-missing"
+        },
+        "body": {
+          "source_url": "https://source.example/docs",
+          "label": "Documentation"
+        }
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/trigger-not-found",
+          "title": "trigger not found",
+          "status": 404,
+          "detail": "No Trigger matches this request.",
+          "code": "trigger_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "trigger-error-placement-create-missing-key",
+      "operation": "POST /api/v1/triggers/{id}/placements",
+      "scenario": "trigger_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/triggers/$trigger_id/placements",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "source_url": "https://source.example/docs",
+          "label": "Documentation"
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/missing-idempotency-key",
+          "title": "missing idempotency key",
+          "status": 400,
+          "detail": "This operation requires an Idempotency-Key header.",
+          "code": "missing_idempotency_key"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "trigger-error-placement-create-invalid-key",
+      "operation": "POST /api/v1/triggers/{id}/placements",
+      "scenario": "trigger_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/triggers/$trigger_id/placements",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "contains spaces"
+        },
+        "body": {
+          "source_url": "https://source.example/docs",
+          "label": "Documentation"
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-idempotency-key",
+          "title": "invalid idempotency key",
+          "status": 400,
+          "detail": "Idempotency-Key must contain between 1 and 255 visible ASCII bytes.",
+          "code": "invalid_idempotency_key"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "trigger-error-placement-create-invalid-body",
+      "operation": "POST /api/v1/triggers/{id}/placements",
+      "scenario": "trigger_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/triggers/$trigger_id/placements",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "trigger-error-placement-create-invalid-body"
+        },
+        "body": "not-an-object"
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid_json",
+          "title": "invalid_json",
+          "status": 422,
+          "detail": "Failed to deserialize the JSON body into the target type: invalid type: string \"not-an-object\", expected struct CreatePlacementRequest at line 1 column 15",
+          "code": "invalid_json"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "trigger-error-placement-create-missing-media-type",
+      "operation": "POST /api/v1/triggers/{id}/placements",
+      "scenario": "trigger_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/triggers/$trigger_id/placements",
+        "headers": {
+          "idempotency-key": "trigger-error-placement-create-missing-media-type"
+        },
+        "body": {
+          "source_url": "https://source.example/docs",
+          "label": "Documentation"
+        }
+      },
+      "response": {
+        "status": 415,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/json_content_type_required",
+          "title": "json_content_type_required",
+          "status": 415,
+          "detail": "The request body must use an application/json content type.",
+          "code": "json_content_type_required"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "trigger-error-placements-list-anonymous",
+      "operation": "GET /api/v1/triggers/{id}/placements",
+      "scenario": "trigger_anonymous",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/triggers/trg_contract/placements?include_retired=true",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "trigger-error-placements-list-missing",
+      "operation": "GET /api/v1/triggers/{id}/placements",
+      "scenario": "trigger_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/triggers/trg_missing/placements?include_retired=true",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/trigger-not-found",
+          "title": "trigger not found",
+          "status": 404,
+          "detail": "No Trigger matches this request.",
+          "code": "trigger_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "trigger-error-stats-anonymous",
+      "operation": "GET /api/v1/triggers/{id}/stats",
+      "scenario": "trigger_anonymous",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/triggers/trg_contract/stats",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "trigger-error-stats-missing",
+      "operation": "GET /api/v1/triggers/{id}/stats",
+      "scenario": "trigger_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/triggers/trg_missing/stats",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/trigger-not-found",
+          "title": "trigger not found",
+          "status": 404,
+          "detail": "No Trigger matches this request.",
+          "code": "trigger_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "trigger-error-placement-retire-anonymous",
+      "operation": "POST /api/v1/triggers/{id}/placements/{placement_id}/retire",
+      "scenario": "trigger_anonymous",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/triggers/trg_contract/placements/plc_contract/retire",
+        "headers": {
+          "idempotency-key": "trigger-error-placement-retire-anonymous"
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "trigger-error-placement-retire-missing",
+      "operation": "POST /api/v1/triggers/{id}/placements/{placement_id}/retire",
+      "scenario": "trigger_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/triggers/trg_missing/placements/$placement_id/retire",
+        "headers": {
+          "idempotency-key": "trigger-error-placement-retire-missing"
+        }
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/trigger-not-found",
+          "title": "trigger not found",
+          "status": 404,
+          "detail": "No Trigger matches this request.",
+          "code": "trigger_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "trigger-error-placement-retire-missing-key",
+      "operation": "POST /api/v1/triggers/{id}/placements/{placement_id}/retire",
+      "scenario": "trigger_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/triggers/$trigger_id/placements/$placement_id/retire",
+        "headers": {}
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/missing-idempotency-key",
+          "title": "missing idempotency key",
+          "status": 400,
+          "detail": "This operation requires an Idempotency-Key header.",
+          "code": "missing_idempotency_key"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "trigger-error-placement-retire-invalid-key",
+      "operation": "POST /api/v1/triggers/{id}/placements/{placement_id}/retire",
+      "scenario": "trigger_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/triggers/$trigger_id/placements/$placement_id/retire",
+        "headers": {
+          "idempotency-key": "contains spaces"
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-idempotency-key",
+          "title": "invalid idempotency key",
+          "status": 400,
+          "detail": "Idempotency-Key must contain between 1 and 255 visible ASCII bytes.",
+          "code": "invalid_idempotency_key"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "trigger-error-delete-published-refused-anonymous",
+      "operation": "DELETE /api/v1/triggers/{id}",
+      "scenario": "trigger_anonymous",
+      "request": {
+        "method": "DELETE",
+        "path": "/api/v1/triggers/trg_contract",
+        "headers": {
+          "idempotency-key": "trigger-error-delete-published-refused-anonymous"
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "trigger-error-delete-published-refused-missing",
+      "operation": "DELETE /api/v1/triggers/{id}",
+      "scenario": "trigger_owner",
+      "request": {
+        "method": "DELETE",
+        "path": "/api/v1/triggers/trg_missing",
+        "headers": {
+          "idempotency-key": "trigger-error-delete-published-refused-missing"
+        }
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/trigger-not-found",
+          "title": "trigger not found",
+          "status": 404,
+          "detail": "No Trigger matches this request.",
+          "code": "trigger_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "trigger-error-delete-published-refused-missing-key",
+      "operation": "DELETE /api/v1/triggers/{id}",
+      "scenario": "trigger_owner",
+      "request": {
+        "method": "DELETE",
+        "path": "/api/v1/triggers/$trigger_id",
+        "headers": {}
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/missing-idempotency-key",
+          "title": "missing idempotency key",
+          "status": 400,
+          "detail": "This operation requires an Idempotency-Key header.",
+          "code": "missing_idempotency_key"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "trigger-error-delete-published-refused-invalid-key",
+      "operation": "DELETE /api/v1/triggers/{id}",
+      "scenario": "trigger_owner",
+      "request": {
+        "method": "DELETE",
+        "path": "/api/v1/triggers/$trigger_id",
+        "headers": {
+          "idempotency-key": "contains spaces"
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-idempotency-key",
+          "title": "invalid idempotency key",
+          "status": 400,
+          "detail": "Idempotency-Key must contain between 1 and 255 visible ASCII bytes.",
+          "code": "invalid_idempotency_key"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "trigger-error-retire-anonymous",
+      "operation": "POST /api/v1/triggers/{id}/retire",
+      "scenario": "trigger_anonymous",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/triggers/trg_contract/retire",
+        "headers": {
+          "idempotency-key": "trigger-error-retire-anonymous"
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "trigger-error-retire-missing",
+      "operation": "POST /api/v1/triggers/{id}/retire",
+      "scenario": "trigger_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/triggers/trg_missing/retire",
+        "headers": {
+          "idempotency-key": "trigger-error-retire-missing"
+        }
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/trigger-not-found",
+          "title": "trigger not found",
+          "status": 404,
+          "detail": "No Trigger matches this request.",
+          "code": "trigger_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "trigger-error-retire-missing-key",
+      "operation": "POST /api/v1/triggers/{id}/retire",
+      "scenario": "trigger_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/triggers/$trigger_id/retire",
+        "headers": {}
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/missing-idempotency-key",
+          "title": "missing idempotency key",
+          "status": 400,
+          "detail": "This operation requires an Idempotency-Key header.",
+          "code": "missing_idempotency_key"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "trigger-error-retire-invalid-key",
+      "operation": "POST /api/v1/triggers/{id}/retire",
+      "scenario": "trigger_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/triggers/$trigger_id/retire",
+        "headers": {
+          "idempotency-key": "contains spaces"
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-idempotency-key",
+          "title": "invalid idempotency key",
+          "status": 400,
+          "detail": "Idempotency-Key must contain between 1 and 255 visible ASCII bytes.",
+          "code": "invalid_idempotency_key"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "trigger-error-embed-anonymous",
+      "operation": "GET /api/v1/triggers/{id}/embed",
+      "scenario": "trigger_anonymous",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/triggers/trg_contract/embed?placement_id=plc_contract",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "trigger-error-embed-missing",
+      "operation": "GET /api/v1/triggers/{id}/embed",
+      "scenario": "trigger_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/triggers/trg_missing/embed?placement_id=$placement_id",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/trigger-embed-not-found",
+          "title": "trigger embed not found",
+          "status": 404,
+          "detail": "No published Trigger placement matches this request.",
+          "code": "trigger_embed_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "trigger-error-create-invalid-title",
+      "operation": "POST /api/v1/triggers",
+      "scenario": "trigger_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/triggers",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "trigger-error-create-invalid-title"
+        },
+        "body": {
+          "content": {
+            "presentation": {
+              "title": "",
+              "description": "Public contract fixture",
+              "button_label": "open_in_cma",
+              "theme": "auto"
+            },
+            "target": {
+              "sandbox_profile": {
+                "id": "sbp_route_sandbox",
+                "revision": 1
+              },
+              "workspace_profile": {
+                "id": "wkp_route_workspace",
+                "revision": 1
+              },
+              "agent_profile": {
+                "id": "agp_route_agent",
+                "revision": 1
+              }
+            },
+            "reuse": {
+              "sandbox": "always_new",
+              "workspace": "always_new",
+              "agent": "always_new"
+            },
+            "first_message": "Inspect the project.",
+            "consent": {
+              "always_review": false
+            }
+          }
+        }
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-title",
+          "title": "invalid title",
+          "status": 422,
+          "detail": "The Trigger does not satisfy its validation contract.",
+          "code": "invalid_title",
+          "field": "presentation.title"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "trigger-error-save-invalid-title",
+      "operation": "PUT /api/v1/triggers/{id}",
+      "scenario": "trigger_owner",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/triggers/$trigger_id",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "trigger-error-save-invalid-title"
+        },
+        "body": {
+          "draft_version": 1,
+          "content": {
+            "presentation": {
+              "title": "",
+              "description": "Public contract fixture",
+              "button_label": "open_in_cma",
+              "theme": "auto"
+            },
+            "target": {
+              "sandbox_profile": {
+                "id": "sbp_route_sandbox",
+                "revision": 1
+              },
+              "workspace_profile": {
+                "id": "wkp_route_workspace",
+                "revision": 1
+              },
+              "agent_profile": {
+                "id": "agp_route_agent",
+                "revision": 1
+              }
+            },
+            "reuse": {
+              "sandbox": "always_new",
+              "workspace": "always_new",
+              "agent": "always_new"
+            },
+            "first_message": "Inspect the project.",
+            "consent": {
+              "always_review": false
+            }
+          }
+        }
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-title",
+          "title": "invalid title",
+          "status": 422,
+          "detail": "The Trigger does not satisfy its validation contract.",
+          "code": "invalid_title",
+          "field": "presentation.title"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "trigger-error-list-invalid-page",
+      "operation": "GET /api/v1/triggers",
+      "scenario": "trigger_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/triggers?limit=0",
+        "headers": {}
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-trigger-page",
+          "title": "invalid trigger page",
+          "status": 422,
+          "detail": "The Trigger does not satisfy its validation contract.",
+          "code": "invalid_trigger_page",
+          "field": "limit"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "trigger-error-list-malformed-query",
+      "operation": "GET /api/v1/triggers",
+      "scenario": "trigger_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/triggers?limit=wrong",
+        "headers": {}
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-trigger-page",
+          "title": "invalid trigger page",
+          "status": 400,
+          "detail": "The query parameters are not valid for this resource.",
+          "code": "invalid_trigger_page"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "trigger-error-placements-list-invalid-query",
+      "operation": "GET /api/v1/triggers/{id}/placements",
+      "scenario": "trigger_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/triggers/$trigger_id/placements?include_retired=wrong",
+        "headers": {}
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-placement-query",
+          "title": "invalid placement query",
+          "status": 400,
+          "detail": "The query parameters are not valid for this resource.",
+          "code": "invalid_placement_query"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "trigger-error-placement-create-invalid-url",
+      "operation": "POST /api/v1/triggers/{id}/placements",
+      "scenario": "trigger_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/triggers/$trigger_id/placements",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "trigger-error-placement-create-invalid-url"
+        },
+        "body": {
+          "source_url": "javascript:alert(1)",
+          "label": "Documentation"
+        }
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-placement-url",
+          "title": "invalid placement url",
+          "status": 422,
+          "detail": "The Trigger does not satisfy its validation contract.",
+          "code": "invalid_placement_url",
+          "field": "placements.source_url"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "trigger-error-placement-retire-missing-placement",
+      "operation": "POST /api/v1/triggers/{id}/placements/{placement_id}/retire",
+      "scenario": "trigger_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/triggers/$trigger_id/placements/plc_missing/retire",
+        "headers": {
+          "idempotency-key": "trigger-error-placement-retire-missing-placement"
+        }
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/placement-not-found",
+          "title": "placement not found",
+          "status": 404,
+          "detail": "No Placement matches this request.",
+          "code": "placement_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "trigger-error-save-stale-version",
+      "operation": "PUT /api/v1/triggers/{id}",
+      "scenario": "trigger_owner",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/triggers/$trigger_id",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "trigger-error-save-stale-version"
+        },
+        "body": {
+          "draft_version": 999,
+          "content": {
+            "presentation": {
+              "title": "Contract Agent",
+              "description": "Public contract fixture",
+              "button_label": "try_it",
+              "theme": "dark"
+            },
+            "target": {
+              "sandbox_profile": {
+                "id": "sbp_route_sandbox",
+                "revision": 1
+              },
+              "workspace_profile": {
+                "id": "wkp_route_workspace",
+                "revision": 1
+              },
+              "agent_profile": {
+                "id": "agp_route_agent",
+                "revision": 1
+              }
+            },
+            "reuse": {
+              "sandbox": "always_new",
+              "workspace": "always_new",
+              "agent": "always_new"
+            },
+            "first_message": "Inspect the project.",
+            "consent": {
+              "always_review": false
+            }
+          }
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/trigger-draft-changed",
+          "title": "trigger draft changed",
+          "status": 409,
+          "detail": "The Trigger draft changed before this operation completed.",
+          "code": "trigger_draft_changed",
+          "expected": 999,
+          "actual": 1
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "trigger-error-publish-stale-version",
+      "operation": "POST /api/v1/triggers/{id}/publish",
+      "scenario": "trigger_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/triggers/$trigger_id/publish",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "trigger-error-publish-stale-version"
+        },
+        "body": {
+          "draft_version": 999
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/trigger-draft-changed",
+          "title": "trigger draft changed",
+          "status": 409,
+          "detail": "The Trigger draft changed before this operation completed.",
+          "code": "trigger_draft_changed",
+          "expected": 999,
+          "actual": 1
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "trigger-error-create-reused-key",
+      "operation": "POST /api/v1/triggers",
+      "scenario": "trigger_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/triggers",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "trigger-errors-setup-create"
+        },
+        "body": {
+          "content": {
+            "presentation": {
+              "title": "Different request",
+              "description": "Public contract fixture",
+              "button_label": "open_in_cma",
+              "theme": "auto"
+            },
+            "target": {
+              "sandbox_profile": {
+                "id": "sbp_route_sandbox",
+                "revision": 1
+              },
+              "workspace_profile": {
+                "id": "wkp_route_workspace",
+                "revision": 1
+              },
+              "agent_profile": {
+                "id": "agp_route_agent",
+                "revision": 1
+              }
+            },
+            "reuse": {
+              "sandbox": "always_new",
+              "workspace": "always_new",
+              "agent": "always_new"
+            },
+            "first_message": "Inspect the project.",
+            "consent": {
+              "always_review": false
+            }
+          }
+        }
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/idempotency-key-reused",
+          "title": "idempotency key reused",
+          "status": 422,
+          "detail": "This Idempotency-Key already names a different request.",
+          "code": "idempotency_key_reused"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    }
+  ]
+}

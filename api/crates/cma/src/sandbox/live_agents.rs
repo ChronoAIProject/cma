@@ -1,0 +1,489 @@
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, OnceLock};
+
+use layer2_core::sandbox::{
+    AgentRuntimeConnection, AgentRuntimeError, AgentRuntimeRegistry, AgentRuntimeTarget,
+    AgentUpdateRecorder,
+};
+use layer2_core::{AgentId, RuntimeCapabilities};
+use layer3_adapter::{ConversationInputSender, ConversationUpdate};
+use tokio::sync::{mpsc, oneshot};
+use tokio::task::AbortHandle;
+
+mod recovery;
+mod updates;
+pub(crate) use recovery::{
+    DurableAgentConnectionLossHandler, LiveAgentAttachmentIdentity, LiveAgentConnectionLossHandler,
+};
+use updates::spawn_update_task;
+
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub(crate) enum LiveAgentRegistryError {
+    #[error("a newer runtime generation is already attached")]
+    StaleGeneration,
+    #[error("the runtime generation is bound to another conversation")]
+    ConversationMismatch,
+    #[error("the live attachment is no longer registered")]
+    NotAttached,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct LiveAgentTarget {
+    pub agent_id: AgentId,
+    pub conversation_id: String,
+    pub runtime_generation: u64,
+}
+
+#[cfg(test)]
+#[derive(Clone)]
+pub(crate) struct LiveAgentConnection {
+    pub capabilities: RuntimeCapabilities,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct LiveAgentAttachment {
+    agent_id: AgentId,
+    conversation_id: String,
+    runtime_generation: u64,
+    authority_fence: u64,
+    nonce: u64,
+    inserted: bool,
+}
+
+struct RegistryEntry {
+    conversation_id: String,
+    runtime_generation: u64,
+    authority_fence: u64,
+    capabilities: RuntimeCapabilities,
+    input: ConversationInputSender,
+    activation: Option<oneshot::Sender<()>>,
+    published: bool,
+    nonce: u64,
+    task: AbortHandle,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct AuthorityWatermark {
+    runtime_generation: u64,
+    authority_fence: u64,
+    fenced: bool,
+}
+
+#[derive(Default)]
+struct RegistryState {
+    entries: HashMap<AgentId, RegistryEntry>,
+    staged: HashMap<AgentId, RegistryEntry>,
+    watermarks: HashMap<AgentId, AuthorityWatermark>,
+}
+
+#[derive(Default)]
+pub(crate) struct LiveAgentRegistry {
+    state: Mutex<RegistryState>,
+    next_nonce: AtomicU64,
+    loss_handler: OnceLock<Arc<dyn LiveAgentConnectionLossHandler>>,
+}
+
+impl LiveAgentRegistry {
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn attach(
+        self: &Arc<Self>,
+        agent_id: AgentId,
+        conversation_id: String,
+        runtime_generation: u64,
+        authority_fence: u64,
+        capabilities: RuntimeCapabilities,
+        input: ConversationInputSender,
+        updates: mpsc::Receiver<ConversationUpdate>,
+        recorder: Arc<dyn AgentUpdateRecorder>,
+    ) -> Result<LiveAgentAttachment, LiveAgentRegistryError> {
+        if runtime_generation == 0 || authority_fence == 0 {
+            return Err(LiveAgentRegistryError::StaleGeneration);
+        }
+        let mut state = self.lock();
+        validate_authority(&state, &agent_id, runtime_generation, authority_fence)?;
+        if let Some(existing) = state.staged.get(&agent_id) {
+            validate_replacement(
+                existing,
+                &conversation_id,
+                runtime_generation,
+                authority_fence,
+            )?;
+            if exact_authority(existing, runtime_generation, authority_fence) {
+                return Ok(attachment(&agent_id, existing, false));
+            }
+        }
+        if let Some(existing) = state.entries.get(&agent_id) {
+            validate_replacement(
+                existing,
+                &conversation_id,
+                runtime_generation,
+                authority_fence,
+            )?;
+            if exact_authority(existing, runtime_generation, authority_fence) {
+                return Ok(attachment(&agent_id, existing, false));
+            }
+        }
+        accept_authority(&mut state, &agent_id, runtime_generation, authority_fence);
+
+        let nonce = self.next_nonce.fetch_add(1, Ordering::Relaxed) + 1;
+        let (activate, activated) = oneshot::channel();
+        let task = spawn_update_task(
+            Arc::downgrade(self),
+            LiveAgentAttachmentIdentity {
+                agent_id: agent_id.clone(),
+                conversation_id: conversation_id.clone(),
+                runtime_generation,
+                authority_fence,
+                nonce,
+            },
+            activated,
+            updates,
+            recorder,
+        );
+        let entry = RegistryEntry {
+            conversation_id: conversation_id.clone(),
+            runtime_generation,
+            authority_fence,
+            capabilities,
+            input,
+            activation: Some(activate),
+            published: false,
+            nonce,
+            task,
+        };
+        if let Some(replaced) = state.staged.insert(agent_id.clone(), entry) {
+            replaced.task.abort();
+        }
+        Ok(LiveAgentAttachment {
+            agent_id,
+            conversation_id,
+            runtime_generation,
+            authority_fence,
+            nonce,
+            inserted: true,
+        })
+    }
+
+    pub(crate) fn publish_and_activate(
+        &self,
+        attachment: &LiveAgentAttachment,
+    ) -> Result<(), LiveAgentRegistryError> {
+        let mut state = self.lock();
+        if exact_entry(&state.entries, attachment).is_some() {
+            return Ok(());
+        }
+        if exact_entry(&state.staged, attachment).is_none() {
+            return Err(LiveAgentRegistryError::NotAttached);
+        }
+        let mut entry = state
+            .staged
+            .remove(&attachment.agent_id)
+            .ok_or(LiveAgentRegistryError::NotAttached)?;
+        let Some(activation) = entry.activation.take() else {
+            entry.task.abort();
+            return Err(LiveAgentRegistryError::NotAttached);
+        };
+        if activation.send(()).is_err() {
+            entry.task.abort();
+            return Err(LiveAgentRegistryError::NotAttached);
+        }
+        entry.published = true;
+        if let Some(replaced) = state.entries.insert(attachment.agent_id.clone(), entry) {
+            replaced.task.abort();
+        }
+        Ok(())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn resolve(&self, target: &LiveAgentTarget) -> Option<LiveAgentConnection> {
+        self.lock().entries.get(&target.agent_id).and_then(|entry| {
+            (entry.published
+                && entry.conversation_id == target.conversation_id
+                && entry.runtime_generation == target.runtime_generation)
+                .then(|| LiveAgentConnection {
+                    capabilities: entry.capabilities.clone(),
+                })
+        })
+    }
+
+    pub(crate) fn published_target_is_attached(&self, target: &LiveAgentTarget) -> bool {
+        target_matches(&self.lock().entries, target)
+    }
+
+    pub(crate) fn target_is_attached(&self, target: &LiveAgentTarget) -> bool {
+        let state = self.lock();
+        target_matches(&state.entries, target) || target_matches(&state.staged, target)
+    }
+
+    pub(crate) fn attachment(
+        &self,
+        target: &LiveAgentTarget,
+        authority_fence: u64,
+    ) -> Result<Option<LiveAgentAttachment>, LiveAgentRegistryError> {
+        if authority_fence == 0 {
+            return Err(LiveAgentRegistryError::StaleGeneration);
+        }
+        let mut state = self.lock();
+        validate_authority(
+            &state,
+            &target.agent_id,
+            target.runtime_generation,
+            authority_fence,
+        )?;
+        accept_authority(
+            &mut state,
+            &target.agent_id,
+            target.runtime_generation,
+            authority_fence,
+        );
+        if let Some(entry) = state.staged.get_mut(&target.agent_id).filter(|entry| {
+            entry.conversation_id == target.conversation_id
+                && entry.runtime_generation == target.runtime_generation
+        }) {
+            if entry.authority_fence > authority_fence {
+                return Err(LiveAgentRegistryError::StaleGeneration);
+            }
+            entry.authority_fence = authority_fence;
+            let attachment = attachment(&target.agent_id, entry, false);
+            accept_authority(
+                &mut state,
+                &target.agent_id,
+                target.runtime_generation,
+                authority_fence,
+            );
+            return Ok(Some(attachment));
+        }
+        let Some(entry) = state.entries.get(&target.agent_id).filter(|entry| {
+            entry.conversation_id == target.conversation_id
+                && entry.runtime_generation == target.runtime_generation
+        }) else {
+            return Ok(None);
+        };
+        if entry.authority_fence > authority_fence {
+            return Err(LiveAgentRegistryError::StaleGeneration);
+        }
+        let attachment = attachment(&target.agent_id, entry, false);
+        accept_authority(
+            &mut state,
+            &target.agent_id,
+            target.runtime_generation,
+            authority_fence,
+        );
+        Ok(Some(attachment))
+    }
+
+    pub(crate) fn rollback(&self, attachment: &LiveAgentAttachment) {
+        if attachment.inserted {
+            let mut state = self.lock();
+            let matches = exact_entry(&state.staged, attachment).is_some();
+            if matches {
+                if let Some(entry) = state.staged.remove(&attachment.agent_id) {
+                    entry.task.abort();
+                }
+            }
+        }
+    }
+
+    pub(crate) fn fence(
+        &self,
+        agent_id: &AgentId,
+        runtime_generation: Option<u64>,
+        authority_fence: u64,
+    ) {
+        let mut state = self.lock();
+        let generation = runtime_generation.unwrap_or_else(|| {
+            state
+                .watermarks
+                .get(agent_id)
+                .map_or(0, |watermark| watermark.runtime_generation)
+        });
+        if !fence_authority(&mut state, agent_id, generation, authority_fence) {
+            return;
+        }
+        remove_fenced_entry(
+            &mut state.entries,
+            agent_id,
+            runtime_generation,
+            authority_fence,
+        );
+        remove_fenced_entry(
+            &mut state.staged,
+            agent_id,
+            runtime_generation,
+            authority_fence,
+        );
+    }
+
+    fn lock(&self) -> std::sync::MutexGuard<'_, RegistryState> {
+        self.state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+}
+
+#[async_trait::async_trait]
+impl AgentRuntimeRegistry for LiveAgentRegistry {
+    async fn resolve(
+        &self,
+        target: &AgentRuntimeTarget,
+    ) -> Result<AgentRuntimeConnection, AgentRuntimeError> {
+        let state = self.lock();
+        let entry = state
+            .entries
+            .get(&target.agent_id)
+            .ok_or(AgentRuntimeError::NotFound)?;
+        if entry.runtime_generation != target.runtime_generation {
+            return Err(AgentRuntimeError::StaleGeneration);
+        }
+        if !entry.published || entry.conversation_id != target.conversation_id {
+            return Err(AgentRuntimeError::NotFound);
+        }
+        Ok(AgentRuntimeConnection {
+            capabilities: entry.capabilities.clone(),
+            input: entry.input.clone(),
+        })
+    }
+
+    async fn fence(
+        &self,
+        agent_id: &AgentId,
+        authority_fence: u64,
+    ) -> Result<(), AgentRuntimeError> {
+        if authority_fence == 0 {
+            return Err(AgentRuntimeError::StaleGeneration);
+        }
+        LiveAgentRegistry::fence(self, agent_id, None, authority_fence);
+        Ok(())
+    }
+}
+
+fn validate_authority(
+    state: &RegistryState,
+    agent_id: &AgentId,
+    runtime_generation: u64,
+    authority_fence: u64,
+) -> Result<(), LiveAgentRegistryError> {
+    if runtime_generation == 0 || authority_fence == 0 {
+        return Err(LiveAgentRegistryError::StaleGeneration);
+    }
+    if state.watermarks.get(agent_id).is_some_and(|watermark| {
+        runtime_generation < watermark.runtime_generation
+            || (runtime_generation == watermark.runtime_generation
+                && (authority_fence < watermark.authority_fence
+                    || (watermark.fenced && authority_fence == watermark.authority_fence)))
+    }) {
+        return Err(LiveAgentRegistryError::StaleGeneration);
+    }
+    Ok(())
+}
+
+fn accept_authority(
+    state: &mut RegistryState,
+    agent_id: &AgentId,
+    runtime_generation: u64,
+    authority_fence: u64,
+) {
+    let watermark = state.watermarks.entry(agent_id.clone()).or_default();
+    if runtime_generation > watermark.runtime_generation {
+        watermark.runtime_generation = runtime_generation;
+        watermark.authority_fence = authority_fence;
+        watermark.fenced = false;
+    } else if runtime_generation == watermark.runtime_generation
+        && authority_fence > watermark.authority_fence
+    {
+        watermark.authority_fence = authority_fence;
+        watermark.fenced = false;
+    }
+}
+
+fn fence_authority(
+    state: &mut RegistryState,
+    agent_id: &AgentId,
+    runtime_generation: u64,
+    authority_fence: u64,
+) -> bool {
+    let watermark = state.watermarks.entry(agent_id.clone()).or_default();
+    if runtime_generation > watermark.runtime_generation
+        || (runtime_generation == watermark.runtime_generation
+            && authority_fence >= watermark.authority_fence)
+    {
+        watermark.runtime_generation = runtime_generation;
+        watermark.authority_fence = authority_fence;
+        watermark.fenced = true;
+        true
+    } else {
+        false
+    }
+}
+
+fn exact_entry<'a>(
+    entries: &'a HashMap<AgentId, RegistryEntry>,
+    attachment: &LiveAgentAttachment,
+) -> Option<&'a RegistryEntry> {
+    entries.get(&attachment.agent_id).filter(|entry| {
+        entry.conversation_id == attachment.conversation_id
+            && entry.runtime_generation == attachment.runtime_generation
+            && entry.authority_fence == attachment.authority_fence
+            && entry.nonce == attachment.nonce
+    })
+}
+
+fn validate_replacement(
+    existing: &RegistryEntry,
+    conversation_id: &str,
+    runtime_generation: u64,
+    authority_fence: u64,
+) -> Result<(), LiveAgentRegistryError> {
+    if existing.runtime_generation > runtime_generation
+        || (existing.runtime_generation == runtime_generation
+            && existing.authority_fence > authority_fence)
+    {
+        return Err(LiveAgentRegistryError::StaleGeneration);
+    }
+    if existing.runtime_generation == runtime_generation
+        && existing.conversation_id != conversation_id
+    {
+        return Err(LiveAgentRegistryError::ConversationMismatch);
+    }
+    Ok(())
+}
+
+fn exact_authority(entry: &RegistryEntry, runtime_generation: u64, authority_fence: u64) -> bool {
+    entry.runtime_generation == runtime_generation && entry.authority_fence == authority_fence
+}
+
+fn attachment(agent_id: &AgentId, entry: &RegistryEntry, inserted: bool) -> LiveAgentAttachment {
+    LiveAgentAttachment {
+        agent_id: agent_id.clone(),
+        conversation_id: entry.conversation_id.clone(),
+        runtime_generation: entry.runtime_generation,
+        authority_fence: entry.authority_fence,
+        nonce: entry.nonce,
+        inserted,
+    }
+}
+
+fn target_matches(entries: &HashMap<AgentId, RegistryEntry>, target: &LiveAgentTarget) -> bool {
+    entries.get(&target.agent_id).is_some_and(|entry| {
+        entry.conversation_id == target.conversation_id
+            && entry.runtime_generation == target.runtime_generation
+    })
+}
+
+fn remove_fenced_entry(
+    entries: &mut HashMap<AgentId, RegistryEntry>,
+    agent_id: &AgentId,
+    runtime_generation: Option<u64>,
+    authority_fence: u64,
+) {
+    let should_remove = entries.get(agent_id).is_some_and(|entry| {
+        runtime_generation.is_none_or(|generation| entry.runtime_generation == generation)
+            && entry.authority_fence <= authority_fence
+    });
+    if should_remove {
+        if let Some(entry) = entries.remove(agent_id) {
+            entry.task.abort();
+        }
+    }
+}

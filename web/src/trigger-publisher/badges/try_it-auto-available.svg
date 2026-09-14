@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="79" height="32" viewBox="0 0 79 32" role="img" aria-labelledby="cma-title">
+<title id="cma-title">Try it</title>
+<style>:root{--badge-bg:#ffffff;--badge-border:#d0d7de;--badge-text:#1f2328;--badge-mark:#0a7a55}@media (prefers-color-scheme:dark){:root{--badge-bg:#0d1117;--badge-border:#30363d;--badge-text:#f0f6fc;--badge-mark:#4fd1a1}}</style>
+<rect x="0.5" y="0.5" width="78" height="31" rx="6" fill="var(--badge-bg)" stroke="var(--badge-border)"/>
+<g color="var(--badge-mark)" transform="translate(2 4) scale(0.24)">
+<path d="M71 71 A30 30 0 1 0 29 71" fill="none" stroke="currentColor" stroke-width="11" stroke-linecap="round"/>
+<path d="M71 71 L61 59 L50 71 L39 59 L29 71" fill="none" stroke="currentColor" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="30" y="38" width="17" height="12" rx="4" fill="currentColor"/>
+<rect x="53" y="38" width="17" height="12" rx="4" fill="currentColor"/>
+<path d="M46 44 L54 44" fill="none" stroke="currentColor" stroke-width="4"/>
+</g>
+<text x="38" y="21" fill="var(--badge-text)" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif" font-size="13" font-weight="600" textLength="31" lengthAdjust="spacingAndGlyphs">Try it</text>
+</svg>

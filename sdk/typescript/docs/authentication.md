@@ -1,105 +1,93 @@
-# TypeScript Authentication
+# Authentication
 
-<!-- nav: 30 Authentication -->
+<!-- nav: 3 Authentication -->
 
-CMA accepts either the deployment's browser session cookie or an HTTP bearer
-credential. The SDK does not mint credentials and never persists one. How a user
-obtains a credential is deployment-specific; when issuance is not self-service,
-ask that deployment's operator or identity administrator.
-
-## Anonymous deployment discovery
-
-`readConformance` is always anonymous, even when the client is configured with a
-bearer credential or browser cookies. It reads the deployment's protocol classes,
-version, and exact build without presenting either credential:
+Resource methods use browser cookies by default. Backend callers can disable
+cookies and provide a rotation-aware credential callback; it is resolved for
+each HTTP request. The callback should read from the host's credential store,
+never from a URL or committed constant:
 
 ```ts
 import { createClient } from '@chronoai/cma-sdk';
 
 const cma = createClient({
   baseUrl: 'https://cma.example.com',
+  cookies: false,
   credential: () => process.env.CMA_ACCESS_TOKEN,
 });
 
-const deployment = await cma.readConformance();
-console.log(deployment.conformsTo, deployment.version, deployment.buildSha);
+await cma.agents.list();
 ```
 
-Correlation and response observation remain active for discovery. Public access
-means that the request omits authorization and cookies; it does not bypass the
-client's diagnostics.
+Never place a credential in `baseUrl`; URLs containing user information are
+rejected.
 
-## Backend bearer credentials
+`readConformance` remains deliberately anonymous: it sends neither bearer
+credentials nor cookies and does not invoke the credential callback. The SDK
+does not perform an interactive sign-in, create API keys or store credentials.
 
-Supply a callback, not a captured header. The callback is invoked for every unary
-request attempt and every event-stream reconnect, so replacing the value in the
-credential store takes effect without rebuilding the client.
+`readTriggerPreview(config, publicId)` and `launches.preview(publicId)` are
+credential-suppressed public reads, as is `auth.readSignupOptions()`. Admission requires the visitor's authenticated
+identity; Launch reads, progress and connection handoffs are owner-checked.
+Publisher methods require the separate Trigger-publishing grant. Operator methods
+require their distinct operator grants; exposing a client namespace does not grant
+authority to use it.
+
+## Renewable Sandbox Authority
+
+Creating a new Sandbox requires renewable owner authority established through
+CMA's public `/auth/login` OAuth flow with the same subject. A request bearer
+authenticates that request; CMA does not persist it or assume it can be renewed.
+This prerequisite also applies to Launch creation or Start when resolution needs
+a new Sandbox, but does not gate reuse of an already admitted Sandbox or Agent.
+Default-context conversation creation also checks setup if it needs a Sandbox.
+
+Missing setup returns HTTP 409 with `sandbox_credential_setup_required` in the
+normal problem document. Use `auth.loginUrl({ returnTo })` for a supported CMA
+workflow destination, complete sign-in with the same account, then submit the
+refused keyed operation with a **new** idempotency key. The original key continues
+to replay its exact refusal, even after setup. An ambiguous transport failure is
+different: retry its original key and unchanged body to learn its outcome.
+Conversation creation is unkeyed: retry a definitive setup refusal after sign-in,
+but never assume an ambiguous conversation-creation failure is safe to replay.
+
+A successful `auth.readSession()` proves identity, not renewable credential
+readiness; resource admission checks that prerequisite again. Authentication
+store or provider outages remain dependency errors, not instructions to replace
+credentials. The SDK neither performs the OAuth exchange nor acquires a refresh
+token for the application.
+
+## Browser Sessions
+
+`auth.readSession()` returns a discriminated `AuthSession`: HTTP 401 with
+`authenticated: false` means signed out; HTTP 503 is an unavailable identity
+store, not a signed-out result. Successful identities carry `subject`, explicit
+`capabilities`, `visitor`, and optional display fields. Display fields are never
+authorization evidence.
+
+`auth.loginUrl({ returnTo, screen: 'register' })` validates a canonical CMA
+workflow destination and returns the navigation URL without making a request.
+`screen` is optional; `auth.logoutUrl()` similarly returns the logout navigation
+URL without revoking anything until the application navigates there.
+`auth.readSignupOptions()` supplies current registration availability.
+Preserve an explicit visitor intent across sign-in,
+with a bounded lifetime and its exact command key/body. An OAuth callback without
+that intent must not create a Launch.
 
 ```ts
 import { createClient } from '@chronoai/cma-sdk';
 
-const credentialStore: { current?: string } = {};
-const cma = createClient({
-  baseUrl: 'https://cma.example.com',
-  credential: () => credentialStore.current,
-  cookies: false,
-});
-
-credentialStore.current = process.env.CMA_ACCESS_TOKEN;
-void cma;
+const cma = createClient();
+const identity = await cma.auth.readSession();
+if (!identity.authenticated) {
+  const destination = cma.auth.loginUrl({ returnTo: '/triggers/manage' });
+  console.log(destination);
+}
 ```
 
-Returning `undefined` sends no Authorization header. Returning an empty string or
-throwing from the callback produces `CredentialError` before the request is sent.
-The SDK never includes credential values in its own error messages.
-
-## Browser sessions
-
-The reference frontend is served on the same origin as its API proxy. It relies on
-the browser cookie and therefore uses the defaults:
-
-```ts
-import { createClient } from '@chronoai/cma-sdk';
-
-const sameOriginCma = createClient();
-const sessions = await sameOriginCma.listSessions();
-
-console.log(sessions.length);
-```
-
-For cross-origin bearer use, configure `baseUrl`, `credential`, and
-`cookies: false`. The client supports that transport shape, but the deployment
-operator must add the browser application's exact origin to the comma-separated
-`CHRONO_SERVER_CORS_ORIGIN` allowlist. CMA then admits the `Authorization` header,
-the `Last-Event-ID` cursor used for stream reconnection, and supported methods,
-including `PUT`, through the browser preflight.
-
-When the origin is missing, the browser reports a CORS or network failure and the
-failed `OPTIONS` response has no `Access-Control-Allow-Origin` header. The API
-request is never sent, so this failure does not become an SDK `ApiError`. See the
-[cross-origin deployment guide](../../../docs/SDK.md#cross-origin-browser-deployments)
-for the operator setting and diagnostics.
-
-The same rule applies to AG-UI's run and session SSE responses. Native
-`EventSource` cannot send the configured Bearer credential, so it works only on
-the same-origin cookie path. Cross-origin frontends create the transport with
-`createAguiTransport(cma.config)` and pass it to `AguiConnection`; that transport
-uses `fetch`, sends `Authorization` on every stream and history request, and
-parses the response's `ReadableStream`. Pass the same config to `AguiOperations`
-for Bearer-authenticated run requests. The default `wireTransport` and
-`fetchTransport` values are the same-origin cookie instances. A terminal attach
-ticket is only for the WebSocket upgrade and is never an AG-UI credential. The
-complete route contract is in [AG-UI Authentication](../../../docs/API_AGUI.md#authentication).
-
-## Reading authentication failures
-
-- HTTP `401` becomes `ApiError` with `isUnauthenticated === true`. Refresh or
-  replace the credential, then make a new request.
-- `CapabilityRefused` is not an authentication failure. The caller was identified,
-  but this session was never granted the named operation. Retrying cannot change it.
-- HTTP `403` is an authorization refusal. A new credential helps only if it carries
-  a different grant.
-
-The complete service authentication contract is in
-[REST Authentication](../../../docs/API_REST.md#authentication). See
-[Errors](errors.md) for the SDK taxonomy.
+`launches.createConnection` returns an opaque handoff id and a NyxID hosted URL,
+never service credentials. Validate HTTPS and reject URL user information before
+navigating. Treat the hosted URL as sensitive handoff data: do not log it or put it
+in the return destination. Poll `readConnection` with the authenticated owner;
+CMA does not inspect cross-origin window contents. Manual connection metadata
+does not imply that a hosted handoff is available.

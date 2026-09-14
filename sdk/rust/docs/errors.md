@@ -1,87 +1,48 @@
-# Rust Errors
+# Errors
 
-<!-- nav: 70 Errors -->
+<!-- nav: 10 Errors -->
 
-All operations return `cma_sdk::Result<T>`. `Error` is non-exhaustive so consumers
-must retain a fallback arm when matching it.
-
-```rust,no_run
-use cma_sdk::{Client, Error, SessionId};
-
-async fn interrupt(client: &Client, session_id: &SessionId) -> cma_sdk::Result<()> {
-    match client.interrupt(session_id).await {
-        Ok(()) => Ok(()),
-        Err(Error::CapabilityRefused {
-            capability,
-            request_id,
-            ..
-        }) => {
-            eprintln!("session was not granted {capability}; request_id={request_id:?}");
-            Ok(())
-        }
-        Err(Error::Api {
-            status,
-            code,
-            message,
-            request_id,
-            ..
-        }) => {
-            eprintln!("HTTP {status} {code}: {message}; request_id={request_id:?}");
-            Ok(())
-        }
-        Err(error) => Err(error),
-    }
-}
-```
-
-| Variant | Meaning | Retry decision |
-|---|---|---|
-| `CapabilityRefused` | This session permanently lacks the named capability | Never for this session |
-| `Api` | Structured service problem with HTTP status, code, and detail | Only according to status and operation semantics |
-| `Transport` | Credential provider, timeout, connection, or response-body failure | A later attempt may work; outcome can be unknown |
-| `Protocol` | Caller value or server response violated the typed boundary | Fix input or investigate version/server drift |
-| `Observer` | The configured response metadata observer failed or panicked | Repair the observer; the response body was not consumed |
-
-The crate retries transport failures according to `RetryPolicy`. It retries HTTP
-`429` or `503` only when the response carries a valid `Retry-After`; an API failure
-without that header is returned immediately. Other API and protocol failures are
-not retried.
-
-An exact `Error::Api { status: 409, code: "session_rotating", .. }` is a
-self-resolving lifecycle refusal. The SDK returns it instead of automatically
-replaying the operation. Re-read the session before a later attempt, inspect its
-current status, and only then decide whether to retry according to the operation's
-side-effect and idempotency semantics. A repeated `session_rotating` refusal means
-the handover still fences interaction even if the stored status has already
-advanced. If the refused input carried a caller-supplied `Idempotency-Key`, use a
-fresh key for the post-rotation attempt: the original key stores and replays its
-`409` response.
-
-The REST service accepts optional idempotency keys for session creation and input,
-but this SDK's high-level methods do not yet expose or automatically supply them. A
-transport failure after a create or input may therefore hide a completed server
-action. A caller that cannot tolerate automatic replay can use a one-attempt policy
-and read current state before deciding what to repeat:
+The client returns `cma_sdk::Error`. `Error::Api` represents a structured
+non-success response, `Error::Protocol` rejects an invalid response boundary,
+`Error::Transport` covers failures before a complete HTTP answer is read, and
+`Error::Validation` rejects invalid caller input before sending it.
 
 ```rust,no_run
-use std::time::Duration;
+use cma_sdk::{Client, Error};
 
-use cma_sdk::{Client, RetryPolicy};
-
-fn conservative_client() -> cma_sdk::Result<Client> {
-    let retries = RetryPolicy::new(1, Duration::ZERO, Duration::ZERO)?;
-    Client::builder("https://cma.example.com")?
-        .credential_provider(|| Ok::<String, ()>(String::from("set-by-secret-store")))
-        .retry_policy(retries)
-        .build()
+# async fn run() -> Result<(), Box<dyn std::error::Error>> {
+let client = Client::builder("https://cma.example.com")?.build()?;
+match client.read_conformance().await {
+    Ok(document) => println!("{}", document.status),
+    Err(Error::Api { status, code, .. }) => eprintln!("{status}: {code:?}"),
+    Err(error) => return Err(error.into()),
 }
+# Ok(())
+# }
 ```
 
-Problem documents that do not match the
-[REST error contract](../../../docs/API_REST.md#11-errors) become `Error::Protocol`
-rather than an unreliable generic API error.
+`Error::Api` preserves HTTP `status`, stable `code`, the safe problem `message`,
+`request_id`, validated `retry_after`, and structured `extensions`. Retry delays
+support positive seconds and future HTTP dates. Missing, malformed, zero, or
+past delays are ignored. Use `extension("field")`, `extension("path")`, or
+`extension("reason")` for string-valued hints; inspect `extensions` directly for
+structured limits and counts. Do not infer machine behavior by parsing prose.
 
-`Error::Api` and `Error::CapabilityRefused` expose `request_id` from the HTTP
-`X-Request-Id` response header. It is `None` when that header is missing or
-unusable. Correlation is not read from, or represented as, a `request_id` field
-inside the problem JSON body.
+`is_unauthenticated()` identifies HTTP 401. `is_retryable()` identifies transport
+failures, HTTP 429, and HTTP 5xx; it is a classification, not a retry policy.
+The SDK performs no automatic retries. A timed-out mutation may already have
+been accepted: retry only with its original key and unchanged body, and do not
+assume that a new key is safe. Authorization, trust, conflict, and validation
+refusals require the caller to address their cause.
+
+Malformed problem documents, a problem status that contradicts the HTTP status,
+oversized responses, and unexpected successful status codes are protocol errors
+rather than fabricated resource values. Transport failures omit request URLs
+and credentials from their messages.
+
+For streams, invalid UTF-8, JSON, closed tags, event names, or cursor ordering
+produce protocol errors and stop the reader. Interrupted transport remains a
+transport error. Responses EOF before a terminal event is ambiguous: retrieve
+the known response or durable Agent history before considering another input.
+AG-UI and Launch replay can reconnect explicitly from the last fully consumed
+durable cursor; Responses sequence numbers cannot be used that way.

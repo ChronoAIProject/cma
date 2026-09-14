@@ -1,0 +1,1002 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "agui-run-stopped-owner",
+      "operation": "POST /api/v1/agui/run",
+      "scenario": "experience_agui_stop_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agui/run",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "threadId": "agt_contract",
+          "messages": [
+            {
+              "role": "user",
+              "content": "Continue"
+            }
+          ]
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "no-cache, no-store",
+          "content-type": "text/event-stream",
+          "x-accel-buffering": "no"
+        },
+        "body": [
+          {
+            "id": "12",
+            "data": {
+              "type": "RUN_STARTED",
+              "threadId": "agt_contract",
+              "runId": "12",
+              "timestamp": "2026-09-07T00:00:00Z"
+            }
+          },
+          {
+            "data": {
+              "type": "TEXT_MESSAGE_START",
+              "threadId": "agt_contract",
+              "runId": "12",
+              "messageId": "msg_13",
+              "role": "user",
+              "timestamp": "2026-09-07T00:00:00Z"
+            }
+          },
+          {
+            "data": {
+              "type": "TEXT_MESSAGE_CONTENT",
+              "threadId": "agt_contract",
+              "runId": "12",
+              "messageId": "msg_13",
+              "delta": "Continue",
+              "timestamp": "2026-09-07T00:00:00Z"
+            }
+          },
+          {
+            "id": "13",
+            "data": {
+              "type": "TEXT_MESSAGE_END",
+              "threadId": "agt_contract",
+              "runId": "12",
+              "messageId": "msg_13",
+              "timestamp": "2026-09-07T00:00:00Z"
+            }
+          },
+          {
+            "id": "14",
+            "data": {
+              "type": "STATE_DELTA",
+              "threadId": "agt_contract",
+              "runId": "12",
+              "delta": [
+                {
+                  "op": "replace",
+                  "path": "/status",
+                  "value": "working"
+                }
+              ],
+              "timestamp": "2026-09-07T00:00:00Z"
+            }
+          },
+          {
+            "id": "18",
+            "data": {
+              "type": "RUN_ERROR",
+              "threadId": "agt_contract",
+              "runId": "12",
+              "code": "owner",
+              "message": "The Agent stopped.",
+              "timestamp": "2026-09-07T00:00:00Z"
+            }
+          }
+        ],
+        "bodyKind": "sse"
+      },
+      "captures": {
+        "event_time_0": "/0/data/timestamp",
+        "event_time_1": "/1/data/timestamp",
+        "event_time_2": "/2/data/timestamp",
+        "event_time_3": "/3/data/timestamp",
+        "event_time_4": "/4/data/timestamp",
+        "event_time_5": "/5/data/timestamp"
+      }
+    },
+    {
+      "id": "agui-run-stopped-operator",
+      "operation": "POST /api/v1/agui/run",
+      "scenario": "experience_agui_stop_operator",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agui/run",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "threadId": "agt_contract",
+          "messages": [
+            {
+              "role": "user",
+              "content": "Continue"
+            }
+          ]
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "no-cache, no-store",
+          "content-type": "text/event-stream",
+          "x-accel-buffering": "no"
+        },
+        "body": [
+          {
+            "id": "12",
+            "data": {
+              "type": "RUN_STARTED",
+              "threadId": "agt_contract",
+              "runId": "12",
+              "timestamp": "2026-09-07T00:00:00Z"
+            }
+          },
+          {
+            "data": {
+              "type": "TEXT_MESSAGE_START",
+              "threadId": "agt_contract",
+              "runId": "12",
+              "messageId": "msg_13",
+              "role": "user",
+              "timestamp": "2026-09-07T00:00:00Z"
+            }
+          },
+          {
+            "data": {
+              "type": "TEXT_MESSAGE_CONTENT",
+              "threadId": "agt_contract",
+              "runId": "12",
+              "messageId": "msg_13",
+              "delta": "Continue",
+              "timestamp": "2026-09-07T00:00:00Z"
+            }
+          },
+          {
+            "id": "13",
+            "data": {
+              "type": "TEXT_MESSAGE_END",
+              "threadId": "agt_contract",
+              "runId": "12",
+              "messageId": "msg_13",
+              "timestamp": "2026-09-07T00:00:00Z"
+            }
+          },
+          {
+            "id": "14",
+            "data": {
+              "type": "STATE_DELTA",
+              "threadId": "agt_contract",
+              "runId": "12",
+              "delta": [
+                {
+                  "op": "replace",
+                  "path": "/status",
+                  "value": "working"
+                }
+              ],
+              "timestamp": "2026-09-07T00:00:00Z"
+            }
+          },
+          {
+            "id": "18",
+            "data": {
+              "type": "RUN_ERROR",
+              "threadId": "agt_contract",
+              "runId": "12",
+              "code": "operator",
+              "message": "The Agent stopped.",
+              "timestamp": "2026-09-07T00:00:00Z"
+            }
+          }
+        ],
+        "bodyKind": "sse"
+      },
+      "captures": {
+        "event_time_0": "/0/data/timestamp",
+        "event_time_1": "/1/data/timestamp",
+        "event_time_2": "/2/data/timestamp",
+        "event_time_3": "/3/data/timestamp",
+        "event_time_4": "/4/data/timestamp",
+        "event_time_5": "/5/data/timestamp"
+      }
+    },
+    {
+      "id": "agui-run-stopped-runtime-lost",
+      "operation": "POST /api/v1/agui/run",
+      "scenario": "experience_agui_stop_runtime_lost",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agui/run",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "threadId": "agt_contract",
+          "messages": [
+            {
+              "role": "user",
+              "content": "Continue"
+            }
+          ]
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "no-cache, no-store",
+          "content-type": "text/event-stream",
+          "x-accel-buffering": "no"
+        },
+        "body": [
+          {
+            "id": "12",
+            "data": {
+              "type": "RUN_STARTED",
+              "threadId": "agt_contract",
+              "runId": "12",
+              "timestamp": "2026-09-07T00:00:00Z"
+            }
+          },
+          {
+            "data": {
+              "type": "TEXT_MESSAGE_START",
+              "threadId": "agt_contract",
+              "runId": "12",
+              "messageId": "msg_13",
+              "role": "user",
+              "timestamp": "2026-09-07T00:00:00Z"
+            }
+          },
+          {
+            "data": {
+              "type": "TEXT_MESSAGE_CONTENT",
+              "threadId": "agt_contract",
+              "runId": "12",
+              "messageId": "msg_13",
+              "delta": "Continue",
+              "timestamp": "2026-09-07T00:00:00Z"
+            }
+          },
+          {
+            "id": "13",
+            "data": {
+              "type": "TEXT_MESSAGE_END",
+              "threadId": "agt_contract",
+              "runId": "12",
+              "messageId": "msg_13",
+              "timestamp": "2026-09-07T00:00:00Z"
+            }
+          },
+          {
+            "id": "14",
+            "data": {
+              "type": "STATE_DELTA",
+              "threadId": "agt_contract",
+              "runId": "12",
+              "delta": [
+                {
+                  "op": "replace",
+                  "path": "/status",
+                  "value": "working"
+                }
+              ],
+              "timestamp": "2026-09-07T00:00:00Z"
+            }
+          },
+          {
+            "id": "18",
+            "data": {
+              "type": "RUN_ERROR",
+              "threadId": "agt_contract",
+              "runId": "12",
+              "code": "runtime_lost",
+              "message": "The Agent stopped.",
+              "timestamp": "2026-09-07T00:00:00Z"
+            }
+          }
+        ],
+        "bodyKind": "sse"
+      },
+      "captures": {
+        "event_time_0": "/0/data/timestamp",
+        "event_time_1": "/1/data/timestamp",
+        "event_time_2": "/2/data/timestamp",
+        "event_time_3": "/3/data/timestamp",
+        "event_time_4": "/4/data/timestamp",
+        "event_time_5": "/5/data/timestamp"
+      }
+    },
+    {
+      "id": "agui-run-stopped-sandbox-retired",
+      "operation": "POST /api/v1/agui/run",
+      "scenario": "experience_agui_stop_sandbox_retired",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agui/run",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "threadId": "agt_contract",
+          "messages": [
+            {
+              "role": "user",
+              "content": "Continue"
+            }
+          ]
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "no-cache, no-store",
+          "content-type": "text/event-stream",
+          "x-accel-buffering": "no"
+        },
+        "body": [
+          {
+            "id": "12",
+            "data": {
+              "type": "RUN_STARTED",
+              "threadId": "agt_contract",
+              "runId": "12",
+              "timestamp": "2026-09-07T00:00:00Z"
+            }
+          },
+          {
+            "data": {
+              "type": "TEXT_MESSAGE_START",
+              "threadId": "agt_contract",
+              "runId": "12",
+              "messageId": "msg_13",
+              "role": "user",
+              "timestamp": "2026-09-07T00:00:00Z"
+            }
+          },
+          {
+            "data": {
+              "type": "TEXT_MESSAGE_CONTENT",
+              "threadId": "agt_contract",
+              "runId": "12",
+              "messageId": "msg_13",
+              "delta": "Continue",
+              "timestamp": "2026-09-07T00:00:00Z"
+            }
+          },
+          {
+            "id": "13",
+            "data": {
+              "type": "TEXT_MESSAGE_END",
+              "threadId": "agt_contract",
+              "runId": "12",
+              "messageId": "msg_13",
+              "timestamp": "2026-09-07T00:00:00Z"
+            }
+          },
+          {
+            "id": "14",
+            "data": {
+              "type": "STATE_DELTA",
+              "threadId": "agt_contract",
+              "runId": "12",
+              "delta": [
+                {
+                  "op": "replace",
+                  "path": "/status",
+                  "value": "working"
+                }
+              ],
+              "timestamp": "2026-09-07T00:00:00Z"
+            }
+          },
+          {
+            "id": "18",
+            "data": {
+              "type": "RUN_ERROR",
+              "threadId": "agt_contract",
+              "runId": "12",
+              "code": "sandbox_retired",
+              "message": "The Agent stopped.",
+              "timestamp": "2026-09-07T00:00:00Z"
+            }
+          }
+        ],
+        "bodyKind": "sse"
+      },
+      "captures": {
+        "event_time_0": "/0/data/timestamp",
+        "event_time_1": "/1/data/timestamp",
+        "event_time_2": "/2/data/timestamp",
+        "event_time_3": "/3/data/timestamp",
+        "event_time_4": "/4/data/timestamp",
+        "event_time_5": "/5/data/timestamp"
+      }
+    },
+    {
+      "id": "agui-run-stopped-failed",
+      "operation": "POST /api/v1/agui/run",
+      "scenario": "experience_agui_stop_failed",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agui/run",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "threadId": "agt_contract",
+          "messages": [
+            {
+              "role": "user",
+              "content": "Continue"
+            }
+          ]
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "no-cache, no-store",
+          "content-type": "text/event-stream",
+          "x-accel-buffering": "no"
+        },
+        "body": [
+          {
+            "id": "12",
+            "data": {
+              "type": "RUN_STARTED",
+              "threadId": "agt_contract",
+              "runId": "12",
+              "timestamp": "2026-09-07T00:00:00Z"
+            }
+          },
+          {
+            "data": {
+              "type": "TEXT_MESSAGE_START",
+              "threadId": "agt_contract",
+              "runId": "12",
+              "messageId": "msg_13",
+              "role": "user",
+              "timestamp": "2026-09-07T00:00:00Z"
+            }
+          },
+          {
+            "data": {
+              "type": "TEXT_MESSAGE_CONTENT",
+              "threadId": "agt_contract",
+              "runId": "12",
+              "messageId": "msg_13",
+              "delta": "Continue",
+              "timestamp": "2026-09-07T00:00:00Z"
+            }
+          },
+          {
+            "id": "13",
+            "data": {
+              "type": "TEXT_MESSAGE_END",
+              "threadId": "agt_contract",
+              "runId": "12",
+              "messageId": "msg_13",
+              "timestamp": "2026-09-07T00:00:00Z"
+            }
+          },
+          {
+            "id": "14",
+            "data": {
+              "type": "STATE_DELTA",
+              "threadId": "agt_contract",
+              "runId": "12",
+              "delta": [
+                {
+                  "op": "replace",
+                  "path": "/status",
+                  "value": "working"
+                }
+              ],
+              "timestamp": "2026-09-07T00:00:00Z"
+            }
+          },
+          {
+            "id": "18",
+            "data": {
+              "type": "RUN_ERROR",
+              "threadId": "agt_contract",
+              "runId": "12",
+              "code": "failed",
+              "message": "The Agent stopped.",
+              "timestamp": "2026-09-07T00:00:00Z"
+            }
+          }
+        ],
+        "bodyKind": "sse"
+      },
+      "captures": {
+        "event_time_0": "/0/data/timestamp",
+        "event_time_1": "/1/data/timestamp",
+        "event_time_2": "/2/data/timestamp",
+        "event_time_3": "/3/data/timestamp",
+        "event_time_4": "/4/data/timestamp",
+        "event_time_5": "/5/data/timestamp"
+      }
+    },
+    {
+      "id": "agui-run-runtime-turn-failed",
+      "operation": "POST /api/v1/agui/run",
+      "scenario": "experience_agui_failing",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agui/run",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "threadId": "agt_contract",
+          "messages": [
+            {
+              "role": "user",
+              "content": "Continue"
+            }
+          ]
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "no-cache, no-store",
+          "content-type": "text/event-stream",
+          "x-accel-buffering": "no"
+        },
+        "body": [
+          {
+            "id": "12",
+            "data": {
+              "type": "RUN_STARTED",
+              "threadId": "agt_contract",
+              "runId": "12",
+              "timestamp": "2026-09-07T00:00:00Z"
+            }
+          },
+          {
+            "data": {
+              "type": "TEXT_MESSAGE_START",
+              "threadId": "agt_contract",
+              "runId": "12",
+              "messageId": "msg_13",
+              "role": "user",
+              "timestamp": "2026-09-07T00:00:00Z"
+            }
+          },
+          {
+            "data": {
+              "type": "TEXT_MESSAGE_CONTENT",
+              "threadId": "agt_contract",
+              "runId": "12",
+              "messageId": "msg_13",
+              "delta": "Continue",
+              "timestamp": "2026-09-07T00:00:00Z"
+            }
+          },
+          {
+            "id": "13",
+            "data": {
+              "type": "TEXT_MESSAGE_END",
+              "threadId": "agt_contract",
+              "runId": "12",
+              "messageId": "msg_13",
+              "timestamp": "2026-09-07T00:00:00Z"
+            }
+          },
+          {
+            "id": "14",
+            "data": {
+              "type": "STATE_DELTA",
+              "threadId": "agt_contract",
+              "runId": "12",
+              "delta": [
+                {
+                  "op": "replace",
+                  "path": "/status",
+                  "value": "working"
+                }
+              ],
+              "timestamp": "2026-09-07T00:00:00Z"
+            }
+          },
+          {
+            "id": "16",
+            "data": {
+              "type": "RUN_ERROR",
+              "threadId": "agt_contract",
+              "runId": "12",
+              "code": "agent_turn_failed",
+              "message": "contract runtime turn failed",
+              "timestamp": "2026-09-07T00:00:00Z"
+            }
+          }
+        ],
+        "bodyKind": "sse"
+      },
+      "captures": {
+        "event_time_0": "/0/data/timestamp",
+        "event_time_1": "/1/data/timestamp",
+        "event_time_2": "/2/data/timestamp",
+        "event_time_3": "/3/data/timestamp",
+        "event_time_4": "/4/data/timestamp",
+        "event_time_5": "/5/data/timestamp"
+      }
+    },
+    {
+      "id": "responses-create-runtime-turn-failed",
+      "operation": "POST /api/v1/responses",
+      "scenario": "experience_responses_failing",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/responses",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "conversation": "agt_contract",
+          "input": "Continue",
+          "stream": true,
+          "previous_response_id": "resp_agt_contract_3"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "no-cache, no-store",
+          "content-type": "text/event-stream",
+          "x-accel-buffering": "no"
+        },
+        "body": [
+          {
+            "event": "response.created",
+            "data": {
+              "response": {
+                "id": "resp_agt_contract_12",
+                "object": "response",
+                "created_at": 1788739200,
+                "status": "in_progress",
+                "background": false,
+                "error": null,
+                "incomplete_details": null,
+                "instructions": null,
+                "max_output_tokens": null,
+                "model": "gpt-proof",
+                "output": [],
+                "parallel_tool_calls": false,
+                "previous_response_id": "resp_agt_contract_3",
+                "reasoning": {
+                  "effort": null,
+                  "summary": null
+                },
+                "store": true,
+                "temperature": null,
+                "text": {
+                  "format": {
+                    "type": "text"
+                  },
+                  "verbosity": "medium"
+                },
+                "tool_choice": "none",
+                "tools": [],
+                "top_p": null,
+                "truncation": "disabled",
+                "usage": null,
+                "metadata": {}
+              },
+              "type": "response.created",
+              "sequence_number": 0
+            }
+          },
+          {
+            "event": "response.in_progress",
+            "data": {
+              "response": {
+                "id": "resp_agt_contract_12",
+                "object": "response",
+                "created_at": 1788739200,
+                "status": "in_progress",
+                "background": false,
+                "error": null,
+                "incomplete_details": null,
+                "instructions": null,
+                "max_output_tokens": null,
+                "model": "gpt-proof",
+                "output": [],
+                "parallel_tool_calls": false,
+                "previous_response_id": "resp_agt_contract_3",
+                "reasoning": {
+                  "effort": null,
+                  "summary": null
+                },
+                "store": true,
+                "temperature": null,
+                "text": {
+                  "format": {
+                    "type": "text"
+                  },
+                  "verbosity": "medium"
+                },
+                "tool_choice": "none",
+                "tools": [],
+                "top_p": null,
+                "truncation": "disabled",
+                "usage": null,
+                "metadata": {}
+              },
+              "type": "response.in_progress",
+              "sequence_number": 1
+            }
+          },
+          {
+            "event": "response.failed",
+            "data": {
+              "response": {
+                "id": "resp_agt_contract_12",
+                "object": "response",
+                "created_at": 1788739200,
+                "status": "failed",
+                "background": false,
+                "error": {
+                  "code": "agent_turn_failed",
+                  "message": "contract runtime turn failed"
+                },
+                "incomplete_details": null,
+                "instructions": null,
+                "max_output_tokens": null,
+                "model": "gpt-proof",
+                "output": [],
+                "parallel_tool_calls": false,
+                "previous_response_id": "resp_agt_contract_3",
+                "reasoning": {
+                  "effort": null,
+                  "summary": null
+                },
+                "store": true,
+                "temperature": null,
+                "text": {
+                  "format": {
+                    "type": "text"
+                  },
+                  "verbosity": "medium"
+                },
+                "tool_choice": "none",
+                "tools": [],
+                "top_p": null,
+                "truncation": "disabled",
+                "usage": null,
+                "metadata": {}
+              },
+              "type": "response.failed",
+              "sequence_number": 2
+            }
+          }
+        ],
+        "bodyKind": "sse"
+      },
+      "captures": {
+        "response_created_seconds_0": "/0/data/response/created_at",
+        "response_created_seconds_1": "/1/data/response/created_at",
+        "response_created_seconds_2": "/2/data/response/created_at"
+      }
+    },
+    {
+      "id": "agui-run-input-not-written",
+      "operation": "POST /api/v1/agui/run",
+      "scenario": "experience_rejected",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agui/run",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "threadId": "agt_contract",
+          "messages": [
+            {
+              "role": "user",
+              "content": "Continue"
+            }
+          ]
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/instance-service-unavailable",
+          "title": "instance service unavailable",
+          "status": 503,
+          "detail": "An instance dependency could not complete this request.",
+          "code": "instance_service_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agui-replay-input-not-written",
+      "operation": "GET /api/v1/agui/events",
+      "scenario": "experience_rejected",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agui/events?thread_id=agt_contract&starting_after=10&follow=false",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "no-cache, no-store",
+          "content-type": "text/event-stream",
+          "x-accel-buffering": "no"
+        },
+        "body": [
+          {
+            "id": "12",
+            "data": {
+              "type": "RUN_STARTED",
+              "threadId": "agt_contract",
+              "runId": "12",
+              "timestamp": "2026-09-07T00:00:00Z"
+            }
+          },
+          {
+            "data": {
+              "type": "TEXT_MESSAGE_START",
+              "threadId": "agt_contract",
+              "runId": "12",
+              "messageId": "msg_13",
+              "role": "user",
+              "timestamp": "2026-09-07T00:00:00Z"
+            }
+          },
+          {
+            "data": {
+              "type": "TEXT_MESSAGE_CONTENT",
+              "threadId": "agt_contract",
+              "runId": "12",
+              "messageId": "msg_13",
+              "delta": "Continue",
+              "timestamp": "2026-09-07T00:00:00Z"
+            }
+          },
+          {
+            "id": "13",
+            "data": {
+              "type": "TEXT_MESSAGE_END",
+              "threadId": "agt_contract",
+              "runId": "12",
+              "messageId": "msg_13",
+              "timestamp": "2026-09-07T00:00:00Z"
+            }
+          },
+          {
+            "id": "14",
+            "data": {
+              "type": "STATE_DELTA",
+              "threadId": "agt_contract",
+              "runId": "12",
+              "delta": [
+                {
+                  "op": "replace",
+                  "path": "/status",
+                  "value": "working"
+                }
+              ],
+              "timestamp": "2026-09-07T00:00:00Z"
+            }
+          },
+          {
+            "id": "16",
+            "data": {
+              "type": "RUN_ERROR",
+              "threadId": "agt_contract",
+              "runId": "12",
+              "code": "input_not_written",
+              "message": "the message did not reach the runtime writer",
+              "timestamp": "2026-09-07T00:00:00Z"
+            }
+          },
+          {
+            "id": "17",
+            "data": {
+              "type": "STATE_DELTA",
+              "threadId": "agt_contract",
+              "runId": "12",
+              "delta": [
+                {
+                  "op": "replace",
+                  "path": "/status",
+                  "value": "ready"
+                }
+              ],
+              "timestamp": "2026-09-07T00:00:00Z"
+            }
+          }
+        ],
+        "bodyKind": "sse"
+      },
+      "captures": {
+        "event_time_0": "/0/data/timestamp",
+        "event_time_1": "/1/data/timestamp",
+        "event_time_2": "/2/data/timestamp",
+        "event_time_3": "/3/data/timestamp",
+        "event_time_4": "/4/data/timestamp",
+        "event_time_5": "/5/data/timestamp",
+        "event_time_6": "/6/data/timestamp"
+      }
+    },
+    {
+      "id": "responses-read-input-not-written",
+      "operation": "GET /api/v1/responses/{response_id}",
+      "scenario": "experience_rejected",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/responses/resp_agt_contract_12",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "id": "resp_agt_contract_12",
+          "object": "response",
+          "created_at": 1788739200,
+          "status": "failed",
+          "background": false,
+          "error": {
+            "code": "input_not_written",
+            "message": "the message did not reach the runtime writer"
+          },
+          "incomplete_details": null,
+          "instructions": null,
+          "max_output_tokens": null,
+          "model": "gpt-proof",
+          "output": [],
+          "parallel_tool_calls": false,
+          "previous_response_id": "resp_agt_contract_3",
+          "reasoning": {
+            "effort": null,
+            "summary": null
+          },
+          "store": true,
+          "temperature": null,
+          "text": {
+            "format": {
+              "type": "text"
+            },
+            "verbosity": "medium"
+          },
+          "tool_choice": "none",
+          "tools": [],
+          "top_p": null,
+          "truncation": "disabled",
+          "usage": null,
+          "metadata": {}
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "response_created_seconds": "/created_at"
+      }
+    }
+  ]
+}

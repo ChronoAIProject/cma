@@ -1,0 +1,131 @@
+use serde::{Deserialize, Serialize};
+
+use crate::ids::{ServiceId, SubjectId};
+
+/// Explicit owner authorization added after the immutable creation scope.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SandboxServiceGrant {
+    pub services: Vec<ServiceId>,
+    pub authorized_by: SubjectId,
+    pub authorized_at: String,
+    /// Credentials at or below this reservation predate the expanded scope.
+    pub credential_generation_floor: u64,
+}
+
+/// Non-secret evidence for one NyxID key minted for a sandbox.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SandboxCredentialAuthority {
+    pub generation: u64,
+    pub provider_key_id: String,
+    pub provider_state_version: i64,
+    pub issued_at: String,
+    pub expires_at: String,
+    pub grant_fingerprint: String,
+}
+
+/// A provider key which must remain visible until revocation succeeds.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SandboxRevokeDebt {
+    pub provider_key_id: String,
+    pub queued_at: String,
+}
+
+/// Provider sign-in state for profiles that use the owner's own model account.
+/// CMA records only the state; credential bytes stay inside the sandbox home.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SandboxSignInState {
+    NotRequired,
+    Required,
+    Complete,
+}
+
+/// Durable, non-secret sandbox credential custody metadata.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SandboxCredentialState {
+    #[serde(default)]
+    pub reaches: Vec<ServiceId>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub service_grants: Vec<SandboxServiceGrant>,
+    /// Highest custody generation reserved for this sandbox.
+    pub key_generation: u64,
+    pub delivered: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub current: Option<SandboxCredentialAuthority>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pending: Option<SandboxCredentialAuthority>,
+    #[serde(default)]
+    pub revoke_debt: Vec<SandboxRevokeDebt>,
+    pub sign_in: SandboxSignInState,
+}
+
+impl SandboxCredentialState {
+    pub fn service_access_generation_floor(&self) -> u64 {
+        self.service_grants
+            .last()
+            .map_or(0, |grant| grant.credential_generation_floor)
+    }
+
+    pub fn effective_reaches(&self) -> Vec<ServiceId> {
+        self.reaches
+            .iter()
+            .chain(self.service_grants.iter().flat_map(|grant| &grant.services))
+            .cloned()
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .collect()
+    }
+
+    pub fn validate(&self) -> bool {
+        let authority_valid = |authority: &SandboxCredentialAuthority| {
+            authority.generation > 0
+                && authority.generation <= self.key_generation
+                && !authority.provider_key_id.trim().is_empty()
+                && authority.provider_state_version > 0
+                && authority.grant_fingerprint.len() == 64
+                && authority
+                    .grant_fingerprint
+                    .bytes()
+                    .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+        };
+        self.current.as_ref().is_none_or(authority_valid)
+            && self.pending.as_ref().is_none_or(authority_valid)
+            && self.delivered == self.current.is_some()
+            && self
+                .pending
+                .as_ref()
+                .is_none_or(|pending| pending.generation == self.key_generation)
+            && self.revoke_debt.iter().all(|debt| {
+                !debt.provider_key_id.trim().is_empty()
+                    && self
+                        .current
+                        .as_ref()
+                        .is_none_or(|current| current.provider_key_id != debt.provider_key_id)
+                    && self
+                        .pending
+                        .as_ref()
+                        .is_none_or(|pending| pending.provider_key_id != debt.provider_key_id)
+            })
+    }
+
+    pub fn next_generation(&self) -> Option<u64> {
+        self.key_generation.checked_add(1)
+    }
+
+    pub fn queue_revoke(&mut self, provider_key_id: String, queued_at: String) {
+        if !self
+            .revoke_debt
+            .iter()
+            .any(|debt| debt.provider_key_id == provider_key_id)
+        {
+            self.revoke_debt.push(SandboxRevokeDebt {
+                provider_key_id,
+                queued_at,
+            });
+        }
+    }
+}

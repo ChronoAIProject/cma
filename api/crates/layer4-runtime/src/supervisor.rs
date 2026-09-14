@@ -1,0 +1,491 @@
+use std::collections::BTreeMap;
+use std::sync::Arc;
+
+use layer3_adapter::wire::{CredentialReceipt, RequestFrame, ResponseFrame};
+use layer3_adapter::{
+    AgentLaunch, AgentSlot, CheckpointHoldReceipt, CheckpointHoldRequest, InstallRequest,
+    RestoreBootstrapReceipt, RestoreBootstrapRequest,
+};
+use tokio::sync::{Mutex, RwLock};
+
+use crate::bridge::Bridge;
+use crate::checkpoint::CheckpointStore;
+use crate::config::RuntimeConfig;
+use crate::failure::{Result, RuntimeError};
+use crate::install_state::RecoveryState;
+use crate::paths::{path_is_directory, safe_component};
+use crate::upstream::{CredentialHolder, PreparedProxies};
+use crate::writer_fence::{SupervisorBoundary, WriterFence};
+
+const MAX_AGENT_SLOTS: usize = 16;
+
+#[path = "supervisor_agent.rs"]
+mod agent;
+#[path = "supervisor_agent_recovery.rs"]
+mod agent_recovery;
+#[path = "supervisor_agent_validation.rs"]
+mod agent_validation;
+#[path = "supervisor_checkpoint.rs"]
+mod checkpoint_lifecycle;
+#[path = "supervisor_guards.rs"]
+mod guards;
+#[path = "supervisor_mutations.rs"]
+mod mutations;
+#[path = "supervisor_recovery.rs"]
+mod recovery;
+#[path = "supervisor_status.rs"]
+mod status;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Phase {
+    Provisioned,
+    Installed,
+    RestorePending,
+    RestoreCredentialed,
+    Credentialed,
+}
+
+struct AgentProcess {
+    launch: AgentLaunch,
+    bridge: Arc<Bridge>,
+}
+
+pub(crate) struct HeldCheckpoint {
+    request: CheckpointHoldRequest,
+    receipt: CheckpointHoldReceipt,
+    fence: WriterFence,
+}
+
+pub(crate) struct Supervisor {
+    config: RuntimeConfig,
+    boot_id: String,
+    phase: RwLock<Phase>,
+    // Only a fresh runtime may prepare unowned work. Recovered homes require
+    // renewed owner credentials even when their installation receipt survives.
+    allow_unowned_preparation: bool,
+    restore_bootstrap: RwLock<Option<RestoreBootstrapReceipt>>,
+    operation_gate: Arc<Mutex<()>>,
+    credential: CredentialHolder,
+    agents: RwLock<BTreeMap<AgentSlot, AgentProcess>>,
+    checkpoint: CheckpointStore,
+    held_checkpoint: Arc<Mutex<Option<HeldCheckpoint>>>,
+    resources: crate::resources::Sampler,
+    writer_boundary: SupervisorBoundary,
+    http: reqwest::Client,
+}
+
+impl Supervisor {
+    pub(crate) async fn start(
+        config: RuntimeConfig,
+        writer_boundary: SupervisorBoundary,
+    ) -> Result<Arc<Self>> {
+        let supervisor = Self::new(config, writer_boundary)?;
+        supervisor.recover_journals().await?;
+        Ok(supervisor)
+    }
+
+    pub(crate) fn new(
+        config: RuntimeConfig,
+        writer_boundary: SupervisorBoundary,
+    ) -> Result<Arc<Self>> {
+        if config.home_identity.is_none() {
+            crate::fs_durability::create_dir_all(&config.home).map_err(|error| {
+                RuntimeError::unavailable(
+                    "home_unavailable",
+                    format!("create sandbox home: {error}"),
+                )
+            })?;
+        }
+        if !path_is_directory(&config.home) {
+            return Err(RuntimeError::rejected(
+                "home_invalid",
+                "sandbox home is not a directory",
+            ));
+        }
+        let home = crate::persistent_home::initialize(&config)?;
+        let install_state = crate::install::recover(&config)?;
+        let restored = home
+            .as_ref()
+            .map(|home| home.restore_completed(&install_state))
+            .transpose()?
+            .unwrap_or(false);
+        let (phase, restore_bootstrap) = match install_state {
+            RecoveryState::Completed => (Phase::Installed, None),
+            RecoveryState::Inherited(receipt) => (
+                if restored {
+                    Phase::Installed
+                } else {
+                    Phase::RestorePending
+                },
+                Some(receipt),
+            ),
+            RecoveryState::Absent | RecoveryState::Terminal => (Phase::Provisioned, None),
+        };
+        let checkpoint = CheckpointStore::new(&config);
+        Ok(Arc::new(Self {
+            config,
+            boot_id: uuid::Uuid::new_v4().simple().to_string(),
+            phase: RwLock::new(phase),
+            allow_unowned_preparation: phase == Phase::Provisioned,
+            restore_bootstrap: RwLock::new(restore_bootstrap),
+            operation_gate: Arc::new(Mutex::new(())),
+            credential: CredentialHolder::new(),
+            agents: RwLock::new(BTreeMap::new()),
+            checkpoint,
+            held_checkpoint: Arc::new(Mutex::new(None)),
+            resources: crate::resources::Sampler::new(
+                crate::resources::Roots::default(),
+                std::time::Instant::now(),
+            ),
+            writer_boundary,
+            http: reqwest::Client::builder()
+                .redirect(reqwest::redirect::Policy::none())
+                .timeout(std::time::Duration::from_secs(120))
+                .build()
+                .expect("skill HTTP client builds"),
+        }))
+    }
+
+    pub(crate) async fn dispatch(&self, request: RequestFrame) -> ResponseFrame {
+        let operation = request.operation();
+        // Observation must not repair journals or wait for archive capture/export.
+        if let RequestFrame::RuntimeStatus(request) = request {
+            return match self.runtime_status(request).await {
+                Ok(status) => ResponseFrame::RuntimeStatus(status),
+                Err(error) => error.response(operation),
+            };
+        }
+        if matches!(
+            request,
+            RequestFrame::PrepareWorkspace(_)
+                | RequestFrame::WorkspaceSetup(_)
+                | RequestFrame::RemoveWorkspace(_)
+        ) {
+            if self.held_checkpoint.lock().await.is_some() {
+                return writers_held_error().response(operation);
+            }
+            if let Err(error) = self.recover_journals().await {
+                return error.response(operation);
+            }
+            if let Err(error) = self.authorize_preparation(&request).await {
+                return error.response(operation);
+            }
+            if let RequestFrame::RemoveWorkspace(reference) = &request {
+                if let Err(error) = self.ensure_workspace_idle(&reference.name).await {
+                    return error.response(operation);
+                }
+            }
+            return match crate::workspace_runtime::dispatch(
+                self.config.clone(),
+                Arc::clone(&self.operation_gate),
+                Arc::clone(&self.held_checkpoint),
+                request,
+            )
+            .await
+            {
+                Ok(response) => response,
+                Err(error) => error.response(operation),
+            };
+        }
+        let _operation = self.operation_gate.lock().await;
+        if let Err(error) = crate::persistent_home::verify(&self.config) {
+            return error.response(operation);
+        }
+        let writers_held = self.held_checkpoint.lock().await.is_some();
+        if writers_held
+            && !matches!(
+                &request,
+                RequestFrame::CheckpointForTeardown(_)
+                    | RequestFrame::ResumeCheckpointWriters(_)
+                    | RequestFrame::CaptureAgent(_)
+                    | RequestFrame::Resources
+            )
+        {
+            return writers_held_error().response(operation);
+        }
+        if let Err(error) = self.authorize_mutation(&request).await {
+            return error.response(operation);
+        }
+        if !writers_held && !matches!(&request, RequestFrame::ResumeCheckpointWriters(_)) {
+            if let Err(error) = self.recover_journals_locked().await {
+                return error.response(operation);
+            }
+        }
+        match self.execute(request).await {
+            Ok(response) => response,
+            Err(error) => error.response(operation),
+        }
+    }
+
+    async fn execute(&self, request: RequestFrame) -> Result<ResponseFrame> {
+        if !matches!(
+            request,
+            RequestFrame::Install(_)
+                | RequestFrame::BootstrapRestore(_)
+                | RequestFrame::Credential(_)
+                | RequestFrame::Restore(_)
+                | RequestFrame::ResumeCheckpointWriters(_)
+                | RequestFrame::Resources
+        ) {
+            self.authorize_preparation(&request).await?;
+        }
+        match request {
+            RequestFrame::CacheSkillArchive(archive) => {
+                crate::skills::cache_archive(&self.config, &archive)?;
+                Ok(ResponseFrame::CacheSkillArchive {
+                    sha256: archive.sha256,
+                })
+            }
+            RequestFrame::Install(request) => self.install(request).await,
+            RequestFrame::BootstrapRestore(request) => self.bootstrap_restore(request).await,
+            RequestFrame::Credential(frame) => self.credential(frame).await,
+            RequestFrame::PrepareWorkspace(_)
+            | RequestFrame::WorkspaceSetup(_)
+            | RequestFrame::RemoveWorkspace(_) => unreachable!("workspace requests detach first"),
+            RequestFrame::AddWorktree(request) => {
+                self.add_worktree(request.authority_fence, request.request)
+                    .await
+            }
+            RequestFrame::RemoveWorktree(request) => {
+                self.remove_worktree(request.authority_fence, request.request)
+                    .await
+            }
+            RequestFrame::MaterializeAgentHome(request) => {
+                self.materialize_agent_home(request.authority_fence, request.request)
+                    .await
+            }
+            RequestFrame::RemoveAgentHome(request) => {
+                self.remove_agent_home(request.authority_fence, request.request)
+                    .await
+            }
+            RequestFrame::OpenAgent(request) => {
+                self.open_agent(request.authority_fence, request.request)
+                    .await
+            }
+            RequestFrame::CloseAgent(request) => {
+                self.close_agent(request.authority_fence, request.request)
+                    .await
+            }
+            RequestFrame::CaptureAgent(reference) => {
+                safe_component(reference.agent_id.as_str(), "agent id")?;
+                let home = self.config.agent_home(reference.agent_id.as_str());
+                if !path_is_directory(&home) {
+                    return Err(RuntimeError::rejected(
+                        "agent_home_not_found",
+                        "agent home was not found",
+                    ));
+                }
+                Ok(ResponseFrame::CaptureAgent(crate::conversation::capture(
+                    &home,
+                )?))
+            }
+            RequestFrame::Checkpoint(request) => self.checkpoint(&request).await,
+            RequestFrame::CheckpointForTeardown(request) => {
+                self.checkpoint_for_teardown(request).await
+            }
+            RequestFrame::ResumeCheckpointWriters(request) => {
+                self.resume_checkpoint_writers(request).await
+            }
+            RequestFrame::Restore(request) => self.restore(&request).await,
+            RequestFrame::Resources => Ok(ResponseFrame::Resources(
+                self.resources.sample(std::time::Instant::now()).into(),
+            )),
+            RequestFrame::RuntimeStatus(_) => {
+                unreachable!("status requests observe without mutation")
+            }
+        }
+    }
+
+    async fn authorize_mutation(&self, request: &RequestFrame) -> Result<()> {
+        use crate::mutation_journal::Operation;
+
+        let fenced = match request {
+            RequestFrame::AddWorktree(request) => {
+                crate::worktree::validate_add_request(&request.request)?;
+                Some((
+                    request.authority_fence,
+                    Operation::add_worktree(&request.request),
+                ))
+            }
+            RequestFrame::RemoveWorktree(request) => {
+                crate::worktree::validate_remove_request(&request.request)?;
+                Some((
+                    request.authority_fence,
+                    Operation::remove_worktree(&request.request),
+                ))
+            }
+            RequestFrame::MaterializeAgentHome(request) => {
+                agent_validation::materialize_home(&request.request)?;
+                Some((
+                    request.authority_fence,
+                    Operation::create_agent_home(&request.request),
+                ))
+            }
+            RequestFrame::RemoveAgentHome(request) => {
+                agent_validation::remove_home(&request.request)?;
+                Some((
+                    request.authority_fence,
+                    Operation::remove_agent_home(&request.request),
+                ))
+            }
+            RequestFrame::OpenAgent(request) => {
+                agent_validation::open(&request.request)?;
+                Some((
+                    request.authority_fence,
+                    Operation::open_agent(&request.request),
+                ))
+            }
+            RequestFrame::CloseAgent(request) => {
+                agent_validation::close(&request.request)?;
+                Some((
+                    request.authority_fence,
+                    Operation::close_agent(&request.request),
+                ))
+            }
+            _ => None,
+        };
+        let Some((authority_fence, operation)) = fenced else {
+            return Ok(());
+        };
+        self.authorize_preparation(request).await?;
+        crate::mutation_authority::admit(&self.config, authority_fence, &operation)
+    }
+
+    async fn install(&self, request: InstallRequest) -> Result<ResponseFrame> {
+        let phase = *self.phase.read().await;
+        let receipt = crate::install::run(&self.config, &request).await?;
+        if phase == Phase::Provisioned {
+            *self.phase.write().await = Phase::Installed;
+        }
+        Ok(ResponseFrame::Install(receipt))
+    }
+
+    async fn bootstrap_restore(&self, request: RestoreBootstrapRequest) -> Result<ResponseFrame> {
+        let receipt = crate::restore_bootstrap::admit(&self.config, &request)?;
+        let mut phase = self.phase.write().await;
+        let mut bootstrap = self.restore_bootstrap.write().await;
+        if bootstrap
+            .as_ref()
+            .is_some_and(|existing| existing != &receipt)
+        {
+            return Err(RuntimeError::rejected(
+                "restore_bootstrap_conflict",
+                "runtime lifecycle carries another restore bootstrap identity",
+            ));
+        }
+        match *phase {
+            Phase::Provisioned => *phase = Phase::RestorePending,
+            Phase::RestorePending | Phase::RestoreCredentialed | Phase::Credentialed => {}
+            Phase::Installed
+                if self.config.home_identity.is_some() && bootstrap.as_ref() == Some(&receipt) => {}
+            Phase::Installed => {
+                return Err(RuntimeError::rejected(
+                    "install_mode_conflict",
+                    "ordinary installation already completed for this runtime",
+                ))
+            }
+        }
+        *bootstrap = Some(receipt.clone());
+        Ok(ResponseFrame::BootstrapRestore(receipt))
+    }
+
+    async fn credential(&self, frame: layer3_adapter::CredentialFrame) -> Result<ResponseFrame> {
+        if frame.operation_id.is_empty() || frame.operation_id.len() > 256 {
+            return Err(RuntimeError::rejected(
+                "credential_operation_invalid",
+                "credential operation id is empty or too large",
+            ));
+        }
+        let phase = *self.phase.read().await;
+        match phase {
+            Phase::Provisioned => {
+                return Err(RuntimeError::rejected(
+                    "install_not_completed",
+                    "credential cannot be installed before software installation completes",
+                ))
+            }
+            Phase::Installed => {
+                let proxies = PreparedProxies::bind(&self.config).await?;
+                self.credential.install(&frame).await?;
+                proxies.start(self.credential.clone());
+                *self.phase.write().await = Phase::Credentialed;
+            }
+            Phase::RestorePending => {
+                let proxies = PreparedProxies::bind(&self.config).await?;
+                self.credential.install(&frame).await?;
+                proxies.start(self.credential.clone());
+                *self.phase.write().await = Phase::RestoreCredentialed;
+            }
+            Phase::RestoreCredentialed | Phase::Credentialed => {
+                self.credential.install(&frame).await?
+            }
+        }
+        Ok(ResponseFrame::Credential(CredentialReceipt {
+            operation_id: frame.operation_id,
+            installed: true,
+        }))
+    }
+
+    pub(crate) async fn bridge(&self, agent_id: &str) -> Option<Arc<Bridge>> {
+        self.agents
+            .read()
+            .await
+            .get(&AgentSlot::new(agent_id))
+            .map(|agent| Arc::clone(&agent.bridge))
+    }
+
+    pub(crate) fn checkpoint_store(&self) -> &CheckpointStore {
+        &self.checkpoint
+    }
+
+    pub(crate) async fn phase(&self) -> Phase {
+        *self.phase.read().await
+    }
+}
+
+fn validate_environment(name: &str, value: &str) -> Result<()> {
+    if name.is_empty()
+        || name.contains('=')
+        || name.contains('\0')
+        || value.contains('\0')
+        || !name
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+    {
+        return Err(RuntimeError::rejected(
+            "agent_environment_invalid",
+            "agent environment contains an invalid name or value",
+        ));
+    }
+    Ok(())
+}
+
+fn reserved(name: &str) -> bool {
+    name == "HOME" || name == "PATH" || name.starts_with("CHRONO_") || name.starts_with("NYXID_")
+}
+
+fn writers_held_error() -> RuntimeError {
+    RuntimeError::rejected(
+        "checkpoint_writers_held",
+        "operation is not permitted while checkpoint writers are held",
+    )
+}
+
+#[cfg(test)]
+#[path = "supervisor_authority_tests.rs"]
+mod authority_tests;
+#[cfg(test)]
+#[path = "supervisor_checkpoint_http_tests.rs"]
+mod checkpoint_http_tests;
+#[cfg(test)]
+#[path = "supervisor_mutation_tests.rs"]
+mod mutation_tests;
+#[cfg(test)]
+#[path = "supervisor_persistent_home_tests.rs"]
+mod persistent_home_tests;
+#[cfg(test)]
+#[path = "supervisor_restore_tests.rs"]
+mod restore_tests;
+#[cfg(test)]
+#[path = "supervisor_tests.rs"]
+mod tests;

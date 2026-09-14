@@ -1,113 +1,42 @@
-//! Recording the durable edges produced by a live pressure fold.
+//! Resource-neutral composition of CPU and memory pressure folds.
 
-use crate::event::EventKind;
-use crate::ids::SessionId;
-use crate::pressure::{
-    CpuPressureSample, CpuPressureTransition, PressureSample, PressureTransition,
+use crate::{
+    CpuPressure, CpuPressurePolicy, CpuPressureSample, CpuPressureTransition, MemoryPressure,
+    MemoryPressurePolicy, PressureSample, PressureTransition,
 };
-use crate::service::SessionService;
 
-impl SessionService {
-    /// Fold one reading into a session's independent resource-pressure states.
-    ///
-    /// There is no caller and nothing to retry. A reading that produces no
-    /// edge is ordinary; a durable write failure is already reported by
-    /// `flush`.
-    pub(crate) async fn note_resource_pressure(
-        &self,
-        id: &SessionId,
-        memory: Option<PressureSample>,
-        cpu: Option<CpuPressureSample>,
-    ) {
-        if memory.is_none() && cpu.is_none() {
-            return;
-        }
-        let settings = self.settings.for_provisioning().await;
-        let wrote = {
-            let mut entries = self.entries.write().await;
-            let Some(entry) = entries.get_mut(id) else {
-                return;
-            };
-            let interactive = entry.session.status.is_interactive();
-            let mut wrote = false;
-            if let Some(sample) = memory {
-                let transition = if interactive {
-                    entry
-                        .memory_pressure
-                        .evaluate(&sample, &settings.memory_pressure)
-                } else {
-                    entry.memory_pressure.abandon(sample.at)
-                };
-                if let Some(transition) = transition {
-                    crate::log::append(entry, memory_event_from(transition));
-                    wrote = true;
-                }
-            }
-            if let Some(sample) = cpu {
-                let transition = if interactive {
-                    entry.cpu_pressure.evaluate(&sample, &settings.cpu_pressure)
-                } else {
-                    entry.cpu_pressure.abandon(sample.at)
-                };
-                if let Some(transition) = transition {
-                    crate::log::append(entry, cpu_event_from(transition));
-                    wrote = true;
-                }
-            }
-            wrote
-        };
-        if wrote {
-            self.flush(id).await;
-        }
-    }
+/// Live pressure folds for one caller-owned resource entry.
+#[derive(Debug, Default)]
+pub struct PressureMonitor {
+    cpu: CpuPressure,
+    memory: MemoryPressure,
 }
 
-fn memory_event_from(transition: PressureTransition) -> EventKind {
-    match transition {
-        PressureTransition::Opened {
-            used_bytes,
-            limit_bytes,
-            occupancy_permille,
-        } => EventKind::MemoryPressureOpened {
-            used_bytes,
-            limit_bytes,
-            occupancy_permille,
-        },
-        PressureTransition::Closed {
-            peak_bytes,
-            limit_bytes,
-            peak_permille,
-            duration_seconds,
-        } => EventKind::MemoryPressureClosed {
-            peak_bytes,
-            limit_bytes,
-            peak_permille,
-            duration_seconds,
-        },
-    }
+/// Durable edges produced by one pair of readings.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct PressureEdges {
+    pub cpu: Option<CpuPressureTransition>,
+    pub memory: Option<PressureTransition>,
 }
 
-fn cpu_event_from(transition: CpuPressureTransition) -> EventKind {
-    match transition {
-        CpuPressureTransition::Opened {
-            used_millis,
-            limit_millis,
-            occupancy_permille,
-        } => EventKind::CpuPressureOpened {
-            used_millis,
-            limit_millis,
-            occupancy_permille,
-        },
-        CpuPressureTransition::Closed {
-            peak_millis,
-            limit_millis,
-            peak_permille,
-            duration_seconds,
-        } => EventKind::CpuPressureClosed {
-            peak_millis,
-            limit_millis,
-            peak_permille,
-            duration_seconds,
-        },
+impl PressureMonitor {
+    pub fn evaluate(
+        &mut self,
+        cpu: &CpuPressureSample,
+        memory: &PressureSample,
+        cpu_policy: &CpuPressurePolicy,
+        memory_policy: &MemoryPressurePolicy,
+    ) -> PressureEdges {
+        PressureEdges {
+            cpu: self.cpu.evaluate(cpu, cpu_policy),
+            memory: self.memory.evaluate(memory, memory_policy),
+        }
+    }
+
+    pub fn abandon(&mut self, at: std::time::Instant) -> PressureEdges {
+        PressureEdges {
+            cpu: self.cpu.abandon(at),
+            memory: self.memory.abandon(at),
+        }
     }
 }

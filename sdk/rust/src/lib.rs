@@ -1,58 +1,42 @@
-//! Async Rust client for the CMA REST interface.
-//!
-//! The crate is deliberately independent from CMA's service workspace. Its
-//! types describe the public wire contract and are pinned to server-owned JSON
-//! fixtures, so using the SDK never links a service implementation crate into a
-//! consumer.
-//!
-//! # Quick start
+//! Async Rust client for CMA public resources and explicit durable work admission.
+//! Includes bounded REST polling and pull-based AG-UI, Launch, and Responses streams.
 //!
 //! ```no_run
-//! use cma_sdk::{Client, CreateSessionRequest, EventKind, SessionInput};
+//! use cma_sdk::Client;
 //!
 //! # async fn run() -> Result<(), Box<dyn std::error::Error>> {
-//! let client = Client::builder("https://cma.example.com")?
-//!     .credential_provider(|| std::env::var("CMA_ACCESS_TOKEN"))
-//!     .build()?;
-//!
-//! let session = client
-//!     .create_session(CreateSessionRequest::default())
-//!     .await?;
-//! client
-//!     .send_input(&session.id, SessionInput::text("Summarise this repository"))
-//!     .await?;
-//!
-//! let mut events = client.stream_events(&session.id, None).await?;
-//! while let Some(event) = events.next().await {
-//!     let event = event?;
-//!     if matches!(event.kind, EventKind::TurnCompleted) {
-//!         break;
-//!     }
-//! }
+//! let client = Client::builder("https://cma.example.com")?.build()?;
+//! let deployment = client.read_conformance().await?;
+//! println!("{}: {}", deployment.service, deployment.status);
 //! # Ok(())
 //! # }
 //! ```
-//!
-//! The live PTY byte stream is intentionally absent from this first release.
-//! It is CMA's priority-3, CLI-shaped interface; this crate covers the REST
-//! terminal operations (resize and screen snapshot) but does not pretend a
-//! bidirectional terminal attachment is an HTTP operation.
 
 #![deny(missing_docs)]
 
+#[macro_use]
+mod macros;
+pub mod admin;
+pub mod agents;
+pub mod agui;
+pub mod assets;
+pub mod auth;
 mod client;
+mod conformance;
+pub mod defaults;
+pub mod discovery;
 mod error;
-mod event;
-mod responses;
-mod settings;
-mod stream;
-mod triggers;
-mod types;
+mod http;
+pub mod instances;
+pub mod launches;
+pub mod profile_authoring;
+pub mod profiles;
+mod resources;
+pub mod responses;
+pub mod stream;
+pub mod triggers;
 
 /// Executable integration guides shipped with the crate.
-///
-/// Each child module includes one file from `docs/`. Rustdoc therefore tests
-/// every Rust fence in the published guides as part of `cargo test --doc`.
 pub mod guides {
     #[doc = include_str!("../docs/README.md")]
     pub mod overview {}
@@ -60,8 +44,12 @@ pub mod guides {
     pub mod quickstart {}
     #[doc = include_str!("../docs/authentication.md")]
     pub mod authentication {}
-    #[doc = include_str!("../docs/sessions.md")]
-    pub mod sessions {}
+    #[doc = include_str!("../docs/sandboxes.md")]
+    pub mod sandboxes {}
+    #[doc = include_str!("../docs/agents.md")]
+    pub mod agents {}
+    #[doc = include_str!("../docs/profiles.md")]
+    pub mod profiles {}
     #[doc = include_str!("../docs/streaming.md")]
     pub mod streaming {}
     #[doc = include_str!("../docs/triggers.md")]
@@ -74,31 +62,7 @@ pub mod guides {
     pub mod reference {}
 }
 
-pub use client::{Client, ClientBuilder, ResponseMetadata, RetryPolicy};
+pub use client::{Client, ClientBuilder};
+pub use conformance::Conformance;
 pub use error::{Error, Result};
-pub use event::{
-    AvailableCommand, ConfigOption, Event, EventKind, PlanStep, ProvisioningStage,
-    RuntimeLossCause, SessionPlane, ToolBody,
-};
-pub use responses::{
-    ConversationItemsRequest, ConversationMessageContent, ConversationMessageItem,
-    CreateResponseRequest, ResponseError, ResponseInput, ResponseInputContent,
-    ResponseInputMessage, ResponseInputText, ResponseInputTokenDetails, ResponseOutputMessage,
-    ResponseOutputText, ResponseOutputTokenDetails, ResponseStatus, ResponseToolActivity,
-    ResponseToolBody, ResponseUsage, ResponsesConversation, ResponsesConversationItem,
-    ResponsesConversationItemList, ResponsesEvent, ResponsesResponse, ResponsesStream,
-};
-pub use settings::{
-    ChatAgentSettings, ChatHostSettings, ChatInactivity, ChatSettings, ChatSetup,
-    ChatWorkspaceSource, StoredChatSettings,
-};
-pub use stream::EventStream;
-pub use triggers::*;
-pub use types::{
-    Agent, ApprovalDecision, ChatHost, ChatHostFailure, ChatHostFailurePhase, ChatHostId,
-    ChatHostPageRequest, ChatHostStatus, ChatSession, Conformance, CreateSessionRequest,
-    CredentialMode, MAX_PAGE_SIZE, MIN_PAGE_SIZE, Page, PageContinuation, PageWalkLimits,
-    PermissionMode, PublicIdentity, Reach, ReasoningEffort, RecoveryState, ScreenSnapshot, Session,
-    SessionId, SessionInput, SessionPageRequest, SessionPricing, SessionSize, SessionStatus,
-    SessionSurface, SessionSurfaceFilter, Skill, StopReason, TerminalGeometry, Usage,
-};
+pub use resources::{EventOptions, IdempotencyKey, PageOptions, ResourceList, ResourcePage};

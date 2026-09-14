@@ -11,16 +11,18 @@ const rustDocsDirectory = join(packageRoot, '..', 'rust', 'docs');
 const declarations = join(packageRoot, 'dist', 'index.d.ts');
 const expectedRustDocuments = [
   'README.md',
+  'agents.md',
   'authentication.md',
   'errors.md',
   'operations.md',
+  'profiles.md',
   'quickstart.md',
   'reference.md',
-  'sessions.md',
+  'sandboxes.md',
   'streaming.md',
   'triggers.md',
 ];
-const expectedTypeScriptDocuments = [...expectedRustDocuments, 'sponsorships.md'].sort();
+const expectedTypeScriptDocuments = [...expectedRustDocuments].sort();
 
 await access(declarations).catch(() => {
   throw new Error('dist/index.d.ts is absent; run npm run build before checking documentation');
@@ -49,9 +51,9 @@ for (const document of documents) {
   navOrders.add(order);
   navLabels.add(label);
 
-  const fence = /```(?:ts|typescript)\s*\n([\s\S]*?)```/g;
+  const fence = /```(ts|tsx|typescript)\s*\n([\s\S]*?)```/g;
   for (const match of markdown.matchAll(fence)) {
-    examples.push({ document, source: match[1] });
+    examples.push({ document, source: match[2], jsx: match[1] === 'tsx' });
   }
 }
 
@@ -81,15 +83,19 @@ for (const document of rustDocuments) {
   rustNavLabels.add(label);
 }
 
-if (examples.length < 8) {
-  throw new Error(`expected at least eight TypeScript examples, found ${String(examples.length)}`);
+if (examples.length < 4) {
+  throw new Error(`expected at least four TypeScript examples, found ${String(examples.length)}`);
 }
 
 const scratch = await mkdtemp(join(tmpdir(), 'cma-sdk-docs-'));
 try {
+  await writeFile(join(scratch, 'package.json'), JSON.stringify({ type: 'module' }));
   const roots = [];
   for (const [index, example] of examples.entries()) {
-    const path = join(scratch, `${basename(example.document, '.md')}-${String(index + 1)}.mts`);
+    const path = join(
+      scratch,
+      `${basename(example.document, '.md')}-${String(index + 1)}.${example.jsx ? 'tsx' : 'mts'}`,
+    );
     await writeFile(path, `export {};\n${example.source}`, 'utf8');
     roots.push(path);
   }
@@ -101,13 +107,16 @@ try {
     moduleResolution: ts.ModuleResolutionKind.NodeNext,
     moduleDetection: ts.ModuleDetectionKind.Force,
     strict: true,
+    jsx: ts.JsxEmit.ReactJSX,
     noEmit: true,
     skipLibCheck: true,
     verbatimModuleSyntax: true,
     baseUrl: packageRoot,
     paths: {
       '@chronoai/cma-sdk': ['./dist/index.d.ts'],
-      '@chronoai/cma-sdk/testing': ['./dist/testing.d.ts'],
+      '@chronoai/cma-sdk/react': ['./dist/react.d.ts'],
+      react: ['./node_modules/@types/react/index.d.ts'],
+      'react/*': ['./node_modules/@types/react/*.d.ts'],
     },
     types: ['node'],
     typeRoots: [join(packageRoot, 'node_modules', '@types')],

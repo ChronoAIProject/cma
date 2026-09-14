@@ -1,0 +1,161 @@
+use super::acp::{Bridge, PROTOCOL_VERSION, SIGN_IN_DEADLINE};
+use super::update_relay::UpdateRelay;
+use super::HostedAgentOpenSettings;
+use crate::AdapterError;
+
+enum Greeting {
+    Fresh(serde_json::Value),
+    Existing,
+}
+
+impl Bridge {
+    pub(super) async fn handshake(
+        &self,
+        resume: Option<String>,
+        cwd: String,
+        settings: HostedAgentOpenSettings,
+        updates: &UpdateRelay,
+    ) -> crate::Result<()> {
+        validate_settings(&cwd, &settings)?;
+        let greeting = self
+            .greet(serde_json::json!({
+                "protocolVersion": PROTOCOL_VERSION,
+                "clientCapabilities": {
+                    "fs": { "readTextFile": false, "writeTextFile": false },
+                    "elicitation": { "url": {} },
+                    // Codex ACP otherwise emits provider failures as assistant text
+                    // followed by end_turn. Negotiate its structured failure result.
+                    "_meta": {
+                        "jetbrains": { "air": { "version": 1, "capabilities": ["sessionFailure"] } }
+                    },
+                },
+            }))
+            .await?;
+
+        if settings.own_credential && self.subscription.is_some() {
+            self.call("cma/codex/authenticate", serde_json::json!({}))
+                .await?;
+        } else if settings.own_credential
+            && resume.is_none()
+            && matches!(greeting, Greeting::Fresh(_))
+        {
+            let Greeting::Fresh(hello) = &greeting else {
+                unreachable!("fresh greeting was matched")
+            };
+            self.authenticate_owner(hello).await?;
+        }
+
+        let session = match (greeting, resume) {
+            (Greeting::Fresh(_), Some(conversation)) => {
+                self.activate_session(conversation.clone(), updates).await?;
+                self.call(
+                    "session/load",
+                    serde_json::json!({
+                        "sessionId": conversation,
+                        "cwd": cwd,
+                        "mcpServers": [],
+                    }),
+                )
+                .await
+                .map_err(|error| error.context("could not resume conversation"))?;
+                conversation
+            }
+            (Greeting::Fresh(_), None) => {
+                let started = self
+                    .call(
+                        "session/new",
+                        serde_json::json!({ "cwd": cwd, "mcpServers": [] }),
+                    )
+                    .await?;
+                let conversation = started
+                    .get("sessionId")
+                    .and_then(serde_json::Value::as_str)
+                    .ok_or_else(|| AdapterError::Rejected("bridge named no conversation".into()))?
+                    .to_string();
+                self.activate_session(conversation.clone(), updates).await?;
+                conversation
+            }
+            (Greeting::Existing, Some(conversation)) => {
+                self.activate_session(conversation.clone(), updates).await?;
+                tracing::info!("rejoining the conversation held by the runtime");
+                conversation
+            }
+            (Greeting::Existing, None) => {
+                return Err(AdapterError::Rejected(
+                    "an initialized bridge requires the held conversation identifier".into(),
+                ));
+            }
+        };
+
+        if let Some(mode) = settings.permission_mode {
+            self.call(
+                "session/set_mode",
+                serde_json::json!({ "sessionId": session, "modeId": mode }),
+            )
+            .await
+            .map_err(|error| {
+                error.context(&format!(
+                    "conversation could not be held to permission mode {mode}"
+                ))
+            })?;
+        }
+        Ok(())
+    }
+
+    async fn greet(&self, params: serde_json::Value) -> crate::Result<Greeting> {
+        match self.call("initialize", params).await {
+            Ok(hello) => Ok(Greeting::Fresh(hello)),
+            Err(refused @ AdapterError::Rejected(_)) => {
+                tracing::info!(%refused, "runtime bridge was already initialized");
+                Ok(Greeting::Existing)
+            }
+            Err(error) => Err(error),
+        }
+    }
+
+    async fn authenticate_owner(&self, hello: &serde_json::Value) -> crate::Result<()> {
+        let methods = hello
+            .get("authMethods")
+            .and_then(serde_json::Value::as_array)
+            .map(Vec::as_slice)
+            .unwrap_or_default();
+        let chosen = methods
+            .iter()
+            .filter_map(|method| method.get("id").and_then(serde_json::Value::as_str))
+            .find(|id| id.contains("device"))
+            .ok_or_else(|| {
+                AdapterError::Unsupported(
+                    "runtime offers no remotely completable owner sign-in".into(),
+                )
+            })?
+            .to_string();
+        self.call_within(
+            "authenticate",
+            serde_json::json!({ "methodId": chosen }),
+            SIGN_IN_DEADLINE,
+        )
+        .await
+        .map_err(|error| error.context("owner sign-in did not complete"))?;
+        Ok(())
+    }
+}
+
+fn validate_settings(cwd: &str, settings: &HostedAgentOpenSettings) -> crate::Result<()> {
+    let valid_mode = settings.permission_mode.as_deref().is_none_or(|mode| {
+        !mode.is_empty()
+            && mode.len() <= 128
+            && mode.trim() == mode
+            && !mode.chars().any(char::is_control)
+    });
+    if cwd.is_empty()
+        || cwd.len() > 4_096
+        || !cwd.starts_with('/')
+        || cwd.chars().any(char::is_control)
+        || !valid_mode
+    {
+        return Err(AdapterError::Rejected(
+            "ACP working directory or permission mode is invalid".into(),
+        ));
+    }
+    Ok(())
+}

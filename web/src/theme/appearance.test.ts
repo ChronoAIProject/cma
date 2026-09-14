@@ -10,7 +10,6 @@ import {
 } from './appearance';
 
 const STORAGE_KEY = 'cma:appearance';
-const LEGACY_STORAGE_KEY = 'chrono-bot:appearance';
 
 /**
  * The two attributes and the boot path — `docs/Web_Style.md` §3.
@@ -59,51 +58,29 @@ afterEach(() => {
 });
 
 describe('stored appearance', () => {
-  it('writes only the canonical key', () => {
+  it('writes the canonical key', () => {
     stubSystem(false);
     setAppearance('dark');
 
     expect(window.localStorage.getItem(STORAGE_KEY)).toBe('dark');
-    expect(window.localStorage.getItem(LEGACY_STORAGE_KEY)).toBeNull();
   });
 
-  it('migrates a valid historical preference', () => {
-    window.localStorage.setItem(LEGACY_STORAGE_KEY, 'dark');
-
-    expect(storedAppearance()).toBe('dark');
-    expect(window.localStorage.getItem(STORAGE_KEY)).toBe('dark');
-  });
-
-  it('prefers a valid canonical preference when both exist', () => {
+  it('reads a valid canonical preference', () => {
     window.localStorage.setItem(STORAGE_KEY, 'light');
-    window.localStorage.setItem(LEGACY_STORAGE_KEY, 'dark');
 
     expect(storedAppearance()).toBe('light');
-    expect(window.localStorage.getItem(STORAGE_KEY)).toBe('light');
   });
 
-  it('falls back to valid historical data when canonical data is malformed', () => {
+  it('defaults to system when canonical data is invalid', () => {
     window.localStorage.setItem(STORAGE_KEY, 'sepia');
-    window.localStorage.setItem(LEGACY_STORAGE_KEY, 'dark');
-
-    expect(storedAppearance()).toBe('dark');
-    expect(window.localStorage.getItem(STORAGE_KEY)).toBe('dark');
-  });
-
-  it('defaults to system when neither spelling contains valid data', () => {
-    window.localStorage.setItem(STORAGE_KEY, 'sepia');
-    window.localStorage.setItem(LEGACY_STORAGE_KEY, 'midnight');
 
     expect(storedAppearance()).toBe('system');
   });
 
-  it('uses a historical preference even when its migration write is blocked', () => {
-    window.localStorage.setItem(LEGACY_STORAGE_KEY, 'dark');
-    vi.spyOn(window.localStorage, 'setItem').mockImplementation(() => {
-      throw new DOMException('quota', 'QuotaExceededError');
-    });
+  it('does not read another product storage key', () => {
+    window.localStorage.setItem('other-product:appearance', 'dark');
 
-    expect(storedAppearance()).toBe('dark');
+    expect(storedAppearance()).toBe('system');
   });
 
   it('defaults to system instead of throwing when reads are blocked', () => {
@@ -242,49 +219,15 @@ describe('the pre-paint boot script', () => {
     // for most people, wrong for exactly those who expressed a preference.
     setAppearance('dark');
     expect(inline).toContain(STORAGE_KEY);
-    expect(inline).toContain(LEGACY_STORAGE_KEY);
   });
 
-  it('migrates a historical preference before first paint', () => {
+  it('ignores an unrecognised preference before first paint', () => {
     stubSystem(false);
-    window.localStorage.setItem(LEGACY_STORAGE_KEY, 'dark');
-
-    boot();
-
-    expect(isDark()).toBe(true);
-    expect(window.localStorage.getItem(STORAGE_KEY)).toBe('dark');
-  });
-
-  it('gives a valid canonical preference precedence before first paint', () => {
-    stubSystem(false);
-    window.localStorage.setItem(STORAGE_KEY, 'light');
-    window.localStorage.setItem(LEGACY_STORAGE_KEY, 'dark');
+    window.localStorage.setItem(STORAGE_KEY, 'sepia');
 
     boot();
 
     expect(isDark()).toBe(false);
-  });
-
-  it('falls back from malformed canonical data before first paint', () => {
-    stubSystem(false);
-    window.localStorage.setItem(STORAGE_KEY, 'sepia');
-    window.localStorage.setItem(LEGACY_STORAGE_KEY, 'dark');
-
-    boot();
-
-    expect(isDark()).toBe(true);
-    expect(window.localStorage.getItem(STORAGE_KEY)).toBe('dark');
-  });
-
-  it('still applies a historical preference when migration writes are blocked', () => {
-    stubSystem(false);
-    window.localStorage.setItem(LEGACY_STORAGE_KEY, 'dark');
-    vi.spyOn(window.localStorage, 'setItem').mockImplementation(() => {
-      throw new DOMException('quota', 'QuotaExceededError');
-    });
-
-    expect(() => boot()).not.toThrow();
-    expect(isDark()).toBe(true);
   });
 
   it('survives storage it is not allowed to read', () => {

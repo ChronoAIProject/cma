@@ -1,0 +1,117 @@
+.sandbox-page {
+  min-width: 0;
+  padding: 24px;
+  overflow: auto;
+}
+.sandbox-page h1 {
+  margin: 0;
+  font: var(--dsw-font-xl-24);
+}
+.sandbox-page h2 {
+  margin: 0 0 16px;
+  font: var(--dsw-font-m-18);
+}
+.sandbox-page h3 {
+  margin: 0;
+  font: var(--dsw-font-base-16);
+  font-weight: 600;
+}
+.sandbox-page p {
+  color: var(--dsw-alias-label-secondary);
+}
+.sandbox-page a {
+  color: var(--dsw-alias-brand-primary);
+}
+.sandbox-page code {
+  font-family: var(--ds-font-family-code);
+  overflow-wrap: anywhere;
+}
+.sandbox-page__header,
+.sandbox-page__actions {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+}
+.sandbox-page__band {
+  margin-top: 24px;
+  padding-top: 24px;
+  border-top: 1px solid var(--dsw-alias-border-l2);
+}
+.sandbox-page dl,
+.sandbox-advanced dl {
+  display: grid;
+  gap: 12px;
+  margin: 0;
+}
+.sandbox-page dl > div,
+.sandbox-advanced dl > div {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 2fr);
+  gap: 16px;
+}
+.sandbox-page dt,
+.sandbox-advanced dt {
+  color: var(--dsw-alias-label-secondary);
+}
+.sandbox-page dd,
+.sandbox-advanced dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.sandbox-page__workspace {
+  padding: 16px 0;
+}
+.sandbox-page__workspace ul,
+.sandbox-page__events {
+  padding: 0;
+  list-style: none;
+}
+.sandbox-page__agents > li {
+  padding: 16px 0;
+  border-top: 1px solid var(--dsw-alias-border-l2);
+}
+.sandbox-page__agents > li > .sandbox-page__header {
+  margin-bottom: 12px;
+}
+.sandbox-page__references {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+.sandbox-advanced {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.sandbox-advanced h3 {
+  font: var(--dsw-font-base-16);
+}
+.sandbox-advanced code {
+  overflow-wrap: anywhere;
+}
+.sandbox-advanced a {
+  color: var(--dsw-alias-brand-primary);
+}
+.sandbox-page__events li {
+  display: flex;
+  gap: 16px;
+  justify-content: space-between;
+  padding: 8px 0;
+  overflow-wrap: anywhere;
+}
+.sandbox-page__events time {
+  color: var(--dsw-alias-label-secondary);
+}
+@media (max-width: 30rem) {
+  .sandbox-page {
+    padding: 16px;
+  }
+  .sandbox-page__events li {
+    flex-direction: column;
+    gap: 8px;
+  }
+}

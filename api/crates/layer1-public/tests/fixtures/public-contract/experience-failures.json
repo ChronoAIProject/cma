@@ -1,0 +1,918 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "agui-run-stopped",
+      "operation": "POST /api/v1/agui/run",
+      "scenario": "experience_stopped",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agui/run",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "threadId": "agt_contract",
+          "messages": [
+            {
+              "role": "user",
+              "content": "Continue"
+            }
+          ]
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent-not-ready",
+          "title": "agent not ready",
+          "status": 409,
+          "detail": "The agent is not ready for this operation.",
+          "code": "agent_not_ready"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agui-run-conversation-unsupported",
+      "operation": "POST /api/v1/agui/run",
+      "scenario": "experience_no_capabilities",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agui/run",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "threadId": "agt_contract",
+          "messages": [
+            {
+              "role": "user",
+              "content": "Continue"
+            }
+          ]
+        }
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent-capability-unsupported",
+          "title": "agent capability unsupported",
+          "status": 422,
+          "detail": "The agent runtime does not support this operation.",
+          "code": "agent_capability_unsupported",
+          "capability": "conversation"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agui-run-steer-unsupported",
+      "operation": "POST /api/v1/agui/run",
+      "scenario": "experience_no_steer",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agui/run",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "threadId": "agt_contract",
+          "messages": [
+            {
+              "role": "user",
+              "content": "Continue"
+            }
+          ]
+        }
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent-capability-unsupported",
+          "title": "agent capability unsupported",
+          "status": 422,
+          "detail": "The agent runtime does not support this operation.",
+          "code": "agent_capability_unsupported",
+          "capability": "steer"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agui-run-approval-not-pending",
+      "operation": "POST /api/v1/agui/run",
+      "scenario": "experience_approval",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agui/run",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "threadId": "agt_contract",
+          "resume": [
+            {
+              "interruptId": "approval_missing",
+              "status": "resolved",
+              "payload": {
+                "decision": "allow"
+              }
+            }
+          ]
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent-approval-not-pending",
+          "title": "agent approval not pending",
+          "status": 409,
+          "detail": "The named approval is not pending for this agent.",
+          "code": "agent_approval_not_pending",
+          "request_id": "approval_missing"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agui-run-invalid-approval-id",
+      "operation": "POST /api/v1/agui/run",
+      "scenario": "experience_approval",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agui/run",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "threadId": "agt_contract",
+          "resume": [
+            {
+              "interruptId": " ",
+              "status": "resolved",
+              "payload": {
+                "decision": "allow"
+              }
+            }
+          ]
+        }
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-agent-request",
+          "title": "invalid agent request",
+          "status": 422,
+          "detail": "The agent request does not satisfy its validation contract.",
+          "code": "invalid_agent_request"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agui-run-operation-pending",
+      "operation": "POST /api/v1/agui/run",
+      "scenario": "experience_pending",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agui/run",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "threadId": "agt_contract",
+          "messages": [
+            {
+              "role": "user",
+              "content": "Continue"
+            }
+          ]
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent-operation-in-flight",
+          "title": "agent operation in flight",
+          "status": 409,
+          "detail": "Another durable operation currently owns this agent.",
+          "code": "agent_operation_in_flight"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agui-run-readiness-timeout",
+      "operation": "POST /api/v1/agui/run",
+      "scenario": "experience_timeout_input",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agui/run",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "threadId": "agt_contract",
+          "messages": [
+            {
+              "role": "user",
+              "content": "Continue"
+            }
+          ]
+        }
+      },
+      "response": {
+        "status": 504,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/provisioning-timeout",
+          "title": "provisioning timeout",
+          "status": 504,
+          "detail": "The context did not become ready within the ten-minute admission bound.",
+          "code": "provisioning_timeout"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agui-replay-durable-turn-failure",
+      "operation": "GET /api/v1/agui/events",
+      "scenario": "experience_failed_turn",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agui/events?thread_id=agt_contract&starting_after=9&follow=false",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "no-cache, no-store",
+          "content-type": "text/event-stream",
+          "x-accel-buffering": "no"
+        },
+        "body": [
+          {
+            "id": "10",
+            "data": {
+              "type": "RUN_ERROR",
+              "threadId": "agt_contract",
+              "runId": "3",
+              "code": "agent_turn_failed",
+              "message": "The runtime could not complete this turn.",
+              "timestamp": "2026-09-05T00:00:00Z"
+            }
+          }
+        ],
+        "bodyKind": "sse"
+      },
+      "captures": {}
+    },
+    {
+      "id": "responses-create-stopped",
+      "operation": "POST /api/v1/responses",
+      "scenario": "experience_stopped",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/responses",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "conversation": "agt_contract",
+          "input": "Continue",
+          "stream": true
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent-not-ready",
+          "title": "agent not ready",
+          "status": 409,
+          "detail": "The agent is not ready for this operation.",
+          "code": "agent_not_ready"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "responses-create-conversation-unsupported",
+      "operation": "POST /api/v1/responses",
+      "scenario": "experience_no_capabilities",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/responses",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "conversation": "agt_contract",
+          "input": "Continue",
+          "stream": true
+        }
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent-capability-unsupported",
+          "title": "agent capability unsupported",
+          "status": 422,
+          "detail": "The agent runtime does not support this operation.",
+          "code": "agent_capability_unsupported",
+          "capability": "conversation"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "responses-create-whitespace-input",
+      "operation": "POST /api/v1/responses",
+      "scenario": "experience_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/responses",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "conversation": "agt_contract",
+          "input": "   ",
+          "stream": true
+        }
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-agent-request",
+          "title": "invalid agent request",
+          "status": 422,
+          "detail": "The agent request does not satisfy its validation contract.",
+          "code": "invalid_agent_request"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "responses-create-operation-pending",
+      "operation": "POST /api/v1/responses",
+      "scenario": "experience_pending",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/responses",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "conversation": "agt_contract",
+          "input": "Continue",
+          "stream": true,
+          "previous_response_id": "resp_agt_contract_3"
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/response-in-progress",
+          "title": "response in progress",
+          "status": 409,
+          "detail": "This conversation already has a response in progress.",
+          "code": "response_in_progress"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "responses-create-working-turn",
+      "operation": "POST /api/v1/responses",
+      "scenario": "experience_working",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/responses",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "conversation": "agt_contract",
+          "input": "Continue",
+          "stream": true,
+          "previous_response_id": "resp_agt_contract_3"
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/response-in-progress",
+          "title": "response in progress",
+          "status": 409,
+          "detail": "This conversation already has a response in progress.",
+          "code": "response_in_progress"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "responses-create-readiness-timeout",
+      "operation": "POST /api/v1/responses",
+      "scenario": "experience_timeout_input",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/responses",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "conversation": "agt_contract",
+          "input": "Continue",
+          "stream": true
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "no-cache, no-store",
+          "content-type": "text/event-stream",
+          "x-accel-buffering": "no"
+        },
+        "body": [
+          {
+            "event": "response.failed",
+            "data": {
+              "response": {
+                "id": "resp_agt_contract_0",
+                "object": "response",
+                "created_at": 0,
+                "status": "failed",
+                "background": false,
+                "error": {
+                  "code": "provisioning_timeout",
+                  "message": "The Agent did not become reachable before the readiness deadline."
+                },
+                "incomplete_details": null,
+                "instructions": null,
+                "max_output_tokens": null,
+                "model": "gpt-proof",
+                "output": [],
+                "parallel_tool_calls": false,
+                "previous_response_id": null,
+                "reasoning": {
+                  "effort": null,
+                  "summary": null
+                },
+                "store": true,
+                "temperature": null,
+                "text": {
+                  "format": {
+                    "type": "text"
+                  },
+                  "verbosity": "medium"
+                },
+                "tool_choice": "none",
+                "tools": [],
+                "top_p": null,
+                "truncation": "disabled",
+                "usage": null,
+                "metadata": {}
+              },
+              "type": "response.failed",
+              "sequence_number": 0
+            }
+          }
+        ],
+        "bodyKind": "sse"
+      },
+      "captures": {}
+    },
+    {
+      "id": "conversations-create-workspace-missing",
+      "operation": "POST /api/v1/conversations",
+      "scenario": "experience_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/conversations",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "metadata": {
+            "workspace": "wks_missing"
+          }
+        }
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource-not-found",
+          "title": "resource not found",
+          "status": 404,
+          "detail": "No resource matches this request.",
+          "code": "workspace_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "conversations-create-sandbox-missing",
+      "operation": "POST /api/v1/conversations",
+      "scenario": "experience_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/conversations",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "metadata": {
+            "sandbox": "sbx_missing"
+          }
+        }
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource-not-found",
+          "title": "resource not found",
+          "status": 404,
+          "detail": "No resource matches this request.",
+          "code": "sandbox_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "conversations-create-agent-limit",
+      "operation": "POST /api/v1/conversations",
+      "scenario": "experience_limit",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/conversations",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "metadata": {
+            "workspace": "wks_route"
+          }
+        }
+      },
+      "response": {
+        "status": 429,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent-limit-reached",
+          "title": "agent limit reached",
+          "status": 429,
+          "detail": "The workspace has reached its live-agent limit.",
+          "code": "agent_limit_reached",
+          "limit": 4,
+          "live": 4
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "conversations-create-defaults-unavailable",
+      "operation": "POST /api/v1/conversations",
+      "scenario": "experience_defaults_unavailable",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/conversations",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/instance-service-unavailable",
+          "title": "instance service unavailable",
+          "status": 503,
+          "detail": "An instance dependency could not complete this request.",
+          "code": "instance_service_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "conversations-create-readiness-timeout",
+      "operation": "POST /api/v1/conversations",
+      "scenario": "experience_timeout_context",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/conversations",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {}
+      },
+      "response": {
+        "status": 504,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/provisioning-timeout",
+          "title": "provisioning timeout",
+          "status": 504,
+          "detail": "The context did not become ready within the ten-minute admission bound.",
+          "code": "provisioning_timeout"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agui-replay-without-runtime-capabilities",
+      "operation": "GET /api/v1/agui/events",
+      "scenario": "experience_no_capabilities",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agui/events?thread_id=agt_contract&starting_after=9&follow=false",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "no-cache, no-store",
+          "content-type": "text/event-stream",
+          "x-accel-buffering": "no"
+        },
+        "body": [
+          {
+            "id": "10",
+            "data": {
+              "type": "RUN_FINISHED",
+              "threadId": "agt_contract",
+              "runId": "3",
+              "outcome": {
+                "type": "complete"
+              },
+              "timestamp": "2026-09-05T00:00:00Z"
+            }
+          }
+        ],
+        "bodyKind": "sse"
+      },
+      "captures": {}
+    },
+    {
+      "id": "responses-read-without-runtime-capabilities",
+      "operation": "GET /api/v1/responses/{response_id}",
+      "scenario": "experience_no_capabilities",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/responses/resp_agt_contract_3",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "id": "resp_agt_contract_3",
+          "object": "response",
+          "created_at": 1788566400,
+          "status": "completed",
+          "background": false,
+          "error": null,
+          "incomplete_details": null,
+          "instructions": null,
+          "max_output_tokens": null,
+          "model": "gpt-proof",
+          "output": [
+            {
+              "id": "msg_agt_contract_3",
+              "type": "message",
+              "status": "completed",
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "output_text",
+                  "text": "First answer",
+                  "annotations": [],
+                  "logprobs": []
+                }
+              ]
+            },
+            {
+              "id": "msg_agt_contract_3_1",
+              "type": "message",
+              "status": "completed",
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "output_text",
+                  "text": "Second answer",
+                  "annotations": [],
+                  "logprobs": []
+                }
+              ]
+            }
+          ],
+          "parallel_tool_calls": false,
+          "previous_response_id": null,
+          "reasoning": {
+            "effort": null,
+            "summary": null
+          },
+          "store": true,
+          "temperature": null,
+          "text": {
+            "format": {
+              "type": "text"
+            },
+            "verbosity": "medium"
+          },
+          "tool_choice": "none",
+          "tools": [],
+          "top_p": null,
+          "truncation": "disabled",
+          "usage": {
+            "input_tokens": 10,
+            "input_tokens_details": {
+              "cached_tokens": 0
+            },
+            "output_tokens": 7,
+            "output_tokens_details": {
+              "reasoning_tokens": 0
+            },
+            "total_tokens": 17
+          },
+          "metadata": {
+            "project": "proof"
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "conversations-read-without-runtime-capabilities",
+      "operation": "GET /api/v1/conversations/{id}",
+      "scenario": "experience_no_capabilities",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/conversations/agt_contract",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "id": "agt_contract",
+          "object": "conversation",
+          "created_at": 1788566400,
+          "metadata": {
+            "agent_profile": "agp_route",
+            "sandbox": "sbx_route",
+            "title": "Agent agt_contract",
+            "workspace": "wks_route"
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "conversations-items-without-runtime-capabilities",
+      "operation": "GET /api/v1/conversations/{id}/items",
+      "scenario": "experience_no_capabilities",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/conversations/agt_contract/items",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "object": "list",
+          "data": [
+            {
+              "id": "msg_agt_contract_3_1",
+              "type": "message",
+              "status": "completed",
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "output_text",
+                  "text": "Second answer",
+                  "annotations": [],
+                  "logprobs": []
+                }
+              ]
+            },
+            {
+              "id": "tool_agt_contract_7",
+              "type": "cma_chat.tool_activity",
+              "call_id": "call-proof",
+              "kind": "read",
+              "target": "Read proof",
+              "status": "in_progress",
+              "duration_ms": null
+            },
+            {
+              "id": "msg_agt_contract_3",
+              "type": "message",
+              "status": "completed",
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "output_text",
+                  "text": "First answer",
+                  "annotations": [],
+                  "logprobs": []
+                }
+              ]
+            },
+            {
+              "id": "msg_agt_contract_4",
+              "type": "message",
+              "status": "completed",
+              "role": "user",
+              "content": [
+                {
+                  "type": "input_text",
+                  "text": "Question"
+                }
+              ]
+            }
+          ],
+          "first_id": "msg_agt_contract_3_1",
+          "last_id": "msg_agt_contract_4",
+          "has_more": false
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    }
+  ]
+}

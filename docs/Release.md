@@ -420,6 +420,30 @@ The POST acknowledgement must name `K`, generation `1`, digest `D`, and `fenceVe
 
 Publishing the matching runtime still does not rotate sessions by itself. After verifying its digest under the release writer/history fence, copy that version tag to the registry used by the cluster, update `CHRONO_SANDBOX_IMAGE` in the deliberate adoption pull request, and deploy that config with the new API. Never deploy the new API while the manifest still names the old runtime.
 
+### Compressed checkpoint runtime adoption
+
+The runtime can seal whole-home checkpoints as deterministic gzip containers.
+Their object references and SHA-256 values identify the exact compressed bytes;
+the internal manifest, file hashes, restore bounds, and runtime contract remain
+unchanged. The compressed-checkpoint runtime restores both historical plain
+archives and new compressed archives without an uncompressed archive staging
+file.
+
+Restoration verifies the archive SHA-256 and validates the complete manifest
+before creating a staging directory. It then reads the payload once to extract
+files, checking each file digest and the compression trailer before replacing
+the Sandbox home. Upload publication still independently checks the full archive.
+This avoids a duplicate restore decompression without changing the archive
+format, integrity checks or runtime contract.
+
+This is a forward-compatible adoption, not a reversible image-only change.
+Once a Sandbox has retained a compressed checkpoint, do not roll its runtime
+back to an image that only reads plain archives. Runtime contract 3 alone does
+not prove this storage-format compatibility. Record the adopted immutable
+runtime digest in deployment evidence, verify restoration of both archive
+encodings, and retain a gzip-capable runtime for rollback. Never discard or
+rewrite an owner's checkpoints to make an older image appear compatible.
+
 ### App-origin route and health-policy adoption
 
 The release that adds network admission limits also changes two Gateway
