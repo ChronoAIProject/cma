@@ -113,9 +113,17 @@ infra/api/httproute.yaml
 infra/api/healthcheckpolicy.yaml
 infra/api/gcpbackendpolicy.yaml
 infra/runtime/Dockerfile
+infra/storage/home-seed.yaml
+infra/storage/home-template.yaml
 ```
 
 No additional manifests, no Helm charts, no kustomize overlays.
+
+The two `infra/storage/` manifests initialize the persistent-home StorageClass,
+snapshot class, credential-free seed Pod/PVC and its VolumeSnapshot. Operators
+apply them explicitly before enabling persistent homes; CI validates them but
+merging or publishing never runs them. They are initialization resources, not
+another continuously running application deployment.
 
 `infra/web/gcpbackendpolicy.yaml` was added after a missing backend timeout was
 measured rather than predicted. The browser still uses one origin, but the
