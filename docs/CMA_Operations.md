@@ -77,6 +77,39 @@ with the disposable previous-version live Agent upgrade/rollback campaign in
 origin, before deploying or enabling bridge changes. Keep accepted work and
 existing runtime cohorts intact through both feature disable and rollback.
 
+The disposable cluster bootstrap is
+`.github/tools/cma-bridge-continuity/bootstrap.py`. Install its pinned Python
+requirements, then supply the repository, a fresh private directory outside Git,
+the verified cluster context and fixture owner subject. It creates a random
+`cma-bridge-e2e-<run>` namespace with a resource quota, a separate Mongo replica
+set Pod, provider server/key, namespace-scoped service accounts and roles, and a
+credential-free home seed. It reads the deployed component pins and copies only
+the existing NyxID application and storage client credentials; it never copies
+production database access, encryption keys, provider keys, user homes or history.
+Runtime NetworkPolicy blocks other namespaces and metadata endpoints.
+
+The bootstrap journal records exact namespace and resource UIDs before later
+mutation. Its guard refuses production namespaces, foreign markers, replacement
+resources, unjournaled resources and broader cluster roles. The only fixture
+cluster role permits reading the named `gvisor` RuntimeClass. `resume.py` accepts
+the same private directory and reconciles exact creation intents; an ambiguous
+create needs the same run marker and creation-spec fingerprint. A disappeared
+journaled object is not silently recreated. Neither tool exposes blanket cleanup.
+
+The operator needs ordinary workload creation plus permission to create/bind
+the declared fixture roles. Bootstrap checks these create permissions with
+SelfSubjectAccessReview before creating resources. A later admission denial
+leaves the completed journal intact and must not be worked around by borrowing
+a more privileged production service account. Resume requires the journaled
+create intent as well as the matching resource fingerprint and namespace UID.
+Initialize only the journaled Mongo Pod's replica set, wait for
+the new home seed, create its snapshot and pin its observed UID before creating
+the saved previous-version API manifests. Checkpoint objects for each run-owned
+Sandbox use the existing `cma/checkpoints/<sha256(sandbox_id)>/` prefix, recorded
+alongside the exact Sandbox identity. Existing-user checkpoint prefixes remain
+outside the campaign's cleanup authority. Creating the environment alone proves
+none of the live upgrade, rollback or browser acceptance cases.
+
 ## Prerequisites
 
 - Verify the exact cluster context, namespace, deployment id, database and bucket
