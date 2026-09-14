@@ -66,6 +66,19 @@ pub struct AccessDecision {
 }
 
 impl AccessDecision {
+    /// Monotonic lifetime for this capability; independent authority has no
+    /// organization deadline. A stream must stop or obtain new evidence by it.
+    pub fn revalidation_deadline(
+        &self,
+        capability: ResourceCapability,
+    ) -> Option<tokio::time::Instant> {
+        if self.independent.contains(&capability) {
+            None
+        } else {
+            self.deadline
+        }
+    }
+
     pub fn allows(&self, capability: ResourceCapability) -> bool {
         self.independent.contains(&capability)
             || (self.capabilities.contains(&capability)

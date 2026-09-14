@@ -29,6 +29,19 @@ impl ResourceAccessService {
         target: &ResourceTarget,
         capability: ResourceCapability,
     ) -> Result<(), ResourceAccessError> {
+        self.current_read_snapshot(authorized, target, capability)
+            .await
+            .map(|_| ())
+    }
+
+    /// Obtain the next aggregate under the original policy and lifetime. This
+    /// cannot renew a stream or adopt changed ownership/shares/target ancestry.
+    pub(crate) async fn current_read_snapshot(
+        &self,
+        authorized: &AuthorizedResource,
+        target: &ResourceTarget,
+        capability: ResourceCapability,
+    ) -> Result<ResourceAccessSnapshot, ResourceAccessError> {
         authorized.decision.require(capability)?;
         let original_scope = authorized.snapshot.scope(target)?;
         let current = self.store.resource_access_snapshot(target).await?;
@@ -38,6 +51,6 @@ impl ResourceAccessService {
             return Err(ResourceAccessStoreError::Conflict.into());
         }
         authorized.decision.require(capability)?;
-        Ok(())
+        Ok(current)
     }
 }

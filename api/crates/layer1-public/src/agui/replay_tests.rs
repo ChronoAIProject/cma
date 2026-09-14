@@ -25,6 +25,7 @@ async fn following() -> (Following, Agent) {
             watching,
             committed_message_seq: 4,
             held: None,
+            authorization: None,
         },
         agent,
     )
@@ -85,6 +86,46 @@ async fn stale_generations_turns_and_superseded_text_are_never_projected() {
     open.held = Some(fragment(&agent, 5));
     open.queue_live(&agent);
     assert!(open.pending.is_empty());
+}
+
+#[tokio::test]
+async fn authorized_snapshot_keeps_live_identity_generation_turn_and_commit_fences() {
+    let (mut open, agent) = following().await;
+    let valid = fragment(&agent, 5);
+    for fault in [
+        "foreign",
+        "generation",
+        "turn",
+        "committed",
+        "future",
+        "valid",
+    ] {
+        let mut candidate = valid.clone();
+        match fault {
+            "foreign" => candidate.agent_id = AgentId("agt_foreign".into()),
+            "generation" => candidate.runtime_generation += 1,
+            "turn" => candidate.turn_sequence += 1,
+            "committed" => candidate.after_seq = 3,
+            "future" => candidate.after_seq = 6,
+            _ => (),
+        }
+        open.held = Some(candidate);
+        open.queue_authorized(layer2_core::sandbox::AgentEventStreamSnapshot {
+            id: agent.id.clone(),
+            runtime_generation: Some(1),
+            active_turn: Some(3),
+            head: 5,
+            history: vec![],
+        });
+        if fault == "valid" {
+            let event = open.pending.pop_front().unwrap();
+            assert!(event.live && event.seq.is_none());
+            assert_eq!(event.body["delta"], "Live text");
+        } else {
+            assert!(open.pending.is_empty());
+            assert_eq!(open.held.is_some(), fault == "future");
+        }
+    }
 }
 
 fn approval(id: &str) -> AgentLogKind {
