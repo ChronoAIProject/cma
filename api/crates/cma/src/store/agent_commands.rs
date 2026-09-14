@@ -42,12 +42,26 @@ impl From<mongodb::error::Error> for ApplyError {
 
 #[async_trait::async_trait]
 impl AgentCommandStore for MongoSandboxStore {
+    async fn get_response_command(
+        &self,
+        id: &layer2_core::ids::AgentResponseId,
+    ) -> Result<Option<AdmittedAgentCommand>, CommandLedgerError> {
+        self.agent_commands
+            .find_one(doc! { "response_id": id.as_str() })
+            .await
+            .map_err(|_| CommandLedgerError::Unavailable)?
+            .as_ref()
+            .map(records::read)
+            .transpose()
+    }
+
     async fn reserve_command(
         &self,
         request: CommandReservation,
     ) -> Result<CommandReservationResult, CommandLedgerError> {
         request.validate()?;
         for _ in 0..TRANSACTION_ATTEMPTS {
+            request.require_current_authority()?;
             let mut session = self
                 .client
                 .start_session()
@@ -71,6 +85,10 @@ impl AgentCommandStore for MongoSandboxStore {
                     return Err(CommandLedgerError::Unavailable);
                 }
             };
+            if let Err(error) = request.require_current_authority() {
+                let _ = session.abort_transaction().await;
+                return Err(error);
+            }
             match commit_transaction(&mut session).await {
                 CommitOutcome::Committed => return Ok(result),
                 CommitOutcome::Retry(_) => continue,

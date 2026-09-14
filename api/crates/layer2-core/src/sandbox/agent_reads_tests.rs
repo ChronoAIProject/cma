@@ -1,3 +1,5 @@
+#[path = "agent_reads_tests/command_admission_tests.rs"]
+mod command_admission_tests;
 #[path = "agent_reads_tests/resource_access_tests.rs"]
 mod resource_access_tests;
 
