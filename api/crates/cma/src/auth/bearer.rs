@@ -50,6 +50,39 @@ pub(super) fn permits_ambient_auth(token: &str) -> bool {
     .any(|field| claims.get(*field).is_some_and(|value| !value.is_null()))
 }
 
+/// Negative restriction only. The provider still verifies the complete token.
+/// Service-account and delegated actor tokens cannot acquire ambient org rights.
+pub(super) fn permits_personal_authority(token: &str) -> bool {
+    if !permits_ambient_auth(token) {
+        return false;
+    }
+    let pieces: Vec<_> = token.split('.').collect();
+    if pieces.len() != 3 {
+        return true;
+    }
+    let decode = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(pieces[1])
+        .or_else(|_| base64::engine::general_purpose::URL_SAFE.decode(pieces[1]));
+    let Ok(bytes) = decode else {
+        return false;
+    };
+    let Ok(body) = serde_json::from_slice::<serde_json::Value>(&bytes) else {
+        return false;
+    };
+    if !body.is_object() {
+        return false;
+    }
+    for key in ["sa", "delegated"] {
+        if body
+            .get(key)
+            .is_some_and(|value| !value.is_null() && value.as_bool() != Some(false))
+        {
+            return false;
+        }
+    }
+    body.get("act").is_none_or(serde_json::Value::is_null)
+}
+
 pub(super) fn bearer_token(headers: &HeaderMap) -> Option<String> {
     let mut values = headers.get_all(header::AUTHORIZATION).iter();
     let value = values.next()?.to_str().ok()?;

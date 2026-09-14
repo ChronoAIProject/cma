@@ -28,6 +28,7 @@ pub mod platform_service;
 pub mod pressure;
 pub mod pressure_service;
 pub mod profiles;
+pub mod resource_access;
 pub mod sandbox;
 pub mod sequence;
 pub mod trigger_domain;

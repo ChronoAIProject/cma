@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use crate::ids::AgentId;
+use crate::resource_access::{AccessDecision, ResourceCapability};
 use crate::{Caller, Capability, SubjectId};
 
 use super::agent_reads_fold::{fold_agent_log, AgentLogProjection};
@@ -154,7 +155,11 @@ impl AgentReadService {
             .get_agent(id)
             .await
             .map_err(store_error)?
-            .filter(|agent| agent.id == *id && agent.owner == caller.subject)
+            .filter(|agent| {
+                agent.id == *id
+                    && AccessDecision::personal(caller, &agent.owner)
+                        .allows(ResourceCapability::ViewHistory)
+            })
             .ok_or(AgentReadError::NotFound)?;
         let (worktree, workspace, sandbox) = self.validate_lineage(&caller.subject, &agent).await?;
         Ok(AgentLineage {
