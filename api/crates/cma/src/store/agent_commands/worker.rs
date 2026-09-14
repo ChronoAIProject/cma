@@ -30,6 +30,72 @@ pub(super) enum Change {
 
 #[async_trait::async_trait]
 impl AgentCommandWorkerStore for MongoSandboxStore {
+    async fn reject_unclaimed_command(
+        &self,
+        id: &layer2_core::ids::AgentCommandId,
+        expected_revision: u64,
+        code: CommandFailureCode,
+        now: String,
+    ) -> Result<(), CommandLedgerError> {
+        use layer2_core::sandbox::agent_io::AgentCommandStore;
+        use mongodb::bson::doc;
+        let mut command = self
+            .get_command(id)
+            .await?
+            .ok_or(CommandLedgerError::NotFound)?;
+        command.reject_unclaimed(expected_revision, code, now)?;
+        let mut fields = super::records::document(&command)?;
+        fields.remove("_id");
+        let revision = super::super::sandbox_mongo::signed(expected_revision, "command revision")
+            .map_err(|_| CommandLedgerError::Invalid)?;
+        let result = self
+            .agent_commands
+            .update_one(
+                doc! { "_id": id.as_str(), "revision": revision },
+                doc! { "$set": fields },
+            )
+            .await
+            .map_err(|_| CommandLedgerError::Unavailable)?;
+        if result.matched_count != 1 {
+            return Err(CommandLedgerError::StaleClaim);
+        }
+        Ok(())
+    }
+
+    async fn command_work_page(
+        &self,
+        page: &layer2_core::sandbox::store::PageRequest,
+    ) -> Result<layer2_core::sandbox::store::Page<AdmittedAgentCommand>, CommandLedgerError> {
+        use futures_util::TryStreamExt;
+        use mongodb::bson::doc;
+        layer2_core::sandbox::store::PageRequest::new(page.limit, page.cursor.clone())
+            .map_err(|_| CommandLedgerError::Invalid)?;
+        let mut filter = doc! { "status": { "$in": ["queued", "in_progress", "waiting_action"] } };
+        if let Some(cursor) = &page.cursor {
+            filter.insert("_id", doc! { "$gt": cursor });
+        }
+        let mut cursor = self
+            .agent_commands
+            .find(filter)
+            .sort(doc! { "_id": 1 })
+            .hint(mongodb::options::Hint::Name(
+                "agent_command_work_scan".into(),
+            ))
+            .limit(i64::from(page.limit) + 1)
+            .max_time(std::time::Duration::from_secs(10))
+            .await
+            .map_err(|_| CommandLedgerError::Unavailable)?;
+        let mut items = Vec::new();
+        while let Some(document) = cursor
+            .try_next()
+            .await
+            .map_err(|_| CommandLedgerError::Unavailable)?
+        {
+            items.push(super::records::read(&document)?);
+        }
+        layer2_core::sandbox::agent_io::finish_command_work_page(items, page)
+    }
+
     async fn reconcile_command(
         &self,
         id: &layer2_core::ids::AgentCommandId,

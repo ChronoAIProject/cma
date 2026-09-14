@@ -1,3 +1,4 @@
+use crate::sandbox::store::{Page, PageRequest};
 use async_trait::async_trait;
 
 use super::{
@@ -7,6 +8,23 @@ use super::{
 
 #[async_trait]
 pub trait AgentCommandWorkerStore: AgentCommandStore {
+    /// Bounded, stable discovery of nonterminal ledger work. This is an internal
+    /// scheduler hint, never permission to execute or a claim on the lane.
+    async fn command_work_page(
+        &self,
+        page: &PageRequest,
+    ) -> Result<Page<AdmittedAgentCommand>, CommandLedgerError>;
+
+    /// Refusal only: compare the observed revision and prove the command is
+    /// still queued, unbound and without a live lease in the same atomic write.
+    async fn reject_unclaimed_command(
+        &self,
+        id: &crate::ids::AgentCommandId,
+        expected_revision: u64,
+        code: CommandFailureCode,
+        now: String,
+    ) -> Result<(), CommandLedgerError>;
+
     /// Rebuild delivery and response state from the authoritative Agent and its
     /// complete log in one snapshot. No caller-supplied completion is accepted.
     async fn reconcile_command(
@@ -40,4 +58,32 @@ pub trait AgentCommandWorkerStore: AgentCommandStore {
         code: CommandFailureCode,
         now: String,
     ) -> Result<AdmittedAgentCommand, CommandLedgerError>;
+}
+
+pub fn finish_command_work_page(
+    mut items: Vec<AdmittedAgentCommand>,
+    page: &PageRequest,
+) -> Result<Page<AdmittedAgentCommand>, CommandLedgerError> {
+    PageRequest::new(page.limit, page.cursor.clone()).map_err(|_| CommandLedgerError::Invalid)?;
+    if items.len() > usize::from(page.limit) + 1 {
+        return Err(CommandLedgerError::Corrupt);
+    }
+    let mut previous = page.cursor.as_deref();
+    for item in &items {
+        item.validate()?;
+        let id = item.receipt.envelope.command_id.as_str();
+        if item.status.is_terminal() || previous.is_some_and(|previous| previous >= id) {
+            return Err(CommandLedgerError::Corrupt);
+        }
+        previous = Some(id);
+    }
+    let next = (items.len() > usize::from(page.limit)).then(|| {
+        items[usize::from(page.limit) - 1]
+            .receipt
+            .envelope
+            .command_id
+            .to_string()
+    });
+    items.truncate(usize::from(page.limit));
+    Ok(Page { items, next })
 }

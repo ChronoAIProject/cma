@@ -22,6 +22,18 @@ pub(super) fn bind_dispatch(
         .agents
         .get(&claim.agent_id)
         .ok_or(SandboxStoreError::Conflict)?;
+    if let Some(policy) = state.resource_policies.get(&current.sandbox_id) {
+        let sandbox = state
+            .sandboxes
+            .get(&current.sandbox_id)
+            .ok_or(SandboxStoreError::Conflict)?;
+        if !policy
+            .personal_owner_of(sandbox)
+            .map_err(|error| SandboxStoreError::Corrupt(error.to_string()))?
+        {
+            return Err(SandboxStoreError::Conflict);
+        }
+    }
     let latest_turn = state
         .agent_logs
         .get(&claim.agent_id)
@@ -53,6 +65,59 @@ pub(super) fn bind_dispatch(
 
 #[async_trait]
 impl AgentCommandWorkerStore for InMemorySandboxStore {
+    async fn reject_unclaimed_command(
+        &self,
+        id: &crate::ids::AgentCommandId,
+        expected_revision: u64,
+        code: CommandFailureCode,
+        now: String,
+    ) -> Result<(), CommandLedgerError> {
+        let mut state = self.lock();
+        let mut command = state
+            .agent_commands
+            .get(id)
+            .cloned()
+            .ok_or(CommandLedgerError::NotFound)?;
+        command.reject_unclaimed(expected_revision, code, now)?;
+        command.validate()?;
+        state.agent_commands.insert(id.clone(), command);
+        Ok(())
+    }
+
+    async fn command_work_page(
+        &self,
+        page: &crate::sandbox::store::PageRequest,
+    ) -> Result<crate::sandbox::store::Page<AdmittedAgentCommand>, CommandLedgerError> {
+        crate::sandbox::store::PageRequest::new(page.limit, page.cursor.clone())
+            .map_err(|_| CommandLedgerError::Invalid)?;
+        let state = self.lock();
+        let mut items: Vec<_> = state
+            .agent_commands
+            .values()
+            .filter(|record| {
+                !record.status.is_terminal()
+                    && page
+                        .cursor
+                        .as_deref()
+                        .is_none_or(|cursor| record.receipt.envelope.command_id.as_str() > cursor)
+            })
+            .collect();
+        items.sort_by(|a, b| {
+            a.receipt
+                .envelope
+                .command_id
+                .cmp(&b.receipt.envelope.command_id)
+        });
+        crate::sandbox::agent_io::finish_command_work_page(
+            items
+                .into_iter()
+                .take(usize::from(page.limit) + 1)
+                .cloned()
+                .collect(),
+            page,
+        )
+    }
+
     async fn reconcile_command(
         &self,
         id: &crate::ids::AgentCommandId,

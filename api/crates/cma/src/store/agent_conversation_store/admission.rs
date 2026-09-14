@@ -33,6 +33,24 @@ pub(super) async fn validate_and_fence(
     let Some(mut parent) = parent else {
         return Ok(());
     };
+    if mutation.command_claim.is_some() {
+        let policy = store
+            .resource_policies
+            .find_one(doc! { "_id": parent.id.as_str() })
+            .session(&mut *session)
+            .await
+            .map_err(ApplyError::Driver)?;
+        if let Some(document) = policy {
+            let personal = super::super::resource_access::read_inventory_policy(&document)
+                .and_then(|policy| policy.personal_owner_of(&parent))
+                .map_err(|error| {
+                    ApplyError::Domain(SandboxStoreError::Corrupt(error.to_string()))
+                })?;
+            if !personal {
+                return Err(ApplyError::Domain(SandboxStoreError::Conflict));
+            }
+        }
+    }
     let expected_revision = parent.revision;
     let mut update = doc! { "$inc": { "agent_conversation_admission_fence": 1_i64 } };
     if parent
@@ -44,7 +62,8 @@ pub(super) async fn validate_and_fence(
             sandbox_replacement_fields(&parent).map_err(ApplyError::Domain)?,
         );
     }
-    // A real parent write serializes the phase check with maintenance and lifecycle commits.
+    // A real parent write serializes phase/owner-kind checks with maintenance,
+    // lifecycle and resource-policy commits (including an absent sidecar).
     let locked = store
         .sandboxes
         .update_one(
