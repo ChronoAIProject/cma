@@ -32,6 +32,8 @@ pub(super) const WORKTREES: &str = "worktrees";
 pub(super) const AGENTS: &str = "agents";
 pub(super) const AGENT_REUSE_BINDINGS: &str = "agent_reuse_bindings";
 pub(super) const AGENT_LOG: &str = "agent_log";
+pub(super) const AGENT_COMMANDS: &str = "agent_commands";
+pub(super) const AGENT_COMMAND_ORDERS: &str = "agent_command_orders";
 pub(super) const SANDBOX_EVENTS: &str = "sandbox_events";
 pub(super) const SANDBOX_ADMISSIONS: &str = "sandbox_admissions";
 pub(super) const CHECKPOINTS: &str = "checkpoints";
@@ -50,6 +52,8 @@ const SANDBOX_COLLECTIONS: &[&str] = &[
     AGENTS,
     AGENT_REUSE_BINDINGS,
     AGENT_LOG,
+    AGENT_COMMANDS,
+    AGENT_COMMAND_ORDERS,
     SANDBOX_EVENTS,
     SANDBOX_ADMISSIONS,
     CHECKPOINTS,
@@ -76,6 +80,8 @@ pub struct MongoSandboxStore {
     pub(super) agents: Collection<Document>,
     pub(super) agent_reuse_bindings: Collection<Document>,
     pub(super) agent_log: Collection<Document>,
+    pub(super) agent_commands: Collection<Document>,
+    pub(super) agent_command_orders: Collection<Document>,
     pub(super) sandbox_events: Collection<Document>,
     pub(super) sandbox_admissions: Collection<Document>,
     pub(super) checkpoints: Collection<Document>,
@@ -114,6 +120,8 @@ impl MongoSandboxStore {
             agents: majority_collection(&database, AGENTS),
             agent_reuse_bindings: majority_collection(&database, AGENT_REUSE_BINDINGS),
             agent_log: majority_collection(&database, AGENT_LOG),
+            agent_commands: majority_collection(&database, AGENT_COMMANDS),
+            agent_command_orders: majority_collection(&database, AGENT_COMMAND_ORDERS),
             sandbox_events: majority_collection(&database, SANDBOX_EVENTS),
             sandbox_admissions: majority_collection(&database, SANDBOX_ADMISSIONS),
             checkpoints: majority_collection(&database, CHECKPOINTS),
@@ -131,6 +139,7 @@ impl MongoSandboxStore {
         super::worktrees::ensure_indexes(&store.worktrees).await?;
         super::agents::ensure_indexes(&store.agents).await?;
         super::agent_log::ensure_indexes(&store.agent_log).await?;
+        super::agent_commands::ensure_indexes(&store.agent_commands).await?;
         super::sandbox_events::ensure_indexes(&store.sandbox_events).await?;
         super::checkpoints::ensure_indexes(&store.checkpoints).await?;
         super::warm_sandboxes::ensure_indexes(&store.warm_sandboxes).await?;

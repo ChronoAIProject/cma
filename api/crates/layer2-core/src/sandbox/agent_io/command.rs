@@ -106,8 +106,47 @@ impl AgentCommand {
     /// Stable across object-key order and equivalent adjacent text partitions.
     /// Attribution, credentials and transport timestamps are outside the input.
     pub fn fingerprint(&self) -> Result<String, AgentOperationError> {
-        let bytes = serde_json::to_vec(&self.canonical()?)
+        let value = serde_json::to_value(self.canonical()?)
             .map_err(|_| invalid("command cannot be encoded"))?;
+        let mut bytes = b"cma.agent-command.v1\n".to_vec();
+        write_canonical(&value, &mut bytes).map_err(|_| invalid("command cannot be encoded"))?;
         Ok(format!("{:x}", Sha256::digest(bytes)))
     }
+}
+
+// Explicit recursive key ordering makes the persisted fingerprint independent
+// of Rust field declaration order and dependency feature unification.
+fn write_canonical(
+    value: &serde_json::Value,
+    output: &mut Vec<u8>,
+) -> Result<(), serde_json::Error> {
+    use serde_json::Value;
+    match value {
+        Value::Object(object) => {
+            output.push(b'{');
+            let mut entries: Vec<_> = object.iter().collect();
+            entries.sort_unstable_by_key(|(key, _)| *key);
+            for (index, (key, value)) in entries.into_iter().enumerate() {
+                if index > 0 {
+                    output.push(b',');
+                }
+                serde_json::to_writer(&mut *output, key)?;
+                output.push(b':');
+                write_canonical(value, output)?;
+            }
+            output.push(b'}');
+        }
+        Value::Array(values) => {
+            output.push(b'[');
+            for (index, value) in values.iter().enumerate() {
+                if index > 0 {
+                    output.push(b',');
+                }
+                write_canonical(value, output)?;
+            }
+            output.push(b']');
+        }
+        value => serde_json::to_writer(output, value)?,
+    }
+    Ok(())
 }

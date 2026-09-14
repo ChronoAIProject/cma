@@ -9,6 +9,7 @@ mod capabilities;
 mod command;
 mod event;
 mod input;
+mod ledger;
 mod service;
 
 pub use admission::{
@@ -21,6 +22,10 @@ pub use event::{
     AgentEphemeralEvent, AgentEvent, AgentEventKind, AgentMessageRole, AGENT_IO_SCHEMA_VERSION,
 };
 pub use input::{AgentAttachmentReference, AgentContent, AgentInput};
+pub use ledger::{
+    command_key_digest, validate_command_reservation, AdmittedAgentCommand, AgentCommandStore,
+    CommandLedgerError, CommandReservation, CommandReservationResult, MAX_COMMAND_QUEUE_CAPACITY,
+};
 
 #[cfg(test)]
 mod event_tests;

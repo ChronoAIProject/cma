@@ -1,0 +1,79 @@
+use async_trait::async_trait;
+
+use crate::ids::AgentCommandId;
+use crate::sandbox::agent_io::{
+    validate_command_reservation, AdmittedAgentCommand, AgentCommandStore, AgentResponseStatus,
+    CommandLedgerError, CommandReservation, CommandReservationResult,
+};
+use crate::sandbox::store::InMemorySandboxStore;
+
+#[async_trait]
+impl AgentCommandStore for InMemorySandboxStore {
+    async fn reserve_command(
+        &self,
+        request: CommandReservation,
+    ) -> Result<CommandReservationResult, CommandLedgerError> {
+        request.validate()?;
+        let mut state = self.lock();
+        let key = (request.scope(), request.key_sha256.clone());
+        if let Some(id) = state.agent_command_keys.get(&key) {
+            let current = state
+                .agent_commands
+                .get(id)
+                .ok_or(CommandLedgerError::Corrupt)?;
+            return request.replay(current.clone());
+        }
+        let agent = state
+            .agents
+            .get(&request.envelope.agent_id)
+            .ok_or(CommandLedgerError::NotFound)?;
+        let parent = state
+            .sandboxes
+            .get(&agent.sandbox_id)
+            .ok_or(CommandLedgerError::NotFound)?;
+        validate_command_reservation(&request, agent, parent)?;
+        let waiting = state
+            .agent_commands
+            .values()
+            .filter(|command| {
+                command.receipt.envelope.agent_id == agent.id
+                    && command.status == AgentResponseStatus::Queued
+            })
+            .count();
+        if waiting >= usize::from(request.queue_capacity) {
+            return Err(CommandLedgerError::QueueFull);
+        }
+        if state
+            .agent_commands
+            .contains_key(&request.envelope.command_id)
+        {
+            return Err(CommandLedgerError::Conflict);
+        }
+        let order = state
+            .agent_command_orders
+            .get(&agent.id)
+            .copied()
+            .unwrap_or(0)
+            .checked_add(1)
+            .ok_or(CommandLedgerError::Corrupt)?;
+        let record = request.record(order, agent.conversation.last_seq)?;
+        let id = record.receipt.envelope.command_id.clone();
+        state
+            .agent_command_orders
+            .insert(request.envelope.agent_id.clone(), order);
+        state.agent_command_keys.insert(key, id.clone());
+        state.agent_commands.insert(id, record.clone());
+        Ok(CommandReservationResult::Created(Box::new(record)))
+    }
+
+    async fn get_command(
+        &self,
+        id: &AgentCommandId,
+    ) -> Result<Option<AdmittedAgentCommand>, CommandLedgerError> {
+        let record = self.lock().agent_commands.get(id).cloned();
+        if let Some(record) = &record {
+            record.validate()?;
+        }
+        Ok(record)
+    }
+}
