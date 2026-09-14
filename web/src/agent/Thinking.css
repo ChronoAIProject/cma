@@ -1,11 +1,12 @@
-/*
- * The reasoning row — docs/Web_Style.md §13.
- *
- * A row rather than a pill, because it carries a line of the agent's own
- * words: a pill sized to its label would truncate every one of them to
- * nothing. No colour, ever — §2 reserves the semantic inks for session and
- * system state, and reasoning is neither.
- */
+/* Active Thinking occupies a stable seat above the composer, outside history. */
+.agent-surface__input {
+  grid-row: 4;
+  min-width: 0;
+}
+
+.agent-surface__thinking {
+  padding: 0 max(16px, calc((100% - var(--read-column)) / 2 + 24px));
+}
 
 .thinking {
   display: flex;
@@ -21,9 +22,8 @@
   align-items: center;
   width: 100%;
   min-width: 0;
-  height: 24px;
+  height: 44px;
   padding: 0;
-  overflow: hidden;
   color: var(--dsw-alias-label-secondary);
   font-family: var(--dsw-font-family);
   font-size: 14px;
@@ -119,18 +119,13 @@
   margin: 4px 0 0;
 }
 
-.thinking__glyph {
-  display: inline-flex;
+.thinking__title,
+.thinking__elapsed {
   flex: none;
-  align-items: center;
-  justify-content: center;
-  width: 16px;
-  height: 16px;
-  color: var(--dsw-alias-label-tertiary);
 }
 
-.thinking__title {
-  flex: none;
+.thinking__elapsed {
+  font-variant-numeric: tabular-nums;
 }
 
 /* A 2px dot between the title and the line, rather than a bullet character. */
@@ -150,60 +145,16 @@
   flex: 1;
   min-width: 0;
   overflow: hidden;
-  color: var(--dsw-alias-label-tertiary);
+  color: var(--dsw-alias-label-secondary);
   text-overflow: ellipsis;
 }
 
-/*
- * The sweep — a band of lighter ground travelling across the row.
- *
- * It says the row is live without claiming progress, which is the same reason
- * §5 refuses a spinner: a bar that fills implies somebody knows how far along
- * it is, and nothing here does. It rides on the row rather than on the text,
- * so the agent's words stay at full contrast while it passes.
- */
-.thinking__key::after {
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  left: 0;
-  width: 300px;
-  background: linear-gradient(
-    90deg,
-    transparent 0%,
-    color-mix(in srgb, var(--dsw-alias-bg-base) 60%, transparent) 55%,
-    transparent 100%
-  );
-  animation: thinking-sweep 2.6s ease-out infinite;
-  pointer-events: none;
-  content: '';
+.thinking__activitybody summary {
+  min-height: 32px;
 }
 
-.thinking--settled .thinking__key::after {
-  display: none;
-}
-
-.thinking__key {
-  position: relative;
-}
-
-@keyframes thinking-sweep {
-  from {
-    transform: translateX(-300px);
-  }
-
-  to {
-    transform: translateX(100%);
-  }
-}
-
-/*
- * Stopped for anybody who asked for less motion. The row still says what the
- * agent is working through — the sweep was never carrying that.
- */
-@media (prefers-reduced-motion: reduce) {
-  .thinking__key::after {
-    animation: none;
-    opacity: 0;
+@media (max-width: 30rem) {
+  .thinking__activitybody summary {
+    min-height: 44px;
   }
 }

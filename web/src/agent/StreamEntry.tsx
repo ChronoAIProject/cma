@@ -15,6 +15,8 @@ import {
 } from '../ui/icons';
 import { MessageContent } from './MessageContent';
 import { SignInCard } from './SignInCard';
+import { ActivityBody } from './Thinking';
+import { isPendingTool } from './toolStatus';
 
 export type Entry =
   | { kind: 'message'; item: ConversationMessage }
@@ -64,14 +66,27 @@ export function StreamEntry({
   if (entry.kind === 'tool') {
     const tool = entry.item;
     return (
-      <div className="agent-event agent-event--tool">
+      <article className="agent-event agent-event--tool" aria-label={`Tool call: ${tool.title}`}>
         <IconCodeOutline16 aria-hidden="true" />
         <div>
           <strong>{tool.title}</strong>
-          <span>{[tool.kind, tool.status].filter(Boolean).join(' · ')}</span>
-          {tool.detail === undefined ? null : <p>{tool.detail}</p>}
+          <span>
+            {[
+              tool.kind,
+              isPendingTool(tool)
+                ? `Outcome not reported (last status: ${tool.status})`
+                : tool.status,
+            ]
+              .filter(Boolean)
+              .join(' · ')}
+          </span>
+          <span className="tool-call__duration">Duration not reported</span>
+          <ActivityBody
+            label="Details"
+            body={tool.detail === undefined ? undefined : { text: tool.detail, truncated: false }}
+          />
         </div>
-      </div>
+      </article>
     );
   }
   if (entry.kind === 'recovery') {

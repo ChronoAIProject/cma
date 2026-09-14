@@ -5,6 +5,7 @@ import { MessageStream } from './MessageStream';
 
 function conversation() {
   const events = [
+    { type: 'RUN_STARTED' },
     { type: 'TEXT_MESSAGE_START', messageId: 'owner', role: 'user' },
     { type: 'TEXT_MESSAGE_CONTENT', messageId: 'owner', delta: 'Find the issue' },
     { type: 'REASONING_MESSAGE_CONTENT', messageId: 'thinking', delta: 'Inspect dependencies' },
@@ -21,6 +22,7 @@ function conversation() {
     },
     { type: 'TEXT_MESSAGE_START', messageId: 'assistant', role: 'assistant' },
     { type: 'TEXT_MESSAGE_CONTENT', messageId: 'assistant', delta: 'The issue is fixed' },
+    { type: 'TOOL_CALL_END', toolCallId: 'tool' },
   ];
   return events.reduce(
     (state, event) => foldLiveEvent(state, { ...event, runId: 'run', threadId: 'agent' }, 'agent'),
@@ -30,14 +32,10 @@ function conversation() {
 
 it('renders messages and Agent activity in their original stream order', () => {
   render(<MessageStream conversation={conversation()} onApproval={vi.fn()} />);
-  fireEvent.click(screen.getByRole('button', { name: /^Thinking/ }));
-  const ordered = [
-    'Find the issue',
-    'Thinking',
-    'Tool - Read package - running - ongoing',
-    'Write package',
-    'The issue is fixed',
-  ].map((name) => screen.getByText(name));
+  expect(screen.queryByRole('button', { name: /^Thinking/ })).not.toBeInTheDocument();
+  const ordered = ['Find the issue', 'Write package', 'The issue is fixed', 'Read package'].map(
+    (name) => screen.getByText(name),
+  );
   ordered
     .slice(1)
     .forEach((element, index) =>
