@@ -6,6 +6,7 @@ mod authority;
 mod context;
 mod identity;
 mod lineage;
+mod personal;
 mod policy;
 mod service;
 mod share;

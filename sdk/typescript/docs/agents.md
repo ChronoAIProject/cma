@@ -4,7 +4,9 @@
 
 One Agent belongs to one Worktree in a Workspace and Sandbox. Its REST,
 AG-UI and Responses interfaces project the same conversation, not separate chats.
-All ordinary reads and commands are owner-scoped.
+REST detail, transcript, events and usage also support current organization or
+share authority. Collection, provenance, live interfaces and commands still
+use their existing personal access boundaries.
 
 ```ts
 import { createClient } from '@chronoai/cma-sdk';
@@ -74,6 +76,35 @@ active direct grants; individual reads retain revoked records. Unsafe narrow
 interactive grants are rejected unless current isolation or an explicit
 compatible whole-Sandbox grant is proved. Choose `view` for ordinary Agent
 sharing. Effective capabilities describe current policy and expire at their
-revalidation deadline; later operations recheck authorization. Generalized shared
-history, streaming, artifacts and interaction remain under development, so these
-management methods do not yet enable recipient use across existing interfaces.
+revalidation deadline; later operations recheck authorization.
+
+Use `agents.readAccessible(id)` for detail that may be shared. It returns the
+existing `Agent` for its personal owner, or `SharedAgent` with `access: 'shared'`
+for every other authorized reader. The shared response includes the Agent ID,
+status, optional title/model and timestamps. Parent identifiers, paths, profiles,
+credentials and native conversation identifiers are outside this projection.
+`agents.read(id)` keeps its full personal-detail type and rejects a shared response.
+
+```ts
+import { createClient } from '@chronoai/cma-sdk';
+
+export async function inspectAccessibleAgent(agentId: string) {
+  const cma = createClient();
+  const detail = await cma.agents.readAccessible(agentId);
+  if (detail.access === 'shared') return { id: detail.id, title: detail.title };
+  return { id: detail.id, workspace: detail.workspace.name };
+}
+```
+
+Shared transcript and event reads retain messages and outcomes, with internal
+metadata and diagnostic details removed. Events outside the reader's scope have
+`kind: { type: 'access_redacted' }`; keep their sequence and advance pagination
+normally. This is a response projection, not a changed durable log. Shared usage
+is Agent-specific. `agents.resources(id)` requires independent Sandbox access,
+because those counters include other Agents in the Sandbox.
+
+Each request obtains current membership evidence. Buffered history and metrics
+are refused if policy changes or evidence expires before release. Membership
+outages return `organization_authority_unavailable`; inaccessible Agents return
+`agent_not_found`. Shared lists, streams, artifacts and interactions remain under
+development.

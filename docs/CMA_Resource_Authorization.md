@@ -152,14 +152,47 @@ Recipients cannot list owner grants or reshare. Visible read-only resources
 return 403; inaccessible resources return 404. Closed JSON bodies reject owner,
 actor, membership and policy-fence fields using the existing 422 contract.
 Effective permissions describe policy; lifecycle, runtime support and each
-operation's authorization still apply. Generalized resource/history readers,
-streams, artifacts and interaction remain required before recipients can use
-these permissions across the product.
+operation's authorization still apply. Agent REST detail/history/usage readers
+now enforce these permissions. Shared collections, hierarchy views, streams,
+artifacts and interactions remain required across the rest of the product.
 
 OpenAPI and repository TypeScript/Rust SDKs expose all six operations. The SDKs
 retain explicit keys/revisions and never automatically resend an uncertain
 mutation. Shared contract fixtures replay 43 actual-handler cases in both SDKs.
 No SDK package publication, UI workflow or production rollout is claimed here.
+
+## Agent REST read projections
+
+Production composes one ResourceAccessService for management and Agent detail,
+transcript, event, usage and resource reads. The authenticated request context
+must match the existing Caller. A missing context supports older compositions;
+a present invalid context is a 401 and never falls back to personal authority.
+
+Personal-owner detail retains its established complete hierarchy and JSON.
+Every other authorized reader receives `access: "shared"`, Agent ID/status,
+optional title/model and timestamps. No parent ID, path, profile configuration,
+credential, native runtime identity or creation provenance is included. The
+TypeScript `agents.readAccessible` and Rust `agents().read_accessible` methods
+model both shapes; existing `read` methods retain the full personal-detail type.
+
+Shared transcripts and event pages preserve conversation messages and outcomes.
+The exhaustive shared event projection withholds ancestry, native conversation
+and generation identifiers, work-step diagnostics, correlation metadata,
+sign-in URLs/codes, first-message custody and runtime configuration. It removes
+origin keys and approval locators and sanitizes failure text and stop reasons.
+Withheld records become `{ "type": "access_redacted" }` at their exact original
+sequence/timestamp. Pages count these records, so every cursor still advances
+through the authoritative complete log. Redaction never mutates stored data
+or excuses a corrupt or incomplete log.
+
+Agent usage requires its own ViewDetails decision and runtime capability.
+Sandbox metrics also require independent Sandbox ViewDetails authorization;
+a narrow Agent grant cannot expose counters from its siblings. Buffered
+history/usage/metrics check current policy again after IO and refuse release
+after a changed fence or expired membership. Checks do not extend evidence or
+retry effects. Membership outages retain the actionable
+`organization_authority_unavailable` response, and inaccessible Agents remain
+404 `agent_not_found`. Existing-user state has not been mutated for verification.
 
 ## Deferred personal commands
 
@@ -184,10 +217,9 @@ runtime write. A command with an existing dispatch binding is reconciled from
 its log and cannot be executed again.
 
 The public admission adapters and scheduler do not yet invoke these ports.
-Existing personal Agent read/operation boundaries use the common personal
-policy with their retained 404 and capability semantics. General organization
-and share access must be connected to fresh ownership/grant stores before it
-is exposed on resource routes.
+Existing personal Agent read/operation boundaries retain their personal checks.
+Configured legacy Agent readers now check the explicit persisted owner kind;
+an org owner cannot become a personal owner through its raw subject string.
 
 ## Verification
 

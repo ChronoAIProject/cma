@@ -283,11 +283,30 @@ use `{ decision: "allow" | "deny" | "abort" }`. Stop accepts `{}` or
 Interrupt, approval, stop and deletion return empty 202 bodies where indicated.
 Do not parse those bodies as JSON or infer completion from acceptance alone.
 
-The Agent detail includes its Sandbox, Workspace, Worktree, profile, status
+The personal-owner Agent detail includes its Sandbox, Workspace, Worktree, profile, status
 and first-message information, not an aggregate revision field. Transcript returns `{ agent_id,
 through_seq, turns }`; usage has its own `through_seq` and cumulative input,
 output and context readings. Resource readings are Sandbox-scoped observations
 projected alongside Agent identity, not per-Agent billing.
+
+Detail, transcript, event and usage reads accept current organization or share
+authority. Other authorized readers receive an explicit shared detail document:
+`access: "shared"`, `id`, `status`, optional `title`/`model`, `created_at`,
+`updated_at`, and optional `ready_at`/`stopped_at`/`deleted_at`. Parent hierarchy,
+paths, profiles, credentials and native conversation identifiers are omitted.
+Sandbox metrics require independent Sandbox access. The TypeScript
+`agents.readAccessible` and Rust `agents().read_accessible` methods parse both
+personal and shared details while existing `read` methods retain their full type.
+
+Shared event pages replace out-of-scope records with
+`kind: { type: "access_redacted" }` at the unchanged sequence/timestamp. Count
+these records and advance cursors normally. Shared transcripts and events omit
+correlation metadata, sign-in secrets and private runtime diagnostics. The
+stored log is unchanged and complete-log validation still applies. Buffered
+results are refused when access changes or expires during IO. Organization
+outages return 503 `organization_authority_unavailable`; inaccessible Agents
+retain 404 `agent_not_found`. Shared collection, provenance, live and interaction
+interfaces remain under development.
 
 `GET /api/v1/agents/{id}/source` returns owner-scoped creation provenance:
 `manual`, `workspace_profile`, or `trigger`. Trigger-created Agents also include
@@ -437,7 +456,7 @@ above applies even when an operation annotates only its principal responses.
 | Operation | Body / Key | Query | Response |
 |---|---|---|---|
 | `GET /api/v1/agents` | - | sandbox, workspace, status, cursor, limit | 200 AgentPageView |
-| `GET /api/v1/agents/{id}` | - | - | 200 AgentView |
+| `GET /api/v1/agents/{id}` | - | - | 200 AccessibleAgentView |
 | `DELETE /api/v1/agents/{id}` | -; key | - | 202 empty |
 | `GET /api/v1/agents/{id}/events` | - | after, limit | 200 AgentEventPageView |
 | `GET /api/v1/agents/{id}/source` | - | - | 200 AgentSourceView |

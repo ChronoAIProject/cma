@@ -6,6 +6,7 @@ import { dictionary, integer, object, optional, text } from '../src/schema.js';
 
 const failure = { class: 'runtime', detail: 'Unavailable' };
 const agentEvents = {
+  access_redacted: { type: 'access_redacted' },
   created: { type: 'created', workspace_id: 'workspace-1', worktree_id: 'worktree-1' },
   conversation_opened: {
     type: 'conversation_opened',

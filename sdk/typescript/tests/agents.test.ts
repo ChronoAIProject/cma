@@ -12,6 +12,40 @@ import {
 } from './resource-fixtures.js';
 
 describe('Agent resource commands', () => {
+  it('reads explicit shared detail without weakening personal detail or identity checks', async () => {
+    const test = transport();
+    const shared = {
+      access: 'shared',
+      id: agent.id,
+      status: 'ready',
+      created_at: now,
+      updated_at: now,
+    };
+    test.answer(shared);
+    expect(await test.client.agents.readAccessible(agent.id)).toEqual(shared);
+    test.answer(agent);
+    expect(await test.client.agents.readAccessible(agent.id)).toEqual(agent);
+    test.answer(shared);
+    await expect(test.client.agents.read(agent.id)).rejects.toBeInstanceOf(ProtocolError);
+    for (const changed of [
+      { ...shared, id: 'other' },
+      { ...shared, access: 'future' },
+      { ...shared, status: undefined },
+      { ...shared, access: undefined },
+    ]) {
+      test.answer(changed);
+      await expect(test.client.agents.readAccessible(agent.id)).rejects.toBeInstanceOf(
+        ProtocolError,
+      );
+    }
+    test.answer({
+      items: [{ seq: 1, appended_at: now, kind: { type: 'access_redacted' } }],
+      next: 1,
+    });
+    const page = await test.client.agents.events(agent.id, { limit: 1 });
+    expect(page.items[0]?.kind.type).toBe('access_redacted');
+    expect(page.next).toBe(1);
+  });
   it('reads Trigger provenance and shortcuts without admitting any command and checks Agent identity', async () => {
     const test = transport();
     const source = {

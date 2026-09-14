@@ -63,6 +63,23 @@ The personal owner manages grants; recipients cannot reshare. Lists contain
 active direct grants; individual reads retain revoked records. Unsafe narrow
 interactive sharing requires current independent isolation or an explicit
 compatible whole-Sandbox grant. Effective capabilities describe current policy,
-not authorization for a later request. Generalized shared history, streaming,
-artifacts and interaction remain under development; these management methods
-do not yet enable recipient use across the existing interfaces.
+not authorization for a later request.
+
+`agents().read_accessible(id)` returns `AccessibleAgent::Personal(Box<Agent>)`
+for a personal owner, or `AccessibleAgent::Shared(SharedAgent)` for another
+authorized reader. Shared detail contains the Agent ID, status, optional title
+and model, and timestamps, with `access: SharedAgentAccess::Shared`. It carries
+no parent hierarchy, profile configuration, credentials or native conversation.
+The existing `read(id)` method retains its full personal-detail type.
+
+Shared transcript and event reads preserve messages and outcomes while removing
+internal metadata and diagnostic details. `AgentEventKind::AccessRedacted`
+retains the original sequence and timestamp for a withheld event; advance page
+cursors normally. This never changes the durable log. Usage is Agent-specific;
+Sandbox resource counters require a separate Sandbox authorization.
+
+Reads obtain current membership and reject buffered results after a policy
+change or expiration. Organization outages return the named
+`organization_authority_unavailable` problem, and inaccessible Agents retain
+`agent_not_found`. Shared collection, live, file and interaction interfaces
+remain under development.

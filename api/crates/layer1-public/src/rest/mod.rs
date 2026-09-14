@@ -13,6 +13,8 @@ use layer2_core::StoreError;
 pub mod admin;
 mod agent_openapi_shapes;
 mod agent_operate;
+mod agent_reads;
+mod agent_shared_shapes;
 mod agent_source;
 mod agents;
 #[cfg(test)]
@@ -48,6 +50,8 @@ mod resource_access_problem;
 mod resource_access_shapes;
 #[cfg(test)]
 mod resource_access_tests;
+#[cfg(test)]
+mod shared_agent_tests;
 pub use resource_access::resource_access_router;
 #[cfg(test)]
 mod trigger_assets_test_support;

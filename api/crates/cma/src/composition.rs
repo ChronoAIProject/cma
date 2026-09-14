@@ -164,6 +164,10 @@ impl ControlPlaneComposition {
         )
         .with_connections(connection_prerequisite.clone());
         let live_agents = Arc::new(LiveAgentRegistry::default());
+        let resource_access = Arc::new(layer2_core::resource_access::ResourceAccessService::new(
+            stores.sandbox_model.clone(),
+            auth.clone(),
+        ));
         let projections = AgentProjectionServices::new(
             stores.sandbox_model.clone(),
             stores.sandbox_profiles.clone(),
@@ -171,7 +175,8 @@ impl ControlPlaneComposition {
             Arc::new(AdapterSandboxResources::new(Arc::clone(&adapter))),
             runtime_capabilities(adapter.capabilities()),
         )
-        .with_connections(connection_prerequisite.clone());
+        .with_connections(connection_prerequisite.clone())
+        .with_resource_access(resource_access.clone());
         let hierarchy = HierarchyReadService::new(stores.sandbox_model.clone());
         let admin = layer1_public::rest::admin::AdminState::new(
             Arc::clone(&settings),
@@ -290,12 +295,7 @@ impl ControlPlaneComposition {
             settings,
         );
         let resource_routes = profiles_router(profiles)
-            .merge(layer1_public::rest::resource_access_router(Arc::new(
-                layer2_core::resource_access::ResourceAccessService::new(
-                    stores.sandbox_model.clone(),
-                    auth.clone(),
-                ),
-            )))
+            .merge(layer1_public::rest::resource_access_router(resource_access))
             .merge(profile_authoring_router(profile_authoring))
             .merge(hierarchy_router(hierarchy))
             .merge(projections.router(Arc::clone(&operations)))
