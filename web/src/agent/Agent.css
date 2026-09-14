@@ -328,9 +328,16 @@
   color: var(--dsw-alias-label-tertiary);
 }
 
+.agent-event.agent-event--tool {
+  align-items: flex-start;
+  padding: 12px;
+  margin: 0 0 16px;
+  border-radius: 8px;
+}
+
 .agent-event--tool > div {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr);
   gap: 4px 8px;
   align-items: start;
   flex: 1;
@@ -343,7 +350,11 @@
 }
 
 .agent-event--tool span {
-  white-space: nowrap;
+  margin-left: 0;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .agent-event--tool p {

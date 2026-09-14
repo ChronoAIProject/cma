@@ -292,9 +292,14 @@ it('names the full lineage and exposes messages, approvals, tools, reasoning, us
   );
   expect(screen.getByRole('heading', { name: 'Agent one' })).toBeInTheDocument();
   expect(screen.getByText('The repository is ready.')).toBeInTheDocument();
-  await actor.click(screen.getByRole('button', { name: /^Thinking/ }));
-  expect(screen.getByText('shell - Typecheck - completed - not reported')).toBeInTheDocument();
-  expect(screen.getAllByText('Check the types.')).toHaveLength(2);
+  expect(screen.queryByRole('button', { name: /^Thinking/ })).not.toBeInTheDocument();
+  expect(screen.getByRole('article', { name: 'Tool call: Typecheck' })).toHaveTextContent(
+    'shell · completed',
+  );
+  expect(screen.getByRole('article', { name: 'Tool call: Typecheck' })).toHaveTextContent(
+    'Duration not reported',
+  );
+  expect(screen.queryByText('Check the types.')).not.toBeInTheDocument();
   expect(screen.getByText('Conversation recovery')).toBeInTheDocument();
   expect(screen.getByLabelText('Agent usage')).toHaveTextContent('120 input');
   await actor.click(screen.getByRole('button', { name: 'Allow' }));
