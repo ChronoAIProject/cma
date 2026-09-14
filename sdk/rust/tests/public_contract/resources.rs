@@ -1,7 +1,7 @@
 use super::context::{Context, invalid};
 use cma_sdk::{
     Result,
-    agents::AgentListOptions,
+    agents::{AccessibleAgentListOptions, AgentListOptions},
     instances::SandboxListOptions,
     profiles::{
         AgentProfileContent, MarketplaceListOptions, ProfileContent, Profiles,
@@ -31,6 +31,7 @@ pub async fn dispatch(c: &Context<'_>) -> Result<()> {
         };
     }
     match op {
+        "GET /api/v1/organizations" => c.check(client.resource_access().organizations().await),
         "GET /api/v1/resource-access/{kind}/{id}" => c.check(
             client
                 .resource_access()
@@ -129,11 +130,14 @@ pub async fn dispatch(c: &Context<'_>) -> Result<()> {
         "GET /api/v1/agents" => c.check(
             client
                 .agents()
-                .list(&AgentListOptions {
-                    status: c.tag("status")?,
-                    sandbox: c.q("sandbox"),
-                    workspace: c.q("workspace"),
-                    page: c.page()?,
+                .list_accessible(&AccessibleAgentListOptions {
+                    organization: c.q("organization"),
+                    filters: AgentListOptions {
+                        status: c.tag("status")?,
+                        sandbox: c.q("sandbox"),
+                        workspace: c.q("workspace"),
+                        page: c.page()?,
+                    },
                 })
                 .await,
         ),

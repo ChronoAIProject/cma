@@ -29,6 +29,7 @@ mod embed;
 mod embed_tests;
 pub mod openapi;
 mod openapi_shapes;
+mod organizations;
 pub mod pagination;
 mod problems;
 mod profile_authoring;

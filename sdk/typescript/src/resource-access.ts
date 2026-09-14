@@ -15,11 +15,21 @@ import {
   integer,
   nullable,
   object,
+  optional,
   positiveInteger,
   tagged,
   text,
   type Output,
 } from './schema.js';
+
+export const organizationRole = enumeration('admin', 'member', 'viewer');
+export type OrganizationRole = Output<typeof organizationRole>;
+export const organizationChoice = object({
+  id: text,
+  role: organizationRole,
+  display_name: optional(text),
+});
+export type OrganizationChoice = Output<typeof organizationChoice>;
 
 export const shareMode = enumeration('view', 'org_roles');
 export const createShareRequest = object({ target_org_id: text, mode: shareMode });
@@ -86,6 +96,15 @@ export type EffectiveAccess = Output<typeof effectiveAccess>;
 /** Policy inspection and owner share management; a permission is not a later-operation credential. */
 export class ResourceAccess {
   constructor(private readonly config: ResolvedConfig) {}
+  /** Current organization choices; subsequent resource requests recheck access. */
+  organizations(options: OperationOptions = {}) {
+    return read(
+      this.config,
+      '/api/v1/organizations',
+      object({ items: array(organizationChoice) }),
+      options,
+    );
+  }
   effective(kind: string, id: string, options: OperationOptions = {}) {
     return read(
       this.config,

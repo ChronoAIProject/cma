@@ -12,6 +12,31 @@ import {
 } from './resource-fixtures.js';
 
 describe('Agent resource commands', () => {
+  it('lists organization scopes and typed shared summaries with encoded filters', async () => {
+    const test = transport();
+    const shared = {
+      access: 'shared',
+      id: 'agt_shared',
+      status: 'ready',
+      created_at: now,
+      updated_at: now,
+    };
+    test.answer({ items: [agentSummary, shared], next: 'agt_shared' });
+    expect(
+      (await test.client.agents.listAccessible({ organization: 'org & scope', limit: 2 })).items,
+    ).toEqual([agentSummary, shared]);
+    expect(new URL(test.calls.at(-1)!.url).searchParams.get('organization')).toBe('org & scope');
+    test.answer({ items: [{ ...shared, access: 'future' }] });
+    await expect(test.client.agents.listAccessible({ organization: 'org' })).rejects.toBeInstanceOf(
+      ProtocolError,
+    );
+    test.answer({ items: [{ id: 'org', role: 'viewer', display_name: 'Example' }] });
+    expect((await test.client.resourceAccess.organizations()).items[0]?.role).toBe('viewer');
+    expect(test.calls.at(-1)?.url).toContain('/api/v1/organizations');
+    test.answer({ items: [{ id: 'org', role: 'future' }] });
+    await expect(test.client.resourceAccess.organizations()).rejects.toBeInstanceOf(ProtocolError);
+  });
+
   it('reads explicit shared detail without weakening personal detail or identity checks', async () => {
     const test = transport();
     const shared = {

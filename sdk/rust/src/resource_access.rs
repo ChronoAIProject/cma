@@ -3,6 +3,26 @@ use crate::{Client, IdempotencyKey, Result, resources::positive};
 use reqwest::{Method, StatusCode};
 use serde::{Deserialize, Serialize};
 
+string_enum! { /// Current organization role for scope presentation.
+    pub enum OrganizationRole { Admin => "admin", Member => "member", Viewer => "viewer" }
+}
+/// One current organization choice. It is not reusable resource authority.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct OrganizationChoice {
+    /// Canonical organization identity.
+    pub id: String,
+    /// Current presentation role; later resource requests recheck membership.
+    pub role: OrganizationRole,
+    /// Optional organization display name.
+    pub display_name: Option<String>,
+}
+/// Current organization choices ordered by canonical identifier.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct OrganizationChoices {
+    /// Available organization scopes.
+    pub items: Vec<OrganizationChoice>,
+}
+
 string_enum! { /// Organization share mode.
     pub enum ShareMode { View => "view", OrgRoles => "org_roles" }
 }
@@ -155,6 +175,11 @@ impl Client {
     }
 }
 impl ResourceAccess<'_> {
+    /// List current organization choices without granting resource access.
+    pub async fn organizations(&self) -> Result<OrganizationChoices> {
+        self.client.get(&["organizations"], &[]).await
+    }
+
     /// Read current capabilities for an agent, sandbox, workspace or worktree.
     pub async fn effective(&self, kind: &str, id: &str) -> Result<EffectiveAccess> {
         self.client.get(&["resource-access", kind, id], &[]).await

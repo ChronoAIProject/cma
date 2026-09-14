@@ -1,7 +1,7 @@
 import { ProtocolError } from '../errors.js';
 import { agentStatus } from '../instances/types.js';
 import { enumeration, object, optional, record, text, type Output } from '../schema.js';
-import { agent, type Agent } from './types.js';
+import { agent, agentSummary, type Agent, type AgentSummary } from './types.js';
 
 /** Safe detail for a reader whose authority does not include personal ownership. */
 export const sharedAgent = object({
@@ -22,6 +22,14 @@ export type AccessibleAgent = (Agent & { readonly access?: never }) | SharedAgen
 export function accessibleAgent(value: unknown): AccessibleAgent {
   const source = record(value);
   if (source.access === undefined) return agent(value);
+  if (source.access === 'shared') return sharedAgent(value);
+  throw new ProtocolError('unknown Agent access discriminator');
+}
+
+export type AccessibleAgentSummary = (AgentSummary & { readonly access?: never }) | SharedAgent;
+export function accessibleAgentSummary(value: unknown): AccessibleAgentSummary {
+  const source = record(value);
+  if (source.access === undefined) return agentSummary(value);
   if (source.access === 'shared') return sharedAgent(value);
   throw new ProtocolError('unknown Agent access discriminator');
 }

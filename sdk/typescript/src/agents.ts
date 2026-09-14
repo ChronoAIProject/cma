@@ -32,13 +32,18 @@ import {
   type StopAgentRequest,
 } from './agents/types.js';
 import { agentEvent } from './agents/events.js';
-import { accessibleAgent } from './agents/shared.js';
+import { accessibleAgent, accessibleAgentSummary } from './agents/shared.js';
 import { requireRefusal } from './unsupported.js';
 
 export interface AgentListOptions extends PageOptions {
   readonly sandbox?: string;
   readonly workspace?: string;
   readonly status?: AgentStatus;
+}
+
+export interface AccessibleAgentListOptions extends AgentListOptions {
+  /** Canonical organization ID; omission selects personal inventory. */
+  readonly organization?: string;
 }
 
 /** Public Agent REST commands and durable read projections. */
@@ -57,6 +62,24 @@ export class Agents {
         limit: options.limit,
       }),
       page(agentSummary),
+      options,
+    );
+  }
+
+  /** List personal Agents or the Agents visible in one current organization. */
+  listAccessible(options: AccessibleAgentListOptions = {}) {
+    if (options.status !== undefined) input(agentStatus, options.status);
+    return read(
+      this.config,
+      query('/api/v1/agents', {
+        organization: options.organization,
+        sandbox: options.sandbox,
+        workspace: options.workspace,
+        status: options.status,
+        cursor: options.cursor,
+        limit: options.limit,
+      }),
+      page(accessibleAgentSummary),
       options,
     );
   }

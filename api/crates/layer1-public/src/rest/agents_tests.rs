@@ -208,6 +208,7 @@ impl SandboxResourceReader for TestResources {
 }
 
 pub(super) struct Fixture {
+    pub(super) state: AgentRoutesState,
     pub(super) router: Router,
     pub(super) store: Arc<InMemorySandboxStore>,
     sandbox_id: SandboxId,
@@ -263,13 +264,10 @@ async fn fixture_with_ports<R: AgentRuntimeRegistry + 'static>(
     let agent_operations = AgentOperationService::new(store.clone(), registry.clone());
     let operation_records: Arc<dyn OperationStore> =
         operations.unwrap_or_else(|| Arc::new(MemoryOperationStore::default()));
-    let router = agent_router(AgentRoutesState::new(
-        agents,
-        reads,
-        agent_operations,
-        operation_records,
-    ));
+    let state = AgentRoutesState::new(agents, reads, agent_operations, operation_records);
+    let router = agent_router(state.clone());
     Fixture {
+        state,
         router,
         store,
         sandbox_id: sandbox.id,

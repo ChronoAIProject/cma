@@ -8,6 +8,17 @@ struct PolicyStore {
 }
 #[async_trait]
 impl ResourceAccessStore for PolicyStore {
+    async fn organization_agents(
+        &self,
+        organization: &SubjectId,
+        query: &AgentListQuery,
+        page: &PageRequest,
+    ) -> Result<Vec<ResourceAccessSnapshot>, ResourceAccessStoreError> {
+        self.inner
+            .organization_agents(organization, query, page)
+            .await
+    }
+
     async fn resource_access_snapshot(
         &self,
         target: &ResourceTarget,
