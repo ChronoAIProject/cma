@@ -67,6 +67,8 @@ pub enum AgentOperationError {
     DispatchRecoveryRequired { operation_sequence: u64 },
     #[error("agent runtime does not support {capability:?}")]
     CapabilityUnsupported { capability: RuntimeCapability },
+    #[error("agent input content is not supported")]
+    ContentUnsupported,
     #[error("agent queued-message capacity reached: {limit}")]
     QueueCapacityExceeded { limit: usize },
     #[error("agent lifecycle authority is stale")]
@@ -109,6 +111,7 @@ impl AgentOperationError {
             Self::DispatchInProgress { .. } => "agent_dispatch_in_progress",
             Self::DispatchRecoveryRequired { .. } => "agent_dispatch_recovery_required",
             Self::CapabilityUnsupported { .. } => "agent_capability_unsupported",
+            Self::ContentUnsupported => "agent_content_unsupported",
             Self::QueueCapacityExceeded { .. } => "agent_message_queue_full",
             Self::StaleWorkAuthority => "agent_work_authority_stale",
             Self::InvalidRequest(_) => "invalid_agent_operation",
@@ -170,11 +173,12 @@ impl AgentOperationService {
         Ok(())
     }
 
-    pub async fn send_message(
+    pub(super) async fn execute_message(
         &self,
         caller: &Caller,
         id: &AgentId,
         text: String,
+        metadata: std::collections::BTreeMap<String, String>,
     ) -> Result<AgentMessageOutcome, AgentOperationError> {
         self.require_owner_authority(caller)?;
         self.validate_message(&text)?;
@@ -190,6 +194,13 @@ impl AgentOperationService {
             }
             self.require_agent_connections(&current).await?;
             let (parent, queues) = self.parent_admission(&current).await?;
+            // Existing queued records have no metadata field. Do not accept
+            // metadata that a retained reader or lifecycle worker would lose.
+            if (queues || current.status == AgentStatus::Paused) && !metadata.is_empty() {
+                return Err(AgentOperationError::InvalidRequest(
+                    "queued message metadata is not supported".into(),
+                ));
+            }
             match current.status {
                 AgentStatus::Ready if queues => {
                     match self.queue_message(current, text.clone(), parent).await {
@@ -199,7 +210,7 @@ impl AgentOperationService {
                     }
                 }
                 AgentStatus::Ready => match self
-                    .fence_message(current, text.clone(), parent, Default::default())
+                    .fence_message(current, text.clone(), parent, metadata.clone())
                     .await
                 {
                     Ok(prepared) => {
@@ -266,7 +277,7 @@ impl AgentOperationService {
         Ok((SandboxMutationGuard::capture(&sandbox), queues))
     }
 
-    pub async fn steer(
+    pub(super) async fn execute_steer(
         &self,
         caller: &Caller,
         id: &AgentId,
@@ -293,7 +304,7 @@ impl AgentOperationService {
         Err(AgentOperationError::Conflict)
     }
 
-    pub async fn interrupt(
+    pub(super) async fn execute_interrupt(
         &self,
         caller: &Caller,
         id: &AgentId,
@@ -324,7 +335,7 @@ impl AgentOperationService {
         Err(AgentOperationError::Conflict)
     }
 
-    pub async fn answer_approval(
+    pub(super) async fn execute_approval(
         &self,
         caller: &Caller,
         id: &AgentId,

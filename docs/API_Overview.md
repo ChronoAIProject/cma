@@ -90,6 +90,23 @@ Responses conversation creation resolves an Agent context from platform defaults
 and optional owned identifiers. Both protocols use the same durable Agent
 log and operation service. Neither creates a hidden frontend-only conversation.
 
+The core operation service now routes input, steering, interruption and approval
+answers through typed `AgentCommand` and `AgentInput` contracts. Existing v1
+adapters retain their request/response shapes and predecessor rules. Text
+partitions normalize without changing whitespace; canonical fingerprints include
+content, control kind, predecessor conditions and metadata. Attachment references
+have an immutable digest, but dispatch currently refuses them with
+`agent_content_unsupported` before sending any accompanying text.
+
+The common `AgentEvent` projection retains the original Agent log cursor and
+safe message, tool, approval, delivery and lifecycle data. Native conversation
+ids, approval locators and sign-in credentials are absent from this projection.
+Live fragments have a separate type with no durable cursor. New command-envelope
+and admission-receipt types distinguish owner, actor, source and grant revision;
+they are separate ledger contracts and do not alter retained Agent records.
+Persisting these receipts and enabling common idempotent busy queues remain the
+next admission work; the new types do not advertise those capabilities as live.
+
 Agent logs, Sandbox events and Launch events have independent monotonic
 sequences. REST exposes JSON event pages. AG-UI exposes SSE with a durable
 cursor only on the last frame projecting a committed log entry. Live text and

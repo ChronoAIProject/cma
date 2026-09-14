@@ -3,6 +3,7 @@
 mod admin;
 mod agent;
 mod agent_context;
+pub mod agent_io;
 mod agent_operation;
 mod agent_operation_dispatch;
 mod agent_operation_queue;
