@@ -125,6 +125,14 @@ pub(super) async fn scenario(name: &str) -> Option<Scenario> {
 pub(super) struct FailingPolicy(pub(super) ResourceAccessStoreError);
 #[async_trait::async_trait]
 impl ResourceAccessStore for FailingPolicy {
+    async fn organization_sandboxes(
+        &self,
+        _organization: &layer2_core::SubjectId,
+        _query: &layer2_core::sandbox::OwnerSandboxQuery,
+    ) -> Result<Vec<ResourceAccessSnapshot>, ResourceAccessStoreError> {
+        Err(self.0.clone())
+    }
+
     async fn organization_agents(
         &self,
         _: &SubjectId,

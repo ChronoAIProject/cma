@@ -161,6 +161,14 @@ struct GatedPolicy {
 }
 #[async_trait::async_trait]
 impl ResourceAccessStore for GatedPolicy {
+    async fn organization_sandboxes(
+        &self,
+        _organization: &layer2_core::SubjectId,
+        _query: &layer2_core::sandbox::OwnerSandboxQuery,
+    ) -> Result<Vec<ResourceAccessSnapshot>, ResourceAccessStoreError> {
+        unreachable!()
+    }
+
     async fn organization_agents(
         &self,
         _: &layer2_core::SubjectId,

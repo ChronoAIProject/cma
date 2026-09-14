@@ -585,7 +585,11 @@
         "hierarchy_service_unavailable",
         "invalid_page",
         "invalid_query",
-        "not_authenticated"
+        "not_authenticated",
+        "organization_authority_unavailable",
+        "resource_access_changed",
+        "resource_access_unavailable",
+        "resource_forbidden"
       ]
     },
     "GET /api/v1/sandboxes/{id}": {

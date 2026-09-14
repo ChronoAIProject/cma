@@ -8,6 +8,7 @@ use crate::resource_access::{ResourceAccessError, ResourceAccessService};
 use crate::{AgentId, Caller, Capability, SandboxId, SubjectId, WorkspaceId, WorktreeId};
 
 mod authorized;
+mod inventory;
 mod projection;
 use projection::{sandbox_view, workspace_view};
 mod shared;
