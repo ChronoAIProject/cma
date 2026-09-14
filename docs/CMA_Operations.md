@@ -14,11 +14,14 @@ merge or push `main`, invoke the release workflow or change NyxID configuration
 or administration.** A direct
 deployment is not a GitHub release and creates no release tag by implication.
 
-The one-time reset of historical CMA data and CMA-owned provider Sandboxes is
-authorized for this refactor. It is not permission to delete another service's
-database, bucket or runtime. Ordinary deployments after reset must preserve all
-owner work under `CLAUDE.md` section 5. An evidence failure requires a local fix
-and direct redeployment, followed by the affected production journeys again.
+The maintainer's 2026-09-14 continuity requirement in bridge issue #850 revokes
+the historical refactor reset authority. No database reset, blanket provider
+cleanup, forced pause or image-driven replacement of existing live Sandboxes is
+permitted. Existing user resources receive read-only verification. Faults and
+cleanup use exact run-owned disposable resources with owner and lineage checks.
+Changing an image default does not authorize rotation of retained runtimes.
+An evidence failure requires a local fix and an isolated rerun before rollout;
+unproved compatibility keeps the new feature disabled.
 
 Current local checks are not production approval. The Release Evidence section
 below records incomplete final gates explicitly. Do not advertise public
@@ -551,7 +554,7 @@ provider generations and event heads before each fault.
 |---|---|
 | Restart during `pausing` | Resume the recorded checkpoint/fence operation; no lost home data |
 | Restart during `reviving` | Restore the same hierarchy and exact Agent conversations |
-| Runtime image drift | Rotate both Agents, dirty Worktree and installed software under contract 3 |
+| Runtime image default changes | Retain existing runtimes, both Agents, dirty Worktree and installed software; new allocations use the new image, and rollback preserves both cohorts |
 | Install failure/timeout | Typed failed step; no credential or proxy activated early |
 | Clone failure / Worktree conflict | Recorded failure without duplicate Workspace/Worktree |
 | Agent start timeout | Named unavailable/failed state, no guessed readiness |

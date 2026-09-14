@@ -426,7 +426,6 @@ async fn lost_warm_runtime_is_replaced_before_any_user_credential_is_delivered()
         harness.adapter.clone(),
         Arc::new(harness.policy.clone()),
         "test".into(),
-        runtime_image(),
     )
     .initialize(SystemTime::now())
     .await

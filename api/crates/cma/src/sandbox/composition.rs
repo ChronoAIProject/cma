@@ -87,7 +87,6 @@ impl SandboxLifecycleComposition {
             Arc::clone(&dependencies.adapter),
             Arc::clone(&dependencies.policy),
             config.deployment_id.clone(),
-            config.runtime_version.clone(),
         )
         .with_profile_agents(Arc::clone(&dependencies.agents));
         let checkpoints = SandboxScheduler::for_checkpoints(
