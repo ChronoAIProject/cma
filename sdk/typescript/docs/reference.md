@@ -1,99 +1,392 @@
-# TypeScript Reference
+# Reference
 
-<!-- nav: 80 Reference -->
+<!-- nav: 11 Reference -->
 
-The API reference is generated from the package source, JSDoc, and declarations;
-this file does not duplicate signatures by hand. Run:
+`createClient(config)` returns a `Cma` with the following public resources:
 
-```sh
-npm run build
-```
+| Resource                                                | Methods                                                                                                                                                                                                                                           |
+| ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `agentProfiles`, `workspaceProfiles`, `sandboxProfiles` | `list`, `read`, `create`, `save`, `publish`, `listRevisions`, `readRevision`, `setVisibility`, `retire`                                                                                                                                           |
+| `profileAuthoring`                                      | `bounds`, `services`, `searchSkills`, read-only `resolveRepository`                                                                                                                                                                               |
+| `marketplace.agent`, `.workspace`, `.sandbox`           | `list`, `read`, `fork`                                                                                                                                                                                                                            |
+| `sandboxes`                                             | `list`, `read`, `create`, `pause`, `revive`, `delete`, `events`                                                                                                                                                                                   |
+| `workspaces`                                            | `list(sandboxId)`, `read`, `create(sandboxId, body, options)`, `delete`                                                                                                                                                                           |
+| `worktrees`                                             | `list(workspaceId)`, `read`                                                                                                                                                                                                                       |
+| `agents`                                                | `list`, `read`, `create(workspaceId, body, options)`, `input`, `steer`, `interrupt`, `answerApproval`, `stop`, `delete`, `events`, `transcript`, `usage`, `resources`                                                                             |
+| `triggerAuthoring`                                      | `list`, `read`, `create`, `save`, `delete`, `publish`, `retire`, `listRevisions`, `listPlacements`, `createPlacement`, `retirePlacement`, `embed`, `stats`                                                                                        |
+| `launches`                                              | `preview`, `createOrResume`, `read`, `list`, `start`, `cancel`, `requirements`, `events`, `stream`, `createConnection`, `readConnection`                                                                                                          |
+| `agui`                                                  | `run`, `replay`, `readCapabilities`, `readSandboxSnapshot`, `streamLaunchEvents`                                                                                                                                                                  |
+| `responses`                                             | `createConversation`, `readConversation`, `listConversationItems`, `create`, `read`, `delete`, `cancel`                                                                                                                                           |
+| `auth`                                                  | `readSession`, `readSignupOptions`, `loginUrl`, `logoutUrl`                                                                                                                                                                                       |
+| `admin`                                                 | `listSandboxes`, `readSandbox`, `sandboxEvents`, `retireSandbox`, `listProfiles`, `retireProfile`, `readSettings`, `replaceSettings`, `patchSettings`, `resetSettings`, `pauseTriggers`, `resumeTriggers`, `readRuntimeInventory`, `listActivity` |
 
-The generated declaration entry point is `dist/index.d.ts`, with declaration maps
-back to `src/`. In an installed package, editors and TypeScript resolve that file
-through the package's `types` and `exports` fields. In the repository, start at the
-[public export list](../src/index.ts).
+`readConformance(options?)` performs `GET /api/v1/conformance` anonymously.
+`readOpenApi(options?)` reads the generated `/openapi.json` anonymously, preserving
+its schemas, operation annotations and extensions.
+
+`agents.terminal(id)` preserves the named `capability_unsupported` refusal, or
+the owner-scoped not-found response. `unsupported.mcp()`, `unsupported.a2a()` and
+`unsupported.agentCard()` probe the explicit `interface_not_available` responses.
+These helpers reject with `ApiError`; they do not provide a terminal or implement
+either protocol. An unexpected successful response is a `ProtocolError`.
+
+`launches.list({ trigger, state, cursor, limit })` filters the visitor's Launches
+by Trigger id and the closed `LaunchState` enum. Its `next` cursor is opaque.
+
+`triggers.badge(publicId, { label, theme, placement, ifNoneMatch })` reads an
+anonymous SVG or a conditional `304` cache result with its entity tag.
+`triggers.embedScript()` reads the public script as text without executing it.
+Both suppress bearer credentials and cookies and reject redirects.
+
+`triggers` is an alias of `triggerAuthoring`. The `admin` namespace requires
+explicit operator capabilities. Settings replace, patch and reset carry
+`expected_revision`; a patch supplies at least one complete section and leaves
+omitted sections unchanged. Null sections and empty patches are refused. Neither
+settings commands nor Trigger pause/resume invent an idempotency key or retry.
+
+`readDefaults(options?)` performs the authenticated `GET /api/v1/defaults` and
+returns only `sandbox_profile`, `workspace_profile`, and `agent_profile`, each
+an immutable `{ id, revision }` reference. It requires `use_own_sandboxes`.
+Read those exact revisions with the matching profile client's `readRevision`;
+never infer configured defaults from Marketplace listings or replace a pinned
+revision with the latest. Immutable revision reads admit the owner's profiles
+and non-retired public profiles; draft access remains owner-management-only.
 
 ```ts
-import {
-  Cma,
-  createClient,
-  type ClientConfig,
-  type Session,
-  type SessionEvent,
-} from '@chronoai/cma-sdk';
+import { type Conformance, readConformance, resolveConfig } from '@chronoai/cma-sdk';
 
-const config: ClientConfig = { baseUrl: 'https://cma.example.com', cookies: false };
-const client: Cma = createClient(config);
-const consume = (session: Session, event: SessionEvent): string =>
-  `${session.id}:${String(event.seq)}`;
-
-void client;
-void consume;
+const config = resolveConfig({ baseUrl: 'https://cma.example.com' });
+const deployment: Conformance = await readConformance(config, {
+  requestId: 'deployment-check-1',
+});
 ```
 
-Two package entry points are public:
+`Conformance` contains `service`, `status`, and an array of currently exposed
+`interfaces`. Generic transport helpers remain available for diagnostics and
+SDK development. Resource methods validate required fields, closed enums,
+nonnegative safe integers and exact success statuses. Unknown resource-response
+fields are omitted; an unknown discriminator in a closed resource-event union is
+a `ProtocolError`. AG-UI preserves extension fields as described below.
 
-- `@chronoai/cma-sdk` is the production client, types, errors, event parser, AG-UI
-  connection, Responses stream fold, secret-free sponsorship projections, and
-  conversation fold.
-- `@chronoai/cma-sdk/testing` contains deterministic builders, mock transports, and
-  transcripts for consumer tests. It is not imported by the production entry point.
+Sandbox and Workspace creation return base views with HTTP 201. Use `read` for
+expanded hierarchy detail. Their lifecycle commands return base views with
+HTTP 202; acceptance does not mean the lifecycle has completed. Agent operations
+likewise return HTTP 202, with only `input` carrying `{ queued: boolean }`.
 
-Unknown runtime identifiers, event discriminators, recovery states, and future
-session lifecycle values cross the boundary according to the forward-compatibility
-rules in [Sessions](sessions.md) and [Streaming](streaming.md). Other malformed
-known shapes fail closed as `ProtocolError`.
-
-The sponsorship exports intentionally provide only four secret-free page reads:
-owner credentials, owner policies with accounting, contributor grants, and sponsor
-grants. They include exact allowlist decoders and role-bound continuation checks,
-but no mutation client. CMA can compose the complete sponsorship service when a
-reviewed enabled deployment tuple is supplied; the checked-in production tuple is
-still dormant and kill-switched, so these contract-first reads remain unavailable
-there. See [Sponsorships](sponsorships.md) for the complete boundary.
-
-## Request correlation
-
-Every operation sends an `X-Request-Id`. By default the SDK generates a UUID, but
-callers can supply an exact id through the operation's final options argument:
+Profile `save` and `publish` require the last observed `draft_version` for
+compare-and-swap. `marketplace.*.read` returns a complete immutable revision and
+resolved nested revisions; Sandbox entries also carry trust confirmation and
+the commands digest. `fork` requires an explicit revision, keeping a retry
+pinned to the revision the owner actually inspected.
 
 ```ts
 import { createClient } from '@chronoai/cma-sdk';
 
-const cma = createClient({ baseUrl: 'https://cma.example.com' });
-const sessions = await cma.listSessions({ requestId: 'Support.Case/488:Exact' });
+const cma = createClient();
+const draft = await cma.agentProfiles.read('agp_default');
+console.log(draft.draft.thinking_effort, draft.draft_version);
 
-void sessions;
+const accepted = await cma.agents.create(
+  'workspace-id',
+  {
+    agent_profile: { id: 'agp_default', revision: 1 },
+    first_message: 'Review the current changes.',
+  },
+  { idempotencyKey: 'create-agent-command-1' },
+);
+console.log(accepted.id, accepted.first_message?.state);
 ```
 
-The per-operation `requestId` takes precedence over `requestIdProvider`. Otherwise,
-the provider runs exactly once for each caller-visible logical operation. The
-resolved text is reused byte-for-byte for every page of an aggregate list and every
-REST SSE or AG-UI reconnect belonging to that operation. Request ids must already
-be nonempty visible HTTP header values; the SDK rejects values that a `Headers`
-implementation would trim, normalize, or otherwise change.
+Examples use illustrative identifiers and command keys. A real caller supplies
+an existing resource identifier and a fresh durable key for each new logical
+command. It retains that key and the exact body until the outcome is settled.
 
-Configure `responseObserver` to receive the HTTP status and usable response
-correlation id as soon as each response handshake completes:
+Agent `resources` keeps unavailable numeric readings as `null`; missing
+`context_window` in usage is distinct from a reported zero. Event and transcript
+DTOs are discriminated unions. Durable histories do not manufacture live
+reasoning or replace the public conversation stream.
+
+## Trigger Authoring
+
+`triggerAuthoring` manages the publisher's Draft and immutable publications. Every
+target is an exact profile `{ id, revision }`, and every target profile must be
+public at publication. Saving a Draft never changes the published Trigger. The
+server validates reuse combinations, limits and publication eligibility; keep
+typed field refusals beside the edited field.
 
 ```ts
-import { createClient, type ResponseMetadata } from '@chronoai/cma-sdk';
+import { createClient, type TriggerContent } from '@chronoai/cma-sdk';
 
-const responses: ResponseMetadata[] = [];
-const cma = createClient({
-  requestIdProvider: () => crypto.randomUUID(),
-  responseObserver: (metadata) => {
-    responses.push(metadata);
-  },
-});
+const cma = createClient();
+export async function saveEditedTrigger(
+  id: string,
+  content: TriggerContent,
+  observedVersion: number,
+  commandKey: string,
+) {
+  return cma.triggerAuthoring.save(
+    id,
+    { content, draft_version: observedVersion },
+    { idempotencyKey: commandKey },
+  );
+}
 
-await cma.readConformance();
+export async function publishReviewedTrigger(id: string, savedVersion: number, commandKey: string) {
+  return cma.triggerAuthoring.publish(
+    id,
+    { draft_version: savedVersion },
+    { idempotencyKey: commandKey },
+  );
+}
 ```
 
-The observer runs before retry inspection and before status or body decoding. A
-throw or rejected promise becomes `ResponseObserverError`. `metadata.requestId`
-comes only from the response's HTTP `X-Request-Id` header; it is `undefined` when
-that header is missing or malformed. Problem-body `request_id` fields are never
-used for correlation. Structured API errors expose the same header-derived value
-as `error.requestId`.
+Save returns a `TriggerDocument`; Publish returns a `PublishedTriggerRevision`
+with the publication's `trigger_id`, `public_id`, revision, digest and content.
+Use the Save result's `draft_version` for the separate Publish command. Retain
+that version and the Publish key if its outcome is unknown.
+
+Placements are stable identities, separate from their HTTPS `source_url` and
+human `label`. `listPlacements(id, { includeRetired: true })` includes retired
+records. `retirePlacement(id, placementId, options)` retires a placement without
+rewriting its historical attribution.
+
+```ts
+import { createClient } from '@chronoai/cma-sdk';
+
+const cma = createClient();
+export async function addReviewedPlacement(triggerId: string, commandKey: string) {
+  const placement = await cma.triggerAuthoring.createPlacement(
+    triggerId,
+    { source_url: 'https://example.com/project', label: 'Project README' },
+    { idempotencyKey: commandKey },
+  );
+  const embed = await cma.triggerAuthoring.embed(triggerId, placement.id);
+  return { placement, embed };
+}
+```
+
+The embed response owns every Markdown, HTML, JavaScript, React and URL snippet,
+plus `javascript_sri` and the `content_security_policy.img_src` / `script_src`
+directives. Display and copy these exact values; do not reconstruct them from
+the public id. `stats` reports totals and placement attribution. A failed stats
+read is unavailable data, never an observed zero.
+
+### React Button
+
+The descriptor's React snippet uses the optional peer-dependent React entry.
+It renders only an anchor and image, makes no API call, and is safe during SSR:
+
+```tsx
+import { CmaTriggerButton } from '@chronoai/cma-sdk/react';
+
+export const publishedButton = (
+  <CmaTriggerButton
+    triggerId="pub_example"
+    placementId="plc_readme"
+    label="open_in_cma"
+    theme="auto"
+    baseUrl="https://cma.example"
+  />
+);
+```
+
+`triggerId` is the public id, not the publisher's private Trigger id. Optional
+`placementId` controls attribution; without it the link uses `/t/{publicId}`.
+`label` is `open_in_cma`, `chat_with_this`, `run_with_cma`, or `try_it`; `theme`
+is `auto`, `light`, or `dark`. Their defaults are `open_in_cma` and `auto`.
+`baseUrl` must be an absolute HTTP(S) origin with no credentials, path, query or
+fragment; its default is `https://bot.chrono-ai.fun`. Prefer the exact supplied
+descriptor props for non-production deployments. Package checks compile and
+render the backend-generated snippet against the packed SDK.
+
+## Visitor Launches
+
+A public GET does not imply consent. Call admission only from a visitor's explicit
+gesture or its already-saved bounded intent after sign-in:
+
+```ts
+import { createClient, repeatChoiceFrom, type CreateLaunchRequest } from '@chronoai/cma-sdk';
+
+const cma = createClient();
+export async function admitVisitorIntent(
+  publicId: string,
+  body: CreateLaunchRequest,
+  commandKey: string,
+) {
+  try {
+    return {
+      record: await cma.launches.createOrResume(publicId, body, { idempotencyKey: commandKey }),
+    };
+  } catch (error) {
+    const existing = repeatChoiceFrom(error);
+    if (existing !== undefined) return { existing };
+    throw error;
+  }
+}
+```
+
+The visitor command uses `start_if_ready: true`, optional `placement_id` and
+`referrer_origin`, and an optional explicit `choice: 'resume' | 'new'`. The SDK
+accepts HTTP 201 and 202 and returns a `Launch` for both. Inspect `state` and
+`review.needs`: Draft opens only its requested review, while accepted work opens
+progress. Repeated admission with the same key returns the recorded response;
+it is not a way to refresh or advance an existing Draft.
+
+After explicit trust review or satisfied account setup, continue that same Draft
+with `start(id, { trust_confirmed_digest, acknowledgements }, options)`. Show the
+recorded commands and environment values verbatim, and submit the exact digest
+the visitor approved. Start returns HTTP 202 and refreshes authoritative account
+requirements. `requirements(id)` is a read with optional `display_name`,
+`connection_mode` and `setup_url`; it does not itself advance the stored Launch.
+
+For hosted setup, open a blank popup synchronously from the gesture, then call
+`createConnection({ service_id, launch_id, intent_id }, options)`. Validate its
+HTTPS `hosted_url` before navigating the popup. Read `readConnection(handoff_id)`
+with bounded polling, verify the Launch and service identities, and continue via
+Start only when its state is `satisfied`. `expired`, `cancelled` and `failed` are
+separate outcomes. A manual or unknown `connection_mode` does not authorize
+inventing a hosted handoff; use only the supplied manual setup metadata.
+
+JSON progress pages come from `events(id, { after, limit })`, returning
+`{ launch_id, events, next_cursor }`. The SSE companion uses the same durable
+sequence but delivers individual `LaunchEvent` values. Follow with a bounded
+signal, retaining an acknowledged cursor and last successful record:
+
+```ts
+import { createClient, ProtocolError, type Launch } from '@chronoai/cma-sdk';
+
+const cma = createClient();
+export async function followPreparation(
+  id: string,
+  signal: AbortSignal,
+  showRecordedProgress: (record: Launch) => Promise<void>,
+) {
+  let record = await cma.launches.read(id, { signal });
+  await showRecordedProgress(record);
+  await cma.launches.stream(id, {
+    after: record.event_head,
+    signal,
+    onEvent: async (event) => {
+      const next = await cma.launches.read(id, { signal });
+      if (next.event_head < event.seq)
+        throw new ProtocolError('Progress snapshot is behind its event');
+      await showRecordedProgress(next);
+      record = next;
+    },
+  });
+  return record;
+}
+```
+
+`stream` makes one connection. Supply bounded reconnect and polling fallback in
+the host application; do not acknowledge an event until its snapshot or durable
+projection has actually been applied. A `ready` record's Agent resolution gives
+the visitor's Agent id. Navigate there without submitting the first message again.
+`cancel(id, options)` is an explicit command; `failure.retryable` is not a public
+retry operation. Retryable worker work resumes under server control. Starting
+over requires a new explicit intent and new key.
+
+## Agent Conversations
+
+`agui.run` posts once to `/api/v1/agui/run`, and `agui.replay` reads
+`/api/v1/agui/events`. In both, `threadId` is an existing Agent id, not a new Chat
+identity. A run request supplies user messages or resolved approval interrupts.
+
+```ts
+import { createClient, type AgentConversationEvent } from '@chronoai/cma-sdk';
+
+const cma = createClient();
+export async function sendExplicitMessage(
+  agentId: string,
+  text: string,
+  signal: AbortSignal,
+  apply: (event: AgentConversationEvent) => Promise<void>,
+) {
+  await cma.agui.run(
+    { threadId: agentId, messages: [{ role: 'user', content: text }] },
+    { signal, onEvent: apply },
+  );
+}
+
+export async function recoverConversation(
+  agentId: string,
+  acknowledgedCursor: number,
+  signal: AbortSignal,
+  apply: (event: AgentConversationEvent) => Promise<void>,
+) {
+  await cma.agui.replay(agentId, {
+    after: acknowledgedCursor,
+    follow: true,
+    maxReconnects: 4,
+    signal,
+    onEvent: apply,
+  });
+}
+```
+
+Frames preserve protocol `type`, `threadId`, `runId` and extension fields. The
+SDK validates frame identity, SSE framing and cursor boundaries, but does not
+replace an application's event-specific reducer: extension values are `unknown`.
+One durable event may project several frames; only its final frame carries
+`cursor`. The SDK buffers that projection and advances replay only after all
+callbacks resolve. Store a cursor only after applying the corresponding frame.
+Live frames carry `cma:live: true` and no durable cursor; they are supplemental
+content and never replace recorded history.
+
+`replay(agentId, { follow: false, onEvent })` reads a finite captured history.
+Following replay reconnects with bounded
+backoff, defaults to four consecutive no-progress reconnects, and accepts a limit
+from zero through twenty. A successful durable acknowledgement resets that
+count. `run` never reconnects its POST. `timeoutMs` bounds admission and response
+headers, not an active AG-UI response body; use `signal` to bound the entire
+operation. Replay transport failure does not change the durable run outcome.
+
+`readCapabilities()` returns the deployment's typed AG-UI feature declaration.
+`readSandboxSnapshot(agentId)` returns the same Agent's Sandbox, Workspace,
+Worktree and first-message state and rejects a mismatched thread identity.
+`streamLaunchEvents` uses the visitor Launch companion: optional `after`,
+`limit` (1-200) and `follow: false` capture one bounded page. The default follows
+until disconnect or caller cancellation; reconnect is caller-owned.
+
+## Responses
+
+`responses` projects the same owned Agent conversation. `createConversation`
+accepts optional `metadata` identifiers `agent_profile`, `workspace`, and
+`sandbox`; it creates an Agent context, not a separate Chat aggregate.
+`readConversation` and `listConversationItems` read its durable projection.
+Items are newest-first, with `after`, `limit` (1-100), nullable `first_id` and
+`last_id`, and `has_more`. Provider tool activity uses `cma_chat.tool_activity`,
+not an invented standard function call.
+
+```ts
+import { createClient, type ResponseEvent } from '@chronoai/cma-sdk';
+
+const cma = createClient();
+export async function sendResponse(
+  agentId: string,
+  text: string,
+  signal: AbortSignal,
+  apply: (event: ResponseEvent) => Promise<void>,
+) {
+  return cma.responses.create(
+    { conversation: agentId, input: text, stream: true },
+    { signal, onEvent: apply },
+  );
+}
+```
+
+`create` submits once and returns the terminal `ResponseObject` after each
+callback has acknowledged its frame. `failed` and `incomplete` are authoritative
+Agent outcomes; an interrupted transport throws without inventing either one.
+The connection-local sequence starts at zero; it is not a durable replay cursor.
+`timeoutMs` bounds only admission and response headers (605 seconds by default);
+use `signal` to bound the complete operation. Never resubmit a disconnected POST
+automatically. Recover with durable `read(responseId)` or the Agent history.
+
+The subset requires `conversation`, exactly one nonempty user text message, and
+`stream: true`. Optional `previous_response_id` enforces a linear prior response;
+`model` is accepted but cannot override the pinned Agent Profile. `store: false`,
+background execution, tools and instruction overrides are unsupported. The
+explicit `delete` and `cancel` helpers preserve the server's
+`responses_field_unsupported` problem as `ApiError`; neither operation is
+advertised as a supported Agent action.

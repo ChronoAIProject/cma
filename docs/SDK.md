@@ -12,7 +12,7 @@ surfaces usable.
 
 Those files are versioned beside their SDKs and are the designated source for the
 CMA Developer surface. The public wire contracts remain in the interface documents:
-[REST](API_REST.md), [AG-UI](API_AGUI.md), [PTY](API_PTY.md), [MCP](API_MCP.md),
+[REST](API_REST.md), [AG-UI](API_AGUI.md), [Responses](API_Responses.md), [PTY](API_PTY.md), [MCP](API_MCP.md),
 and [A2A](API_A2A.md).
 
 ## Cross-origin browser deployments
@@ -36,8 +36,8 @@ the observable distinction from an API authentication or authorization refusal.
 That grant covers AG-UI as well as REST. A cross-origin conversation frontend
 must consume `POST /api/v1/agui/run` and `GET /api/v1/agui/events` with `fetch`
 and an `Authorization: Bearer` header; native `EventSource` cannot set that
-header. The TypeScript SDK's `createAguiTransport` uses `fetch` and a streaming
+header. The TypeScript SDK's `agui.run` and `agui.replay` use `fetch` and a streaming
 body reader for this reason. Native `EventSource` is limited to the same-origin
-cookie path, and a terminal-upgrade ticket is not an alternative credential for
-either AG-UI stream. See [AG-UI Authentication](API_AGUI.md#authentication) and
+cookie path. There is no terminal plane or terminal-upgrade ticket in this
+release. See [AG-UI Authentication](API_AGUI.md#authentication) and
 the SDK's [TypeScript Authentication guide](../sdk/typescript/docs/authentication.md#browser-sessions).

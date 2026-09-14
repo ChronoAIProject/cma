@@ -27,54 +27,16 @@
 
       Storage can throw — private modes and blocked cookies both do — and a
       theme preference is never worth failing to render the page over.
-
-      Measurement queues only fixed enum tuples. The bundle validates and drains
-      them before it re-reads appearance; no stored value enters the queue.
     -->
     <script>
       (function () {
-        var measurements = [];
+        var choice = 'system';
         try {
-          if (Array.isArray(window.__cmaBrowserCompatibilityQueue)) {
-            measurements = window.__cmaBrowserCompatibilityQueue;
-          } else {
-            window.__cmaBrowserCompatibilityQueue = measurements;
+          var stored = window.localStorage.getItem('cma:appearance');
+          if (stored === 'light' || stored === 'dark' || stored === 'system') {
+            choice = stored;
           }
         } catch (e) {}
-        function measure(generation, outcome) {
-          try {
-            measurements.push(['appearance', generation, outcome]);
-          } catch (e) {}
-        }
-
-        var choice = 'system';
-        var canonical = null;
-        try {
-          canonical = window.localStorage.getItem('cma:appearance');
-          measure('canonical', 'read-ok');
-        } catch (e) {
-          measure('canonical', 'read-blocked');
-        }
-        var valid = canonical === 'light' || canonical === 'dark' || canonical === 'system';
-        if (valid) {
-          choice = canonical;
-        } else {
-          var historical = null;
-          try {
-            historical = window.localStorage.getItem('chrono-bot:appearance');
-          } catch (e) {}
-          valid = historical === 'light' || historical === 'dark' || historical === 'system';
-          if (valid) {
-            choice = historical;
-            measure('historical-key', 'fallback-used');
-            try {
-              window.localStorage.setItem('cma:appearance', historical);
-              measure('canonical', 'write-ok');
-            } catch (e) {
-              measure('canonical', 'write-blocked');
-            }
-          }
-        }
         var dark =
           choice === 'dark' ||
           (choice !== 'light' &&

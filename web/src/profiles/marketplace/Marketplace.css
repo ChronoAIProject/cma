@@ -1,0 +1,79 @@
+.marketplace {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  padding: 24px;
+  overflow: auto;
+  color: var(--dsw-alias-label-primary);
+  background: var(--dsw-alias-bg-base);
+}
+.marketplace h1 {
+  margin: 0;
+  font: var(--dsw-font-xl-24);
+  overflow-wrap: anywhere;
+}
+.marketplace-detail-header p {
+  color: var(--dsw-alias-label-secondary);
+  font: var(--dsw-font-s-14);
+}
+.marketplace-detail > * {
+  max-width: 920px;
+  margin-right: auto;
+  margin-left: auto;
+}
+.marketplace-detail-header {
+  margin-bottom: 24px;
+  overflow-wrap: anywhere;
+}
+.marketplace-facts {
+  margin: 0;
+}
+.marketplace-facts > div {
+  display: grid;
+  grid-template-columns: minmax(0, 220px) minmax(0, 1fr);
+  gap: 16px;
+  padding: 16px 0;
+}
+.marketplace-facts dt {
+  color: var(--dsw-alias-label-secondary);
+  font: var(--dsw-font-s-14);
+}
+.marketplace-facts dd {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.marketplace-facts pre {
+  margin: 0;
+  padding: 12px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-family: var(--ds-font-family-code);
+  font-size: 13px;
+  line-height: 20px;
+  background: var(--dsw-alias-bg-layer-1);
+}
+.marketplace-facts ol,
+.marketplace-facts ul {
+  margin: 0;
+  padding-left: 24px;
+}
+.marketplace-commands li + li,
+.marketplace-environment > div + div {
+  margin-top: 8px;
+}
+.marketplace-environment {
+  margin: 0;
+}
+.marketplace-environment dt {
+  margin-bottom: 8px;
+}
+@media (max-width: 30rem) {
+  .marketplace {
+    padding: 16px;
+  }
+  .marketplace-facts > div {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 8px;
+  }
+}

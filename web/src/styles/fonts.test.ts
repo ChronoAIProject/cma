@@ -55,7 +55,7 @@ function stack(value: string): string[] {
 }
 
 describe('the platform faces', () => {
-  it('vendors the four selected families, their six faces, and nothing else', () => {
+  it('vendors the five selected families, their seven faces, and nothing else', () => {
     // Exact equality: a retired face lingering here would still ship dead bytes.
     expect(readdirSync(FONTS).sort()).toEqual([
       'Archivo-Variable.woff2',
@@ -68,6 +68,8 @@ describe('the platform faces', () => {
       'OFL-FamiljenGrotesk.txt',
       'OFL-IBMPlexMono.txt',
       'OFL-JetBrainsMono.txt',
+      'OFL-Shrikhand.txt',
+      'Shrikhand-Regular.woff2',
     ]);
   });
 
@@ -87,7 +89,7 @@ describe('the platform faces', () => {
     const faces = styleSheets().flatMap((css) =>
       [...css.matchAll(/@font-face\s*\{([^}]*)\}/g)].map((match) => match[1] ?? ''),
     );
-    expect(faces).toHaveLength(6);
+    expect(faces).toHaveLength(7);
 
     const declarations = faces.map((face) => ({
       family: /font-family:\s*'([^']+)'/.exec(face)?.[1] ?? '',
@@ -97,6 +99,13 @@ describe('the platform faces', () => {
       display: /font-display:\s*([^;]+)/.exec(face)?.[1]?.trim() ?? '',
     }));
     expect(declarations).toEqual([
+      {
+        family: 'Shrikhand',
+        file: 'Shrikhand-Regular.woff2',
+        format: 'woff2',
+        weight: '400',
+        display: 'swap',
+      },
       {
         family: 'Archivo',
         file: 'Archivo-Variable.woff2',
@@ -220,6 +229,7 @@ describe('the platform faces', () => {
       ['OFL-FamiljenGrotesk.txt', 'The Familjen Grotesk Project Authors'],
       ['OFL-IBMPlexMono.txt', 'Copyright \u00a9 2017 IBM Corp.'],
       ['OFL-JetBrainsMono.txt', 'JetBrains Mono Project Authors'],
+      ['OFL-Shrikhand.txt', 'Jonny Pinhorn'],
     ] as const;
     expect(
       readdirSync(FONTS)

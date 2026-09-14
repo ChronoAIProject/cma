@@ -1,195 +1,188 @@
-# Services: what a session may reach, and how it reaches it
+# Services And Connection Assist
 
-A session can act on its owner's behalf against platform services — open a pull request on GitHub, read from object storage, call the model endpoint. This page is the whole path, in order, with the file and symbol that implements each step.
+Service authority belongs to the **Sandbox**. Every Agent in that Sandbox uses
+the same scoped NyxID agent key through the local broker. Agent Profiles select
+behavior, not another service grant; Workspace creation and runtime rotation do
+not widen an existing Sandbox's reach.
 
-It exists because the path spans seven files and nobody could see it. Work has already been proposed against this mechanism on the assumption it did not exist, when it had shipped some time earlier.
+[CMA Model](CMA_Model.md) describes the profile and credential boundaries.
+[REST](API_REST.md) and [CMA Trigger](CMA_Trigger.md) define public request shapes.
+This document distinguishes service requirements, connection guidance and the
+actual scoped credential. None is a substitute for the others.
 
-**Two words are used precisely throughout.** A session's **reach** is the list of services its credential may call. A session's **capabilities** are what it can do — hold a conversation, render a terminal, be interrupted. They are different facts about the same session and neither implies the other.
+## Scope And Provisioning
 
----
+A Sandbox Profile records `nyxid_services`. Admission unions that set with
+`CHRONO_BASELINE_SERVICES` and pins the resulting scope on the Sandbox. The
+checked-in baseline is `chrono-llm-public,ornn-api`. Later profile edits, retirement,
+publication or operator-default changes do not rewrite the instance's grant.
 
-## 1. The path, in order
+Managed Codex model calls use the `chrono-llm-public` NyxID proxy by default.
+When rendering either an initial runtime or a revived one, CMA selects the
+public or legacy Chrono LLM route from that Sandbox's pinned service scope.
+This keeps older `chrono-llm`-only credentials usable without widening them.
+Custom model endpoints and own-account model access keep their configured route.
 
-### 1. The catalogue answers as the caller
-
+```text
+Sandbox profile scope + deployment baseline
+  -> pinned Sandbox authority
+  -> software install without credential or credential-bearing proxy
+  -> owner-scoped key issuance and durable encrypted custody
+  -> generation-fenced credential activation
+  -> Workspace setup and per-Agent conversations through the broker
 ```
-GET /api/v1/environment-profiles/services
-```
 
-The request, response shape, mandatory identifiers, and no-catalogue behavior
-are documented in the REST interface's
-[Services catalogue](./API_REST.md#services-catalogue).
+CMA obtains the owner's delegated credential server-side. It mints a separate
+agent key for the Sandbox, using the pinned service selection, and retains
+its material in encrypted custody rather than in the public aggregate. The
+aggregate records nonsecret scope, generation and provider authority metadata.
+Duplicate mint races reconcile to one custodied generation and record revocation
+of a losing provider key. Retirement and renewal also use recorded custody and
+revocation work; a lost HTTP response is not proof of provider revocation.
 
-`layer1-public/src/rest/environments.rs::services` → `EnvironmentProfileService::available_services` (`layer2-core/src/environment_service.rs`).
+Software installation completes first, as the nonroot `cma` user. The scoped
+credential and credential-bearing loopback proxy become available afterward.
+Workspace clone/init and setup then run, followed by per-Agent home preparation.
+The global environment contains configuration and an inert broker token, never
+the real service credential. The real value is delivered to the runtime's
+credential holder over its private transport.
 
-Answered **as the caller**, with their own delegated credential, because which services exist is a fact about their account and this service's own identity would answer with a different list. The mandated entries travel alongside so a client can draw them as fixed rather than inferring which cannot be unticked.
+A profile is not a credential store. Environment values, system prompts and
+commands are public/disclosed content subject to reserved-name and secret
+validation. Service names and ids may appear in owner-visible requirements;
+key values, delegated tokens, provider refresh tokens and unredacted rejected
+values must not appear in logs, event history or browser storage.
 
-A deployment with no catalogue configured answers `ServiceAvailability::NoCatalogue` (`layer2-core/src/environment_catalog.rs`) rather than an error. Nothing about that stops a session starting — see §4.
+## What Requirements Mean
 
-That no-catalogue case is distinct from an outage of a configured catalogue.
-The direct picker route returns `503 service_catalogue_unavailable` when it
-cannot ask for the caller's services; this route-specific response is
-documented with the [Services catalogue](./API_REST.md#services-catalogue).
+`GET /api/v1/launches/{id}/requirements` checks as the Launch owner, not its
+publisher. Its `services` list retains each required service id and a typed
+state. Active usable grants satisfy requirements; inactive, ambiguous, missing
+or unknown provider rows do not. A provider outage must not be converted into
+an empty successful grant list.
 
-### 2. A profile records a selection
+Launch admission and explicit Start both recheck the service list in the
+Launch's frozen Trigger Sandbox Profile, including when reusing a live or
+paused Sandbox or an existing Agent. An unmet connection keeps the same Draft
+and resolved hierarchy available for connection assist. A revoked connection
+between admission and Start blocks work until a successful recheck. Replaying
+an already admitted command returns its recorded result without starting or
+checking again. These checks do not broaden an existing Sandbox's pinned grant.
 
-`EnvironmentProfileSpec::services` and `EnvironmentProfile::services` (`layer2-core/src/environment.rs`). The wire shape is the
-[`nyxid.services` profile field](./API_REST.md#write-shape-profilerequest).
-It is authored in `web/src/environment/ServicePicker.tsx`, either in the profile
-editor or inline in the new-session dialog (`web/src/sessions/NewSessionDialog.tsx`),
-which saves a real profile rather than a one-off selection.
+Current optional guidance appears **inside each service entry**:
 
-A profile is a **named, reusable, auditable record**. That is why the selection lives there rather than on the session request: two sessions started from one profile must be the same session twice.
+| Field | Meaning |
+|---|---|
+| `display_name` | Validated current catalogue name when available |
+| `connection_mode` | `hosted`, `manual` or `unknown` |
+| `setup_url` | Validated provider setup destination for a manual connection |
 
-### 3. The session records what it was granted
+CMA derives hosted/manual mode from explicit active catalogue metadata. An
+active HTTP service can use hosted connection assist; an active SSH service is
+manual. Missing, inactive or unknown types remain unknown. Do not infer service
+type from an id or slug, and do not invent a provider setup URL in the frontend.
+Metadata describes a possible next action, not authorization. A missing name
+can fall back to the service identifier without changing its state.
 
-`Session::granted_services` (`layer2-core/src/session.rs`), written when the session is created and read back by `SessionService::services_for` (`layer2-core/src/credentials.rs`).
+The guidance is a live projection and does not rewrite the persisted Launch
+requirements snapshot, event history or already issued Sandbox scope. Reading
+requirements does not start, retry, cancel or replace any Agent.
 
-Recorded rather than recomputed, and this is the step people expect to be missing. See §2.
+## Hosted Connection Handoff
 
-### 4. Provisioning mints a credential for that session alone
+Create with `POST /api/v1/service-connections`, the documented
+`CreateServiceConnectionRequest` and `Idempotency-Key`. The request belongs to
+one caller-owned Launch and one required service. A successful 201 returns
+`handoff_id`, `hosted_url` and `expires_at`.
 
-`SessionService::credential_for` (`layer2-core/src/credentials.rs`) asks the configured `CredentialSource` for a credential minted for **this session** against **this session's service list**. A replaced runtime is re-credentialled the same way, from the same recorded list.
+The adapter requests a 15-minute NyxID connect link as the visitor, not with
+operator credentials. It validates the returned provider id, timestamp and
+hosted URL: one configured HTTPS browser origin, the supported connect path,
+no user information, query or fragment, and no arbitrary redirect. Provider
+HTTP requests have a 15-second bound, no redirect following, a 1-MiB decoded
+response bound and at most 1,000 catalogue/service rows.
 
-### 5. The sandbox is given a broker address, and an inert token
+Open the hosted URL only from the visitor's explicit connection action. It is
+short-lived handoff authority, not a destination to place in logs, analytics,
+profile content, persistent storage or error messages. A browser may use a
+popup or an explicitly initiated same-tab fallback. In the latter case,
+persist only the bounded handoff identity and correlation/expiry metadata,
+never the hosted URL or a service credential.
 
-`HostedKernel::base_environment` (`layer3-adapter/src/hosted/deployment.rs`) sets, for every hosted kernel:
+Poll `GET /api/v1/service-connections/{handoff_id}`. Only the owner can read it.
+A completed NyxID link is insufficient on its own: CMA re-reads UserService
+state and verifies the exact returned id and slug describe a unique usable
+service. Only then is the handoff satisfied. A closed popup, a browser return,
+a successful sign-in or a local timeout is not proof of a grant.
 
-| Variable | Value | Why |
-|---|---|---|
-| `NYXID_URL` | `http://127.0.0.2:9092` | the supervisor's signed, policy-enforcing loopback proxy, not the platform |
-| `NYXID_ACCESS_TOKEN` | `local-proxy-no-credential-needed` | a placeholder, deliberately useless |
-| `CHRONO_SESSION_REACHES` | `api-github,chrono-llm` | what this session may reach, by name |
+Preserve the handoff's key/request until creation settles. A transport failure
+must not mint another link automatically. Stop polling at expiry, cancellation,
+route change or a terminal outcome; bound in-flight reads and let the visitor
+initiate a supported new attempt when necessary. On return, refresh requirements
+and continue the same Draft through its explicit Start operation.
 
-**The owner's real credential never enters the sandbox.** A terminal attachment is equivalent to shell access to that sandbox, so anything reachable from its environment is reachable by whoever is typing. The supervisor's proxy strips the placeholder and attaches the real credential on the way out, which also means a refreshed credential needs no restart.
+Pending hosted setup keeps Connect and Verify available. Connect reopens the
+current unexpired in-memory link without minting another handoff. Verify reads
+the exact handoff immediately and reports when access is still pending; popup
+closure alone is never success. After reload, the hosted URL is intentionally
+absent from storage, so another explicit Connect can request a new link. Starting
+that replacement aborts the previous poll, and late results cannot satisfy the
+new attempt. Simultaneous satisfaction of several services continues the same
+Draft once; the backend still rechecks every service before admitting work.
 
-`CHRONO_SESSION_REACHES` is always set, including empty. "This session reaches nothing" and "nothing told me" are different facts and an agent acts differently on them.
+## Connection Outcomes
 
-### 6. The real credential arrives over the pod's link
+| Observation | Required client behavior |
+|---|---|
+| Pending handoff | Poll with a bounded client interval until expiry; do not start automatically |
+| Satisfied handoff | Refresh requirements; only a still-valid explicit consent can admit Start |
+| Failed, cancelled or expired | Keep the Launch; present its recorded result and supported next action |
+| Manual service | Offer only the server-provided setup destination and refresh requirements on return |
+| Unknown/unsupported type | Show uncertainty; never claim it is connected or silently choose a protocol |
+| Provider or identity outage | Preserve state and report unavailable; no optimistic satisfaction |
+| Missing owner credential | Reauthenticate through CMA's existing identity flow |
+| Missing/foreign handoff | Concealed 404; do not attach another owner's handoff |
 
-`SessionService::supply_credential` (`layer2-core/src/credentials.rs`) → `refresh_credential` → a `Credential` control frame over the pod's link (`layer3-adapter/src/hosted/link.rs`).
+The adapter does not invent a custom OAuth callback, device-code exchange or
+API-key entry form. NyxID's hosted UI owns those protocol details. CMA only
+creates the link, validates its origin and polls the owner-scoped result.
+Registration and visitor role administration likewise belong to NyxID operators,
+not a CMA callback. See [Operations](CMA_Operations.md).
 
-**It requires an open link**, and the link opens when the control plane attaches. `supply_credential` is called from exactly three places: `attach.rs` (a client attached), `readopt.rs` (a session re-adopted after a restart) and `credentials.rs` (a periodic sweep). The consequence is stated in `attach.rs`'s own comment: without it "the session opens, looks healthy, and refuses every model call until a sweep happens to notice minutes later".
+## Failure And Recovery Boundaries
 
-### 7. The agent spends it
+Credential refusal, dependency unavailability and transient runtime failure are
+different facts. A missing grant requires a connection or permission change;
+repeating the same provision is not a grant. A provider/network outage can be
+retried within recorded operation identity. A stale generation or contradictory
+custody record fails closed rather than installing guessed credentials.
 
-The `nyxid` CLI is a baseline package and a baseline skill (`cma/src/config.rs`, `CHRONO_BASELINE_PACKAGES` and `CHRONO_BASELINE_SKILLS`), installed in `infra/runtime/Dockerfile` with a verified checksum. It reads `NYXID_URL` and `NYXID_ACCESS_TOKEN` from the environment, so it calls the loopback proxy and never tries to refresh a credential itself.
+The baseline service set must be usable for the intended visitor account.
+A role that grants `cma:trigger:launch` but cannot obtain required services does
+not prove a working public journey. The real baseline-only fresh-visitor gate
+must exercise key issuance, installation order and Agent output.
 
----
+A runtime rotation preserves Sandbox authority. It does not re-read a changed
+profile to broaden scope or replace the Agent with an unrelated conversation.
+Credential renewal and checkpoint recovery must be observed against the final
+runtime digest, including a working Agent and a rejected unauthorized call.
 
-## 2. What is scoped to what
+## Evidence Register
 
-- **A credential is minted per session**, against that session's own list, and re-minted the same way for a replacement runtime.
-- **A session's reach is fixed when it is provisioned.** A profile can be edited afterwards — widened, narrowed, or deleted — and the session keeps what it was given. Reading the profile to learn a running session's reach gives the wrong answer precisely when somebody has changed one.
-- **A rotation changes nothing about reach.** A replaced runtime is the same session.
-- **The session reports its own answer.** `reach` on the session object over REST ([Sessions](./API_REST.md#4-sessions)), and `CHRONO_SESSION_REACHES` inside the sandbox. Both carry identifiers and display names; neither carries a credential.
+Deterministic tests cover owner isolation, malformed provider responses, bounded
+transport, explicit service-type metadata, short-lived handoffs, exact active
+service rechecks, duplicate credential custody and generation/revocation fences.
+These establish implementation invariants, not the production identity-provider
+configuration or real user consent experience.
 
----
+Final evidence must record OAuth, API-key and device-code hosted journeys;
+manual/unknown guidance; missing/inactive/revoked grants; expired/cancelled links;
+popup blocking and same-tab return; NyxID unavailability; fresh visitor baseline
+access; credential renewal while working; and pause/revive/rotation with the
+same Agent identity. Historical provider experiments are retained in
+[Sandbox Provider](Sandbox_Provider.md) with their version boundaries.
 
-## 3. What cannot be removed, and why
-
-`Baseline` (`layer2-core/src/environment.rs`), configured at startup in `cma/src/main.rs`, carries mandated packages, mandated skills and mandated services. It is applied on every profile write and every resolution, whatever the caller sent.
-
-These are part of what a session **is** on this platform rather than something a caller opted into. A profile that excluded the model endpoint would not be a narrower session — it would be a session that cannot think. A client that omits them still gets them, and the interface renders them as fixed rather than inviting somebody to attempt something that will be undone.
-
----
-
-## 4. The three refusals
-
-Starting a session against a service can fail for three different reasons, and a client that cannot tell them apart retries the one that will never succeed and gives up on the one that would have worked.
-
-| `code` | Status | Means | Do |
-|---|---|---|---|
-| `service_not_granted` | `422` | the owner has not granted this service; `detail` names it | grant it in NyxID — **retrying will not help** |
-| `service_catalogue_unavailable` | `503` | the catalogue could not be asked; the owner's services are fine | **retry** |
-| — | — | this deployment has no catalogue at all | nothing — profiles still store selections and sessions still honour them |
-
-Told apart by `code` and status, never by prose.
-
-**The refusal is at provision, not at profile write.** A grant can be revoked between saving a profile and starting a session from it, so the write-time answer is a warning and the provision-time answer is the true one.
-
-**A catalogue that cannot be asked refuses nothing.** What a session may reach is recorded on the profile; the catalogue exists to help choose, not to authorise. Blocking session creation on the catalogue being reachable would take the service down with it, for selections settled days ago.
-
----
-
-## 5. What has been proven, and what has not
-
-Recorded here rather than left in an issue, because a page that describes the intended path and omits what is unverified is worse than none. Full transcripts are on #131.
-
-**Established by experiment:**
-
-- `nyxid` resolves on `PATH` in the published runtime image, at the version the Dockerfile pins.
-- `NYXID_ACCESS_TOKEN` in the sandbox is the placeholder, present from the first frame, and the real credential is not in the sandbox environment at any point.
-- A sandbox whose supervisor holds no credential yet answers **`503`, body `no upstream credential available yet`** — not a `401`. An agent reasoning about a `401` will reason wrongly.
-- An ordinary deployment that leaves `CHRONO_PLATFORM_BASE_URL` unset starts **no proxy at all**, while `NYXID_URL` still points at `127.0.0.2:9092` — so the sandbox sees **connection refused**, not a refusal from a broker. A Trigger runtime fails startup instead because its platform gateway is mandatory.
-- Nothing in the sandbox environment named the session's grant. That gap is what `CHRONO_SESSION_REACHES` (§1.5) closes.
-
-**Established by the Trigger enforcement contract and deterministic tests:**
-
-- A Trigger runtime receives a signed, Launch- and session-bound GitHub policy
-  only when it advertises `github_capability_v2`; an old runtime or a missing,
-  expired, revoked, malformed, or stale-generation policy fails closed.
-- The policy binds the canonical NyxID GitHub catalog service ID, exact
-  UserService ID, and current per-user slug. The slug may be suffixed and is
-  evidence rather than authority. GitHub calls use
-  `/api/v1/proxy/{catalog_service_id}/{github_path}` with `_nyxid_via` equal to
-  the exact UserService ID; slug routes and UserService-ID direct routes fail
-  closed.
-- Before issue and every renewal, CMA resolves the numeric repository through
-  the exact NyxID UserService and signs only the provider-returned canonical
-  owner/name binding. The policy lifetime is at most 60 seconds with at most 5
-  seconds of accepted clock skew.
-- Layer 4 admits only the closed method/route/body operation families in the
-  policy. It rejects another repository, owner, branch, session, operation
-  class, path encoding, or `force=true` update before forwarding the request.
-- Policy replacement and revoke tombstones are monotonic and acknowledged.
-  Until Layer 4 acknowledges a tombstone or NyxID confirms agent-key
-  revocation, CMA reports `revocation_pending`; expiry is the disconnected
-  runtime backstop, not a claim of immediate revocation.
-- Pull-request creation/update and other CMA-owned irreversible effects remain
-  typed server-side writers. A session policy never authorizes upstream writes
-  or pull-request mutation.
-- Capability-required MVP runtimes allow non-GitHub slug passthrough only for
-  the frozen deployment baseline `chrono-llm`, `ornn-api`, and `ornn`. A
-  baseline change requires a reviewed Layer 4 update and built-image evidence;
-  an arbitrary configured reach is never silently promoted to passthrough.
-- Historical v1 Trigger records remain readable, but missing catalog/UserService
-  route bindings cannot authorize a new provision, readoption, rotation,
-  recovery, renewal, or GitHub effect.
-
-**Not yet established**, and each needs a signed-in identity with a service actually granted:
-
-- whether an agent finds the broker **unprompted** and does real work through it;
-- whether the granted scope covers the calls an agent actually makes;
-- what a scope refusal looks like from inside the sandbox;
-- whether a credential renewal mid-session is invisible to a working agent.
-- whether the signed policy succeeds and refuses the required cases inside the
-  pinned release runtime against a disposable real repository;
-- whether the same policy and paired workspace/conversation state survive a
-  real control-plane restart and runtime image rotation; and
-- whether tombstone acknowledgement or NyxID agent-key revocation is observed
-  within the documented bound in staging.
-
-Until those are walked, the honest claim is that the general service path and
-the Trigger enforcement path are built and deterministically tested, not that
-the Trigger flow has been seen to work end to end against the pinned deployed
-runtime and real provider.
-
----
-
-## 6. The rule about values
-
-**No credential value appears in this repository, in a log, in an activity record, or in an error.** Not in tests, not in fixtures, and nothing may be allowlisted to make a scanner pass (`CLAUDE.md` §9).
-
-What makes that checkable rather than promised is the shape of the activity classifier (`cma/src/activity/classify.rs`): a request body is parsed into a struct with a field for each parameter somebody decided may be kept, and serde discards the rest. A field added to a request later **has nowhere to land**. A denylist would have to be updated in step with every such field and would leak the first time it was not.
-
-The same reasoning runs through the rest of the path: the sandbox gets a placeholder rather than a credential, `reach` carries identifiers and names, `CHRONO_SESSION_REACHES` carries names, and the profile store's `Debug` keeps variable values out of logs.
-
----
-
-## See also
-
-- [Environment Profiles](./API_REST.md#3-environment-profiles) — authoring the service selection and reading the catalogue
-- [Sessions](./API_REST.md#4-sessions) — the `reach` field on a session, and the three refusals as REST renders them
-- `docs/API_Overview.md` §6 — rule 6, "Identity is NyxID"
-- `CLAUDE.md` §4 — why a change to deployment surface changes `infra/` in the same pull request
+Do not claim these production journeys passed until the [Operations](CMA_Operations.md)
+register names their tested commit/image, redacted result and cleanup. There is
+no legacy GitHub contribution-policy, pull-request writer or session-wide reach
+contract in this release.

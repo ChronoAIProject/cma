@@ -1,218 +1,88 @@
-//! What a caller is allowed to do.
-//!
-//! The core models capabilities, not roles. Roles are an identity-provider
-//! concept and their names, nesting, and wildcards belong to whoever issues
-//! them; the core only needs to know whether this caller may take this action.
-//! The process that verifies the credential is responsible for translating.
-//!
-//! That separation is what stops the provider's vocabulary leaking in here, and
-//! it means a deployment can rename or restructure roles without touching a
-//! single authorization decision.
+//! Identity-platform authorization projected into core capabilities.
 
 use std::collections::BTreeSet;
 
-use crate::error::CoreError;
-use crate::ids::SubjectId;
+use serde::{Deserialize, Serialize};
+
+use crate::{CoreError, SubjectId};
 
 /// A distinct action the core can be asked to perform.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Capability {
-    /// Provision a new session.
-    CreateSession,
-    /// Read and attach to sessions the caller owns.
-    UseOwnSessions,
-    /// End a session the caller owns.
-    TerminateOwnSession,
-    /// Read and write the caller's own reusable environment bundles.
-    ///
-    /// Its own capability rather than part of session use: a bundle holds
-    /// values a caller is invited to treat as secret, and outlives every
-    /// session that referenced it.
-    ManageOwnEnvironmentProfiles,
-    /// Read every session, regardless of owner.
-    ReadAllSessions,
-    /// Read the runtime inventory: which sandboxes exist and their state.
+    /// Provision a new Sandbox directly.
+    CreateSandbox,
+    /// Read and operate Sandboxes owned by the caller.
+    UseOwnSandboxes,
+    /// Delete a Sandbox owned by the caller.
+    DeleteOwnSandbox,
+    /// Author and revise Profiles owned by the caller.
+    ManageOwnProfiles,
+    /// Publish Triggers owned by the caller.
+    PublishTriggers,
+    /// Launch a published Trigger into the caller's own resources.
+    LaunchTriggers,
+    /// Read every Sandbox regardless of owner.
+    ReadAllSandboxes,
+    /// Retire or otherwise control a Sandbox regardless of owner.
+    ControlAnySandbox,
+    /// Read the provider runtime inventory.
     ReadRuntimeInventory,
-    /// Read the durable event log of any session.
+    /// Read durable resource event logs.
     ReadEventLog,
-    /// Read the record of what the service has been asked to do.
-    ///
-    /// Its own capability rather than part of reading every session: the
-    /// record names every subject that has ever called, and is the one place
-    /// an operator's own actions are visible to somebody else.
+    /// Read deployment-wide activity records.
     ReadActivityLog,
-    /// Read the directory of subjects that have used the service.
+    /// Read the deployment user directory.
     ReadUserDirectory,
-    /// Read and change settings that apply to the whole deployment.
-    ///
-    /// Read and write together, unlike the operator's monitoring set, because
-    /// there is no role that wants to watch these without changing them: they
-    /// are configuration, not activity, and a caller who may not edit them has
-    /// nothing to do with the value.
-    ///
-    /// Privileged in the strongest sense here. Every other privileged
-    /// capability reaches across subjects to *observe* or to *stop*; this one
-    /// changes what every future session on the deployment is told before it
-    /// does anything.
+    /// Read and change deployment-owned settings.
     ConfigurePlatform,
-    /// End or pause a session whatever subject owns it.
-    ///
-    /// Deliberately separate from ending your own. Every caller who can use a
-    /// session holds the first; only an operator holds this, so a role that
-    /// gains everyday use can never quietly acquire the ability to stop
-    /// somebody else's work.
-    ControlAnySession,
-    /// Create and revive sessions past the deployment's live-session limit.
-    ///
-    /// Its own capability rather than a reading of any existing one, and each
-    /// alternative is wrong in a way nobody would see:
-    ///
-    /// - Not `Authorization::is_privileged()`. That predicate is satisfied by
-    ///   read-only grants — `ReadAllSessions`, `ReadRuntimeInventory`,
-    ///   `ReadEventLog`, `ReadActivityLog`, `ReadUserDirectory` — so somebody
-    ///   handed a monitoring role purely to watch the service would silently
-    ///   acquire unlimited session creation.
-    /// - Not `ConfigurePlatform`. Authoring a policy is not standing outside it,
-    ///   and an administrator who sets a limit should still be measured against
-    ///   it unless somebody separately decided otherwise.
-    /// - Not part of a subject's own work. The limit is the deployment's, and
-    ///   who is excused from it is decided by whoever runs the service.
-    ///
-    /// Deliberately **not** in `is_privileged()`. By that predicate's own stated
-    /// meaning — whether this capability reaches past the caller's own work — it
-    /// does not qualify: it changes nothing about anybody else's sessions, sees
-    /// nothing across subjects, and stops nothing. It is an exemption from a
-    /// policy, not a reach into somebody else's work.
-    ExceedSessionLimit,
-    /// Register provider credentials and manage sponsorship policies owned by
-    /// the authenticated subject.
-    ///
-    /// Separate from platform configuration: a developer may sponsor a
-    /// Trigger without gaining authority over deployment-wide settings, and a
-    /// platform administrator does not silently become that developer.
-    ManageOwnSponsorships,
-    /// Reconcile provider-observed sponsored usage.
-    ///
-    /// This is issued only to the trusted metering path. A normal session may
-    /// reserve against its own grant, but it cannot decide that a provider
-    /// request settled, choose its cost, or release an ambiguous reservation.
-    ReconcileSponsoredUsage,
 }
 
-impl Capability {
-    /// Every capability this build knows, in declaration order.
-    ///
-    /// Named so anything which must decide about all of them walks this list
-    /// rather than repeating it and drifting. The declared length constrains
-    /// the literal, never the enum; `all_names_every_capability` is the guard,
-    /// because its match is exhaustive.
-    pub const ALL: [Capability; 14] = [
-        Self::CreateSession,
-        Self::UseOwnSessions,
-        Self::TerminateOwnSession,
-        Self::ManageOwnEnvironmentProfiles,
-        Self::ReadAllSessions,
-        Self::ReadRuntimeInventory,
-        Self::ReadEventLog,
-        Self::ReadActivityLog,
-        Self::ReadUserDirectory,
-        Self::ConfigurePlatform,
-        Self::ControlAnySession,
-        Self::ExceedSessionLimit,
-        Self::ManageOwnSponsorships,
-        Self::ReconcileSponsoredUsage,
-    ];
-
-    /// Whether this capability reaches past the caller's own work.
-    ///
-    /// Kept as a predicate rather than a comment so an audit surface can list
-    /// the privileged set without enumerating it by hand and drifting.
-    pub fn is_privileged(self) -> bool {
-        // Exhaustive because a new capability was otherwise silently treated
-        // as ordinary. This predicate has no production caller; it is the one
-        // answer tests use when asking whether an ability crosses subjects,
-        // so an omission here would disarm those tests without failing.
-        match self {
-            Self::CreateSession
-            | Self::UseOwnSessions
-            | Self::TerminateOwnSession
-            | Self::ManageOwnEnvironmentProfiles
-            | Self::ExceedSessionLimit
-            | Self::ManageOwnSponsorships => false,
-            Self::ReadAllSessions
-            | Self::ReadRuntimeInventory
-            | Self::ReadEventLog
-            | Self::ReadActivityLog
-            | Self::ReadUserDirectory
-            | Self::ConfigurePlatform
-            | Self::ControlAnySession
-            | Self::ReconcileSponsoredUsage => true,
-        }
-    }
-}
-
-/// The set of capabilities a caller holds.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct Authorization {
-    granted: BTreeSet<Capability>,
-}
+/// A closed set of capabilities established by the authentication boundary.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct Authorization(BTreeSet<Capability>);
 
 impl Authorization {
-    /// An authorization holding nothing.
-    ///
-    /// The default, deliberately: a caller whose capabilities could not be
-    /// determined gets none, so a failure to translate denies rather than
-    /// silently admits.
+    /// An authorization that grants nothing.
     pub fn none() -> Self {
         Self::default()
     }
 
-    /// Build from a set of capabilities.
-    pub fn from_capabilities(caps: impl IntoIterator<Item = Capability>) -> Self {
-        Self {
-            granted: caps.into_iter().collect(),
-        }
+    /// Build an authorization from verified capabilities.
+    pub fn new(capabilities: impl IntoIterator<Item = Capability>) -> Self {
+        Self(capabilities.into_iter().collect())
     }
 
-    /// Whether this caller holds a capability.
+    /// Whether this authority contains a capability.
     pub fn allows(&self, capability: Capability) -> bool {
-        self.granted.contains(&capability)
+        self.0.contains(&capability)
     }
 
-    /// Whether this caller holds any privileged capability.
-    pub fn is_privileged(&self) -> bool {
-        self.granted.iter().any(|c| c.is_privileged())
-    }
-
-    /// Everything granted, for diagnostics and audit.
-    pub fn capabilities(&self) -> impl Iterator<Item = Capability> + '_ {
-        self.granted.iter().copied()
-    }
-
-    /// Fail unless the caller holds `capability`.
+    /// Refuse unless a capability is present.
     pub fn require(&self, capability: Capability) -> Result<(), CoreError> {
-        if self.allows(capability) {
-            return Ok(());
-        }
-        Err(CoreError::Forbidden)
+        self.allows(capability)
+            .then_some(())
+            .ok_or(CoreError::Forbidden)
+    }
+
+    /// Iterate over the verified capabilities in stable order.
+    pub fn iter(&self) -> impl Iterator<Item = Capability> + '_ {
+        self.0.iter().copied()
     }
 }
 
-/// Who is asking, and what they may do.
-///
-/// Carried together because every authorization decision needs both: identity
-/// alone cannot answer "may they", and capabilities alone cannot answer "whose
-/// session is this".
-#[derive(Debug, Clone)]
+/// An authenticated subject and the authority verified for this request.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Caller {
-    /// The authenticated principal.
+    /// Stable identity asserted by the identity provider.
     pub subject: SubjectId,
-    /// What that principal may do.
+    /// Capabilities resolved for the request.
     pub authorization: Authorization,
 }
 
 impl Caller {
-    /// Build a caller.
+    /// Bind an identity to its verified authority.
     pub fn new(subject: SubjectId, authorization: Authorization) -> Self {
         Self {
             subject,
@@ -220,74 +90,9 @@ impl Caller {
         }
     }
 
-    /// Whether this caller may act on a resource owned by `owner`.
-    ///
-    /// Ownership is the ordinary path. A privileged reader may see another
-    /// subject's session, which is why the admin dashboard works at all, but
-    /// this returns true only for capabilities that are reads: nothing here
-    /// lets one subject act *as* another.
-    pub fn may_read_owned_by(&self, owner: &SubjectId) -> bool {
-        &self.subject == owner || self.authorization.allows(Capability::ReadAllSessions)
-    }
-
-    /// Whether this caller may read the durable event log of `owner`'s session.
-    ///
-    /// A separate grant from seeing the session, because the log says more than
-    /// the list does: it is every state change, every configuration a session
-    /// was given and every reason one ended, in order. Reading who is running
-    /// what should not carry reading everything they have done, or the two
-    /// capabilities the provider issues separately collapse into one.
-    pub fn may_read_event_log_owned_by(&self, owner: &SubjectId) -> bool {
-        &self.subject == owner || self.authorization.allows(Capability::ReadEventLog)
-    }
-
-    /// Fail unless this caller may end or pause *some* session.
-    ///
-    /// The cheap half of the check, made before anything is read. A caller
-    /// holding neither grant is refused without a lookup, so an identifier
-    /// cannot be probed for existence by somebody entitled to nothing at all.
-    pub fn require_any_control(&self) -> Result<(), CoreError> {
-        if self.authorization.allows(Capability::TerminateOwnSession)
-            || self.authorization.allows(Capability::ControlAnySession)
-        {
-            return Ok(());
-        }
-        Err(CoreError::Forbidden)
-    }
-
-    /// Fail unless this caller may end or pause a session owned by `owner`.
-    ///
-    /// The other half, made once the owner is known. Acting on your own work
-    /// needs the everyday grant; acting on somebody else's needs the operator
-    /// one, and holding the everyday grant never stands in for it.
-    pub fn require_control_of(&self, owner: &SubjectId) -> Result<(), CoreError> {
-        if &self.subject == owner && self.authorization.allows(Capability::TerminateOwnSession) {
-            return Ok(());
-        }
-        self.authorization.require(Capability::ControlAnySession)
-    }
-
-    /// Fail unless this caller *is* the owner and may control their own work.
-    ///
-    /// Stricter than [`Self::require_control_of`], and deliberately so. An
-    /// operator grant stands in for stopping somebody else's session, because
-    /// stopping is something an operator has to be able to do. Changing which
-    /// plane a session is driven on is not: it changes what the owner is
-    /// looking at, and nobody else has a reason to.
-    pub fn require_own_control_of(&self, owner: &SubjectId) -> Result<(), CoreError> {
-        if &self.subject != owner {
-            return Err(CoreError::Forbidden);
-        }
-        self.authorization.require(Capability::TerminateOwnSession)
-    }
-
-    /// Whether this caller is acting on work that is not theirs.
-    ///
-    /// Worth naming because it is the thing a record of actions exists for:
-    /// the same operation means something different when the subject taking it
-    /// is not the one whose work it ends.
-    pub fn is_acting_for_another(&self, owner: &SubjectId) -> bool {
-        &self.subject != owner
+    /// Refuse unless the caller holds a capability.
+    pub fn require(&self, capability: Capability) -> Result<(), CoreError> {
+        self.authorization.require(capability)
     }
 }
 
@@ -295,283 +100,19 @@ impl Caller {
 mod tests {
     use super::*;
 
-    fn subject(id: &str) -> SubjectId {
-        SubjectId(id.to_string())
-    }
-
-    /// Every capability, walked so the compiler has to hear about a new one.
-    ///
-    /// The match is exhaustive on purpose. A capability added to the enum
-    /// stops this compiling, which is the moment somebody decides whether
-    /// `ALL` carries it and whether a wildcard reaches it.
-    ///
-    /// This cannot prove the new variant was added to `ALL`, only that nobody
-    /// added one to the enum without being told. Stable Rust has no construct
-    /// that proves an array names every variant; the compile error is enough.
     #[test]
-    fn all_names_every_capability() {
-        for capability in Capability::ALL {
-            match capability {
-                Capability::CreateSession
-                | Capability::UseOwnSessions
-                | Capability::TerminateOwnSession
-                | Capability::ManageOwnEnvironmentProfiles
-                | Capability::ReadAllSessions
-                | Capability::ReadRuntimeInventory
-                | Capability::ReadEventLog
-                | Capability::ReadActivityLog
-                | Capability::ReadUserDirectory
-                | Capability::ConfigurePlatform
-                | Capability::ControlAnySession
-                | Capability::ExceedSessionLimit
-                | Capability::ManageOwnSponsorships
-                | Capability::ReconcileSponsoredUsage => {}
-            }
-        }
-
-        let mut sorted = Capability::ALL;
-        sorted.sort();
-        let mut deduped = sorted.to_vec();
-        deduped.dedup();
+    fn authority_is_closed_and_defaults_to_deny() {
         assert_eq!(
-            deduped.len(),
-            Capability::ALL.len(),
-            "ALL must not name a capability twice; a duplicate hides a missing one"
-        );
-    }
-
-    #[test]
-    fn an_empty_authorization_allows_nothing() {
-        // The default must deny: a caller whose capabilities could not be
-        // resolved is not a caller with full access.
-        let a = Authorization::none();
-        for c in [
-            Capability::CreateSession,
-            Capability::UseOwnSessions,
-            Capability::ReadAllSessions,
-            Capability::ReadRuntimeInventory,
-        ] {
-            assert!(!a.allows(c), "{c:?} must not be granted by default");
-        }
-        assert!(!a.is_privileged());
-    }
-
-    #[test]
-    fn require_reports_forbidden_for_a_missing_capability() {
-        let a = Authorization::from_capabilities([Capability::UseOwnSessions]);
-        assert!(a.require(Capability::UseOwnSessions).is_ok());
-        assert_eq!(
-            a.require(Capability::CreateSession),
+            Authorization::none().require(Capability::ConfigurePlatform),
             Err(CoreError::Forbidden)
         );
-    }
 
-    #[test]
-    fn only_capabilities_that_cross_subjects_count_as_privileged() {
-        let ordinary = [
-            Capability::CreateSession,
-            Capability::UseOwnSessions,
-            Capability::TerminateOwnSession,
-            Capability::ManageOwnEnvironmentProfiles,
-            Capability::ExceedSessionLimit,
-            Capability::ManageOwnSponsorships,
-        ];
-        let privileged = [
-            Capability::ReadAllSessions,
-            Capability::ReadRuntimeInventory,
-            Capability::ReadEventLog,
-            Capability::ReadActivityLog,
-            Capability::ReadUserDirectory,
+        let authority = Authorization::new([
+            Capability::UseOwnSandboxes,
             Capability::ConfigurePlatform,
-            Capability::ControlAnySession,
-            Capability::ReconcileSponsoredUsage,
-        ];
-
-        for c in ordinary {
-            assert!(
-                !c.is_privileged(),
-                "{c:?} reaches only its own caller's work"
-            );
-        }
-        for c in privileged {
-            assert!(
-                c.is_privileged(),
-                "{c:?} reaches past the caller and must count as privileged"
-            );
-        }
-        assert_eq!(
-            ordinary.len() + privileged.len(),
-            Capability::ALL.len(),
-            "every capability must be classified by exactly one of these lists"
-        );
-    }
-
-    #[test]
-    fn an_exemption_is_not_a_reach_across_subjects() {
-        // The audit surface uses this predicate to enumerate cross-subject
-        // grants. Raising only the holder's own allowance must not appear there
-        // as permission to observe or act on somebody else's work.
-        assert!(!Capability::ExceedSessionLimit.is_privileged());
-
-        let authorization = Authorization::from_capabilities([Capability::ExceedSessionLimit]);
-        assert!(
-            !authorization.is_privileged(),
-            "an exemption from a deployment limit does not cross subjects"
-        );
-    }
-
-    #[test]
-    fn an_owner_may_read_their_own_session() {
-        let c = Caller::new(
-            subject("a"),
-            Authorization::from_capabilities([Capability::UseOwnSessions]),
-        );
-        assert!(c.may_read_owned_by(&subject("a")));
-    }
-
-    #[test]
-    fn an_ordinary_caller_cannot_read_someone_elses_session() {
-        let c = Caller::new(
-            subject("a"),
-            Authorization::from_capabilities([
-                Capability::CreateSession,
-                Capability::UseOwnSessions,
-                Capability::TerminateOwnSession,
-            ]),
-        );
-        assert!(
-            !c.may_read_owned_by(&subject("b")),
-            "daily-use capabilities must not see another subject's work"
-        );
-    }
-
-    #[test]
-    fn a_privileged_reader_may_read_another_subjects_session() {
-        let c = Caller::new(
-            subject("admin"),
-            Authorization::from_capabilities([Capability::ReadAllSessions]),
-        );
-        assert!(c.may_read_owned_by(&subject("someone-else")));
-    }
-
-    #[test]
-    fn reading_every_session_does_not_imply_reading_every_event_log() {
-        // The two are issued as separate permissions, so one standing in for
-        // the other would mean the narrower grant silently carried the wider
-        // one and the distinction the provider draws bought nothing.
-        let c = Caller::new(
-            subject("admin"),
-            Authorization::from_capabilities([Capability::ReadAllSessions]),
-        );
-        assert!(c.may_read_owned_by(&subject("someone-else")));
-        assert!(
-            !c.may_read_event_log_owned_by(&subject("someone-else")),
-            "listing sessions must not open their histories"
-        );
-    }
-
-    #[test]
-    fn an_owner_reads_their_own_event_log_without_a_privileged_grant() {
-        let c = Caller::new(
-            subject("a"),
-            Authorization::from_capabilities([Capability::UseOwnSessions]),
-        );
-        assert!(c.may_read_event_log_owned_by(&subject("a")));
-        assert!(!c.may_read_event_log_owned_by(&subject("b")));
-    }
-
-    #[test]
-    fn the_event_log_grant_is_what_opens_another_subjects_history() {
-        let c = Caller::new(
-            subject("admin"),
-            Authorization::from_capabilities([Capability::ReadEventLog]),
-        );
-        assert!(c.may_read_event_log_owned_by(&subject("someone-else")));
-    }
-
-    #[test]
-    fn reading_everything_does_not_imply_acting_on_it() {
-        // The admin surface is a monitor, not a second pair of hands. A reader
-        // holds no capability that mutates another subject's session.
-        let admin = Authorization::from_capabilities([
-            Capability::ReadAllSessions,
-            Capability::ReadRuntimeInventory,
-            Capability::ReadEventLog,
-            Capability::ReadActivityLog,
-            Capability::ReadUserDirectory,
+            Capability::UseOwnSandboxes,
         ]);
-        assert!(!admin.allows(Capability::CreateSession));
-        assert!(!admin.allows(Capability::TerminateOwnSession));
-        assert!(!admin.allows(Capability::ControlAnySession));
-        let reader = Caller::new(subject("admin"), admin);
-        assert_eq!(
-            reader.require_control_of(&subject("someone-else")),
-            Err(CoreError::Forbidden),
-            "watching every session must not confer stopping one"
-        );
-    }
-
-    #[test]
-    fn an_owner_may_control_their_own_session() {
-        let c = Caller::new(
-            subject("a"),
-            Authorization::from_capabilities([Capability::TerminateOwnSession]),
-        );
-        assert!(c.require_any_control().is_ok());
-        assert!(c.require_control_of(&subject("a")).is_ok());
-    }
-
-    #[test]
-    fn an_owner_may_not_control_somebody_elses_session() {
-        // The check that must never weaken: an ordinary caller stays confined
-        // to their own work however the operator surface grows.
-        let c = Caller::new(
-            subject("a"),
-            Authorization::from_capabilities([
-                Capability::CreateSession,
-                Capability::UseOwnSessions,
-                Capability::TerminateOwnSession,
-            ]),
-        );
-        assert_eq!(
-            c.require_control_of(&subject("b")),
-            Err(CoreError::Forbidden)
-        );
-    }
-
-    #[test]
-    fn an_operator_may_control_any_session_including_their_own() {
-        let c = Caller::new(
-            subject("operator"),
-            Authorization::from_capabilities([Capability::ControlAnySession]),
-        );
-        assert!(c.require_any_control().is_ok());
-        assert!(c.require_control_of(&subject("someone-else")).is_ok());
-        // Their own too, even without the everyday grant: an operator that
-        // could act on everyone but themselves would be a curiosity, not a
-        // safety property.
-        assert!(c.require_control_of(&subject("operator")).is_ok());
-    }
-
-    #[test]
-    fn a_caller_with_no_control_grant_is_refused_before_anything_is_read() {
-        // The point of the cheap half: a caller entitled to nothing is turned
-        // away without a lookup, so an identifier cannot be probed by handing
-        // it to this operation and watching which refusal comes back.
-        let c = Caller::new(
-            subject("a"),
-            Authorization::from_capabilities([Capability::UseOwnSessions]),
-        );
-        assert_eq!(c.require_any_control(), Err(CoreError::Forbidden));
-    }
-
-    #[test]
-    fn acting_for_another_is_recognised_by_subject() {
-        let c = Caller::new(
-            subject("operator"),
-            Authorization::from_capabilities([Capability::ControlAnySession]),
-        );
-        assert!(c.is_acting_for_another(&subject("someone-else")));
-        assert!(!c.is_acting_for_another(&subject("operator")));
+        assert!(authority.allows(Capability::ConfigurePlatform));
+        assert_eq!(authority.iter().count(), 2);
     }
 }

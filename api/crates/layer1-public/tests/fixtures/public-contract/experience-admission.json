@@ -1,0 +1,656 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "agui-run-completes",
+      "operation": "POST /api/v1/agui/run",
+      "scenario": "experience_agui_admission",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agui/run",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "threadId": "agt_contract",
+          "runId": "client-correlation",
+          "messages": [
+            {
+              "role": "user",
+              "content": "Continue the proof"
+            }
+          ]
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "no-cache, no-store",
+          "content-type": "text/event-stream",
+          "x-accel-buffering": "no"
+        },
+        "body": [
+          {
+            "id": "12",
+            "data": {
+              "type": "RUN_STARTED",
+              "threadId": "agt_contract",
+              "runId": "12",
+              "timestamp": "2026-09-07T00:00:00Z"
+            }
+          },
+          {
+            "data": {
+              "type": "TEXT_MESSAGE_START",
+              "threadId": "agt_contract",
+              "runId": "12",
+              "messageId": "msg_13",
+              "role": "user",
+              "timestamp": "2026-09-07T00:00:00Z"
+            }
+          },
+          {
+            "data": {
+              "type": "TEXT_MESSAGE_CONTENT",
+              "threadId": "agt_contract",
+              "runId": "12",
+              "messageId": "msg_13",
+              "delta": "Continue the proof",
+              "timestamp": "2026-09-07T00:00:00Z"
+            }
+          },
+          {
+            "id": "13",
+            "data": {
+              "type": "TEXT_MESSAGE_END",
+              "threadId": "agt_contract",
+              "runId": "12",
+              "messageId": "msg_13",
+              "timestamp": "2026-09-07T00:00:00Z"
+            }
+          },
+          {
+            "id": "14",
+            "data": {
+              "type": "STATE_DELTA",
+              "threadId": "agt_contract",
+              "runId": "12",
+              "delta": [
+                {
+                  "op": "replace",
+                  "path": "/status",
+                  "value": "working"
+                }
+              ],
+              "timestamp": "2026-09-07T00:00:00Z"
+            }
+          },
+          {
+            "id": "16",
+            "data": {
+              "type": "RUN_FINISHED",
+              "threadId": "agt_contract",
+              "runId": "12",
+              "outcome": {
+                "type": "complete"
+              },
+              "timestamp": "2026-09-07T00:00:00Z"
+            }
+          }
+        ],
+        "bodyKind": "sse"
+      },
+      "captures": {
+        "event_time_0": "/0/data/timestamp",
+        "event_time_1": "/1/data/timestamp",
+        "event_time_2": "/2/data/timestamp",
+        "event_time_3": "/3/data/timestamp",
+        "event_time_4": "/4/data/timestamp",
+        "event_time_5": "/5/data/timestamp"
+      }
+    },
+    {
+      "id": "agui-followup-run-completes",
+      "operation": "POST /api/v1/agui/run",
+      "scenario": "experience_agui_admission",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agui/run",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "threadId": "agt_contract",
+          "runId": "client-correlation",
+          "messages": [
+            {
+              "role": "user",
+              "content": "Check the next boundary"
+            }
+          ]
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "no-cache, no-store",
+          "content-type": "text/event-stream",
+          "x-accel-buffering": "no"
+        },
+        "body": [
+          {
+            "id": "19",
+            "data": {
+              "type": "RUN_STARTED",
+              "threadId": "agt_contract",
+              "runId": "19",
+              "timestamp": "2026-09-07T00:00:00Z"
+            }
+          },
+          {
+            "data": {
+              "type": "TEXT_MESSAGE_START",
+              "threadId": "agt_contract",
+              "runId": "19",
+              "messageId": "msg_20",
+              "role": "user",
+              "timestamp": "2026-09-07T00:00:00Z"
+            }
+          },
+          {
+            "data": {
+              "type": "TEXT_MESSAGE_CONTENT",
+              "threadId": "agt_contract",
+              "runId": "19",
+              "messageId": "msg_20",
+              "delta": "Check the next boundary",
+              "timestamp": "2026-09-07T00:00:00Z"
+            }
+          },
+          {
+            "id": "20",
+            "data": {
+              "type": "TEXT_MESSAGE_END",
+              "threadId": "agt_contract",
+              "runId": "19",
+              "messageId": "msg_20",
+              "timestamp": "2026-09-07T00:00:00Z"
+            }
+          },
+          {
+            "id": "21",
+            "data": {
+              "type": "STATE_DELTA",
+              "threadId": "agt_contract",
+              "runId": "19",
+              "delta": [
+                {
+                  "op": "replace",
+                  "path": "/status",
+                  "value": "working"
+                }
+              ],
+              "timestamp": "2026-09-07T00:00:00Z"
+            }
+          },
+          {
+            "id": "23",
+            "data": {
+              "type": "RUN_FINISHED",
+              "threadId": "agt_contract",
+              "runId": "19",
+              "outcome": {
+                "type": "complete"
+              },
+              "timestamp": "2026-09-07T00:00:00Z"
+            }
+          }
+        ],
+        "bodyKind": "sse"
+      },
+      "captures": {
+        "event_time_0": "/0/data/timestamp",
+        "event_time_1": "/1/data/timestamp",
+        "event_time_2": "/2/data/timestamp",
+        "event_time_3": "/3/data/timestamp",
+        "event_time_4": "/4/data/timestamp",
+        "event_time_5": "/5/data/timestamp"
+      }
+    },
+    {
+      "id": "responses-create-completes",
+      "operation": "POST /api/v1/responses",
+      "scenario": "experience_responses_admission",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/responses",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "conversation": "agt_contract",
+          "input": "Continue the proof",
+          "stream": true,
+          "previous_response_id": "resp_agt_contract_3",
+          "metadata": {
+            "request": "admitted"
+          }
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "no-cache, no-store",
+          "content-type": "text/event-stream",
+          "x-accel-buffering": "no"
+        },
+        "body": [
+          {
+            "event": "response.created",
+            "data": {
+              "response": {
+                "id": "resp_agt_contract_12",
+                "object": "response",
+                "created_at": 1700000000,
+                "status": "in_progress",
+                "background": false,
+                "error": null,
+                "incomplete_details": null,
+                "instructions": null,
+                "max_output_tokens": null,
+                "model": "gpt-proof",
+                "output": [],
+                "parallel_tool_calls": false,
+                "previous_response_id": "resp_agt_contract_3",
+                "reasoning": {
+                  "effort": null,
+                  "summary": null
+                },
+                "store": true,
+                "temperature": null,
+                "text": {
+                  "format": {
+                    "type": "text"
+                  },
+                  "verbosity": "medium"
+                },
+                "tool_choice": "none",
+                "tools": [],
+                "top_p": null,
+                "truncation": "disabled",
+                "usage": null,
+                "metadata": {
+                  "request": "admitted"
+                }
+              },
+              "type": "response.created",
+              "sequence_number": 0
+            }
+          },
+          {
+            "event": "response.in_progress",
+            "data": {
+              "response": {
+                "id": "resp_agt_contract_12",
+                "object": "response",
+                "created_at": 1700000000,
+                "status": "in_progress",
+                "background": false,
+                "error": null,
+                "incomplete_details": null,
+                "instructions": null,
+                "max_output_tokens": null,
+                "model": "gpt-proof",
+                "output": [],
+                "parallel_tool_calls": false,
+                "previous_response_id": "resp_agt_contract_3",
+                "reasoning": {
+                  "effort": null,
+                  "summary": null
+                },
+                "store": true,
+                "temperature": null,
+                "text": {
+                  "format": {
+                    "type": "text"
+                  },
+                  "verbosity": "medium"
+                },
+                "tool_choice": "none",
+                "tools": [],
+                "top_p": null,
+                "truncation": "disabled",
+                "usage": null,
+                "metadata": {
+                  "request": "admitted"
+                }
+              },
+              "type": "response.in_progress",
+              "sequence_number": 1
+            }
+          },
+          {
+            "event": "response.completed",
+            "data": {
+              "response": {
+                "id": "resp_agt_contract_12",
+                "object": "response",
+                "created_at": 1700000000,
+                "status": "completed",
+                "background": false,
+                "error": null,
+                "incomplete_details": null,
+                "instructions": null,
+                "max_output_tokens": null,
+                "model": "gpt-proof",
+                "output": [],
+                "parallel_tool_calls": false,
+                "previous_response_id": "resp_agt_contract_3",
+                "reasoning": {
+                  "effort": null,
+                  "summary": null
+                },
+                "store": true,
+                "temperature": null,
+                "text": {
+                  "format": {
+                    "type": "text"
+                  },
+                  "verbosity": "medium"
+                },
+                "tool_choice": "none",
+                "tools": [],
+                "top_p": null,
+                "truncation": "disabled",
+                "usage": null,
+                "metadata": {
+                  "request": "admitted"
+                }
+              },
+              "type": "response.completed",
+              "sequence_number": 2
+            }
+          }
+        ],
+        "bodyKind": "sse"
+      },
+      "captures": {
+        "admitted_response_id": "/0/data/response/id",
+        "admitted_seconds": "/0/data/response/created_at"
+      }
+    },
+    {
+      "id": "responses-completed-retrieve",
+      "operation": "GET /api/v1/responses/{response_id}",
+      "scenario": "experience_responses_admission",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/responses/$admitted_response_id",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "id": "resp_agt_contract_12",
+          "object": "response",
+          "created_at": 1700000000,
+          "status": "completed",
+          "background": false,
+          "error": null,
+          "incomplete_details": null,
+          "instructions": null,
+          "max_output_tokens": null,
+          "model": "gpt-proof",
+          "output": [],
+          "parallel_tool_calls": false,
+          "previous_response_id": "resp_agt_contract_3",
+          "reasoning": {
+            "effort": null,
+            "summary": null
+          },
+          "store": true,
+          "temperature": null,
+          "text": {
+            "format": {
+              "type": "text"
+            },
+            "verbosity": "medium"
+          },
+          "tool_choice": "none",
+          "tools": [],
+          "top_p": null,
+          "truncation": "disabled",
+          "usage": null,
+          "metadata": {
+            "request": "admitted"
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "responses-completed-stale-previous",
+      "operation": "POST /api/v1/responses",
+      "scenario": "experience_responses_admission",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/responses",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "conversation": "agt_contract",
+          "input": "Continue the proof",
+          "stream": true,
+          "previous_response_id": "resp_agt_contract_3",
+          "metadata": {
+            "request": "admitted"
+          }
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/previous-response-conflict",
+          "title": "previous response conflict",
+          "status": 409,
+          "detail": "previous_response_id is not the conversation's latest response.",
+          "code": "previous_response_id_conflict",
+          "field": "previous_response_id"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "responses-concurrent-conflict",
+      "operation": "POST /api/v1/responses",
+      "scenario": "experience_working",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/responses",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "conversation": "agt_contract",
+          "input": "Continue the proof",
+          "stream": true,
+          "previous_response_id": "resp_agt_contract_3",
+          "metadata": {
+            "request": "admitted"
+          }
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/response-in-progress",
+          "title": "response in progress",
+          "status": 409,
+          "detail": "This conversation already has a response in progress.",
+          "code": "response_in_progress"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agui-delivery-ambiguous",
+      "operation": "POST /api/v1/agui/run",
+      "scenario": "experience_agui_ambiguous",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agui/run",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "threadId": "agt_contract",
+          "runId": "client-correlation",
+          "messages": [
+            {
+              "role": "user",
+              "content": "Continue the proof"
+            }
+          ]
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent-delivery-ambiguous",
+          "title": "agent delivery ambiguous",
+          "status": 503,
+          "detail": "The operation outcome is ambiguous and requires durable reconciliation.",
+          "code": "agent_delivery_ambiguous"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agui-ambiguous-retry-refused",
+      "operation": "POST /api/v1/agui/run",
+      "scenario": "experience_agui_ambiguous",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agui/run",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "threadId": "agt_contract",
+          "runId": "client-correlation",
+          "messages": [
+            {
+              "role": "user",
+              "content": "Continue the proof"
+            }
+          ]
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent-operation-in-flight",
+          "title": "agent operation in flight",
+          "status": 409,
+          "detail": "Another durable operation currently owns this agent.",
+          "code": "agent_operation_in_flight"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "responses-delivery-ambiguous",
+      "operation": "POST /api/v1/responses",
+      "scenario": "experience_responses_ambiguous",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/responses",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "conversation": "agt_contract",
+          "input": "Continue the proof",
+          "stream": true,
+          "previous_response_id": "resp_agt_contract_3",
+          "metadata": {
+            "request": "admitted"
+          }
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent-delivery-ambiguous",
+          "title": "agent delivery ambiguous",
+          "status": 503,
+          "detail": "The operation outcome is ambiguous and requires durable reconciliation.",
+          "code": "agent_delivery_ambiguous"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "responses-ambiguous-retry-refused",
+      "operation": "POST /api/v1/responses",
+      "scenario": "experience_responses_ambiguous",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/responses",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "conversation": "agt_contract",
+          "input": "Continue the proof",
+          "stream": true,
+          "previous_response_id": "resp_agt_contract_3",
+          "metadata": {
+            "request": "admitted"
+          }
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/previous-response-conflict",
+          "title": "previous response conflict",
+          "status": 409,
+          "detail": "previous_response_id is not the conversation's latest response.",
+          "code": "previous_response_id_conflict",
+          "field": "previous_response_id"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    }
+  ]
+}

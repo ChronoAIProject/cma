@@ -1,0 +1,120 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "rest-checkpoint-input-not-admitted",
+      "operation": "POST /api/v1/agents/{id}/input",
+      "scenario": "agents_checkpoint",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_contract/input",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "checkpoint-input-one"
+        },
+        "body": { "text": "Continue" }
+      },
+      "response": {
+        "status": 409,
+        "headers": { "content-type": "application/problem+json" },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/sandbox-checkpoint-in-progress",
+          "title": "sandbox checkpoint in progress",
+          "status": 409,
+          "detail": "The Sandbox is saving a checkpoint. Input was not accepted; retry after the checkpoint completes.",
+          "code": "sandbox_checkpoint_in_progress"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agui-checkpoint-input-not-admitted",
+      "operation": "POST /api/v1/agui/run",
+      "scenario": "experience_checkpoint",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agui/run",
+        "headers": { "content-type": "application/json" },
+        "body": {
+          "threadId": "agt_contract",
+          "messages": [{ "role": "user", "content": "Continue" }]
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": { "content-type": "application/problem+json" },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/sandbox-checkpoint-in-progress",
+          "title": "sandbox checkpoint in progress",
+          "status": 409,
+          "detail": "The Sandbox is saving a checkpoint. Input was not accepted; retry after the checkpoint completes.",
+          "code": "sandbox_checkpoint_in_progress"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agui-checkpoint-approval-not-admitted",
+      "operation": "POST /api/v1/agui/run",
+      "scenario": "experience_checkpoint",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agui/run",
+        "headers": { "content-type": "application/json" },
+        "body": {
+          "threadId": "agt_contract",
+          "resume": [
+            {
+              "interruptId": "approval-one",
+              "status": "resolved",
+              "payload": { "decision": "allow" }
+            }
+          ]
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": { "content-type": "application/problem+json" },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/sandbox-checkpoint-in-progress",
+          "title": "sandbox checkpoint in progress",
+          "status": 409,
+          "detail": "The Sandbox is saving a checkpoint. Input was not accepted; retry after the checkpoint completes.",
+          "code": "sandbox_checkpoint_in_progress"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "responses-checkpoint-input-not-admitted",
+      "operation": "POST /api/v1/responses",
+      "scenario": "experience_checkpoint",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/responses",
+        "headers": { "content-type": "application/json" },
+        "body": {
+          "conversation": "agt_contract",
+          "input": "Continue",
+          "stream": true
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": { "content-type": "application/problem+json" },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/sandbox-checkpoint-in-progress",
+          "title": "sandbox checkpoint in progress",
+          "status": 409,
+          "detail": "The Sandbox is saving a checkpoint. Input was not accepted; retry after the checkpoint completes.",
+          "code": "sandbox_checkpoint_in_progress"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    }
+  ]
+}

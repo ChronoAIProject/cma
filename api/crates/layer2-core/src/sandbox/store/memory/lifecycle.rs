@@ -1,0 +1,234 @@
+use super::*;
+
+#[async_trait]
+impl SandboxAdmissionStore for InMemorySandboxStore {
+    async fn sandbox_admission_replay(
+        &self,
+        owner: &SubjectId,
+        launch_id: &str,
+    ) -> Result<Option<SandboxAdmissionReplay>, SandboxStoreError> {
+        sandbox_admission_replay(&self.lock(), owner, launch_id)
+    }
+
+    async fn admit_sandbox(
+        &self,
+        admission: SandboxAdmission,
+    ) -> Result<SandboxAdmissionResult, SandboxStoreError> {
+        admission.validate()?;
+        let mut state = self.lock();
+        let replay_key = admission
+            .trigger_launch_id()
+            .map(|launch_id| (admission.sandbox.owner.clone(), launch_id.to_string()));
+        if let Some(replay) = replay_key
+            .as_ref()
+            .map(|(owner, launch_id)| sandbox_admission_replay(&state, owner, launch_id))
+            .transpose()?
+            .flatten()
+        {
+            if replay.admission_fingerprint != admission.admission_fingerprint {
+                return Err(SandboxStoreError::SandboxOriginConflict);
+            }
+            if replay.sandbox.owner != admission.sandbox.owner
+                || replay.sandbox.origin != admission.sandbox.origin
+            {
+                return Err(SandboxStoreError::Corrupt(
+                    "sandbox admission identity disagrees with its aggregate".into(),
+                ));
+            }
+            return Ok(SandboxAdmissionResult::Existing(replay.sandbox));
+        }
+        let live = state
+            .sandboxes
+            .values()
+            .filter(|sandbox| {
+                sandbox.owner == admission.sandbox.owner && sandbox.retired_at.is_none()
+            })
+            .count();
+        if live >= usize::from(admission.live_limit) {
+            return Err(SandboxStoreError::LimitReached {
+                limit: admission.live_limit,
+                live: u16::try_from(live).unwrap_or(u16::MAX),
+            });
+        }
+        let mut sandbox = admission.sandbox;
+        let admission_name = admission.name;
+        sandbox.name = match &admission_name {
+            SandboxAdmissionName::Exact(name) => {
+                if name_in_use(&state, &sandbox.owner, name) {
+                    return Err(SandboxStoreError::Duplicate);
+                }
+                name.clone()
+            }
+            SandboxAdmissionName::Allocate(base) => allocated_name(&state, &sandbox.owner, base),
+        };
+        let mut candidate = state.clone();
+        let id = sandbox.id.clone();
+        create_record!(candidate, sandboxes, id.clone(), sandbox.clone())?;
+        if let Some(key) = replay_key {
+            candidate.sandbox_admissions.insert(
+                key,
+                (id.clone(), admission_name, admission.admission_fingerprint),
+            );
+        }
+        append_sandbox_event(
+            &mut candidate,
+            &id,
+            admission.event_at,
+            SandboxEventKind::Created,
+        )?;
+        *state = candidate;
+        Ok(SandboxAdmissionResult::Created(sandbox))
+    }
+}
+
+#[async_trait]
+impl SandboxWorkerStore for InMemorySandboxStore {
+    async fn due_sandbox_work(
+        &self,
+        now: &str,
+        limit: u16,
+    ) -> Result<Vec<SandboxId>, SandboxStoreError> {
+        if limit == 0 || limit > MAX_PAGE_SIZE {
+            return Err(SandboxStoreError::InvalidPage);
+        }
+        let mut ids: Vec<_> = self
+            .lock()
+            .sandboxes
+            .values()
+            .filter(|sandbox| sandbox.work.is_due(now))
+            .map(|sandbox| sandbox.id.clone())
+            .collect();
+        ids.sort_by(|left, right| left.as_str().cmp(right.as_str()));
+        ids.truncate(usize::from(limit));
+        Ok(ids)
+    }
+
+    async fn claim_sandbox_work(
+        &self,
+        id: &SandboxId,
+        holder: &str,
+        now: String,
+        lease_expires_at: String,
+    ) -> Result<Option<Sandbox>, SandboxStoreError> {
+        let mut state = self.lock();
+        let Some(current) = state.sandboxes.get(id) else {
+            return Ok(None);
+        };
+        if !current.work.is_due(&now) || current.lifecycle.checkpoint_capture.is_some() {
+            return Ok(None);
+        }
+        let mut claimed = current.clone();
+        claimed
+            .work
+            .claim(holder.to_string(), &now, lease_expires_at)
+            .map_err(|error| SandboxStoreError::Corrupt(error.to_string()))?;
+        claimed.revision = claimed
+            .revision
+            .checked_add(1)
+            .ok_or(SandboxStoreError::Conflict)?;
+        claimed.updated_at = now;
+        claimed.validate().map_err(|error| {
+            SandboxStoreError::Corrupt(format!("claimed sandbox is invalid: {error}"))
+        })?;
+        state.sandboxes.insert(id.clone(), claimed.clone());
+        Ok(Some(claimed))
+    }
+
+    async fn purge_sandbox(
+        &self,
+        id: &SandboxId,
+        expected_revision: u64,
+        now: &str,
+    ) -> Result<(), SandboxStoreError> {
+        let mut state = self.lock();
+        let sandbox = state.sandboxes.get(id).ok_or(SandboxStoreError::NotFound)?;
+        if sandbox.revision != expected_revision
+            || sandbox.status != SandboxStatus::Retired
+            || !sandbox.credential.revoke_debt.is_empty()
+            || sandbox
+                .purge_after
+                .as_deref()
+                .is_none_or(|deadline| deadline > now)
+        {
+            return Err(SandboxStoreError::Conflict);
+        }
+        let agent_ids: Vec<_> = state
+            .agents
+            .values()
+            .filter(|agent| &agent.sandbox_id == id)
+            .map(|agent| agent.id.clone())
+            .collect();
+        state.sandboxes.remove(id);
+        state
+            .sandbox_admissions
+            .retain(|_, (sandbox_id, _, _)| sandbox_id != id);
+        state.sandbox_events.remove(id);
+        state.workspaces.retain(|_, row| &row.sandbox_id != id);
+        state.worktrees.retain(|_, row| &row.sandbox_id != id);
+        state.agents.retain(|_, row| &row.sandbox_id != id);
+        state
+            .agent_reuse_bindings
+            .retain(|_, (agent_id, _)| !agent_ids.contains(agent_id));
+        for agent_id in agent_ids {
+            state.agent_logs.remove(&agent_id);
+        }
+        Ok(())
+    }
+}
+
+fn name_in_use(state: &State, owner: &SubjectId, name: &str) -> bool {
+    state.sandboxes.values().any(|sandbox| {
+        &sandbox.owner == owner && sandbox.name == name && sandbox.retired_at.is_none()
+    })
+}
+
+fn allocated_name(state: &State, owner: &SubjectId, base: &str) -> String {
+    for number in 1_u64.. {
+        let candidate = allocated_sandbox_name(base, number)
+            .expect("a validated admission name can always be allocated");
+        if !name_in_use(state, owner, &candidate) {
+            return candidate;
+        }
+    }
+    unreachable!("the unbounded numeric suffix space always has a free name")
+}
+
+fn sandbox_admission_replay(
+    state: &State,
+    owner: &SubjectId,
+    launch_id: &str,
+) -> Result<Option<SandboxAdmissionReplay>, SandboxStoreError> {
+    let origin = SandboxOrigin::Trigger {
+        launch_id: launch_id.to_string(),
+    };
+    let matching_ids = state
+        .sandboxes
+        .values()
+        .filter(|sandbox| sandbox.owner == *owner && sandbox.origin == origin)
+        .map(|sandbox| &sandbox.id)
+        .collect::<Vec<_>>();
+    let Some((sandbox_id, name, fingerprint)) = state
+        .sandbox_admissions
+        .get(&(owner.clone(), launch_id.to_string()))
+    else {
+        return if matching_ids.is_empty() {
+            Ok(None)
+        } else {
+            Err(SandboxStoreError::Corrupt(
+                "trigger sandbox is missing admission replay metadata".into(),
+            ))
+        };
+    };
+    let sandbox = state.sandboxes.get(sandbox_id).ok_or_else(|| {
+        SandboxStoreError::Corrupt("sandbox admission points to a missing aggregate".into())
+    })?;
+    if matching_ids.as_slice() != [sandbox_id]
+        || sandbox.owner != *owner
+        || sandbox.origin != origin
+    {
+        return Err(SandboxStoreError::Corrupt(
+            "sandbox admission origin disagrees with its aggregate".into(),
+        ));
+    }
+    SandboxAdmissionReplay::new(sandbox.clone(), name.clone(), fingerprint.clone()).map(Some)
+}

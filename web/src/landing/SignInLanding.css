@@ -1,0 +1,106 @@
+.sign-in-landing {
+  transition: opacity var(--ds-transition-duration) var(--ds-ease-in-out);
+}
+.sign-in-landing--entering {
+  opacity: 0;
+  pointer-events: none;
+}
+.sign-in-landing .brand-home {
+  width: min(100%, 760px);
+  padding-top: 144px;
+}
+.sign-in-landing .brand-home h1 {
+  font-family: 'Shrikhand', var(--dsw-font-family);
+  font-weight: 700;
+  font-synthesis: weight;
+  font-size: clamp(18px, 4.8vw, 40px);
+  line-height: 1.2;
+  white-space: nowrap;
+}
+.landing__character-invitation {
+  position: absolute;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  top: -120px;
+  left: 50%;
+  width: 264px;
+  height: 88px;
+  margin-left: -132px;
+  border-radius: 50%;
+  background: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-label-primary);
+  filter: drop-shadow(0 4px 8px var(--dsw-alias-bg-mask-2));
+  font-family: 'Shrikhand', var(--dsw-font-family);
+  font-size: 24px;
+  font-weight: 700;
+  font-synthesis: weight;
+  line-height: 1.2;
+  white-space: nowrap;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transform: translateY(12px) scale(0.85);
+}
+.landing__character-invitation::before,
+.landing__character-invitation::after,
+.landing__character-invitation > span::before {
+  position: absolute;
+  content: '';
+  background: inherit;
+  z-index: -1;
+}
+.landing__character-invitation::before {
+  width: 112px;
+  height: 64px;
+  top: -12px;
+  left: 40px;
+  border-radius: 50%;
+}
+.landing__character-invitation > span::before {
+  width: 112px;
+  height: 64px;
+  top: 0;
+  left: 108px;
+  background: var(--dsw-alias-bg-layer-1);
+  border-radius: 50%;
+}
+.landing__character-invitation::after {
+  width: 16px;
+  height: 16px;
+  bottom: -4px;
+  left: 92px;
+  transform: rotate(45deg);
+}
+.landing__character[data-invitation] .landing__character-invitation {
+  visibility: visible;
+  opacity: 1;
+  transform: none;
+  animation: landing-invitation 0.45s var(--ds-ease-in-out) both;
+}
+.landing__character[data-activating] .landing__character-invitation {
+  visibility: hidden;
+}
+@keyframes landing-invitation {
+  0% {
+    opacity: 0;
+    transform: translateY(12px) scale(0.85);
+  }
+  70% {
+    opacity: 1;
+    transform: translateY(-2px) scale(1.04);
+  }
+  100% {
+    opacity: 1;
+    transform: none;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .sign-in-landing {
+    transition: none;
+  }
+  .landing__character[data-invitation] .landing__character-invitation {
+    animation: none;
+  }
+}

@@ -1,2925 +1,610 @@
 # REST Interface
 
-**Priority 3 — for backend server clients.**
+This is the public HTTP contract for CMA's Sandbox model. The served
+`GET /openapi.json` is OpenAPI 3.1 and supplies exact JSON schemas, parameters,
+security declarations and response media types. The operation inventory below
+is checked against that document, including its AG-UI and Responses projections.
+[CMA Model](CMA_Model.md) defines lifecycle and profile semantics;
+[CMA Trigger](CMA_Trigger.md) defines publishing, consent and visitor reuse.
 
-REST is the **superset interface**: it projects all ten core operations and is the reference realisation of the core session model. Every other interface is a projection of the same model; where a question about semantics is ambiguous elsewhere, this document is the answer.
+There are no `/sessions`, `/chats`, environment-profile, contribution,
+sponsorship or terminal-attachment APIs in this release. Resource management
+uses Sandbox, Workspace, Worktree and Agent ids. A resource's readable name is
+not an id or a concurrency fence.
 
-See [API_Overview.md](./API_Overview.md) for the core operation set, session lifecycle, and event model. The stateful streaming chat projection is specified separately in [API_Responses.md](./API_Responses.md); it shares this interface's authentication, problem, request-limit, and rate-limit rules.
+## Authentication And HTTP
 
----
+Use `Authorization: Bearer <credential>` for backend calls, or the same-origin
+CMA browser cookie. Never embed credentials in query strings, HTML or badges.
+Cookie requests are subject to origin defenses; cross-origin browser clients
+must use an explicitly configured CORS origin. Allowed request headers include
+`Content-Type`, `Authorization`, `Last-Event-ID`, `Idempotency-Key` and
+`X-Request-Id`; exposed response headers include `Link`, `Retry-After` and
+`X-Request-Id`. CORS is not authorization.
 
-## 1. Conventions
+Creating a new Sandbox also requires renewable owner delegation already held by
+CMA. A request bearer authenticates that request; CMA does not persist it or
+derive refresh authority from it. Complete the existing `/auth/login` OAuth
+flow with the same account to establish delegation. Bearer SDK calls remain
+supported after this setup; the browser session need not accompany them.
 
-### Authentication
+`POST /api/v1/sandboxes`, public Launch creation, and Draft Launch start return
+`409 sandbox_credential_setup_required` when a new Sandbox is needed but that
+delegation is missing or no longer renewable. No Sandbox is admitted, and a
+refused Draft start leaves the Launch unchanged. Reused Sandboxes and Agents do
+not acquire this prerequisite merely for reuse. Identity-store or provider
+outages remain sanitized `503` failures, not a request to repeat sign-in.
+Default-context `POST /api/v1/conversations` inherits this prerequisite when it
+needs a new Sandbox. That protocol-compatible operation is unkeyed: retry only
+a definitive setup refusal after sign-in, not an ambiguous creation failure.
 
-Two credentials are accepted, because there are two kinds of client.
+Use the SDK's `auth.loginUrl` or `auth().login_url` with a canonical CMA return
+path, preserve the pending command without any credential, and verify that the
+returned identity is the same subject. A successful browser session alone does
+not prove the provider supplied renewable delegation: the next admission still
+checks it. For keyed operations, after a definitive setup-required refusal and
+successful sign-in, explicitly retry with a **new** idempotency key. The previous
+key continues to replay its exact refusal; transport-ambiguous retries must
+retain the original key and body. Neither OAuth callback nor return navigation
+starts work.
 
-A **browser** signs in through the identity provider and is given a session cookie. Send it with every request (`credentials: 'include'` from `fetch`).
+Send `Content-Type: application/json` when a route has a JSON body. An empty
+object and an absent body are not interchangeable: Agent stop requires `{}`
+(or its documented reason field), whereas interrupt, pause and revive have no
+request schema. Request bodies are capped at 2 MiB before per-field validation.
+Unknown request fields are refused on closed DTOs. Integers, enums and profile
+references are validated, not coerced from arbitrary strings.
 
-A **server** presents a bearer token issued by the identity provider:
+Owner routes return the same `404` for missing and foreign resources. An
+administrator uses the capability-gated `/admin` operations rather than
+impersonating another owner. Public preview and badge access does not authorize
+Launch creation. Visit [API Overview](API_Overview.md#authentication-and-visitors)
+for browser identity and visitor capabilities.
 
-```http
-Authorization: Bearer <access token>
+The composed identity/discovery/static routes also include:
+
+| Operation | Meaning |
+|---|---|
+| `GET /openapi.json` | Anonymous machine-readable contract |
+| `GET /auth/login` | Begin NyxID OAuth; return destination is validated |
+| `GET /auth/callback` | Complete identity exchange; never starts Agent work |
+| `GET /auth/session` | Browser identity, capabilities and visitor flag; 401 when signed out |
+| `POST /auth/logout` | Revoke browser login and expire cookie; redirect to `/` |
+| `GET /embed/v1.js` | Fixed versioned-by-integrity embed script; no credential access |
+| `POST /api/v1/mcp` | Typed 501 `interface_not_available` |
+| `GET /.well-known/agent-card.json` | Typed 501 `interface_not_available` for A2A |
+| `/api/v1/a2a` | Typed 501 `interface_not_available` |
+
+`GET /auth/signup-options` appears in the checked inventory. Its four-field
+response is exactly `{ email_signup, social_providers, invite_code_required,
+register_available }`. CMA reports registration availability but never creates
+NyxID users or roles. Anonymous preview/badge GETs and OAuth callbacks are inert.
+
+## Errors, Retry And Concurrency
+
+Errors use `application/problem+json` with standard `type`, `title`, `status`,
+`detail` and a stable `code`. Additional structured context may name a resource,
+limit, current revision, required digest, cursor head or reset time. Inspect
+`code` and HTTP status, not prose. Preserve `X-Request-Id` for support without
+logging credentials or rejected secret-bearing input.
+
+| Status | Typical handling |
+|---|---|
+| 400 | Correct malformed body, query, cursor or idempotency header |
+| 401 | Reauthenticate; do not retry an unauthenticated mutation blindly |
+| 403 | Capability refusal; changing the URL or resource id cannot grant access |
+| 404 | Missing or concealed resource; do not infer another owner's existence |
+| 409 | State, draft-version, expected-revision, trust or idempotency conflict; read current state |
+| 422 | Unsupported operation or semantic validation refusal; correct input |
+| 429 | Count/rate limit; respect the reset information and `Retry-After` when supplied |
+| 503 | Dependency or durable-store unavailable; retry only within the operation's safety contract |
+
+Every inventory row marked `key` requires `Idempotency-Key`. Generate a fresh
+opaque key per logical mutation, retain its exact body, and reuse that pair when
+the result is ambiguous. Reusing a key with changed content conflicts. An exact
+replay returns the original status/body, not a fresh snapshot. In particular,
+replaying a Draft Launch's creation key still returns its original 201 even
+after the Launch has progressed; read the Launch to obtain current state.
+
+`idempotency_in_flight` and `idempotency_recovery_required` leave the command
+unsettled. Do not replace its key merely because a response was lost. Read-only
+GET retries and SSE reconnects do not authorize a new input or create POST.
+AG-UI run and Responses creation do not use this REST key contract: submit
+once and recover retained output through reads.
+
+Profiles use `draft_version` for draft save/publication. Settings use
+`expected_revision`. These are server-issued optimistic concurrency values,
+not timestamps or request ids. A conflict requires a new read and an explicit
+reconciliation of the user's intended changes; never overwrite newer state
+using an automatically substituted revision.
+
+## Profile Authoring
+
+The four `/api/v1/profile-authoring` operations require authentication and
+`ManageOwnProfiles`. They are read-only lookups, including the repository
+resolver's POST: no idempotency key, resource admission, profile edit, clone,
+or Sandbox creation occurs. All successful responses are HTTP 200. Optional
+output fields are omitted rather than returned as `null`.
+Service and skill lookups use the current request's delegated authority when
+present, including for bearer callers without a previous browser sign-in.
+That authority is transient, never persisted by the lookup, and never included
+in a public response or repository verification request.
+
+`GET /api/v1/profile-authoring/bounds` returns
+`{ min_cpu_millis, max_cpu_millis, min_memory_mib, max_memory_mib }` from the
+same fixed deployment policy used to validate Sandbox Profiles. It does not
+depend on catalogue or repository availability.
+
+`GET /api/v1/profile-authoring/services` returns an array of owner-visible
+`{ id, catalog_id?, name, description? }` choices. `id` is the selectable scope
+identifier; `catalog_id`, when reported, is the source's canonical service
+identity for opening its detail page and must not replace the profile's scope
+identifier. An empty array is a successful empty
+catalogue. Source failures return `503 profile_services_unavailable`, not an
+empty catalogue or credentials.
+Catalogue descriptions retain the complete source text up to 6144 UTF-8 bytes;
+this authoring limit does not change the separate profile draft limits.
+
+`GET /api/v1/profile-authoring/skills?q=&limit=&cursor=` returns
+`{ items: [{ id, name, description?, versions: [string] }], next? }`. Omitted
+`q` browses with an empty query; queries allow at most 200 UTF-8 bytes and no
+control characters. The limit defaults to 20 and accepts 1-50. A supplied
+cursor must be nonempty, at most 2048 bytes, and free of control characters.
+Versions are up to 100 latest selectable, nondeprecated releases, ordered
+newest-first by numeric `major.minor` and retained as strings. Existing profile
+pins are not changed by catalogue filtering. A filtered page may contain no
+items while retaining an advancing `next`; continue until `next` is absent.
+Invalid queries and source-rejected cursors return
+`400 invalid_profile_authoring_query`; unavailable or malformed source data
+returns `503 profile_skills_unavailable`.
+
+`POST /api/v1/profile-authoring/repositories/resolve` takes `{ url, reference? }`
+for a public GitHub repository and an optional branch or tag. The URL must
+contain exactly two nonempty ASCII owner/repository components,
+each at most 100 bytes after removing the repository's optional `.git` suffix.
+A single trailing slash is accepted. The response is
+`{ url, reference?, default_branch, commit_sha }`. The URL is canonical and may
+normalize owner/repository case and remove `.git` or trailing slashes.
+`reference` is retained exactly when requested and omitted otherwise; the
+observed default branch is never substituted into it. `default_branch` and the
+lowercase 40-hex `commit_sha` are verified server-side observations. No caller
+credential is forwarded to GitHub and redirects are not followed.
+
+Invalid URLs or references return `422 invalid_repository` or
+`invalid_repository_reference`; repository absence/inaccessibility returns
+`404 repository_not_found`, and a missing branch/tag returns
+`404 repository_reference_not_found`. Failed verification returns
+`503 repository_unavailable`. Malformed JSON, incompatible body fields,
+oversized bodies, and missing/wrong content types use `invalid_json` with
+400, 422, 413, and 415 respectively. All four routes return
+`401 not_authenticated` or `403 forbidden` before exposing validation or source
+results to unauthorized callers.
+
+## Profiles And Marketplace
+
+The three profile APIs share lifecycle shape but have different content schemas.
+Create uses `{ name, description?, content }`; read returns identity, owner,
+visibility, draft content, `draft_version` and publication information. Update
+uses `{ draft_version, content, name?, description? }`. Publication posts
+`{ draft_version }` to `/revisions` and returns an immutable published revision.
+Visibility uses `{ visibility: "private" | "public" }`. Making a profile private
+or retiring it hides discovery without invalidating existing instance snapshots
+or exact published references. A retired profile cannot publish new revisions.
+
+A profile reference is `{ "id": "agp_example", "revision": 1 }`, with a
+positive published revision of the correct kind. Agent, Workspace and Sandbox
+references are not interchangeable. Array order is preserved and the canonical
+content digest includes that order. The exact reserved defaults `agp_default`
+and `wkp_default` are accepted as Agent and Workspace references respectively;
+other reserved-looking strings and cross-kind IDs are not interchangeable.
+
+Newly selected references must resolve to an owned or public, nonretired profile
+revision. An exact pin inherited from the server-recorded fork source or the
+parent's own prior published revisions remains usable when the child becomes
+private or retired. Changing its ID or revision is a new selection and requires
+current access. Draft JSON alone never grants reference authority, and inherited
+pins do not grant direct access to a private child's profile routes. Publication
+rechecks these rules atomically with reading the draft and inserting its revision.
+
+```json
+{
+  "name": "Repository reviewer",
+  "description": "Read and review repository changes",
+  "content": {
+    "model": null,
+    "thinking_effort": "medium",
+    "permission_level": "guarded",
+    "skills": [],
+    "system_prompt": "Review the repository and report actionable findings."
+  }
+}
 ```
 
-This is the form that CMA (ChronoAI Managed Agent) clients use. A server has no cookie jar, no redirect to follow and no browser to send to a login page, so the cookie is not available to it.
+Workspace content has `location`, `name`, `setup_commands` and
+`agent_profiles`. `location` is `{ type: "git_repository", url, reference? }`
+or `{ type: "directory", name }`. Repositories must be supported public GitHub
+URLs. The effective directory is under `/home/cma`; main checkouts are never
+Agent working directories.
 
-The token is checked with the provider rather than decoded here, which is what makes a withdrawn token stop working. The answer is cached for up to a minute, so bearer-token revocation takes effect within that window rather than immediately.
+Sandbox content has `cpu_millis`, `memory_mib`, `nyxid_services`,
+`agent_provider`, `model_access`, `max_workspaces`, `max_agents_per_workspace`,
+`workspace_profiles`, `software_install_commands` and `environment_variables`.
+Only `agent_provider: "codex"` is supported. Model access is
+`chronoai_managed` or `own_credentials`. Environment variables are public
+configuration, not secret storage. [CMA Model](CMA_Model.md#profile-contract)
+lists complete field bounds, reserved names and trust rules.
 
-The capabilities behind a browser cookie have an authorization deadline no more than 60 seconds after the last complete provider answer and never later than the access token's own expiry. Once that deadline is due, a cookie request cannot use the stored authority until CMA obtains a complete provider answer under a durable, replica-safe single-flight claim. A complete reduced or empty permissions array takes effect on that request; `active: false` also quarantines the rejected access token and makes its retained refresh grant immediately eligible. If another worker is checking the subject, the provider is too slow, or every advertised answer is transport-failed, retryable, malformed, or incomplete, the request fails temporarily with `503` rather than exercising overdue privileges. The last complete grant remains stored for recovery but is not served while overdue. Introspection is authoritative independently of userinfo, so a healthy reduced or inactive introspection answer cannot be masked by userinfo `401` or `403`. A bounded 16-subject background batch advances a fairness cursor each sweep to prewarm and recover subjects without making revocation depend on draining the backlog.
+Marketplace `kind` is `agent`, `workspace` or `sandbox`, not the plural profile
+route component. Listing accepts search `q` and a cursor. Detail exposes usable
+published content and transitive trust disclosure. Fork posts `{}` for the
+current usable revision or `{ revision: n }` for an explicit revision, returning
+a new caller-owned profile with provenance. There is no shared mutable fork.
 
-Browser sign-in does not require the provider to issue a refresh token. An access-token-only delegation remains usable through its access-token lifetime; once that nonrenewable token expires and CMA can no longer check it authoritatively, its cookie capabilities fail closed.
+## Instance Creation And Lifecycle
 
-Capabilities are the same either way: they come from the subject's roles as the provider reports them, so a client is never more privileged for having arrived over one route than the other.
+`GET /api/v1/defaults` returns three exact published references named
+`sandbox_profile`, `workspace_profile` and `agent_profile`. Do not guess default
+ids, reconstruct references from display names or silently use a later revision.
 
-A request with neither credential is `401`. A request whose credential is valid but insufficient is `403`.
-The unauthenticated response carries `code: "not_authenticated"`; clients branch
-on that code and the status, never on its prose.
+Create a Sandbox with `{ sandbox_profile: { id, revision }, name? }`.
+Create a Workspace under it with `{ workspace_profile: { id, revision } }`.
+Both requests accept `trust_confirmed` and `commands_digest` when the selected
+foreign executable content requires explicit review. Use the server-provided
+digest; trust for one command set does not authorize another.
 
+Create an Agent under a ready Workspace with:
 
-| Concern | Rule |
-|---|---|
-| Base path | `/api/v1` |
-| Auth | NyxID bearer token, or the CMA session cookie for browser clients |
-| Errors | RFC 9457 `application/problem+json` |
-| Rate limiting | RFC 6585 `429` with RFC 9110 `Retry-After` |
-| Pagination | RFC 8288 `Link` with `rel="next"` |
-| Idempotency | Optional `Idempotency-Key` is honoured by `POST /sessions` and `POST /sessions/{id}/input`. Execution has a two-minute lease; only a finite stored outcome starts the 24-hour replay-retention period |
-| Timestamps | RFC 3339, UTC, always `Z` |
-| Versioning | Additive within `/v1`. A breaking change mints `/v2`; `/v1` is never redefined |
+```json
+{
+  "agent_profile": { "id": "agp_example", "revision": 1 },
+  "title": "Repository review",
+  "first_message": "Inspect the repository and summarize the changes."
+}
+```
 
-Every response carries `X-Request-Id`, including authentication failures and
-unmatched routes. A supplied value is echoed; otherwise CMA mints a UUID. The
-same value is attached to the request's tracing span. Include it in any support
-report.
+The response contains the Agent and its parent context. Worktree and Agent
+admission reserves one dedicated branch/directory atomically; there is no
+independent Worktree-create route. Creation acceptance is not readiness or
+first-message completion. Follow the Agent, Sandbox events and recorded
+first-message state. Counts are enforced transactionally at admission.
 
-### Request limits
+Sandbox pause/revive and removal return recorded lifecycle state. Stopping an
+Agent preserves readable history; deleting it records cleanup of its Worktree
+and home. Workspace removal and Sandbox retirement are durable operations,
+not a direct recursive filesystem API. The [CMA Model](CMA_Model.md#lifecycle-states)
+contains the actual transition whitelist.
 
-CMA uses continuously refilled token buckets, not fixed one-minute windows.
-The configured rate is also the maximum burst:
+## Agent Input And Reads
 
-| Request class | Default rate and burst | Configuration |
-|---|---:|---|
-| Pre-authentication admission, per client network | 6,000 per minute | `CHRONO_SERVER_RATE_ADMISSION_PER_MINUTE` |
-| `GET` or `HEAD` on `/livez` and `/ready`, per client network | 120 per minute | `CHRONO_SERVER_RATE_HEALTH_PER_MINUTE` |
-| Provision or rotate: `POST /sessions`, `POST /api/v1/conversations`, `POST /agui/run`, `POST /sessions/{id}/plane`, `POST /sessions/{id}/revive`, `POST /launches/{id}/start` | 10 per minute | `CHRONO_SERVER_RATE_CREATE_PER_MINUTE` |
-| Deliver a prompt: `POST /sessions/{id}/input`, `POST /sessions/{id}/steer`, `POST /api/v1/responses` | 120 per minute | `CHRONO_SERVER_RATE_INPUT_PER_MINUTE` |
-| Every other admitted request | 600 per minute | `CHRONO_SERVER_RATE_DEFAULT_PER_MINUTE` |
+REST input and steer accept `{ text }`. Input returns `202` with `{ queued }`;
+queueing is an admission fact, not proof of runtime delivery. Approval answers
+use `{ decision: "allow" | "deny" | "abort" }`. Stop accepts `{}` or
+`{ reason: "owner" }`; a caller cannot impersonate an internal failure reason.
+Interrupt, approval, stop and deletion return empty 202 bodies where indicated.
+Do not parse those bodies as JSON or infer completion from acceptance alone.
 
-Every non-preflight, non-health request first consumes the cheap network
-admission bucket, before authentication, body capture, or activity-store I/O.
-Health requests consume their dedicated network bucket instead. An admitted
-non-health request then consumes one operation bucket. Authenticated operation
-traffic on protected routes is keyed by resolved NyxID subject, so changing
-connections or credentials does not create another budget. Routes that are
-public by contract, including REST and AG-UI discovery and the browser auth
-flow, remain keyed by client network even when a request happens to carry a
-cookie or bearer token. Other anonymous traffic and the admission guard are
-also keyed by client network. An AG-UI run can create a billed session when its
-thread is absent, so it always uses the conservative creation budget; the
-middleware does not read its body or query session state to decide whether to
-protect the service.
+The Agent detail includes its Sandbox, Workspace, Worktree, profile, status
+and first-message information, not an aggregate revision field. Transcript returns `{ agent_id,
+through_seq, turns }`; usage has its own `through_seq` and cumulative input,
+output and context readings. Resource readings are Sandbox-scoped observations
+projected alongside Agent identity, not per-Agent billing.
 
-The direct TCP peer is used unless it belongs to a network explicitly listed in
-`CHRONO_SERVER_TRUSTED_PROXY_CIDRS`. Only then does CMA read
-`X-Forwarded-For`, skip `CHRONO_SERVER_TRUSTED_PROXY_HOPS` GFE-owned tokens
-from the right, and select the upstream address the GFE observed. The current
-Google load balancer appends `upstream-ip,load-balancer-ip`, so the configured
-hop count is one.
+`GET /api/v1/agents/{id}/source` returns owner-scoped creation provenance:
+`manual`, `workspace_profile`, or `trigger`. Trigger-created Agents also include
+the published Trigger title, public id, revision and quick messages when the
+source remains resolvable. Quick messages follow the latest published revision;
+draft edits stay private and retired Triggers return no shortcut actions.
+Reading source never sends a message or replays the first prompt. Each optional
+Trigger content `quick_messages` entry has a required unique name (120 UTF-8
+bytes), description (2,000 bytes) and text (32,768 bytes), with at most eight
+entries. Missing or empty arrays preserve legacy content digests.
 
-When that observed upstream belongs to
-`CHRONO_SERVER_CLOUDFLARE_PROXY_CIDRS`, CMA advances one more token toward the
-visitor only if exactly one valid `CF-Connecting-IP` header equals that
-next-left token and no `CF-Worker` or overwrite-mode `CF-Connecting-IPv6`
-marker is present. Class-E Cloudflare Pseudo IPv4 values are never visitor
-authority. A missing, duplicate, whitespace-padded, malformed, or mismatched
-Cloudflare identity, a Worker-marked or Pseudo-IPv4-overwrite request, or an
-upstream outside the pinned Cloudflare ranges keeps the GFE-observed upstream
-as the key and ignores every caller-supplied prefix. A missing, malformed, or
-too-short GFE chain falls back to the TCP peer. This conditional rule preserves
-per-visitor budgets through the reviewed Cloudflare path without allowing a
-direct-origin caller to select a spoofed prefix; a newly added, unreviewed
-Cloudflare range degrades to an edge-shared bucket until configuration and
-evidence are updated.
+`GET /api/v1/agents/{id}/events` is a **JSON page**, not SSE. It accepts `after`
+and `limit` (1-200, default 200), returns `items` and optional `next`, and omits
+internal dispatch keys and runtime approval locators. Read all pages, require
+advancing cursors and combine transcript fallback without duplicating messages.
 
-Startup accepts Cloudflare trust only when the configured ranges are empty or
-exactly equal to the complete build-pinned 15-IPv4/7-IPv6 set, and it rejects
-any overlap with the configured GFE ranges. That source check does not detect a
-range Cloudflare later removes and another party acquires. Release evidence and
-runtime monitoring must compare the official IPv4 and IPv6 sets against the
-pin in both directions; any removed or reassigned pinned range is a security
-alert and the visitor-selection branch must not be exposed until a reviewed
-build and configuration update remove it. The frozen Cloudflare configuration
-must also keep Pseudo IPv4 disabled (or Add Header mode with the real
-`CF-Connecting-IP` and `X-Forwarded-For` retained), preserve visitor IP headers,
-and exclude Worker/transform behavior for these hostnames. Source support alone
-does not satisfy that production rollout gate.
+Each transcript turn includes ordered `messages` with the durable `sequence`,
+`role` (`user` or `assistant`), `content` and `appended_at`. Steering remains a
+distinct owner message inside the active turn, even when assistant messages
+precede it. The `owner_message` summary holds only the initial input and
+`agent_messages` only assistant text; use `messages` to reconstruct chronology.
+Merge transcript and event replay by durable message sequence, not by turn id.
+Sandbox events are separately scoped JSON history. Launch event pages have
+`launch_id`, `events` and optional `next_cursor`; their cursors must not be used for Agent history.
+For live Agent and Launch streams see [AG-UI](API_AGUI.md).
 
-IPv4-mapped IPv6 is the same key as IPv4, and ordinary IPv6 addresses are
-normalized to `/64`. Requests with no peer metadata share one
-unidentified-client bucket rather than bypassing protection. On the managed app
-hostname the Gateway routes `/api`, `/auth`, `/openapi.json`, and
-`/.well-known/agent-card.json` directly to `cma-api`, so the web pod is not an
-extra untrusted hop and every browser client retains its own selected network
-key on the validated edge path.
+## Triggers, Launches And Connections
 
-An exhausted bucket returns `429 application/problem+json` with code
-`rate_limited`. REST rejections retain the profile and service-description
-`Link` headers. `Retry-After` is a positive whole number of seconds, rounded up
-from the token's remaining wait, and is exposed through CORS. Waiting that many
-seconds makes at least one token available if no concurrent request consumes it
-first. Browser CORS preflight `OPTIONS` requests carrying both `Origin` and
-`Access-Control-Request-Method` are exempt and cached for up to one hour; they
-perform no authenticated application operation. An arbitrary `OPTIONS` request
-without that preflight shape consumes the ordinary route budget.
+[CMA Trigger](CMA_Trigger.md) gives complete publisher content and fixture-derived
+request examples, source placement rules, the a/b/c reuse mapping, consent,
+requirements and all five snippet forms. Do not infer the Launch body from a
+preview or reuse an authoring DTO for visitor admission.
 
-Rejected traffic does not enter durable activity recording: doing a body read
-and MongoDB write for traffic rejected to protect those resources would put the
-expensive work ahead of the boundary. Rejections are counted in process and
-reported through exponentially sampled structured logs. The counters and token
-buckets are process-local. This deployment pins the API to one replica, where
-configured operation values are exact. Running N replicas without shared state
-makes effective allowances up to N times larger.
+The anonymous preview is a safe projection, not the publisher-owned draft.
+Create Launch is authenticated and takes a stable idempotency key. It can
+return a reviewed Draft (201) or admitted work (202) when `start_if_ready` and
+current requirements allow it. A retained Draft continues through
+`POST /api/v1/launches/{id}/start`, which rechecks requirements and explicit
+trust/repeat consent. Cancellation is separate. There is no public worker retry.
 
-Routes that consume request bodies are capped at 2 MiB (2,097,152 bytes). REST
-and AG-UI JSON routes that reach body collection return `413
-application/problem+json` with code `request_too_large` when that ceiling is
-crossed. Media-type validation is deliberately earlier on routes that can
-reject without reading: an oversized body with a missing or wrong JSON content
-type can therefore return coded `415 unsupported_media_type`. Bodyless routes
-and handlers that do not consume a supplied body make no unconditional 413
-promise.
+The requirements snapshot includes `services`. Each entry keeps its service id
+and state and may additionally expose current `display_name`,
+`connection_mode: "hosted" | "manual" | "unknown"` and `setup_url`. Missing
+metadata remains unknown; a slug is not evidence that SSH/manual setup is
+needed. Historical Launch snapshots are not rewritten by current metadata.
 
-### Idempotent retries
+Connection assist creates a short-lived owner-bound handoff for one service
+and reads its status. It never puts a service credential in the response.
+Only an active service recheck can establish connection; popup close, OAuth
+return and a persisted handoff id cannot. [Services](Services.md) documents
+hosted/manual/unsupported/unavailable outcomes and recovery.
 
-Outside the Trigger workflow, `POST /api/v1/sessions` and
-`POST /api/v1/sessions/{id}/input` are the two operations that read
-`Idempotency-Key`. They are the operations where a lost response would otherwise
-provision a second billed sandbox or deliver the same prompt twice. The Trigger
-commands marked `required` in [Triggers and Launches](#2-triggers-and-launches)
-consume the same durable store. Trigger reads, connection preflight, and
-pull-request review do not read the header.
+The embed descriptor is owner-only and requires `placement_id`. It provides
+server-derived URLs, snippets, SRI and CSP directives. Public badges are
+anonymous SVG with closed label/theme query values, optional placement
+attribution, ETag and conditional 304 handling. Never supply arbitrary SVG,
+HTML, style, redirect origins or credential-bearing query parameters.
 
-A key contains 1 to 255 visible ASCII bytes. It is scoped to the authenticated
-subject and the particular operation, so one subject cannot consume another's
-key and a session-create key does not collide with a session-input key. The
-first request reserves the key durably before doing any work and receives a
-two-minute execution lease. Lease expiry never authorizes another execution.
-Once the owner stores a finite result, its status, representation headers, and
-body are retained for 24 hours from that completion. A retry with the exact same
-request body bytes receives the same status and byte-identical response body
-without performing the operation again. Per-request transport headers,
-including `X-Request-Id` and CORS headers, are generated for the retry rather
-than copied from the first request.
+## Administration
 
-A completed refusal is an outcome too. In particular, if session input records
-`409 session_rotating`, the same key and body continue to replay that refusal
-after the handover finishes. Wait until the session is usable, then mint a new
-key for the intended post-rotation attempt.
+Administration exposes settings, Sandbox/profile/runtime inventories, activity,
+retirement and Trigger pause/resume under specific operator capabilities.
+Owner views do not gain these operations from a route name or role slug.
+Settings replacement uses `{ expected_revision, settings }`; patch uses
+`expected_revision` plus complete changed sections, not arbitrary nested
+JSON Patch operations. Reset uses `{ expected_revision }`. Read the resulting
+revision after every successful change. Runtime inventory can fail unavailable
+without proving that a runtime is absent.
 
-Four refusals make ambiguous retries explicit:
+See [Operations](CMA_Operations.md) for settings meaning, deployment prerequisites,
+alerts, recovery, data-reset boundaries and production evidence. There is no
+arbitrary shell, database deletion or NyxID administration endpoint here.
 
-| Status and code | Meaning |
-|---|---|
-| `400 invalid_idempotency_key` | The key is empty, longer than 255 bytes, contains non-visible ASCII, or was supplied more than once |
-| `409 idempotency_in_flight` | The first request still owns its two-minute execution lease. Retry shortly with the same key and body |
-| `409 idempotency_recovery_required` | The previous execution ended without a replay receipt. This Idempotency-Key remains fenced unless the original execution records its exact result; manual review of durable state is required |
-| `422 idempotency_key_reused` | The key already names a different request body. Mint a new key; replaying the first response would be incorrect |
+## Operation Inventory
 
-If the durable claim store cannot be reached while reserving a key, the request
-fails with `503` and code `store_failed` before the session or prompt operation
-starts. The service never falls back to unprotected execution. If recording the
-result fails after the operation, the response is `503` and the claim continues
-to block duplicate execution. Once its two-minute lease ends without a receipt,
-the claim becomes durable `idempotency_recovery_required`; it has no TTL and is
-never deleted, reacquired, or automatically re-executed. Only an exact late
-result from the original claim generation can turn that claim into a replay
-receipt, which then replays normally for 24 hours from the time the finite
-outcome is stored. CMA has no generic background or operator process that takes
-over an abandoned operation claim.
+The following rows are derived from the actual OpenAPI export and checked for
+complete method/path coverage. Schema names refer to
+`/openapi.json#/components/schemas/<name>`. `key` means the required
+`Idempotency-Key` header. Path variables are required; listed query fields are
+optional unless marked `*`. Success schemas describe the projected response,
+not a guarantee that asynchronous work has finished. The shared error contract
+above applies even when an operation annotates only its principal responses.
 
-Only a positively proven pre-write failure is retryable as execution. A finite
-refusal recorded before any domain write is replayable under its same key; when
-the refusal's own remediation permits a later semantic attempt, that later
-attempt uses a new key. A lost process, elapsed lease, transport ambiguity, or
-failure to store a post-operation receipt is not proof that no bytes or domain
-mutation occurred, so no caller or replica may infer permission to execute it
-again. Manual review must establish durable domain truth before an operator or
-caller decides any later, semantically distinct action. That review does not
-clear the original claim or manufacture its missing replay receipt.
+<!-- openapi-operations:start -->
+### Administration
 
-### Trigger and Launch projection
-
-REST is the canonical and sole write projection for the Trigger workflow. The
-public preview under `/api/v1/triggers/public/{public_id}` is subject-free and
-side-effect-free. Authenticated resources under `/api/v1/triggers`,
-`/api/v1/trigger-connections`, and `/api/v1/launches` cover publisher drafts and
-revisions, reusable NyxID GitHub connections, immutable Launch review,
-repository/progress/diff state, cancellation, branch publication, and explicit
-Open or Update pull-request confirmation. Ambiguous initial-task delivery has a
-separate owner-confirmed recovery command; generic external-effect recovery is
-an operator-only read-only reconciliation command under `/api/v1/admin/`.
-
-Every workflow mutation requires `Idempotency-Key` and reserves through the
-same durable operation store described above. There is no dashboard-only route,
-query-string credential, or AG-UI write path. Reads project provider-neutral
-Layer 2 models and public-safe reach/refusal status; GitHub HTTP payloads,
-credential values, internal effect keys, and provider request bodies never
-cross this interface. The TypeScript and Rust SDK fixtures are the executable
-contract for these resources, and `/openapi.json` contains every served route.
-The complete route and representation catalogue is in
-[Triggers and Launches](#2-triggers-and-launches).
-
----
-
-## 2. Triggers and Launches
-
-A Trigger is a publisher-owned draft that becomes an immutable public revision.
-A Launch is one authenticated contributor's durable execution of that exact
-revision. A README button links only to the public identifier. It contains no CMA
-API key, GitHub token, prompt, repository credential, or mutable configuration.
-
-### Authentication and causality
-
-`GET /api/v1/triggers/public/{public_id}` is the only anonymous Trigger route. It
-is side-effect-free and sends no `Set-Cookie`; an SDK with a configured bearer or
-cookie jar deliberately suppresses both. Crawlers, unfurlers, browser prefetch,
-and repeated GETs can therefore inspect it without creating a Launch, forking a
-repository, or starting a session. Successful REST and AG-UI previews both send
-`Cache-Control: public, max-age=60` and `Referrer-Policy: no-referrer`; neither
-projection may acquire different caching or referrer semantics.
-
-Every other route requires the normal CMA subject credential. CMA never accepts a
-GitHub token from the browser. Connection commands return a NyxID OAuth handoff
-URL or a public-safe connection projection; NyxID retains the provider token.
-The OAuth callback consumes its state and returns to the Launch review. It never
-starts work. Each sign-in attempt also has an independent high-entropy,
-host-only, `HttpOnly`, `SameSite=Lax` browser-binding cookie scoped to
-`/auth/callback` and expiring after ten minutes (`Secure` on HTTPS). State is
-consumed atomically only when both digests match, so a copied callback cannot
-consume the initiating browser's attempt and concurrent tabs do not displace
-one another. Terminal callback handling clears that attempt's cookie. A Trigger
-return reports `auth_error=expired`, `auth_error=cancelled`, or
-`auth_error=failed` on the same `/triggers/{public_id}` review route; these are
-display states and never authorize Start.
-
-Every state-changing route below marked `required` requires one exact
-`Idempotency-Key`. The visible-ASCII, subject/operation scope, replay, body-conflict,
-in-flight, retention, and fail-closed rules are the rules in
-[Idempotent retries](#idempotent-retries). A lost response is retried with the
-same key and byte-identical body. A changed review, confirmation, or semantic
-intent uses a new key.
-
-### Publisher routes
-
-| Method and path | Purpose | Idempotency-Key | Success |
+| Operation | Body / Key | Query | Response |
 |---|---|---|---|
-| `GET /api/v1/triggers/public/{public_id}` | Anonymous projection of one published or retired revision | absent | `200` `TriggerPreview` |
-| `GET /api/v1/triggers?limit=&cursor=` | List the caller's mutable drafts | absent | `200` `TriggerDraftPage` |
-| `POST /api/v1/triggers` | Create a draft after resolving one exact repository through one selected NyxID service | required | `201` `TriggerDraft` |
-| `GET /api/v1/triggers/{trigger_id}` | Read one owned draft | absent | `200` `TriggerDraft` |
-| `PUT /api/v1/triggers/{trigger_id}` | Fully replace a draft under `expected_version` | required | `200` `TriggerDraft` |
-| `POST /api/v1/triggers/{trigger_id}/publish` | Verify current publisher authority and publish one immutable revision | required | `201` `TriggerRevision` |
-| `GET /api/v1/trigger-revisions?limit=&cursor=` | List the caller's immutable revisions | absent | `200` `TriggerRevisionPage` |
-| `GET /api/v1/trigger-revisions/{revision_id}` | Read one owned immutable revision | absent | `200` `TriggerRevision` |
-| `POST /api/v1/trigger-revisions/{revision_id}/retire` | Stop new Launch creation without rewriting existing Launches | required | `200` `TriggerRevision` |
+| `GET /api/v1/admin/activity` | - | actor, action, limit, cursor | 200 ActivityPageView |
+| `GET /api/v1/admin/profiles` | - | kind, visibility, owner, cursor, limit | 200 ProfilePageView |
+| `POST /api/v1/admin/profiles/{kind}/{id}/retire` | - | - | 200 ProfileSummaryView |
+| `GET /api/v1/admin/runtime-inventory` | - | - | 200 RuntimeInventoryView |
+| `GET /api/v1/admin/sandboxes` | - | owner, status, runtime_version, cursor, limit | 200 SandboxPageView |
+| `GET /api/v1/admin/sandboxes/{id}` | - | - | 200 SandboxDetailView |
+| `GET /api/v1/admin/sandboxes/{id}/events` | - | after, limit | 200 array<object> |
+| `POST /api/v1/admin/sandboxes/{id}/retire` | - | - | 200 object |
+| `GET /api/v1/admin/settings` | - | - | 200 SettingsView |
+| `PUT /api/v1/admin/settings` | ReplaceRequest | - | 200 SettingsView |
+| `PATCH /api/v1/admin/settings` | PatchRequest | - | 200 SettingsView |
+| `POST /api/v1/admin/settings/reset` | ResetRequest | - | 200 SettingsView |
+| `POST /api/v1/admin/triggers/pause` | - | - | 200 SettingsView |
+| `POST /api/v1/admin/triggers/resume` | - | - | 200 SettingsView |
 
-Create and replace accept `selected_service_id` plus `content`. `content` is the
-closed publisher request shape: `schema_version`,
-`publisher_display_identity`, `repository`, `task`, `session`,
-`repository_access`, `setup`, `contribution`, `commercial_policy`,
-`override_policy`, and `public_projection`. `repository` carries the numeric
-`repository_id`, selected and contribution-base refs, and `source_mode`; CMA
-resolves canonical names, numeric/node identities, visibility, fork policy, and
-the observed source SHA itself. Unknown nested policy fields are refused.
+### Agent profiles
 
-`TriggerDraft` carries `id`, `selected_service_id`, `version`,
-`next_revision_number`, resolved `content`, `created_at`, and `updated_at`.
-`selected_service_id` is the exact NyxID UserService that most recently resolved
-and authorized the mutable draft. Publication must name that same service; CMA
-refuses a silent connection substitution. Draft pages use
-`{"items": [...], "next_cursor": string|null}`. A revision adds `public_id`,
-`digest`, `availability`, the verified publisher `authority`, `published_at`,
-and nullable `retired_at`. Its content is immutable. Direct links to a retired
-revision remain previewable, while new Launch creation is refused.
-
-`TriggerPreview` is the deliberately smaller public shape:
-`public_id`, `availability`, `publisher_display_identity`, repository numeric id,
-owner, name, visibility and `allow_forking`, `public_summary`, permission ceiling,
-required capabilities, default and ceiling resources, default and ceiling
-timeouts, billing mode, pricing-policy reference, and revision digest. It contains
-neither the rendered/private prompt nor configured credential material.
-
-`estimated_cost` is a closed public cost state for the immutable default
-resources and timeout. `exact_zero` carries an exact USD zero under the
-deployment-owned zero-cost policy. `contributor_estimate` carries a server-formatted
-USD amount and `quoted_at`, but is provisional: authenticated Launch review
-recalculates and pins the contributor's selected configuration. `quote_unavailable`
-carries no amount; clients must not render it as zero or invent a fallback price.
-
-### NyxID GitHub connection routes
-
-| Method and path | Purpose | Idempotency-Key | Success |
+| Operation | Body / Key | Query | Response |
 |---|---|---|---|
-| `GET /api/v1/trigger-connections` | List reusable GitHub services available to the caller | absent | `200` `{"connections": [...]}` |
-| `POST /api/v1/trigger-connections` | Begin a single explicit OAuth consent attempt from `intent_id` | required | `200` `ConnectionAuthorization` |
-| `DELETE /api/v1/trigger-connections/{service_id}` | Revoke one exact caller-owned service; the command body is `{}` | required | `200` resulting `TriggerConnection` |
-| `POST /api/v1/trigger-connections/{service_id}/reconnect` | Begin new consent for one exact existing service | required | `200` `ConnectionAuthorization` |
-| `GET /api/v1/trigger-connections/{service_id}/preflight` | Revalidate one exact service and its public account/scope state | absent | `200` `TriggerConnection` |
+| `GET /api/v1/agent-profiles` | - | cursor, limit | 200 AgentProfilePageView |
+| `POST /api/v1/agent-profiles` | CreateAgentProfileRequest; key | - | 201 AgentProfileView |
+| `GET /api/v1/agent-profiles/{id}` | - | - | 200 AgentProfileView |
+| `PUT /api/v1/agent-profiles/{id}` | UpdateAgentProfileRequest; key | - | 200 AgentProfileView |
+| `POST /api/v1/agent-profiles/{id}/retire` | -; key | - | 200 AgentProfileView |
+| `GET /api/v1/agent-profiles/{id}/revisions` | - | cursor, limit | 200 AgentProfileRevisionPageView |
+| `POST /api/v1/agent-profiles/{id}/revisions` | PublishProfileRequest; key | - | 201 AgentProfileRevisionView |
+| `GET /api/v1/agent-profiles/{id}/revisions/{revision}` | - | - | 200 AgentProfileRevisionView |
+| `PUT /api/v1/agent-profiles/{id}/visibility` | SetProfileVisibilityRequest; key | - | 200 AgentProfileView |
 
-`ConnectionAuthorization` contains only `service_id`, `authorization_url`, and
-`attempt_nonce`. `TriggerConnection` contains `service_id`, `state_version`,
-public state, nullable numeric/node account identity and login/avatar, granted
-scope names, and nullable consent observation time. It never contains an access
-token, refresh token, backing key, or provider request body.
+### Agents
 
-Preflight is an authenticated GET and has no idempotency key. It is advisory for
-review; Start and every later irreversible effect revalidate authority at their
-own fence. A UI must not infer current write authority merely from an old
-preflight response.
-
-Revocation is an authenticated, owner-scoped command. Unknown and foreign
-service identifiers are concealed as `404`; an exact same-key/body replay
-returns the recorded public projection. The command preserves Trigger drafts,
-Launches, sessions, workspaces, forks, branches, commits, and pull requests.
-Owner-scoped durable revocation intent and receipt evidence keeps response-loss
-replay and later different-key repeats convergent when the provider's active-only
-list no longer contains the service. A bare active-list miss, without that
-evidence, is never treated as proof of ownership or successful revocation.
-Affected Launches converge to resumable `auth_required`. A returned inactive or
-revoked projection does not claim provider denial was instantaneous: capability
-use remains `revocation_pending` until CMA observes the signed tombstone,
-confirmed agent-key revocation, or the bounded credential expiry.
-
-### Launch routes
-
-| Method and path | Purpose | Idempotency-Key | Success |
+| Operation | Body / Key | Query | Response |
 |---|---|---|---|
-| `POST /api/v1/triggers/public/{public_id}/launches` | Create or resume this subject's current Launch for the immutable revision | required | `201` `Launch` |
-| `POST /api/v1/triggers/public/{public_id}/launches/new` | Create a separate Launch after `acknowledge_additional_resources: true` | required | `201` `Launch` |
-| `GET /api/v1/launches?state=&trigger_public_id=&session_id=&limit=&cursor=` | List owned Launches with bounded cursor paging, optionally narrowed to one exact session | absent | `200` `LaunchPage` |
-| `GET /api/v1/launches/{launch_id}` | Read the complete owned Launch review and current state | absent | `200` `Launch` |
-| `PATCH /api/v1/launches/{launch_id}/overrides` | Replace allowed overrides under `expected_revision` | required | `200` `Launch` |
-| `PUT /api/v1/launches/{launch_id}/connection` | Select one exact reusable service under `expected_revision` | required | `200` `Launch` |
-| `POST /api/v1/launches/{launch_id}/start` | Confirm and enqueue the exact reviewed effective configuration | required | `202` `Launch` |
-| `POST /api/v1/launches/{launch_id}/recover-initial-prompt` | Explicitly authorize one replacement generation for the exact retained ambiguous prompt | required | `202` `Launch` |
-| `POST /api/v1/launches/{launch_id}/contributions/review` | Request a new sealed read-only workspace diff | required | `202` `Launch` |
-| `GET /api/v1/launches/{launch_id}/diff` | Read current diff, contribution, and pull-request status | absent | `200` `DiffReview` |
-| `POST /api/v1/launches/{launch_id}/contributions/publish` | Publish exactly one reviewed diff to the guarded Launch branch | required | `202` `Launch` |
-| `POST /api/v1/launches/{launch_id}/pull-request/review` | Seal an Open or Update proposal without writing GitHub | absent | `200` `PullRequestDraft` |
-| `POST /api/v1/launches/{launch_id}/pull-request/open` | Explicitly confirm exactly the sealed Open proposal | required | `202` `Launch` |
-| `POST /api/v1/launches/{launch_id}/pull-request/update` | Explicitly confirm exactly the sealed Update proposal | required | `202` `Launch` |
-| `POST /api/v1/launches/{launch_id}/pull-request/refresh` | Queue an immediate fenced read-only provider status observation under `expected_revision` | required | `202` `Launch` |
-| `POST /api/v1/launches/{launch_id}/complete` | Explicitly finish CMA orchestration after handing an open provider PR to its maintainers | required | `200` `Launch` |
-| `GET /api/v1/launches/{launch_id}/diff-artifacts/{artifact_id}/download` | Download one owned, retained, digest-verified immutable artifact | absent | `200 application/octet-stream` |
-| `POST /api/v1/launches/{launch_id}/cancel` | Cancel safely while retaining durable history | required | `200` `Launch` |
-| `GET /api/v1/launches/{launch_id}/events?after=&limit=` | Replay durable progress strictly after a sequence cursor | absent | `200` `LaunchProgress` |
-
-Re-clicking the same README link is not a request for duplicate infrastructure.
-The normal create-or-resume route returns the same contributor/revision Launch
-while it is nonterminal. A new `Idempotency-Key` may represent a later click and
-still resolves through that durable marker. Only `/launches/new`, with its explicit
-resource acknowledgement, requests another Launch.
-
-`LaunchPage` uses `{"items": [...], "next_cursor": string|null}`. `state`,
-`trigger_public_id`, and `session_id` are optional conjunctive filters. The
-session filter compares the exact session identifier retained on an owned
-Launch; it cannot discover another subject's Launch. All filters are bound into
-the opaque cursor. Malformed cursors, cross-collection cursors, and unknown query
-fields are refused rather than silently changing the result set.
-
-### Launch representation
-
-The `Launch` response is the review snapshot and durable state machine in one
-resource. Its fields are grouped here; `/openapi.json` carries the closed nested
-schemas.
-
-| Fields | Meaning |
-|---|---|
-| `id`, `trigger_public_id`, `revision_digest`, `source_sha`, `revision_content` | Immutable Trigger and source captured by this Launch |
-| `state`, `revision_number`, `blocked_reason`, `failure`, `resume_state` | Optimistic-concurrency revision and current lifecycle/failure/recovery projection |
-| `overrides`, `effective` | Contributor edits and the exact resolved configuration and confirmation digest |
-| `pricing`, `runtime_admission`, `review_quota`, `start_admission` | Server-owned price, locked kernel, pinned runtime/capabilities, review-time quota, and fresh Start evidence |
-| `connection`, `workflow_paths`, `workflow_risk_acknowledged` | Selected public-safe NyxID service and workflow warning decision |
-| `steps` | Stable ordered progress checklist |
-| `fork`, `branch`, `workspace`, `session`, `reach`, `delivery` | Reconciled resources and public-safe capability/prompt-delivery state |
-| `contribution_checkpoint_version`, `diff`, `contribution`, `pull_request` | Current contribution review and GitHub publication records |
-| `created_at`, `updated_at`, `draft_expires_at`, `started_at`, `terminal_at` | Durable lifecycle times, including the server-derived pre-Start review deadline |
-
-`state` is one of `draft`, `auth_required`, `preflight`, `fork_pending`,
-`fork_ready`, `branch_pending`, `workspace_pending`, `sandbox_pending`,
-`session_pending`, `prompt_pending`, `ready`, `contributing`, `pr_pending`,
-`pr_open`, `completed`, `failed_retryable`, `failed_terminal`, or `cancelled`.
-Clients must not derive authority from the state name; the command performs the
-same ownership, revision, policy, and authority checks again.
-
-`draft_expires_at` is minted by CMA 24 hours after Launch creation. The exact
-deadline is expired: a pre-Start mutation first settles the Launch durably as
-`failed_terminal` with `launch_draft_expired`, then returns a typed conflict
-without calling GitHub or admitting sandbox work. A README re-click that finds
-the still-current expired draft atomically creates one replacement; if expiry
-has already been settled, use the explicit New Launch action. The old record is
-retained in either case. This deadline no longer applies after Start, so a
-started `auth_required` Launch remains recoverable.
-
-`pricing` is exact integer evidence. It carries the billing policy, optional
-rate-card id and copied rate, currency, admitted size, hourly micro-USD amount,
-maximum estimated micro-USD amount, quote time, and expiry. Zero-cost Launches
-have no rate card or rate and both amounts are zero, even on a priced
-deployment. Contributor Launches copy the accepted rate terms into the session;
-retiring that card after Start does not reprice or invalidate the promise.
-
-`runtime_admission` discloses the closed `kernel` vocabulary
-(`codex-trigger-native-v1` for the public MVP), pins the dedicated provider lane
-and deployment runtime identity, and records its canonical capability inventory.
-The ordinary `codex` session kernel is not a Trigger fallback. The value comes
-from the server's authoritative Trigger admission configuration; clients must
-not infer it from `runtime_version` or capabilities. `review_quota` shows the
-observed owner live-session count and
-deployment reservation headroom. Start obtains `start_admission` by checking the
-quote, current rate card, locked kernel, runtime identity/capabilities, owner
-quota, and deployment capacity again. Kernel/runtime identity and required
-capabilities are also checked immediately before provisioning. Missing or
-changed evidence fails closed.
-
-The second exact kernel value, `codex`, identifies a retained pre-versioned
-Launch; it is not an alias or fallback for the current route. CMA returns that
-Launch from owned list/read, a normal README re-click, progress/events, and diff
-inspection. Its existing session remains reachable, retained immutable diff
-artifacts remain downloadable, `/launches/new` may create a separate current
-Launch, and `/cancel` may stop the historical Launch without deleting its
-records. Overrides, connection selection, Start, diff capture, branch
-publication, pull-request review/open/update/status refresh, completion, and
-initial-prompt recovery are unavailable. Those commands return HTTP `409` with
-code `trigger_runtime_route_unavailable` and field
-`runtime_admission.kernel`, without a provider call or Launch mutation. Clients
-should present `codex` Launches as explicitly read-only except for cancellation
-and New Launch creation. Every other kernel string is outside the closed wire
-vocabulary and fails decoding rather than being treated as historical.
-
-Each step carries `key`, stable `sequence`, `status`, nullable start/completion
-times, `attempt`, `safe_detail`, `remediation`, public-safe external resource ids,
-and `correlation_id`. Status is `pending`, `running`, `completed`, `blocked`,
-`retryable`, `failed`, or `cancelled`. The fixed checklist covers review,
-connection, preflight, fork, branch, workspace, sandbox, session, capability,
-prompt delivery, ready, checkpoint, diff, branch publication, and pull request.
-The resource-id map is filtered by one server-side closed allowlist for both a
-current Launch and replayed progress events. It may carry public repository,
-ref, SHA, session, sandbox, checkpoint, artifact digest, commit, and pull-request
-identities. Unknown keys, provider request IDs, object-store references,
-prompt-origin/hash/fence internals, credentials, and worker identifiers are
-removed rather than passed through.
-
-`failure` is nullable. When present it carries `class`, stable `code`, safe
-`detail`, actionable `remediation`, `correlation_id`, nullable `retry_at`, and
-`observed_at`. `recovery_required` is never represented as an ordinary retryable
-failure: CMA holds the relevant fence until explicit recovery can resolve an
-ambiguous external or prompt effect.
-
-`reach` exposes service id, revocation state, signed-policy generation/fence,
-runtime audience, expiry, observation/refresh/revocation times, public refusal,
-and revocation acknowledgements. `delivery` exposes only the seven-state
-at-most-once record: `queued`, `dispatch_fenced`, `write_confirmed`,
-`execution_observed`, `completed`, `failed`, or `recovery_required`, plus safe
-origin/hash/fence sequence and times. Neither projection exposes credentials,
-worker fencing tokens, provider request ids, backing key ids, or object-store
-references.
-
-### Overrides and confirmations
-
-`PATCH /overrides` accepts:
-
-```json
-{
-  "expected_revision": 7,
-  "overrides": {
-    "task_inputs": {"area": "documentation"},
-    "work_label": "Documentation fix",
-    "resource_size": {"cpu_millis": 1000, "memory_mib": 2048},
-    "timeout_seconds": 3600,
-    "optional_checks": []
-  }
-}
-```
-
-Only publisher-declared editable fields within publisher and deployment ceilings
-are accepted. `work_label` is display-only and never changes the immutable
-`cma/<launch-id>` Git ref. Each successful edit increments `revision_number` and
-produces a new `effective.digest`. Repository identity, credential route,
-permission ceiling, setup policy, kernel, and signed capability policy are not
-overrideable.
-Configured checks remain an empty compatibility field in the public MVP.
-Non-empty publisher declarations or Launch selections are rejected until CMA
-has a reviewed resource- and network-bounded sandbox runner.
-
-Saving an override clears all earlier admission evidence and obtains a new
-server quote, runtime snapshot, and quota observation. These server-owned
-pricing and runtime snapshots are part of `effective.digest`; even saving the
-same configuration to refresh stale evidence yields a new digest and requires a
-new explicit Start confirmation. Quota is live evidence and is not itself
-hashed into the digest.
-
-Admission failures use stable Problem Details codes:
-
-| Code | HTTP | Client action |
-|---|---:|---|
-| `trigger_admission_unavailable` | `503` | Retry later; no provider work was admitted. |
-| `trigger_pricing_unavailable` | `503` | Retry after deployment pricing is available. |
-| `trigger_price_changed` | `409` | Save the review again, inspect the new price, and reconfirm Start. |
-| `trigger_quote_expired` | `409` | Open a New Launch with current evidence. |
-| `trigger_quota_exhausted` | `409` | Release or wait for capacity, then save and review again. |
-| `trigger_capability_unsupported` | `422` | Use a Trigger/runtime combination supporting the named `capability`. |
-| `trigger_runtime_changed` | `409` | Save the review again, inspect the new runtime, and reconfirm Start. |
-| `trigger_draft_expired` | `409` | Follow `remediation` to the explicit New Launch flow. |
-
-Each response includes actionable `remediation`. Capability refusal also
-includes the canonical `capability`; draft expiry includes
-`field: "draft_expires_at"`. Clients must branch on `code`, not English detail.
-
-Publisher request-policy failures keep `code: "invalid_trigger_request"` and
-HTTP `422`. Their safe `field`, closed `validation_category`, and fixed
-`remediation` distinguish `repository_identity`, `repository_policy`,
-`repository_ref`, `scope_capability`, `commercial_policy`, and the fallback
-`trigger_policy`. The server never copies the rejected value, provider response,
-or internal validation detail into these fields. Create, replace, and publish
-document this `422` response explicitly in OpenAPI.
-
-Every irreversible or user-significant command carries both
-`expected_revision` and `snapshot_digest`. The digest target is deliberately not
-the same for every action:
-
-| Command | `snapshot_digest` must equal |
-|---|---|
-| Start | Current `launch.effective.digest` |
-| Request diff | Current `launch.effective.digest` |
-| Cancel | Current `launch.effective.digest` |
-| Recover initial prompt | Retained `launch.delivery.payload_hash` |
-| Publish branch | Reviewed `diff.artifact.digest` |
-| Open or Update pull request | Side-effect-free `PullRequestDraft.intent_digest` |
-
-A stale revision or digest returns a conflict/validation problem before the
-effect. The client reloads the Launch or review and asks for a new explicit
-decision; it never silently substitutes the new snapshot.
-
-Initial-prompt recovery additionally requires
-`acknowledge_duplicate_execution_risk: true`. It is admitted only for the owner
-of a `failed_retryable` Launch blocked on `recovery_required`, with a retained
-`recovery_required` delivery/effect and no worker lease. Acceptance queues one
-replacement generation but does not itself send it. Each accepted generation
-may add one owner turn and may execute the task twice relative to an ambiguous
-earlier generation. Replaying the same key/body cannot add another generation.
-See [CMA_Trigger_Recovery.md](./CMA_Trigger_Recovery.md) for the exact state and
-resource-count matrices.
-
-### Durable progress
-
-`LaunchProgress` has `launch_id`, ordered `events`, and `next_cursor`. An event
-has `sequence`, `launch_id`, `occurred_at`, `correlation_id`, an authoritative
-compact `progress` snapshot, and a tagged `kind`. `progress` contains the
-current state, blocked reason, failure, resume state, reach, and initial-prompt
-delivery. The `created` kind carries the complete stable step table; later
-`step_changed` kinds carry one sanitized replacement row. Those two pieces let
-a client reconstruct the current progress projection exactly from sequence 1
-without consulting browser state.
-The closed kinds are `created`, `draft_updated`, `connection_selected`, `started`,
-`state_changed`, `step_changed`, `blocked`, `failure`, `effect_reconciled`,
-`delivery_changed`, `reach_changed`, `confirmation_recorded`, `resumed`,
-`recovery_authorized`, `cleanup_planned`, `cleanup_completed`, and `cancelled`.
-The nested step, failure, blocked reason, and reach values use the same sanitized
-public projections as `Launch`.
-
-`after` defaults to `0` and means strictly after that accepted sequence. `limit`
-defaults to `100` and is clamped to `1..=500`. Persist `next_cursor`, reconnect
-from it, and refresh the Launch projection as events arrive. A transport
-disconnect loses no accepted progress. An immediately repeated event with an
-identical complete envelope is harmless and may be collapsed. A conflicting
-duplicate, any sequence gap, or a mixed-Launch stream must be rejected.
-`next_cursor` is the last unique accepted sequence, or `after` for an empty
-page. Events never contain credentials, raw provider payloads, internal
-idempotency hashes, worker fences, or object references.
-`pull_request_status_refresh_requested` records the accepted queued command;
-`pull_request_status_changed` carries the observed PR state, mergeability,
-checks, and nullable safe failure.
-
-REST `GET /api/v1/launches/{launch_id}/events` remains a bounded JSON page for
-SDK and request/response clients. AG-UI
-`GET /api/v1/agui/launches/{launch_id}/events` exposes the same public event
-projection as resumable SSE. It accepts `starting_after` (`after` is an alias),
-`limit`, and `follow`; `Last-Event-ID` takes precedence. Each frame carries the
-event sequence as its SSE `id` and the exact `LaunchEvent` JSON as `data`.
-`follow=false` drains one page and closes, while the default follows future
-events with transport keepalives. Both routes reject a cursor above the owned
-Launch's durable high-water mark as `400 cursor_beyond_end`, after applying
-normal owner concealment. Clients must resume from the returned `head` or an
-earlier accepted sequence rather than silently replaying from zero.
-
-### Diff and pull-request representations
-
-`DiffReview` contains `launch_id`, `revision_number`, `state`, `source_sha`,
-`workflow_paths`, and nullable `artifact`, `contribution`, and `pull_request`.
-The artifact seals baseline/checkpoint digests and expected/observed branch heads;
-bounded file entries with change kind, modes, hashes, byte counts, optional patch,
-and completeness; total changed bytes/files; commit identities; workflow paths;
-validation/check results; its digest and object size; creation/retention times; and
-the tenant-scoped download path.
-
-Every file entry always carries `additions` and `deletions`. They are exact
-non-negative line counts for text, computed independently of whether the bounded
-response retains `patch`; both are JSON `null` for binary content, where line
-counts are unavailable. Their availability is paired. Clients must never derive
-counts from the optional patch or render `null` as zero.
-
-Branch publication requires the artifact digest and creates a contribution record
-with the exact expected head, produced tree/commit/object ids, resulting head,
-attribution, confirmation digest/time, and publication state. CMA uses guarded
-compare-and-swap semantics and does not force an unexpected fork branch head.
-
-Pull-request review accepts `operation: "open"|"update"` and optional title/body.
-Its `PullRequestDraft` seals upstream and fork numeric/node identities, base and
-head refs/revisions, prior target identity for Update, guarded previous metadata,
-the exact title/body/body digest, stable Launch marker, and `intent_digest`.
-Review has no provider write and no idempotency key. Open and Update are separate
-confirmation routes; neither can silently become the other.
-
-The reconciled pull-request record adds provider numeric/node id and number,
-canonical URL, `creating|updating|open|closed_unmerged|merged|recovery_required`
-state, observed base/head/title/body, mergeability/checks, confirmation and
-provider times. Its nullable `status_failure` is the latest safe status-read
-failure, `provider_request_id` is safe provider correlation metadata, and
-`head_matches_launch` reports whether the observed provider head still equals
-the retained contribution head. A false match leaves the PR readable and
-disables Update. An ambiguous provider response is reconciled by marker and
-numeric identity before retry; unresolved ambiguity becomes
-`recovery_required`.
-
-Positive PR creation settles at top-level `pr_open`, not `completed`. While it
-remains there, the same Launch can capture another reviewed diff and explicitly
-Update its still-matching open PR. CMA also polls open PR status independently of
-the browser. The refresh route only makes the next fenced observation due and
-returns the revision that recorded that request; it does not call the provider
-on the HTTP request thread.
-
-Completion has two closed paths from `pr_open`. A positively observed merge
-atomically advances the Launch to `completed`. Alternatively, while the provider
-record is still `open`, the contributor may POST `/complete` with
-`expected_revision`, the current `effective.digest` as `snapshot_digest`, and an
-idempotency key. That exact-snapshot confirmation returns `200`, performs no
-provider request, starts revocation of remaining Launch reach, and retains the
-fork, branch, contribution commit, and open PR unchanged for maintainers. Once
-completed, CMA accepts no further contribution, Update, or status-refresh command
-for that Launch. `closed_unmerged` remains top-level `pr_open`, is not eligible
-for explicit open-PR handoff, and offers New Launch; CMA never reopens it.
-
-The server-owned fixture corpus under
-`api/crates/layer1-public/tests/fixtures/rest-sdk/` is serialized and parsed by
-server DTOs and copied byte-identically into both SDKs. The TypeScript SDK decodes
-the response fixtures through its public transport; the Rust SDK deserializes
-them into independent public types. `/openapi.json` enumerates every operation
-above and references concrete schemas for every owned nested representation.
-
----
-
-## 3. Environment Profiles
-
-An environment profile is the named, reusable description from which sessions
-are created: variables, software, runtime and model choices, resource size,
-skills, service reach, and the owner's standing instructions. A session request
-selects the profile by `id`; it does not repeat these fields.
-
-Profiles are private to their owner. Collection reads contain only the caller's
-profiles, and read, replace, delete, and preference operations deliberately
-answer `404 environment_profile_not_found` for both an unknown identifier and a
-profile owned by somebody else. There is no operator cross-owner read for a
-resource whose variable values may contain credentials.
-
-### Write shape: `ProfileRequest`
-
-`POST` creates a profile and `PUT /{id}` fully replaces its writable contents.
-This field-complete create example is the canonical request shape:
-
-```http
-POST /api/v1/environment-profiles
-Content-Type: application/json
-```
-
-<!-- profile-request-example -->
-```json
-{
-  "name": "field-complete profile",
-  "variables": [
-    { "key": "PROFILE_MODE", "value": "round-trip" }
-  ],
-  "packages": [
-    { "name": "platform-cli", "version": "2.4.1" },
-    { "name": "ripgrep", "version": "14.1.1" }
-  ],
-  "agent": {
-    "kernel": "profile-kernel",
-    "mode": "conversation",
-    "model": "model-for-round-trip",
-    "reasoning_effort": "x_high",
-    "permission": "unrestricted",
-    "credential": "own",
-    "size": { "cpu_millis": 1500, "memory_mib": 3072 },
-    "record_tool_bodies": true,
-    "skills": ["mandatory-skill", "chosen-skill"]
-  },
-  "nyxid": {
-    "services": ["mandatory-service", "calendar"]
-  },
-  "agent_notes": "Keep the caller's standing instructions byte for byte."
-}
-```
-
-Top-level fields:
-
-| Field | Required | Default and meaning |
-|---|---:|---|
-| `name` | yes | Owner-visible name. Whitespace is trimmed; an empty name is refused |
-| `variables` | no | `[]`. Each entry requires string `key` and `value`. Values are opaque, stored, and returned so an editor can round-trip them |
-| `packages` | no | `[]`, before mandatory packages are merged. Each entry requires `name`; `version` is optional and is omitted from a response when unpinned |
-| `agent` | no | `{}`. The nested defaults are listed below |
-| `nyxid` | no | `{ "services": [] }`, before mandatory services are merged |
-| `agent_notes` | no | `""`. Owner-authored standing instructions, separate from non-editable platform instructions |
-
-`agent` fields:
-
-| Field | Required | Default and meaning |
-|---|---:|---|
-| `kernel` | no | The deployment's configured kernel on create and full replacement. Replacement omission does not preserve the current explicit selection; echo the value from GET to retain it |
-| `mode` | no | `"terminal"`; the other value is `"conversation"` |
-| `model` | no | No pinned model. It is omitted from the response when absent |
-| `reasoning_effort` | no | `"high"`; accepted values are `minimal`, `low`, `medium`, `high`, and `x_high` |
-| `permission` | no | `"guarded"`; the other values are `autonomous` and `unrestricted` |
-| `credential` | no | `"delegated"`; `"own"` means the agent uses the owner's model-vendor account. This is a mode, never credential material |
-| `size` | no | The deployment's reservation. When present, both positive integer fields `cpu_millis` and `memory_mib` are required; absent size is omitted from the response |
-| `record_tool_bodies` | no | `false`. Whether tool arguments and results are written to the durable conversation log. The response always carries this boolean |
-| `skills` | no | `[]`, before mandatory skills are merged. Entries are skill identifiers |
-
-Each writable list accepts at most 100 caller-controlled entries. `packages`,
-`skills`, and `nyxid.services` may render more than 100 entries after the
-deployment adds its mandatory baseline. A replacement accepts either the six
-writable fields or the complete `ProfileView` returned by GET, so a client may
-literally GET, transform writable content, and PUT that object back. In the full
-view, `id` must match the path; `mandatory`, `created_at`, `updated_at`, and
-`preferred` are type-checked read-only echoes and never overwrite current
-server-owned state. Those five fields remain invalid on create. An exact raw-view
-or writable-projection echo remains a no-op after the mandatory baseline grows,
-shrinks, or renames entries. Any changed replacement is validated against the
-current baseline: one occurrence of each current mandatory identifier is
-deployment-owned, while duplicates and retired mandatory identities count toward
-the caller's limit.
-
-Every object in this request is closed: unknown fields are refused at the top
-level and inside `variables`, `packages`, `agent`, `agent.size`, `nyxid`, and a
-replacement view's `mandatory` object.
-Create and replace both return `422 invalid_request` rather than silently
-discarding a misspelling. For a short identifier-shaped unknown key, the
-problem document names it in `field` and gives its object location in `path`
-(for example, `"field": "reasoningEffort"` and
-`"path": "agent.reasoningEffort"`). The human-readable detail stays fixed and
-no submitted scalar value is reflected. Non-identifier and unbounded keys are
-also refused but omitted from the diagnostic fields. For example, this is
-invalid:
-
-<!-- profile-invalid-request-example -->
-```json
-{
-  "name": "misspelled profile",
-  "agent": { "reasoningEffort": "x_high" }
-}
-```
-
-### Read shape: `ProfileView`
-
-Create, read, replace, list, and preference responses use one profile shape.
-Every accepted write field is rendered back. Server-owned fields are added:
-
-| Field | Meaning |
-|---|---|
-| `id` | Stable profile identifier |
-| `name`, `variables`, `packages`, `agent`, `nyxid`, `agent_notes` | The writable contents after mandatory entries have been applied |
-| `mandatory.packages` | Package names the deployment puts back on every write |
-| `mandatory.skills` | Skill identifiers the deployment puts back on every write |
-| `created_at` | Creation time, retained across replacement |
-| `updated_at` | Last content-changing replacement time; an exact raw-view or writable-projection echo retains it |
-| `preferred` | Client-facing preselection state. A client may start its session form on this profile, but must still send its id in `POST /api/v1/sessions` |
-
-`agent.kernel`, `mode`, `reasoning_effort`, `permission`, `credential`,
-`record_tool_bodies`, and `skills` are always present. `agent.model` and
-`agent.size` are omitted when no value was selected. `packages[].version` is
-likewise omitted for an unpinned package. A boolean such as
-`record_tool_bodies` is never made ambiguous by omission.
-
-A profile stored before the deployment added a mandatory entry or began
-settling kernels is projected through the current baseline and configured
-kernel when read. This does not rewrite the stored record or advance
-`updated_at`; it gives legacy and newly written profiles the same writable
-projection in the wire shape.
-
-**`mandatory` marks entries, not a special profile.** Omitting a mandatory
-package or skill from a replacement does not remove it; the service merges it
-back and reports its identifier under `mandatory` so a client can render the
-entry as fixed. An owned profile containing mandatory entries can still be
-deleted with `204`; deleting the profile does not revoke the deployment's
-baseline from other profiles or sessions.
-
-**`201 Created`** returns a complete `ProfileView`. On creation, `created_at`
-and `updated_at` are identical because no later content replacement has occurred:
-
-<!-- profile-view-example -->
-```json
-{
-  "id": "envp_example",
-  "name": "field-complete profile",
-  "variables": [
-    { "key": "PROFILE_MODE", "value": "round-trip" }
-  ],
-  "packages": [
-    { "name": "platform-cli", "version": "2.4.1" },
-    { "name": "ripgrep", "version": "14.1.1" }
-  ],
-  "agent": {
-    "kernel": "profile-kernel",
-    "mode": "conversation",
-    "model": "model-for-round-trip",
-    "reasoning_effort": "x_high",
-    "permission": "unrestricted",
-    "credential": "own",
-    "size": { "cpu_millis": 1500, "memory_mib": 3072 },
-    "record_tool_bodies": true,
-    "skills": ["mandatory-skill", "chosen-skill"]
-  },
-  "nyxid": {
-    "services": ["mandatory-service", "calendar"]
-  },
-  "agent_notes": "Keep the caller's standing instructions byte for byte.",
-  "mandatory": {
-    "packages": ["platform-cli"],
-    "skills": ["mandatory-skill"]
-  },
-  "created_at": "2026-08-25T09:00:00Z",
-  "updated_at": "2026-08-25T09:00:00Z",
-  "preferred": false
-}
-```
-
-### List
-
-```http
-GET /api/v1/environment-profiles?limit=50
-```
-
-**`200 OK`** is a newest-first array of complete `ProfileView` rows:
-
-<!-- profile-list-response-example -->
-```json
-[
-  {
-    "id": "envp_example",
-    "name": "field-complete profile",
-    "variables": [
-      { "key": "PROFILE_MODE", "value": "round-trip" }
-    ],
-    "packages": [
-      { "name": "platform-cli", "version": "2.4.1" },
-      { "name": "ripgrep", "version": "14.1.1" }
-    ],
-    "agent": {
-      "kernel": "profile-kernel",
-      "mode": "conversation",
-      "model": "model-for-round-trip",
-      "reasoning_effort": "x_high",
-      "permission": "unrestricted",
-      "credential": "own",
-      "size": { "cpu_millis": 1500, "memory_mib": 3072 },
-      "record_tool_bodies": true,
-      "skills": ["mandatory-skill", "chosen-skill"]
-    },
-    "nyxid": {
-      "services": ["mandatory-service", "calendar"]
-    },
-    "agent_notes": "Keep the caller's standing instructions byte for byte.",
-    "mandatory": {
-      "packages": ["platform-cli"],
-      "skills": ["mandatory-skill"]
-    },
-    "created_at": "2026-08-25T09:00:00Z",
-    "updated_at": "2026-08-25T09:00:00Z",
-    "preferred": false
-  }
-]
-```
-
-`limit` defaults to `50` and is clamped to `1..=200`. `cursor` is the opaque
-value from `Link: <...>; rel="next"`; the final page has no next link. Profiles
-do not accept the session-only `status` filter. Unknown parameters, malformed
-cursors, or a cursor issued for another collection return `400 invalid_query`.
-
-### Read, replace, and delete
-
-```http
-GET /api/v1/environment-profiles/{id}
-```
-
-**`200 OK`** returns the complete `ProfileView` shown above. Unknown and foreign
-identifiers both return `404 environment_profile_not_found`.
-
-Replacement is a full-document PUT, not a patch:
-
-```http
-PUT /api/v1/environment-profiles/{id}
-Content-Type: application/json
-```
-
-<!-- profile-request-example -->
-```json
-{
-  "name": "replacement profile",
-  "agent": {
-    "kernel": "profile-kernel",
-    "record_tool_bodies": false
-  }
-}
-```
-
-**`200 OK`** returns the replaced `ProfileView`. Omitted writable fields reset
-to their documented defaults, after which mandatory entries are merged back.
-The profile keeps its `id`, `created_at`, and `preferred` value. A malformed or
-unknown field returns `400` or `422`; an unknown or foreign id returns `404`.
-An exact complete-`ProfileView` echo (or its writable projection) whose normalized
-contents already match performs no store write and retains `updated_at`, so the
-returned `ProfileView` stays byte-identical. Read-only fields in a transformed
-view do not overwrite current server state. That includes legacy profiles
-projected through a baseline or kernel that changed after they were stored.
-
-```http
-DELETE /api/v1/environment-profiles/{id}
-```
-
-**`204 No Content`** deletes an owned profile, including one that contains
-mandatory entries. Unknown and foreign ids return `404
-environment_profile_not_found`.
-
-### Skills catalogue
-
-```http
-GET /api/v1/environment-profiles/skills
-```
-
-**`200 OK`** returns selectable skills and the mandatory package/skill markers
-needed before the first profile exists:
-
-<!-- skill-catalog-response-example -->
-```json
-{
-  "skills": [
-    {
-      "id": "chosen-skill",
-      "name": "Repository review",
-      "description": "Review a repository without changing it",
-      "access": "owner"
-    }
-  ],
-  "mandatory": {
-    "packages": ["platform-cli"],
-    "skills": ["mandatory-skill"]
-  }
-}
-```
-
-`access` is optional display text supplied by the catalogue. A deployment with
-no skill catalogue returns the same shape with an empty `skills` array; profile
-writes remain available. If a configured skill catalogue cannot be read, this
-route returns a `503 skill_catalogue_unavailable` problem document; retrying
-the picker request is appropriate.
-
-### Services catalogue
-
-```http
-GET /api/v1/environment-profiles/services
-```
-
-**`200 OK`** returns services visible to this caller and the identifiers the
-deployment mandates:
-
-<!-- service-catalog-response-example -->
-```json
-{
-  "services": [
-    {
-      "id": "calendar",
-      "name": "Calendar",
-      "description": "Read and manage calendar events"
-    }
-  ],
-  "mandatory": ["mandatory-service"]
-}
-```
-
-`description` is optional. The catalogue is queried as the caller because its
-answer depends on their grants. With no service catalogue configured, the
-route returns `200` with an empty `services` array; profiles still store service
-selections and sessions still honour them. That absence is distinct from a
-configured catalogue outage: when the catalogue cannot be asked, this route
-returns a `503 service_catalogue_unavailable` problem document and the caller
-should retry.
-
-### Preferred profile
-
-Preference is client-facing preselection state. It is a collection-level PUT
-because selecting one profile also clears the previous winner; it is not a
-writable flag on an individual profile. A client may initialize its session
-form from the selected profile, but it must send that id explicitly as
-`environment_profile` when creating a session. The service never consults this
-state for an unqualified create, which always uses deployment defaults.
-
-```http
-PUT /api/v1/environment-profiles/preferred
-Content-Type: application/json
-```
-
-<!-- preferred-request-example -->
-```json
-{ "profile": "envp_example" }
-```
-
-`profile` must identify one profile the caller owns. The selected profile is
-validated before the previous preference is changed. Unknown and foreign ids
-both return `404 environment_profile_not_found`; a malformed or unknown body
-field returns `400` or `422`.
-
-**`200 OK`** is the complete post-write profile collection, newest first, with
-exactly the selected row carrying `preferred: true`:
-
-<!-- preferred-response-example -->
-```json
-[
-  {
-    "id": "envp_example",
-    "name": "field-complete profile",
-    "variables": [
-      { "key": "PROFILE_MODE", "value": "round-trip" }
-    ],
-    "packages": [
-      { "name": "platform-cli", "version": "2.4.1" },
-      { "name": "ripgrep", "version": "14.1.1" }
-    ],
-    "agent": {
-      "kernel": "profile-kernel",
-      "mode": "conversation",
-      "model": "model-for-round-trip",
-      "reasoning_effort": "x_high",
-      "permission": "unrestricted",
-      "credential": "own",
-      "size": { "cpu_millis": 1500, "memory_mib": 3072 },
-      "record_tool_bodies": true,
-      "skills": ["mandatory-skill", "chosen-skill"]
-    },
-    "nyxid": {
-      "services": ["mandatory-service", "calendar"]
-    },
-    "agent_notes": "Keep the caller's standing instructions byte for byte.",
-    "mandatory": {
-      "packages": ["platform-cli"],
-      "skills": ["mandatory-skill"]
-    },
-    "created_at": "2026-08-25T09:00:00Z",
-    "updated_at": "2026-08-25T09:00:00Z",
-    "preferred": true
-  }
-]
-```
-
-Clearing is expressed with an explicit `null` value:
-
-<!-- preferred-request-example -->
-```json
-{ "profile": null }
-```
-
-It returns the same complete collection with every row carrying
-`preferred: false`. The `/v1` response is intentionally complete for clients
-that replace their loaded collection with it; it is assembled through bounded
-owner-list pages even though the final JSON array has no profile-count limit.
-
----
-
-## 4. Sessions
-
-### Create
-
-```http
-POST /api/v1/sessions
-Content-Type: application/json
-
-{
-  "cols": 120,
-  "rows": 32,
-  "environment_profile": "envp_7dec1b0ca73c46b88121b259577bbe96",
-  "quoted_rate_card": "rate_9f2c4d71"
-}
-```
-
-| Field                 | Required | Notes                                                                                                                                         |
-| --------------------- | -------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
-| `surface`             | no       | Closed enum. `"chat"` creates a worktree-backed thread on the owner's deployment-managed shared host. Omit it for an ordinary agent session. Chat cannot be combined with `environment_profile` |
-| `cols`                | no       | Initial terminal width. Sent with `rows` or not at all                                                                                          |
-| `rows`                | no       | Initial terminal height                                                                                                                         |
-| `environment_profile` | no       | Id from [Environment Profiles](#3-environment-profiles). **Never carries secret values** — it selects a profile provisioned out of band. Omitting it is a choice too: the session starts the way this deployment says an unqualified one should |
-| `quoted_rate_card`    | no       | The `rate_card` from `GET /api/v1/pricing/quote`. If another card is now in force, creation is refused with `409 price_changed` before any session exists. Omit it for backward compatibility when no quote was taken |
-
-**These five are the whole body.** An earlier version of this section
-documented `llm_source` as required, along with `environment`, `workspace`,
-`concurrent_input` and `metadata`, and an `Idempotency-Key` header on every
-side-effecting `POST`. The body fields have never existed in the service and are
-now refused by name. Idempotency is now deliberately narrower and real: the
-header is honoured on session creation and session input as described in
-[Idempotent retries](#idempotent-retries), rather than claimed for operations
-that do not read it.
-
-The profile is the whole description of the session — which agent, which model,
-how freely it acts, whose access it spends, what it carries, and how much CPU
-and memory it reserves — so nothing else about the agent is sent here. The size
-is the profile's: omitting `agent.size` takes the deployment's reservation, and
-the answer is frozen for the life of the session, including across a rotation.
-
-`surface: "chat"` selects the deployment's chat settings instead of an
-environment profile. Those settings pin the host runtime, model, reasoning
-effort, delegated credential, setup, and workspace source for every thread on
-that owner's host. Sending both `surface: "chat"` and `environment_profile`
-returns `422 invalid_request`; neither setting silently wins.
-
-**A caller does not choose a kernel here.** Which one a session runs on comes
-from the [environment profile](#3-environment-profiles) it names, or from what
-the deployment configured when it names none. There is no session-create field
-for it, and that is deliberate: the reusable profile is the one place that
-states the complete agent configuration.
-
-**A field this endpoint does not know is refused, not ignored.** Sending
-`"kernel"` is the obvious thing to try, because `GET /api/v1/kernels`
-enumerates them — so it answers `422` with `invalid_request`. Rejection details
-are fixed by error class rather than copied from Serde because other request
-bodies can carry credentials. It used to be discarded, and the session came
-back `201` on whichever kernel the profile actually resolved to. To choose a
-kernel, create or replace an [environment profile](#3-environment-profiles)
-whose `agent.kernel` is the one you want, then name its `id` here.
-
-A body that cannot be read keeps the status that says why: `415` when the `Content-Type` is not `application/json`, `400` when the JSON is malformed, `422` when it parsed and could not be honoured. All three carry the same problem document as every other failure.
-
-The profile is **frozen at creation**, as is the kernel it resolves to. Changing either means a new session.
-
-**`201 Created`** — the shape below was read off a live deployment rather than
-composed here, because the previous example carried an `llm_source` field the
-service does not send and spelled `recovery_state` as an object it does not use.
-
-```json
-{
-  "id": "sesn_1c83fa5f89e84f2da092398e669a12f6",
-  "status": "provisioning",
-  "recovery_state": "normal",
-  "kernel": "codex",
-  "agent": {
-    "permission": "guarded",
-    "reasoning_effort": "high",
-    "credential": "delegated"
-  },
-  "cols": 120,
-  "rows": 32,
-  "last_seq": 0,
-  "created_at": "2026-08-19T11:38:12Z",
-  "conforms_to": [
-    "https://spec.chrono-ai.fun/cma/1.0/conf/core",
-    "https://spec.chrono-ai.fun/cma/1.0/conf/conversation"
-  ],
-  "reach": []
-}
-```
-
-`conforms_to` is what this session was granted, and is how a client learns what
-it may ask for without trying. `runtime_version`, `rotations` and `rotated_at`
-appear once a session has been moved, and are absent before that because a
-session that has never been rotated has nothing to explain.
-
-A chat thread additionally carries its durable worktree projection:
-
-```json
-{
-  "chat": {
-    "worktree_name": "chat-3",
-    "worktree_path": "/workspace/chat-3"
-  }
-}
-```
-
-`title` appears after automatic title generation commits one, and
-`paused_notice` appears while the shared host is paused. Both are omitted when
-absent. Host identity and provider runtime authority are private and never
-appear in this projection.
-
-A priced session also carries the price settled when it was created:
-
-```json
-{
-  "pricing": {
-    "rate_card": "rate_9f2c4d71",
-    "currency": "USD",
-    "micros_per_hour": "45000",
-    "display": "$0.045",
-    "quoted_at": "2026-08-23T05:00:00Z"
-  }
-}
-```
-
-This is part of the session record, not a fresh lookup. The card may have been
-retired since creation and the session still carries the rate it accepted.
-`pricing` is omitted for a session created before pricing was recorded or on a
-deployment with no configured price. Omission means **not priced**; it never
-means zero or free.
-
-### Live-session allowance
-
-```http
-GET /api/v1/sessions/allowance
-```
-
-```json
-{ "limit": 3, "live": 2, "exempt": false }
-```
-
-This is the authenticated caller's own allowance, including for an operator
-who may read other owners' sessions. `limit` is absent when this deployment has
-set no limit. `exempt` is true only for a caller explicitly allowed to exceed
-the limit; it is not inferred from an absent limit.
-
-`live` counts ordinary agent records whose desired state wants a runtime:
-`provisioning`, `ready`, `running`, and `rotating`. It is read from the session
-record, never from provider inventory. An `idle` (paused) session consumes no
-slot, nor does a terminated one. Reviving a paused session is checked as a new
-ask, which is what prevents pause and revive from walking around the limit.
-Chat threads are excluded because their shared host's `max_threads` is the
-independent bound; opening another chat window does not reserve another host.
-
-**This is advisory.** It exists so a client can offer only what will be
-permitted, rather than offering everything and letting people discover
-refusals by hitting them. The core checks again on the create or revive request
-that uses it, so a client that ignored this answer, or fabricated one, would
-gain nothing. Hiding a control is a courtesy; it is not access control.
-
-Lowering a limit is **not retroactive**. Existing work is never stopped, and a
-control-plane restart, reconciliation sweep, or runtime rotation brings every
-recorded live session back regardless of the new limit. An owner already over
-the limit cannot create or revive until enough sessions have been paused or
-ended to put them below it. Repeating revive on a session that already wants a
-runtime remains a no-op and does not consume a second slot.
-
-Enforcement serialises asks by one subject inside each control-plane replica.
-Across replicas it is best-effort: concurrent asks can overshoot the configured
-limit by a bounded amount. This is a policy limit, not a security boundary; a
-hard distributed limit requires a conditional write in the session store.
-
-### Read, list, stop, revive, delete
-
-```http
-GET    /api/v1/sessions/{id}
-GET    /api/v1/sessions?status=running&surface=chat&limit=50
-POST   /api/v1/sessions/{id}/stop
-POST   /api/v1/sessions/{id}/revive
-GET    /api/v1/sessions/{id}/transcript
-DELETE /api/v1/sessions/{id}
-```
-
-`GET /api/v1/sessions` returns `200 []` only when the session store was read
-successfully and the caller genuinely has no visible sessions. If the store
-cannot be read, it returns a `503 runtime_unavailable` problem document; an
-unavailable list is never represented as an empty one.
-
-The session list is newest first and remains a JSON array. It accepts exactly
-these query parameters:
-
-| Parameter | Meaning |
-|---|---|
-| `status` | Exact lifecycle value to retain, such as `running`; omit it for every status |
-| `surface` | `chat` retains shared-host chat threads; `agent` retains ordinary sessions; omit it for both |
-| `limit` | Page size, default `50`, clamped to `1..=200` (`0` becomes `1`) |
-| `cursor` | Opaque continuation copied from the previous response's next link |
-
-Rows are stably ordered by `created_at` descending and then session id
-descending. When another page exists the response carries
-`Link: </api/v1/sessions?...&cursor=...>; rel="next"`; the final page has no
-next link. Follow that link verbatim rather than decoding or constructing its
-cursor. Cursors are versioned and bound to the exact collection that issued
-them: owner, operator, and environment-profile cursors are not interchangeable.
-They also carry a canonical RFC 3339 store position. A misspelled or unknown
-parameter; malformed cursor encoding or payload; an unsupported cursor version;
-a noncanonical or nonsemantic cursor timestamp; an empty cursor identifier; or a
-cursor reused on another collection is refused with `400
-application/problem+json` and `code: "invalid_query"` rather than being silently
-ignored.
-
-`stop` releases the runtime and keeps the session: it goes `idle`, stays listed,
-stays readable, and nothing is being paid for. `revive` gives it a runtime
-again under the same id, with the same history and the same options — reviving
-never mints a new session. When the owner is at or over their live-session
-limit, revive returns the same typed refusal as create and the session stays
-paused.
-
-The session returned by `revive` uses the same projection as create, list, and
-read. Its creator, granted reach, and recorded installed skills do not disappear
-because the route changed. Directory or catalogue outages cost human-readable
-names, not identifiers or the response itself. A newly created provisioning
-session can omit `agent.skills` until installation has actually been recorded.
-
-`DELETE` is terminal and irreversible. It is the only one of the three that loses anything, and it is not how you pause.
-
-Chat lifecycle is platform-managed. An owner cannot `stop`, `revive`, or
-change the plane of one chat thread; each returns `409 invalid_state` with
-chat-specific detail. Terminal endpoints are refused by the thread's granted
-capabilities. `DELETE` is allowed: it terminates the thread and removes its
-worktree from a live host, or removes it from the paused host's restore set.
-Deleting the final thread retires the now-empty shared host. Operator
-`stop_any` and `terminate_any` remain available for abuse response and affect
-the addressed thread without treating the shared host as owner-controlled.
-
-`transcript` returns everything the session's terminal has shown, as the byte stream a terminal renders — `application/octet-stream`, not JSON, because escaping an escape-sequence stream into a string is a decision the server has no business making. It works whether or not a runtime exists, which is how a stopped session stays readable.
-
-### Environment profile list
-
-```http
-GET /api/v1/environment-profiles?limit=50&cursor=<opaque>
-```
-
-The owned-profile list uses the same stable newest-first array and pagination
-contract: `limit` defaults to `50` and is clamped to `1..=200`, `cursor` is
-opaque, and `Link: rel="next"` appears only when another page exists. Profiles
-do not accept the session-only `status` filter. Unknown parameters and malformed
-cursors return the same `400 invalid_query` problem document.
-
-### Preferred environment profile
-
-```http
-PUT /api/v1/environment-profiles/preferred
-Content-Type: application/json
-
-{ "profile": "envp_01K3" }
-```
-
-`profile` names one profile the caller owns. It is client-facing preselection
-state: a client starts its session form on that profile and sends the selected
-id explicitly in `POST /api/v1/sessions`. `null` clears the preselection. The
-service never substitutes a preferred id into an unqualified create request;
-omitting `environment_profile` always uses the deployment's defaults. The
-selected profile is validated before the existing preference is changed.
-
-The `200 OK` body is the complete post-write profile collection, newest first,
-with exactly the selected row carrying `preferred: true`. Clearing the choice
-returns the same complete collection with every row carrying `preferred: false`.
-This is the response released under `/v1`; existing clients replace their
-loaded collection with it, so narrowing it would make unchanged profiles
-disappear.
-
-The mutation itself remains bounded: it validates the selected profile, reads
-the previous winner, and asks the store to replace the preference without
-collecting the owner's profiles. After that succeeds, the compatibility
-response is assembled through the same owner-authorized list service as the
-GET route, walking newest-first store pages of at most 200 rows. The response
-is intentionally complete, but no individual persistence read is unbounded and
-there is no profile-count quota.
-
-### Changing which plane a session is driven on
-
-```http
-POST /api/v1/sessions/{id}/plane
-Content-Type: application/json
-
-{ "plane": "conversation" }
-```
-
-`terminal` or `conversation`. Naming the plane the session is already on changes nothing and is not an error.
-
-**It is a rotation.** The session's conversation is captured, its sandbox is released, a replacement is started under the other front-end, and the agent resumes from the capture. The session keeps its identifier, its history, its configuration and its place in its owner's list; `rotations` and `rotated_at` move exactly as they do for a runtime upgrade, and `rotated_at` is the moment the conversation was taken — anything the agent did after it did not travel.
-
-**`200 OK`** returns the session mid-handover, `status: "rotating"`. During that window the server refuses prompts, approvals, interrupts, terminal input, resize, signals, and terminal attachment with `409 session-rotating`; the intended operation may be attempted after the session becomes usable again on its own. A keyed session-input refusal is a completed idempotent outcome, so that later attempt needs a fresh `Idempotency-Key`; reusing the refused key replays its original `409`. A client that needs to time the retry can re-read this session until its status is no longer `rotating`, then act on the status it receives. Clients should disable input during that window for experience, but correctness does not depend on them doing so.
-
-The response still carries the session's creator, granted `reach`, and recorded
-installed skills, with catalogue names whenever available. A handover changes
-its plane; it does not turn a populated session into a partial representation.
-
-The granted set is re-derived and re-reported: a session moved to `conversation` stops conforming to `…/conf/terminal` and starts conforming to `…/conf/conversation`. A client that cached the old set will be refused by name, which is the point of refusing by name.
-
-**Only the owner.** An operator capability does not stand in here: ending somebody's session is something an operator has to be able to do, and deciding what they are looking at is not.
-
-Every refusal comes before anything is torn down, and a refused session keeps running exactly as it was:
-
-| Situation | Status | `code` |
-|---|---|---|
-| The kernel does not serve that plane | `422` | `capability_unsupported`, naming `conversation` or `terminal` |
-| The kernel cannot carry its conversation across | `422` | `capability_unsupported`, naming `snapshot` |
-| The session is already being moved, or has no runtime | `409` | `invalid_state` |
-| The session is somebody else's | `404` | `session_not_found` |
-
-### What a session may reach
-
-A read carries `reach`: the services this session's credential may call on its owner's behalf.
-
-```json
-"reach": [
-  { "id": "api-github", "name": "GitHub", "description": "Repositories and pull requests", "mandated": false },
-  { "id": "nyxid", "name": "NyxID", "mandated": true }
-]
-```
-
-This is the other half of a fact whose first half is `capabilities`. Capabilities are what a session can **do**; `reach` is what it can **touch**. A client showing one and not the other is describing half a session.
-
-The whole path — catalogue, profile, grant, credential, sandbox — is documented
-in [Services](./Services.md).
-
-**It is the session's answer, not its profile's.** A session's reach is decided when it is provisioned and recorded on the session. A profile can be edited afterwards — widened, narrowed, or deleted — and the session keeps the scope it was provisioned with, so reading the profile to learn a running session's reach gives the wrong answer precisely when somebody has changed one. It survives a rotation for the same reason: a replaced runtime is the same session.
-
-`mandated` marks what this deployment requires in every session, so a client can draw those entries as fixed rather than guessing which cannot be removed.
-
-`name` and `description` come from the caller's own service catalogue and are **absent when it could not be asked**. A catalogue that is down costs the names and not the answer: the identifiers alone are still true, and reporting an error here would render a transient outage as a session that reaches nothing. See `docs/Services.md`.
-
-**Never a credential.** `reach` carries identifiers and display names. What a session may reach is a fact about its configuration; what it holds is not, and no token, no expiry and nothing that could be used to fingerprint one appears here.
-
-### Environment profiles and skill catalogue
-
-```http
-GET /api/v1/environment-profiles
-GET /api/v1/environment-profiles/skills
-```
-
-The skill route returns every registry entry the authenticated caller may put
-in a profile, plus the deployment's mandatory packages and skills. CMA follows
-the registry's opaque cursor with pages of 100, to an explicit ceiling of 50
-pages / 5,000 distinct skills. A terminal fiftieth page succeeds. If the
-registry advertises another page, omits pagination metadata or a required next
-cursor, repeats a cursor, or repeats a skill identity, the route returns a
-coded `503 skill_catalogue_unavailable` problem and no catalogue body. Its
-detail is fixed and never reflects an upstream URL, cursor, or transport error.
-The route never presents the pages collected so far as a complete picker.
-
-Session reads make one side-effect-free catalogue walk for all distinct recorded
-skill identifiers on the rendered response. That walk sends no fuzzy `q`, follows
-the same opaque cursor in pages of 100, and stops at the same ceiling of 50 pages
-/ 5,000 rows. It therefore enriches a valid profile containing 100 caller skills
-plus mandatory baseline skills in at most 50 upstream requests, rather than one
-request per grant. A repeated durable identifier keeps its first request order
-and consumes no separate work. The walk never calls Ornn's
-`/api/v1/skills/{idOrName}` detail route, whose authenticated GET records a
-package pull in Mongo and PostHog.
-
-Only an exact registry GUID or exact slug can supply `agent.skills[].name` and
-`description`; substring matches never do. Each result is keyed to the durable
-identifier it resolved, so a successful GUID cannot accidentally supply metadata
-for a colliding slug. A slug shared by multiple rows is ambiguous and remains
-raw without hiding metadata for other identifiers. A removed, inaccessible, or
-malformed entry likewise affects only identifiers it claims to represent.
-
-Enrichment is best-effort because the durable grants are already the authority.
-After a later page or transport failure, exact GUID matches collected on earlier
-pages remain usable; slug-only matches remain raw because an unseen page could
-still contain a colliding alias. If no safe metadata was collected, the catalogue
-failure is logged and the rendered response still carries every raw grant. In
-all cases enrichment changes only `name` and `description`: recorded order, `id`,
-and `version` remain byte-for-byte stable.
-
----
-
-## 5. Input, interrupt, steer
-
-### One route, two planes
-
-`input` means different things to the two kinds of session, and the session's granted capabilities decide which. A caller never chooses: read `capabilities` on the session object, or just send — the projection is the same operation in the core either way.
-
-**Conversation session** — the text opens a prompt turn.
-
-```http
-POST /api/v1/sessions/{id}/input
-{ "text": "Refactor the auth module to use the new token type." }
-```
-
-**Terminal session** — the text is typed at the terminal, with a newline unless you say otherwise.
-
-```http
-POST /api/v1/sessions/{id}/input
-{ "text": "ls -la", "newline": true }
-```
-
-`newline` defaults to `true`: a client sending a line means to submit it. Send `false` to compose a command in pieces.
-
-For anything a JSON string cannot carry — control characters, escape sequences, and the keypresses that answer a kernel's own on-screen approval prompt — send raw bytes instead:
-
-```http
-POST /api/v1/sessions/{id}/input
-{ "bytes_b64": "GwtC" }
-```
-
-`bytes_b64` is refused on a conversation session: a conversation takes words, and decoding bytes into a prompt would send something nobody typed. Sending both fields on a terminal session uses the bytes — a caller who supplied them meant something the text could not express.
-
-**On the terminal plane, input is how approvals are answered and how a turn is steered.** That kernel asks on its own screen, and the answer is a keypress. There is no separate operation for it, and §6 says so where a client would look.
-
-### Interrupt
-
-```http
-POST /api/v1/sessions/{id}/interrupt
-```
-
-Stops what the session is doing without ending it. On a conversation this cancels the turn in flight; on a terminal it injects the in-band `0x03` control byte (Ctrl-C), not an OS signal.
-
-Interrupting requires the `interrupt` capability on a conversation session. Not every kernel has one — a wire can offer a prompt and no way to withdraw it — and a session whose kernel cannot is refused by name rather than left waiting for something that will not happen.
-
-### Steer
-
-```http
-POST /api/v1/sessions/{id}/steer
-{ "text": "Stop — only touch files under src/auth/." }
-```
-
-Redirects a turn already in progress, which is not the same as starting a new one. Projected only where the kernel advertises `steer`; elsewhere it returns the typed capability error. Subsets are declared, not discovered.
-
-### While a terminal is attached
-
-A live PTY attachment holds the terminal exclusively, and that changes what these routes do:
-
-| | while attached | reason |
-|---|---|---|
-| `input` | `409` `/already-attached` | keystrokes injected into a live attachment land inside an escape sequence that client is drawing; afterwards neither side can tell which characters were whose |
-| `resize` | `409` `/already-attached` | the attached client declared the geometry it is drawing for, and resizing reflows a screen it is halfway through painting |
-| `interrupt` | **allowed** | it injects only the bounded, named `INT` control byte (`0x03`, Ctrl-C), rather than free-form input, and stopping a runaway command is exactly what an owner may need to do from elsewhere |
-
-The rule is about *this* route, not about the terminal. The client holding the attachment drives it through its own connection and is unaffected: refusing writes at the operation itself would refuse that client its own keystrokes.
-
-With no attachment live, all three operate the terminal directly.
-
----
-
-## 6. Events
-
-### Replay and follow
-
-```http
-GET /api/v1/sessions/{id}/events?starting_after=1042
-Accept: text/event-stream
-```
-
-This single SSE route first replays every durable event after the optional
-per-session cursor, oldest first, and then follows the same log for new events.
-It does not have a separate JSON history page, a `limit` parameter, a `Link`
-header, or an `/events/stream` variant.
-
-`starting_after` is the canonical query name. REST also accepts `after` as a
-compatibility alias. A valid numeric `Last-Event-ID` header takes precedence
-over either query spelling, matching automatic `EventSource` reconnects.
-Unknown, malformed, repeated, or combined canonical-and-alias query fields
-return a `400` problem document instead of silently replaying from the start.
-
-Each frame carries the sequence in `id` and uses SSE's default message event.
-The JSON `data` object is keyed `{seq, session_id, event}`, with the core event
-kind nested under `event`. Browser clients therefore use `onmessage`, not a
-named-event listener:
-
-```text
-id: 1043
-data: {"seq":1043,"session_id":"sesn_01JD8Z3K7","event":{"type":"turn_started"}}
-
-id: 1044
-data: {"seq":1044,"session_id":"sesn_01JD8Z3K7","event":{"type":"approval_requested","request_id":"apr_7Q2","action":"command_execution"}}
-```
-
-**Reconnect correctly:** persist an event cursor only after committing that
-event's effect, then reopen this route with that cursor. Sending both the query
-cursor and `Last-Event-ID` is safe; the header wins, and clients should still
-deduplicate by `seq` across an uncertain disconnect.
-
-Only durable semantic events appear on this route. Ephemeral terminal and
-message deltas travel on their interface-specific live connections; they are
-never stored and cannot be replayed here.
-
-A handover first records a unit discriminator immediately before its `rotating`
-status, in the same durable write:
-
-```text
-id: 1045
-data: {"seq":1045,"session_id":"sesn_01JD8Z3K7","event":{"type":"runtime_handover_started"}}
-
-id: 1046
-data: {"seq":1046,"session_id":"sesn_01JD8Z3K7","event":{"type":"status_changed","status":"rotating"}}
-```
-
-`runtime_handover_started` means the outgoing runtime's cumulative token counter
-continues through this attempt. The unit event permanently selects marker-based
-usage accounting for this session, so later status changes are lifecycle state
-rather than token-counter boundaries. A rollback to the outgoing runtime writes
-no incarnation marker and keeps that counter in the same segment.
-
-The next marker depends on the store protocol. A compatibility store has no
-fencing generation, so it atomically names each newly provisioned runtime and
-appends this unit event in the same record commit:
-
-```text
-id: 1047
-data: {"seq":1047,"session_id":"sesn_01JD8Z3K7","event":{"type":"runtime_incarnation_started"}}
-```
-
-Every `runtime_incarnation_started` begins another compatibility runtime
-incarnation. A provider attempt that never gets a durable handle writes none;
-retrying the same atomic commit through its idempotency receipt cannot append a
-duplicate unit.
-
-A coordinated store instead commits a successful runtime-authority switch with
-its positive durable generation:
-
-```text
-id: 1047
-data: {"seq":1047,"session_id":"sesn_01JD8Z3K7","event":{"type":"runtime_started","generation":3}}
-```
-
-`runtime_started` is committed atomically with the coordinated authority switch,
-so a candidate that fails before taking authority writes none and retrying a
-completed switch does not write another. A strictly newer generation begins
-another runtime incarnation; duplicate or older generations are ignored by
-folds. Before these markers existed, `rotating` is the only retained candidate
-boundary in the durable log, so markerless history is segmented there as a
-legacy approximation. It does not prove that authority changed at that exact
-event; databases from unreleased coordination formats whose boundary can be
-later are refused during startup rather than reported as exactly accounted.
-Once any marker discriminator has appeared, `status_changed` is lifecycle state
-only: a modern handover can enter `rotating` and roll back to the same runtime.
-
-A runtime the service established as lost has the same envelope:
-
-```text
-id: 1048
-data: {"seq":1048,"session_id":"sesn_01JD8Z3K7","event":{"type":"runtime_lost","runtime_id":"runtime_01K35QJ0","cause":"out_of_memory"}}
-```
-
-`runtime_lost` carries `runtime_id`, the opaque identifier of the runtime that is gone, and `cause` where the service could establish one. The cause is `out_of_memory`, `ended`, `failed`, `displaced`, or `unrecognised`; when nothing supplied a reason, `cause` is omitted rather than invented.
-
-Processor and memory pressure are each recorded as two edge-triggered events.
-Raw resource readings are never written to the event log: each reading replaces
-the prior live value, while an episode is something that happened once and must
-survive a reconnect.
-
-```json
-{"type":"cpu_pressure_opened","used_millis":850,"limit_millis":1000,"occupancy_permille":850}
-{"type":"cpu_pressure_closed","peak_millis":970,"limit_millis":1000,"peak_permille":970,"duration_seconds":181}
-{"type":"memory_pressure_opened","used_bytes":912680550,"limit_bytes":1073741824,"occupancy_permille":850}
-{"type":"memory_pressure_closed","peak_bytes":1041529569,"limit_bytes":1073741824,"peak_permille":970,"duration_seconds":181}
-```
-
-An opening event appears only after that resource's occupancy has stayed at or
-above its configured entry threshold for the configured consecutive-reading
-dwell; a brief spike therefore produces no event. Its closing event appears
-after occupancy has stayed below the exit threshold and the settle floor has
-elapsed. It carries the episode's peak and a duration measured by a monotonic
-clock, not by subtracting the event timestamps. The shipped CPU and memory
-policies enter at 800 permille after five readings, exit below 700 permille
-after fifteen readings, and hold a close for 120 seconds. At the two-second
-cadence that bounds each resource to at most 46 edges in an adversarial hour,
-or 92 total if both resources oscillate adversarially and independently.
-
-For client folding, an open episode ends as soon as the session leaves an
-interactive status, even if no close was written (for example, if the control
-plane stopped during the episode). A second opening for the same resource with
-no close replaces the first; pressure is state, not a stack. A reading with no
-CPU rate, no memory figure, or no corresponding reported positive limit says
-nothing about that resource's pressure and neither opens nor closes an episode.
-The requested session size is never substituted for an absent observed limit.
-
----
-
-## 7. Approvals
-
-```http
-POST /api/v1/sessions/{id}/approvals/{request_id}
-{ "decision": "allow" }
-```
-
-`decision` is `allow`, `deny`, or `abort`. Refusing one action and abandoning the turn are different intentions: `deny` refuses this and the turn carries on without it, `abort` refuses it and stops the turn. A client that meant the second and sent the first watches the agent try something else instead of stopping.
-
-**Conversation sessions only.** On a terminal session this returns the typed capability error naming `conversation`: that kernel asks on its own screen and its answer is a keypress, so the operation to use is `POST /input` with the bytes the prompt is waiting for (§4). Inventing an approval route there would be a second way to say something the session cannot hear.
-
-While an approval is pending the session is `idle` with `stop_reason: requires_action`, and the pending request ids are listed on the session object. That state survives a client disconnect and a control plane restart — a request waiting when you reconnect is still answerable. Answering one nothing is waiting for is refused rather than forwarded.
-
----
-
-## 8. Terminal
-
-```http
-GET  /api/v1/sessions/{id}/screen          → current rendered screen
-POST /api/v1/sessions/{id}/resize          { "cols": 120, "rows": 40 }
-POST /api/v1/sessions/{id}/terminal-ticket { "takeover": false }
-```
-
-REST exposes these for clients that need terminal state without holding a stream. The live byte stream itself is the [PTY interface](./API_PTY.md).
-
-`resize` with a zero dimension is rejected with `422`.
-
-### Attach ticket
-
-```json
-{ "ticket": "…", "expires_at": "2026-08-17T14:37:14Z" }
-```
-
-The browser WebSocket API cannot set a header on an upgrade, so a bearer-authenticated frontend exchanges its credential here — over a route that *can* carry one — for a single-use, ~30-second, session- and subject-bound ticket, and presents that as `?ticket=…` on the upgrade. Same-origin cookie clients need none of this and attach unchanged.
-
-The ticket's bearer value is returned only to the caller. Durable custody records its one-way digest, session and subject binding, captured authorization and attachment claim, and expiry so another replica can consume it exactly once. A custody outage returns the typed, retryable `503 store_failed` problem on issue or redemption; it is not collapsed into an invalid-ticket `401`.
-
-`{"takeover": true}` supersedes whoever currently holds the attachment; the superseded client is sent a close frame naming the reason. Without it, attaching over a live attachment is a typed conflict.
-
-A session with no terminal capability is refused here with `capability_unsupported`, not issued a ticket for something it cannot do. The full contract, including what makes a ticket in a URL acceptable and what is never recorded, is in [API_PTY.md §2.1](./API_PTY.md).
-
-**Both are owner-only, and no operator capability reaches them.** A screen carries whatever the agent has printed, and a session started from an environment bundle has that bundle's values in its process environment — so what is on a screen may be its owner's secrets. This is the same rule `transcript` follows, for the same content by another route.
-
----
-
-## 9. Pricing and usage
-
-### Quote a new session
-
-```http
-GET /api/v1/pricing/quote?environment_profile=envp_7dec1b0ca73c46b88121b259577bbe96
-```
-
-The route is authenticated. `environment_profile` is optional; omission asks
-for the deployment's unqualified session, exactly as omission on create does.
-The service resolves the profile's actual authored size and computes the quote
-with integer micro-USD arithmetic:
-
-```json
-{
-  "rate_card": "rate_9f2c4d71",
-  "currency": "USD",
-  "cpu_millis": 1000,
-  "memory_mib": 1024,
-  "micros_per_hour": "45000",
-  "display": "$0.045",
-  "per": "hour",
-  "quoted_at": "2026-08-23T05:00:00Z"
-}
-```
-
-`micros_per_hour` is a decimal string so its complete integer survives clients
-whose JSON numbers are binary floating point. `display` is the lossless string
-the service will reconcile against; clients render it verbatim and perform no
-rounding. The only currency is USD. Memory is priced in GiB, with 1,024 MiB per
-GiB.
-
-There is deliberately no raw CPU/memory query. A quote accepts an environment
-profile because it must price the size the service will actually provision,
-not a hypothetical size a client assembled separately. If a price is
-configured but the selected session has no authored size, the route returns
-`422 invalid_request`, naming the missing administrator-declared assumed
-session size. The service does not parse opaque deployment quantity strings or
-invent a default.
-
-Where no price list is configured, the successful response is exactly:
-
-```json
-{ "priced": false }
-```
-
-That is not a zero quote and is never rendered as `$0.00`. The deployment is
-working and has stated no price.
-
-This route quotes a **new** session. There is no route to re-quote a session
-that already exists, deliberately: its `pricing` field is the rate pinned at
-creation, and looking up the current card would give the wrong answer as soon
-as prices change.
-
-Send the returned `rate_card` as `quoted_rate_card` on `POST /api/v1/sessions`.
-The amount pinned on the new session is computed from that same sealed card and
-resolved size. If another card came into force between the two requests,
-creation returns `409 price_changed` and writes no session; read a fresh quote
-and ask the owner again.
-
-### Runtime usage
-
-```http
-GET /api/v1/sessions/{id}/usage
-```
-
-```json
-{ "input_tokens": 184203, "output_tokens": 9877, "context_used": 41204, "context_window": 200000 }
-```
-
-Requires the `usage` capability. Not every kernel reports token counts, and one that does not returns the typed capability error rather than a plausible zero.
-
-`context_window` is the latest ceiling a runtime stated for `context_used`.
-Absence on a later report does not erase an earlier stated ceiling. The key is
-absent when no report has stated one and is never zero; no interface estimates
-one.
-
-`input_tokens` and `output_tokens` are the sum, over runtime incarnations, of
-the highest cumulative totals each incarnation reported. A runtime's totals can
-dip in a corrected report, so the maximum within one incarnation prevents usage
-from falling; a replacement runtime restarts its counters, so its maximum is
-added after each compatibility `runtime_incarnation_started` marker or a
-strictly newer coordinated `runtime_started` marker. Markerless history is
-segmented on legacy `status_changed` events that enter `rotating`, as the best
-boundary retained by those logs rather than a claim of exact authority timing.
-The first `runtime_handover_started`, `runtime_incarnation_started`, or
-`runtime_started` event permanently enables exact marker accounting, after
-which status changes do not close a segment. Duplicate or older coordinated
-generations are ignored.
-
-`context_used` is the latest nonzero context reading across all incarnations,
-so it can fall when the agent summarises the conversation to make room. A zero
-in turn-only accounting means no context reading and leaves the last real value
-standing. Each observed fall within one runtime is recorded as a durable
-`context_compacted` event carrying the previous reading, the new reading and the
-stated ceiling where one is known.
-
-### Live sandbox resources
-
-```http
-GET /api/v1/sessions/{id}/resources
-```
-
-The latest reading is a point read beside `/usage`. It carries all fourteen
-figures the core holds, in REST's snake-case vocabulary:
-
-```json
-{
-  "reading": {
-    "cpu_millis_used": 340,
-    "cpu_millis_limit": 1000,
-    "memory_bytes_used": 892211200,
-    "memory_bytes_limit": 1073741824,
-    "memory_bytes_peak": 930086912,
-    "stall_permille": 12,
-    "ceiling_hits": 0,
-    "allocation_failures": 0,
-    "kills": 0,
-    "received_bytes": 18442,
-    "sent_bytes": 9120,
-    "received_bytes_per_second": 420,
-    "sent_bytes_per_second": 110,
-    "interval_ms": 2000
-  },
-  "observed_at": "2026-08-22T09:14:06Z",
-  "reason": null
-}
-```
-
-Every field is present. An unread level, an absent limit, and a rate without a
-predecessor are each `null`, never omitted and never zero. `observed_at` is the
-UTC RFC 3339 moment the reading reached the core.
-
-The route has five distinguishable answers:
-
-| Condition | Answer |
-|---|---|
-| The session was not granted `resources` | **422** `capability-unsupported`, with `"capability": "resources"`; never a 404 |
-| Granted, but no reading has arrived | **200**, `{"reading":null,"observed_at":null,"reason":"no_reading_yet"}` |
-| Granted, but this runtime cannot report | **200**, `{"reading":null,"observed_at":null,"reason":"runtime_does_not_report"}` |
-| A reading arrived without a ceiling | **200**, the complete reading with the limit field `null` and `reason:null` |
-| The caller cannot see the session | **404** `session-not-found`, indistinguishable from a missing id |
-
-A granted session declares
-`https://spec.chrono-ai.fun/cma/1.0/conf/resources` in its own
-`conforms_to` list. An older record whose resource grant was never written, or
-a session explicitly refused the grant, does not.
-
-### Reserved-capacity spend
-
-```http
-GET /api/v1/sessions/{id}/spend
-```
-
-This owner-only route reads what the session has accrued at the rate pinned
-when it was created. It is separate from `/usage`: this is the deployment's
-charge for reserved CPU and memory, while token usage and any model-vendor cost
-describe a different service and may be billed to a different party.
-
-A priced session returns:
-
-```json
-{
-  "priced": true,
-  "rate_card": "rate_9f2c4d71",
-  "currency": "USD",
-  "micros_per_hour": "45000",
-  "accrued_micros": "22500",
-  "display": "$0.0225",
-  "billable_seconds": 1800,
-  "accruing": true,
-  "unbounded_intervals": 0
-}
-```
-
-`micros_per_hour` and `accrued_micros` are decimal strings in micro-USD;
-`display` is rendered by the service from the same pinned integer and is what a
-client shows verbatim. The ledger has one-second resolution. It combines all
-billable seconds before dividing by 3,600, so the one final floor rounds toward
-the owner instead of losing a fraction independently at every transition.
-
-The charge is for the session's recorded reservation, not sampled CPU or
-memory utilisation. Requests and limits are the same at the provider boundary,
-but the provider does not echo the capacity it applied, so this service cannot
-claim that measured or provider-confirmed capacity is being billed. A rotation
-is one continuous session interval and overlapping runtimes cannot count a
-second twice.
-
-Accrual begins when the session first becomes `ready`. It remains open while
-the session is `ready`, `running`, `rotating`, or waiting for its owner to
-resolve an approval. Provisioning time and time after an owner stops or
-terminates the session are not charged. A sandbox that has died continues to
-accrue while the durable history still says the session holds capacity; the
-ledger stops only when the loss produces a durable closing transition. It does
-not infer a bill from transient provider observations.
-
-An interval with an absent, malformed, pre-creation, or future bound is skipped
-rather than guessed. `unbounded_intervals` counts those omissions. A non-zero
-value means the displayed figure covers less than the session's whole durable
-life and must not be presented as complete.
-
-A session created before pricing was recorded, or while no card was configured,
-returns exactly the non-monetary shape below. It is not a zero charge:
-
-```json
-{
-  "priced": false,
-  "accruing": false,
-  "unbounded_intervals": 0
-}
-```
-
-Price quotes, pinned session rates, and accrued amounts use micro-USD; `"412"`
-means $0.000412, never $4.12. Monetary values on the quote and spend routes are
-decimal strings, never binary floating-point numbers.
-
----
-
-## 10. Capability declaration
-
-```http
-GET /api/v1/conformance
-```
-
-```json
-{
-  "conformsTo": [
-  "https://spec.chrono-ai.fun/cma/1.0/conf/rest-core",
-  "https://spec.chrono-ai.fun/cma/1.0/conf/events-replay",
-  "https://spec.chrono-ai.fun/cma/1.0/conf/approvals",
-  "https://spec.chrono-ai.fun/cma/1.0/conf/steering",
-  "https://spec.chrono-ai.fun/cma/1.0/conf/interrupt",
-  "https://spec.chrono-ai.fun/cma/1.0/conf/terminal",
-  "https://spec.chrono-ai.fun/cma/1.0/conf/usage"
-  ],
-  "version": "v0.7.0",
-  "build_sha": "8d74d0e55c39d9170d35f92b7818a5eb923bd201"
-}
-```
-
-`version` is the release version baked into the API image, or `development` for
-a local build that supplied no release version. `build_sha` is the full source
-commit baked into the API image, or `development` for a local build that
-supplied no commit. Clients use these fields to establish which additive `/v1`
-contract a deployment is running; neither field is an authorization or
-capability grant.
-
-Representations carry `Link: <…/conf/rest-core>; rel="profile"`, and the service advertises `Link: </openapi.json>; rel="service-desc"`.
-
-### What this deployment can run
-
-```http
-GET /api/v1/kernels
-```
-
-```json
-{ "kernels": [
-  { "id": "codex", "modes": ["terminal", "conversation"] },
-  { "id": "claude-code", "modes": ["conversation"] }
-] }
-```
-
-Which runtimes this deployment can back a session with, and which planes each one can be asked to serve. A caller still does not choose a kernel on a session — an environment profile names it — so this is what a client offers while somebody is *authoring* a profile.
-
-Kernel discovery requires authentication because it reports deployment-specific facts. The static `GET /api/v1/conformance` document remains public.
-
-`modes` is derived from what the adapter advertises, through the same code that decides a session's granted set. A pairing listed here is one the deployment will accept, and a pairing absent from it is refused with `capability_unsupported` naming the plane. That is the point of publishing it: the refusal belongs where the choice is being made, not after a session has been asked for.
-
-A runtime that serves neither plane is listed with an empty `modes`. It is still a runtime this deployment knows about, and reporting it as absent would be a different claim.
-
-The machine-readable contract is anonymous `GET /openapi.json` (OpenAPI 3.1).
-It is generated from the annotated handlers through the same registrations
-that build the router, so adding a documented operation also adds its route.
-The document includes the RFC 9457 problem schema used by every refusal.
-
----
-
-## 11. Errors
-
-```http
-HTTP/1.1 409 Conflict
-Content-Type: application/problem+json
-X-Request-Id: 94ea38a2-c2cb-4a43-9fe2-d25a60b59ec5
-
-{
-  "type": "https://spec.chrono-ai.fun/cma/1.0/problems/session-terminated",
-  "title": "session terminated",
-  "status": 409,
-  "detail": "session terminated",
-  "code": "session_terminated"
-}
-```
-
-| Status | When |
-|---|---|
-| `400` | Malformed JSON (`code: "malformed_json"`), invalid query parameters (`code: "invalid_query"`), or an invalid operation key (`code: "invalid_idempotency_key"`) |
-| `401` | Missing or invalid NyxID credential (`code: "not_authenticated"`) |
-| `403` | Authenticated, but the session belongs to another subject |
-| `404` | No matching REST path (`code: "not_found"`), or no such session/resource visible to this subject |
-| `405` | The REST path exists but does not accept this method (`code: "method_not_allowed"`) |
-| `409` | Conflicts with current state - session rotating, session terminated, live-session limit reached, quoted rate card changed, an operation with this key is still running (`code: "idempotency_in_flight"`), or its execution lease ended without a replay receipt (`code: "idempotency_recovery_required"`) |
-| `413` | The request body exceeds 2 MiB / 2,097,152 bytes (`code: "request_too_large"`) |
-| `415` | A JSON route was sent another media type (`code: "unsupported_media_type"`) |
-| `422` | Well-formed but semantically invalid — zero terminal dimension, invalid session size, or an operation key reused with another body (`code: "idempotency_key_reused"`) |
-| `429` | The caller exhausted a route-class budget (`code: "rate_limited"`); observe the positive integer `Retry-After` |
-| `501` | The operation exists in the core but this interface does not project it |
-| `503` | Control plane recovering or failing over; retry |
-
-Every error response includes a non-empty `code` and uses
-`Content-Type: application/problem+json`. Clients tell failures apart by that
-code and by status, never by prose. `501` responses name the missing capability
-in `detail`, so a client learns what is unavailable rather than guessing.
-
-### Session rotation
-
-`session_rotating` is a retryable, self-resolving `409` response with problem
-type `session-rotating`. The server refuses every conversation and terminal
-input operation until the handover completes, preventing accepted input from
-reaching the outgoing runtime. It is distinct from `session_terminated`, which
-is final and cannot become usable through waiting.
-
-### The three service refusals
-
-Starting a session against a service can fail for three different reasons, and a client that cannot tell them apart retries the one that will never succeed and gives up on the one that would have worked.
-
-| `code` | Status | What it means | What to do |
+| `GET /api/v1/agents` | - | sandbox, workspace, status, cursor, limit | 200 AgentPageView |
+| `GET /api/v1/agents/{id}` | - | - | 200 AgentView |
+| `DELETE /api/v1/agents/{id}` | -; key | - | 202 empty |
+| `GET /api/v1/agents/{id}/events` | - | after, limit | 200 AgentEventPageView |
+| `GET /api/v1/agents/{id}/source` | - | - | 200 AgentSourceView |
+| `POST /api/v1/agents/{id}/stop` | StopAgentRequest; key | - | 202 empty |
+| `GET /api/v1/agents/{id}/terminal` | - | - | 404 ProblemDocument; 501 ProblemDocument |
+| `GET /api/v1/agents/{id}/transcript` | - | - | 200 AgentTranscriptView |
+| `POST /api/v1/workspaces/{id}/agents` | CreateAgentRequest; key | - | 201 AgentView |
+
+### Agent operations
+
+| Operation | Body / Key | Query | Response |
 |---|---|---|---|
-| `invalid_session_size` | `422` | A session size was sent with a zero CPU or memory figure. | Send both figures non-zero. **Retrying unchanged will not help.** |
-| `service_not_granted` | `422` | The owner has not granted this service. `detail` names it. | Grant it in NyxID. **Retrying will not help.** |
-| `service_catalogue_unavailable` | `503` | The catalogue could not be asked. The owner's services are fine. | **Retry.** Nothing is wrong with the session or the profile. |
-| — | — | This deployment has no catalogue at all. | Nothing. It is not an error: profiles still store selections and sessions still honour them, there is simply nothing to choose from. |
+| `POST /api/v1/agents/{id}/approvals/{request_id}` | ApprovalDecisionRequest; key | - | 202 empty |
+| `POST /api/v1/agents/{id}/input` | AgentTextRequest; key | - | 202 InputAcceptedView |
+| `POST /api/v1/agents/{id}/interrupt` | -; key | - | 202 empty |
+| `POST /api/v1/agents/{id}/steer` | AgentTextRequest; key | - | 202 empty |
 
-Told apart by `code` and by status, never by prose — a client matching on a sentence breaks when somebody rewords one.
+### Agent usage
 
-`service_catalogue_unavailable` is deliberately not `runtime_unavailable`: a caller told the runtime is unavailable goes and looks at the sandbox provider, which has nothing to do with it.
-
-**The refusal is at provision, not at profile write.** A grant can be revoked between saving a profile and starting a session from it, so the write-time answer is friendlier and the provision-time answer is the true one. A profile naming a service the catalogue does not currently grant is stored, and logged as a warning; the session started from it is what gets refused.
-
-**A catalogue that cannot be asked refuses nothing.** What a session may reach is recorded on the profile; the catalogue exists to help choose, not to authorise. Blocking session creation on NyxID being reachable would take the service down with it, and would do so for selections settled days ago.
-
-See `docs/Services.md` for the whole path.
-
-### Price-change refusal
-
-| `code` | Status | What it means | What to do |
+| Operation | Body / Key | Query | Response |
 |---|---|---|---|
-| `price_changed` | `409` | The accepted rate card is no longer the card used for new work. | Read `/api/v1/pricing/quote` again and show the new `display` before retrying. |
-
-```json
-{
-  "type": "https://spec.chrono-ai.fun/cma/1.0/problems/price-changed",
-  "title": "price changed",
-  "status": 409,
-  "detail": "the price changed: quoted against rate card rate_old, now rate_new",
-  "code": "price_changed",
-  "quoted_rate_card": "rate_old",
-  "rate_card": "rate_new"
-}
-```
-
-Both card ids are top-level fields so a client never parses the English
-`detail`. The refusal keys only on the rate-card id, never on the platform
-settings revision: editing a briefing or another unrelated setting is not a
-price change. It is a conflict rather than `429`; time does not clear it and no
-honest `Retry-After` exists. Creation is refused before an identifier is minted
-or a record is written.
-
-### Size-bound refusal
-
-`size_out_of_bounds` is a `422` response with problem type `size-out-of-bounds`. The request is well formed, but this deployment will not provision the size it states. Retrying the same request unchanged will not help.
-
-The problem document carries the refusal as top-level fields so a client never has to parse `detail`:
-
-| Field | Meaning |
-|---|---|
-| `dimension` | `cpu_millis` or `memory_mib`; the name includes the unit used by the three figures |
-| `requested` | The figure the profile asked for |
-| `minimum` | The inclusive lower bound currently configured for that dimension |
-| `maximum` | The inclusive upper bound currently configured for that dimension |
-
-The refusal happens when a session is created, before an identifier or record exists, not when its environment profile is saved. Bounds can change after a profile was authored, so an out-of-bounds profile remains writable and is logged as a warning; starting a session from it is the operation refused.
-
-These bounds apply only to a size the profile explicitly states. A profile with no `agent.size`, and a creation naming no profile, use this deployment's own sandbox reservation without being measured against the bounds. That reservation may lie outside the range an administrator has configured: the range governs what a caller may ask for, not the unnamed deployment default.
-
-### Deployment-capacity refusal
-
-`deployment_at_capacity` is a `503` response with problem type
-`deployment-at-capacity`. It is not a limit on this caller: the deployment's
-declared shared room is smaller than this request, and the caller may own none
-of the sessions occupying it. A smaller session may fit, or stopping a session
-may release enough room.
-
-```json
-{
-  "type": "https://spec.chrono-ai.fun/cma/1.0/problems/deployment-at-capacity",
-  "title": "deployment at capacity",
-  "status": 503,
-  "detail": "no room for a session of 2000m CPU and 4096MiB: 750m CPU and 1536MiB free",
-  "code": "deployment_at_capacity",
-  "requested_cpu_millis": 2000,
-  "requested_memory_mib": 4096,
-  "free_cpu_millis": 750,
-  "free_memory_mib": 1536
-}
-```
-
-The four top-level integer fields let a client state what was requested and
-what is free without parsing `detail`. Retrying may succeed after some session
-stops, but no `Retry-After` is offered: elapsed time does not release a
-reservation. Creation is refused before an identifier is minted or a record is
-written.
-
-The capacity is declared in platform settings, not observed from the shared
-sandbox provider. Passing this preflight check therefore cannot prove a later
-provider create will succeed. The adapter contract can classify a provider's
-exact capacity response and avoid retrying it, but the production probe on
-2026-08-23 found that the current hosted provider exposes only a generic
-pending state and a create timeout. Those signals are deliberately not guessed
-to mean capacity, so this provider's late failure remains subject to its
-ordinary timeout until it exposes a specific contract.
-
-### Live-session-limit refusal
-
-`session_limit_reached` is a `409` response with problem type
-`session-limit-reached`. The request is valid and can succeed after the owner
-pauses or ends enough sessions. It is not `429`: time does not clear this
-condition, so no honest `Retry-After` exists and automatic retry is not useful.
-
-```json
-{
-  "type": "https://spec.chrono-ai.fun/cma/1.0/problems/session-limit-reached",
-  "title": "session limit reached",
-  "status": 409,
-  "detail": "3 of 3 sessions are already running for this owner; stop one before starting another",
-  "code": "session_limit_reached",
-  "limit": 3,
-  "live": 3
-}
-```
-
-`limit` and `live` are top-level integer fields so a client can act without
-parsing the English `detail`. If an administrator lowered the limit beneath an
-owner's current count, `live` may be greater than `limit`; the detail then says
-that nothing new starts until fewer than `limit` sessions are running.
-
-Creation is refused before an identifier is minted or a record is written.
-Revive is refused before the paused record changes, so its history remains
-readable and its state remains `idle`. The limit applies only where an owner is
-asking for another runtime; reconciliation and rotation never reach it. See
-the advisory allowance route in §3 for counting, non-retroactivity, and the
-cross-replica enforcement boundary.
-
----
-
-## 12. Administration
-
-Everything an operator can see and do lives under `/api/v1/admin/`, one segment so the whole surface can be restricted in front of the service as well as inside it. Each endpoint is gated on its own capability, and no capability is implied by another.
-
-| Permission | Capability | What it opens |
-|---|---|---|
-| `cma:admin:sessions` | read every session and shared chat host | `GET /api/v1/admin/sessions`, `GET /api/v1/admin/chat/hosts` |
-| `cma:admin:users` | read the user directory | `GET /api/v1/admin/users` |
-| `cma:admin:activity` | read the activity log and redacted Trigger support | `GET /api/v1/admin/activity`, `GET /api/v1/admin/triggers/support` |
-| `cma:admin:sandboxes` | read the runtime inventory | `GET /api/v1/admin/runtimes` |
-| `cma:admin:control` | stop or terminate any session, retire a shared chat host, and authorize read-only Trigger effect reconciliation | `POST /api/v1/admin/sessions/{id}/stop`, `.../terminate`, `POST /api/v1/admin/chat/hosts/{id}/retire`, `POST /api/v1/admin/triggers/launches/{launch_id}/reconcile` |
-| `cma:admin:settings` | configure the platform | `GET /api/v1/admin/settings`, `PUT /api/v1/admin/settings`, `PATCH /api/v1/admin/settings`, `POST /api/v1/admin/settings/reset` |
-
-Reading and acting are separate grants on purpose: a role handed out so somebody can watch the service cannot also stop somebody's work.
-
-`cma:admin:events` opens the durable event log of a session the caller does not own (`GET /api/v1/sessions/{id}/events`). It is not implied by `cma:admin:sessions`: knowing which sessions exist and reading everything one of them has ever done are different questions, and the second is the one the log answers.
-
-Nothing under `/api/v1/admin/` is reachable on an everyday grant, including the two controls — a caller ending their own session does that at `/api/v1/sessions/{id}/terminate`. That is what lets the whole segment be restricted in front of the service without the gateway and the application disagreeing about who may call it.
-
-**Naming people is not a second gate.** `GET /api/v1/admin/sessions` needs only `cma:admin:sessions`. A caller who also holds `cma:admin:users` gets `owner_label` on each row; one who does not gets the rows with `owner` alone. A view is never refused because a *second* capability is missing, or an empty list would stop meaning "there is nothing".
-
-`GET /api/v1/admin/sessions` accepts the same exact `status`, clamped `limit`,
-and opaque `cursor` parameters as the caller-owned session list. It defaults to
-50 rows, never returns more than 200, remains a JSON array, and emits a next
-`Link` only when another page exists. Unknown parameters are refused with
-`400 invalid_query`.
-
-`GET /api/v1/admin/chat/hosts` uses the same bounded array-and-`Link`
-contract with `limit` and a route-bound opaque `cursor`. It has no status
-filter. A cursor issued for sessions or any other collection is invalid here,
-and a host cursor is invalid on those collections.
-
-**No read is unbounded.** The admin session and chat-host collections use cursor
-pages as described above. `GET /api/v1/admin/users` and
-`GET /api/v1/admin/activity` both take `limit`, both clamp it, and both default
-to 100.
-
-**Refusals.** A caller without an operator capability gets `403` with `problem.type` ending `/not-an-operator` on the collections — they name no identifier, so there is nothing to protect by pretending it is missing. Identifier-bearing session and chat-host controls keep the session surface's `404`, because a refusal must not confirm the target exists. That `404` is byte-for-byte the one a target that does not exist produces: same status, same `type`, same `title`, same `detail`, same `code`. A body that differed would answer the question the status withholds.
-
-### Chat-host inventory and retirement
-
-```http
-GET  /api/v1/admin/chat/hosts?limit=50&cursor=<opaque>
-POST /api/v1/admin/chat/hosts/{id}/retire
-```
-
-Inventory requires `cma:admin:sessions`, exposed to clients as
-`read_all_sessions`. It is newest first, defaults to 50 rows, clamps every
-request to 1 through 200 rows, and emits a standard `Link: <...>; rel="next"`
-only when another page exists. Its `200` body remains a JSON array:
-
-```json
-[
-  {
-    "id": "chho_0123456789abcdef0123456789abcdef",
-    "owner": "76fe9d91",
-    "status": "paused",
-    "thread_count": 3,
-    "runtime_version": "2026.09.1",
-    "paused_at": "2026-09-01T01:00:00Z",
-    "revived_at": "2026-09-01T00:30:00Z",
-    "checkpoint_captured_at": "2026-09-01T00:59:58Z",
-    "last_failure": {
-      "phase": "workspace_setup",
-      "command_index": 1,
-      "output_excerpt": "error: toolchain download failed\n",
-      "retryable": true,
-      "cleanup_pending": false,
-      "occurred_at": "2026-09-01T01:00:01Z"
-    },
-    "settings_revision": 17,
-    "created_at": "2026-08-31T23:00:00Z"
-  }
-]
-```
-
-`status` is one of `provisioning`, `active`, `pausing`, `paused`, `reviving`,
-or `retired`. Optional lifecycle times, `runtime_version`, and `last_failure`
-are omitted when absent. A failure phase is one of `runtime`,
-`workspace_source`, `workspace_setup`, `credential`, `cleanup`, or
-`runtime_lost`. Setup failures may carry the zero-based `command_index` and the
-combined output tail, already bounded to 32 KiB. `thread_count` counts retained,
-non-removed threads. The projection does not expose provider runtime authority,
-transition claims, configured setup command text, prompt content, checkpoint
-object references or digests, credentials, or the pinned settings body.
-
-Retirement requires `cma:admin:control`, exposed as `control_any_session`, and
-is valid for active and paused hosts. It returns the resulting host projection
-with `200 OK`. Repeating it for a retired host is a no-op with the same `200`;
-no `Idempotency-Key` is required. Another non-retired lifecycle state returns
-`409 invalid_state` rather than racing its transition.
-
-For an active host, the service fences new input, captures every retained
-conversation and the workspace, verifies the sealed checkpoint bytes, and only
-then performs identity-fenced runtime deletion. A failed capture or verification
-does not authorize deletion. For a paused host, no new capture is needed. In
-both cases, retained threads become `terminated` with `stop_reason: "revoked"`
-and this durable status detail:
-
-```text
-Administrative chat-host retirement revoked this thread.
-```
-
-Retirement does not delete checkpoint objects or thread event histories. Old
-thread reads remain available under their existing session ids. The owner's
-next New Chat creates a fresh, higher-generation host incarnation under the
-then-current settings and does not reuse the retired incarnation's thread set.
-
-Both inventory and retirement are activity-classified as `chat_host_list` and
-`chat_host_retire`; retirement targets the host id and attributes the operator
-subject. No prompt, message, checkpoint reference, or settings body is recorded.
-
-The TypeScript SDK exposes `listChatHostsPage`, `listChatHosts`, and
-`retireChatHost` (also as configured-client methods). The Rust SDK exposes
-`Client::list_chat_host_page`, `Client::list_chat_hosts`,
-`Client::list_chat_hosts_with_limits`, and `Client::retire_chat_host`. Both SDKs
-validate the closed lifecycle and bind continuations to this exact collection.
-
-### Platform settings
-
-```http
-GET   /api/v1/admin/settings
-PUT   /api/v1/admin/settings
-PATCH /api/v1/admin/settings
-POST  /api/v1/admin/settings/reset
-```
-
-All four routes require `cma:admin:settings`, which appears to clients as the
-`configure_platform` capability. The product wildcard `cma:*`
-grants it. A signed-in caller without it receives `403` with a problem type
-ending `/not-an-operator`; these routes name no protected identifier, so they
-never disguise that refusal as `404`.
-
-`GET` returns the complete current object, the revision a later write must
-name, and the complete object replaced by the most recent write when one
-exists:
-
-```json
-{
-  "revision": 12,
-  "settings": {
-    "chat": null,
-    "briefing": {
-      "before": [
-        "# Working in this session",
-        "This session is already authenticated. Do not run `nyxid login`."
-      ],
-      "reach_heading": "## What you can reach",
-      "reach_lead": "Use only the service slugs granted below.",
-      "reach_close": "Calls to every other service are refused.",
-      "reach_none": "No services were granted to this session.",
-      "after": ["Continue with the owner's standing instructions."]
-    },
-    "deployment_capacity": {
-      "cpu_millis": 20000,
-      "memory_mib": 40960,
-      "assumed_session_size": { "cpu_millis": 1000, "memory_mib": 1024 }
-    },
-    "cpu_pressure": {
-      "enter_permille": 800,
-      "exit_permille": 700,
-      "enter_samples": 5,
-      "exit_samples": 15,
-      "settle_seconds": 120
-    },
-    "memory_pressure": {
-      "enter_permille": 850,
-      "exit_permille": 650,
-      "enter_samples": 6,
-      "exit_samples": 18,
-      "settle_seconds": 180
-    },
-    "pricing": { "cards": [] },
-    "size_bounds": {
-      "min_cpu_millis": 250,
-      "max_cpu_millis": 4000,
-      "min_memory_mib": 256,
-      "max_memory_mib": 8192
-    },
-    "live_sessions": 4
-  },
-  "previous": {
-    "chat": null,
-    "briefing": {
-      "before": ["# Working in this session"],
-      "reach_heading": "## Granted services",
-      "reach_lead": "The following service slugs are available.",
-      "reach_close": "Other services remain unavailable.",
-      "reach_none": "No services are available to this session.",
-      "after": []
-    },
-    "deployment_capacity": {
-      "cpu_millis": null,
-      "memory_mib": null,
-      "assumed_session_size": null
-    },
-    "cpu_pressure": {
-      "enter_permille": 800,
-      "exit_permille": 700,
-      "enter_samples": 5,
-      "exit_samples": 15,
-      "settle_seconds": 120
-    },
-    "memory_pressure": {
-      "enter_permille": 800,
-      "exit_permille": 700,
-      "enter_samples": 5,
-      "exit_samples": 15,
-      "settle_seconds": 120
-    },
-    "pricing": { "cards": [] },
-    "size_bounds": {
-      "min_cpu_millis": 500,
-      "max_cpu_millis": 3000,
-      "min_memory_mib": 512,
-      "max_memory_mib": 4096
-    },
-    "live_sessions": 3
-  }
-}
-```
-
-An untouched deployment answers at revision `0` with the shipped settings and
-omits `previous`. `previous` has no revision of its own and is not an automatic
-rollback: it is the full object available for inspection or recovery. To
-restore its PATCH-editable values, send them in a PATCH together with the
-current revision. Pricing history cannot be rolled back; a later rate is
-represented by another sealed card.
-
-`PUT` is a conditional replacement of the complete settings document. It is
-the route used to configure pricing, because a price card is durable history
-and is never treated as an ordinary field-level edit. Start from the complete
-`settings` object returned by `GET`, retain every existing card byte-for-byte
-and in order, and send it under `settings` with the revision that was read:
-
-```http
-PUT /api/v1/admin/settings
-Content-Type: application/json
-
-{
-  "expected_revision": 12,
-  "settings": {
-    "chat": null,
-    "briefing": {
-      "before": ["# Working in this session"],
-      "reach_heading": "## What you can reach",
-      "reach_lead": "Use only the service slugs granted below.",
-      "reach_close": "Calls to every other service are refused.",
-      "reach_none": "No services were granted to this session.",
-      "after": []
-    },
-    "deployment_capacity": {
-      "cpu_millis": 20000,
-      "memory_mib": 40960,
-      "assumed_session_size": { "cpu_millis": 1000, "memory_mib": 1024 }
-    },
-    "cpu_pressure": {
-      "enter_permille": 800,
-      "exit_permille": 700,
-      "enter_samples": 5,
-      "exit_samples": 15,
-      "settle_seconds": 120
-    },
-    "memory_pressure": {
-      "enter_permille": 850,
-      "exit_permille": 650,
-      "enter_samples": 6,
-      "exit_samples": 18,
-      "settle_seconds": 180
-    },
-    "pricing": {
-      "cards": [
-        {
-          "id": "rate_9f2c4d71",
-          "effective_from": "2026-08-23T05:00:00Z",
-          "rate": {
-            "cpu_micros_per_cpu_hour": 40000,
-            "memory_micros_per_gib_hour": 5000
-          },
-          "retired_at": null
-        }
-      ]
-    },
-    "size_bounds": {
-      "min_cpu_millis": 250,
-      "max_cpu_millis": 4000,
-      "min_memory_mib": 256,
-      "max_memory_mib": 8192
-    },
-    "live_sessions": 4
-  }
-}
-```
-
-The only currency is USD. The two rate figures are integer micro-USD per
-reserved CPU-hour and per reserved GiB-hour. An empty `cards` array means the
-deployment has configured no price, not a zero rate. A legitimate price change
-retires the current card and appends exactly one new card; the outgoing
-`retired_at` and incoming `effective_from` are the same instant. Existing cards
-cannot be removed, reordered, reopened, or have their timestamps or rates
-edited. Such a document is refused as `422 price_list_not_append_only` and the
-stored list remains unchanged.
-
-`PATCH` is conditional and setting-granular. Every request includes
-`expected_revision` and at least one setting. A setting that is omitted stays
-unchanged; one that is present replaces that setting as a whole.
-
-```http
-PATCH /api/v1/admin/settings
-Content-Type: application/json
-
-{
-  "expected_revision": 12,
-  "briefing": {
-    "before": [
-      "# Working in this session",
-      "This session is already authenticated. Do not run `nyxid login`."
-    ],
-    "reach_heading": "## What you can reach",
-    "reach_lead": "Use only the service slugs granted below.",
-    "reach_close": "Calls to every other service are refused.",
-    "reach_none": "No services were granted to this session.",
-    "after": ["Continue with the owner's standing instructions."]
-  },
-  "deployment_capacity": {
-    "cpu_millis": 20000,
-    "memory_mib": 40960,
-    "assumed_session_size": { "cpu_millis": 1000, "memory_mib": 1024 }
-  },
-  "size_bounds": {
-    "min_cpu_millis": 250,
-    "max_cpu_millis": 4000,
-    "min_memory_mib": 256,
-    "max_memory_mib": 8192
-  },
-  "live_sessions": 5
-}
-```
-
-A successful write increments the revision and returns the same complete shape
-as `GET`. The object it replaced becomes `previous`:
-
-```json
-{
-  "revision": 13,
-  "settings": {
-    "chat": null,
-    "briefing": {
-      "before": [
-        "# Working in this session",
-        "This session is already authenticated. Do not run `nyxid login`."
-      ],
-      "reach_heading": "## What you can reach",
-      "reach_lead": "Use only the service slugs granted below.",
-      "reach_close": "Calls to every other service are refused.",
-      "reach_none": "No services were granted to this session.",
-      "after": ["Continue with the owner's standing instructions."]
-    },
-    "deployment_capacity": {
-      "cpu_millis": 20000,
-      "memory_mib": 40960,
-      "assumed_session_size": { "cpu_millis": 1000, "memory_mib": 1024 }
-    },
-    "cpu_pressure": {
-      "enter_permille": 800,
-      "exit_permille": 700,
-      "enter_samples": 5,
-      "exit_samples": 15,
-      "settle_seconds": 120
-    },
-    "memory_pressure": {
-      "enter_permille": 850,
-      "exit_permille": 650,
-      "enter_samples": 6,
-      "exit_samples": 18,
-      "settle_seconds": 180
-    },
-    "pricing": { "cards": [] },
-    "size_bounds": {
-      "min_cpu_millis": 250,
-      "max_cpu_millis": 4000,
-      "min_memory_mib": 256,
-      "max_memory_mib": 8192
-    },
-    "live_sessions": 5
-  },
-  "previous": {
-    "chat": null,
-    "briefing": {
-      "before": [
-        "# Working in this session",
-        "This session is already authenticated. Do not run `nyxid login`."
-      ],
-      "reach_heading": "## What you can reach",
-      "reach_lead": "Use only the service slugs granted below.",
-      "reach_close": "Calls to every other service are refused.",
-      "reach_none": "No services were granted to this session.",
-      "after": ["Continue with the owner's standing instructions."]
-    },
-    "deployment_capacity": {
-      "cpu_millis": 16000,
-      "memory_mib": 32768,
-      "assumed_session_size": { "cpu_millis": 1000, "memory_mib": 1024 }
-    },
-    "cpu_pressure": {
-      "enter_permille": 800,
-      "exit_permille": 700,
-      "enter_samples": 5,
-      "exit_samples": 15,
-      "settle_seconds": 120
-    },
-    "memory_pressure": {
-      "enter_permille": 850,
-      "exit_permille": 650,
-      "enter_samples": 6,
-      "exit_samples": 18,
-      "settle_seconds": 180
-    },
-    "pricing": { "cards": [] },
-    "size_bounds": {
-      "min_cpu_millis": 250,
-      "max_cpu_millis": 4000,
-      "min_memory_mib": 256,
-      "max_memory_mib": 8192
-    },
-    "live_sessions": 4
-  }
-}
-```
-
-The five settings accepted by `PATCH` have distinct replacement rules.
-`pricing` is accepted only inside the complete document sent to `PUT`:
-
-| Setting | PATCH rule |
-|---|---|
-| `chat` | The object replaces the complete Chat declaration. Omitted nested fields take the shipped defaults listed below. Explicit `null` removes the object and turns Chat off; omission leaves the current object unchanged. Unknown nested fields are refused. |
-| `briefing` | All six fields are required when it is named. `before` and `after` are ordered arrays of prose blocks and may be empty. The other four values are text and may deliberately be empty. `null` is refused; use the reset route for shipped prose. |
-| `deployment_capacity` | The object replaces the whole declaration. `cpu_millis` and `memory_mib` are nullable non-negative `u64` totals; `null` leaves that dimension undeclared, while zero is an explicit ceiling. `assumed_session_size` is either `null` or a non-zero CPU/memory pair. The setting itself cannot be `null`. |
-| `size_bounds` | All four non-zero `u32` values are required when it is named. CPU is in millicores and memory is in MiB. The range applies only when a session explicitly asks for a size; an unnamed size uses the deployment reservation even when that reservation lies outside these bounds. |
-| `live_sessions` | A non-zero `u32` sets the per-subject limit. Explicit `null` means no limit. Omission means leave the current choice alone. Lowering it never stops existing work; it governs later create and revive asks, not reconciliation or rotation. |
-
-The optional Chat declaration can be changed on its own through the same public
-route used by the dashboard and both SDKs:
-
-```http
-PATCH /api/v1/admin/settings
-Content-Type: application/json
-
-{
-  "expected_revision": 13,
-  "chat": {
-    "enabled": true,
-    "workspace": {
-      "repository_url": "https://github.com/the-omega-institute/trureturing",
-      "branch": "dev"
-    },
-    "agent": {
-      "model": null,
-      "reasoning_effort": "high",
-      "instructions": "",
-      "record_tool_bodies": true
-    },
-    "message_prefixes": ["$codex-formal-answer"],
-    "inactivity": { "pause_after_seconds": 900 },
-    "setup": {
-      "commands": [
-        "set -eu; test -f skills/codex-formal-answer/SKILL.md; mkdir -p \"$HOME/.agents/skills/codex-formal-answer\" \"$HOME/.codex/skills/codex-formal-answer\"; cp -R skills/codex-formal-answer/. \"$HOME/.agents/skills/codex-formal-answer/\"; cp -R skills/codex-formal-answer/. \"$HOME/.codex/skills/codex-formal-answer/\""
-      ]
-    },
-    "host": { "size": null, "max_threads": 10 }
-  }
-}
-```
-
-Those values are also the nested defaults, except that `enabled` ships
-`false`. An absent or `null` Chat object means the feature is off; old settings
-documents therefore remain off rather than gaining a synthesized object. An
-empty object supplied as `chat` resolves to the complete dark default. The
-model may be `null` to use the deployment default. Thinking effort is one of
-`minimal`, `low`, `medium`, `high`, or `x_high`. An explicit host size is a
-positive `u32` pair in millicores and MiB; `null` uses the deployment default.
-
-Chat validation is byte-based where stated: `repository_url` must be a
-credential-free HTTPS URL of at most 512 UTF-8 bytes, with no query or fragment
-and a basename safe to use as one workspace directory; `branch` is 1 through
-200 UTF-8 bytes with no whitespace. There may be at most 8 message prefixes,
-each non-empty after trimming, single-line, and at most 256 UTF-8 bytes. The
-pause interval is 60 through 86400 seconds. There may be at most 16 setup
-commands, each at most 4096 UTF-8 bytes. `max_threads` is 1 through 50. A
-semantic refusal is `422 invalid_request` and names `field` and `path` without
-reflecting the submitted scalar. Permission (`unrestricted`), mode
-(`conversation`), credential (`delegated`), and the deployment's default agent
-kernel are fixed behavior and are not stored fields.
-
-Setup commands run sequentially after the repository clone and again after a
-revived workspace is restored, before any conversation process opens. Each is
-executed by `/bin/bash -c` in the prepared repository as runtime uid 10001,
-which has no root authority. Commands therefore must use user-space installs,
-must be idempotent, and should prefer paths under the repository so installed
-toolchains ride the pause checkpoint. The Lean fixture command is exactly:
+| `GET /api/v1/agents/{id}/resources` | - | - | 200 AgentResourcesView |
+| `GET /api/v1/agents/{id}/usage` | - | - | 200 AgentUsageView |
+
+### Ag-ui
+
+| Operation | Body / Key | Query | Response |
+|---|---|---|---|
+| `GET /api/v1/agui/agents/{id}/sandbox` | - | - | 200 JSON |
+| `GET /api/v1/agui/capabilities` | - | - | 200 JSON |
+| `GET /api/v1/agui/events` | - | thread_id*, starting_after, after, follow | 200 SSE |
+| `POST /api/v1/agui/run` | RunRequest | - | 200 SSE |
+
+### Trigger launches
+
+| Operation | Body / Key | Query | Response |
+|---|---|---|---|
+| `GET /api/v1/agui/launches/{id}/events` | - | starting_after, after, limit, follow | 200 SSE |
+| `GET /api/v1/launches` | - | trigger, state, cursor, limit | 200 LaunchPageView |
+| `GET /api/v1/launches/{id}` | - | - | 200 LaunchView |
+| `POST /api/v1/launches/{id}/cancel` | -; key | - | 200 LaunchView |
+| `GET /api/v1/launches/{id}/events` | - | after, limit | 200 LaunchEventPageView |
+| `GET /api/v1/launches/{id}/requirements` | - | - | 200 RequirementsSnapshotView |
+| `POST /api/v1/launches/{id}/start` | StartLaunchRequest; key | - | 202 LaunchView |
+| `POST /api/v1/triggers/public/{public_id}/launches` | CreateLaunchRequest; key | - | 201 LaunchView; 202 LaunchView |
+| `POST /api/v1/triggers/public/{public_id}/entry-intent` | - | - | 200 TriggerEntryIntentView |
+
+### Discovery
+
+| Operation | Body / Key | Query | Response |
+|---|---|---|---|
+| `GET /api/v1/conformance` | - | - | 200 ConformanceDocument |
+| `GET /auth/signup-options` | - | - | 200 SignupOptions |
+
+### Responses
+
+| Operation | Body / Key | Query | Response |
+|---|---|---|---|
+| `POST /api/v1/conversations` | CreateConversationRequest | - | 200 Conversation |
+| `GET /api/v1/conversations/{id}` | - | - | 200 Conversation |
+| `GET /api/v1/conversations/{id}/items` | - | after, limit | 200 ConversationItemList |
+| `POST /api/v1/responses` | CreateResponseRequest | - | 200 SSE |
+| `GET /api/v1/responses/{response_id}` | - | - | 200 ResponseObject |
+| `DELETE /api/v1/responses/{response_id}` | - | - | 422 ProblemDocument |
+| `POST /api/v1/responses/{response_id}/cancel` | - | - | 422 ProblemDocument |
+
+### Profiles
+
+| Operation | Body / Key | Query | Response |
+|---|---|---|---|
+| `GET /api/v1/defaults` | - | - | 200 DefaultProfilesView |
+
+### Profile authoring
+
+| Operation | Body / Key | Query | Response |
+|---|---|---|---|
+| `GET /api/v1/profile-authoring/bounds` | - | - | 200 ProfileCapacityBoundsView |
+| `GET /api/v1/profile-authoring/services` | - | - | 200 array<AuthoringServiceView> |
+| `GET /api/v1/profile-authoring/skills` | - | q, limit, cursor | 200 AuthoringSkillPage |
+| `POST /api/v1/profile-authoring/repositories/resolve` | ResolveRepositoryRequest | - | 200 RepositoryResolutionView |
+
+### Profile marketplace
+
+| Operation | Body / Key | Query | Response |
+|---|---|---|---|
+| `GET /api/v1/marketplace/{kind}` | - | q, cursor, limit | 200 MarketplacePageView |
+| `GET /api/v1/marketplace/{kind}/{id}` | - | - | 200 MarketplaceEntryView |
+| `POST /api/v1/marketplace/{kind}/{id}/fork` | ForkProfileRequest; key | - | 201 ForkedProfileView |
+
+### Sandbox profiles
+
+| Operation | Body / Key | Query | Response |
+|---|---|---|---|
+| `GET /api/v1/sandbox-profiles` | - | cursor, limit | 200 SandboxProfilePageView |
+| `POST /api/v1/sandbox-profiles` | CreateSandboxProfileRequest; key | - | 201 SandboxProfileView |
+| `GET /api/v1/sandbox-profiles/{id}` | - | - | 200 SandboxProfileView |
+| `PUT /api/v1/sandbox-profiles/{id}` | UpdateSandboxProfileRequest; key | - | 200 SandboxProfileView |
+| `POST /api/v1/sandbox-profiles/{id}/retire` | -; key | - | 200 SandboxProfileView |
+| `GET /api/v1/sandbox-profiles/{id}/revisions` | - | cursor, limit | 200 SandboxProfileRevisionPageView |
+| `POST /api/v1/sandbox-profiles/{id}/revisions` | PublishProfileRequest; key | - | 201 SandboxProfileRevisionView |
+| `GET /api/v1/sandbox-profiles/{id}/revisions/{revision}` | - | - | 200 SandboxProfileRevisionView |
+| `PUT /api/v1/sandbox-profiles/{id}/visibility` | SetProfileVisibilityRequest; key | - | 200 SandboxProfileView |
+
+### Sandboxes
+
+| Operation | Body / Key | Query | Response |
+|---|---|---|---|
+| `GET /api/v1/sandboxes` | - | status, cursor, limit | 200 OwnerSandboxPageView |
+| `POST /api/v1/sandboxes` | CreateSandboxRequest; key | - | 201 SandboxView |
+| `GET /api/v1/sandboxes/{id}` | - | - | 200 OwnerSandboxDetailView |
+| `GET /api/v1/sandboxes/{id}/snapshots/{epoch}/download` | - | - | 200 application/octet-stream attachment; owner-authenticated latest completed snapshot |
+| `DELETE /api/v1/sandboxes/{id}` | -; key | - | 202 SandboxView |
+| `GET /api/v1/sandboxes/{id}/events` | - | after, limit | 200 array<SandboxEventView> |
+| `POST /api/v1/sandboxes/{id}/pause` | -; key | - | 202 SandboxView |
+| `POST /api/v1/sandboxes/{id}/revive` | -; key | - | 202 SandboxView |
+| `POST /api/v1/sandboxes/{id}/service-access` | GrantSandboxServiceAccessRequest; key | - | 200 SandboxView; new grants require fully Paused, existing grants replay without change |
+
+### Workspaces
+
+| Operation | Body / Key | Query | Response |
+|---|---|---|---|
+| `GET /api/v1/sandboxes/{id}/workspaces` | - | - | 200 WorkspaceListView |
+| `POST /api/v1/sandboxes/{id}/workspaces` | CreateWorkspaceRequest; key | - | 201 WorkspaceView |
+| `GET /api/v1/workspaces/{id}` | - | - | 200 WorkspaceDetailView |
+| `DELETE /api/v1/workspaces/{id}` | -; key | - | 202 WorkspaceView |
+
+### Service connections
+
+| Operation | Body / Key | Query | Response |
+|---|---|---|---|
+| `POST /api/v1/service-connections` | CreateServiceConnectionRequest; key | - | 201 CreatedServiceConnectionView |
+| `GET /api/v1/service-connections/{handoff_id}` | - | - | 200 ServiceConnectionStatusView |
+
+### Triggers
+
+| Operation | Body / Key | Query | Response |
+|---|---|---|---|
+| `GET /api/v1/triggers` | - | cursor, limit | 200 TriggerPageView |
+| `POST /api/v1/triggers` | CreateTriggerRequest; key | - | 201 TriggerView |
+| `GET /api/v1/triggers/public/{public_id}` | - | - | 200 TriggerPreviewView |
+| `GET /api/v1/triggers/public/{public_id}/badge.svg` | - | label, theme, placement | 200 SVG; 304 empty |
+| `GET /api/v1/triggers/public/{public_id}/open/{placement_id}` | - | - | 303 public Trigger page |
+| `GET /api/v1/triggers/{id}` | - | - | 200 TriggerView |
+| `PUT /api/v1/triggers/{id}` | UpdateTriggerRequest; key | - | 200 TriggerView |
+| `DELETE /api/v1/triggers/{id}` | -; key | - | 204 empty |
+| `POST /api/v1/triggers/{id}/publish` | PublishTriggerRequest; key | - | 201 PublishedTriggerRevisionView |
+| `POST /api/v1/triggers/{id}/retire` | -; key | - | 200 TriggerView |
+| `GET /api/v1/triggers/{id}/revisions` | - | - | 200 array<TriggerRevisionView> |
+| `GET /api/v1/triggers/{id}/stats` | - | - | 200 TriggerStatisticsView |
+
+### Trigger placements
+
+| Operation | Body / Key | Query | Response |
+|---|---|---|---|
+| `GET /api/v1/triggers/{id}/embed` | - | placement_id* | 200 EmbedDescriptor |
+| `GET /api/v1/triggers/{id}/placements` | - | include_retired | 200 array<PlacementView> |
+| `POST /api/v1/triggers/{id}/placements` | CreatePlacementRequest; key | - | 201 PlacementView |
+| `POST /api/v1/triggers/{id}/placements/{placement_id}/retire` | -; key | - | 200 PlacementView |
+
+### Workspace profiles
+
+| Operation | Body / Key | Query | Response |
+|---|---|---|---|
+| `GET /api/v1/workspace-profiles` | - | cursor, limit | 200 WorkspaceProfilePageView |
+| `POST /api/v1/workspace-profiles` | CreateWorkspaceProfileRequest; key | - | 201 WorkspaceProfileView |
+| `GET /api/v1/workspace-profiles/{id}` | - | - | 200 WorkspaceProfileView |
+| `PUT /api/v1/workspace-profiles/{id}` | UpdateWorkspaceProfileRequest; key | - | 200 WorkspaceProfileView |
+| `POST /api/v1/workspace-profiles/{id}/retire` | -; key | - | 200 WorkspaceProfileView |
+| `GET /api/v1/workspace-profiles/{id}/revisions` | - | cursor, limit | 200 WorkspaceProfileRevisionPageView |
+| `POST /api/v1/workspace-profiles/{id}/revisions` | PublishProfileRequest; key | - | 201 WorkspaceProfileRevisionView |
+| `GET /api/v1/workspace-profiles/{id}/revisions/{revision}` | - | - | 200 WorkspaceProfileRevisionView |
+| `PUT /api/v1/workspace-profiles/{id}/visibility` | SetProfileVisibilityRequest; key | - | 200 WorkspaceProfileView |
+
+### Worktrees
+
+| Operation | Body / Key | Query | Response |
+|---|---|---|---|
+| `GET /api/v1/workspaces/{id}/worktrees` | - | - | 200 WorktreeListView |
+| `GET /api/v1/worktrees/{id}` | - | - | 200 WorktreeView |
+
+<!-- openapi-operations:end -->
+
+## Contract Verification
+
+From the repository root, export the actual Rust OpenAPI document and pass it
+to the route-coverage checker (set `CARGO_TARGET_DIR` to the shared target when
+working in this milestone's coordinated worktree):
 
 ```sh
-[ -x .toolchain/bin/lake ] || (curl -sSf https://elan.lean-lang.org/elan-init.sh | ELAN_HOME=$PWD/.toolchain sh -s -- -y --default-toolchain "$(cat lean-toolchain)")
+cargo run --manifest-path api/Cargo.toml -p layer1-public --example openapi --locked --quiet | node .github/scripts/check-api-docs.mjs
+node --test .github/scripts/check-api-docs.test.mjs
 ```
 
-The supervisor gives each command 600 seconds, stops at the first nonzero exit,
-and retains only one combined stdout/stderr tail of at most 32 KiB. A setup call
-is serialized with startup and is refused once any conversation has opened in
-that runtime incarnation. A failing index and its bounded excerpt are retained
-on the host for operators; neither configured command text nor output is copied
-to activity.
-
-To remove only Chat while preserving every other setting, send:
-
-```json
-{ "expected_revision": 14, "chat": null }
-```
-
-`cpu_pressure` and `memory_pressure` are independently editable only inside the
-complete document sent to `PUT`; `PATCH` does not accept either policy. Each
-policy requires an entry threshold from 1 through 1000 permille, an exit
-threshold at least 50 permille below it, at least two entry samples, at least as
-many exit samples as entry samples, and a settle floor of at least 60 seconds.
-
-Deployment capacity is a ledger over durable records whose desired state wants
-a runtime. Pausing a session releases its reservation. Existing work is never
-stopped when the declaration is lowered, and reconciliation and rotation are
-never refused by it. If the new request names no size, or any counted record
-has no size, and `assumed_session_size` is `null`, the sum cannot be computed
-honestly: the entire capacity check is skipped and creation proceeds with an
-operator warning. An unsized session is never counted as zero.
-
-For example, this removes only the live-session limit and preserves every
-other setting:
-
-```json
-{ "expected_revision": 13, "live_sessions": null }
-```
-
-The granted-services list is deliberately absent from every settings payload.
-When grants exist it is generated from the session's actual grants and inserted
-between `reach_lead` and `reach_close` while the briefing is rendered. With no
-grants, `reach_none` is rendered instead. A request cannot remove, replace, or
-forge the generated list; it controls only the prose around it.
-
-Only Codex currently reads the briefing document. Claude Code and the DeepSeek
-Harness do not receive it. The setting is read when a runtime is provisioned;
-changing it does not rewrite a runtime that is already running. Clearing the
-prose is permitted, but doing so removes the guidance that the session is
-already authenticated and that `nyxid login` will fail.
-
-The empty body below is not a valid no-op and returns `422 invalid_request`:
-
-```json
-{ "expected_revision": 12 }
-```
-
-Unknown fields are also refused. A malformed settings body never echoes the
-administrator's prose in its problem response.
-
-Every write is optimistic. A PUT, PATCH, or reset whose `expected_revision` is no
-longer current changes nothing and returns:
-
-```http
-HTTP/1.1 409 Conflict
-Content-Type: application/problem+json
-
-{
-  "type": "https://spec.chrono-ai.fun/cma/1.0/problems/settings-conflict",
-  "title": "settings conflict",
-  "status": 409,
-  "detail": "the platform's settings changed since they were read: these settings were changed by somebody else since you read them",
-  "code": "settings_conflict"
-}
-```
-
-On `settings_conflict`, read again and let the operator choose whether to load
-the current values or retain their draft and explicitly repeat the write
-against the new revision. A client must not silently retry with last-write-wins
-semantics.
-
-On a deployment with no settings store, `GET` still returns the shipped
-defaults at revision `0`; `PUT`, `PATCH`, and reset return `503
-settings_unavailable` rather than claiming an unwritten change succeeded. A
-configured store that cannot be read or written uses the same 503 code. These
-write routes return the 403 `not-an-operator` refusal described above when the
-caller lacks `configure_platform`, and a stale revision always returns the 409
-`settings_conflict` response without changing the stored document.
-
-Reset restores the shipped briefing and removes the optional Chat object,
-returning Chat to its absent, off state. It preserves deployment capacity,
-pressure policies, pricing history, size bounds and the live-session limit,
-increments the revision, and records the complete pre-reset object as
-`previous`:
-
-```http
-POST /api/v1/admin/settings/reset
-Content-Type: application/json
-
-{ "expected_revision": 13 }
-```
-
-Its successful response has the same complete `revision`, `settings`, and
-`previous` shape as GET and PATCH. It is conditional in exactly the same way
-and returns `409 settings_conflict` rather than resetting a revision the caller
-did not inspect.
-
-### Registered users
-
-```http
-GET /api/v1/admin/users?limit=100
-```
-
-```json
-[{ "subject": "76fe9d91", "label": "Ada Lovelace", "display_name": "Ada Lovelace",
-   "email": "ada@example.com", "first_seen": "2026-08-01T09:14:22Z",
-   "last_seen": "2026-08-14T11:02:05Z" }]
-```
-
-Recorded on sign-in, since that is the only moment the identity provider's account details are in hand. `label` is what a client displays; `subject` is what it keys on. A person the provider released no details for carries no `label`, and a client falls back rather than presenting an opaque identifier as a name.
-
-Most recently seen first, `limit` clamped to 500. Entries do not expire: one is a person rather than an event, and dropping one would lose the first time they were seen and make them look new on their return.
-
-### Activity log
-
-```http
-GET /api/v1/admin/activity?actor=76fe9d91&limit=100
-```
-
-```json
-[{ "id": "actv_0f3c…", "at": "2026-08-14T11:02:05Z", "actor": "76fe9d91",
-   "action": "session_terminate",
-   "target": { "kind": "session", "id": "sesn_01JD8Z3K7" },
-   "outcome": "succeeded",
-   "detail": { "runtime": "codex" } }]
-```
-
-Every request the control plane serves is recorded: who, when, what, with which parameters, and how it came out. `outcome` is one of `succeeded`, `denied` (turned away), `rejected` (sent something unusable), `failed` (our fault). `actor` is absent when the request carried no established identity — a refused caller is recorded precisely because they were refused.
-
-Settings reads are recorded as `platform_settings_read`; successful `PUT` and
-`PATCH` requests, and their refusals, are `platform_settings_write`. The reset
-route retains its more specific `platform_settings_reset` action. A successful
-write may carry `detail.setting`, a comma-joined list in declaration order of
-the settings that actually changed, such as `"briefing,pricing"`. When pricing
-changed it may also carry `detail.rate_card`, the identifier of the newly
-in-force sealed card. A no-op write invents neither detail. These entries never
-copy a rate, a monetary amount, or any administrator-authored briefing prose.
-
-**`detail` never contains a secret.** What may be recorded is an allowlist in the core, and there is no key in it for an environment variable's value, a credential, a token, a cookie or a header. A bundle of variables is described by how many it carried, never by what they were. Newest first; `limit` is clamped by the service. Entries expire on a schedule the deployment sets (`CHRONO_ACTIVITY_RETENTION_DAYS`, ninety days by default).
-
-Reading requires `cma:admin:activity`. There is no per-caller view: an ordinary caller cannot read the log at all, not even their own entries. What happened to their own session is in that session's event stream, which is theirs.
-
-### Trigger support and effect reconciliation
-
-```http
-GET  /api/v1/admin/triggers/support?launch_id=<launch_id>
-GET  /api/v1/admin/triggers/support?correlation_id=<correlation_id>
-POST /api/v1/admin/triggers/launches/{launch_id}/reconcile
-```
-
-Support requires `cma:admin:activity` and exactly one lookup parameter. It
-returns the redacted Launch/effect ledger needed to diagnose one correlation;
-it never returns a prompt, repository path or content, credential, raw object
-reference, or provider response body.
-
-Reconciliation requires `cma:admin:control`, `Idempotency-Key`, and this closed
-request body:
-
-```json
-{
-  "expected_revision": 17,
-  "effect": "pull_request",
-  "intent_key": "cma-trigger:launch:pull-request:1",
-  "expected_fence": 9,
-  "evidence_correlation_id": "recovery-correlation-9"
-}
-```
-
-The command is accepted only when the Launch is blocked on
-`recovery_required`, has no live worker lease, and every supplied value exactly
-matches the retained effect and failure. It returns an empty `202`, restores
-the retained step, and schedules only a read-only reconciliation. The complete
-owner Launch is deliberately not returned through a cross-owner control route.
-It never repeats the external write or authorizes a replacement initial prompt. See
-[CMA_Trigger_Recovery.md](./CMA_Trigger_Recovery.md) for the operator procedure
-and exact resource-count contract.
-
-### Live runtimes
-
-```http
-GET /api/v1/admin/runtimes
-```
-
-```json
-{ "running": 3, "fully_observed": true,
-  "providers": [{ "kernel": "codex", "observable": true,
-    "runtimes": [{ "runtime": "sbx_7Q2", "session": "sesn_01JD8Z3K7",
-                   "owner": "76fe9d91", "status": "ready", "unaccounted": false }] }] }
-```
-
-The providers are asked what they are running and the answer is joined against the record, which is what supplies the session's owner and state. `unaccounted` marks a runtime nothing in the record is entitled to.
-
-**A provider that cannot be asked is not a provider running nothing.** That provider carries `"observable": false` with a `reason` and **no `runtimes` array at all**, and the top-level `running` is omitted, because a total that silently excludes a provider is the same lie as an empty list. Clients must render this as "unknown", never as an idle namespace.
-
-### Cross-owner session control
-
-```http
-POST /api/v1/admin/sessions/{id}/stop
-POST /api/v1/admin/sessions/{id}/terminate
-```
-
-The same core operations the owner's own routes project, at an address that says who is taking them. `stop` stays reversible whoever asked for it; the session keeps its history and can be revived by its owner. Deleting is **not** here: running the service needs the ability to stop work that is costing money or misbehaving, and stopping is reversible where destroying somebody else's history is not.
-
-Both are recorded in the activity log with the operator as `actor` and the session as `target`, and Layer 2 logs a warning whenever the caller is not the owner.
-
----
-
-## 13. What the caller may do
-
-A browser client asks who it is at `GET /auth/session`, and the answer says what that identity may do:
-
-```json
-{ "authenticated": true, "subject": "76fe9d91",
-  "display_name": "Ada Lovelace", "email": "ada@example.com",
-  "capabilities": ["read_all_sessions", "read_user_directory", "control_any_session",
-                   "configure_platform"] }
-```
-
-The names are the core's capabilities, not the identity provider's permissions: a client is never given the provider's vocabulary, because role names, their nesting and their wildcards belong to whoever issues them and change without this service moving. An unauthenticated caller gets `401` with `{"authenticated": false}` and no `capabilities` key at all — there is no identity to have an entitlement.
-
-**This is advisory.** It exists so a client can offer only what will be permitted, rather than offering everything and letting people discover refusals by hitting them. Every capability named here is checked again by the core on the request that uses it, so a client that ignored this list, or fabricated one, would gain nothing. Hiding a control is a courtesy; it is not access control.
-
-A caller granted nothing is told `"capabilities": []`. The key is always present for an authenticated caller, so a client that reads an absent key as "unknown" and an empty one as "nothing" never has to guess which it is looking at.
-
-Discovering entitlement by attempting the operation is deliberately **not** the intended route: every attempt is recorded in the activity log, so a client that probed on every page load would fill the record with refusals nobody asked for.
+The Layer 1 test suite independently checks that every exported method/path is
+present in this document, so route additions cannot silently pass the backend
+gates while leaving this inventory stale. The OpenAPI JSON remains a generated
+artifact, not a checked-in substitute for the server's current contract.

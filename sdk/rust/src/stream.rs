@@ -1,196 +1,155 @@
-//! Reconnecting server-sent event stream.
+//! Bounded, pull-based SSE transport using the standard eventsource parser.
 
-use std::fmt;
-use std::pin::Pin;
-use std::task::{Context, Poll};
-use std::time::Duration;
-
+use crate::{
+    Error, Result,
+    client::ClientInner,
+    http::{Request, outgoing, parse_retry_after, problem_error},
+};
 use eventsource_stream::{EventStreamError, Eventsource};
 use futures_util::{Stream, StreamExt};
+use reqwest::{StatusCode, header};
+use std::pin::Pin;
 
-use crate::{Client, Error, Event, Result, SessionId};
+const MAX_FRAME_BYTES: usize = 1024 * 1024;
+const MAX_ERROR_BYTES: usize = 8 * 1024 * 1024;
 
-const MAX_EVENT_BYTES: usize = 2 * 1024 * 1024;
+/// One parsed SSE event, retaining the standard inherited last-event identifier.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ServerEvent {
+    /// SSE event name; `message` when no explicit event name was sent.
+    pub event: String,
+    /// Standard inherited last-event ID, not necessarily an ID on this frame.
+    pub last_event_id: String,
+    /// JSON data carried by this event.
+    pub data: serde_json::Value,
+}
 
-/// A cancellation-safe stream of validated, typed session events.
-///
-/// Dropping this value drops the active response body, reconnect timer, and all
-/// pending work. It does not mutate shared client state, so another request can
-/// use the cloned client immediately.
+/// Pull-based event reader; dropping it cancels only observation, never durable work.
 pub struct EventStream {
-    inner: Pin<Box<dyn Stream<Item = Result<Event>> + Send + 'static>>,
+    inner: Pin<Box<dyn Stream<Item = Result<ServerEvent>> + Send>>,
+    ended: bool,
 }
 
 impl EventStream {
-    pub(crate) async fn open(
-        client: Client,
-        session_id: SessionId,
-        starting_after: Option<u64>,
-    ) -> Result<Self> {
-        let cursor = starting_after.unwrap_or(0);
-        let response = client.connect_events(&session_id, cursor).await?;
-        let stream = event_stream(client, session_id, cursor, response);
-        Ok(Self {
-            inner: Box::pin(stream),
+    /// Read the next event without reconnecting or retrying an admitted command.
+    pub async fn next(&mut self) -> Option<Result<ServerEvent>> {
+        if self.ended {
+            return None;
+        }
+        let next = self.inner.next().await;
+        if next.as_ref().is_none_or(Result::is_err) {
+            self.ended = true;
+        }
+        next
+    }
+}
+
+pub(crate) async fn open(client: &ClientInner, mut request: Request<'_>) -> Result<EventStream> {
+    request.headers.insert(
+        header::ACCEPT,
+        header::HeaderValue::from_static("text/event-stream"),
+    );
+    let mut response = outgoing(client, request)?
+        .send()
+        .await
+        .map_err(|_| Error::transport("event stream could not obtain an HTTP response"))?;
+    if response.status() != StatusCode::OK {
+        let status = response.status();
+        let request_id = response
+            .headers()
+            .get("x-request-id")
+            .and_then(|value| value.to_str().ok())
+            .map(str::to_owned);
+        let retry_after = response
+            .headers()
+            .get(header::RETRY_AFTER)
+            .and_then(|value| value.to_str().ok())
+            .and_then(parse_retry_after);
+        let mut body = Vec::new();
+        while let Some(chunk) = response
+            .chunk()
+            .await
+            .map_err(|_| Error::transport("event stream problem body was interrupted"))?
+        {
+            if chunk.len() > MAX_ERROR_BYTES.saturating_sub(body.len()) {
+                return Err(Error::protocol(
+                    "event stream problem body exceeded its bound",
+                ));
+            }
+            body.extend_from_slice(&chunk);
+        }
+        if status.is_success() {
+            return Err(Error::protocol("event stream expected HTTP 200"));
+        }
+        return Err(problem_error(status, request_id, retry_after, &body));
+    }
+    if !response
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| {
+            value
+                .split(';')
+                .next()
+                .is_some_and(|kind| kind.trim().eq_ignore_ascii_case("text/event-stream"))
         })
+    {
+        return Err(Error::protocol("event stream requires text/event-stream"));
     }
-
-    /// Wait for the next event or stream failure.
-    ///
-    /// This inherent method avoids requiring callers to import `StreamExt` for
-    /// the common case. The type also implements [`futures_util::Stream`].
-    pub async fn next(&mut self) -> Option<Result<Event>> {
-        StreamExt::next(self).await
-    }
+    // Bound incomplete frames before the parser can accumulate arbitrary remote data.
+    let mut guard = FrameBound::default();
+    let bytes = response.bytes_stream().map(move |chunk| {
+        let chunk = chunk.map_err(|_| Error::transport("event stream body was interrupted"))?;
+        guard.inspect(&chunk)?;
+        Ok::<_, Error>(chunk)
+    });
+    let parsed = bytes.eventsource().map(|event| {
+        let event = event.map_err(|error| match error {
+            EventStreamError::Transport(error) => error,
+            _ => Error::protocol("event stream contained invalid framing"),
+        })?;
+        let data = serde_json::from_str(&event.data)
+            .map_err(|_| Error::protocol("event stream data was not valid JSON"))?;
+        Ok(ServerEvent {
+            event: event.event,
+            last_event_id: event.id,
+            data,
+        })
+    });
+    Ok(EventStream {
+        inner: Box::pin(parsed),
+        ended: false,
+    })
 }
 
-impl fmt::Debug for EventStream {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("EventStream")
-            .field("connection", &"[streaming]")
-            .finish()
-    }
+#[derive(Default)]
+struct FrameBound {
+    bytes: usize,
+    line_content: bool,
+    previous_cr: bool,
 }
 
-impl Stream for EventStream {
-    type Item = Result<Event>;
-
-    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        self.inner.as_mut().poll_next(cx)
-    }
-}
-
-fn event_stream(
-    client: Client,
-    session_id: SessionId,
-    starting_cursor: u64,
-    first_response: reqwest::Response,
-) -> impl Stream<Item = Result<Event>> + Send + 'static {
-    async_stream::stream! {
-        let mut cursor = starting_cursor;
-        let mut response = Some(first_response);
-        let mut consecutive_empty_connections = 0_usize;
-        let mut server_retry = None::<Duration>;
-
-        loop {
-            let Some(current_response) = response.take() else {
-                yield Err(Error::transport("event stream lost its active response"));
-                return;
-            };
-            let mut source = current_response.bytes_stream().eventsource();
-            let mut received_event = false;
-
-            while let Some(frame) = source.next().await {
-                let frame = match frame {
-                    Ok(frame) => frame,
-                    Err(EventStreamError::Transport(_)) => break,
-                    Err(EventStreamError::Utf8(error)) => {
-                        yield Err(Error::protocol(format!(
-                            "event stream is not valid UTF-8: {error}"
-                        )));
-                        return;
-                    }
-                    Err(EventStreamError::Parser(error)) => {
-                        yield Err(Error::protocol(format!(
-                            "event stream is not valid SSE: {error}"
-                        )));
-                        return;
-                    }
-                };
-
-                if frame.event != "message" {
-                    yield Err(Error::protocol(format!(
-                        "event stream used named event '{}' instead of the default message event",
-                        frame.event
-                    )));
-                    return;
-                }
-                if frame.id.is_empty() {
-                    yield Err(Error::protocol("event stream frame omitted its sequence id"));
-                    return;
-                }
-                let frame_sequence = match frame.id.parse::<u64>() {
-                    Ok(sequence) if sequence > 0 => sequence,
-                    _ => {
-                        yield Err(Error::protocol(format!(
-                            "event stream frame id '{}' is not a positive sequence",
-                            frame.id
-                        )));
-                        return;
-                    }
-                };
-                if frame.data.len() > MAX_EVENT_BYTES {
-                    yield Err(Error::protocol(format!(
-                        "event frame exceeds the {MAX_EVENT_BYTES}-byte boundary"
-                    )));
-                    return;
-                }
-                let event = match serde_json::from_str::<Event>(&frame.data) {
-                    Ok(event) => event,
-                    Err(error) => {
-                        yield Err(Error::protocol(format!(
-                            "event frame does not match the CMA wire shape: {error}"
-                        )));
-                        return;
-                    }
-                };
-                if event.seq != frame_sequence {
-                    yield Err(Error::protocol(format!(
-                        "event frame id {frame_sequence} does not match payload sequence {}",
-                        event.seq
-                    )));
-                    return;
-                }
-                if event.session_id != session_id {
-                    yield Err(Error::protocol(format!(
-                        "event for {} arrived on stream for {session_id}",
-                        event.session_id
-                    )));
-                    return;
-                }
-                if event.seq < cursor {
-                    yield Err(Error::protocol(format!(
-                        "event sequence {} moved behind resume cursor {cursor}",
-                        event.seq
-                    )));
-                    return;
-                }
-                if event.seq == cursor {
-                    continue;
-                }
-
-                cursor = event.seq;
-                received_event = true;
-                consecutive_empty_connections = 0;
-                if let Some(retry) = frame.retry {
-                    server_retry = Some(retry);
-                }
-                yield Ok(event);
+impl FrameBound {
+    fn inspect(&mut self, chunk: &[u8]) -> Result<()> {
+        for &byte in chunk {
+            self.bytes += 1;
+            if self.bytes > MAX_FRAME_BYTES {
+                return Err(Error::protocol("event stream frame exceeded its bound"));
             }
-
-            if !received_event {
-                consecutive_empty_connections = consecutive_empty_connections.saturating_add(1);
-                if consecutive_empty_connections >= client.retry_policy_ref().max_attempts() {
-                    yield Err(Error::transport(
-                        "event stream closed repeatedly without delivering an event",
-                    ));
-                    return;
-                }
+            if byte == b'\n' && self.previous_cr {
+                self.previous_cr = false;
+                continue;
             }
-
-            let delay = server_retry.unwrap_or_else(|| {
-                client
-                    .retry_policy_ref()
-                    .delay(consecutive_empty_connections.max(1))
-            });
-            tokio::time::sleep(delay).await;
-            match client.connect_events(&session_id, cursor).await {
-                Ok(next_response) => response = Some(next_response),
-                Err(error) => {
-                    yield Err(error);
-                    return;
+            self.previous_cr = byte == b'\r';
+            if matches!(byte, b'\r' | b'\n') {
+                if !self.line_content {
+                    self.bytes = 0;
                 }
+                self.line_content = false;
+            } else {
+                self.line_content = true;
             }
         }
+        Ok(())
     }
 }

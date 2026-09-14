@@ -1,5 +1,31 @@
 # Sandbox provider: observed production contract
 
+## Current Runtime Contract
+
+The Sandbox/Agent implementation requires runtime contract **3**, declared by
+the image label `dev.chrono.cma.runtime-contract`. The control plane provisions
+one isolated runtime per Sandbox, with Workspaces, dedicated Worktrees and
+per-Agent homes. It does not create one pod per Agent or run Agents in a main
+checkout. Software installation completes as `cma` before credential delivery
+or activation of the credential-bearing loopback proxy.
+
+The final image must demonstrate whole-home writer-fenced checkpoint/restore,
+operation receipts, credential generations, per-Agent configuration and exact
+conversation resumption. Changing `CHRONO_SANDBOX_IMAGE` requires an immutable
+digest and triggers recorded rotation; a new tag or label is not evidence.
+See [CMA Model](CMA_Model.md) for the current contract and
+[Operations](CMA_Operations.md) for the final verification register.
+
+The historical provider observations in sections 1-7 below remain unchanged.
+They establish only behavior on their recorded versions. Section 8 records
+Agent-home experiments on a contract-2 image with Codex 0.147.0 and codex-acp
+1.4.0. Its G-A3 result was corrected by #835: the bridge **does** discover skills
+added after startup. Do not cite those historical experiments as proof that the
+final contract-3 image or production rollout passed. Re-run G-A1-G-A5 and the
+Sandbox/restart/rotation gates against that final digest before public readiness.
+
+## Historical Provider Evidence
+
 This document records what the hosted sandbox provider actually did when it
 was driven against production on 2026-08-23 UTC. It is evidence, not a design
 for how a provider ought to behave. The complete request, response, Kubernetes
@@ -55,10 +81,9 @@ Before any probe sandbox was created, `GET /v1/sandboxes` returned:
 }
 ```
 
-This is the envelope consumed by `SandboxClient::list` in
-`api/crates/layer3-adapter/src/sandbox.rs`. A listing is paged in groups of 20;
-the `pagination` object, particularly `hasNextPage`, is authoritative about
-whether another page exists.
+The observed listing was paged in groups of 20. The `pagination` object,
+particularly `hasNextPage`, is authoritative about whether another page
+exists.
 
 Because the initial listing was empty, the first control sandbox established
 the provider-to-Kubernetes mapping:
@@ -70,18 +95,9 @@ the provider-to-Kubernetes mapping:
 - the sandbox is owned by a `sandbox.opensandbox.io/v1alpha1` `BatchSandbox`
   whose name is the sandbox ID.
 
-At the time of this probe, the historical metadata key
-`chrono-bot/control-plane` was consumed by `HostedKernel::list_runtimes` and
-reconciliation. Every probe used the value `sizing-probe`, not
-`chrono-bot-prod`, so the production reconciler was not entitled to adopt or
-reclaim it.
-
-Current provisioning writes `cma/control-plane`, `cma/session`, and
-`cma/kernel` as the canonical keys and duplicates the same values under their
-historical `chrono-bot/*` counterparts. Reconciliation prefers each canonical
-ownership value and falls back to the historical value when it is absent. The
-fallback cannot be removed until a complete provider listing proves that no
-live pre-rename sandbox still depends on it.
+Every observation sandbox used the metadata value `sizing-probe`, distinct
+from the production deployment identity. The provider copied that metadata to
+pod labels, which made the temporary objects independently identifiable.
 
 ## 2. Per-sandbox reservations
 
@@ -98,16 +114,14 @@ returned HTTP 200. The raw provider object contained its image, entrypoint,
 metadata, lifecycle status, and timestamps. It did **not** contain requested or
 applied resources.
 
-The answer is **honoured**, not clamped or ignored. `HostedKernel::provision`
-in `api/crates/layer3-adapter/src/hosted/mod.rs` may therefore continue to
-render each `RuntimeCapacity` through `SandboxShape::limits_for` into the
-request's `resourceLimits` map.
+The answer is **honoured**, not clamped or ignored: each requested value was
+rendered into the resulting pod specification without adjustment.
 
 The evidence boundary matters for metering: the service knows what it asked
 for, and the observed pod spec matched it. The provider's public sandbox
-response does not independently echo what was applied. Price is consequently
-based on the pinned reservation, never on a field claimed to have come back
-from the provider.
+response does not independently echo what was applied. Callers must not
+present a provider response field as independent confirmation of the applied
+reservation.
 
 ### Namespace policy in force
 
@@ -161,14 +175,12 @@ maximum memory usage per Container is 8Gi, but limit is 1000Gi
 ```
 
 The provider exposed none of that text and no machine-readable capacity code.
-This timeout occurs inside `SandboxClient::create`, whose `PROVIDER_TIMEOUT` is
-240 seconds. It happens before `HostedKernel::await_running` receives an ID and
-can poll lifecycle state.
+The observation client timed out after 240 seconds. It received no identifier
+that could be used to poll lifecycle state.
 
 `BATCHSANDBOX_PENDING` is an allocation state, not a capacity verdict. Mapping
-that word itself to `AdapterError::AtCapacity` would turn an ordinary slow
-allocation into a false refusal. No code may make that mapping from this
-record.
+that word itself to a capacity error would turn an ordinary slow allocation
+into a false refusal. No code may make that mapping from this record.
 
 The practical contract is therefore:
 
@@ -196,8 +208,7 @@ but the gVisor guest presented this cgroup membership:
 1:cpu:/<guest-cgroup>
 ```
 
-This is cgroup v1. Every cgroup v2 path read by
-`layer4_runtime::resources::Sampler` was absent:
+This is cgroup v1. The following cgroup v2 paths were absent:
 
 ```text
 /sys/fs/cgroup/memory.max
@@ -218,24 +229,21 @@ The available v1 denominator files did not reflect the pod reservation:
 ```
 
 Both different-size controls returned the same unlimited sentinels. Numeric
-`memory.usage_in_bytes` and `cpuacct.usage` existed. The supervisor reads those
-usage counters but treats the sentinels as absent limits, so it does not draw a
-misleading percentage. The v2 pressure and OOM event counters remain absent.
+`memory.usage_in_bytes` and `cpuacct.usage` existed. The v2 pressure and OOM
+event counters were absent.
 
 `/sys/class/net` was absent, so interface names and their `rx_bytes` and
-`tx_bytes` counters could not be listed. The probe did not record
-`/proc/net/dev`; the sampler uses its non-loopback counters only as a fallback
-when that proc file is present and sysfs has no usable interface.
+`tx_bytes` counters could not be listed. The observation did not record
+`/proc/net/dev`.
 
 The top-level `/sys/fs/cgroup` tmpfs was mounted read-only; controller mounts
 were readable. The pod spec did not set `readOnlyRootFilesystem` (the
 Kubernetes default is false), dropped `NET_RAW`, used RuntimeDefault seccomp,
 and ran the application as uid 10001.
 
-The supervisor represents missing reads as absent fields and advertises the
-resource lane in readiness only when a sample contains an observation beyond
-its monotonic clock. An uptime-only frame is neither sent nor forwarded by the
-control plane, so the route's existence alone cannot imply useful reporting.
+These observations do not establish that every runtime image or provider
+version exposes the same counters. Missing values must remain distinguishable
+from zero values.
 
 ## 5. Death and reclamation
 
@@ -269,11 +277,10 @@ After the death, every provider sample said:
 }
 ```
 
-`Sandbox::is_running` correctly returns false, so reconciliation may treat the
-runtime as non-serving. `hosted::loss::loss_reason` cannot derive an OOM verdict
-from this response. This reproduces the production incident recorded on #464:
-the kernel proves OOM while Kubernetes presents exit 128 / `Error`, and the
-provider does not name memory as the cause.
+The response establishes only that the sandbox is non-serving. It cannot
+support an OOM verdict. This reproduces the production incident recorded on
+#464: the kernel proves OOM while Kubernetes presents exit 128 / `Error`, and
+the provider does not name memory as the cause.
 
 ### Provider timeout
 
@@ -319,142 +326,315 @@ Re-run this record when any of these change:
 
 - the OpenSandbox server or exec helper version;
 - the runtime class or gVisor version;
-- the runtime image's user or supervisor sampler;
+- the runtime image's user or resource sampler;
 - the namespace `LimitRange` or `ResourceQuota`;
 - provider status or error response vocabulary.
 
 Do not turn a new provider word into a capability, capacity refusal, or loss
 reason until its request and lifecycle have been driven and recorded again.
 
-## 7. Workspace capture transport discovery
+## 7. Snapshot and file transport
 
-Issue #662 asks whether the pinned provider can capture and restore a complete
-repository workspace without adding a new Layer 4 wire lane. This section
-records the bounded production discovery result from 2026-08-26. It does not
-advertise workspace recovery as an implemented CMA capability.
-
-### Deployed production surface
-
-CMA's production `CHRONO_SANDBOX_BASE_URL` names the `opensandbox-server`
-service, not the separately installed `opensandbox-server-codex` service. The
-observed deployment is:
-
-| Component | Observed value |
-|---|---|
-| Helm chart / chart app version | `opensandbox-server-0.1.2` / `0.1.0` |
-| Server image | `opensandbox/server@sha256:4b386f107a4222320928b0b4dd38df8dc5154250ea4c90b4d36767a62f69ce7c` |
-| Installed Python distribution | editable `opensandbox-server 0.1.0.dev0` from `/app` |
-| Controller | `opensandbox/controller:v0.2.0` |
-| Execd | `opensandbox/execd:v1.0.20` |
-| Provider HTTP proxy timeout | `httpx.AsyncClient(timeout=180.0)` |
-| Maximum requested sandbox lifetime | 3,600 seconds |
-
-The chart version is not the server source version. In particular, the live
-image's API does not match the previously inspected upstream `server/v0.1.2`
-tag, so that tag and its commit cannot be used as evidence for this deployment.
-The image digest, live OpenAPI document, installed distribution, and driven
-responses above are the production record. No source commit is claimed for an
-image that does not publish one in its observed metadata.
-
-The live OpenAPI document advertises all of:
+A second production observation on 2026-08-26 established the provider's
+storage transport surface. The deployed OpenAPI document advertised:
 
 - `POST /v1/sandboxes/{sandbox_id}/snapshots`;
 - `GET /v1/snapshots` and `GET`/`DELETE /v1/snapshots/{snapshot_id}`; and
 - `CreateSandboxRequest.snapshotId` for restore.
 
-Therefore "snapshot routes are absent" is not a valid explanation for the
-production limitation.
+The routes existed, but a native snapshot finished in `Failed` state with
+reason `RegistryNotConfigured`. The snapshot registry was not configured in
+the controller manager, so native snapshot and restore were not operational.
 
-### Native snapshot result
+The provider-authenticated Execd proxy accepted command, ranged file download,
+and multipart file upload requests. An idle-fixture round trip preserved text
+and binary hashes, executable mode, and a relative symlink. The download route
+returned a correct HTTP 206 response for a byte range. The upload route
+returned no `ETag`, `Digest`, `Content-MD5`, or other integrity header, so the
+destination had to verify the complete SHA-256 value before extraction.
 
-A disposable sandbox was snapshotted through the live API. Creation returned
-HTTP 202 and snapshot `ed464609-9b9b-4ad4-9269-7f4585ccdbf0`, but its terminal
-state was:
+This observation proves byte transport only. It does not prove resumable
+upload, a maximum request size, or a consistent capture while processes are
+writing. The provider proxy used a 180-second HTTP client timeout and exposed
+no filesystem pause, freeze, or atomic-volume operation. Any future use must
+define its own size limit, deadline, integrity check, and writer-consistency
+boundary.
+
+## 8. Agent home evidence
+
+### Untouched-conversation persistence correction
+
+On 2026-09-08 a production default Agent with no submitted prompt exposed an
+incomplete case in the original capture evidence: Codex 0.147.0 keeps a newly
+started conversation in memory until its first message or a metadata write.
+Whole-home capture succeeded, but the separate conversation capture correctly
+refused the absent rollout and manual pause failed before publication.
+
+The provider-specific compatibility patch in
+`api/crates/layer3-adapter/src/codex/persist_conversations.cjs` names each new
+conversation `New Agent` through `thread/name/set` before ACP reports success.
+This lets Codex itself persist its original metadata and conversation identity;
+it neither sends a prompt nor manufactures transcript entries. The upstream
+ACP 1.4.0 distribution hash remains
+`ba74f54f7c89ba61858e544eb3afefbb0c1b90f2b23a136664828816a8430dbf`.
+The patched executable hash is
+`c3cb7e54fb6a48f3091b97bed9f5243eaf7c3f3293fbd1b021e0faf41067cd2c`.
+Both are verified in the runtime build. Unexpected upstream bytes, repeated
+patching and ambiguous source matches fail closed.
+
+An offline Linux/amd64 test against the exact production runtime archive
+verified a single `session_meta` record after `session/new`, zero turns, a full
+provider-process restart, and `session/load` of the original identity. The
+runtime build repeats this proof. This local proof does not by itself claim
+production pause/resume acceptance; that is recorded separately in
+`CMA_Unattended_Acceptance.md` after deployment.
+
+The official app-server reference documents `thread/name/set` and the persisted
+thread lifecycle: <https://learn.chatgpt.com/docs/app-server.md>. The pinned
+binary and ACP process tests establish the exact empty-conversation behavior.
+
+### Original agent home evidence
+
+This record was captured on 2026-09-05 Asia/Singapore against the contract-2
+runtime. It establishes the per-agent Codex home capability; it does not rely
+on the older production-provider observations above.
+
+| Component | Pinned value |
+|---|---|
+| Runtime image | `cma-runtime:m16-arm64` |
+| Runtime image ID | `sha256:0fc5383fa451ca16f024951d29813f6fa06a7ddcb368ebc4dd54bbae48dd5152` |
+| Architecture | `arm64` |
+| Runtime contract label | `2` |
+| Codex | `@openai/codex` 0.147.0 |
+| ACP bridge | `@agentclientprotocol/codex-acp` 1.4.0 |
+| Codex launcher SHA-256 | `134063e133f0b4244fa3b251acf973d4fe4b4aeeacbdc135211bf480f59f1477` |
+| ACP distribution SHA-256 | `ba74f54f7c89ba61858e544eb3afefbb0c1b90f2b23a136664828816a8430dbf` |
+
+The runtime's revision label was
+`08b0ddae7b69cfe086da3e1be6eea72b9b2a77d5`, which did not resolve to a
+commit in the local repository used for this audit. This record therefore
+pins the immutable image ID and executable hashes rather than claiming source
+provenance from that label. The final release evidence must pin the rebuilt
+release image digest and final CMA commit independently.
+
+The probe spoke newline-delimited ACP JSON-RPC over bridge stdio, correlated
+request IDs, enforced a deadline, and redacted session IDs and credential
+values. The redacted source report and harness have these hashes:
 
 ```text
-state:   Failed
-reason:  RegistryNotConfigured
-message: snapshot-registry not configured in controller manager
+report SHA-256:  e1a75eb6fe0fad6c71f936d84c40d3a8e04ae6333ba3f166259f61094db217a5
+harness SHA-256: 09cb4a6aef1fb8e8faac893a57cc6a3ba61d863caa9b6ce8e4fcf2e23f36fc7f
 ```
 
-The source sandbox subsequently expired and returned HTTP 404. The failed
-snapshot was deleted explicitly (HTTP 204) and then returned HTTP 404. The
-schema is present, but native snapshot and restore are not operational in this
-production installation. CMA must not claim or depend on them unless the
-registry is configured and a new round trip is demonstrated.
+No API key, authorization-header value, or unredacted conversation ID is in
+this record.
 
-### Execd archive round trip
+### Gate verdicts
 
-The deployed Execd version's upstream source is pinned at
-`ae452d4af7b6415b5074fd7e075b97ff7a5ac236`. Its production endpoints were
-reachable through the provider-authenticated proxy at:
+| Gate | Verdict | Demonstrated contract |
+|---|---|---|
+| G-A1 | Pass | Two concurrent bridges in one sandbox use different `CODEX_HOME` configuration. |
+| G-A2 | Pass | Home `AGENTS.md` and repository `AGENTS.md` are both applied, in that order. |
+| G-A3 | Corrected by #835 | Initial skills are discovered, and added skills are hot-reloaded in the same bridge. |
+| G-A4 | Pass | The shared auth symlink and the managed loopback-provider path both work. |
+| G-A5 | Pass | Conversation data lives in the agent home and survives exact capture and restore. |
+
+The adapter advertises `per_agent_home` for runtime contract 2 on the strength
+of these results. A future Codex, ACP, or runtime-contract version does not
+inherit this evidence automatically.
+
+### G-A1: distinct homes
+
+Two bridges ran concurrently in one container. Alpha used model `gpt-5.2`
+with low effort; beta used `gpt-5.5` with high effort. Each process received a
+different home beneath `/home/cma/.cma/agents`.
 
 ```text
-POST /v1/sandboxes/{id}/proxy/44772/command
-GET  /v1/sandboxes/{id}/proxy/44772/files/download?path=...
-POST /v1/sandboxes/{id}/proxy/44772/files/upload
+CODEX_HOME=/home/cma/.cma/agents/alpha/home
+CODEX_HOME=/home/cma/.cma/agents/beta/home
 ```
 
-Two disposable sandboxes tagged `cma-trigger-readiness` drove this sequence:
+The redacted `session/new` results were:
 
-1. Execd created a nested text file, binary file, executable file with mode
-   `755`, and relative symlink, then archived the workspace.
-2. The 6,144-byte archive was downloaded with HTTP 200. Its source and local
-   SHA-256 values both were
-   `f418af1073e79d48df6c4d8b5a92dbf0e0cc7f096a47ae26a331120a336ac726`.
-3. A `Range: bytes=0-63` request returned HTTP 206, the correct
-   `Content-Range: bytes 0-63/6144`, and bytes matching the full archive's
-   prefix. The route supports ranged download.
-4. The full archive and a deliberately truncated 64-byte artifact were each
-   accepted by multipart upload with HTTP 200. Execd and the provider supplied
-   no `ETag`, `Digest`, `Content-MD5`, or checksum header, so the destination
-   compared each uploaded SHA-256 with the source manifest before extraction.
-   The truncated artifact failed that comparison and was not extracted.
-5. After full-archive verification, extraction reproduced the text and binary
-   hashes, executable mode `755`, executable size, and symlink target exactly.
-6. Both sandboxes were deleted through the provider with HTTP 204 and each
-   returned HTTP 404 afterwards. Local archive and header artifacts were also
-   removed.
+```json
+{
+  "bridgesConcurrentInOneContainer": true,
+  "agentA": {
+    "sessionId": "<session sha256:90e2e0bfae28 length:36>",
+    "model": "gpt-5.2[low]",
+    "configOptions": {"model":"gpt-5.2","reasoning_effort":"low"}
+  },
+  "agentB": {
+    "sessionId": "<session sha256:a77464c25107 length:36>",
+    "model": "gpt-5.5[high]",
+    "configOptions": {"model":"gpt-5.5","reasoning_effort":"high"}
+  }
+}
+```
 
-This demonstrates byte transport, ranged reads, multipart writes, and an
-application-level integrity check on the exact production provider. It does
-not demonstrate a resumable upload. The provider proxy has a 180-second HTTP
-client timeout and advertises no request-size or integrity bound for this
-route. A production protocol must impose its own maximum archive size,
-deadline, manifest hash, and retry rules; it must treat every interrupted or
-unknown upload as uncommitted until the complete destination hash is proven.
+This proves that `CODEX_HOME` selects process-local configuration for
+simultaneous agents in one sandbox.
 
-### Consistency result and transport decision
+### G-A2: profile and repository instructions
 
-The round trip deliberately used an idle fixture. Execd can run `tar` and
-`sync`, but neither its file API nor the provider exposes a pause, filesystem
-freeze, atomic volume snapshot, or proof that the agent and its descendants
-have stopped writing. CMA's current `rotating` state refuses new client input,
-but an already-running agent turn or background process can continue changing
-the workspace. The current Layer 4 wire declares terminal, conversation,
-conversation-gap, and telemetry lanes only; none provides a workspace writer
-fence or quiescence acknowledgement.
+The selected home and git worktree carried independent sentinels:
 
-Consequently the provider-only branch fails #662's consistency requirement.
-The selected design is the explicit fallback: a versioned Layer 4 workspace
-checkpoint capability with a staged runtime-image rollout. Its protocol must:
+```text
+<CODEX_HOME>/AGENTS.md: CMA808_GLOBAL_PROFILE_SENTINEL
+<worktree>/AGENTS.md:  CMA808_REPOSITORY_INSTRUCTION_SENTINEL
+```
 
-1. fence the checkpoint with the Launch workspace epoch and refuse concurrent
-   captures;
-2. stop admitting new work and positively establish that all supported
-   workspace writers are quiescent before capture;
-3. flush writes, create a bounded archive and versioned manifest, and report
-   size plus content hashes before the old runtime may be torn down;
-4. commit durable object storage and the checkpoint record atomically from the
-   Launch's perspective, leaving the previous checkpoint valid on failure;
-5. verify the manifest and materialized tree before starting the agent in a
-   replacement runtime; and
-6. fail closed to recovery-required, or resume the still-live old runtime,
-   whenever quiescence, capture, upload, commit, or restore cannot be proven.
+`codex debug prompt-input` rendered this model-visible order:
 
-The demonstrated Execd path may be reused only as a bulk relay for an already
-sealed, hash-addressed archive. It is not the consistency authority. An old
-runtime image that does not advertise the new checkpoint capability is
-ineligible for CMA Trigger, and no rollout may rotate an existing live session
-until the complete conversation-plus-workspace handover has itself been
-demonstrated.
+```text
+# AGENTS.md instructions for /workspace
+
+<INSTRUCTIONS>
+CMA808_GLOBAL_PROFILE_SENTINEL
+
+The global agent profile instruction must be presented before repository instructions.
+
+--- project-doc ---
+
+CMA808_REPOSITORY_INSTRUCTION_SENTINEL
+
+The repository instruction must be presented after the global profile instruction.
+</INSTRUCTIONS>
+```
+
+The contract is therefore "profile prompt + repository instructions." CMA
+writes the profile prompt to the agent home and does not edit repository
+files. The fallback worktree `.cma/AGENTS.md` was neither required nor used.
+
+### G-A3: skill discovery and hot reload
+
+`cma-808-start-skill` existed under `<CODEX_HOME>/skills` before bridge start.
+Only after the first `session/new` completed, the harness created
+`cma-808-late-skill/SKILL.md`, invoked `/skills` in that session, and then
+opened another session on the same still-running bridge.
+
+```json
+{
+  "bridgePidStayedConstant": true,
+  "firstSession": {
+    "id": "<session sha256:b2596e7a4d99 length:36>",
+    "startSkillSeenInInboundFrames": true,
+    "lateSkillSeenInInboundFramesAtCreation": false
+  },
+  "sameSessionSlashSkills": {
+    "stopReason": "end_turn",
+    "error": null,
+    "startSkillSeenInInboundFrames": true,
+    "lateSkillSeenInInboundFrames": true,
+    "inboundMethods": ["session/update"]
+  },
+  "secondSessionSameBridge": {
+    "id": "<session sha256:4ee65e2f4793 length:36>",
+    "lateSkillSeenInInboundFrames": true
+  }
+}
+```
+
+This contradicts #808's original negative assertion that a post-start skill
+would remain invisible. [Issue #835](https://github.com/ChronoAIProject/cma/issues/835)
+corrects that contract: the pinned bridge discovers the added skill through
+same-session `/skills`, and a later `session/new` on the same bridge discovers
+it as well. No cache was added to manufacture the old result.
+
+CMA still installs every configured skill beneath the individual agent home
+before first use, and an unavailable archive fails creation with typed
+`skill_unavailable { id }`. Agent Profile immutability remains a CMA product
+and audit rule; it is not justified by a Codex kernel cache boundary.
+
+### G-A4: shared auth and managed loopback
+
+For own-credential access, the literal layout was:
+
+```text
+/home/cma/.cma/provider/codex/auth.json
+/home/cma/.cma/agents/own/home/auth.json -> ../../../provider/codex/auth.json
+```
+
+The provider auth file was mounted read-only from the host into a disposable
+container. The status transcript was fully redacted:
+
+```text
+../../../provider/codex/auth.json
+Logged in using an API key - <fully redacted>
+exit 0
+```
+
+ACP initialization advertised `api-key`, and `session/new` succeeded with
+model `gpt-5.2[low]`.
+
+After the new renderer landed, the managed path was repeated against its exact
+configuration rather than relying on the earlier port-18080 probe:
+
+```toml
+model_provider = "cma"
+
+[model_providers.cma]
+name = "CMA Loopback"
+base_url = "http://127.0.0.1:9091"
+env_key = "CHRONO_UPSTREAM_PLACEHOLDER_KEY"
+wire_api = "responses"
+```
+
+The fake loopback server recorded only structural evidence and deliberately
+returned an error after receipt:
+
+```json
+{
+  "method": "POST",
+  "path": "/responses",
+  "authorizationHeaderPresent": true,
+  "contentType": "application/json",
+  "bodyBytes": 44391,
+  "configuredModel": "gpt-5.2",
+  "markerReachedProxy": true
+}
+```
+
+No header value was logged. This proves both own-credential and
+ChronoAI-managed access modes.
+
+### G-A5: home-local conversation capture and restore
+
+A real ACP turn containing marker `CMA808_HISTORY_SENTINEL_20260905` completed
+under `/home/cma/.cma/agents/own/home`. The exact-ID inspector found one
+rollout below that home's `sessions/` tree:
+
+```json
+{
+  "sessionId": "<session sha256:c31611975065 length:36>",
+  "relativePath": "2026/09/04/rollout-2026-09-04T18-19-45-<session-id>.jsonl",
+  "bytes": 46088,
+  "lines": 9,
+  "sha256": "8ec8485c97268a3f1a8e2e708c2d84ef581a8991e521fed8606d726b6cb6ebcf",
+  "openingRecordType": "session_meta",
+  "openingCwd": "/workspace"
+}
+```
+
+Layer 4 captured that exact conversation as a 46,204-byte carry stream with
+SHA-256
+`af2707696166648670ee56c26d80560599afaf6ba947e97b62dcd6ad24a75ad6`.
+Restoring it into a fresh agent home reproduced the same rollout path, byte
+count, line count, and JSONL hash. ACP `session/load` then returned without an
+RPC error and replayed the unique marker:
+
+```json
+{
+  "requestedSessionId": "<session sha256:c31611975065 length:36>",
+  "loadError": null,
+  "markerSeenInReplayedInboundFrames": true,
+  "inboundFrameCount": 5,
+  "inboundMethods": ["session/update"],
+  "loadedConfig": {"model":"gpt-5.2[low]"}
+}
+```
+
+A second exact-ID capture after restore produced another 46,204-byte carry
+stream with the same SHA-256; byte comparison exited zero. This proves that
+conversation records live under the selected agent home and remain findable
+by conversation ID after whole-home transport.

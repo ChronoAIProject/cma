@@ -30,12 +30,16 @@ tokio = { workspace = true }
 tracing = { workspace = true }
 utoipa = { workspace = true }
 utoipa-axum = { workspace = true }
+# Builds public Trigger and badge URLs without hand-joining path or query text.
+url = { workspace = true }
 # For its CSPRNG-backed v4 generator, which is what an attach ticket is drawn
 # from. Already a workspace dependency.
 uuid = { workspace = true }
 zeroize = { workspace = true }
 
 [dev-dependencies]
+layer2-core = { workspace = true, features = ["test-support"] }
+tokio = { workspace = true, features = ["test-util"] }
 # Applies the projection's patches with an independent RFC 6902 implementation,
 # so the canonical starting document is a proven wire contract rather than an
 # example that only this crate understands.
