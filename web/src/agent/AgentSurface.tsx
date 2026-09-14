@@ -12,6 +12,7 @@ import { IconCloseOutline16, IconInspectOutline12 } from '../ui/icons';
 import type { AgentController, AgentResourceState } from './controller';
 import { Composer } from './Composer';
 import { MessageStream } from './MessageStream';
+import { ActiveThinking } from './ActiveThinking';
 import './Agent.css';
 import { statusLabel } from '../vocabulary/status';
 import { ProvisioningProgress } from '../sandbox/ProvisioningProgress';
@@ -234,39 +235,44 @@ export function AgentSurface({
           )}
         </MessageStream>
       </div>
-      <Composer
-        key={`composer:${agentId}`}
-        quickMessages={source.status === 'ready' ? source.value.trigger?.quick_messages : undefined}
-        status={status}
-        pausedNotice={pausedNotice}
-        running={running}
-        starting={starting}
-        inputAvailability={
-          readOnly
-            ? {
-                ...controller.inputAvailability,
-                allowed: false,
-                notice: 'Only the owner can send messages to this agent.',
-              }
-            : verified === undefined
+      <div className="agent-surface__input">
+        <ActiveThinking key={agentId} conversation={conversation} />
+        <Composer
+          key={`composer:${agentId}`}
+          quickMessages={
+            source.status === 'ready' ? source.value.trigger?.quick_messages : undefined
+          }
+          status={status}
+          pausedNotice={pausedNotice}
+          running={running}
+          starting={starting}
+          inputAvailability={
+            readOnly
               ? {
                   ...controller.inputAvailability,
                   allowed: false,
-                  notice: 'Verify the required connections to continue.',
+                  notice: 'Only the owner can send messages to this agent.',
                 }
-              : controller.inputAvailability
-        }
-        busy={
-          historyIncomplete || (controller.pending !== undefined && controller.pending !== 'send')
-        }
-        onSend={async (content, onAccepted) => {
-          connections.run(
-            { type: 'agent', id: agentId },
-            () => void controller.send(content, onAccepted),
-          );
-        }}
-        onStop={controller.interrupt}
-      />
+              : verified === undefined
+                ? {
+                    ...controller.inputAvailability,
+                    allowed: false,
+                    notice: 'Verify the required connections to continue.',
+                  }
+                : controller.inputAvailability
+          }
+          busy={
+            historyIncomplete || (controller.pending !== undefined && controller.pending !== 'send')
+          }
+          onSend={async (content, onAccepted) => {
+            connections.run(
+              { type: 'agent', id: agentId },
+              () => void controller.send(content, onAccepted),
+            );
+          }}
+          onStop={controller.interrupt}
+        />
+      </div>
       {verified === undefined && !readOnly ? (
         <ConnectionWizard
           target={{ type: 'agent', id: agentId }}
