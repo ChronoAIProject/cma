@@ -875,6 +875,7 @@ async fn worker_does_not_resend_a_first_message_fenced_by_the_same_lease() {
     harness
         .store
         .commit_agent_conversation(AgentConversationMutation {
+            command_claim: None,
             admission_guard: Some(layer2_core::sandbox::store::SandboxMutationGuard::capture(
                 &parent,
             )),

@@ -17,6 +17,7 @@ impl AgentConversationStore for InMemorySandboxStore {
         let mut state = self.lock();
         let mut candidate = state.clone();
         validate_mutation(&candidate, &mutation)?;
+        super::agent_command_work::bind_dispatch(&mut candidate, &mutation)?;
         if mutation.admission_guard.is_some() {
             candidate
                 .sandboxes

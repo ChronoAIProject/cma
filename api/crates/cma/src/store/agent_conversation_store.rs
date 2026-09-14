@@ -28,6 +28,7 @@ mod admission_tests;
 
 #[cfg_attr(test, derive(Clone))]
 pub(super) struct ConversationReceipt {
+    pub(super) command_dispatch: Option<layer2_core::sandbox::agent_io::CommandDispatch>,
     pub(super) agent: Agent,
     pub(super) logs: Vec<AgentLogEntry>,
 }
@@ -160,6 +161,7 @@ async fn apply_mutation(
         .map_err(ApplyError::Domain)?
         .ok_or(ApplyError::Domain(SandboxStoreError::NotFound))?;
     let mut actual_last_seq = 0;
+    let mut latest_turn = None;
     let log_summary = scan_complete_log_with_session(
         store,
         &mutation.agent.id,
@@ -167,6 +169,11 @@ async fn apply_mutation(
         session,
         |entry| {
             actual_last_seq = entry.seq;
+            if let layer2_core::sandbox::AgentLogKind::TurnStarted { turn_sequence, .. } =
+                entry.kind
+            {
+                latest_turn = Some(turn_sequence);
+            }
             Ok(())
         },
     )
@@ -177,9 +184,19 @@ async fn apply_mutation(
         .map_err(ApplyError::Domain)?;
 
     admission::validate_and_fence(store, &current, mutation, session).await?;
+    let command_dispatch =
+        super::agent_commands::binding::bind(store, &current, latest_turn, mutation, session)
+            .await
+            .map_err(|error| match error {
+                super::agent_commands::ApplyError::Domain(error) => {
+                    ApplyError::Domain(super::agent_commands::binding::domain_error(error))
+                }
+                super::agent_commands::ApplyError::Driver(error) => ApplyError::Driver(error),
+            })?;
     replace_agent(store, &current, mutation, session).await?;
     insert_logs(store, &logs, session).await?;
     Ok(ConversationReceipt {
+        command_dispatch,
         agent: mutation.agent.clone(),
         logs,
     })
@@ -368,6 +385,11 @@ pub(super) async fn reconcile_conversation_snapshot(
         .transpose()?;
     if agent.as_ref() != Some(&receipt.agent) {
         return Ok(false);
+    }
+    if let Some(dispatch) = &receipt.command_dispatch {
+        if !super::agent_commands::binding::matches_snapshot(store, dispatch, session).await? {
+            return Ok(false);
+        }
     }
     let Some(first_receipt_seq) = receipt.logs.first().map(|entry| entry.seq) else {
         return Ok(false);

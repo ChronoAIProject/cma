@@ -52,15 +52,22 @@ impl AgentCommandStore for InMemorySandboxStore {
         let order = state
             .agent_command_orders
             .get(&agent.id)
-            .copied()
-            .unwrap_or(0)
+            .map_or(0, |lane| lane.last_order)
             .checked_add(1)
             .ok_or(CommandLedgerError::Corrupt)?;
-        let record = request.record(order, agent.conversation.last_seq)?;
+        let target_turn = (!matches!(
+            request.envelope.command,
+            crate::sandbox::agent_io::AgentCommand::Message { .. }
+        ))
+        .then_some(agent.conversation.active_turn)
+        .flatten();
+        let record = request.record(order, agent.conversation.last_seq, target_turn)?;
         let id = record.receipt.envelope.command_id.clone();
         state
             .agent_command_orders
-            .insert(request.envelope.agent_id.clone(), order);
+            .entry(request.envelope.agent_id.clone())
+            .or_default()
+            .last_order = order;
         state.agent_command_keys.insert(key, id.clone());
         state.agent_commands.insert(id, record.clone());
         Ok(CommandReservationResult::Created(Box::new(record)))

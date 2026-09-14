@@ -1,4 +1,5 @@
 use futures_util::TryStreamExt;
+mod work_tests;
 use layer2_core::ids::{AgentCommandId, AgentResponseId};
 use layer2_core::sandbox::agent_io::*;
 use layer2_core::sandbox::store::SandboxMutationGuard;

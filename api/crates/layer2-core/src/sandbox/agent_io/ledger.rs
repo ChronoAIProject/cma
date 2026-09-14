@@ -34,6 +34,10 @@ pub struct AdmittedAgentCommand {
     pub queue_deadline: String,
     pub status: AgentResponseStatus,
     pub revision: u64,
+    #[serde(default)]
+    pub target_turn: Option<u64>,
+    #[serde(default)]
+    pub work: super::CommandWorkState,
 }
 
 impl AdmittedAgentCommand {
@@ -47,7 +51,7 @@ impl AdmittedAgentCommand {
         {
             return Err(CommandLedgerError::Corrupt);
         }
-        Ok(())
+        super::work::validate_work(self)
     }
 
     pub fn scope(&self) -> String {
@@ -74,6 +78,8 @@ pub enum CommandLedgerError {
     IdempotencyConflict,
     #[error("Agent admission observation is stale")]
     Conflict,
+    #[error("command worker claim is stale")]
+    StaleClaim,
     #[error("Agent cannot accept this command")]
     NotAdmissible,
     #[error("Agent command queue is full")]
@@ -91,6 +97,7 @@ impl CommandLedgerError {
             Self::NotFound => "agent_not_found",
             Self::IdempotencyConflict => "agent_command_key_conflict",
             Self::Conflict => "agent_command_admission_conflict",
+            Self::StaleClaim => "agent_command_claim_stale",
             Self::NotAdmissible => "agent_command_not_admissible",
             Self::QueueFull => "agent_command_queue_full",
             Self::Corrupt => "agent_command_ledger_corrupt",
@@ -140,13 +147,14 @@ impl CommandReservation {
         {
             return Err(CommandLedgerError::Invalid);
         }
-        self.record(1, 0)?.validate()
+        self.record(1, 0, None)?.validate()
     }
 
     pub fn record(
         &self,
         order: u64,
         cursor: u64,
+        target_turn: Option<u64>,
     ) -> Result<AdmittedAgentCommand, CommandLedgerError> {
         if order == 0 || order > i64::MAX as u64 {
             return Err(CommandLedgerError::Corrupt);
@@ -163,6 +171,8 @@ impl CommandReservation {
             queue_deadline: self.queue_deadline.clone(),
             status: AgentResponseStatus::Queued,
             revision: 1,
+            target_turn,
+            work: Default::default(),
         })
     }
 
