@@ -1,4 +1,5 @@
 mod admission_fence_tests;
+mod command_tests;
 mod first_message_tests;
 mod fixtures;
 mod linear_input_tests;
