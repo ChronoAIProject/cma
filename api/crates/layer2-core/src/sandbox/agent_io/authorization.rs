@@ -14,6 +14,19 @@ pub trait PersonalCommandAdmissionAuthority: Send + Sync {
     ) -> Result<AgentAuthorizationRevision, CommandAuthorizationError>;
 }
 
+/// Select durable execution custody for a currently authorized resource. The
+/// actor remains the authenticated principal; resource access by itself cannot
+/// supply somebody else's credential or establish deferred execution custody.
+#[async_trait::async_trait]
+pub trait AgentCommandAdmissionAuthority: Send + Sync {
+    async fn command_admission_authority(
+        &self,
+        context: &crate::resource_access::CallerContext,
+        credential: &str,
+        owner: &super::AgentOwner,
+    ) -> Result<AgentAuthorizationRevision, CommandAuthorizationError>;
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum CommandAuthorizationError {
     #[error("the authority that admitted this command is no longer available")]

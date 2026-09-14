@@ -5,6 +5,7 @@
 //! and event variants remain readable by previous releases during rollback.
 
 mod admission;
+mod admission_service;
 mod authorization;
 mod binding;
 mod capabilities;
@@ -15,7 +16,9 @@ mod evidence;
 mod input;
 mod lane;
 mod ledger;
+mod reservation_policy;
 mod service;
+mod status;
 mod work;
 mod worker;
 mod worker_store;
@@ -24,9 +27,12 @@ pub use admission::{
     AdmissionReceipt, AgentActor, AgentAuthorizationRevision, AgentCommandEnvelope,
     AgentCommandSource, AgentOwner, AgentResponseStatus, AgentSourceKind,
 };
+pub use admission_service::{
+    AgentCommandService, CommandAdmissionError, CommandSubmission, CommandSubmissionSource,
+};
 pub use authorization::{
-    AgentCommandAuthorizer, CommandAuthorizationError, DeferredCommandError,
-    PersonalCommandAdmissionAuthority,
+    AgentCommandAdmissionAuthority, AgentCommandAuthorizer, CommandAuthorizationError,
+    DeferredCommandError, PersonalCommandAdmissionAuthority,
 };
 pub use binding::bind_command_dispatch;
 pub use capabilities::AgentInterfaceCapabilities;
@@ -41,6 +47,8 @@ pub use ledger::{
     command_key_digest, validate_command_reservation, AdmittedAgentCommand, AgentCommandStore,
     CommandLedgerError, CommandReservation, CommandReservationResult, MAX_COMMAND_QUEUE_CAPACITY,
 };
+pub use reservation_policy::validate_command_reservation_policy;
+pub use status::{CommandReceiptView, CommandStatusView};
 pub use work::{
     CommandClaim, CommandClaimRequest, CommandDispatch, CommandFailure, CommandFailureCode,
     CommandLease, CommandObservation, CommandWorkState,

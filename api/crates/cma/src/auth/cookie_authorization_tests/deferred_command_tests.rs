@@ -245,3 +245,80 @@ async fn restricted_owner_projection_cannot_admit_deferred_personal_authority() 
         assert_eq!(fixture.control.requests.load(Ordering::SeqCst), before);
     }
 }
+
+#[tokio::test]
+async fn command_admission_binds_exact_request_context_issuer_credential_actor_and_owner() {
+    use layer2_core::resource_access::CallerContext;
+    let fixture = Fixture::new().await;
+    fixture.seed().await;
+    let credential = "must-not-leak-access-token";
+    let context = CallerContext {
+        caller: caller(),
+        actor: AgentActor::Api {
+            subject: caller().subject,
+            delegation_id: None,
+        },
+        credential: fixture
+            .auth
+            .provider_credential_context(&caller().subject, credential)
+            .unwrap(),
+        memberships: Vec::new(),
+    };
+    let owner = AgentOwner::Person {
+        subject: caller().subject,
+    };
+    let reference = fixture
+        .auth
+        .command_admission_authority(&context, credential, &owner)
+        .await
+        .unwrap();
+    assert_eq!(
+        reference,
+        fixture
+            .auth
+            .personal_command_authority(&caller(), credential)
+            .await
+            .unwrap()
+    );
+    for change in 0..8 {
+        let mut context = context.clone();
+        let mut owner = owner.clone();
+        let mut selected = credential;
+        match change {
+            0 => context.credential.issuer = "https://foreign.test".into(),
+            1 => context.credential.credential_id = "foreign".into(),
+            2 => context.credential.subject = SubjectId::new("foreign"),
+            3 => {
+                context.actor = AgentActor::Human {
+                    subject: SubjectId::new("foreign"),
+                }
+            }
+            4 => {
+                context.actor = AgentActor::Api {
+                    subject: caller().subject,
+                    delegation_id: Some("delegation".into()),
+                }
+            }
+            5 => {
+                owner = AgentOwner::Organization {
+                    subject: caller().subject,
+                }
+            }
+            6 => {
+                owner = AgentOwner::Person {
+                    subject: SubjectId::new("foreign"),
+                }
+            }
+            _ => selected = "another-credential",
+        }
+        let before = fixture.control.requests.load(Ordering::SeqCst);
+        assert_eq!(
+            fixture
+                .auth
+                .command_admission_authority(&context, selected, &owner)
+                .await,
+            Err(CommandAuthorizationError::Revoked)
+        );
+        assert_eq!(fixture.control.requests.load(Ordering::SeqCst), before);
+    }
+}

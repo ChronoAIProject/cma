@@ -5,8 +5,8 @@
 use std::time::{Duration, SystemTime};
 
 use layer2_core::sandbox::agent_io::{
-    AgentActor, AgentAuthorizationRevision, AgentCommandAuthorizer, AgentCommandEnvelope,
-    AgentOwner, CommandAuthorizationError, PersonalCommandAdmissionAuthority,
+    AgentActor, AgentAuthorizationRevision, AgentCommandAdmissionAuthority, AgentCommandAuthorizer,
+    AgentCommandEnvelope, AgentOwner, CommandAuthorizationError, PersonalCommandAdmissionAuthority,
 };
 use layer2_core::{Caller, Capability};
 use sha2::{Digest as _, Sha256};
@@ -15,6 +15,39 @@ use super::{cookie_authorization, persistence::SubjectAuthState, refresh, AuthMo
 
 const POLICY_REVISION: u64 = 1;
 const VERIFICATION_TIMEOUT: Duration = Duration::from_secs(15);
+
+#[async_trait::async_trait]
+impl AgentCommandAdmissionAuthority for AuthState {
+    async fn command_admission_authority(
+        &self,
+        context: &layer2_core::resource_access::CallerContext,
+        credential: &str,
+        owner: &AgentOwner,
+    ) -> Result<AgentAuthorizationRevision, CommandAuthorizationError> {
+        if !context.validate_principal()
+            || self
+                .provider_credential_context(&context.caller.subject, credential)
+                .as_ref()
+                != Some(&context.credential)
+            || owner
+                != &(AgentOwner::Person {
+                    subject: context.caller.subject.clone(),
+                })
+            || !matches!(
+                &context.actor,
+                AgentActor::Human { .. }
+                    | AgentActor::Api {
+                        delegation_id: None,
+                        ..
+                    }
+            )
+        {
+            return Err(CommandAuthorizationError::Revoked);
+        }
+        self.personal_command_authority(&context.caller, credential)
+            .await
+    }
+}
 
 #[async_trait::async_trait]
 impl PersonalCommandAdmissionAuthority for AuthState {
