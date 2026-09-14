@@ -24,6 +24,7 @@ pub(crate) enum InstanceProblem {
     MessageQueueFull { limit: usize },
     ApprovalNotPending { approval_id: String },
     CapabilityUnsupported { capability: RuntimeCapability },
+    ContentUnsupported,
     OperationInFlight,
     CheckpointInProgress,
     DeliveryAmbiguous,
@@ -116,6 +117,7 @@ impl From<AgentOperationError> for InstanceProblem {
             AgentOperationError::CapabilityUnsupported { capability } => {
                 Self::CapabilityUnsupported { capability }
             }
+            AgentOperationError::ContentUnsupported => Self::ContentUnsupported,
             AgentOperationError::QueueCapacityExceeded { limit } => {
                 Self::MessageQueueFull { limit }
             }
@@ -174,6 +176,12 @@ impl IntoResponse for InstanceProblem {
                 "invalid-agent-request",
                 "The agent request does not satisfy its validation contract.",
                 "invalid_agent_request",
+            ),
+            Self::ContentUnsupported => (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "agent-content-unsupported",
+                "This Agent interface accepts text content only.",
+                "agent_content_unsupported",
             ),
             Self::WorkspaceNotReady => (
                 StatusCode::CONFLICT,
