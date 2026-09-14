@@ -20,6 +20,7 @@ mod lane;
 mod ledger;
 mod reservation_policy;
 mod response_read;
+mod revival_authority;
 mod service;
 mod status;
 mod work;
@@ -53,6 +54,7 @@ pub use ledger::{
 };
 pub use reservation_policy::validate_command_reservation_policy;
 pub use response_read::AgentResponseReading;
+pub use revival_authority::CommandRevivalAuthorization;
 pub use status::{CommandReceiptView, CommandStatusView};
 pub use work::{
     CommandClaim, CommandClaimRequest, CommandDispatch, CommandFailure, CommandFailureCode,

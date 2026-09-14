@@ -273,6 +273,7 @@ impl SandboxService {
         let committed = self
             .store
             .commit(SandboxTransaction::SaveSandboxAndAppend {
+                command_revival: None,
                 expected_revision: expected,
                 sandbox: Box::new(sandbox.clone()),
                 event_at: now,

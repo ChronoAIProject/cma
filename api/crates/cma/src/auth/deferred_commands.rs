@@ -178,4 +178,20 @@ impl AgentCommandAuthorizer for AuthState {
         .await
         .map_err(|_| CommandAuthorizationError::Unavailable)?
     }
+
+    async fn authorize_command_revival(
+        &self,
+        access: &layer2_core::resource_access::ResourceAccessService,
+        command: &layer2_core::sandbox::agent_io::AdmittedAgentCommand,
+    ) -> Result<
+        std::sync::Arc<layer2_core::sandbox::agent_io::CommandRevivalAuthorization>,
+        ResourceCommandAuthorizationError,
+    > {
+        tokio::time::timeout(
+            VERIFICATION_TIMEOUT,
+            self.retained_command_revival(access, command),
+        )
+        .await
+        .map_err(|_| CommandAuthorizationError::Unavailable)?
+    }
 }

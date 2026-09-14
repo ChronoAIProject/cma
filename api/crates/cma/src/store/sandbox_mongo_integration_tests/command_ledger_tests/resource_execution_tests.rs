@@ -1,6 +1,9 @@
 use super::super::work_tests::message_mutation;
 use super::*;
 
+#[path = "command_revival_tests.rs"]
+mod revival;
+
 struct Membership(Duration);
 
 fn context() -> CallerContext {
