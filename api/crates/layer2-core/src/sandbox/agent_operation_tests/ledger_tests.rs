@@ -3,12 +3,13 @@ use std::sync::Arc;
 use super::fixtures::*;
 use crate::ids::{AgentCommandId, AgentResponseId};
 use crate::sandbox::agent_io::*;
-use crate::sandbox::store::{AgentStore, SandboxMutationGuard};
+use crate::sandbox::store::{AgentStore, SandboxMutationGuard, SandboxStore};
 use crate::sandbox::*;
 
 pub(super) fn reservation(agent: &Agent, parent: &Sandbox, key: &str) -> CommandReservation {
     let command = AgentCommand::message("Inspect this.");
     CommandReservation {
+        authority_deadline: None,
         envelope: AgentCommandEnvelope {
             schema_version: AGENT_IO_SCHEMA_VERSION,
             command_id: AgentCommandId::generate(),
@@ -39,6 +40,11 @@ pub(super) fn reservation(agent: &Agent, parent: &Sandbox, key: &str) -> Command
         queue_capacity: 2,
         expected_agent_revision: agent.revision,
         parent: SandboxMutationGuard::capture(parent),
+        policy: crate::resource_access::ResourcePolicyFence {
+            sandbox_id: parent.id.clone(),
+            sandbox_created_at: parent.created_at.clone(),
+            policy_revision: 0,
+        },
     }
 }
 
@@ -146,4 +152,175 @@ async fn stale_or_foreign_admission_has_no_receipt_or_consumed_order() {
             .unwrap(),
     );
     assert_eq!(valid.receipt.agent_order, 1);
+}
+
+fn personal_policy(parent: &Sandbox) -> crate::resource_access::ResourcePolicyRecord {
+    crate::resource_access::ResourcePolicyRecord {
+        sandbox_id: parent.id.clone(),
+        sandbox_created_at: parent.created_at.clone(),
+        owner: AgentOwner::Person {
+            subject: parent.owner.clone(),
+        },
+        organization_evidence: None,
+        revision: 1,
+    }
+}
+
+#[tokio::test]
+async fn policy_revision_is_fenced_without_changing_aggregate_revisions_and_retries_survive() {
+    let (store, agent, parent) = fixture().await;
+    let original_request = reservation(&agent, &parent, "old-policy");
+    let original = record(
+        store
+            .reserve_command(original_request.clone())
+            .await
+            .unwrap(),
+    );
+    store.set_resource_policy_for_test(personal_policy(&parent));
+    let mut current = reservation(&agent, &parent, "new-policy");
+    assert_eq!(
+        store.reserve_command(current.clone()).await,
+        Err(CommandLedgerError::Conflict)
+    );
+    assert_eq!(
+        record(store.reserve_command(original_request).await.unwrap()),
+        original
+    );
+    current.policy.policy_revision = 1;
+    // Credential custody revision is independent of the resource policy fence.
+    current.envelope.authorization.policy_revision = 17;
+    let admitted = record(store.reserve_command(current).await.unwrap());
+    assert_eq!(admitted.receipt.agent_order, 2);
+    assert_eq!(store.get_agent(&agent.id).await.unwrap(), Some(agent));
+    assert_eq!(store.get_sandbox(&parent.id).await.unwrap(), Some(parent));
+}
+
+#[tokio::test]
+async fn owner_kind_incarnation_and_corrupt_policy_cannot_admit_or_consume_order() {
+    use crate::resource_access::*;
+    let (store, agent, parent) = fixture().await;
+    let mut submission = reservation(&agent, &parent, "fenced");
+    submission.policy.policy_revision = 1;
+    let mut policy = personal_policy(&parent);
+    policy.owner = ResourceOwner::Organization {
+        subject: parent.owner.clone(),
+    };
+    policy.organization_evidence = Some(OrganizationOwnershipEvidence {
+        issuer: "https://identity.test".into(),
+        organization: parent.owner.clone(),
+        admitted_by: ResourceActor::Human {
+            subject: crate::SubjectId::new("admin"),
+        },
+        verified_at: NOW.into(),
+    });
+    store.set_resource_policy_for_test(policy);
+    assert_eq!(
+        store.reserve_command(submission.clone()).await,
+        Err(CommandLedgerError::NotFound)
+    );
+    for corruption in 0..3 {
+        let mut policy = personal_policy(&parent);
+        match corruption {
+            0 => policy.sandbox_created_at = LATEST.into(),
+            1 => policy.revision = 0,
+            _ => {
+                policy.owner = ResourceOwner::Person {
+                    subject: crate::SubjectId::new("foreign"),
+                }
+            }
+        }
+        store.set_resource_policy_for_test(policy);
+        assert_eq!(
+            store.reserve_command(submission.clone()).await,
+            Err(CommandLedgerError::Corrupt)
+        );
+    }
+    store.set_resource_policy_for_test(personal_policy(&parent));
+    submission.policy.sandbox_created_at = LATEST.into();
+    assert_eq!(
+        store.reserve_command(submission.clone()).await,
+        Err(CommandLedgerError::Conflict)
+    );
+    submission.policy.sandbox_created_at = parent.created_at.clone();
+    assert_eq!(
+        record(store.reserve_command(submission).await.unwrap())
+            .receipt
+            .agent_order,
+        1
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn expired_membership_cannot_create_or_recover_a_reservation() {
+    let (store, agent, parent) = fixture().await;
+    let original_request = reservation(&agent, &parent, "retained");
+    let original = record(
+        store
+            .reserve_command(original_request.clone())
+            .await
+            .unwrap(),
+    );
+    for mut submission in [original_request, reservation(&agent, &parent, "expired")] {
+        submission.authority_deadline = Some(tokio::time::Instant::now());
+        assert_eq!(
+            store.reserve_command(submission).await,
+            Err(CommandLedgerError::Conflict)
+        );
+    }
+    assert_eq!(
+        store
+            .get_command(&original.receipt.envelope.command_id)
+            .await
+            .unwrap(),
+        Some(original)
+    );
+    assert_eq!(
+        record(
+            store
+                .reserve_command(reservation(&agent, &parent, "fresh"))
+                .await
+                .unwrap()
+        )
+        .receipt
+        .agent_order,
+        2
+    );
+}
+
+#[tokio::test]
+async fn response_identity_is_unique_and_duplicate_refusal_does_not_consume_order() {
+    let (store, agent, parent) = fixture().await;
+    let first = record(
+        store
+            .reserve_command(reservation(&agent, &parent, "first"))
+            .await
+            .unwrap(),
+    );
+    let response_id = first.receipt.response_id.as_ref().unwrap();
+    assert_eq!(
+        store.get_response_command(response_id).await.unwrap(),
+        Some(first.clone())
+    );
+    let mut duplicate = reservation(&agent, &parent, "second");
+    duplicate.response_id = Some(response_id.clone());
+    assert_eq!(
+        store.reserve_command(duplicate).await,
+        Err(CommandLedgerError::Conflict)
+    );
+    assert!(store
+        .get_response_command(&AgentResponseId::generate())
+        .await
+        .unwrap()
+        .is_none());
+    assert_eq!(
+        record(
+            store
+                .reserve_command(reservation(&agent, &parent, "third"))
+                .await
+                .unwrap()
+        )
+        .receipt
+        .agent_order,
+        2
+    );
 }

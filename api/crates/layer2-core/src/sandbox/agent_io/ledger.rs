@@ -24,6 +24,12 @@ pub struct CommandReservation {
     pub queue_capacity: u16,
     pub expected_agent_revision: u64,
     pub parent: SandboxMutationGuard,
+    /// Current resource authorization, distinct from credential/grant revision.
+    /// Every new reservation proves this fence atomically with resource guards.
+    pub policy: crate::resource_access::ResourcePolicyFence,
+    /// Nonrenewing live authorization; internal only, never deserialized from a
+    /// client or retained as permission for a later execution attempt.
+    pub authority_deadline: Option<tokio::time::Instant>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -120,6 +126,13 @@ pub trait AgentCommandStore: Send + Sync {
         &self,
         id: &AgentCommandId,
     ) -> Result<Option<AdmittedAgentCommand>, CommandLedgerError>;
+
+    /// Resolve the response index only. The service authorizes the associated
+    /// resource before exposing any command/response status or receipt.
+    async fn get_response_command(
+        &self,
+        id: &AgentResponseId,
+    ) -> Result<Option<AdmittedAgentCommand>, CommandLedgerError>;
 }
 
 pub fn command_key_digest(key: &str) -> Result<String, CommandLedgerError> {
@@ -137,17 +150,31 @@ impl CommandReservation {
     }
 
     pub fn validate(&self) -> Result<(), CommandLedgerError> {
+        self.require_current_authority()?;
         self.envelope
             .validate_integrity()
             .map_err(|_| CommandLedgerError::Invalid)?;
         if !valid_digest(&self.key_sha256)
             || !(1..=MAX_COMMAND_QUEUE_CAPACITY).contains(&self.queue_capacity)
             || self.expected_agent_revision == 0
+            || self.policy.sandbox_id != self.parent.sandbox_id
+            || crate::seconds_from_rfc3339(&self.policy.sandbox_created_at).is_none()
+            || self.policy.policy_revision > i64::MAX as u64
             || !ordered_times(&self.admitted_at, &self.queue_deadline)
         {
             return Err(CommandLedgerError::Invalid);
         }
         self.record(1, 0, None)?.validate()
+    }
+
+    pub fn require_current_authority(&self) -> Result<(), CommandLedgerError> {
+        if self
+            .authority_deadline
+            .is_some_and(|deadline| tokio::time::Instant::now() >= deadline)
+        {
+            return Err(CommandLedgerError::Conflict);
+        }
+        Ok(())
     }
 
     pub fn record(

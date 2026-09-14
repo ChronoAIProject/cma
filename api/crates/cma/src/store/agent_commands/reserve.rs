@@ -45,8 +45,22 @@ pub(super) async fn apply(
         .map_err(|_| CommandLedgerError::Corrupt)?
         .ok_or(CommandLedgerError::NotFound)?;
     validate_command_reservation(request, &agent, &parent)?;
+    let policy = store
+        .resource_policies
+        .find_one(doc! { "_id": parent.id.as_str() })
+        .session(&mut *session)
+        .await?
+        .as_ref()
+        .map(super::super::resource_access::read_inventory_policy)
+        .transpose()
+        .map_err(|_| CommandLedgerError::Corrupt)?;
+    layer2_core::sandbox::agent_io::validate_command_reservation_policy(
+        request,
+        &parent,
+        policy.as_ref(),
+    )?;
 
-    // Real writes serialize resource retirement against the observation. These
+    // Real writes serialize resource retirement and policy changes against the observation. These
     // additive top-level fences do not change the old aggregate wire records.
     let agent_revision =
         signed(agent.revision, "Agent revision").map_err(|_| CommandLedgerError::Corrupt)?;

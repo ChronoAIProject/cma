@@ -92,6 +92,12 @@ struct UncertainStore {
 
 #[async_trait::async_trait]
 impl AgentCommandStore for UncertainStore {
+    async fn get_response_command(
+        &self,
+        id: &crate::ids::AgentResponseId,
+    ) -> Result<Option<AdmittedAgentCommand>, CommandLedgerError> {
+        self.inner.get_response_command(id).await
+    }
     async fn reserve_command(
         &self,
         request: CommandReservation,
