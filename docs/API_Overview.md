@@ -110,9 +110,10 @@ command kind; identical retries return the original receipt and changed input
 conflicts. No expiration index silently makes an old key reusable. A bounded
 background worker discovers admitted commands, obtains fresh personal authority,
 claims the Agent's lane and atomically binds dispatch before sending input.
-Recovery reconciles the existing binding without sending another input. Public
-admission adapters remain under development, so common idempotent busy queues
-are not advertised as live.
+Recovery reconciles the existing binding without sending another input. The
+[Responses v2 contract](API_Responses.md) provides durable personal admission,
+receipts and explicit replay. Production shared and organization mutation
+admission remains under development.
 
 Agent logs, Sandbox events and Launch events have independent monotonic
 sequences. REST exposes JSON event pages. AG-UI exposes SSE with a durable
@@ -126,9 +127,11 @@ durable projection. A replay connection failure is not an Agent turn failure.
 Disconnecting a streaming POST does not cancel its admitted work; replay reads,
 not repeated input POSTs, are the recovery path.
 
-The Responses subset has no stream-resume operation. Its response and item
+The Responses v1 subset has no stream-resume operation. Its response and item
 reads recover retained output, while its strict predecessor fence prevents a
-caller from silently forking the Agent's linear conversation.
+caller from silently forking the Agent's linear conversation. Responses v2 uses
+the common command queue and explicit durable event replay; it requires an
+existing conversation and does not accept a nonnull predecessor.
 
 ## Lifecycle And Availability
 

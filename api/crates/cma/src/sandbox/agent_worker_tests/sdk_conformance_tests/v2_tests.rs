@@ -3,6 +3,61 @@ use layer2_core::resource_access::*;
 use layer2_core::sandbox::agent_io::*;
 use layer2_core::Caller;
 
+#[tokio::test]
+async fn response_admission_reads_durable_open_before_ready_publication_without_retry() {
+    use tower::ServiceExt;
+    let harness = Harness::new(Arc::new(EmptyAgentSkillResolver)).await;
+    let agent = harness.admit("response-before-ready", vec![]).await;
+    for _ in 0..3 {
+        harness.run(&agent.id, harness.now).await;
+    }
+    let pending = harness.stored(&agent.id).await;
+    assert_eq!(pending.status, AgentStatus::Starting);
+    assert_eq!(pending.work.step, AgentWorkStep::PublishReady);
+    assert!(pending.conversation.conversation_id.is_some());
+    assert!(!harness
+        .store
+        .agent_log(&agent.id, 0, 100)
+        .await
+        .unwrap()
+        .iter()
+        .any(|entry| matches!(entry.kind, AgentLogKind::ConversationOpened { .. })));
+    let (router, _) = conversation_router(&harness).await;
+    let router = router.layer(middleware::from_fn_with_state(
+        harness.workspace.owner.clone(),
+        authenticate,
+    ));
+    let response = router
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v2/responses")
+                .header("authorization", TEST_BEARER)
+                .header("content-type", "application/json")
+                .header("idempotency-key", "open-before-ready")
+                .body(axum::body::Body::from(
+                    json!({"conversation": agent.id, "input": "sdk-helper-text", "stream": true})
+                        .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(harness.stored(&agent.id).await, pending);
+    assert_eq!(
+        harness
+            .store
+            .command_work_page(&PageRequest::default())
+            .await
+            .unwrap()
+            .items
+            .len(),
+        1
+    );
+    drop(response);
+}
+
 struct Authority(SubjectId);
 pub(super) fn context(owner: &SubjectId) -> CallerContext {
     CallerContext {

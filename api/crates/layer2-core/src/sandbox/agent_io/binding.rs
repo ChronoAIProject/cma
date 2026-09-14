@@ -27,16 +27,23 @@ pub fn bind_command_dispatch(
     if lane.lease != command.work.lease || command.receipt.agent_order > lane.last_order {
         return Err(CommandLedgerError::Corrupt);
     }
+    if let Some(fence) = &mutation.execution_fence {
+        fence
+            .require_envelope(&command.receipt.envelope)
+            .map_err(|_| CommandLedgerError::Conflict)?;
+    } else if command.receipt.envelope.owner
+        != (AgentOwner::Person {
+            subject: current.owner.clone(),
+        })
+    {
+        return Err(CommandLedgerError::Conflict);
+    }
     if mutation.admission_guard.is_none()
         || command.status != AgentResponseStatus::Queued
         || command.work.dispatch.is_some()
         || command.queue_expired(now)
         || mutation.agent.id != current.id
         || command.receipt.envelope.agent_id != current.id
-        || command.receipt.envelope.owner
-            != (AgentOwner::Person {
-                subject: current.owner.clone(),
-            })
         || current.requested_stop_reason.is_some()
         || current
             .conversation

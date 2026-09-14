@@ -126,12 +126,15 @@ conversation items, alias retries, retrieval, replay and named refusals. Python'
 aggregate helper requires a model argument; the fixture uses the first response's
 pinned model. The unchanged v1 fixtures also passed on that server.
 
-An initial Python v2 run returned `503 response_unavailable`; subsequent concurrent
-Node/Python runs and 80 turns across four concurrent disposable conversations
-passed without retry. That initial transient remains unexplained. An earlier
-eight-Agent probe hit the fixture's Agent-creation capacity (429). These are local
-fixture results, not real-provider or production continuity evidence. V2 production
-rollout and previous-version live-session continuity remain release gates.
+Intermittent Python `503 response_unavailable` was reproduced while a new Agent
+had durably opened its native conversation but had not yet published Ready.
+History now recognizes that intermediate state only with the exact open receipt
+and matching completion log. It creates no synthetic conversation event or turn;
+missing or mismatched published history remains corrupt. A deterministic actual
+handler test freezes that startup phase, and all four official/CMA clients passed
+two turns and recovery concurrently after the fix, without retries. An earlier
+eight-Agent probe hit Agent-creation capacity (429). These are local fixture
+results; production rollout and previous-version continuity remain release gates.
 
 CMA SDKs expose this contract separately as TypeScript `responsesV2` and Rust
 `responses_v2()`. Their stream receipt callbacks/accessors expose durable IDs

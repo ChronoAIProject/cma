@@ -100,7 +100,7 @@ impl ResourceAccessStore for InMemorySandboxStore {
     }
 }
 
-fn snapshot(
+pub(super) fn snapshot(
     state: &super::super::State,
     target: &ResourceTarget,
 ) -> Result<ResourceAccessSnapshot, ResourceAccessStoreError> {

@@ -15,6 +15,9 @@ use layer3_adapter::ConversationInputSender;
 use super::work_tests::{claim_request, live_request};
 use super::*;
 
+#[path = "resource_execution_tests.rs"]
+mod resource_execution;
+
 struct Authority(Mutex<Result<Caller, CommandAuthorizationError>>);
 #[async_trait::async_trait]
 impl AgentCommandAuthorizer for Authority {

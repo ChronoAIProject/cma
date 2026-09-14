@@ -140,6 +140,7 @@ fn begin_turn(
     agent.conversation.last_seq += 2;
     AgentConversationMutation {
         command_claim: None,
+        execution_fence: None,
         admission_guard,
         expected_agent_revision,
         expected_last_seq,
@@ -181,6 +182,7 @@ fn begin_first_message(
     agent.conversation.last_seq += 4;
     AgentConversationMutation {
         command_claim: None,
+        execution_fence: None,
         admission_guard,
         expected_agent_revision,
         expected_last_seq,

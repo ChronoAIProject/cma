@@ -13,6 +13,9 @@ mod admission_results;
 #[path = "command_status_fence_tests.rs"]
 mod status_fences;
 
+#[path = "command_execution_tests.rs"]
+mod execution;
+
 fn context(subject: &str) -> CallerContext {
     CallerContext {
         caller: caller(subject, true),

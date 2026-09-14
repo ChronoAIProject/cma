@@ -44,9 +44,9 @@ pub use checkpoint::{
 };
 pub use conversation::{
     AvailableCommand, AvailableCommandsUpdate, ContentBlock, ContentChunk, ConversationChannel,
-    ConversationId, ConversationInput, ConversationInputSender, ConversationSendOutcome,
-    ConversationUpdate, MessageId, PermissionDecision, PermissionLocator, PermissionOption,
-    PermissionOptionId, PermissionOptionKind, PermissionRequest, PromptResponse,
+    ConversationId, ConversationInput, ConversationInputGuard, ConversationInputSender,
+    ConversationSendOutcome, ConversationUpdate, MessageId, PermissionDecision, PermissionLocator,
+    PermissionOption, PermissionOptionId, PermissionOptionKind, PermissionRequest, PromptResponse,
     RequestPermissionRequest, SessionUpdate, ToolCall, ToolCallId, ToolCallStatus, ToolCallUpdate,
     ToolCallUpdateFields, ToolKind, TurnEvidence, TurnScopedEvidence, TurnStopReason, TurnUsage,
     UsageUpdate,

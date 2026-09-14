@@ -1,7 +1,6 @@
 use std::sync::Arc;
 
-use crate::resource_access::{AccessDecision, ResourceCapability};
-use crate::{AgentId, Caller, Capability, RuntimeCapability};
+use crate::{AgentId, Caller, RuntimeCapability};
 
 use super::store::{
     AgentConversationStore, AgentLogStore, AgentStore, SandboxLifecycleExecutionStore,
@@ -17,6 +16,9 @@ pub(super) const MAX_OPERATION_COMMIT_RETRIES: usize = 8;
 
 #[path = "agent_linear_input.rs"]
 mod linear_input;
+
+#[path = "agent_operation_authority.rs"]
+mod execution_authority;
 
 pub trait AgentOperationStore:
     AgentStore + AgentLogStore + AgentConversationStore + SandboxStore + SandboxLifecycleExecutionStore
@@ -131,6 +133,7 @@ impl AgentOperationError {
 
 pub struct AgentOperationService {
     pub(super) command_claim: Option<super::agent_io::CommandClaim>,
+    pub(super) execution_authority: Option<super::agent_io::CommandExecutionAuthorization>,
     pub(super) connections: Arc<dyn super::SandboxCredentialPrerequisite>,
     pub(super) store: Arc<dyn AgentOperationStore>,
     pub(super) runtimes: Arc<dyn AgentRuntimeRegistry>,
@@ -144,6 +147,7 @@ impl AgentOperationService {
     {
         Arc::new(Self {
             command_claim: None,
+            execution_authority: None,
             store,
             runtimes,
             connections: Arc::new(super::FixedSandboxCredentialPrerequisite::Ready),
@@ -156,6 +160,7 @@ impl AgentOperationService {
     ) -> Arc<Self> {
         Arc::new(Self {
             command_claim: self.command_claim.clone(),
+            execution_authority: self.execution_authority.clone(),
             connections,
             store: self.store.clone(),
             runtimes: self.runtimes.clone(),
@@ -365,36 +370,6 @@ impl AgentOperationService {
             }
         }
         Err(AgentOperationError::Conflict)
-    }
-
-    fn require_owner_authority(&self, caller: &Caller) -> Result<(), AgentOperationError> {
-        caller
-            .authorization
-            .allows(Capability::UseOwnSandboxes)
-            .then_some(())
-            .ok_or(AgentOperationError::Forbidden)
-    }
-
-    async fn owned_agent(
-        &self,
-        caller: &Caller,
-        id: &AgentId,
-    ) -> Result<Agent, AgentOperationError> {
-        let agent = AgentStore::get_agent(self.store.as_ref(), id)
-            .await
-            .map_err(operation_store_error)?
-            .filter(|agent| {
-                agent.id == *id
-                    && AccessDecision::personal(caller, &agent.owner)
-                        .allows(ResourceCapability::Interact)
-            })
-            .ok_or(AgentOperationError::NotFound)?;
-        if agent.requested_stop_reason.is_some() {
-            return Err(AgentOperationError::StatusConflict {
-                status: agent.status,
-            });
-        }
-        Ok(agent)
     }
 
     fn require_active_status(

@@ -105,6 +105,7 @@ async fn commit_conversation(
                 return Err(SandboxStoreError::Unavailable(error.to_string()));
             }
         };
+        admission::require_current(&mutation, &mut session).await?;
         match commit_transaction(&mut session).await {
             CommitOutcome::Committed => return Ok(receipt.logs),
             CommitOutcome::Retry(error) => last_transient = Some(error.to_string()),
