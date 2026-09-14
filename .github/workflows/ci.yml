@@ -42,7 +42,7 @@ jobs:
       - name: Provider contract mutation regressions
         run: ruby .github/scripts/ci-contract-tests.rb provider
       - name: Staging authority and evidence regressions
-        run: node --test .github/scripts/staging-authority.test.mjs .github/scripts/deployment-observer.test.mjs .github/scripts/mongo-contract-tests.test.mjs
+        run: node --test .github/scripts/staging-authority.test.mjs .github/scripts/deployment-observer.test.mjs .github/scripts/cma-bridge-continuity-observer.test.mjs .github/scripts/mongo-contract-tests.test.mjs
       - name: Install harness dependencies
         working-directory: web
         run: npm ci
