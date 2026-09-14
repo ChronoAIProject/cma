@@ -1,0 +1,12 @@
+import type { Capability } from '../auth/types';
+
+export const operatorViews = [
+  { id: 'sandboxes', label: 'Sandboxes', capability: 'read_all_sandboxes' },
+  { id: 'profiles', label: 'Profiles', capability: 'read_all_sandboxes' },
+  { id: 'settings', label: 'Platform settings', capability: 'configure_platform' },
+  { id: 'activity', label: 'Activity', capability: 'read_activity_log' },
+] as const;
+
+export function canOpenOperations(capabilities: readonly Capability[]): boolean {
+  return operatorViews.some((view) => capabilities.includes(view.capability));
+}

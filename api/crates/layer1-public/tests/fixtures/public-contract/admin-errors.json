@@ -1,0 +1,1217 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "admin-settings-read-anonymous",
+      "operation": "GET /api/v1/admin/settings",
+      "scenario": "admin_anonymous",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/admin/settings",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "admin-settings-read-denied",
+      "operation": "GET /api/v1/admin/settings",
+      "scenario": "admin_forbidden",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/admin/settings",
+        "headers": {}
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-an-operator",
+          "title": "not an operator",
+          "status": 403,
+          "detail": "This operation requires an operator capability this caller does not hold.",
+          "code": "forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "admin-settings-patch-anonymous",
+      "operation": "PATCH /api/v1/admin/settings",
+      "scenario": "admin_anonymous",
+      "request": {
+        "method": "PATCH",
+        "path": "/api/v1/admin/settings",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "expected_revision": 0,
+          "marketplace": {
+            "enabled": false
+          }
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "admin-settings-patch-denied",
+      "operation": "PATCH /api/v1/admin/settings",
+      "scenario": "admin_forbidden",
+      "request": {
+        "method": "PATCH",
+        "path": "/api/v1/admin/settings",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "expected_revision": 0,
+          "marketplace": {
+            "enabled": false
+          }
+        }
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-an-operator",
+          "title": "not an operator",
+          "status": 403,
+          "detail": "This operation requires an operator capability this caller does not hold.",
+          "code": "forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "admin-settings-patch-invalid-body",
+      "operation": "PATCH /api/v1/admin/settings",
+      "scenario": "admin_operator",
+      "request": {
+        "method": "PATCH",
+        "path": "/api/v1/admin/settings",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": []
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-request",
+          "title": "invalid request",
+          "status": 422,
+          "detail": "The JSON body does not match the platform settings contract.",
+          "code": "invalid_request"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "admin-settings-patch-missing-media-type",
+      "operation": "PATCH /api/v1/admin/settings",
+      "scenario": "admin_operator",
+      "request": {
+        "method": "PATCH",
+        "path": "/api/v1/admin/settings",
+        "headers": {},
+        "body": {
+          "expected_revision": 0,
+          "marketplace": {
+            "enabled": false
+          }
+        }
+      },
+      "response": {
+        "status": 415,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/unsupported-media-type",
+          "title": "unsupported media type",
+          "status": 415,
+          "detail": "The request must use the application/json media type.",
+          "code": "unsupported_media_type"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "admin-settings-replace-anonymous",
+      "operation": "PUT /api/v1/admin/settings",
+      "scenario": "admin_anonymous",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/admin/settings",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "expected_revision": 1,
+          "settings": {
+            "defaults": {
+              "sandbox_profile": {
+                "id": "sbp_default",
+                "revision": 1
+              },
+              "workspace_profile": {
+                "id": "wkp_default",
+                "revision": 1
+              },
+              "agent_profile": {
+                "id": "agp_default",
+                "revision": 1
+              }
+            },
+            "inactivity": {
+              "pause_after_seconds": 900
+            },
+            "retention": {
+              "checkpoint_grace_days": 7,
+              "agent_log_days": 90
+            },
+            "limits": {
+              "max_sandboxes_per_user": 9,
+              "visitor_max_sandboxes": 1,
+              "visitor_max_launches_per_day": 5
+            },
+            "triggers": {
+              "enabled": false,
+              "orchestration_paused": false
+            },
+            "marketplace": {
+              "enabled": false
+            }
+          }
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "admin-settings-replace-denied",
+      "operation": "PUT /api/v1/admin/settings",
+      "scenario": "admin_forbidden",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/admin/settings",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "expected_revision": 1,
+          "settings": {
+            "defaults": {
+              "sandbox_profile": {
+                "id": "sbp_default",
+                "revision": 1
+              },
+              "workspace_profile": {
+                "id": "wkp_default",
+                "revision": 1
+              },
+              "agent_profile": {
+                "id": "agp_default",
+                "revision": 1
+              }
+            },
+            "inactivity": {
+              "pause_after_seconds": 900
+            },
+            "retention": {
+              "checkpoint_grace_days": 7,
+              "agent_log_days": 90
+            },
+            "limits": {
+              "max_sandboxes_per_user": 9,
+              "visitor_max_sandboxes": 1,
+              "visitor_max_launches_per_day": 5
+            },
+            "triggers": {
+              "enabled": false,
+              "orchestration_paused": false
+            },
+            "marketplace": {
+              "enabled": false
+            }
+          }
+        }
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-an-operator",
+          "title": "not an operator",
+          "status": 403,
+          "detail": "This operation requires an operator capability this caller does not hold.",
+          "code": "forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "admin-settings-replace-invalid-body",
+      "operation": "PUT /api/v1/admin/settings",
+      "scenario": "admin_operator",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/admin/settings",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": []
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-request",
+          "title": "invalid request",
+          "status": 422,
+          "detail": "The JSON body does not match the platform settings contract.",
+          "code": "invalid_request"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "admin-settings-replace-missing-media-type",
+      "operation": "PUT /api/v1/admin/settings",
+      "scenario": "admin_operator",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/admin/settings",
+        "headers": {},
+        "body": {
+          "expected_revision": 1,
+          "settings": {
+            "defaults": {
+              "sandbox_profile": {
+                "id": "sbp_default",
+                "revision": 1
+              },
+              "workspace_profile": {
+                "id": "wkp_default",
+                "revision": 1
+              },
+              "agent_profile": {
+                "id": "agp_default",
+                "revision": 1
+              }
+            },
+            "inactivity": {
+              "pause_after_seconds": 900
+            },
+            "retention": {
+              "checkpoint_grace_days": 7,
+              "agent_log_days": 90
+            },
+            "limits": {
+              "max_sandboxes_per_user": 9,
+              "visitor_max_sandboxes": 1,
+              "visitor_max_launches_per_day": 5
+            },
+            "triggers": {
+              "enabled": false,
+              "orchestration_paused": false
+            },
+            "marketplace": {
+              "enabled": false
+            }
+          }
+        }
+      },
+      "response": {
+        "status": 415,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/unsupported-media-type",
+          "title": "unsupported media type",
+          "status": 415,
+          "detail": "The request must use the application/json media type.",
+          "code": "unsupported_media_type"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "admin-settings-reset-anonymous",
+      "operation": "POST /api/v1/admin/settings/reset",
+      "scenario": "admin_anonymous",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/settings/reset",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "expected_revision": 2
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "admin-settings-reset-denied",
+      "operation": "POST /api/v1/admin/settings/reset",
+      "scenario": "admin_forbidden",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/settings/reset",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "expected_revision": 2
+        }
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-an-operator",
+          "title": "not an operator",
+          "status": 403,
+          "detail": "This operation requires an operator capability this caller does not hold.",
+          "code": "forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "admin-settings-reset-invalid-body",
+      "operation": "POST /api/v1/admin/settings/reset",
+      "scenario": "admin_operator",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/settings/reset",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": []
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-request",
+          "title": "invalid request",
+          "status": 422,
+          "detail": "The JSON body does not match the platform settings contract.",
+          "code": "invalid_request"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "admin-settings-reset-missing-media-type",
+      "operation": "POST /api/v1/admin/settings/reset",
+      "scenario": "admin_operator",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/settings/reset",
+        "headers": {},
+        "body": {
+          "expected_revision": 2
+        }
+      },
+      "response": {
+        "status": 415,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/unsupported-media-type",
+          "title": "unsupported media type",
+          "status": 415,
+          "detail": "The request must use the application/json media type.",
+          "code": "unsupported_media_type"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "admin-trigger-pause-anonymous",
+      "operation": "POST /api/v1/admin/triggers/pause",
+      "scenario": "admin_anonymous",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/triggers/pause",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "admin-trigger-pause-denied",
+      "operation": "POST /api/v1/admin/triggers/pause",
+      "scenario": "admin_forbidden",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/triggers/pause",
+        "headers": {}
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-an-operator",
+          "title": "not an operator",
+          "status": 403,
+          "detail": "This operation requires an operator capability this caller does not hold.",
+          "code": "forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "admin-trigger-resume-anonymous",
+      "operation": "POST /api/v1/admin/triggers/resume",
+      "scenario": "admin_anonymous",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/triggers/resume",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "admin-trigger-resume-denied",
+      "operation": "POST /api/v1/admin/triggers/resume",
+      "scenario": "admin_forbidden",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/triggers/resume",
+        "headers": {}
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-an-operator",
+          "title": "not an operator",
+          "status": 403,
+          "detail": "This operation requires an operator capability this caller does not hold.",
+          "code": "forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "admin-sandbox-list-anonymous",
+      "operation": "GET /api/v1/admin/sandboxes",
+      "scenario": "admin_anonymous",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/admin/sandboxes?owner=owner-a&status=active&runtime_version=runtime-v1",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "admin-sandbox-list-denied",
+      "operation": "GET /api/v1/admin/sandboxes",
+      "scenario": "admin_forbidden",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/admin/sandboxes?owner=owner-a&status=active&runtime_version=runtime-v1",
+        "headers": {}
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-an-operator",
+          "title": "not an operator",
+          "status": 403,
+          "detail": "This operation requires an operator capability this caller does not hold.",
+          "code": "forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "admin-sandbox-list-invalid-page",
+      "operation": "GET /api/v1/admin/sandboxes",
+      "scenario": "admin_operator",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/admin/sandboxes?limit=0",
+        "headers": {}
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-admin-request",
+          "title": "invalid admin request",
+          "status": 400,
+          "detail": "The operator request parameters are not valid.",
+          "code": "invalid_admin_request"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "admin-sandbox-read-anonymous",
+      "operation": "GET /api/v1/admin/sandboxes/{id}",
+      "scenario": "admin_anonymous",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/admin/sandboxes/sbx_contract",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "admin-sandbox-read-denied",
+      "operation": "GET /api/v1/admin/sandboxes/{id}",
+      "scenario": "admin_forbidden",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/admin/sandboxes/sbx_contract",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/sandbox-not-found",
+          "title": "sandbox not found",
+          "status": 404,
+          "detail": "No sandbox matches this request.",
+          "code": "sandbox_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "admin-sandbox-events-anonymous",
+      "operation": "GET /api/v1/admin/sandboxes/{id}/events",
+      "scenario": "admin_anonymous",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/admin/sandboxes/sbx_contract/events?after=0&limit=10",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "admin-sandbox-events-denied",
+      "operation": "GET /api/v1/admin/sandboxes/{id}/events",
+      "scenario": "admin_forbidden",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/admin/sandboxes/sbx_contract/events?after=0&limit=10",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/sandbox-not-found",
+          "title": "sandbox not found",
+          "status": 404,
+          "detail": "No sandbox matches this request.",
+          "code": "sandbox_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "admin-sandbox-events-invalid-page",
+      "operation": "GET /api/v1/admin/sandboxes/{id}/events",
+      "scenario": "admin_operator",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/admin/sandboxes/sbx_contract/events?limit=0",
+        "headers": {}
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-admin-request",
+          "title": "invalid admin request",
+          "status": 400,
+          "detail": "The operator request parameters are not valid.",
+          "code": "invalid_admin_request"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "admin-sandbox-retire-missing-anonymous",
+      "operation": "POST /api/v1/admin/sandboxes/{id}/retire",
+      "scenario": "admin_anonymous",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/sandboxes/sbx_missing/retire",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "admin-sandbox-retire-missing-denied",
+      "operation": "POST /api/v1/admin/sandboxes/{id}/retire",
+      "scenario": "admin_forbidden",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/sandboxes/sbx_missing/retire",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/sandbox-not-found",
+          "title": "sandbox not found",
+          "status": 404,
+          "detail": "No sandbox matches this request.",
+          "code": "sandbox_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "admin-profile-list-anonymous",
+      "operation": "GET /api/v1/admin/profiles",
+      "scenario": "admin_anonymous",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/admin/profiles?kind=agent&visibility=public&owner=owner-a",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "admin-profile-list-denied",
+      "operation": "GET /api/v1/admin/profiles",
+      "scenario": "admin_forbidden",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/admin/profiles?kind=agent&visibility=public&owner=owner-a",
+        "headers": {}
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-an-operator",
+          "title": "not an operator",
+          "status": 403,
+          "detail": "This operation requires an operator capability this caller does not hold.",
+          "code": "forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "admin-profile-list-invalid-page",
+      "operation": "GET /api/v1/admin/profiles",
+      "scenario": "admin_operator",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/admin/profiles?limit=0",
+        "headers": {}
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-admin-request",
+          "title": "invalid admin request",
+          "status": 400,
+          "detail": "The operator request parameters are not valid.",
+          "code": "invalid_admin_request"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "admin-profile-retire-anonymous",
+      "operation": "POST /api/v1/admin/profiles/{kind}/{id}/retire",
+      "scenario": "admin_anonymous",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/profiles/agent/agp_contract/retire",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "admin-profile-retire-denied",
+      "operation": "POST /api/v1/admin/profiles/{kind}/{id}/retire",
+      "scenario": "admin_forbidden",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/profiles/agent/agp_contract/retire",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/profile-not-found",
+          "title": "profile not found",
+          "status": 404,
+          "detail": "No profile matches this request.",
+          "code": "profile_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "admin-runtime-inventory-anonymous",
+      "operation": "GET /api/v1/admin/runtime-inventory",
+      "scenario": "admin_anonymous",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/admin/runtime-inventory",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "admin-runtime-inventory-denied",
+      "operation": "GET /api/v1/admin/runtime-inventory",
+      "scenario": "admin_forbidden",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/admin/runtime-inventory",
+        "headers": {}
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-an-operator",
+          "title": "not an operator",
+          "status": 403,
+          "detail": "This operation requires an operator capability this caller does not hold.",
+          "code": "forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "admin-activity-empty-filter-anonymous",
+      "operation": "GET /api/v1/admin/activity",
+      "scenario": "admin_anonymous",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/admin/activity?actor=unrelated-actor&limit=10",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "admin-activity-empty-filter-denied",
+      "operation": "GET /api/v1/admin/activity",
+      "scenario": "admin_forbidden",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/admin/activity?actor=unrelated-actor&limit=10",
+        "headers": {}
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-an-operator",
+          "title": "not an operator",
+          "status": 403,
+          "detail": "This operation requires an operator capability this caller does not hold.",
+          "code": "forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "admin-activity-empty-filter-invalid-page",
+      "operation": "GET /api/v1/admin/activity",
+      "scenario": "admin_operator",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/admin/activity?limit=0",
+        "headers": {}
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-admin-request",
+          "title": "invalid admin request",
+          "status": 400,
+          "detail": "The operator request parameters are not valid.",
+          "code": "invalid_admin_request"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "admin-sandbox-read-target-missing",
+      "operation": "GET /api/v1/admin/sandboxes/{id}",
+      "scenario": "admin_operator",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/admin/sandboxes/sbx_missing",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/sandbox-not-found",
+          "title": "sandbox not found",
+          "status": 404,
+          "detail": "No sandbox matches this request.",
+          "code": "sandbox_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "admin-sandbox-events-target-missing",
+      "operation": "GET /api/v1/admin/sandboxes/{id}/events",
+      "scenario": "admin_operator",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/admin/sandboxes/sbx_missing/events",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/sandbox-not-found",
+          "title": "sandbox not found",
+          "status": 404,
+          "detail": "No sandbox matches this request.",
+          "code": "sandbox_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "admin-sandbox-retire-missing-target-missing",
+      "operation": "POST /api/v1/admin/sandboxes/{id}/retire",
+      "scenario": "admin_operator",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/sandboxes/sbx_missing/retire",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/sandbox-not-found",
+          "title": "sandbox not found",
+          "status": 404,
+          "detail": "No sandbox matches this request.",
+          "code": "sandbox_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "admin-profile-retire-target-missing",
+      "operation": "POST /api/v1/admin/profiles/{kind}/{id}/retire",
+      "scenario": "admin_operator",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/profiles/agent/missing/retire",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/profile-not-found",
+          "title": "profile not found",
+          "status": 404,
+          "detail": "No profile matches this request.",
+          "code": "profile_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    }
+  ]
+}

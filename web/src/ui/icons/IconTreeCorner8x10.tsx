@@ -10,7 +10,7 @@
  */
 import type { IconProps } from './props';
 
-/** tree_corner_8x10 (figma extract; session-tree "L" connector, stroke geometry pre-expanded) */
+/** tree_corner_8x10 (figma extract; resource-tree "L" connector, stroke geometry pre-expanded) */
 export const IconTreeCorner8x10 = ({ size = 10, className }: IconProps) => (
   <svg
     width={(size * 8) / 10}

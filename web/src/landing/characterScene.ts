@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { stepMotion } from './characterMotion';
 
 const RADIUS = 0.355;
 const HEM_LOW = -0.262;
@@ -18,6 +19,9 @@ const ROWS_PER_RING = LIP_ROWS + BODY_ROWS;
 interface CharacterOptions {
   readonly onReady?: () => void;
   readonly onUnavailable?: () => void;
+  readonly state?: 'brand' | 'running' | 'completed' | 'pending' | 'failed';
+  readonly autoRotate?: boolean;
+  readonly onActivate?: () => void;
 }
 
 export interface CharacterHandle {
@@ -170,7 +174,7 @@ function shadowTexture() {
   return new THREE.CanvasTexture(canvas);
 }
 
-function readPalette(host: HTMLElement): CharacterPalette {
+function readPalette(host: HTMLElement, state: CharacterOptions['state']): CharacterPalette {
   const styles = getComputedStyle(host);
   const read = (property: string) => {
     const value = styles.getPropertyValue(property).trim();
@@ -182,7 +186,11 @@ function readPalette(host: HTMLElement): CharacterPalette {
   const dark = document.body.hasAttribute('data-ds-dark-theme');
 
   return {
-    body: read('--dsw-alias-brand-primary'),
+    body: read(
+      state === undefined || state === 'brand'
+        ? '--dsw-alias-brand-primary'
+        : `--dsw-alias-character-${state}`,
+    ),
     lens: read('--dsw-alias-brand-primary-invert'),
     sky: read(dark ? '--dsw-alias-label-primary' : '--dsw-alias-label-primary-foreground'),
     ground: read('--dsw-alias-bg-layer-3'),
@@ -197,6 +205,8 @@ function readPalette(host: HTMLElement): CharacterPalette {
 /** Mount the supplied procedural CMA character into a transparent, responsive host. */
 export function mountCharacter(host: HTMLElement, options: CharacterOptions = {}): CharacterHandle {
   const motion = window.matchMedia('(prefers-reduced-motion: reduce)');
+  const decorative = options.state === undefined || options.state === 'brand';
+  const moving = decorative || options.state !== 'failed';
   let reduced = motion.matches;
   let disposed = false;
   let intersecting = true;
@@ -217,7 +227,8 @@ export function mountCharacter(host: HTMLElement, options: CharacterOptions = {}
   host.appendChild(renderer.domElement);
 
   function syncInteraction() {
-    const enabled = !reduced && contextAvailable;
+    const enabled =
+      (!reduced || options.onActivate !== undefined) && contextAvailable && decorative;
     host.toggleAttribute('data-motion', enabled);
     if (host instanceof HTMLButtonElement) {
       host.disabled = !enabled;
@@ -342,6 +353,7 @@ export function mountCharacter(host: HTMLElement, options: CharacterOptions = {}
     depthWrite: false,
   });
   const shadow = new THREE.Sprite(shadowMaterial);
+  shadow.visible = decorative;
   shadow.scale.set(0.76, 0.11, 1);
   shadow.position.set(0, -0.43, -0.05);
   scene.add(shadow);
@@ -352,6 +364,9 @@ export function mountCharacter(host: HTMLElement, options: CharacterOptions = {}
   let spinStart = -1;
   let nextGlint = 2.4;
   let swing = 0;
+  let activating = false;
+  let activated = false;
+  let bumpStart = -1;
 
   const visible = () =>
     !disposed && contextAvailable && intersecting && document.visibilityState === 'visible';
@@ -369,14 +384,15 @@ export function mountCharacter(host: HTMLElement, options: CharacterOptions = {}
       return;
     }
 
-    if (!reduced && lastFrame !== null) {
+    if (!reduced && moving && lastFrame !== null) {
       animationTime += Math.min((timestamp - lastFrame) / 1000, 0.05);
     }
     lastFrame = timestamp;
-    const time = reduced ? 0 : animationTime;
+    const time = reduced || !moving ? 0 : animationTime;
 
-    body.update(time);
-    if (reduced) {
+    body.update(decorative || options.state === 'running' ? time : 0);
+    const step = stepMotion(options.state, time);
+    if (reduced || !decorative) {
       pointer.x = 0;
       pointer.y = 0;
       target.x = 0;
@@ -396,8 +412,16 @@ export function mountCharacter(host: HTMLElement, options: CharacterOptions = {}
     head.rotation.x = pointer.y * 0.24;
     body.mesh.rotation.y = -swing * 0.5;
     body.mesh.rotation.z = swing * 0.22;
-    rig.position.y = reduced ? 0 : Math.sin(time * 1.05) * 0.028;
-    rig.rotation.z = reduced ? 0 : Math.sin(time * 0.72) * 0.028 - pointer.x * 0.05;
+    rig.position.y = reduced ? 0 : decorative ? Math.sin(time * 1.05) * 0.028 : step.lift;
+    rig.rotation.z = reduced || !decorative ? 0 : Math.sin(time * 0.72) * 0.028 - pointer.x * 0.05;
+
+    if (!reduced && bumpStart >= 0 && spinStart < 0) {
+      const progress = clamp((animationTime - bumpStart) / 0.65, 0, 1);
+      const bump = Math.sin(progress * Math.PI);
+      rig.position.y += 0.08 * bump;
+      rig.scale.setScalar(1 + 0.06 * bump);
+      if (progress >= 1) bumpStart = -1;
+    }
 
     if (spinStart >= 0) {
       const progress = clamp((animationTime - spinStart) / 0.95, 0, 1);
@@ -411,15 +435,21 @@ export function mountCharacter(host: HTMLElement, options: CharacterOptions = {}
         spinStart = -1;
         spin = 0;
         rig.scale.setScalar(1);
+        if (activating && !activated) {
+          activated = true;
+          options.onActivate?.();
+        }
       }
     }
-    rig.rotation.y = spin;
+    const rotationSpeed =
+      options.state === 'running' ? Math.PI : options.autoRotate ? Math.PI / 4 : 0;
+    rig.rotation.y = reduced ? 0 : time * rotationSpeed + spin + step.rotation;
 
     shadowMaterial.opacity = 0.46 - rig.position.y * 1.4;
     const shadowScale = 1 - rig.position.y * 0.5;
     shadow.scale.set(0.76 * shadowScale, 0.11 * shadowScale, 1);
 
-    if (!reduced && time > nextGlint) {
+    if (!reduced && decorative && time > nextGlint) {
       const progress = (time - nextGlint) / 0.62;
       if (progress >= 1) {
         nextGlint = time + 4.5 + Math.random() * 2.5;
@@ -439,7 +469,7 @@ export function mountCharacter(host: HTMLElement, options: CharacterOptions = {}
       ready = true;
       options.onReady?.();
     }
-    if (!reduced) {
+    if (!reduced && moving) {
       requestRender();
     }
   }
@@ -457,7 +487,7 @@ export function mountCharacter(host: HTMLElement, options: CharacterOptions = {}
   }
 
   function applyTheme() {
-    const palette = readPalette(host);
+    const palette = readPalette(host, options.state);
     bodyMaterial.color.copy(palette.body);
     bodyMaterial.sheenColor.copy(palette.key);
     lensMaterial.color.copy(palette.lens);
@@ -474,7 +504,7 @@ export function mountCharacter(host: HTMLElement, options: CharacterOptions = {}
   }
 
   const onPointerMove = (event: PointerEvent) => {
-    if (reduced) {
+    if (reduced || !decorative) {
       return;
     }
     const bounds = host.getBoundingClientRect();
@@ -485,9 +515,27 @@ export function mountCharacter(host: HTMLElement, options: CharacterOptions = {}
     target.y = clamp(((event.clientY - bounds.top) / bounds.height - 0.5) * 2, -1.6, 1.6);
   };
   const onClick = () => {
-    if (!reduced && spinStart < 0) {
+    if (options.onActivate !== undefined) {
+      if (activating || activated) return;
+      host.setAttribute('data-activating', '');
+      if (reduced) {
+        activated = true;
+        options.onActivate();
+        return;
+      }
+      activating = true;
+      bumpStart = -1;
+      spinStart = animationTime;
+      return;
+    }
+    if (!reduced && decorative && spinStart < 0) {
       spinStart = animationTime;
     }
+  };
+  const onInvite = () => {
+    if (options.onActivate === undefined || reduced || activating || activated) return;
+    bumpStart = animationTime;
+    requestRender();
   };
   const onVisibility = () => {
     lastFrame = null;
@@ -495,6 +543,10 @@ export function mountCharacter(host: HTMLElement, options: CharacterOptions = {}
   };
   const onMotion = (event: MediaQueryListEvent) => {
     reduced = event.matches;
+    if (reduced && activating && !activated) {
+      activated = true;
+      options.onActivate?.();
+    }
     syncInteraction();
     lastFrame = null;
     requestRender();
@@ -513,6 +565,8 @@ export function mountCharacter(host: HTMLElement, options: CharacterOptions = {}
   window.addEventListener('pointermove', onPointerMove, { passive: true });
   window.addEventListener('resize', resize);
   host.addEventListener('click', onClick);
+  host.addEventListener('pointerenter', onInvite);
+  host.addEventListener('focus', onInvite);
   document.addEventListener('visibilitychange', onVisibility);
   motion.addEventListener('change', onMotion);
   renderer.domElement.addEventListener('webglcontextlost', onContextLost);
@@ -547,6 +601,8 @@ export function mountCharacter(host: HTMLElement, options: CharacterOptions = {}
       window.removeEventListener('pointermove', onPointerMove);
       window.removeEventListener('resize', resize);
       host.removeEventListener('click', onClick);
+      host.removeEventListener('pointerenter', onInvite);
+      host.removeEventListener('focus', onInvite);
       document.removeEventListener('visibilitychange', onVisibility);
       motion.removeEventListener('change', onMotion);
       renderer.domElement.removeEventListener('webglcontextlost', onContextLost);
@@ -580,6 +636,7 @@ export function mountCharacter(host: HTMLElement, options: CharacterOptions = {}
       renderer.forceContextLoss();
       renderer.domElement.remove();
       host.removeAttribute('data-motion');
+      host.removeAttribute('data-activating');
       if (host instanceof HTMLButtonElement) {
         host.disabled = true;
       }

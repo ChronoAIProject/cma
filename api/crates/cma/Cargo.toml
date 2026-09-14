@@ -11,6 +11,7 @@ base64 = { workspace = true }
 futures-util = { workspace = true }
 flate2 = { workspace = true }
 governor = { workspace = true }
+httpdate = { workspace = true }
 ipnet = { workspace = true }
 sha2 = { workspace = true }
 sha1 = { workspace = true }
@@ -34,6 +35,7 @@ uuid = { workspace = true }
 zeroize = { workspace = true }
 
 [dev-dependencies]
+layer2-core = { workspace = true, features = ["test-support"] }
 # Holds PTY receipt, output, and disconnect boundaries so socket races are
 # proved without sleeps or scheduler assumptions.
 layer1-public = { workspace = true, features = ["test-support"] }

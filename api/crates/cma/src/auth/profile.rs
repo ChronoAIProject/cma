@@ -8,10 +8,11 @@
 //! the interface falls back rather than inventing one, and no decision is ever
 //! made on the strength of a display name.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 /// A signed-in person, as the interface should present them.
-#[derive(Debug, Clone, Serialize, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(deny_unknown_fields)]
 pub struct Profile {
     /// The provider's account name, when it has one.
     #[serde(skip_serializing_if = "Option::is_none")]

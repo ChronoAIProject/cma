@@ -1,3 +1,4 @@
+import { Presence } from './Presence';
 import { useState } from 'react';
 import { Button } from './Button';
 import { Modal } from './Modal';
@@ -109,16 +110,20 @@ export function RiskConfirmation({
         />
         {acknowledgeLabel}
       </label>
-      {status === undefined ? null : (
-        <p className="risk__status" role="status" aria-live="polite">
-          {status}
-        </p>
-      )}
-      {failure === undefined ? null : (
-        <p className="risk__failure" role="alert">
-          {failure}
-        </p>
-      )}
+      <Presence>
+        {status === undefined ? null : (
+          <p className="risk__status" role="status" aria-live="polite">
+            {status}
+          </p>
+        )}
+      </Presence>
+      <Presence>
+        {failure === undefined ? null : (
+          <p className="risk__failure" role="alert">
+            {failure}
+          </p>
+        )}
+      </Presence>
     </Modal>
   );
 }

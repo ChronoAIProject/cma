@@ -2,7 +2,6 @@
 
 use std::time::{Duration, SystemTime};
 
-use futures_util::TryStreamExt as _;
 use layer2_core::{OperationClaim, OperationReservation, OperationStore, StoreError};
 use mongodb::{
     bson::{doc, spec::BinarySubtype, Binary, Bson, DateTime},
@@ -12,14 +11,14 @@ use mongodb::{
 };
 use serde::{Deserialize, Serialize};
 
-use super::durability::majority_collection;
+use super::{
+    durability::majority_collection,
+    schema::{self, DOCUMENT_SCHEMA_VERSION},
+};
 
-const OPERATIONS: &str = "operation_claims";
-const LEGACY_EXPIRY_INDEX: &str = "operation_claim_expiry";
+pub(super) const OPERATIONS: &str = "operation_claims";
 const EXPIRY_INDEX: &str = "operation_outcome_expiry";
 const DUPLICATE_KEY: i32 = 11_000;
-const NAMESPACE_NOT_FOUND: i32 = 26;
-const INDEX_NOT_FOUND: i32 = 27;
 const RESERVATION_RETRIES: usize = 3;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -33,6 +32,7 @@ struct OperationIdDoc {
 struct OperationDoc {
     #[serde(rename = "_id")]
     id: OperationIdDoc,
+    document_schema_version: i64,
     #[serde(default)]
     claim_id: Option<String>,
     fingerprint: Binary,
@@ -54,6 +54,7 @@ pub struct MongoOperationStore {
 impl MongoOperationStore {
     pub(super) async fn open(client: &Client, database: &str) -> Result<Self, StoreError> {
         let database = client.database(database);
+        schema::initialize_collections(&database, &[OPERATIONS]).await?;
         let store = Self {
             operations: majority_collection(&database, OPERATIONS),
         };
@@ -63,47 +64,18 @@ impl MongoOperationStore {
     }
 
     async fn held(&self, claim: &OperationClaim) -> Result<Option<OperationDoc>, StoreError> {
-        self.operations
+        let document = self
+            .operations
             .find_one(id_filter(claim))
             .await
-            .map_err(|error| StoreError::Unavailable(format!("read operation claim: {error}")))
+            .map_err(|error| StoreError::Unavailable(format!("read operation claim: {error}")))?;
+        if let Some(document) = &document {
+            schema::require_current(document.document_schema_version)?;
+        }
+        Ok(document)
     }
 
     async fn ensure_expiry_index(&self) -> Result<(), StoreError> {
-        let indexes = match self.operations.list_indexes().await {
-            Ok(cursor) => match cursor.try_collect::<Vec<_>>().await {
-                Ok(indexes) => indexes,
-                Err(error) if is_namespace_not_found(&error) => Vec::new(),
-                Err(error) => {
-                    return Err(StoreError::Unavailable(format!(
-                        "read operation claim indexes: {error}"
-                    )))
-                }
-            },
-            // A fresh database has no collection to inspect. Creating the
-            // current index below creates that collection atomically.
-            Err(error) if is_namespace_not_found(&error) => Vec::new(),
-            Err(error) => {
-                return Err(StoreError::Unavailable(format!(
-                    "list operation claim indexes: {error}"
-                )))
-            }
-        };
-        if indexes.iter().any(|index| {
-            index
-                .options
-                .as_ref()
-                .and_then(|options| options.name.as_deref())
-                == Some(LEGACY_EXPIRY_INDEX)
-        }) {
-            if let Err(error) = self.operations.drop_index(LEGACY_EXPIRY_INDEX).await {
-                if !is_index_not_found(&error) {
-                    return Err(StoreError::Unavailable(format!(
-                        "replace legacy operation claim expiry index: {error}"
-                    )));
-                }
-            }
-        }
         self.operations
             .create_index(expiry_index())
             .await
@@ -202,6 +174,7 @@ impl OperationStore for MongoOperationStore {
             .update_one(
                 doc! {
                     "_id": id_bson(claim),
+                    "document_schema_version": DOCUMENT_SCHEMA_VERSION,
                     "claim_id": claim.claim_id(),
                     "fingerprint": binary(claim.fingerprint().to_vec()),
                     "outcome": Bson::Null,
@@ -252,6 +225,7 @@ impl OperationStore for MongoOperationStore {
 fn to_doc(claim: &OperationClaim) -> OperationDoc {
     OperationDoc {
         id: operation_id(claim),
+        document_schema_version: DOCUMENT_SCHEMA_VERSION,
         claim_id: Some(claim.claim_id().to_string()),
         fingerprint: binary(claim.fingerprint().to_vec()),
         outcome: None,
@@ -278,12 +252,16 @@ fn id_bson(claim: &OperationClaim) -> Bson {
 }
 
 fn id_filter(claim: &OperationClaim) -> mongodb::bson::Document {
-    doc! { "_id": id_bson(claim) }
+    doc! {
+        "_id": id_bson(claim),
+        "document_schema_version": DOCUMENT_SCHEMA_VERSION,
+    }
 }
 
 fn expired_filter(claim: &OperationClaim, now: SystemTime) -> mongodb::bson::Document {
     doc! {
         "_id": id_bson(claim),
+        "document_schema_version": DOCUMENT_SCHEMA_VERSION,
         "outcome": { "$type": "binData" },
         "expires_at": { "$lte": DateTime::from_system_time(now) },
     }
@@ -292,6 +270,7 @@ fn expired_filter(claim: &OperationClaim, now: SystemTime) -> mongodb::bson::Doc
 fn recovery_filter(claim: &OperationClaim, now: SystemTime) -> mongodb::bson::Document {
     doc! {
         "_id": id_bson(claim),
+        "document_schema_version": DOCUMENT_SCHEMA_VERSION,
         "fingerprint": binary(claim.fingerprint().to_vec()),
         "outcome": Bson::Null,
         "recovery_required": { "$ne": true },
@@ -339,213 +318,6 @@ fn is_duplicate_key(error: &Error) -> bool {
     )
 }
 
-fn is_index_not_found(error: &Error) -> bool {
-    matches!(error.kind.as_ref(), ErrorKind::Command(command) if command.code == INDEX_NOT_FOUND)
-}
-
-fn is_namespace_not_found(error: &Error) -> bool {
-    matches!(error.kind.as_ref(), ErrorKind::Command(command) if command.code == NAMESPACE_NOT_FOUND)
-}
-
 #[cfg(test)]
-mod tests {
-    use futures_util::TryStreamExt as _;
-    use layer2_core::SubjectId;
-
-    use super::*;
-
-    fn claim(key: &str, fingerprint: u8, lease_expires_at: SystemTime) -> OperationClaim {
-        OperationClaim::new(
-            SubjectId("subject-a".into()),
-            "create-resource",
-            key,
-            [fingerprint; 32],
-            lease_expires_at,
-            Duration::from_secs(86_400),
-        )
-    }
-
-    fn claim_with_lease(
-        key: &str,
-        fingerprint: u8,
-        lease_expires_at: SystemTime,
-        outcome_retention: Duration,
-    ) -> OperationClaim {
-        OperationClaim::new(
-            SubjectId("subject-a".into()),
-            "create-resource",
-            key,
-            [fingerprint; 32],
-            lease_expires_at,
-            outcome_retention,
-        )
-    }
-
-    #[test]
-    fn expiry_is_limited_to_completed_outcomes() {
-        let expiry = expiry_index();
-        assert_eq!(expiry.keys, doc! { "expires_at": 1 });
-        let options = expiry.options.unwrap();
-        assert_eq!(options.expire_after, Some(Duration::ZERO));
-        assert_eq!(
-            options.partial_filter_expression,
-            Some(doc! { "outcome": { "$type": "binData" } })
-        );
-    }
-
-    #[test]
-    fn the_compound_identity_and_fingerprint_round_trip() {
-        let held = claim(
-            "retry-a",
-            7,
-            SystemTime::UNIX_EPOCH + Duration::from_secs(2_000_000_000),
-        );
-        let stored = to_doc(&held);
-        assert_eq!(stored.id, operation_id(&held));
-        assert_eq!(stored.claim_id.as_deref(), Some(held.claim_id()));
-        assert_eq!(stored.expires_at, None);
-        assert_eq!(fingerprint_bytes(&stored).unwrap(), held.fingerprint());
-    }
-
-    #[test]
-    fn recovery_fence_requires_the_exact_unfinished_expired_lease() {
-        let now = SystemTime::UNIX_EPOCH + Duration::from_secs(2_000_000_000);
-        let held = claim_with_lease(
-            "stale",
-            4,
-            now - Duration::from_secs(1),
-            Duration::from_secs(86_400),
-        );
-        let filter = recovery_filter(&held, now);
-        assert_eq!(filter.get("_id"), Some(&id_bson(&held)));
-        assert_eq!(
-            filter.get("fingerprint"),
-            Some(&Bson::Binary(binary(held.fingerprint().to_vec())))
-        );
-        assert_eq!(filter.get("outcome"), Some(&Bson::Null));
-        assert!(filter.contains_key("$or"));
-    }
-
-    #[tokio::test]
-    #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable real MongoDB"]
-    async fn real_mongo_reserves_once_replays_and_reuses_expired_keys() {
-        let uri = std::env::var("CHRONO_TEST_MONGODB_URI")
-            .expect("ignored test requires CHRONO_TEST_MONGODB_URI");
-        let client = Client::with_uri_str(&uri).await.unwrap();
-        let database_name = format!("chrono_operation_test_{}", uuid::Uuid::new_v4().simple());
-        let first = MongoOperationStore::open(&client, &database_name)
-            .await
-            .unwrap();
-        let second = MongoOperationStore::open(&client, &database_name)
-            .await
-            .unwrap();
-
-        let indexes = client
-            .database(&database_name)
-            .collection::<mongodb::bson::Document>(OPERATIONS)
-            .list_indexes()
-            .await
-            .unwrap()
-            .try_collect::<Vec<_>>()
-            .await
-            .unwrap();
-        let expiry = indexes
-            .into_iter()
-            .find(|index| {
-                index
-                    .options
-                    .as_ref()
-                    .and_then(|options| options.name.as_deref())
-                    == Some(EXPIRY_INDEX)
-            })
-            .expect("named operation expiry index exists");
-        assert_eq!(expiry.keys, doc! { "expires_at": 1 });
-        assert_eq!(expiry.options.unwrap().expire_after, Some(Duration::ZERO));
-
-        let future = SystemTime::now() + Duration::from_secs(120);
-        let held = claim("held", 1, future);
-        let (left, right) = tokio::join!(first.reserve(&held), second.reserve(&held));
-        let reservations = [left.unwrap(), right.unwrap()];
-        assert_eq!(
-            reservations
-                .iter()
-                .filter(|result| matches!(result, OperationReservation::Acquired))
-                .count(),
-            1
-        );
-        assert_eq!(
-            reservations
-                .iter()
-                .filter(|result| matches!(result, OperationReservation::Pending))
-                .count(),
-            1
-        );
-
-        first.complete(&held, b"created".to_vec()).await.unwrap();
-        assert_eq!(
-            second.reserve(&held).await.unwrap(),
-            OperationReservation::Complete(b"created".to_vec())
-        );
-        assert_eq!(
-            second.reserve(&claim("held", 2, future)).await.unwrap(),
-            OperationReservation::FingerprintMismatch
-        );
-
-        let expired = claim_with_lease("expired", 3, future, Duration::ZERO);
-        assert_eq!(
-            first.reserve(&expired).await.unwrap(),
-            OperationReservation::Acquired
-        );
-        first
-            .complete(&expired, b"expired outcome".to_vec())
-            .await
-            .unwrap();
-        let reusable = claim("expired", 3, future);
-        assert_eq!(
-            second.reserve(&reusable).await.unwrap(),
-            OperationReservation::Acquired
-        );
-        assert!(first
-            .complete(&expired, b"stale outcome".to_vec())
-            .await
-            .is_err());
-        assert_eq!(
-            second.reserve(&reusable).await.unwrap(),
-            OperationReservation::Pending
-        );
-        second
-            .complete(&reusable, b"current outcome".to_vec())
-            .await
-            .unwrap();
-
-        let abandoned = claim_with_lease(
-            "abandoned",
-            5,
-            SystemTime::UNIX_EPOCH,
-            Duration::from_secs(86_400),
-        );
-        first
-            .operations
-            .insert_one(to_doc(&abandoned))
-            .await
-            .unwrap();
-        assert_eq!(
-            second.reserve(&abandoned).await.unwrap(),
-            OperationReservation::RecoveryRequired
-        );
-        assert_eq!(
-            first.reserve(&abandoned).await.unwrap(),
-            OperationReservation::RecoveryRequired
-        );
-        first
-            .complete(&abandoned, b"reconciled".to_vec())
-            .await
-            .unwrap();
-        assert_eq!(
-            second.reserve(&abandoned).await.unwrap(),
-            OperationReservation::Complete(b"reconciled".to_vec())
-        );
-
-        client.database(&database_name).drop().await.unwrap();
-    }
-}
+#[path = "operation_tests.rs"]
+mod tests;

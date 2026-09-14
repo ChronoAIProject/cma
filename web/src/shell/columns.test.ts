@@ -85,7 +85,7 @@ describe('solving the three columns', () => {
 
   it('never takes width from the sidebar', () => {
     /*
-     * It is the way to every other session. A layout that took it away to
+     * It is the way to every other resource. A layout that took it away to
      * make room would be one where the fix for "this is too narrow" is
      * itself unreachable.
      */

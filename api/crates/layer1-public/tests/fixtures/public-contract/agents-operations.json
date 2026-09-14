@@ -1,0 +1,218 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "agent-runtime-input",
+      "operation": "POST /api/v1/agents/{id}/input",
+      "scenario": "agents_operating",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_contract/input",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "agent-runtime-input"
+        },
+        "body": {
+          "text": "Review the contract"
+        }
+      },
+      "response": {
+        "status": 202,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "queued": false
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-runtime-steer",
+      "operation": "POST /api/v1/agents/{id}/steer",
+      "scenario": "agents_operating",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_contract/steer",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "agent-runtime-steer"
+        },
+        "body": {
+          "text": "Focus on evidence"
+        }
+      },
+      "response": {
+        "status": 202,
+        "headers": {},
+        "body": null,
+        "bodyKind": "empty"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-runtime-interrupt",
+      "operation": "POST /api/v1/agents/{id}/interrupt",
+      "scenario": "agents_operating",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_contract/interrupt",
+        "headers": {
+          "idempotency-key": "agent-runtime-interrupt"
+        }
+      },
+      "response": {
+        "status": 202,
+        "headers": {},
+        "body": null,
+        "bodyKind": "empty"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-approval-exact-identity",
+      "operation": "POST /api/v1/agents/{id}/approvals/{request_id}",
+      "scenario": "agents_approval",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_contract/approvals/not-pending",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "agent-approval-exact-identity"
+        },
+        "body": {
+          "decision": "allow"
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent-approval-not-pending",
+          "title": "agent approval not pending",
+          "status": 409,
+          "detail": "The named approval is not pending for this agent.",
+          "code": "agent_approval_not_pending",
+          "request_id": "not-pending"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-runtime-approval",
+      "operation": "POST /api/v1/agents/{id}/approvals/{request_id}",
+      "scenario": "agents_approval",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_contract/approvals/approval_contract",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "agent-runtime-approval"
+        },
+        "body": {
+          "decision": "allow"
+        }
+      },
+      "response": {
+        "status": 202,
+        "headers": {},
+        "body": null,
+        "bodyKind": "empty"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-paused-queue",
+      "operation": "POST /api/v1/agents/{id}/input",
+      "scenario": "agents_paused",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_contract/input",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "agent-paused-queue"
+        },
+        "body": {
+          "text": "Queued until resumed"
+        }
+      },
+      "response": {
+        "status": 202,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "queued": true
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-runtime-ambiguous",
+      "operation": "POST /api/v1/agents/{id}/input",
+      "scenario": "agents_ambiguous",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_contract/input",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "agent-runtime-ambiguous"
+        },
+        "body": {
+          "text": "Receipt may be lost"
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent-delivery-ambiguous",
+          "title": "agent delivery ambiguous",
+          "status": 503,
+          "detail": "The operation outcome is ambiguous and requires durable reconciliation.",
+          "code": "agent_delivery_ambiguous"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-runtime-ambiguous-recovery",
+      "operation": "POST /api/v1/agents/{id}/input",
+      "scenario": "agents_ambiguous",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_contract/input",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "agent-runtime-ambiguous-recovery"
+        },
+        "body": {
+          "text": "Do not dispatch again"
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent-operation-in-flight",
+          "title": "agent operation in flight",
+          "status": 409,
+          "detail": "Another durable operation currently owns this agent.",
+          "code": "agent_operation_in_flight"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    }
+  ]
+}
