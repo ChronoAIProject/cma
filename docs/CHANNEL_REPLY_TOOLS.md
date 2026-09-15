@@ -71,6 +71,23 @@ platform delivery. Multiple calls append atomically to the original response's
 delivery order. Chunking retains that order. Unknown network/send outcomes are
 recorded for explicit recovery and are never automatically retried.
 
+## Send pacing and provider cooldowns
+
+The durable outbox shares one active send slot per NyxID provider, platform,
+and actual bot across CMA replicas. Changing keys, routes, or Bridge
+configuration does not reset that slot. CMA currently enforces a conservative
+minimum interval of three seconds for Telegram and one second for Discord,
+Lark, and Feishu. These limits pace separate tool calls while the Agent keeps
+working; delivery does not depend on turn completion.
+
+A provider 429 records an unknown send outcome and retains `Retry-After` as a
+cooldown for subsequent messages. Numeric seconds and HTTP dates are supported;
+missing or ambiguous metadata uses a sixty-second cooldown. Valid longer waits
+are preserved. A late 429 also extends the cooldown after worker recovery,
+without replacing a newer reservation or changing the original recovery status.
+Waiting for a bot slot consumes no delivery attempt. Only a refusal before any
+provider request bytes are written can enter a safe automatic retry state.
+
 ## Compatibility and implementation status
 
 The stored reply policy retains the legacy spelling `final_response` for

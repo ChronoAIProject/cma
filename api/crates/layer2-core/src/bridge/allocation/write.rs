@@ -118,6 +118,9 @@ impl AllocationReservation {
     pub fn previous(&self) -> Option<&AllocationRecord> {
         self.reset.as_ref().map(|(record, _)| record)
     }
+    pub fn reset_management(&self) -> Option<&BridgeManagementLease> {
+        self.reset.as_ref().map(|(_, management)| management)
+    }
     pub fn require_current(&self) -> Result<(), AllocationError> {
         self.authority.require_record(&self.record)?;
         if let Some((_, management)) = &self.reset {

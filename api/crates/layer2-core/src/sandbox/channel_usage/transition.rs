@@ -237,6 +237,7 @@ pub(super) fn apply(
                 if !matches!(
                     reason,
                     ChannelBindingChangeReason::Detachment
+                        | ChannelBindingChangeReason::Reset
                         | ChannelBindingChangeReason::AdministrativeIntervention
                 ) {
                     return Err(invalid());

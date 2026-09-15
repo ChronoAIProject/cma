@@ -4,6 +4,7 @@ mod contract;
 #[cfg(test)]
 mod http_tests;
 mod material;
+mod renewal;
 #[cfg(test)]
 pub(crate) mod test_fixture;
 use contract::*;

@@ -21,6 +21,8 @@ use mongodb::{
     ClientSession,
 };
 
+pub(in crate::store) mod bridge_append;
+pub(in crate::store) mod bridge_detach;
 mod records;
 pub(super) use records::ensure_indexes;
 pub(super) use records::read_snapshot as read_inventory_snapshot;
@@ -163,8 +165,8 @@ impl AgentChannelUsageStore for MongoSandboxStore {
     }
 }
 
-/// Kept session-aware so a future authorized bridge transaction can compose this
-/// append with its binding/command write instead of recording successful use early.
+/// Composes with authorized Bridge transactions so binding and accepted-command
+/// history commits atomically with its actual source action.
 pub(super) async fn apply(
     store: &MongoSandboxStore,
     request: &ChannelUsageMutation,

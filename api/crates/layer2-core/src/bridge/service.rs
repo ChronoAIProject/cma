@@ -34,6 +34,26 @@ impl BridgeService {
     pub fn connection_validator(&self) -> Arc<dyn BridgeConnectionValidator> {
         self.connections.clone()
     }
+    pub fn check_feature(
+        &self,
+        feature: BridgeFeature,
+        platform: &BridgePlatform,
+    ) -> Result<(), BridgeError> {
+        self.connections.check_feature(feature, platform)
+    }
+
+    pub async fn check_feature_for_pin(
+        &self,
+        feature: BridgeFeature,
+        pin: &BridgeWorkPin,
+    ) -> Result<(), BridgeError> {
+        let bridge = self
+            .store
+            .bridge(&pin.bridge_id)
+            .await?
+            .ok_or(BridgeError::NotFound)?;
+        self.check_feature(feature, &bridge.pinned(pin)?.config.connector.platform)
+    }
     pub fn new(
         store: Arc<dyn BridgeStore>,
         organizations: Arc<dyn OrganizationAuthority>,
@@ -273,6 +293,22 @@ impl BridgeService {
                 return Err(BridgeError::IdempotencyConflict);
             }
             return Ok(prior.receipt);
+        }
+        let restores_traffic = match (&mutation.change, &original) {
+            (BridgeChange::Emergency { controls }, Some(record)) => {
+                (record.emergency.ingress_stopped && !controls.ingress_stopped)
+                    || (record.emergency.execution_stopped && !controls.execution_stopped)
+                    || (record.emergency.outbound_stopped && !controls.outbound_stopped)
+            }
+            _ => false,
+        };
+        if restores_traffic
+            || matches!(
+                mutation.change,
+                BridgeChange::Create { .. } | BridgeChange::Update { .. } | BridgeChange::Enable
+            )
+        {
+            self.check_feature(BridgeFeature::Management, &connector.platform)?;
         }
         let mut record = plan(original, &mutation, &context.actor)?;
         if matches!(mutation.change, BridgeChange::Enable)

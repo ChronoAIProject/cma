@@ -92,6 +92,11 @@ impl OwnerTokenSource for AuthState {
 
 #[async_trait::async_trait]
 pub(crate) trait SandboxCredentialController: Send + Sync {
+    /// Check authority before any phase that will restore runtime access.
+    /// Ordinary credentials retain their existing lifecycle authorization.
+    async fn require_lifecycle_restore(&self, _sandbox: &Sandbox) -> Result<(), CredentialError> {
+        Ok(())
+    }
     async fn issue(
         &self,
         sandbox: &Sandbox,
@@ -121,7 +126,7 @@ pub(crate) trait SandboxCredentialController: Send + Sync {
         }
         Ok(())
     }
-    async fn revoke(&self, owner: &SubjectId, provider_key_id: &str)
+    async fn revoke(&self, sandbox: &Sandbox, provider_key_id: &str)
         -> Result<(), CredentialError>;
     async fn settle_revocations(&self, _sandbox: &Sandbox) -> Result<(), CredentialError> {
         Ok(())
@@ -305,10 +310,10 @@ impl SandboxCredentialController for ManagedSandboxCredentials {
 
     async fn revoke(
         &self,
-        owner: &SubjectId,
+        sandbox: &Sandbox,
         provider_key_id: &str,
     ) -> Result<(), CredentialError> {
-        let token = self.owner_token(owner).await?;
+        let token = self.owner_token(&sandbox.owner).await?;
         self.issuer
             .revoke(provider_key_id, token.expose())
             .await

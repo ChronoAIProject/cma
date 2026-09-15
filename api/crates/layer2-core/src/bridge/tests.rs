@@ -684,3 +684,6 @@ async fn custody_management_lease_preserves_actor_and_original_deadline_and_revi
         Err(BridgeError::Forbidden)
     ));
 }
+
+#[path = "tests/feature_gates.rs"]
+mod feature_gates;

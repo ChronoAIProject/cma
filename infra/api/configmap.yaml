@@ -7,6 +7,17 @@ metadata:
     app.kubernetes.io/name: cma-api
     app.kubernetes.io/part-of: cma
 data:
+  # Independent process-start Bridge gates; enable only after canary verification.
+  CHRONO_BRIDGE_MANAGEMENT_ENABLED: "false"
+  CHRONO_BRIDGE_INGRESS_ENABLED: "false"
+  CHRONO_BRIDGE_ALLOCATION_ENABLED: "false"
+  CHRONO_BRIDGE_EXECUTION_ENABLED: "false"
+  CHRONO_BRIDGE_OUTBOUND_ENABLED: "false"
+  CHRONO_BRIDGE_TELEGRAM_ENABLED: "false"
+  CHRONO_BRIDGE_DISCORD_ENABLED: "false"
+  CHRONO_BRIDGE_LARK_ENABLED: "false"
+  CHRONO_BRIDGE_FEISHU_ENABLED: "false"
+  CHRONO_BRIDGE_V2_UI_TRANSPORT_ENABLED: "false"
   # Bounded policy pinned before each Sandbox/Workspace provisioning effect.
   CHRONO_INSTALL_COMMAND_TIMEOUT_SECONDS: "600"
   CHRONO_INSTALL_TOTAL_TIMEOUT_SECONDS: "1800"
