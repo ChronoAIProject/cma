@@ -54,7 +54,7 @@ test('LOCAL Bridge cleanup keeps explicit consent and exact recovery usable on n
     );
     for (const width of [1440, 390, 320]) {
       await page.setViewportSize({ width, height: 1000 });
-      const section = page.getByRole('region', { name: 'Allocations and child cleanup' });
+      const section = page.getByRole('region', { name: 'Allocations and cleanup' });
       await section.scrollIntoViewIfNeeded();
       await expect
         .poll(() =>
@@ -74,7 +74,7 @@ test('LOCAL Bridge cleanup keeps explicit consent and exact recovery usable on n
   }
   state.manager = false;
   await page.getByRole('button', { name: 'Refresh bridge', exact: true }).click();
-  await expect(page.getByRole('heading', { name: 'Allocations and child cleanup' })).toHaveCount(0);
+  await expect(page.getByRole('heading', { name: 'Allocations and cleanup' })).toHaveCount(0);
   expect(boundary.unexpected).toEqual([]);
   expect(boundary.errors).toEqual([]);
 });
