@@ -25,8 +25,12 @@ mod conversation_fold_support;
 mod conversation_recorder;
 mod creation_admission;
 mod provenance;
+mod provenance_inventory;
 mod provenance_service;
 pub use provenance::{AgentCreationCategory, AgentCreationOrigin, AgentCreationProvenance};
+pub use provenance_inventory::{
+    AgentProvenanceInventoryQuery, AgentProvenanceInventoryRow, AgentProvenanceInventoryService,
+};
 pub use provenance_service::{
     AgentProvenanceDetails, AgentProvenanceReading, AgentProvenanceService,
 };

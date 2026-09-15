@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "openapi_operations": 134,
+  "openapi_operations": 135,
   "operations": {
     "GET /api/v1/organizations": {
       "classification": "openapi",
@@ -2031,6 +2031,19 @@
         "organization_authority_unavailable",
         "resource_access_changed",
         "resource_access_unavailable",
+        "resource_not_found"
+      ]
+    },
+    "GET /api/v1/agents/provenance": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/agent_provenance_inventory.rs# Bounded retained creation inventory with fresh scope authorization and category filtering.",
+      "required_problems": [
+        "invalid_instance_query",
+        "not_authenticated",
+        "organization_authority_unavailable",
+        "resource_access_changed",
+        "resource_access_unavailable",
+        "resource_forbidden",
         "resource_not_found"
       ]
     }

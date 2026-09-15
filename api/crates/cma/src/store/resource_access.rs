@@ -13,6 +13,7 @@ use super::sandbox_mongo::{
 };
 
 mod inventory;
+pub(super) use inventory::read as read_agent_inventory;
 mod mutation;
 pub(super) use mutation::fence_lineage;
 mod records;

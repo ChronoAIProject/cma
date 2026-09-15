@@ -137,7 +137,7 @@ impl AgentProvenanceService {
     }
 }
 
-fn require_identity(
+pub(super) fn require_identity(
     record: &AgentCreationProvenance,
     snapshot: &ResourceAccessSnapshot,
 ) -> Result<(), ResourceAccessError> {
