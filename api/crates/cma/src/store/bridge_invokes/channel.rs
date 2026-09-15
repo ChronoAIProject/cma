@@ -20,6 +20,7 @@ use crate::store::{
 
 use super::MongoBridgeInvokeStore;
 
+mod acceptance_receipt;
 mod execution;
 mod refusal;
 mod retained;
@@ -28,6 +29,7 @@ pub(crate) struct MongoChannelCommandStore {
     invokes: Arc<MongoBridgeInvokeStore>,
     inbox: Collection<Document>,
     allocations: Collection<Document>,
+    acceptance_receipts: Collection<Document>,
 }
 
 impl MongoChannelCommandStore {
@@ -44,6 +46,7 @@ impl MongoChannelCommandStore {
             invokes,
             inbox: majority_collection(&database, "bridge_callback_inbox"),
             allocations: majority_collection(&database, "bridge_allocations"),
+            acceptance_receipts: majority_collection(&database, "bridge_callback_receipts"),
         }
     }
 
@@ -62,11 +65,17 @@ impl MongoChannelCommandStore {
         let result =
             reserve::apply(&self.invokes.resources, request.reservation(), session).await?;
         let (record, created) = match result {
-            CommandReservationResult::Created(record) => (record, true),
+            CommandReservationResult::Created(record) => {
+                request.require_admission_enabled()?;
+                (record, true)
+            }
             CommandReservationResult::Existing(record) => (record, false),
         };
         request.require_result(&record)?;
         self.bind_sidecar(request, created, session).await?;
+        self.invokes
+            .record_accepted_usage(request, &record, created, session)
+            .await?;
         request.require_current()?;
         Ok(*record)
     }
@@ -102,7 +111,7 @@ impl ChannelCommandStore for MongoChannelCommandStore {
         &self,
         request: ChannelCommandReservation,
     ) -> Result<AdmittedAgentCommand, ChannelCommandAdmissionError> {
-        for _ in 0..TRANSACTION_ATTEMPTS {
+        for attempt in 0..TRANSACTION_ATTEMPTS {
             request.require_current()?;
             let mut session = self
                 .invokes
@@ -122,7 +131,10 @@ impl ChannelCommandStore for MongoChannelCommandStore {
                         MutationError::Driver(error)
                             if is_duplicate_key(&error) || is_transient(&error) =>
                         {
-                            tokio::task::yield_now().await;
+                            // The winning admission also commits usage history.
+                            // Give that transaction time to finish before a new
+                            // snapshot; immediate retries can exhaust the budget.
+                            admission_retry_delay(attempt).await;
                             continue;
                         }
                         MutationError::Driver(_) => {
@@ -138,7 +150,10 @@ impl ChannelCommandStore for MongoChannelCommandStore {
             }
             match commit_transaction(&mut session).await {
                 CommitOutcome::Committed => return Ok(record),
-                CommitOutcome::Retry(_) => continue,
+                CommitOutcome::Retry(_) => {
+                    admission_retry_delay(attempt).await;
+                    continue;
+                }
                 // No runtime input was sent. A retry with fresh authority must
                 // recover the same permanent command/response identity.
                 CommitOutcome::Unknown(_) | CommitOutcome::Failed(_) => {
@@ -148,6 +163,10 @@ impl ChannelCommandStore for MongoChannelCommandStore {
         }
         Err(CommandLedgerError::Conflict.into())
     }
+}
+
+async fn admission_retry_delay(attempt: usize) {
+    tokio::time::sleep(std::time::Duration::from_millis(5 << attempt.min(4))).await;
 }
 
 #[derive(Debug, thiserror::Error)]

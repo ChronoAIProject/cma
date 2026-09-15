@@ -413,6 +413,16 @@ are referenced in `infra/api/secret.yaml`, never stored in ConfigMaps.
 | `CHRONO_SERVER_PUBLIC_URL` | CMA browser origin; default local `http://localhost:8080`, production explicit |
 | `CHRONO_SERVER_CORS_ORIGIN` | Comma-separated exact allowed origins; default local `http://localhost:5173` |
 | `CHRONO_AUTH_MODE` | `provider` in production; `trusted` is local fixed-subject development only |
+| `CHRONO_BRIDGE_MANAGEMENT_ENABLED` | Fresh Bridge setup/configuration/enable/grant/import/retry authority; false by default; retained reads, exact receipts and safe reductions stay available |
+| `CHRONO_BRIDGE_INGRESS_ENABLED` | Fresh signed callback acceptance; false by default; accepted input can drain through independently enabled stages |
+| `CHRONO_BRIDGE_ALLOCATION_ENABLED` | New Channel allocation/provisioning/child/start effects; false by default; preserve current phases and in-flight outcomes |
+| `CHRONO_BRIDGE_EXECUTION_ENABLED` | New Channel command admission and held-command release; false by default; already Released commands drain in shared FIFO order |
+| `CHRONO_BRIDGE_OUTBOUND_ENABLED` | Fresh explicit reply-tool admission and provider send attempts; false by default; recover retained receipts/outcomes and never auto-retry Unknown |
+| `CHRONO_BRIDGE_TELEGRAM_ENABLED` | Telegram fresh-effect gate, independent of other platforms and stages; false by default |
+| `CHRONO_BRIDGE_DISCORD_ENABLED` | Discord fresh-effect gate; false by default |
+| `CHRONO_BRIDGE_LARK_ENABLED` | Lark fresh-effect gate, independent of Feishu; false by default |
+| `CHRONO_BRIDGE_FEISHU_ENABLED` | Feishu fresh-effect gate, independent of Lark; false by default |
+| `CHRONO_BRIDGE_V2_UI_TRANSPORT_ENABLED` | Eligibility for the separately integrated v2 browser transport; false by default; does not disable existing public v2 API routes or change an accepted request protocol |
 | `CHRONO_TRUSTED_SUBJECT` | Local trusted-mode subject; default `local-developer`, irrelevant in provider mode |
 | `CHRONO_NYXID_BASE_URL` | Required API/OAuth HTTP(S) origin in provider mode |
 | `CHRONO_NYXID_PUBLIC_URL` | Required exact canonical HTTPS browser origin in provider mode |
@@ -463,6 +473,67 @@ fingerprint. A changed timeout or clone-depth environment value must not change
 an already admitted replay plan. Existing Sandboxes likewise keep their pinned
 profile and service scope. Startup defaults seed missing default profiles; they
 are not a live rewrite mechanism for published profiles or existing settings.
+
+## Bridge rollout switches
+
+The ten Bridge switches are independent process-start booleans. Missing values
+mean false; only the exact strings `true` and `false` are accepted. A stage also
+requires its pinned platform switch. Enabling management does not enable ingress
+or workers. Disabling ingress lets previously accepted work drain when its other
+stages are enabled. Switches supply availability only; current caller, Bridge,
+grant, custody, resource and original-source checks still apply.
+
+Execution disable stops new Channel admission and held-command release. Commands
+already Released into an Agent's shared queue drain in original FIFO order;
+dispatch-bound commands reconcile their existing effect. Do not skip a retained
+Channel head to prioritize another caller, and do not pause the common command
+or lifecycle workers. Held reservations can temporarily consume shared capacity
+until their original deadline or a proven revocation. Immediate clearance needs
+an explicit audited cancellation operation, not a flag-induced silent reorder.
+
+Outbound disable preserves exact tool receipts, pending order, original
+custody/destination, deadlines and attempts. Recover the original receipt before
+refusing a new tool intent. In-flight sends may finish recording; expired Sending
+attempts become Unknown through local reconciliation. Reenabling never supplies
+retry consent or resets an attempt, deadline, source identity or reply token.
+Unknown delivery still requires the explicit recovery command and its duplicate
+risk acknowledgement. Local expiry and outcome bookkeeping must stay available.
+
+Retain accepted-input disposition evidence independently of payload TTL. An
+input paused past its original admission deadline expires truthfully; it must not
+silently disappear or obtain a fresh deadline on reenabling. An already accepted
+or uncertain browser submission retains its protocol, exact body and idempotency
+key even when v2 UI transport eligibility changes. The existing public v2 API
+continues serving SDK callers.
+
+A rollout is globally disabled only after every old replica has stopped starting
+new work and drained its in-flight effects. A process environment change is not
+an instantaneous global cancellation. No runtime image rotation, live Agent pause,
+provider-role expansion, database reset or retained-resource rewrite is required
+to change these control-plane switches.
+
+Channel-created active Sandboxes renew their runtime credential through a
+separate bounded scheduler. Each step verifies the original retained human
+control-plane grant, current selected-key custody, original allocation and
+current resource identity. Renewal replaces the key on the same runtime and
+revokes the previous key after replacement; it does not create another Agent or
+conversation. Renewal audit records retain the actual human actor and hashed
+grant identity without credentials. An unknown mint result stays held and must
+not cause a second mint request.
+
+This maintenance remains available when new-admission switches are disabled.
+The renewal lease prevents concurrent Sandbox lifecycle changes while accepted
+Agent commands continue through their shared queue. A retained Ready allocation
+can renew after reset only under the original resource identity and the current
+`DrainOriginal` policy. `SuspendOriginal`, removed or replaced human consent,
+and retired resources block renewal. Ordinary owner-token issuance never
+substitutes for missing Channel authority.
+
+Dedicated Channel revival and retirement authority remain separate lifecycle
+work. Until those paths are supported, Channel revival and image rotation hold
+before checkpoint, runtime or retained-credential delivery effects. Ordinary
+manual and Trigger lifecycle behavior continues through its existing authority
+path. The active-runtime renewal path does not authorize these restore effects.
 
 ## Platform Settings
 

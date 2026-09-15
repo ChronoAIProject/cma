@@ -22,6 +22,7 @@ use super::MongoBridgeInvokeStore;
 
 mod enqueue;
 mod management;
+mod rate;
 mod records;
 mod scanning;
 mod snapshot;
@@ -38,6 +39,7 @@ pub(crate) struct MongoBridgeReplyToolStore {
     heads: Collection<Document>,
     audits: Collection<Document>,
     scans: Collection<Document>,
+    send_rates: Collection<Document>,
     recoveries: Collection<Document>,
     wake: tokio::sync::Notify,
 }
@@ -59,6 +61,7 @@ impl MongoBridgeReplyToolStore {
                 "bridge_outbox_heads",
                 "bridge_outbox_audits",
                 "bridge_outbox_scans",
+                "bridge_outbox_send_rates",
                 "bridge_outbox_recoveries",
             ],
         )
@@ -72,6 +75,7 @@ impl MongoBridgeReplyToolStore {
             heads: majority_collection(&database, "bridge_outbox_heads"),
             audits: majority_collection(&database, "bridge_outbox_audits"),
             scans: majority_collection(&database, "bridge_outbox_scans"),
+            send_rates: majority_collection(&database, "bridge_outbox_send_rates"),
             recoveries: majority_collection(&database, "bridge_outbox_recoveries"),
             wake: tokio::sync::Notify::new(),
         };

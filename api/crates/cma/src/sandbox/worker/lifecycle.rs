@@ -23,6 +23,29 @@ impl SandboxWorker {
         sandbox: Sandbox,
         now: SystemTime,
     ) -> Result<(), SandboxStoreError> {
+        // A restore eventually redelivers a credential even when its service
+        // generation floor does not require minting. Gate the whole operation
+        // before checkpoint, runtime, Agent, or retained-key effects.
+        if matches!(
+            sandbox.lifecycle.operation,
+            Some(SandboxLifecycleOperation::Revive { .. })
+                | Some(SandboxLifecycleOperation::ImageRotation { .. })
+        ) {
+            if let Err(error) = self
+                .dependencies
+                .credentials
+                .require_lifecycle_restore(&sandbox)
+                .await
+            {
+                return self
+                    .handle_lifecycle_failure(
+                        sandbox,
+                        super::support::credential_failure(error),
+                        now,
+                    )
+                    .await;
+            }
+        }
         if sandbox.runtime.is_some() {
             if let Err(error) = crate::sandbox::runtime_attachment::adopt_bound_runtime(
                 self.dependencies.adapter.as_ref(),

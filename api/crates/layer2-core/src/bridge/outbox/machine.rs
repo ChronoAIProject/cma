@@ -223,6 +223,10 @@ impl OutboxItem {
                 attempt: attempt.into(),
                 reason,
             },
+            DeliveryOutcome::RateLimitedUnknown { .. } => DeliveryState::Unknown {
+                attempt: attempt.into(),
+                reason: DeliveryFailure::RateLimited,
+            },
         };
         let mut next = self.clone();
         next.transition(state, now_ms)?;

@@ -24,7 +24,7 @@ pub(super) fn key_issuer(config: &Config) -> Option<Arc<KeyIssuer>> {
     )))
 }
 
-pub(super) fn channel_schedulers(
+pub(super) async fn channel_schedulers(
     config: &Config,
     stores: &MongoStores,
     bridge: &crate::bridge::composition::BridgeComposition,
@@ -54,6 +54,24 @@ pub(super) fn channel_schedulers(
         credentials.clone(),
         dependencies.clone(),
     ));
+    bridge
+        .allocations
+        .initialize_channel_renewal_discovery()
+        .await
+        .map_err(|error| format!("channel renewal discovery is not usable: {error}"))?;
+    let renewals = crate::bridge::channel_renewal_work::ChannelRenewalWork {
+        definitions: definitions.clone(),
+        allocations: bridge.allocations.clone(),
+        authority: authority.clone(),
+        driver: crate::sandbox::channel_renewal::ChannelCredentialRenewalDriver {
+            allocations: bridge.allocations.clone(),
+            credentials: credentials.clone(),
+            issuer: dependencies.issuer.clone(),
+            custody: stores.sandbox_credentials.clone(),
+            adapter: adapter.clone(),
+            holder: format!("{}:renewal:{}", config.deployment_id, uuid::Uuid::new_v4()),
+        },
+    };
     let allocations = ChannelAllocationWork {
         definitions: definitions.clone(),
         allocations: bridge.allocations.clone(),
@@ -101,6 +119,7 @@ pub(super) fn channel_schedulers(
     Ok(vec![
         ChannelScheduler::new(Arc::new(inputs)),
         ChannelScheduler::new(Arc::new(allocations)),
+        ChannelScheduler::new(Arc::new(renewals)),
     ])
 }
 

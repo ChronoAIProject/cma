@@ -96,6 +96,21 @@ impl ChannelAgentCommandService {
         command: &AdmittedAgentCommand,
     ) -> Result<(), Error> {
         authority.fence.require_held(command)?;
+        if let Some(gates) = &self.feature_gates {
+            let source = &authority.fence.source;
+            let config = &source
+                .proof()
+                .bridge()
+                .pinned(&source.inbox().pin)
+                .map_err(|_| Error::SourceMismatch)?
+                .config;
+            gates
+                .check_feature(
+                    crate::bridge::BridgeFeature::Execution,
+                    &config.connector.platform,
+                )
+                .map_err(|_| Error::Unavailable)?;
+        }
         tokio::time::timeout_at(
             authority.fence.proof().deadline(),
             self.store

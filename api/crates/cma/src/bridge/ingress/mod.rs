@@ -108,6 +108,12 @@ impl CallbackIngress {
         if body.len() > config.limits.max_payload_bytes as usize {
             return Err(CallbackError::Bounds);
         }
+        self.connections
+            .check_feature(
+                layer2_core::bridge::BridgeFeature::Ingress,
+                &config.connector.platform,
+            )
+            .map_err(|_| CallbackError::BindingUnavailable)?;
         let keyset = self.keys.get(false).await?;
         let verify = |keys| {
             self.verifier.preauthenticate(

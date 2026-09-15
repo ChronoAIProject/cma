@@ -65,6 +65,22 @@ pub(in crate::store) async fn read_snapshot(
     session: &mut ClientSession,
 ) -> Result<AgentChannelUsageSnapshot, UsageError> {
     let provenance = crate::store::agent_provenance::read_snapshot(store, id, session).await?;
+    let state = match read_retained_state(store, id, session).await? {
+        Some(stored) => stored.state,
+        None => AgentChannelUsageState::empty(provenance.creation_provenance(id)?),
+    };
+    let snapshot = AgentChannelUsageSnapshot { provenance, state };
+    snapshot.validate(id)?;
+    Ok(snapshot)
+}
+
+/// History belongs to its original Agent incarnation, even after removal.
+/// Reading it supplies no current resource access or dispatch authority.
+pub(super) async fn read_retained_state(
+    store: &MongoSandboxStore,
+    id: &AgentId,
+    session: &mut ClientSession,
+) -> Result<Option<StoredAgentChannelUsage>, UsageError> {
     let stored = store
         .agent_channel_usage
         .find_one(doc! {"_id":id.as_str()})
@@ -82,17 +98,17 @@ pub(in crate::store) async fn read_snapshot(
         .as_ref()
         .map(read_event)
         .transpose()?;
-    let state = match (stored, latest) {
+    match (stored, latest) {
         (Some(stored), Some(latest)) => {
             stored.validate_latest(&latest)?;
-            stored.state
+            if &stored.state.creation.agent_id != id {
+                return Err(corrupt().into());
+            }
+            Ok(Some(stored))
         }
-        (None, None) => AgentChannelUsageState::empty(provenance.creation_provenance(id)?),
-        _ => return Err(corrupt().into()),
-    };
-    let snapshot = AgentChannelUsageSnapshot { provenance, state };
-    snapshot.validate(id)?;
-    Ok(snapshot)
+        (None, None) => Ok(None),
+        _ => Err(corrupt().into()),
+    }
 }
 
 pub(super) async fn read_history(

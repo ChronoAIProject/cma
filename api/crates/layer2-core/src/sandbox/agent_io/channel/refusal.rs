@@ -14,6 +14,9 @@ use super::{
 pub enum ChannelHoldRefusalReason {
     QueueTimeout,
     GrantRevoked,
+    TargetMissing,
+    BridgeMissing,
+    GrantMissing,
 }
 
 /// Refusal-only evidence for exactly one unchanged, unleased Channel hold.
@@ -99,6 +102,9 @@ impl ChannelHoldRefusal {
             code: match self.reason {
                 ChannelHoldRefusalReason::QueueTimeout => CommandFailureCode::QueueTimeout,
                 ChannelHoldRefusalReason::GrantRevoked => CommandFailureCode::AuthorityRevoked,
+                ChannelHoldRefusalReason::TargetMissing => CommandFailureCode::AgentUnavailable,
+                ChannelHoldRefusalReason::BridgeMissing
+                | ChannelHoldRefusalReason::GrantMissing => CommandFailureCode::AuthorityRevoked,
             },
             at: crate::now_rfc3339(),
         });

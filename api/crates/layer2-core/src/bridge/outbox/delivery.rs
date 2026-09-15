@@ -134,6 +134,12 @@ pub enum DeliveryOutcome {
         evidence: NotSentEvidence,
     },
     Unknown(DeliveryFailure),
+    /// The provider reported throttling, but did not prove that sending was
+    /// impossible. The original attempt stays Unknown. The timestamp only
+    /// delays subsequent sends through the same bot.
+    RateLimitedUnknown {
+        not_before_ms: i64,
+    },
 }
 
 #[async_trait]

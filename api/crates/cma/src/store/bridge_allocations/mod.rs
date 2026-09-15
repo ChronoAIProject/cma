@@ -2,6 +2,7 @@
 //! provider creation or Agent command submission occurs in this store.
 mod channel_children;
 mod channel_provisioning;
+mod channel_renewal;
 mod channel_startup;
 mod records;
 mod sandbox_admission;
@@ -47,7 +48,11 @@ impl MongoBridgeAllocationStore {
         let database = bridges.client.database(name);
         initialize_collections(
             &database,
-            &["bridge_allocation_heads", "bridge_allocations"],
+            &[
+                "bridge_allocation_heads",
+                "bridge_allocations",
+                "channel_credential_renewal_audits",
+            ],
         )
         .await?;
         let store = Self {

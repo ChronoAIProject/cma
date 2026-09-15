@@ -144,6 +144,7 @@ impl ChannelCommandReservation {
             inbox,
             allocation,
             reservation,
+            feature_gates: None,
         };
         result.require_current()?;
         Ok(result)

@@ -59,6 +59,10 @@ impl BridgeInvokeService {
             return Err(BridgeInvokeError::Suspended);
         }
         let config = &bridge.current()?.config;
+        self.definitions.check_feature(
+            super::super::BridgeFeature::Management,
+            &config.connector.platform,
+        )?;
         if !matches!(&config.placement, BridgePlacementPolicy::ExistingAgent { target } if target == &request.target)
         {
             return Err(BridgeInvokeError::TargetMismatch);

@@ -101,10 +101,13 @@ impl MongoBridgeReplyToolStore {
             start_transaction(&mut session)
                 .await
                 .map_err(|_| OutboxError::Unavailable)?;
-            if let Err(error) = self
-                .replace_item(claimed.revision, &next, &mut session)
-                .await
-            {
+            let result = async {
+                self.finish_rate(claimed, now, None, &mut session).await?;
+                self.replace_item(claimed.revision, &next, &mut session)
+                    .await
+            }
+            .await;
+            if let Err(error) = result {
                 let _ = session.abort_transaction().await;
                 if error.retryable() {
                     continue;

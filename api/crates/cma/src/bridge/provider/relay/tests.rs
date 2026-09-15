@@ -11,6 +11,7 @@ struct TestState {
     body: Value,
     delay: Duration,
     redirect: bool,
+    retry_after: Option<String>,
 }
 async fn handle(
     State(state): State<TestState>,
@@ -21,6 +22,11 @@ async fn handle(
     state.requests.lock().unwrap().push(body);
     tokio::time::sleep(state.delay).await;
     let mut response = (state.status, Json(state.body)).into_response();
+    if let Some(value) = state.retry_after {
+        response
+            .headers_mut()
+            .insert("retry-after", value.parse().unwrap());
+    }
     if state.redirect {
         response
             .headers_mut()
@@ -39,12 +45,21 @@ impl Drop for Fixture {
     }
 }
 async fn fixture(status: StatusCode, body: Value, delay: Duration) -> Fixture {
+    fixture_with_retry_after(status, body, delay, None).await
+}
+async fn fixture_with_retry_after(
+    status: StatusCode,
+    body: Value,
+    delay: Duration,
+    retry_after: Option<&str>,
+) -> Fixture {
     let state = TestState {
         requests: Arc::new(Mutex::new(Vec::new())),
         status,
         body,
         delay,
         redirect: status.is_redirection(),
+        retry_after: retry_after.map(str::to_owned),
     };
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let endpoint = format!("http://{}", listener.local_addr().unwrap());
@@ -99,7 +114,6 @@ async fn provider_failure_token_consumption_and_redirects_never_trigger_automati
         StatusCode::BAD_REQUEST,
         StatusCode::UNAUTHORIZED,
         StatusCode::CONFLICT,
-        StatusCode::TOO_MANY_REQUESTS,
         StatusCode::INTERNAL_SERVER_ERROR,
         StatusCode::TEMPORARY_REDIRECT,
     ] {
@@ -162,4 +176,30 @@ async fn oversized_success_body_is_unknown() {
         send(&fixture, Duration::from_secs(1)).await,
         DeliveryOutcome::Unknown(DeliveryFailure::ReceiptInvalid)
     );
+}
+
+#[tokio::test]
+async fn throttled_post_retains_unknown_outcome_and_backoff_without_a_second_request() {
+    let fixture = fixture_with_retry_after(
+        StatusCode::TOO_MANY_REQUESTS,
+        json!({"error":"private provider details"}),
+        Duration::ZERO,
+        Some("120"),
+    )
+    .await;
+    let before = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as i64;
+    let DeliveryOutcome::RateLimitedUnknown { not_before_ms } =
+        send(&fixture, Duration::from_secs(1)).await
+    else {
+        panic!("rate metadata must not claim the original POST was not sent");
+    };
+    let after = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as i64;
+    assert!((before + 120_000..=after + 120_000).contains(&not_before_ms));
+    assert_eq!(fixture.state.requests.lock().unwrap().len(), 1);
 }

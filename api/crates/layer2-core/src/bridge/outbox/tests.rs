@@ -360,3 +360,26 @@ fn escaping_keeps_utf16_bounds_and_breaks_markup_and_mass_mentions() {
         assert_eq!(full.chars().filter(|c| *c == '😀').count(), 5000);
     }
 }
+
+#[test]
+fn rate_limit_metadata_never_makes_an_unconfirmed_send_retryable() {
+    let mut item = items("Progress", false).remove(0);
+    send(
+        &mut item,
+        DeliveryOutcome::RateLimitedUnknown {
+            not_before_ms: 10_000,
+        },
+    );
+    assert!(matches!(
+        item.state,
+        DeliveryState::Unknown {
+            reason: DeliveryFailure::RateLimited,
+            ..
+        }
+    ));
+    assert_eq!(
+        item.claim("later-worker".into(), 10_001, 11_000, None),
+        Err(OutboxError::UnknownOutcome)
+    );
+    assert_eq!(item.attempts.len(), 1);
+}

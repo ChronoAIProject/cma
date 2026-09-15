@@ -98,6 +98,8 @@ impl MongoChannelCommandStore {
         {
             return Err(ChannelCommandAdmissionError::SourceMismatch.into());
         }
+        self.bind_acceptance_receipt(&inbox, &correlation, session)
+            .await?;
         // Both real writes participate in the command transaction, including
         // replay. Reset/retirement, message removal and competing correlation
         // writes must conflict instead of validating only a stale read snapshot.

@@ -139,7 +139,7 @@ impl SandboxCredentialController for TestCredentials {
     async fn forget(&self, _: &SandboxId, _: u64) -> Result<(), CredentialError> {
         unreachable!("skill resolution must not delete authority")
     }
-    async fn revoke(&self, _: &SubjectId, _: &str) -> Result<(), CredentialError> {
+    async fn revoke(&self, _: &Sandbox, _: &str) -> Result<(), CredentialError> {
         unreachable!("skill resolution must not revoke authority")
     }
 }

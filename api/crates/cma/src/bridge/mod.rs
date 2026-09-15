@@ -12,16 +12,19 @@ use layer2_core::resource_access::{ResourceOwner, ResourceShareStore, ResourceTa
 use crate::auth::AuthMode;
 use crate::store::MongoBridgeStore;
 
+pub(crate) mod channel_renewal_work;
 pub(crate) mod channel_scheduler;
 pub(crate) mod channel_tools;
 pub(crate) mod channel_work;
 pub(crate) mod composition;
 pub(crate) mod control_plane;
 pub(crate) mod custody;
+mod feature_policy;
 #[allow(dead_code)] // #861 awaits a composed route with live selected-key custody.
 pub(crate) mod ingress;
 mod managed_credentials;
 pub(crate) mod outbox_delivery;
+pub(crate) mod outbox_rate;
 pub(crate) mod outbox_scheduler;
 mod provider;
 pub(crate) mod provisioning;
@@ -40,6 +43,7 @@ pub(crate) fn service(
     resources: Arc<dyn ResourceShareStore>,
     credential_store: Arc<dyn custody::BridgeCredentialStore>,
     provisioning: Option<Arc<provisioning::BridgeProvisioningDependencies>>,
+    flags: crate::config::BridgeFeatureFlags,
 ) -> Result<(BridgeService, Option<Arc<ManagedBridgeCredentials>>), BridgeError> {
     if let AuthMode::Provider { base_url, .. } = mode {
         let provider = Arc::new(NyxBridgeProvider::new(base_url)?);
@@ -56,12 +60,20 @@ pub(crate) fn service(
             provisioning,
         });
         Ok((
-            BridgeService::new(store, organizations, connections),
+            BridgeService::new(
+                store,
+                organizations,
+                feature_policy::configured(connections, flags),
+            ),
             Some(credentials),
         ))
     } else {
         Ok((
-            BridgeService::new(store, organizations, Arc::new(UnavailableConnections)),
+            BridgeService::new(
+                store,
+                organizations,
+                feature_policy::configured(Arc::new(UnavailableConnections), flags),
+            ),
             None,
         ))
     }

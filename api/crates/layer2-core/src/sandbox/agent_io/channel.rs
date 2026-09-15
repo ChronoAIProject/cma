@@ -62,6 +62,7 @@ pub struct ChannelCommandReservation {
     inbox: StoredInbox,
     allocation: AllocationRecord,
     reservation: CommandReservation,
+    feature_gates: Option<Arc<dyn crate::bridge::BridgeConnectionValidator>>,
 }
 
 impl ChannelCommandReservation {
@@ -76,6 +77,26 @@ impl ChannelCommandReservation {
     }
     pub fn reservation(&self) -> &CommandReservation {
         &self.reservation
+    }
+
+    /// The store calls this only for a new reservation, after exact replay has
+    /// been identified. A disabled stage cannot hide a retained command receipt.
+    pub fn require_admission_enabled(&self) -> Result<(), ChannelCommandAdmissionError> {
+        if let Some(gates) = &self.feature_gates {
+            let config = &self
+                .proof
+                .bridge()
+                .pinned(&self.inbox.pin)
+                .map_err(|_| ChannelCommandAdmissionError::SourceMismatch)?
+                .config;
+            gates
+                .check_feature(
+                    crate::bridge::BridgeFeature::Execution,
+                    &config.connector.platform,
+                )
+                .map_err(|_| ChannelCommandAdmissionError::Unavailable)?;
+        }
+        Ok(())
     }
 
     pub fn require_current(&self) -> Result<(), ChannelCommandAdmissionError> {
@@ -182,11 +203,23 @@ pub trait ChannelCommandStore: Send + Sync {
 
 pub struct ChannelAgentCommandService {
     store: Arc<dyn ChannelCommandStore>,
+    feature_gates: Option<Arc<dyn crate::bridge::BridgeConnectionValidator>>,
 }
 
 impl ChannelAgentCommandService {
     pub fn new(store: Arc<dyn ChannelCommandStore>) -> Self {
-        Self { store }
+        Self {
+            store,
+            feature_gates: None,
+        }
+    }
+
+    pub fn with_feature_gates(
+        mut self,
+        gates: Arc<dyn crate::bridge::BridgeConnectionValidator>,
+    ) -> Self {
+        self.feature_gates = Some(gates);
+        self
     }
 
     /// A held durable command is not permission to execute, revive, approve or
@@ -197,7 +230,8 @@ impl ChannelAgentCommandService {
         inbox: StoredInbox,
         allocation: AllocationRecord,
     ) -> Result<AdmittedAgentCommand, ChannelCommandAdmissionError> {
-        let request = ChannelCommandReservation::prepare(proof, inbox, allocation)?;
+        let mut request = ChannelCommandReservation::prepare(proof, inbox, allocation)?;
+        request.feature_gates = self.feature_gates.clone();
         let deadline = request
             .proof()
             .deadline()

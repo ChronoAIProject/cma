@@ -83,6 +83,9 @@ fn readiness(error: ChannelCommandAdmissionError) -> CommandReadiness {
         ChannelCommandAdmissionError::Invoke(BridgeInvokeError::Revoked) => {
             CommandReadiness::Reject(CommandFailureCode::AuthorityRevoked)
         }
+        ChannelCommandAdmissionError::Invoke(BridgeInvokeError::NotFound) => {
+            CommandReadiness::Reject(CommandFailureCode::AgentUnavailable)
+        }
         _ => CommandReadiness::Retry,
     }
 }
