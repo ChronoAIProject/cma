@@ -350,7 +350,8 @@ receipt remains fenced with its named idempotency error. Changing its key is not
 a recovery operation. Admission uncertainty is never stored as a final failed
 receipt that would hide accepted work. This migration does not change v1
 Responses/AG-UI parsing. Response-targeted controls use the separate v2 contract
-documented in [Responses](API_Responses.md#cma-response-controls).
+documented in [Responses](API_Responses.md#cma-response-controls). Rich Agent
+history and new-tab transport selection use [Agent event replay v2](API_Agent_Events_V2.md).
 
 The personal-owner Agent detail includes its Sandbox, Workspace, Worktree, profile, status
 and first-message information, not an aggregate revision field. Transcript returns `{ agent_id,
@@ -768,6 +769,9 @@ above applies even when an operation annotates only its principal responses.
 | `POST /api/v1/conversations` | CreateConversationRequest | - | 200 Conversation |
 | `GET /api/v1/conversations/{id}` | - | - | 200 Conversation |
 | `GET /api/v1/conversations/{id}/items` | - | after, limit | 200 ConversationItemList |
+| `GET /api/v2/ui/transport` | - | - | 200 UiTransportView |
+| `GET /api/v2/agents/{agent_id}/events/snapshot` | - | limit, page_cursor | 200 EventPage |
+| `GET /api/v2/agents/{agent_id}/events` | - | after_cursor, follow / Last-Event-ID | 200 Agent event SSE |
 | `GET /api/v2` | - | - | 200 JSON capabilities |
 | `POST /api/v2/responses` | CreateV2ResponseRequest | - | 200 SSE |
 | `POST /api/v2/agents/{agent_id}/responses` | CreateV2ResponseRequest | - | 200 SSE |

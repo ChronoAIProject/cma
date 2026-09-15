@@ -4,6 +4,10 @@ use super::*;
 mod fences;
 #[path = "reads/stream.rs"]
 mod stream;
+#[path = "reads/window.rs"]
+mod window;
+#[path = "reads/window_probe_tests.rs"]
+mod window_probe_tests;
 
 async fn history(store: &InMemorySandboxStore) -> Agent {
     let agent = store
