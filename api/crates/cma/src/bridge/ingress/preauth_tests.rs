@@ -49,7 +49,7 @@ impl BridgeConnectionValidator for Fixture {
 }
 #[async_trait::async_trait]
 impl CallbackInboxStore for Fixture {
-    async fn accept(&self, _: InboxWrite) -> Result<InboxReceipt, CallbackError> {
+    async fn accept(&self, _: InboxWrite) -> Result<CallbackAcceptance, CallbackError> {
         self.inbox_calls.fetch_add(1, Ordering::SeqCst);
         Err(CallbackError::Unavailable)
     }

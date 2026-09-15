@@ -5,6 +5,7 @@ use super::*;
 pub(super) struct Provider {
     pub bridge: BridgeRecord,
     pub rows: Mutex<BTreeMap<String, StoredInbox>>,
+    pub refusals: Mutex<BTreeMap<String, (String, ChannelControlReceipt)>>,
     pub provider_calls: AtomicUsize,
     pub inbox_calls: AtomicUsize,
     pub failure: AtomicUsize,
@@ -76,16 +77,31 @@ impl CallbackInboxStore for Provider {
     async fn recover_receipt(
         &self,
         write: &InboxWrite,
-    ) -> Result<Option<InboxReceipt>, CallbackError> {
-        self.rows
+    ) -> Result<Option<CallbackAcceptance>, CallbackError> {
+        if let Some(receipt) = self
+            .rows
             .lock()
             .await
             .get(&write.record().id)
             .map(|row| write.match_replay(row))
+            .transpose()?
+        {
+            return Ok(Some(CallbackAcceptance::Message(receipt)));
+        }
+        self.refusals
+            .lock()
+            .await
+            .get(&write.record().id)
+            .map(|(digest, receipt)| {
+                if digest != &write.record().attestation.body_sha256 {
+                    return Err(CallbackError::ReplayConflict);
+                }
+                Ok(CallbackAcceptance::ControlRefused(receipt.clone()))
+            })
             .transpose()
     }
 
-    async fn accept(&self, write: InboxWrite) -> Result<InboxReceipt, CallbackError> {
+    async fn accept(&self, write: InboxWrite) -> Result<CallbackAcceptance, CallbackError> {
         self.inbox_calls.fetch_add(1, Ordering::SeqCst);
         self.entered.notify_one();
         self.commits.acquire().await.unwrap().forget();
@@ -95,7 +111,35 @@ impl CallbackInboxStore for Provider {
         write.require_current(&self.bridge)?;
         let mut rows = self.rows.lock().await;
         if let Some(row) = rows.get(&write.record().id) {
-            return write.match_replay(row);
+            return write.match_replay(row).map(CallbackAcceptance::Message);
+        }
+        let mut refusals = self.refusals.lock().await;
+        if let Some((digest, receipt)) = refusals.get(&write.record().id) {
+            if digest != &write.record().attestation.body_sha256 {
+                return Err(CallbackError::ReplayConflict);
+            }
+            return Ok(CallbackAcceptance::ControlRefused(receipt.clone()));
+        }
+        if let Some(code) = write.control_refusal() {
+            let receipt = ChannelControlReceipt {
+                version: 1,
+                callback_id: write.record().id.clone(),
+                bridge_id: write.record().pin.bridge_id.clone(),
+                message_id: write.record().message_id.clone(),
+                persisted_at: write.record().accepted_at,
+                code,
+            };
+            refusals.insert(
+                write.record().id.clone(),
+                (
+                    write.record().attestation.body_sha256.clone(),
+                    receipt.clone(),
+                ),
+            );
+            if self.failure.load(Ordering::SeqCst) == 2 {
+                return Err(CallbackError::Unavailable);
+            }
+            return Ok(CallbackAcceptance::ControlRefused(receipt));
         }
         let receipt = write.record().receipt();
         if write.record().admission != InboxAdmission::Accepted {
@@ -106,7 +150,7 @@ impl CallbackInboxStore for Provider {
         if self.failure.load(Ordering::SeqCst) == 2 {
             return Err(CallbackError::Unavailable);
         }
-        Ok(receipt)
+        Ok(CallbackAcceptance::Message(receipt))
     }
 }
 
@@ -128,6 +172,7 @@ impl HttpFixture {
         let provider = Arc::new(Provider {
             bridge: protocol.bridge.clone(),
             rows: Mutex::new(BTreeMap::new()),
+            refusals: Mutex::new(BTreeMap::new()),
             provider_calls: AtomicUsize::new(0),
             inbox_calls: AtomicUsize::new(0),
             failure: AtomicUsize::new(0),

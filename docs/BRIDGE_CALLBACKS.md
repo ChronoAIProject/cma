@@ -1,6 +1,6 @@
 # NyxID bridge callback contract
 
-`POST /api/v1/bridge-callbacks/{bridge_id}` accepts a signed NyxID callback into CMA's durable inbox. This connector endpoint uses callback authentication and is mounted separately from browser/session management routes. Its callback token cannot authenticate ordinary CMA REST operations. The connector protocol is documented here separately from the management OpenAPI inventory.
+`POST /api/v1/bridge-callbacks/{bridge_id}` durably classifies a signed NyxID callback as a Message or a refused reserved Control. This connector endpoint uses callback authentication and is mounted separately from browser/session management routes. Its callback token cannot authenticate ordinary CMA REST operations. The connector protocol is documented here separately from the management OpenAPI inventory.
 
 The bridge must already be enabled with a matching owner, selected existing bot/key/routes, verified encrypted key custody and valid current target/binding. Its manager configuration supplies the exact callback URL; the request body cannot select an owner, Agent or provisioning profile. A deployment without the supported configured HTTPS issuer/callback setup or optional public JWKS origin exposes an unavailable callback route and continues serving its existing sessions.
 
@@ -25,7 +25,7 @@ The optional relay token corroborates the retained owner/key only. Its absence p
 
 ## Durable acknowledgment
 
-CMA returns `202` only after the store confirms a majority-durable matching inbox receipt. No provisioning, Agent turn, reply delivery or worker invocation occurs in the HTTP request. A typical admitted receipt is:
+CMA returns `202` only after the store confirms a majority-durable matching Message receipt or reserved-Control refusal. No provisioning, Agent turn, reply delivery or worker invocation occurs in the HTTP request. A typical admitted Message receipt is:
 
 ```json
 {
@@ -67,6 +67,12 @@ Denied records retain no execution hold or reply credentials. Other typed reason
 An authenticated duplicate with the same verified business identity and exact body returns the original retained receipt, including its original admission and hold. It does not indicate a second acceptance. Same identity with different content returns `409`. A valid retry after an unknown commit can reconcile a committed receipt. Expired or otherwise invalid callback tokens cannot retrieve a retained receipt.
 
 ## Failure responses
+
+The [reserved text-control foundation](CHANNEL_CONTROLS.md) defines the separate
+`control_refused` durable response. Controls remain disabled; no reserved request
+starts a Message or an Agent control. Authentication, bounds, custody and
+persistence failures keep the failure envelope below. Previously accepted
+Message receipts preserve their original meaning on recovery.
 
 Failures contain a safe `code` and `acceptance` value, with no raw body, token or private platform metadata:
 

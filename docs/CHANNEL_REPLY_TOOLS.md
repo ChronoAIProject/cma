@@ -7,6 +7,14 @@ final answer. Ordinary manual and Trigger sessions do not receive this tool;
 connecting an existing manually created Agent to a bridge does not change its
 creation provenance or make it eligible.
 
+Pending tool approval remains an authenticated CMA dashboard/API decision.
+An active channel-created Agent may explicitly explain that policy with this
+reply tool. Once approval projects WaitingAction, the current reply admission
+requires InProgress and the runtime may already be blocked, so an external
+waiting notice is not guaranteed. CMA's durable waiting status is the fallback.
+The [disabled Channel control foundation](CHANNEL_CONTROLS.md) adds no automatic
+final, progress, waiting or refusal sends and cannot approve a tool.
+
 The return path is CMA's reply outbox → NyxID
 `POST /api/v1/channel-relay/reply` → the original bot/chat/thread. The original
 NyxID message identity remains authoritative. The model never selects a bot,
