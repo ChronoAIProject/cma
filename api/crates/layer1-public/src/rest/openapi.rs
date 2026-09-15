@@ -38,6 +38,21 @@ use super::trigger_openapi_shapes::*;
 #[derive(OpenApi)]
 #[openapi(
     paths(
+        super::bridge_invokes::list,
+        super::bridge_invokes::issue,
+        super::bridge_invokes::detail,
+        super::bridge_invokes::revoke,
+        super::bridge_invokes::readiness,
+        super::bridges::choices,
+        super::bridges::list,
+        super::bridges::read,
+        super::bridges::create,
+        super::bridges::configuration,
+        super::bridges::update,
+        super::bridges::control,
+        super::bridges::validate,
+        super::bridges::import,
+        super::bridges::revoke,
         super::agent_artifacts::publish,
         super::agent_artifacts::list,
         super::agent_artifacts::read,

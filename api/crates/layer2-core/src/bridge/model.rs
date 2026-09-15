@@ -58,6 +58,7 @@ pub enum BridgeSetupBlock {
     CustodyUnavailable,
     RenewableAuthorityUnavailable,
     TargetMismatch,
+    InvokeConsentRequired,
     ProfileUnavailable,
     AuthorityExpired,
 }

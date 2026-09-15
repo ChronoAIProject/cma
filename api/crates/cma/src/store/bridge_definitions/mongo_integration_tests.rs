@@ -362,3 +362,6 @@ async fn owner_index_corruption_and_hidden_lookahead_refuse_public_inventory() {
 mod custody;
 mod custody_proof;
 mod inbox;
+
+#[path = "../bridge_allocations/mongo_integration_tests.rs"]
+mod allocations;

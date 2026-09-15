@@ -12,7 +12,10 @@ use sha2::{Digest as _, Sha256};
 use super::*;
 use crate::store::sandbox_maintenance::mongo_integration_tests::ready_agent;
 
-async fn fixture(client: &Client, name: &str) -> (MongoSandboxStore, ResourceTarget) {
+pub(in crate::store) async fn fixture(
+    client: &Client,
+    name: &str,
+) -> (MongoSandboxStore, ResourceTarget) {
     let store = MongoSandboxStore::open(client, name).await.unwrap();
     let parent = sandbox("sbx_shares");
     let mut agent = ready_agent(&parent, "agt_share");

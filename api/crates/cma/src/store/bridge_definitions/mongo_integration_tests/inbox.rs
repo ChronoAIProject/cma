@@ -54,8 +54,10 @@ fn callback(message: &str, text: &str) -> (Vec<u8>, String, String) {
         "api_key_id":"key-1","conversation_id":"route-1","inbound_message_id":message,"platform":"telegram"}),
     );
     let body=serde_json::to_vec(&json!({"message_id":message,"correlation_id":"callback-1","platform":"telegram","reply_token":reply,
-        "agent":{"api_key_id":"key-1","name":"Fixture"},"conversation":{"id":"route-1","platform_id":"real-chat","type":"group"},
-        "thread_id":"protected-interaction-secret","sender":{"platform_id":"sender"},"content":{"type":"text","text":text},"timestamp":"2026-09-15T00:00:00Z","raw_platform_data":{"secret":"excluded"}})).unwrap();
+        "agent":{"api_key_id":"key-1","name":"Fixture"},"conversation":{"id":"route-1","platform_id":"-100123","type":"private"},
+        "thread_id":"protected-interaction-secret","sender":{"platform_id":"12345"},"content":{"type":"text","text":text},"timestamp":"2026-09-15T00:00:00Z",
+        "raw_platform_data":{"secret":"excluded","update_id":99,"message":{"message_id":42,"date":1700000000,
+            "chat":{"id":-100123,"type":"supergroup"},"from":{"id":12345,"is_bot":false},"text":text}}})).unwrap();
     let signed = sign(
         json!({"iss":"https://nyx.example","aud":"channel-relay/callback","iat":now(),"exp":now()+300,"jti":"callback-1","token_type":"relay_callback",
         "api_key_id":"key-1","message_id":message,"platform":"telegram","body_sha256":format!("{:x}",Sha256::digest(&body))}),
@@ -63,16 +65,25 @@ fn callback(message: &str, text: &str) -> (Vec<u8>, String, String) {
     (body, signed, reply)
 }
 async fn write(store: &MongoBridgeStore, id: &BridgeId, body: &[u8], token: &str) -> InboxWrite {
+    write_with_key_lease(store, id, body, token, Duration::from_secs(60)).await
+}
+async fn write_with_key_lease(
+    store: &MongoBridgeStore,
+    id: &BridgeId,
+    body: &[u8],
+    token: &str,
+    key_lease: Duration,
+) -> InboxWrite {
     let bridge = store.bridge(id).await.unwrap().unwrap();
     let proof = Authority
         .validate_connection(&bridge.owner, &bridge.current().unwrap().config)
         .await
         .unwrap();
-    let binding = CallbackBinding::new(bridge, proof).unwrap();
+    let binding = CallbackBinding::new(bridge.clone(), proof).unwrap();
     let keys = CallbackKeySet::from_pinned_jwks(
         "https://nyx.example".into(),
         JWKS,
-        tokio::time::Instant::now() + Duration::from_secs(60),
+        tokio::time::Instant::now() + key_lease,
     )
     .unwrap();
     let verifier = CallbackVerifier::new(CallbackTokenPolicy {
@@ -86,8 +97,8 @@ async fn write(store: &MongoBridgeStore, id: &BridgeId, body: &[u8], token: &str
     .unwrap();
     let payload: Value = serde_json::from_slice(body).unwrap();
     verifier
-        .verify(
-            binding,
+        .preauthenticate(
+            bridge,
             &keys,
             CallbackHeaders {
                 callback_token: token,
@@ -99,6 +110,101 @@ async fn write(store: &MongoBridgeStore, id: &BridgeId, body: &[u8], token: &str
             body,
         )
         .unwrap()
+        .classify_capabilities(body, &crate::bridge::ingress::NyxidCapabilities)
+        .unwrap()
+        .bind(binding)
+        .unwrap()
+}
+
+#[tokio::test]
+#[ignore = "requires the disposable failpoint-enabled MongoDB replica contract runner"]
+async fn uncertain_commit_with_expired_proof_stays_unknown_and_fresh_retry_recovers_receipt() {
+    let (admin, database, _, _, id) = setup().await;
+    let uri = std::env::var("CHRONO_TEST_MONGODB_FAILPOINT_URI").unwrap();
+    let app_name = format!(
+        "cma-callback-reconciliation-{}",
+        uuid::Uuid::new_v4().simple()
+    );
+    let mut options = mongodb::options::ClientOptions::parse(uri).await.unwrap();
+    options.app_name = Some(app_name.clone());
+    let client = Client::with_options(options).unwrap();
+    let store = open_store(&client, &database).await;
+    let inbox =
+        MongoCallbackInbox::open(&store, &database, "disposable-callback", &encryption_key())
+            .await
+            .unwrap();
+    let (body, token, _) = callback("uncertain-commit", "retained message");
+    // Each commit takes 300 ms and reports an ambiguous write-concern result.
+    // The transaction commits, but its original key proof expires before the
+    // bounded commit helper returns. Keep the failpoint active across driver
+    // retries too, so a sixth wire attempt cannot silently recover success.
+    admin
+        .database("admin")
+        .run_command(doc! {
+            "configureFailPoint": "failCommand", "mode": "alwaysOn",
+            "data": {
+                "failCommands": ["commitTransaction"], "appName": &app_name,
+                "blockConnection": true, "blockTimeMS": 300_i32,
+                "writeConcernError": {"code": 50_i32, "codeName": "MaxTimeMSExpired",
+                    "errmsg": "injected ambiguous callback commit after proof expiry"}
+            }
+        })
+        .await
+        .unwrap();
+    let write = write_with_key_lease(&store, &id, &body, &token, Duration::from_secs(1)).await;
+    let expected = write.record().receipt();
+    let outcome = inbox.accept(write).await;
+    admin
+        .database("admin")
+        .run_command(doc! {"configureFailPoint": "failCommand", "mode": "off"})
+        .await
+        .expect("disable failpoint before assertions");
+    assert_eq!(outcome, Err(CallbackError::Unavailable));
+    let rows = crate::store::durability::majority_collection::<Document>(
+        &client.database(&database),
+        "bridge_callback_inbox",
+    );
+    let document = rows
+        .find_one(doc! {"_id": &expected.inbox_id})
+        .await
+        .unwrap()
+        .unwrap();
+    let retained: StoredInbox = crate::store::sandbox_mongo::read_record(&document).unwrap();
+    assert_eq!(
+        retained.receipt(),
+        expected,
+        "unknown response must not discard the durable result"
+    );
+    let fresh = write_with_key_lease(&store, &id, &body, &token, Duration::from_secs(60)).await;
+    assert_eq!(inbox.accept(fresh).await.unwrap(), expected);
+    assert_eq!(rows.count_documents(doc! {}).await.unwrap(), 1);
+    client.database(&database).drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires the disposable MongoDB replica contract runner"]
+async fn uncertain_commit_reconciliation_preserves_observed_conflict_and_exact_original_receipt() {
+    let (client, database, store, inbox, id) = setup().await;
+    let (body, token, _) = callback("reconcile", "original message");
+    let original = inbox
+        .accept(write(&store, &id, &body, &token).await)
+        .await
+        .unwrap();
+    let duplicate = write(&store, &id, &body, &token).await;
+    assert_eq!(inbox.reconcile_commit(&duplicate).await.unwrap(), original);
+    let (changed, changed_token, _) = callback("reconcile", "substituted message");
+    let conflict = write(&store, &id, &changed, &changed_token).await;
+    assert_eq!(
+        inbox.reconcile_commit(&conflict).await,
+        Err(CallbackError::ReplayConflict)
+    );
+    let (missing, missing_token, _) = callback("unobserved", "unobserved message");
+    let missing = write(&store, &id, &missing, &missing_token).await;
+    assert_eq!(
+        inbox.reconcile_commit(&missing).await,
+        Err(CallbackError::Unavailable)
+    );
+    client.database(&database).drop().await.unwrap();
 }
 async fn setup() -> (
     Client,
@@ -202,6 +308,10 @@ async fn signed_duplicate_race_restart_and_encrypted_reply_expiry_preserve_one_a
     let (a, b) = tokio::join!(inbox.accept(a), inbox.accept(b));
     let receipt = a.unwrap();
     assert_eq!(b.unwrap(), receipt);
+    assert_eq!(
+        receipt.execution_hold,
+        Some(InboxExecutionHold::WorkerUnavailable)
+    );
     let reopened =
         MongoCallbackInbox::open(&store, &database, "disposable-callback", &encryption_key())
             .await
@@ -217,6 +327,20 @@ async fn signed_duplicate_race_restart_and_encrypted_reply_expiry_preserve_one_a
     let documents = database_handle.collection::<Document>("bridge_callback_inbox");
     assert_eq!(documents.count_documents(doc! {}).await.unwrap(), 1);
     let raw = documents.find_one(doc! {}).await.unwrap().unwrap();
+    let retained: StoredInbox = crate::store::sandbox_mongo::read_record(&raw).unwrap();
+    assert_eq!(
+        retained.execution_hold,
+        Some(InboxExecutionHold::WorkerUnavailable)
+    );
+    assert_eq!(retained.envelope.conversation_type, "group");
+    assert!(retained.capabilities.is_some());
+    assert!(
+        layer2_core::bridge::partition::NormalizedPartitionSource::from_stored(
+            &retained,
+            &store.bridge(&id).await.unwrap().unwrap(),
+        )
+        .is_ok()
+    );
     let encoded = serde_json::to_string(&raw).unwrap();
     assert!(!encoded.contains(&reply));
     assert!(!encoded.contains("excluded"));
