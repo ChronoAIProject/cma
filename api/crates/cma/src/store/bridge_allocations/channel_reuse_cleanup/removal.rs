@@ -5,7 +5,7 @@ use crate::store::agents::read_agent;
 mod publication;
 mod runtime;
 pub(in crate::store) use publication::require_complete;
-const REMOVAL_AUDITS: &str = "channel_reuse_cleanup_removal_audits";
+pub(super) const REMOVAL_AUDITS: &str = "channel_reuse_cleanup_removal_audits";
 
 impl MongoBridgeAllocationStore {
     pub(in crate::store::bridge_allocations) async fn cleanup_released_agent_capacity(
@@ -113,6 +113,18 @@ impl MongoBridgeAllocationStore {
             None => ChannelReuseRemovalState::new(&saved, &observed, agent.work.next_fence)?,
         };
         require_markers(&database, &state, previous.is_none(), session).await?;
+        // Bound cleanup-job proof reads fence this same tombstone during the
+        // nested drain transaction. Use its current transactional row for CAS,
+        // while requiring the retained removal state to remain identical.
+        let existing = if previous.is_some() {
+            let row = read(&database, CLEANUP_TOMBSTONES, &id, session).await?;
+            if read_removal(&row)? != state {
+                return Err(AllocationError::Conflict.into());
+            }
+            Some(row)
+        } else {
+            None
+        };
         if let Some(completed) = completed {
             if completed != &state {
                 return Err(AllocationError::Conflict.into());
@@ -272,7 +284,7 @@ pub(in crate::store) fn read_removal(
     }
     Ok(state)
 }
-fn audit_id(state: &ChannelReuseRemovalState) -> String {
+pub(super) fn audit_id(state: &ChannelReuseRemovalState) -> String {
     format!("{}:revision:{}", state.id, state.revision)
 }
 async fn append_audit(

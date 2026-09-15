@@ -3,6 +3,7 @@
 use std::sync::Arc;
 mod adapter;
 mod bridge;
+use crate::config::bridge_flags::BridgeFlag::TriggerCommandAdmission;
 use adapter::production_adapter;
 
 use axum::{extract::DefaultBodyLimit, Router};
@@ -320,9 +321,7 @@ impl ControlPlaneComposition {
             },
         );
         let trigger = TriggerComposition::new(TriggerCompositionDependencies {
-            common_first_messages: config
-                .bridge_flags
-                .enabled(crate::config::bridge_flags::BridgeFlag::TriggerCommandAdmission),
+            common_first_messages: config.bridge_flags.enabled(TriggerCommandAdmission),
             agent_reads: projections.reads(),
             credentials: connection_prerequisite.clone(),
             stores: Arc::clone(&stores),
@@ -401,6 +400,7 @@ impl ControlPlaneComposition {
             &bridge_definitions,
             bridge_credentials.clone(),
             adapter,
+            live_agents.clone(),
         )
         .await?;
         let resource_routes = profiles_router(profiles)

@@ -74,6 +74,8 @@ impl MongoBridgeAllocationStore {
                 "channel_reuse_cleanup_admission_audits",
                 "channel_reuse_cleanup_tombstones",
                 "channel_reuse_cleanup_removal_audits",
+                "channel_child_cleanup_jobs_v1",
+                "channel_child_cleanup_job_admissions_v1",
             ],
         )
         .await?;
@@ -111,6 +113,9 @@ impl MongoBridgeAllocationStore {
                 .partial_filter_expression(doc! {"channel_reuse":{"$exists":true}}).build())
             .build()).await.map_err(|_| layer2_core::StoreError::Unavailable(
                 "create shared parent lifecycle index".into()))?;
+        store.initialize_cleanup_jobs().await.map_err(|_| {
+            layer2_core::StoreError::Unavailable("create explicit cleanup job indexes".into())
+        })?;
         Ok(store)
     }
 
