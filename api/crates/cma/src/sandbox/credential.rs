@@ -97,6 +97,22 @@ pub(crate) trait SandboxCredentialController: Send + Sync {
     async fn require_lifecycle_restore(&self, _sandbox: &Sandbox) -> Result<(), CredentialError> {
         Ok(())
     }
+    async fn commit_channel_phase(
+        &self,
+        _sandbox: &Sandbox,
+        _mutation: &layer2_core::sandbox::store::SandboxLifecycleMutation,
+    ) -> Result<bool, CredentialError> {
+        Ok(false)
+    }
+    async fn restore_channel_credential(
+        &self,
+        _sandbox: &Sandbox,
+    ) -> Result<bool, CredentialError> {
+        Ok(false)
+    }
+    async fn publish_channel_active(&self, _sandbox: &Sandbox) -> Result<bool, CredentialError> {
+        Ok(false)
+    }
     async fn issue(
         &self,
         sandbox: &Sandbox,

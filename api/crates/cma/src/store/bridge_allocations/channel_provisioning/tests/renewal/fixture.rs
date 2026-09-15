@@ -23,14 +23,14 @@ use std::{
     time::{Duration, SystemTime},
 };
 
-pub(super) struct RenewalFixture {
+pub(crate) struct RenewalFixture {
     pub original: Fixture,
     pub driver: ChannelCredentialRenewalDriver,
     pub state: Arc<HttpState>,
     pub due: SystemTime,
     task: tokio::task::JoinHandle<()>,
 }
-pub(super) struct HttpState {
+pub(crate) struct HttpState {
     pub mint_count: AtomicUsize,
     pub revoke_count: AtomicUsize,
     pub mint_unknown: AtomicBool,

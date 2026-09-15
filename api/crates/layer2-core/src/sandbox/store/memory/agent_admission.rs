@@ -4,18 +4,28 @@ use crate::sandbox::{AgentOrigin, SandboxEventKind, SandboxReviveCause, Workspac
 
 #[async_trait]
 impl AgentAdmissionStore for InMemorySandboxStore {
+    async fn admit_agent_with_trigger_initiator(
+        &self,
+        admission: AgentAdmission,
+        initiation: crate::trigger_domain::LaunchInitiation,
+        reuse_existing: bool,
+    ) -> Result<AgentAdmissionResult, SandboxStoreError> {
+        self.admit_agent_with_reuse(admission, reuse_existing, Some(initiation))
+            .await
+    }
+
     async fn admit_agent_reusing_profile(
         &self,
         admission: AgentAdmission,
     ) -> Result<AgentAdmissionResult, SandboxStoreError> {
-        self.admit_agent_with_reuse(admission, true).await
+        self.admit_agent_with_reuse(admission, true, None).await
     }
 
     async fn admit_agent(
         &self,
         admission: AgentAdmission,
     ) -> Result<AgentAdmissionResult, SandboxStoreError> {
-        self.admit_agent_with_reuse(admission, false).await
+        self.admit_agent_with_reuse(admission, false, None).await
     }
 }
 
@@ -24,7 +34,11 @@ impl InMemorySandboxStore {
         &self,
         admission: AgentAdmission,
         reuse_existing: bool,
+        initiation: Option<crate::trigger_domain::LaunchInitiation>,
     ) -> Result<AgentAdmissionResult, SandboxStoreError> {
+        if let Some(initiation) = &initiation {
+            initiation.require_agent_admission(&admission)?;
+        }
         let mut state = self.lock();
         let binding = state
             .agent_reuse_bindings
@@ -206,8 +220,13 @@ impl InMemorySandboxStore {
         }
 
         let creation = admission.materialize(&workspace)?;
-        let provenance =
-            super::provenance::creation_record(&state, &admission, &creation.agent, &sandbox)?;
+        let provenance = super::provenance::creation_record(
+            &state,
+            &admission,
+            &creation.agent,
+            &sandbox,
+            initiation.as_ref(),
+        )?;
         if state.worktrees.contains_key(&creation.worktree.id)
             || state.agents.contains_key(&creation.agent.id)
             || state

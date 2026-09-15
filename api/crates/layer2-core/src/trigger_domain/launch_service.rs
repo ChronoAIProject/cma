@@ -210,6 +210,30 @@ impl LaunchService {
         public_id: &PublicTriggerId,
         request: CreateOrResumeLaunch,
     ) -> Result<LaunchCreateResult, LaunchServiceError> {
+        self.create_with_initiator(caller, None, public_id, request)
+            .await
+    }
+
+    pub async fn create_or_resume_as(
+        &self,
+        context: &crate::resource_access::CallerContext,
+        public_id: &PublicTriggerId,
+        request: CreateOrResumeLaunch,
+    ) -> Result<LaunchCreateResult, LaunchServiceError> {
+        if !context.validate_principal() {
+            return Err(LaunchServiceError::Forbidden);
+        }
+        self.create_with_initiator(&context.caller, Some(context), public_id, request)
+            .await
+    }
+
+    async fn create_with_initiator(
+        &self,
+        caller: &Caller,
+        context: Option<&crate::resource_access::CallerContext>,
+        public_id: &PublicTriggerId,
+        request: CreateOrResumeLaunch,
+    ) -> Result<LaunchCreateResult, LaunchServiceError> {
         require_launcher(caller)?;
         validate_create_request(&request)?;
         let command_key_hash =
@@ -300,6 +324,9 @@ impl LaunchService {
                 created_at: now.clone(),
             })
             .map_err(|error| LaunchServiceError::InvalidRequest(error.to_string()))?;
+            launch.initiation = context
+                .map(|context| super::LaunchInitiation::capture(context, &launch))
+                .transpose()?;
             let mut events = vec![LaunchEventKind::Created];
             if let Some(choice) = request.choice {
                 events.push(LaunchEventKind::RepeatChoiceRecorded { choice });

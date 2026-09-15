@@ -28,9 +28,8 @@ use crate::{
     rate_limit::RateLimiters,
     sandbox::{
         runtime_capabilities, DurableCheckpointObjectPurger, LiveAgentRegistry, LiveSandboxPolicy,
-        ManagedSandboxCredentials, OrnnAgentSkillResolver, ProviderTitleEndpoint,
-        SandboxCredentialController, SandboxLifecycleComposition, SandboxLifecycleConfig,
-        SandboxLifecycleDependencies, UnavailableSandboxCredentials,
+        OrnnAgentSkillResolver, ProviderTitleEndpoint, SandboxLifecycleComposition,
+        SandboxLifecycleConfig, SandboxLifecycleDependencies,
     },
     store::{DefaultProfileSpec, MongoStores},
     trigger::{CmaServiceConnectionBroker, TriggerComposition, TriggerCompositionDependencies},
@@ -258,19 +257,15 @@ impl ControlPlaneComposition {
             resource_access.clone(),
         )
         .await?;
-        let sandbox_credentials: Arc<dyn SandboxCredentialController> = match key_issuer {
-            Some(issuer) => ManagedSandboxCredentials::new(
-                issuer,
-                Arc::clone(&auth),
-                Arc::clone(&stores.sandbox_credentials),
-            ),
-            None => Arc::new(UnavailableSandboxCredentials),
-        };
-        let sandbox_credentials: Arc<dyn SandboxCredentialController> =
-            crate::sandbox::channel_credentials::ChannelGuardedCredentials::new(
-                sandbox_credentials,
-                bridge.allocations.clone(),
-            );
+        let sandbox_credentials = bridge::sandbox_credentials(
+            key_issuer,
+            auth.clone(),
+            &stores,
+            &bridge,
+            &bridge_definitions,
+            bridge_credentials.clone(),
+            adapter.clone(),
+        );
         if !auth.requires_credential() {
             tracing::warn!(
                 "running with a trusted fixed subject; this mode is for local development only"
@@ -349,6 +344,11 @@ impl ControlPlaneComposition {
         let command_worker = layer2_core::sandbox::agent_io::AgentCommandWorker::new(
             stores.sandbox_model.clone(),
             Arc::new(crate::commands::ResourceCommandExecution {
+                channel_revival: crate::commands::ChannelCommandRevival::configured(
+                    &bridge,
+                    &bridge_definitions,
+                    bridge_credentials.clone(),
+                ),
                 authority: auth.clone(),
                 access: resource_access.clone(),
                 store: stores.sandbox_model.clone(),

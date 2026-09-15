@@ -19,6 +19,8 @@ use crate::{
 use fixture::Fixture;
 #[path = "tests/channel_reply_tests.rs"]
 mod channel_reply;
+#[path = "tests/command_revival_tests.rs"]
+mod command_revival;
 use layer2_core::sandbox::store::{SandboxStore, SandboxWorkerStore};
 use layer3_adapter::{wire::WireOperation, RuntimeHandle};
 use std::sync::atomic::Ordering;

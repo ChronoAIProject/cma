@@ -238,7 +238,15 @@ fn claim(
     let revision = snapshot
         .renewal
         .as_ref()
-        .map_or(Some(1), |state| state.revision.checked_add(1))
+        .map_or_else(
+            || {
+                snapshot
+                    .lifecycle_credential
+                    .as_ref()
+                    .map_or(Some(1), |state| state.renewal_revision.checked_add(1))
+            },
+            |state| state.revision.checked_add(1),
+        )
         .ok_or(AllocationError::Corrupt)?;
     if snapshot
         .renewal

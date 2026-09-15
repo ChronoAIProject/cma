@@ -460,11 +460,12 @@ async fn admission_reconciliation_rejects_an_above_high_water_orphan() {
     let (client, database, store, _, _, admission) = fixture("reconcile_orphan").await;
     let mut transaction = store.client.start_session().await.unwrap();
     start_transaction(&mut transaction).await.unwrap();
-    let receipt = match super::apply_admission(&store, &admission, false, &mut transaction).await {
-        Ok(AdmissionReceipt::Created(receipt)) => receipt,
-        Ok(AdmissionReceipt::Existing(_)) => panic!("fresh admission unexpectedly replayed"),
-        Err(_) => panic!("fresh admission transaction failed"),
-    };
+    let receipt =
+        match super::apply_admission(&store, &admission, false, None, &mut transaction).await {
+            Ok(AdmissionReceipt::Created(receipt)) => receipt,
+            Ok(AdmissionReceipt::Existing(_)) => panic!("fresh admission unexpectedly replayed"),
+            Err(_) => panic!("fresh admission transaction failed"),
+        };
     transaction.commit_transaction().await.unwrap();
 
     let mut anchor_session = store.client.start_session().await.unwrap();

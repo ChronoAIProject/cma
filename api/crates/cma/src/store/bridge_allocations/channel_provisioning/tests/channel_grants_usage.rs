@@ -26,7 +26,7 @@ async fn channel_usage_ready_grant_attach_is_atomic_multiple_config_grants_share
     let before = history(&f.resources, &agent).await;
     assert!(before.1.is_empty());
     let (store, service) = invokes(&f).await;
-    let control_plane = Arc::new(f.lease);
+    let control_plane = f.lease.clone();
     f.client
         .database(&f.database)
         .run_command(doc! {

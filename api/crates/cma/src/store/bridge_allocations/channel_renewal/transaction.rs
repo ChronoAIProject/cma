@@ -104,6 +104,13 @@ pub(super) async fn apply(
         sandbox,
         creation: decode(&document, "channel_creation")?,
         provisioning: decode(&document, "channel_provisioning")?,
+        lifecycle_credential: document
+            .get("channel_lifecycle_credential")
+            .map(|value| {
+                mongodb::bson::deserialize_from_bson(value.clone())
+                    .map_err(|_| AllocationError::Corrupt)
+            })
+            .transpose()?,
         renewal: document
             .get("channel_renewal")
             .map(|value| {
