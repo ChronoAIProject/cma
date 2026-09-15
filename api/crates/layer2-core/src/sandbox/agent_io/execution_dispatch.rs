@@ -104,3 +104,51 @@ impl ConversationInputGuard for ChannelDispatchGuard {
             .map_err(|_| refused())
     }
 }
+
+pub(in crate::sandbox) struct TriggerDispatchGuard {
+    pub authority: super::TriggerExecutionAuthorization,
+    pub target: AgentRuntimeTarget,
+    pub operation_sequence: u64,
+    pub turn_sequence: u64,
+}
+
+#[async_trait::async_trait]
+impl ConversationInputGuard for TriggerDispatchGuard {
+    async fn check(&self) -> layer3_adapter::Result<()> {
+        let refused = || {
+            AdapterError::Rejected("Trigger first-message authority is no longer current".into())
+        };
+        let proof = self
+            .authority
+            .current_proof()
+            .await
+            .map_err(|_| refused())?;
+        let agent = proof.agent();
+        if agent.id != self.target.agent_id
+            || agent.conversation.conversation_id.as_ref() != Some(&self.target.conversation_id)
+            || agent.conversation.runtime_generation != Some(self.target.runtime_generation)
+            || agent.conversation.active_turn != Some(self.turn_sequence)
+            || agent
+                .conversation
+                .first_message
+                .as_ref()
+                .is_none_or(|first| {
+                    first.fence_sequence != self.operation_sequence
+                        || first.turn_sequence != Some(self.turn_sequence)
+                })
+            || agent
+                .conversation
+                .operation
+                .as_ref()
+                .is_none_or(|operation| {
+                    operation.sequence != self.operation_sequence
+                        || operation.turn_sequence != self.turn_sequence
+                        || operation.runtime_generation != self.target.runtime_generation
+                        || operation.state != AgentOperationDelivery::DispatchFenced
+                })
+        {
+            return Err(refused());
+        }
+        Ok(())
+    }
+}

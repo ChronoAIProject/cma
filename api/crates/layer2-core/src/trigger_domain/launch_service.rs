@@ -139,6 +139,7 @@ impl LaunchServiceError {
 }
 
 pub struct LaunchService {
+    pub(super) common_first_messages: bool,
     pub(super) definitions: Arc<dyn TriggerStore>,
     pub(super) profile_reader: Arc<dyn TriggerProfileReader>,
     pub(super) sandbox_profiles: Arc<dyn SandboxProfileStore>,
@@ -172,6 +173,7 @@ impl LaunchService {
         let sandbox_profiles: Arc<dyn SandboxProfileStore> = profiles.clone();
         let workspace_profiles: Arc<dyn WorkspaceProfileStore> = profiles;
         Arc::new(Self {
+            common_first_messages: false,
             definitions,
             profile_reader,
             sandbox_profiles,
@@ -327,6 +329,9 @@ impl LaunchService {
             launch.initiation = context
                 .map(|context| super::LaunchInitiation::capture(context, &launch))
                 .transpose()?;
+            if self.common_first_messages {
+                launch.input_protocol = Some(super::LaunchInputProtocol::capture(&launch)?);
+            }
             let mut events = vec![LaunchEventKind::Created];
             if let Some(choice) = request.choice {
                 events.push(LaunchEventKind::RepeatChoiceRecorded { choice });

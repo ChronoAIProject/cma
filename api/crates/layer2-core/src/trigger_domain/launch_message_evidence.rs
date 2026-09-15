@@ -21,9 +21,13 @@ pub(super) fn observe_first_message(
         return Err(progress_error());
     }
     let next = LaunchMessageEvidence::from_record(agent_id.clone(), record);
-    validate_cursor_shape(&next, record.state)?;
+    validate_cursor_shape(&next, record.state, launch.input_protocol.is_some())?;
     if let Some(current) = &launch.first_message_evidence {
-        validate_cursor_shape(current, launch.first_message)?;
+        validate_cursor_shape(
+            current,
+            launch.first_message,
+            launch.input_protocol.is_some(),
+        )?;
         validate_stable_identity(current, &next)?;
         validate_evidence_advance(current, &next, launch.first_message, record.state, mode)?;
     } else if launch.first_message != FirstMessageDelivery::Queued {
@@ -55,7 +59,11 @@ pub(super) fn validate_persisted_message_evidence(launch: &Launch) -> Result<(),
     {
         return Err(progress_error());
     }
-    validate_cursor_shape(evidence, launch.first_message)
+    validate_cursor_shape(
+        evidence,
+        launch.first_message,
+        launch.input_protocol.is_some(),
+    )
 }
 
 impl LaunchMessageEvidence {
@@ -179,6 +187,7 @@ pub(super) fn validate_first_message_record(
             record.dispatch_generation,
             record.turn_sequence,
             record.state,
+            record.common_binding.is_some(),
         ))
     .then_some(())
     .ok_or_else(progress_error)
@@ -187,6 +196,7 @@ pub(super) fn validate_first_message_record(
 fn validate_cursor_shape(
     evidence: &LaunchMessageEvidence,
     state: FirstMessageDelivery,
+    common: bool,
 ) -> Result<(), TriggerError> {
     valid_cursor_values(
         evidence.recovery_generation,
@@ -195,6 +205,7 @@ fn validate_cursor_shape(
         evidence.dispatch_generation,
         evidence.turn_sequence,
         state,
+        common,
     )
     .then_some(())
     .ok_or_else(progress_error)
@@ -207,8 +218,15 @@ fn valid_cursor_values(
     dispatch_generation: u64,
     turn_sequence: Option<u64>,
     state: FirstMessageDelivery,
+    common: bool,
 ) -> bool {
     match state {
+        FirstMessageDelivery::Failed if common && attempt == 0 => {
+            recovery_generation == 0
+                && fence_sequence == 0
+                && dispatch_generation == 0
+                && turn_sequence.is_none()
+        }
         FirstMessageDelivery::Queued if attempt == 0 => {
             recovery_generation == 0
                 && fence_sequence == 0

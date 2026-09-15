@@ -23,9 +23,12 @@ use super::workspaces::{read_workspace, workspace_replacement_fields};
 use super::worktrees::worktree_document;
 
 mod attribution;
+mod parent_fences;
 mod retry;
 #[path = "agent_admission_reuse.rs"]
 mod reuse;
+mod trigger_protocol;
+use parent_fences::{advance_sandbox, advance_workspace};
 
 use reuse::reuse_profile_agent;
 #[cfg(test)]
@@ -196,6 +199,23 @@ async fn apply_admission(
     initiation: Option<&layer2_core::trigger_domain::LaunchInitiation>,
     session: &mut mongodb::ClientSession,
 ) -> Result<AdmissionReceipt, ApplyError> {
+    let common_launch = trigger_protocol::selected(store, admission, session).await?;
+    if let Some(launch) = &common_launch {
+        if launch.initiation.as_ref() != initiation {
+            return Err(ApplyError::Domain(SandboxStoreError::Conflict));
+        }
+        launch
+            .initiation
+            .as_ref()
+            .ok_or(ApplyError::Domain(SandboxStoreError::Conflict))?
+            .require_agent_admission(admission)
+            .map_err(ApplyError::Domain)?;
+        // An accepted receipt may be replayed after its original worker claim
+        // has ended. New work still requires the live initiation fence below.
+        if let Some(replay) = replay_in_transaction(store, admission, session).await? {
+            return Ok(replay);
+        }
+    }
     if let Some(initiation) = initiation {
         attribution::fence_initiation(store, admission, initiation, session).await?;
     }
@@ -240,6 +260,7 @@ async fn apply_admission(
         &workspace,
         &sandbox,
         reuse_existing,
+        common_launch.as_ref(),
         session,
     )
     .await?
@@ -269,7 +290,7 @@ async fn apply_admission(
         }));
     }
 
-    let creation =
+    let mut creation =
         super::warm_sandboxes::adopt_agent(store, &sandbox, &workspace, admission, session)
             .await
             .map_err(ApplyError::Domain)?;
@@ -333,6 +354,17 @@ async fn apply_admission(
         .await
         .map_err(classify_log_insert)?;
 
+    if let Some(launch) = &common_launch {
+        super::trigger_first_messages::attach(
+            store,
+            launch,
+            admission,
+            &mut creation.agent,
+            session,
+        )
+        .await
+        .map_err(ApplyError::from)?;
+    }
     let revival_event = match revival {
         Some(event) => Some(
             append_in_transaction(
@@ -393,70 +425,6 @@ fn next_workspace(
         .checked_add(1)
         .ok_or(ApplyError::Domain(SandboxStoreError::Conflict))?;
     Ok(next)
-}
-
-async fn advance_workspace(
-    store: &MongoSandboxStore,
-    previous: &layer2_core::sandbox::Workspace,
-    next: &layer2_core::sandbox::Workspace,
-    session: &mut mongodb::ClientSession,
-) -> Result<(), ApplyError> {
-    let advanced = store
-        .workspaces
-        .update_one(
-            doc! {
-                "_id": previous.id.as_str(),
-                "document_schema_version": DOCUMENT_SCHEMA_VERSION,
-                "channel_reuse_cleanup_execution": { "$exists": false },
-                "revision": signed(previous.revision, "workspace revision")
-                    .map_err(|_| ApplyError::Domain(SandboxStoreError::Conflict))?,
-                "next_worktree_number": signed(
-                    previous.next_worktree_number,
-                    "workspace next worktree number",
-                )
-                .map_err(|_| ApplyError::Domain(SandboxStoreError::Conflict))?,
-            },
-            doc! { "$set": workspace_replacement_fields(next).map_err(ApplyError::Domain)? },
-        )
-        .session(session)
-        .await
-        .map_err(ApplyError::Driver)?;
-    if advanced.matched_count == 1 {
-        Ok(())
-    } else {
-        Err(ApplyError::Domain(SandboxStoreError::Conflict))
-    }
-}
-
-async fn advance_sandbox(
-    store: &MongoSandboxStore,
-    previous: &layer2_core::sandbox::Sandbox,
-    next: &layer2_core::sandbox::Sandbox,
-    session: &mut mongodb::ClientSession,
-) -> Result<(), ApplyError> {
-    let advanced = store
-        .sandboxes
-        .update_one(
-            doc! {
-                "_id": previous.id.as_str(),
-                "document_schema_version": DOCUMENT_SCHEMA_VERSION,
-                "channel_reuse_cleanup_execution": { "$exists": false },
-                "revision": signed(previous.revision, "sandbox revision")
-                    .map_err(|_| ApplyError::Domain(SandboxStoreError::Conflict))?,
-            },
-            doc! {
-                "$set": sandbox_replacement_fields(next).map_err(ApplyError::Domain)?,
-                "$inc": { "workspace_admission_fence": 1_i64 },
-            },
-        )
-        .session(session)
-        .await
-        .map_err(ApplyError::Driver)?;
-    if advanced.matched_count == 1 {
-        Ok(())
-    } else {
-        Err(ApplyError::Domain(SandboxStoreError::Conflict))
-    }
 }
 
 fn classify_aggregate_insert(error: mongodb::error::Error) -> ApplyError {

@@ -58,6 +58,21 @@ impl AgentOperationService {
                                 ),
                             )
                             .await
+                    } else if let Some(authority) = &self.trigger_authority {
+                        connection
+                            .input
+                            .send_guarded(
+                                prepared.input.clone(),
+                                std::sync::Arc::new(
+                                    super::agent_io::execution_dispatch::TriggerDispatchGuard {
+                                        authority: authority.clone(),
+                                        target: prepared.target.clone(),
+                                        operation_sequence: prepared.operation_sequence,
+                                        turn_sequence: prepared.turn_sequence,
+                                    },
+                                ),
+                            )
+                            .await
                     } else {
                         connection
                             .input
@@ -160,6 +175,12 @@ impl AgentOperationService {
             if matches!(&classification, SendClassification::PreWrite(_)) {
                 append_pre_write_rollback(&current, &mut next, &prepared, &at, &mut logs)?;
             }
+            super::agent_io::trigger::project_delivery(
+                &mut next,
+                prepared.operation_sequence,
+                &at,
+                &mut logs,
+            )?;
             match self.commit_change(&current, next, logs, at).await {
                 Ok((agent, _)) => {
                     return match &classification {
@@ -244,6 +265,10 @@ impl AgentOperationService {
             channel_execution_fence: admission_guard
                 .as_ref()
                 .and(self.channel_authority.as_ref())
+                .map(|authority| authority.fence()),
+            trigger_execution_fence: admission_guard
+                .as_ref()
+                .and(self.trigger_authority.as_ref())
                 .map(|authority| authority.fence()),
             admission_guard,
             expected_agent_revision: current.revision,

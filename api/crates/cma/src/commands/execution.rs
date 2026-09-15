@@ -119,6 +119,17 @@ impl AgentCommandExecution for ResourceCommandExecution {
     }
 
     async fn check_queued(&self, command: &AdmittedAgentCommand) -> CommandReadiness {
+        if super::trigger_execution::is_trigger(command) {
+            return self
+                .operations
+                .authorize_trigger_claim(command)
+                .await
+                .map(|_| CommandReadiness::Ready)
+                .unwrap_or_else(|error| match classify(error) {
+                    CommandAttempt::Reject(code) => CommandReadiness::Reject(code),
+                    _ => CommandReadiness::Retry,
+                });
+        }
         if is_channel(command) {
             return self
                 .channel_checked(command)
@@ -133,6 +144,9 @@ impl AgentCommandExecution for ResourceCommandExecution {
     }
 
     async fn prepare_queued(&self, command: &AdmittedAgentCommand) {
+        if super::trigger_execution::is_trigger(command) {
+            return;
+        }
         if is_channel(command) {
             if let Some(revival) = &self.channel_revival {
                 if let Ok(authority) = self.channel_checked(command).await {
@@ -177,6 +191,12 @@ impl AgentCommandExecution for ResourceCommandExecution {
     }
 
     async fn execute(&self, command: &AdmittedAgentCommand) -> CommandAttempt {
+        if super::trigger_execution::is_trigger(command) {
+            return match self.operations.execute_trigger_claim(command).await {
+                Ok(_) => CommandAttempt::Finished,
+                Err(error) => classify(error),
+            };
+        }
         if is_channel(command) {
             return self.execute_channel(command).await;
         }

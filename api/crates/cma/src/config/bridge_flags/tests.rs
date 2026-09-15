@@ -35,18 +35,19 @@ fn existing_deployment_defaults_close_every_new_channel_effect() {
     })
     .unwrap();
     assert_eq!(flags, BridgeFeatureFlags::default());
-    assert_eq!(seen.len(), 11);
+    assert_eq!(seen.len(), BridgeFlag::ALL.len());
     for platform in PLATFORMS {
         for stage in STAGES {
             assert!(flags.check_new_effect(stage, platform).is_err());
         }
     }
     assert!(!flags.enabled(BridgeFlag::V2UiTransport));
+    assert!(!flags.enabled(BridgeFlag::TriggerCommandAdmission));
 }
 
 #[test]
-fn all_2048_configurations_keep_each_flag_independent() {
-    for bits in 0..2048 {
+fn all_flag_configurations_keep_each_flag_independent() {
+    for bits in 0..(1 << BridgeFlag::ALL.len()) {
         let selected: Vec<_> = BridgeFlag::ALL
             .into_iter()
             .filter(|flag| bits & (1 << (*flag as usize)) != 0)

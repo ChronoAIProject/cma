@@ -26,6 +26,7 @@ use super::*;
 
 mod credential_prerequisite;
 mod initiation;
+mod input_protocol;
 mod no_review_consent;
 mod prepared_reuse;
 mod request_validation;

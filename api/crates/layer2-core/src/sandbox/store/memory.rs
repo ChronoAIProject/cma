@@ -259,6 +259,22 @@ impl WorktreeStore for InMemorySandboxStore {
 
 #[async_trait]
 impl AgentStore for InMemorySandboxStore {
+    async fn require_legacy_first_message(&self, agent: &Agent) -> Result<(), SandboxStoreError> {
+        let current = self
+            .get_agent(&agent.id)
+            .await?
+            .ok_or(SandboxStoreError::NotFound)?;
+        if current
+            .conversation
+            .first_message
+            .as_ref()
+            .is_some_and(|first| first.common_binding.is_some())
+        {
+            return Err(SandboxStoreError::Conflict);
+        }
+        Ok(())
+    }
+
     async fn create_agent(&self, agent: Agent) -> Result<(), SandboxStoreError> {
         if agent.work.resolved_skills.is_some() {
             return Err(SandboxStoreError::Conflict);
