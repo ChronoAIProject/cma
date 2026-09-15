@@ -29,7 +29,7 @@ use std::time::SystemTime;
 
 pub(crate) enum LifecycleCredentialChange<'a> {
     Read,
-    MintIntent,
+    MintIntent(&'a crate::auth::keys::bridge::mint_intent::BridgeSandboxMintIntent),
     Mint {
         custody: &'a MongoSandboxCredentialStore,
         material: &'a CredentialMaterial,

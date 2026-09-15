@@ -133,6 +133,15 @@ impl BridgeProvisioningAuthority {
 #[async_trait::async_trait]
 pub(crate) trait ChannelRevivalAuthoritySource: Send + Sync {
     async fn resolve(&self, sandbox: &Sandbox) -> Result<ChannelRevivalAuthority, BridgeError>;
+    async fn resolve_reused(
+        &self,
+        _allocation: &AllocationRecord,
+        _sandbox: &Sandbox,
+    ) -> Result<super::reuse_revival::ChannelReuseRevivalAuthority, BridgeError> {
+        Err(BridgeError::ConnectionRequired(
+            BridgeSetupBlock::IncompatibleTarget,
+        ))
+    }
 }
 pub(crate) struct ManagedChannelRevivalAuthority {
     pub definitions: BridgeService,
@@ -141,6 +150,16 @@ pub(crate) struct ManagedChannelRevivalAuthority {
 }
 #[async_trait::async_trait]
 impl ChannelRevivalAuthoritySource for ManagedChannelRevivalAuthority {
+    async fn resolve_reused(
+        &self,
+        allocation: &AllocationRecord,
+        sandbox: &Sandbox,
+    ) -> Result<super::reuse_revival::ChannelReuseRevivalAuthority, BridgeError> {
+        self.authority
+            .resolve_reused_revival(&self.definitions, allocation, sandbox)
+            .await
+    }
+
     async fn resolve(&self, sandbox: &Sandbox) -> Result<ChannelRevivalAuthority, BridgeError> {
         let allocation = self
             .allocations

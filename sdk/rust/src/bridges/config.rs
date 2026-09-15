@@ -2,7 +2,7 @@
 use serde::{Deserialize, Serialize};
 
 string_enum! { /// Platform of the selected existing bot.
-    pub enum BridgePlatform { Telegram => "telegram", Discord => "discord", Lark => "lark", Feishu => "feishu" }
+    pub enum BridgePlatform { Telegram => "telegram", TelegramNew => "telegram-new", Discord => "discord", Lark => "lark", Feishu => "feishu" }
 }
 string_enum! { /// Explicit model-context partition policy.
     pub enum BridgePartitionPolicy {
@@ -45,6 +45,18 @@ pub struct BridgeAgentTarget {
     /// Retained Agent.
     pub agent_id: String,
 }
+string_enum! { /// All participants can read sibling filesystem, processes and credentials.
+    pub enum BridgeSharedTrust { AllParticipantsShareFilesystemProcessesAndCredentials => "all_participants_share_filesystem_processes_and_credentials" }
+}
+/// Required free slots for unrelated owner work. This does not resize the parent.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BridgeSharedCapacity {
+    /// Reserve 1 through 15 slots under the Sandbox's immutable Workspace limit.
+    pub keep_other_workspaces: u8,
+    /// Reserve 1 through 15 slots under each selected Workspace's Agent limit.
+    pub keep_other_agents_per_workspace: u8,
+}
 /// Existing shared context or new resources from three explicit clean templates.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
@@ -62,6 +74,32 @@ pub enum BridgePlacement {
         workspace_profile: BridgeProfileRef,
         /// Agent template.
         agent_profile: BridgeProfileRef,
+    },
+    /// A unique Workspace, Worktree and Agent per partition inside the shared Sandbox.
+    WorkspacePerPartition {
+        /// Exact retained parent Sandbox.
+        sandbox_id: String,
+        /// Immutable Workspace template.
+        workspace_profile: BridgeProfileRef,
+        /// Immutable Agent template.
+        agent_profile: BridgeProfileRef,
+        /// Explicit acceptance of the whole shared execution boundary.
+        shared_trust: BridgeSharedTrust,
+        /// Capacity retained for unrelated work.
+        capacity: BridgeSharedCapacity,
+    },
+    /// A unique Worktree and Agent per partition inside the shared Workspace.
+    WorktreeAgentPerPartition {
+        /// Exact retained ancestor Sandbox.
+        sandbox_id: String,
+        /// Exact retained parent Workspace.
+        workspace_id: String,
+        /// Immutable Agent template.
+        agent_profile: BridgeProfileRef,
+        /// Explicit acceptance of the whole shared execution boundary.
+        shared_trust: BridgeSharedTrust,
+        /// Capacity retained for unrelated work.
+        capacity: BridgeSharedCapacity,
     },
 }
 /// Explicit opaque sender or chat identity gate.

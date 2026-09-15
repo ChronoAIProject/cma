@@ -14,6 +14,7 @@ pub(crate) struct ChannelGuardedCredentials {
     ordinary: Arc<dyn SandboxCredentialController>,
     provenance: Arc<dyn SandboxCredentialProvenance>,
     lifecycle: Option<Arc<dyn super::channel_lifecycle_credentials::ChannelLifecycleCredentials>>,
+    retirement: Option<Arc<dyn super::channel_retirement::ChannelRetirement>>,
 }
 impl ChannelGuardedCredentials {
     #[cfg(test)]
@@ -25,8 +26,10 @@ impl ChannelGuardedCredentials {
             ordinary,
             provenance,
             lifecycle: None,
+            retirement: None,
         })
     }
+    #[cfg(test)]
     pub fn with_lifecycle(
         ordinary: Arc<dyn SandboxCredentialController>,
         provenance: Arc<dyn SandboxCredentialProvenance>,
@@ -38,6 +41,22 @@ impl ChannelGuardedCredentials {
             ordinary,
             provenance,
             lifecycle,
+            retirement: None,
+        })
+    }
+    pub fn with_retirement(
+        ordinary: Arc<dyn SandboxCredentialController>,
+        provenance: Arc<dyn SandboxCredentialProvenance>,
+        lifecycle: Option<
+            Arc<dyn super::channel_lifecycle_credentials::ChannelLifecycleCredentials>,
+        >,
+        retirement: Option<Arc<dyn super::channel_retirement::ChannelRetirement>>,
+    ) -> Arc<Self> {
+        Arc::new(Self {
+            ordinary,
+            provenance,
+            lifecycle,
+            retirement,
         })
     }
     fn lifecycle(
@@ -53,6 +72,22 @@ impl ChannelGuardedCredentials {
 }
 #[async_trait::async_trait]
 impl SandboxCredentialController for ChannelGuardedCredentials {
+    async fn retire_channel(
+        &self,
+        sandbox: &Sandbox,
+        agents: &dyn super::worker::LiveAgentStopper,
+        now: SystemTime,
+    ) -> Result<bool, CredentialError> {
+        match self.provenance.require_ordinary(&sandbox.id).await {
+            Ok(()) => self.ordinary.retire_channel(sandbox, agents, now).await,
+            Err(_) => {
+                self.retirement.as_ref().ok_or_else(|| CredentialError::Unavailable(
+                    "Channel retirement requires complete original root ownership and scoped cleanup authority".into()))?
+                    .run(sandbox, agents, now).await?;
+                Ok(true)
+            }
+        }
+    }
     async fn commit_channel_phase(
         &self,
         sandbox: &Sandbox,

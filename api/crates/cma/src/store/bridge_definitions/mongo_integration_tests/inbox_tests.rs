@@ -14,6 +14,8 @@ use super::*;
 use crate::store::AuthEncryptionKey;
 #[path = "inbox_receipts.rs"]
 mod receipts;
+#[path = "inbox_redelivery.rs"]
+mod redelivery;
 #[path = "inbox_reply_addressing.rs"]
 mod reply_addressing;
 #[path = "inbox_work.rs"]
@@ -55,15 +57,22 @@ fn sign(claims: Value) -> String {
     format!("{input}.{}", URL_SAFE_NO_PAD.encode(signature))
 }
 pub(super) fn callback(message: &str, text: &str) -> (Vec<u8>, String, String) {
+    callback_for_sender(message, text, 12345)
+}
+pub(super) fn callback_for_sender(
+    message: &str,
+    text: &str,
+    sender: u64,
+) -> (Vec<u8>, String, String) {
     let reply = sign(
         json!({"iss":"https://nyx.example","aud":"channel-relay/reply","iat":now(),"exp":now()+1800,"jti":"reply-1","token_type":"relay_reply",
         "api_key_id":"key-1","conversation_id":"route-1","inbound_message_id":message,"platform":"telegram"}),
     );
     let body=serde_json::to_vec(&json!({"message_id":message,"correlation_id":"callback-1","platform":"telegram","reply_token":reply,
         "agent":{"api_key_id":"key-1","name":"Fixture"},"conversation":{"id":"route-1","platform_id":"-100123","type":"private"},
-        "thread_id":"protected-interaction-secret","sender":{"platform_id":"12345"},"content":{"type":"text","text":text},"timestamp":"2026-09-15T00:00:00Z",
+        "thread_id":"protected-interaction-secret","sender":{"platform_id":sender.to_string()},"content":{"type":"text","text":text},"timestamp":"2026-09-15T00:00:00Z",
         "raw_platform_data":{"secret":"excluded","update_id":99,"message":{"message_id":42,"date":1700000000,
-            "chat":{"id":-100123,"type":"supergroup"},"from":{"id":12345,"is_bot":false},"text":text}}})).unwrap();
+            "chat":{"id":-100123,"type":"supergroup"},"from":{"id":sender,"is_bot":false},"text":text}}})).unwrap();
     let signed = sign(
         json!({"iss":"https://nyx.example","aud":"channel-relay/callback","iat":now(),"exp":now()+300,"jti":"callback-1","token_type":"relay_callback",
         "api_key_id":"key-1","message_id":message,"platform":"telegram","body_sha256":format!("{:x}",Sha256::digest(&body))}),
@@ -104,8 +113,20 @@ async fn write_with_extractor(
     key_lease: Duration,
     extractor: &dyn CallbackCapabilityExtractor,
 ) -> InboxWrite {
+    write_using_validator(store, id, body, token, key_lease, extractor, &Authority).await
+}
+
+pub(super) async fn write_using_validator(
+    store: &MongoBridgeStore,
+    id: &BridgeId,
+    body: &[u8],
+    token: &str,
+    key_lease: Duration,
+    extractor: &dyn CallbackCapabilityExtractor,
+    validator: &dyn BridgeConnectionValidator,
+) -> InboxWrite {
     let bridge = store.bridge(id).await.unwrap().unwrap();
-    let proof = Authority
+    let proof = validator
         .validate_connection(&bridge.owner, &bridge.current().unwrap().config)
         .await
         .unwrap();

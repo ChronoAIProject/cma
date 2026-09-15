@@ -16,7 +16,10 @@ use super::*;
 
 mod admission;
 mod attach;
+mod historical;
+mod management;
 mod model;
+pub(in crate::store) use management::apply_management_usage;
 mod reset;
 mod revoke;
 use model::{BindingHead, GrantLink};

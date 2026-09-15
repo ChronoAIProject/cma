@@ -187,7 +187,8 @@ impl MongoBridgeInvokeStore {
         if &current.sidecar != fence.sidecar() {
             return Err(Error::SourceMismatch.into());
         }
-        self.fence_transaction(fence.proof(), session).await?;
+        self.fence_observed_transaction(fence.proof(), Some(&current.allocation), session)
+            .await?;
         super::super::channel_source::fence(
             self,
             command,

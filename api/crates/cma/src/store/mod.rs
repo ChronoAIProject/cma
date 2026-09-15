@@ -31,6 +31,8 @@ pub(crate) mod bridge_allocations;
 mod bridge_credentials;
 mod bridge_definitions;
 mod bridge_invokes;
+mod bridge_reuse_lifecycle;
+mod bridge_reuse_parent;
 pub(crate) mod channel_tools;
 pub(crate) use channel_tools::MongoChannelToolStore;
 mod checkpoint_capture;

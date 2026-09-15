@@ -40,6 +40,7 @@ impl BridgeConnectionValidator for ConfiguredBridgeConnections {
         };
         let platform = match platform {
             BridgePlatform::Telegram => BridgePlatformFlag::Telegram,
+            BridgePlatform::TelegramNew => BridgePlatformFlag::TelegramNew,
             BridgePlatform::Discord => BridgePlatformFlag::Discord,
             BridgePlatform::Lark => BridgePlatformFlag::Lark,
             BridgePlatform::Feishu => BridgePlatformFlag::Feishu,
@@ -50,6 +51,25 @@ impl BridgeConnectionValidator for ConfiguredBridgeConnections {
             self.flags.check_new_effect(stage, platform)
         };
         result.map_err(|_| BridgeError::Unavailable)
+    }
+
+    fn capabilities(&self) -> layer2_core::bridge::BridgeCapabilityCatalog {
+        let mut catalog = self.inner.capabilities();
+        for connector in &mut catalog.connectors {
+            let Some(platform) = super::capability_catalog::supported_platform(&connector.platform)
+            else {
+                continue;
+            };
+            let enabled = |feature| self.check_feature(feature, &platform).is_ok();
+            connector.stages = layer2_core::bridge::BridgeCapabilityStages {
+                management: enabled(BridgeFeature::Management),
+                ingress: enabled(BridgeFeature::Ingress),
+                allocation: enabled(BridgeFeature::Allocation),
+                execution: enabled(BridgeFeature::Execution),
+                outbound: enabled(BridgeFeature::Outbound),
+            };
+        }
+        catalog
     }
 
     async fn validate_connection(

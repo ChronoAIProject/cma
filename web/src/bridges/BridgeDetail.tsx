@@ -38,9 +38,6 @@ export function BridgeDetail({
         {current.state.status === 'error' ? (
           <p role="alert">This bridge is unavailable. Refresh to check current access.</p>
         ) : null}
-        {bridge === undefined ? null : (
-          <p>Message processing and channel reply delivery are not available on this build.</p>
-        )}
         {bridge !== undefined && !bridge.can_manage ? (
           <p>
             The owner or an organization admin can manage this bridge’s settings and connection.

@@ -11,7 +11,7 @@ use ring::{
 use serde_json::json;
 use sha2::{Digest, Sha256};
 
-use super::super::{caller, Fixture};
+use super::super::Fixture;
 use super::*;
 
 pub(super) struct ChannelFixture {
@@ -24,10 +24,12 @@ pub(super) struct ChannelFixture {
 
 impl ChannelFixture {
     pub async fn new() -> Self {
-        let mut f = Fixture::new().await;
+        Self::from_fixture(Fixture::new().await).await
+    }
+    pub async fn from_fixture(mut f: Fixture) -> Self {
         let grant = f
             .service
-            .issue(&caller(), None, f.issue("consent"))
+            .issue(&f.context, Some("fixture-credential"), f.issue("consent"))
             .await
             .unwrap()
             .result;

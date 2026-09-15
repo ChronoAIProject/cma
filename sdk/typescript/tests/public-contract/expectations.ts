@@ -84,6 +84,7 @@ export const localCodes = new Map([
 
 const protectedQueries = new Map([
   ['bridge-setup-list-unknown-query', ['unexpected']],
+  ['bridge-setup-capabilities-invalid-query', ['unexpected']],
   ['creation-inventory-invalid-creator', ['created_by']],
   ['responses-v2-retrieve-query', ['stream']],
   ['sandbox-inventory-invalid-owner', ['owner']],

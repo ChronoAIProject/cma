@@ -43,7 +43,7 @@ fn default_partitions_keep_senders_chats_conversations_and_platform_scopes_separ
             assert_ne!(original, changed.key(), "{dimension}");
         }
     }
-    assert_eq!(platform_keys.len(), 4);
+    assert_eq!(platform_keys.len(), 5);
 }
 
 #[test]
@@ -151,7 +151,10 @@ fn stable_thread_keys_require_the_right_platform_capability_and_do_not_use_gener
             );
             let mut wrong = base.facts();
             wrong.thread = stable_thread(
-                if platform == BridgePlatform::Telegram {
+                if matches!(
+                    platform,
+                    BridgePlatform::Telegram | BridgePlatform::TelegramNew
+                ) {
                     &BridgePlatform::Discord
                 } else {
                     &BridgePlatform::Telegram

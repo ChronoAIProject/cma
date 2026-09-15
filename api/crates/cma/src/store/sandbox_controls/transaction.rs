@@ -33,6 +33,18 @@ pub(super) async fn apply(
             // for an already-satisfied command that only writes a receipt.
             resource_access::fence_lineage(store, &snapshot, session).await?;
             let plan = plan_sandbox_control(record, &snapshot.lineage.sandbox, &at)?;
+            let plan = if let SandboxControlPlan::Transition { sandbox, .. } = &plan {
+                if store
+                    .channel_reuse_blocks_quiescence(&snapshot.lineage.sandbox, sandbox, session)
+                    .await?
+                {
+                    SandboxControlPlan::Reject(SandboxControlFailure::NotEligible)
+                } else {
+                    plan
+                }
+            } else {
+                plan
+            };
             let mut next = record.clone();
             next.revision = 2;
             match plan {

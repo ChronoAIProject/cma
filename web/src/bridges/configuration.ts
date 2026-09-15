@@ -78,6 +78,9 @@ export function configurationComplete(config: BridgeConfiguration): boolean {
     config.binding.route_ids.length > 0 &&
     (p.kind === 'existing_agent'
       ? Object.values(p.target).every(Boolean)
-      : p.agent_profile.id !== '' && p.workspace_profile.id !== '' && p.sandbox_profile.id !== '')
+      : p.kind === 'new_sandbox' &&
+        p.agent_profile.id !== '' &&
+        p.workspace_profile.id !== '' &&
+        p.sandbox_profile.id !== '')
   );
 }

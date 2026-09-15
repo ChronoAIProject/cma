@@ -1,4 +1,4 @@
-use layer2_core::bridge::{BridgeError, BridgePlatform, BridgeSetupBlock};
+use layer2_core::bridge::{BridgeError, BridgeSetupBlock};
 use layer2_core::resource_access::ResourceOwner;
 use layer2_core::SubjectId;
 use serde::Deserialize;
@@ -16,7 +16,7 @@ pub(super) struct Bots {
 pub(super) struct Bot {
     pub id: String,
     pub user_id: String,
-    pub platform: BridgePlatform,
+    pub platform: String,
     pub is_active: bool,
 }
 #[derive(Deserialize)]
@@ -35,7 +35,7 @@ pub(super) struct Key {
     pub allow_all_services: bool,
     pub allowed_node_ids: Vec<String>,
     pub allow_all_nodes: bool,
-    pub platform: Option<BridgePlatform>,
+    pub platform: Option<String>,
     pub callback_url: Option<String>,
     pub credential_source: CredentialSource,
 }

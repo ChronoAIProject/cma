@@ -34,8 +34,8 @@ trap 'exit 143' TERM
 # The growing suite creates many short-lived databases. Reserve disk headroom
 # for Mongo's index-build threshold, and bound cache/oplog within the memory cap.
 docker run --detach --name "$contract_name" --label "$contract_label" \
-  --publish 127.0.0.1::27017 --memory 3g --cpus 2 --pids-limit 256 \
-  --tmpfs /data/db:rw,size=2147483648 --tmpfs /data/configdb:rw,size=16777216 \
+  --publish 127.0.0.1::27017 --memory 4g --cpus 2 --pids-limit 256 \
+  --tmpfs /data/db:rw,size=3221225472 --tmpfs /data/configdb:rw,size=16777216 \
   "$mongo_image" --replSet cma_ci --bind_ip_all \
   --wiredTigerCacheSizeGB 0.25 --oplogSize 64 \
   --setParameter enableTestCommands=1 >/dev/null
@@ -62,4 +62,4 @@ export CHRONO_TEST_MONGODB_URI="mongodb://${endpoint}/?directConnection=true&rep
 export CHRONO_TEST_MONGODB_FAILPOINT_URI="$CHRONO_TEST_MONGODB_URI"
 cd "$repo_root/api"
 cargo nextest run --workspace --locked --run-ignored only --test-threads 1 --no-fail-fast \
-  -E 'test(store::sandbox_mongo_integration_tests::warm_hierarchy_tests::) | test(store::agent_admission::mongo_integration_tests::) | test(store::schema_mongo_integration_tests::) | test(store::trigger_definitions::launch_mongo_integration_tests::) | test(store::checkpoint_objects::mongo_integration_tests::) | test(store::sandbox_mongo_integration_tests::checkpoint_capture_tests::) | test(store::sandbox_mongo_integration_tests::service_access_tests::) | test(store::sandbox_mongo_integration_tests::command_ledger_tests::) | test(store::sandbox_mongo_integration_tests::resource_access_tests::) | test(store::bridge_definitions::mongo_integration_tests::) | test(store::bridge_invokes::tests::) | test(store::bridge_invokes::outbox::tests::) | test(store::bridge_invokes::outbox::rate::tests::) | test(store::bridge_allocations::mongo_integration_tests::)'
+  -E 'test(store::sandbox_mongo_integration_tests::warm_hierarchy_tests::) | test(store::agent_admission::mongo_integration_tests::) | test(store::schema_mongo_integration_tests::) | test(store::trigger_definitions::launch_mongo_integration_tests::) | test(store::checkpoint_objects::mongo_integration_tests::) | test(store::sandbox_mongo_integration_tests::checkpoint_capture_tests::) | test(store::sandbox_mongo_integration_tests::service_access_tests::) | test(store::sandbox_mongo_integration_tests::command_ledger_tests::) | test(store::sandbox_mongo_integration_tests::resource_access_tests::) | test(store::sandbox_maintenance::mongo_integration_tests::) | test(store::bridge_definitions::mongo_integration_tests::) | test(store::bridge_invokes::tests::) | test(store::bridge_invokes::outbox::tests::) | test(store::bridge_invokes::outbox::rate::tests::) | test(store::bridge_invokes::outbox::snapshot::grant::tests::) | test(store::bridge_allocations::mongo_integration_tests::)'

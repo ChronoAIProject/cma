@@ -154,6 +154,12 @@ impl MongoBridgeAllocationStore {
         session: &mut ClientSession,
     ) -> Result<(), MutationError> {
         let record = write.record();
+        if matches!(
+            record.placement,
+            layer2_core::bridge::allocation::AllocationPlacement::ReuseParent { .. }
+        ) {
+            self.require_reuse_capacity(record, session).await?;
+        }
         if new_head
             && self
                 .heads

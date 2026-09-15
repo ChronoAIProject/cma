@@ -224,13 +224,14 @@ impl NyxBridgeProvider {
             .find(|key| key.id == connector.key_id)
             .ok_or_else(binding_mismatch)?;
         if !bot.is_active
-            || bot.platform != connector.platform
+            || super::capability_catalog::supported_platform(&bot.platform).as_ref()
+                != Some(&connector.platform)
             || !key.is_active
             || key.state_version <= 0
-            || key
-                .platform
-                .as_ref()
-                .is_some_and(|platform| platform != &connector.platform)
+            || key.platform.as_ref().is_some_and(|platform| {
+                super::capability_catalog::supported_platform(platform).as_ref()
+                    != Some(&connector.platform)
+            })
         {
             return Err(binding_mismatch());
         }

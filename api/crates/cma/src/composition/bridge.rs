@@ -98,6 +98,29 @@ pub(super) async fn channel_schedulers(
             credentials: credentials.clone(),
             adapter: adapter.clone(),
         },
+        reuse: crate::sandbox::channel_reuse::ChannelReuseDriver {
+            allocations: bridge.allocations.clone(),
+            credentials: credentials.clone(),
+            adapter: adapter.clone(),
+            settings: ChannelProvisioningSettings {
+                deployment_id: config.deployment_id.clone(),
+                runtime_version: config.runtime.sandbox_image.clone(),
+                execution: config.execution,
+                home_policy: config.runtime.home_policy.clone(),
+            },
+            holder: format!(
+                "{}:channel-reuse:{}",
+                config.deployment_id,
+                uuid::Uuid::new_v4()
+            ),
+            startup: crate::sandbox::channel_reuse::startup::ChannelReuseStartupDriver {
+                allocations: bridge.allocations.clone(),
+                resources: stores.sandbox_model.clone(),
+                credentials: credentials.clone(),
+                adapter: adapter.clone(),
+                skills: dependencies.skills.clone(),
+            },
+        },
         startup: crate::sandbox::channel_startup::ChannelStartupDriver {
             allocations: bridge.allocations.clone(),
             resources: stores.sandbox_model.clone(),
@@ -130,11 +153,17 @@ pub(super) fn provisioning(
     adapter: Arc<dyn layer3_adapter::SandboxAdapter>,
     capacity_bounds: layer2_core::profiles::ProfileCapacityBounds,
     issuer: Option<Arc<KeyIssuer>>,
+    organizations: Arc<crate::auth::AuthState>,
 ) -> Result<Option<Arc<BridgeProvisioningDependencies>>, String> {
     let Some(issuer) = issuer else {
         return Ok(None);
     };
     Ok(Some(Arc::new(BridgeProvisioningDependencies {
+        resources: stores.sandbox_model.clone(),
+        resource_access: Arc::new(layer2_core::resource_access::ResourceAccessService::new(
+            stores.sandbox_model.clone(),
+            organizations,
+        )),
         sandbox_profiles: stores.sandbox_profiles.clone(),
         workspace_profiles: stores.sandbox_profiles.clone(),
         agent_profiles: stores.sandbox_profiles.clone(),
@@ -164,11 +193,49 @@ pub(super) fn sandbox_credentials(
         }
         None => Arc::new(UnavailableSandboxCredentials),
     };
-    crate::sandbox::channel_credentials::ChannelGuardedCredentials::with_lifecycle(
+    crate::sandbox::channel_credentials::ChannelGuardedCredentials::with_retirement(
         ordinary,
         bridge.allocations.clone(),
-        channel_lifecycle_credentials(stores, bridge, definitions, credentials, adapter),
+        channel_lifecycle_credentials(
+            stores,
+            bridge,
+            definitions,
+            credentials.clone(),
+            adapter.clone(),
+        ),
+        channel_retirement(stores, bridge, definitions, credentials, adapter),
     )
+}
+
+fn channel_retirement(
+    stores: &MongoStores,
+    bridge: &crate::bridge::composition::BridgeComposition,
+    definitions: &layer2_core::bridge::BridgeService,
+    credentials: Option<Arc<crate::bridge::ManagedBridgeCredentials>>,
+    adapter: Arc<dyn layer3_adapter::SandboxAdapter>,
+) -> Option<Arc<dyn crate::sandbox::channel_retirement::ChannelRetirement>> {
+    use crate::bridge::provisioning::{
+        retirement::ManagedChannelRetirementAuthority, BridgeProvisioningAuthority,
+    };
+    let credentials = credentials?;
+    let dependencies = credentials.provisioning.clone()?;
+    Some(Arc::new(
+        crate::sandbox::channel_retirement::ChannelRetirementDriver {
+            authority: Arc::new(ManagedChannelRetirementAuthority {
+                definitions: definitions.clone(),
+                allocations: bridge.allocations.clone(),
+                authority: Arc::new(BridgeProvisioningAuthority::new(
+                    credentials.clone(),
+                    dependencies.clone(),
+                )),
+            }),
+            allocations: bridge.allocations.clone(),
+            credentials,
+            issuer: dependencies.issuer.clone(),
+            custody: stores.sandbox_credentials.clone(),
+            adapter,
+        },
+    ))
 }
 
 fn channel_lifecycle_credentials(

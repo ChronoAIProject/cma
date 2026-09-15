@@ -108,6 +108,30 @@ mint, delivery, and revocation receipts. An uncertain mint remains held; it
 never causes an automatic second mint request. Normal reply-tool eligibility
 still depends on the Agent's immutable channel-created origin.
 
+A channel-created child under a shared manual or Trigger parent follows the
+ordinary parent's lifecycle and credential worker. Its queued message can
+schedule revival only with the current Channel execution grant and the retained
+configuring human's current permission to manage that exact parent. Scheduling
+preserves the original queued command, child conversation and unrelated siblings.
+Reusing the parent does not change its origin or grant reply tools to existing
+manual or Trigger Agents.
+
+An explicit partition reset preserves already accepted commands and replies on
+their original Agent and conversation. Execution proves the exact retained
+allocation and every successor through the current partition generation, while
+checking the original grant and current Bridge policy. The reset does not grant
+new admission to the retired allocation. Replies queued before the reset and
+replies explicitly sent during the retained turn keep the original NyxID message
+and destination; their delivery may finish after the turn completes. Revocation
+or suspension of the original authority still prevents sending.
+
+Stopping that Agent prevents further execution and new reply calls. An already
+queued reply may still be delivered while the original resource records and
+authority remain available. Deleted Agents, removed children and retired or
+purged parents require separate cleanup evidence and remain ineligible for this
+delivery path. A refusal before sending releases the exact claim and bot slot
+with a retry delay; an uncertain Sending commit keeps its recovery boundary.
+
 ## Compatibility and implementation status
 
 The stored reply policy retains the legacy spelling `final_response` for
@@ -125,9 +149,18 @@ recovery, grant revocation, and the absence of automatic final-answer sends.
 
 These tests establish the CMA integration using controlled provider fixtures.
 Live Telegram delivery and production upgrade acceptance remain pending.
-Channel image rotation, uncertain-mint orphan cleanup, lifecycle teardown, and
-other milestone 17 work remain in progress. Credential cleanup also needs a
-fresh original-owner absence check when NyxID conceals lost access with a 404;
-that response alone does not prove a previously known key was revoked. The
-current milestone work has not
-been rolled out to production.
+Uncertain-mint cleanup retains the original request plan, identifies an exact
+orphan through the original owner's key inventory, and records that identity
+before scoped revocation. A fresh complete original-owner absence check is
+required when NyxID returns 404; that response alone does not prove revocation.
+Cleanup never issues a second mint request or turns an uncertain mint into a
+usable credential.
+
+Channel retirement now has a dedicated original-human authority path for a
+completed, exactly owned resource tree with a proven runtime binding. It records
+Agent stop, credential revocation and runtime teardown progress durably. Paused
+or uncertain initial runtime bindings remain held, as do final home/checkpoint
+cleanup and history purge. Shared-child cleanup and image rotation remain
+unfinished. See [Channel lifecycle recovery](CMA_Channel_Lifecycle_Recovery.md)
+for these boundaries. The current milestone work has not been rolled out to
+production.

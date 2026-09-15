@@ -216,21 +216,34 @@ pub(super) fn apply(
             });
         }
         ChannelUsageChange::Use { binding_id } | ChannelUsageChange::Detach { binding_id } => {
-            if predecessor.is_some() || !opaque(binding_id) {
+            if !opaque(binding_id) {
                 return Err(invalid());
             }
             let position = after
                 .active_bindings
                 .iter()
-                .position(|b| &b.reference.binding_id == binding_id)
-                .ok_or(SandboxStoreError::Conflict)?;
+                .position(|b| &b.reference.binding_id == binding_id);
             if matches!(change, ChannelUsageChange::Use { .. }) {
                 if reason != ChannelBindingChangeReason::AcceptedCommand {
                     return Err(invalid());
                 }
-                let active = &mut after.active_bindings[position];
-                active.first_used_at.get_or_insert(at.into());
-                active.last_used_at = Some(at.into());
+                if let Some(position) = position {
+                    if predecessor.is_some() {
+                        return Err(invalid());
+                    }
+                    let active = &mut after.active_bindings[position];
+                    active.first_used_at.get_or_insert(at.into());
+                    active.last_used_at = Some(at.into());
+                } else {
+                    // DrainOriginal may admit an already accepted callback after
+                    // management detached its allocation. Exact retained binding
+                    // evidence records historical use without restoring activity.
+                    let binding = predecessor.ok_or(SandboxStoreError::Conflict)?;
+                    binding.validate()?;
+                    if &binding.binding_id != binding_id {
+                        return Err(SandboxStoreError::Conflict);
+                    }
+                }
                 after.first_used_at.get_or_insert(at.into());
                 after.last_used_at = Some(at.into());
             } else {
@@ -238,11 +251,17 @@ pub(super) fn apply(
                     reason,
                     ChannelBindingChangeReason::Detachment
                         | ChannelBindingChangeReason::Reset
+                        | ChannelBindingChangeReason::Rebind
                         | ChannelBindingChangeReason::AdministrativeIntervention
                 ) {
                     return Err(invalid());
                 }
-                after.active_bindings.remove(position);
+                if predecessor.is_some() {
+                    return Err(invalid());
+                }
+                after
+                    .active_bindings
+                    .remove(position.ok_or(SandboxStoreError::Conflict)?);
             }
         }
     }

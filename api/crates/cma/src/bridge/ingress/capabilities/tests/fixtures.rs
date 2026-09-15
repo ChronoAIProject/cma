@@ -62,7 +62,7 @@ impl Fixture {
             updated_at: time.clone(),
         };
         let (chat, sender, raw) = match platform {
-            BridgePlatform::Telegram => (
+            BridgePlatform::Telegram | BridgePlatform::TelegramNew => (
                 "-100123",
                 "12345",
                 json!({
@@ -248,9 +248,10 @@ fn sign(claims: &Value) -> String {
     format!("{input}.{}", URL_SAFE_NO_PAD.encode(signature))
 }
 
-pub(super) fn platforms() -> [BridgePlatform; 4] {
+pub(super) fn platforms() -> [BridgePlatform; 5] {
     [
         BridgePlatform::Telegram,
+        BridgePlatform::TelegramNew,
         BridgePlatform::Lark,
         BridgePlatform::Feishu,
         BridgePlatform::Discord,

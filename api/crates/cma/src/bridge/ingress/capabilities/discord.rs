@@ -56,10 +56,14 @@ pub(super) fn observe(
         .is_some_and(|v| !v.is_null())
     {
         ChannelEventKind::MessageEdit
-    } else if matches!(message.get("type").and_then(Value::as_u64), Some(0 | 19))
-        && text_matches(inbox, message.get("content").and_then(Value::as_str))
-    {
-        ChannelEventKind::UserMessage
+    } else if matches!(message.get("type").and_then(Value::as_u64), Some(0 | 19)) {
+        message_event(
+            inbox,
+            message.get("content").and_then(Value::as_str),
+            message
+                .get("attachments")
+                .is_some_and(|v| !v.as_array().is_some_and(Vec::is_empty)),
+        )
     } else {
         ChannelEventKind::Unknown
     };

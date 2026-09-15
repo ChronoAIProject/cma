@@ -14,7 +14,7 @@ import {
   type Output,
 } from '../schema.js';
 
-export const platform = enumeration('telegram', 'discord', 'lark', 'feishu');
+export const platform = enumeration('telegram', 'telegram-new', 'discord', 'lark', 'feishu');
 export const partition = enumeration(
   'conversation_sender',
   'conversation',
@@ -26,8 +26,36 @@ export const partition = enumeration(
 export const acceptedWork = enumeration('drain_original', 'suspend_original');
 const profile = object({ id: text, revision: positiveInteger });
 const target = object({ sandbox_id: text, workspace_id: text, worktree_id: text, agent_id: text });
+export const sharedTrust = enumeration(
+  'all_participants_share_filesystem_processes_and_credentials',
+);
+function reservedCapacity(value: unknown): number {
+  const result = positiveInteger(value);
+  if (result > 15) throw new ProtocolError('shared capacity must reserve 1 through 15 slots');
+  return result;
+}
+export const sharedCapacity = object({
+  keep_other_workspaces: reservedCapacity,
+  keep_other_agents_per_workspace: reservedCapacity,
+});
 export const placement = tagged(
   {
+    workspace_per_partition: object({
+      kind: enumeration('workspace_per_partition'),
+      sandbox_id: text,
+      workspace_profile: profile,
+      agent_profile: profile,
+      shared_trust: sharedTrust,
+      capacity: sharedCapacity,
+    }),
+    worktree_agent_per_partition: object({
+      kind: enumeration('worktree_agent_per_partition'),
+      sandbox_id: text,
+      workspace_id: text,
+      agent_profile: profile,
+      shared_trust: sharedTrust,
+      capacity: sharedCapacity,
+    }),
     existing_agent: object({ kind: enumeration('existing_agent'), target }),
     new_sandbox: object({
       kind: enumeration('new_sandbox'),
@@ -210,3 +238,6 @@ export type BridgeConfigurationDetail = Output<typeof detail>;
 export type BridgeValidation = Output<typeof validation>;
 export type BridgeConnectorChoices = Output<typeof choices>;
 export type BridgePage = Output<typeof page>;
+
+export type BridgeSharedTrust = Output<typeof sharedTrust>;
+export type BridgeSharedCapacity = Output<typeof sharedCapacity>;

@@ -1,7 +1,9 @@
 use super::*;
+#[path = "absence_tests.rs"]
+mod absence_tests;
 use crate::auth::keys::bridge::test_fixture::{lease, HUMAN_SECRET};
 use axum::{
-    extract::State,
+    extract::{Query, State},
     http::{HeaderMap, StatusCode},
     routing::get,
     Json, Router,
@@ -24,6 +26,9 @@ struct StateData {
     status: Mutex<StatusCode>,
     deletes: AtomicUsize,
     delete_response: Mutex<StatusCode>,
+    listing_status: Mutex<StatusCode>,
+    listing_override: Mutex<Option<Value>>,
+    owner: ResourceOwner,
 }
 struct Fixture {
     lease: BridgeControlPlaneLease,
@@ -50,7 +55,7 @@ impl Fixture {
             },
             1,
         );
-        let source = match owner {
+        let source = match &owner {
             ResourceOwner::Person { .. } => json!({"type":"personal"}),
             ResourceOwner::Organization { subject } => {
                 json!({"type":"org","org_id":subject.as_str(),"role":"admin","allowed":true})
@@ -77,8 +82,12 @@ impl Fixture {
             status: Mutex::new(StatusCode::OK),
             deletes: AtomicUsize::new(0),
             delete_response: Mutex::new(StatusCode::NO_CONTENT),
+            listing_status: Mutex::new(StatusCode::OK),
+            listing_override: Mutex::new(None),
+            owner,
         });
         let router = Router::new()
+            .route("/api/v1/api-keys", get(listing))
             .route("/api/v1/api-keys/key-prior", get(metadata).delete(delete))
             .with_state(state.clone());
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -240,4 +249,33 @@ async fn uncertain_scoped_delete_reconciles_actual_provider_soft_delete_without_
         f.revoke().await.unwrap();
         assert_eq!(f.state.deletes.load(Ordering::SeqCst), 1);
     }
+}
+
+async fn listing(
+    State(state): State<Arc<StateData>>,
+    headers: HeaderMap,
+    Query(query): Query<std::collections::BTreeMap<String, String>>,
+) -> Result<Json<Value>, StatusCode> {
+    authorized(&headers)?;
+    match &state.owner {
+        ResourceOwner::Person { .. } => assert!(!query.contains_key("org_id")),
+        ResourceOwner::Organization { subject } => assert_eq!(
+            query.get("org_id").map(String::as_str),
+            Some(subject.as_str())
+        ),
+    }
+    let status = *state.listing_status.lock().unwrap();
+    if status != StatusCode::OK {
+        return Err(status);
+    }
+    if let Some(value) = state.listing_override.lock().unwrap().clone() {
+        return Ok(Json(value));
+    }
+    let metadata = state.metadata.lock().unwrap();
+    let keys = if metadata["is_active"] == true {
+        vec![metadata.clone()]
+    } else {
+        vec![]
+    };
+    Ok(Json(json!({"keys":keys})))
 }

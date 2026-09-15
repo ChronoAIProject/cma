@@ -3,6 +3,7 @@
 mod authority;
 mod model;
 mod profiles;
+mod reuse;
 mod sandbox_admission;
 mod store;
 mod write;
@@ -10,12 +11,15 @@ mod write;
 pub use authority::*;
 pub use model::*;
 pub use profiles::*;
+pub use reuse::*;
 pub use sandbox_admission::*;
 pub use store::*;
 pub use write::*;
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum AllocationError {
+    #[error("selected parent cannot support the requested shared placement")]
+    IncompatibleTarget,
     #[error("allocation authority is unavailable or expired")]
     AuthorityUnavailable,
     #[error("allocation identity or authority does not match")]

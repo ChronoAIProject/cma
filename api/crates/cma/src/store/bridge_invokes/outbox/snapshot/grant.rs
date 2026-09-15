@@ -9,7 +9,7 @@ impl MongoBridgeReplyToolStore {
         observed: &TurnSnapshot,
         write_fence: bool,
         session: &mut ClientSession,
-    ) -> Result<(), MutationError> {
+    ) -> Result<AllocationRecord, MutationError> {
         let AgentActor::Channel { grant_id, .. } = &observed.command.receipt.envelope.actor else {
             return Err(OutboxError::SourceMismatch.into());
         };
@@ -39,22 +39,28 @@ impl MongoBridgeReplyToolStore {
         {
             return Err(OutboxError::SourceMismatch.into());
         }
-        grant
-            .target
-            .require(&grant.owner, &observed.resources.resource)
-            .map_err(|_| OutboxError::AuthorityUnavailable)?;
-        match &observed.allocation.placement {
+        if observed.require_live_agent {
+            grant
+                .target
+                .require(&grant.owner, &observed.resources.resource)
+        } else {
+            grant
+                .target
+                .require_retained_reply_target(&grant.owner, &observed.resources.resource)
+        }
+        .map_err(|_| OutboxError::AuthorityUnavailable)?;
+        let source_allocation = match &observed.allocation.placement {
             AllocationPlacement::ExistingAgent {
                 grant_id: original, ..
             } => {
                 if grant_id != original || grant.channel.is_some() {
                     return Err(OutboxError::SourceMismatch.into());
                 }
+                observed.allocation.clone()
             }
-            AllocationPlacement::NewSandbox { .. } => {
+            AllocationPlacement::NewSandbox { .. } | AllocationPlacement::ReuseParent { .. } => {
                 let basis = grant.channel.as_ref().ok_or(OutboxError::SourceMismatch)?;
-                if basis.allocation != observed.allocation || basis.creation != observed.provenance
-                {
+                if basis.creation != observed.provenance {
                     return Err(OutboxError::SourceMismatch.into());
                 }
                 basis
@@ -63,14 +69,18 @@ impl MongoBridgeReplyToolStore {
                 basis
                     .require_resources(&observed.resources.resource)
                     .map_err(|_| OutboxError::AuthorityUnavailable)?;
-                if write_fence {
-                    self.invokes
-                        .fence_channel_grant(basis, session)
-                        .await
-                        .map_err(|_| OutboxError::AuthorityUnavailable)?;
-                }
+                self.invokes
+                    .require_retained_channel_grant(
+                        basis,
+                        &observed.allocation,
+                        write_fence,
+                        session,
+                    )
+                    .await
+                    .map_err(grant_error)?;
+                basis.allocation.clone()
             }
-        }
+        };
         if write_fence {
             let changed = self
                 .invokes
@@ -85,6 +95,18 @@ impl MongoBridgeReplyToolStore {
                 return Err(OutboxError::Conflict.into());
             }
         }
-        Ok(())
+        Ok(source_allocation)
     }
 }
+
+fn grant_error(error: crate::store::bridge_invokes::MutationError) -> MutationError {
+    match error {
+        crate::store::bridge_invokes::MutationError::Mongo(error) => MutationError::Driver(error),
+        crate::store::bridge_invokes::MutationError::Invoke(_) => {
+            OutboxError::AuthorityUnavailable.into()
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests;

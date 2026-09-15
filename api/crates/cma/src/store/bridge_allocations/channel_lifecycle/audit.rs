@@ -15,7 +15,7 @@ pub(super) async fn append(
         .as_ref()
         .ok_or(AllocationError::Corrupt)?;
     let action = match change {
-        LifecycleCredentialChange::MintIntent => "mint_intent",
+        LifecycleCredentialChange::MintIntent(_) => "mint_intent",
         LifecycleCredentialChange::Mint { .. } => "mint_receipt",
         LifecycleCredentialChange::Deliver => "delivery_receipt",
         LifecycleCredentialChange::Revoke { .. } => "revocation_receipt",

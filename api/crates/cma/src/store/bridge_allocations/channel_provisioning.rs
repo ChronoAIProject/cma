@@ -15,11 +15,36 @@ use layer2_core::sandbox::{Sandbox, SandboxEventKind};
 use mongodb::bson::doc;
 
 impl MongoBridgeAllocationStore {
+    pub(crate) async fn fence_channel_mint_provisioning(
+        &self,
+        authority: &AllocationAuthority,
+        human: &BridgeControlPlaneLease,
+        snapshot: &ChannelProvisioningSnapshot,
+        session: &mut mongodb::ClientSession,
+    ) -> Result<(), MutationError> {
+        let current = transaction::apply(
+            self,
+            authority,
+            human,
+            &snapshot.allocation,
+            &snapshot.state.settings,
+            None,
+            session,
+        )
+        .await?;
+        if current.sandbox != snapshot.sandbox
+            || current.state != snapshot.state
+            || current.creation != snapshot.creation
+        {
+            return Err(AllocationError::Conflict.into());
+        }
+        Ok(())
+    }
     pub(crate) async fn pending_channel_allocations(
         &self,
         after: Option<&str>,
     ) -> Result<Vec<String>, AllocationError> {
-        let mut filter = doc! {"creates_sandbox":true,"record.state":{"$in":["reserved","needs_connection","provisioning","failed_retryable"]},"_id":{"$type":"string"}};
+        let mut filter = doc! {"$or":[{"creates_sandbox":true},{"record.placement.kind":"reuse_parent"}],"record.state":{"$in":["reserved","needs_connection","provisioning","failed_retryable"]},"_id":{"$type":"string"}};
         if let Some(after) = after {
             filter.insert("_id", doc! {"$type":"string","$gt":after});
         }

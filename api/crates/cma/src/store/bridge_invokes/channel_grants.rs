@@ -13,7 +13,7 @@ use crate::store::{
 };
 
 impl MongoBridgeInvokeStore {
-    fn channel_allocations(&self) -> Collection<Document> {
+    pub(super) fn channel_allocations(&self) -> Collection<Document> {
         majority_collection(
             &self.bridges.client.database(&self.grants.namespace().db),
             "bridge_allocations",
@@ -45,7 +45,7 @@ impl MongoBridgeInvokeStore {
         Err(BridgeInvokeError::Unavailable)
     }
 
-    async fn channel_snapshot(
+    pub(super) async fn channel_snapshot(
         &self,
         allocation_id: &str,
         session: &mut ClientSession,

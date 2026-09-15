@@ -13,6 +13,10 @@ pub enum Classification {
 // Exact backend-invalid cases not claimed as typed HTTP replay. Each is checked
 // against its source shape or the SDK's real preflight, then its shared error is decoded.
 pub const LOCAL_CASES: &[(&str, Classification)] = &[
+    (
+        "bridge-setup-capabilities-invalid-query",
+        Classification::QueryShape,
+    ),
     ("bridge-outbox-list-invalid-limit", Classification::Local),
     ("bridge-outbox-recover-missing-key", Classification::Local),
     (
@@ -886,6 +890,7 @@ pub fn assert_unrepresentable(case: &Case, class: Classification) {
                 return;
             }
             let allowed: &[&str] = match case.operation.as_str() {
+                "GET /api/v1/bridge-connectors/capabilities" => &["organization"],
                 "GET /api/v1/bridges" => &["organization", "cursor", "limit"],
                 "GET /api/v1/agents/provenance" => &[
                     "organization",

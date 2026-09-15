@@ -339,6 +339,7 @@ fn tool_request_rejects_destination_or_credential_injection_and_scope_expiry() {
 fn escaping_keeps_utf16_bounds_and_breaks_markup_and_mass_mentions() {
     for platform in [
         BridgePlatform::Telegram,
+        BridgePlatform::TelegramNew,
         BridgePlatform::Discord,
         BridgePlatform::Lark,
     ] {
@@ -347,7 +348,10 @@ fn escaping_keeps_utf16_bounds_and_breaks_markup_and_mass_mentions() {
             "😀".repeat(5000)
         );
         let parts = super::text::chunks(&platform, &text).unwrap();
-        let limit = if platform == BridgePlatform::Telegram {
+        let limit = if matches!(
+            platform,
+            BridgePlatform::Telegram | BridgePlatform::TelegramNew
+        ) {
             4000
         } else {
             1900

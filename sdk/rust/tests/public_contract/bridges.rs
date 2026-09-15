@@ -37,6 +37,11 @@ pub async fn dispatch(c: &Context<'_>) -> Result<()> {
                 .revoke_invoke_grant(c.param("id"), &c.body()?, &c.key()?)
                 .await,
         ),
+        "GET /api/v1/bridge-connectors/capabilities" => c.check(
+            bridges
+                .capabilities(c.query.get("organization").map(String::as_str))
+                .await,
+        ),
         "GET /api/v1/bridge-connectors" => c.check(
             bridges
                 .choices(c.query.get("organization").map(String::as_str))

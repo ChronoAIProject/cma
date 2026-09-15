@@ -23,6 +23,12 @@ use mongodb::{
 
 pub(in crate::store) mod bridge_append;
 pub(in crate::store) mod bridge_detach;
+pub(in crate::store) mod bridge_historical;
+pub(in crate::store) fn read_usage_event(
+    document: &Document,
+) -> Result<ChannelUsageEvent, SandboxStoreError> {
+    records::read_event(document)
+}
 mod records;
 pub(super) use records::ensure_indexes;
 pub(super) use records::read_snapshot as read_inventory_snapshot;
@@ -199,7 +205,10 @@ pub(super) async fn apply(
         Some(previous) => {
             let row = store
                 .channel_usage_events
-                .find_one(doc! {"binding_id":previous})
+                .find_one(doc! {"$or":[
+                    {"binding_id":previous},
+                    {"record.predecessor.binding_id":previous,"record.change.kind":"use"}
+                ]})
                 .session(&mut *session)
                 .await?
                 .ok_or(SandboxStoreError::Conflict)?;
@@ -208,6 +217,11 @@ pub(super) async fn apply(
                 event
                     .change
                     .introduced_binding()
+                    .or_else(|| {
+                        matches!(event.change, ChannelUsageChange::Use { .. })
+                            .then_some(event.predecessor.as_ref())
+                            .flatten()
+                    })
                     .filter(|binding| &binding.binding_id == previous)
                     .ok_or_else(|| {
                         SandboxStoreError::Corrupt("channel binding index changed".into())

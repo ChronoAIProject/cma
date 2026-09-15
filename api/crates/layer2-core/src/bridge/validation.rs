@@ -114,6 +114,27 @@ impl BridgeValidation {
             return Err(blocked(BridgeSetupBlock::CustodyUnavailable));
         }
         match &config.placement {
+            BridgePlacementPolicy::WorkspacePerPartition { sandbox_id, .. }
+            | BridgePlacementPolicy::WorktreeAgentPerPartition { sandbox_id, .. } => {
+                let target = config
+                    .placement
+                    .reused_parent()
+                    .ok_or_else(|| blocked(BridgeSetupBlock::IncompatibleTarget))?;
+                let resources = observation
+                    .existing_target
+                    .as_ref()
+                    .ok_or_else(|| blocked(BridgeSetupBlock::IncompatibleTarget))?;
+                let scope = resources
+                    .scope(&target)
+                    .map_err(|_| blocked(BridgeSetupBlock::IncompatibleTarget))?;
+                if &scope.owner != owner
+                    || &resources.lineage.sandbox.id != sandbox_id
+                    || !observation.exact_profiles_available
+                    || !observation.renewable_sandbox_authority
+                {
+                    return Err(blocked(BridgeSetupBlock::IncompatibleTarget));
+                }
+            }
             BridgePlacementPolicy::ExistingAgent { target } => {
                 let snapshot = observation
                     .existing_target
@@ -213,6 +234,11 @@ pub trait BridgeConnectionValidator: Send + Sync {
         _platform: &super::BridgePlatform,
     ) -> Result<(), BridgeError> {
         Ok(())
+    }
+
+    /// Unknown implementations expose no capabilities by default.
+    fn capabilities(&self) -> super::BridgeCapabilityCatalog {
+        super::BridgeCapabilityCatalog::default()
     }
 
     async fn validate_connection(

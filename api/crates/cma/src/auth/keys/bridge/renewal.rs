@@ -4,6 +4,7 @@ use super::{require_lease, unavailable, KeyIssuer, KeyIssuerError};
 use crate::bridge::BridgeControlPlaneLease;
 use layer2_core::{resource_access::ResourceOwner, sandbox::SandboxCredentialAuthority};
 use serde::Deserialize;
+mod absence;
 #[cfg(test)]
 mod tests;
 
@@ -27,9 +28,13 @@ impl KeyIssuer {
         );
         let metadata: PriorKeyMetadata = match self.bridge_json(self.http.get(&url), lease).await {
             Ok(metadata) => metadata,
-            // NyxID authenticates the current actor before resolving the key.
-            // Absence is the idempotent completion of an earlier exact delete.
-            Err(KeyIssuerError::Refused(404)) => return require_lease(lease),
+            // Detail404 also conceals lost org membership. Require fresh
+            // original-owner list permission and exact absence before receipt.
+            Err(KeyIssuerError::Refused(404)) => {
+                return self
+                    .require_bridge_key_absent(lease, &previous.provider_key_id)
+                    .await;
+            }
             Err(error) => return Err(error),
         };
         metadata.require(lease, &name, previous)?;
@@ -43,7 +48,12 @@ impl KeyIssuer {
         .await
         .map_err(|_| unavailable())?
         .map_err(|_| unavailable())?;
-        if !response.status().is_success() && response.status().as_u16() != 404 {
+        if response.status().as_u16() == 404 {
+            return self
+                .require_bridge_key_absent(lease, &previous.provider_key_id)
+                .await;
+        }
+        if !response.status().is_success() {
             return Err(KeyIssuerError::Refused(response.status().as_u16()));
         }
         require_lease(lease)
@@ -51,7 +61,7 @@ impl KeyIssuer {
 }
 
 #[derive(Deserialize)]
-struct PriorKeyMetadata {
+pub(super) struct PriorKeyMetadata {
     id: String,
     name: String,
     is_active: bool,
@@ -77,7 +87,7 @@ enum PriorSource {
     },
 }
 impl PriorKeyMetadata {
-    fn require(
+    pub(super) fn require(
         &self,
         lease: &BridgeControlPlaneLease,
         name: &str,
