@@ -57,7 +57,7 @@ mod command_revival;
 mod events;
 mod provenance;
 mod provenance_inventory;
-use events::bounded_events;
+use events::{append_sandbox_event, bounded_events};
 #[cfg(test)]
 mod launch_command_tests;
 mod lifecycle;
@@ -76,6 +76,9 @@ mod reconciliation;
 mod reconciliation_tests;
 mod resource_access;
 mod sandbox_controls;
+mod targeted_controls;
+#[cfg(test)]
+mod targeted_controls_tests;
 mod workspace_lifecycle;
 
 #[async_trait]
@@ -472,28 +475,4 @@ impl SandboxTransactionStore for InMemorySandboxStore {
         *state = candidate;
         Ok(())
     }
-}
-
-fn append_sandbox_event(
-    state: &mut State,
-    sandbox_id: &SandboxId,
-    appended_at: String,
-    kind: SandboxEventKind,
-) -> Result<SandboxEvent, SandboxStoreError> {
-    if !state.sandboxes.contains_key(sandbox_id) {
-        return Err(SandboxStoreError::NotFound);
-    }
-    let events = state.sandbox_events.entry(sandbox_id.clone()).or_default();
-    let seq = u64::try_from(events.len())
-        .map_err(|_| SandboxStoreError::SequenceConflict)?
-        .checked_add(1)
-        .ok_or(SandboxStoreError::SequenceConflict)?;
-    let event = SandboxEvent {
-        sandbox_id: sandbox_id.clone(),
-        seq,
-        appended_at,
-        kind,
-    };
-    events.push(event.clone());
-    Ok(event)
 }

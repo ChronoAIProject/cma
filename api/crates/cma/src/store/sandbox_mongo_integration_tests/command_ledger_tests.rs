@@ -4,6 +4,7 @@ mod audit_tests;
 mod discovery_tests;
 mod execution_tests;
 mod sandbox_controls_tests;
+mod targeted_control_tests;
 mod work_tests;
 use layer2_core::ids::{AgentCommandId, AgentResponseId};
 use layer2_core::sandbox::agent_io::*;

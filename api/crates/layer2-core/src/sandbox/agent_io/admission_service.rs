@@ -172,7 +172,7 @@ impl AgentCommandService {
         Ok(Some(CommandStatusView::from_record(&record)))
     }
 
-    async fn prepare(
+    pub(super) async fn prepare(
         &self,
         context: &CallerContext,
         credential: &str,
