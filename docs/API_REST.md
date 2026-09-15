@@ -350,7 +350,7 @@ never rewritten. Missing or inconsistent ancestry refuses capture, and missing
 creation evidence produces `legacy_unknown` without inventing a creator. Mongo
 uses metadata lineage guards while preserving serialized resource records,
 revisions, conversations, runtime attachments and history. Channel allocation/
-history, org/shared inventory UI and exports remain
+history, organization Sandbox navigation and share-management UI remain
 unfinished; the channel category is reserved for that work.
 
 `GET /api/v1/agents/provenance` lists safe creation summaries in stable Agent-ID
@@ -386,6 +386,32 @@ tree rows. Facts refresh once per minute and on foreground, and are discarded
 on changed viewer/client context, disabled views, or read refusal. These tree
 filters apply to loaded tree rows. The dedicated REST inventory also covers
 retained archived Agents.
+
+The web inventory is available at `/agents` and
+`/organizations/{organization}/agents`, and through **Agents** in the account
+menu. It offers named Personal/Organization scopes, immutable creation and status
+filters, previous/next paging and **Export this page**. Empty filtered pages retain
+the next-page action. Exports perform a fresh authorized page read and include
+only the safe creation-summary fields. Changing scope cancels an outstanding
+export; downloaded files remain outside later revocation.
+
+Agent deep links classify the public accessible response before choosing a
+controller. Shared/organization Agent views read only the Agent's authorized
+history and effective capabilities. They do not fetch parent resources, profile
+drafts or runtime readings. Viewers see history and pending approvals without
+interaction buttons; current interaction/approval capabilities enable the
+composer, response interruption and approval answers. These use the public SDK
+and recheck effective access before the server independently authorizes each
+command. An access refusal clears the shared view and cancels its stream without
+logging out the user's unrelated personal work. Personal controllers and drafts
+survive a foreground classification refresh; an actual refusal removes them.
+
+Scoped inventory/history values refresh every 30 seconds, expire no later than
+55 seconds from the read start (or the earlier server authority deadline), and
+clear on foreground, viewer/client/scope change or refusal. A 15-second timeout
+also clears an unverified result. This Agent inventory increment does not yet
+provide organization Sandbox trees, aggregate Shared-with-me scope, share editing,
+scoped artifact UI or shared lifecycle management.
 
 `GET /api/v1/agents/{id}/source` returns authorized provisioning origin and shortcuts.
 Personal owners retain the existing source document:

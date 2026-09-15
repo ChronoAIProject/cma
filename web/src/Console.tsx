@@ -25,6 +25,9 @@ import { Button } from './ui/Button';
 import { IconNewChatOutline16 } from './ui/icons';
 import './Console.css';
 import type { ProfileUse } from './profiles/marketplace/client';
+import { useAgentAccess } from './resources/agentAccess';
+import { SharedAgent } from './resources/SharedAgent';
+import { AgentInventory } from './resources/AgentInventory';
 
 const ProfileViews = lazy(() =>
   import('./profiles/ProfileViews').then((module) => ({ default: module.ProfileViews })),
@@ -61,6 +64,18 @@ export function Console({
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [revision, setRevision] = useState(0);
   const client = useCmaClient();
+  const agentAccess = useAgentAccess(
+    client.resourceViews,
+    route.kind === 'agent' ? route.agentId : undefined,
+  );
+  const shared =
+    agentAccess.state.status === 'ready' && agentAccess.state.value.detail.access === 'shared'
+      ? agentAccess.state.value.detail
+      : undefined;
+  const personalAgentId =
+    route.kind === 'agent' && (client.resourceViews === undefined || agentAccess.personalReady)
+      ? route.agentId
+      : undefined;
   const profiles = useProfileViewsClient();
   const operator = useOperatorClient();
   const publisher = usePublisherClient();
@@ -73,7 +88,7 @@ export function Console({
     refreshNavigation();
     setRevision((value) => value + 1);
   }, [refreshNavigation]);
-  const agent = useAgentController(client, route.kind === 'agent' ? route.agentId : undefined, {
+  const agent = useAgentController(client, personalAgentId, {
     summary:
       route.kind === 'agent' && navigation.status === 'ready'
         ? navigation.items
@@ -106,7 +121,43 @@ export function Console({
   };
   const ready = agent.state.status === 'ready' ? agent.state : undefined;
   const content =
-    route.kind === 'agent' ? (
+    route.kind === 'inventory' ? (
+      client.resourceViews === undefined ? (
+        <section className="console__empty">
+          <h1>Agent inventory unavailable</h1>
+        </section>
+      ) : (
+        <AgentInventory
+          client={client.resourceViews}
+          organization={route.organization}
+          onNavigate={onNavigate}
+        />
+      )
+    ) : route.kind === 'agent' && shared !== undefined && client.resourceViews !== undefined ? (
+      <SharedAgent
+        key={shared.id}
+        client={client.resourceViews}
+        web={client}
+        detail={shared}
+        onAccessChanged={agentAccess.reload}
+      />
+    ) : route.kind === 'agent' &&
+      client.resourceViews !== undefined &&
+      personalAgentId === undefined &&
+      agentAccess.state.status !== 'ready' ? (
+      <section
+        className="console__empty"
+        role={agentAccess.state.status === 'error' ? 'alert' : 'status'}
+      >
+        <h1>{agentAccess.state.status === 'error' ? 'Agent unavailable' : 'Opening Agent'}</h1>
+        {agentAccess.state.status === 'error' ? (
+          <>
+            <p>{agentAccess.state.message}</p>
+            <Button onClick={agentAccess.reload}>Check access again</Button>
+          </>
+        ) : null}
+      </section>
+    ) : route.kind === 'agent' ? (
       <AgentSurface
         key={route.agentId}
         agentId={route.agentId}
@@ -232,10 +283,10 @@ export function Console({
 
   return (
     <AppFrame
-      detailsOpen={route.kind === 'agent' && detailsOpen}
+      detailsOpen={personalAgentId !== undefined && detailsOpen}
       compactDetailsOverlay
       details={
-        route.kind === 'agent' ? (
+        route.kind === 'agent' && personalAgentId !== undefined ? (
           <AgentDetails
             key={route.agentId}
             open={detailsOpen}

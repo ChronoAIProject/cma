@@ -807,6 +807,42 @@ not zero. A context ceiling adds a neutral 2px track no wider than 240px, with
 accessible numeric values. Without a reported ceiling, show only the known
 figure. Context-summary boundaries use neutral metadata, not failure colour.
 
+### Organization inventory and shared Agent views
+
+The account menu's **Agents** entry opens `/agents`; an organization selection
+uses `/organizations/{organization}/agents` so reload and deep links retain the
+scope. Named organization choices use the existing Picker. The inventory keeps
+creation and lifecycle status as separate filters, includes retained Agents,
+and shows title, recorded status, immutable creation category and creation date.
+Rows open the canonical Agent route. Previous/Next actions operate on fresh
+pages; an empty filtered page with continuation explicitly invites the next page.
+The **Export this page** action rechecks access and downloads only that page's
+safe JSON summary fields. It cancels on changed scope or client. A completed
+download cannot be recalled by later revocation.
+
+Use the existing surface, border, font, Button and Picker tokens. The inventory
+filters wrap, and its four-column rows become two columns on narrow screens.
+Do not show private source IDs, creators, parent identities or profile controls
+in these rows. An organization-choice outage has its own retry and leaves the
+personal inventory independently usable.
+
+Shared Agent routes have a safe title/status/creation header and Agent history.
+They never start the personal controller, parent/profile loaders, connection
+wizard or runtime readings. Pending approvals remain readable without action
+buttons for a viewer. The composer, response interruption and approval buttons
+follow current effective capabilities. Commands use the current public SDK
+principal; an organization admin's message is attributed to that admin.
+Personal controllers retain their draft and stream while the access-classification
+read refreshes. A real refusal clears the selected shared/denied view, not the
+account's independent personal work.
+
+Scoped results refresh every 30 seconds and expire at the earlier server deadline
+or 55 seconds from request start, even while another refresh is pending. A read
+that exceeds 15 seconds loses its display authority. Foreground, scope/client
+changes and denied access clear old shared values and cancel streams/exports.
+Organization Sandbox trees, aggregate Shared-with-me scope, share editing, scoped
+artifact controls and shared lifecycle controls remain subsequent work.
+
 ## 13a. Agent resources
 
 Resources are a public point read scoped to the Agent's Sandbox. Memory, CPU,
