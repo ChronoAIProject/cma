@@ -17,6 +17,7 @@ use super::{
 };
 
 mod resource;
+mod sandbox_controls;
 
 const POLICY_REVISION: u64 = 1;
 const VERIFICATION_TIMEOUT: Duration = Duration::from_secs(15);

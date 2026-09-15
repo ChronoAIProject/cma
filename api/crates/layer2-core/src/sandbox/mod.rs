@@ -19,6 +19,7 @@ mod background_checkpoint;
 mod checkpoint;
 mod checkpoint_capture;
 mod checkpoint_writer_recovery;
+pub mod control;
 mod conversation;
 mod conversation_fold;
 mod conversation_fold_support;

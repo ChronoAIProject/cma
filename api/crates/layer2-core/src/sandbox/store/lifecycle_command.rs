@@ -140,7 +140,7 @@ where
     }
 }
 
-pub(super) enum PendingApplication {
+pub(crate) enum PendingApplication {
     Commit {
         expected_revision: u64,
         sandbox: Sandbox,
@@ -160,7 +160,7 @@ impl PendingApplication {
     }
 }
 
-pub(super) fn apply_command(
+pub(crate) fn apply_command(
     current: Sandbox,
     command: &SandboxLifecycleCommand,
 ) -> Result<PendingApplication, SandboxStoreError> {

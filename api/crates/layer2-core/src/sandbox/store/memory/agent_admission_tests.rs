@@ -25,6 +25,7 @@ mod creation_revival;
 mod provenance;
 mod provenance_backfill;
 mod provenance_inventory;
+mod sandbox_controls_tests;
 
 pub(super) const NOW: &str = "2026-09-05T00:00:00Z";
 
