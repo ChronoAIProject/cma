@@ -10,7 +10,10 @@ import type { BridgeViewsClient } from './client';
 
 export function sameCleanupTarget(
   allocation: BridgeCleanupAllocation,
-  status: BridgeChildCleanupStatus,
+  status: Pick<
+    BridgeChildCleanupStatus,
+    'bridge_id' | 'allocation_id' | 'generation' | 'allocation_revision' | 'target'
+  >,
 ) {
   return (
     status.bridge_id === allocation.bridge_id &&
