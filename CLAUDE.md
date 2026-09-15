@@ -35,6 +35,10 @@ use public AG-UI, and the public Responses interface projects the same Agent
 conversation for compatible clients. A missing first-party capability must be
 added to the appropriate public interface, never a private route.
 
+New Agent tabs may select public Responses v2 input and rich Agent replay through
+the authenticated transport flag. Existing tabs retain their selected transport
+through flag changes and reloads; uncertain requests keep their original keys.
+
 A CMA Trigger brings a visitor to an Agent of their own, never the publisher's.
 GET, navigation, and an OAuth callback do not start work. An explicit visitor
 action supplies consent and admits the durable operation.

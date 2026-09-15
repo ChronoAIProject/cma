@@ -143,7 +143,10 @@ export function AgentSurface({
   const starting = controller.pending === 'send' && !running;
   const historyIncomplete = state.historyLoading === true || state.historyUnavailable === true;
   const approvalBusy =
-    controller.pending === 'approval' || historyIncomplete || !controller.inputAvailability.allowed;
+    controller.pending === 'approval' ||
+    historyIncomplete ||
+    !controller.inputAvailability.allowed ||
+    controller.controlsUnavailable === true;
   const issue = state.historyLoading
     ? 'Loading conversation activity.'
     : state.historyUnavailable
@@ -217,6 +220,29 @@ export function AgentSurface({
         )}
       </Presence>
 
+      {controller.pendingMessage === undefined && !controller.pendingControl ? null : (
+        <div className="agent-action-error" role="status">
+          <span>
+            {controller.pendingMessage !== undefined
+              ? 'Your message is awaiting confirmation. Recover it before sending another message.'
+              : 'Your response action is awaiting confirmation.'}
+          </span>
+          <Button
+            size="sm"
+            disabled={controller.pending !== undefined || historyIncomplete}
+            onClick={() => void controller.recoverPending?.()}
+          >
+            Recover pending request
+          </Button>
+        </div>
+      )}
+
+      {controller.controlNotice === undefined ? null : (
+        <div className="agent-action-error" role="status">
+          {controller.controlNotice}
+        </div>
+      )}
+
       <div className="agent-surface__conversation">
         {status === 'starting' ||
         detail.failure !== undefined ||
@@ -250,6 +276,9 @@ export function AgentSurface({
           pausedNotice={pausedNotice}
           running={running}
           starting={starting}
+          controlsUnavailable={controller.controlsUnavailable}
+          requestPending={controller.pendingMessage !== undefined}
+          acceptedMessage={controller.acceptedMessage}
           inputAvailability={
             readOnly
               ? {

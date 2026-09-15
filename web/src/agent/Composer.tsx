@@ -12,6 +12,9 @@ interface ComposerProps {
   readonly pausedNotice?: string;
   readonly running: boolean;
   readonly starting?: boolean;
+  readonly controlsUnavailable?: boolean;
+  readonly requestPending?: boolean;
+  readonly acceptedMessage?: string;
   readonly inputAvailability: SandboxInputAvailability;
   readonly busy: boolean;
   readonly quickMessages?: readonly TriggerQuickMessage[];
@@ -43,6 +46,9 @@ export function Composer({
   pausedNotice,
   running,
   starting = false,
+  controlsUnavailable = false,
+  requestPending = false,
+  acceptedMessage,
   inputAvailability,
   busy,
   quickMessages = [],
@@ -50,6 +56,7 @@ export function Composer({
   onStop,
 }: ComposerProps) {
   const [content, setContent] = useState('');
+  const [previousAccepted, setPreviousAccepted] = useState(acceptedMessage);
   const [submitting, setSubmitting] = useState(false);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const sending = useRef(false);
@@ -60,6 +67,11 @@ export function Composer({
   const hasNotice =
     starting || notice !== undefined || inputAvailability.savingStartedAt !== undefined;
   const usable = canMessage(status);
+
+  if (acceptedMessage !== previousAccepted) {
+    setPreviousAccepted(acceptedMessage);
+    if (acceptedMessage !== undefined && content.trim() === acceptedMessage) setContent('');
+  }
 
   useEffect(() => {
     if (usable) inputRef.current?.focus();
@@ -93,6 +105,7 @@ export function Composer({
       running ||
       starting ||
       inputBlocked ||
+      requestPending ||
       sending.current
     )
       return;
@@ -113,7 +126,9 @@ export function Composer({
     <div className="agent-composer">
       <QuickMessages
         messages={quickMessages}
-        disabled={!usable || busy || running || starting || inputBlocked || submitting}
+        disabled={
+          !usable || busy || running || starting || inputBlocked || submitting || requestPending
+        }
         onSend={submit}
       />
       <Presence>
@@ -188,8 +203,12 @@ export function Composer({
             variant="primary"
             icon={<IconStopFill16 />}
             aria-label="Stop response"
-            title="Stop response"
-            disabled={busy}
+            title={
+              controlsUnavailable
+                ? 'This turn does not support response controls.'
+                : 'Stop response'
+            }
+            disabled={busy || controlsUnavailable}
             onClick={() => void onStop()}
           />
         ) : (
@@ -200,7 +219,9 @@ export function Composer({
             icon={<IconSendOutline16 />}
             aria-label="Send message"
             title="Send message"
-            disabled={!usable || busy || starting || inputBlocked || content.trim() === ''}
+            disabled={
+              !usable || busy || starting || inputBlocked || requestPending || content.trim() === ''
+            }
             aria-describedby={hasNotice ? noticeId : undefined}
           />
         )}
