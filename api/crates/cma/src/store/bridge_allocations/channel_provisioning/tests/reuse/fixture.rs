@@ -11,7 +11,9 @@ pub(crate) struct ReuseFixture {
 }
 impl ReuseFixture {
     pub async fn new(shared_workspace: bool) -> Self {
-        let mut original = Fixture::new().await;
+        Self::with_original(shared_workspace, Fixture::new().await).await
+    }
+    pub async fn with_original(shared_workspace: bool, mut original: Fixture) -> Self {
         original.ready().await;
         let target = original.record.placement.target().clone();
         let mut parent = original

@@ -124,7 +124,7 @@ pub(super) fn item_document(item: &OutboxItem) -> Result<Document, OutboxError> 
         "updated_at_ms":item.updated_at_ms,"next_check_at_ms":next_check_at_ms,"record":record_bson(item).map_err(|_|OutboxError::Corrupt)?},
     )
 }
-pub(super) fn read_item(document: &Document) -> Result<OutboxItem, OutboxError> {
+pub(in crate::store) fn read_item(document: &Document) -> Result<OutboxItem, OutboxError> {
     let item: OutboxItem = read_record(document).map_err(|_| OutboxError::Corrupt)?;
     let expected = item_document(&item)?;
     if expected.iter().any(|(key, value)| {
