@@ -13,6 +13,7 @@ import { ReferenceLink } from '../profiles/ReferenceLink';
 import { creationLabel, useAgentProvenance } from './provenance';
 
 interface AgentDetailsProps {
+  readonly sharing?: React.ReactNode;
   readonly detail?: AgentDetail;
   readonly workspace?: WorkspaceDetail;
   readonly pending?: AgentCommand;
@@ -72,6 +73,7 @@ function Fact({ term, children }: { readonly term: string; readonly children: Re
 }
 
 export function AgentDetails({
+  sharing,
   detail,
   workspace,
   pending,
@@ -121,6 +123,7 @@ export function AgentDetails({
         )}
       </header>
       <div className="agent-details__scroll">
+        {sharing === undefined ? null : <Band title="Organization access">{sharing}</Band>}
         <Band title="Creation">
           <dl>
             <Fact term="Origin">{creationLabel(provenance)}</Fact>
