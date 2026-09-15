@@ -427,6 +427,10 @@
   align-items: center;
 }
 
+.agent-composer__form--queue {
+  grid-template-columns: minmax(0, 1fr) 40px 40px;
+}
+
 .agent-composer__capsule {
   display: flex;
   flex-direction: column;
@@ -559,6 +563,10 @@
 
   .agent-composer__form {
     grid-template-columns: minmax(0, 1fr) 44px;
+  }
+
+  .agent-composer__form--queue {
+    grid-template-columns: minmax(0, 1fr) 44px 44px;
   }
 
   .agent-composer .agent-composer__submit {
