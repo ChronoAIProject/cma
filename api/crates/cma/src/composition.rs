@@ -36,6 +36,12 @@ use crate::{
 
 pub(crate) struct ControlPlaneComposition {
     pub router: Router,
+    /// Durable definitions and readonly provider verification. Public management
+    /// routes follow once selected-key custody is implemented.
+    #[allow(dead_code)]
+    pub bridge_definitions: layer2_core::bridge::BridgeService,
+    #[allow(dead_code)] // Public bridge setup routes compose this custodian next.
+    pub bridge_credentials: Option<Arc<crate::bridge::ManagedBridgeCredentials>>,
     pub launch_scheduler: super::trigger::LaunchScheduler,
     pub provenance_backfill: crate::sandbox::AgentProvenanceBackfill,
     pub command_scheduler: super::commands::CommandScheduler,
@@ -135,6 +141,14 @@ impl ControlPlaneComposition {
             stores.auth.clone(),
             config.nyxid_public_url.clone(),
         );
+        let (bridge_definitions, bridge_credentials) = crate::bridge::service(
+            &config.auth_mode,
+            stores.bridge_definitions.clone(),
+            auth.clone(),
+            stores.sandbox_model.clone(),
+            stores.bridge_credentials.clone(),
+        )
+        .map_err(|error| format!("bridge verifier is not usable: {error}"))?;
         let broker = Arc::new(
             CmaServiceConnectionBroker::from_auth_config(
                 &config.auth_mode,
@@ -340,11 +354,23 @@ impl ControlPlaneComposition {
             resource_access.clone(),
         );
         let resource_routes = profiles_router(profiles)
+            .merge(layer1_public::rest::agent_artifacts_router(
+                layer2_core::sandbox::agent_artifacts::AgentArtifactService::new(
+                    stores.sandbox_model.clone(),
+                    resource_access.clone(),
+                ),
+            ))
             .merge(layer1_public::rest::sandbox_commands_router(
                 sandbox_control_service,
             ))
             .merge(layer1_public::rest::agent_provenance_inventory_router(
                 layer2_core::sandbox::AgentProvenanceInventoryService::new(
+                    stores.sandbox_model.clone(),
+                    resource_access.clone(),
+                ),
+            ))
+            .merge(layer1_public::rest::agent_channel_usage_router(
+                layer2_core::sandbox::channel_usage::AgentChannelUsageService::new(
                     stores.sandbox_model.clone(),
                     resource_access.clone(),
                 ),
@@ -386,6 +412,8 @@ impl ControlPlaneComposition {
 
         Ok(Self {
             router,
+            bridge_definitions,
+            bridge_credentials,
             provenance_backfill,
             launch_scheduler,
             command_scheduler,

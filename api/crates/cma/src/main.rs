@@ -2,6 +2,7 @@
 
 mod activity;
 mod auth;
+mod bridge;
 mod commands;
 mod composition;
 mod config;

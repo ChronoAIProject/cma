@@ -36,6 +36,8 @@ pub(crate) struct Params {
     workspace: Option<String>,
     status: Option<AgentStatus>,
     creation_origin: Option<AgentCreationCategory>,
+    channel_active: Option<bool>,
+    channel_history: Option<bool>,
     cursor: Option<String>,
     limit: Option<u16>,
 }
@@ -50,6 +52,7 @@ pub(crate) struct AgentProvenanceInventoryItemView {
     created_at: String,
     updated_at: String,
     creation_origin: AgentCreationCategoryView,
+    channel_usage: super::agent_channel_usage::ChannelUsageSummaryView,
 }
 
 #[derive(Serialize, ToSchema)]
@@ -65,6 +68,7 @@ pub(crate) struct AgentProvenanceInventoryPageView {
     params(("shared" = Option<bool>, Query, description = "Explicit incoming shares across current organizations; mutually exclusive with organization"), ("organization" = Option<String>, Query), ("sandbox" = Option<String>, Query),
         ("workspace" = Option<String>, Query), ("status" = Option<String>, Query),
         ("creation_origin" = Option<AgentCreationCategoryView>, Query),
+        ("channel_active" = Option<bool>, Query), ("channel_history" = Option<bool>, Query),
         ("cursor" = Option<String>, Query), ("limit" = Option<u16>, Query)),
     responses((status = 200, body = AgentProvenanceInventoryPageView),
         (status = 400, body = crate::rest::ProblemDocument), (status = 404, body = crate::rest::ProblemDocument)))]
@@ -89,6 +93,8 @@ pub(crate) async fn list(
             status: params.status,
         },
         creation_origin: params.creation_origin,
+        channel_active: params.channel_active,
+        channel_history: params.channel_history,
     };
     let result = match resource {
         Some(resource) => {
@@ -129,6 +135,7 @@ impl From<AgentProvenanceInventoryRow> for AgentProvenanceInventoryItemView {
             created_at: value.created_at,
             updated_at: value.updated_at,
             creation_origin: value.creation_origin.into(),
+            channel_usage: value.channel_usage.into(),
         }
     }
 }

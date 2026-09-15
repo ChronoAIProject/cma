@@ -2,6 +2,7 @@
 
 mod admin;
 mod agent;
+pub mod agent_artifacts;
 mod agent_context;
 pub mod agent_io;
 mod agent_operation;
@@ -16,6 +17,7 @@ mod agent_runtime;
 mod agent_service;
 mod agent_work;
 mod background_checkpoint;
+pub mod channel_usage;
 mod checkpoint;
 mod checkpoint_capture;
 mod checkpoint_writer_recovery;

@@ -3,6 +3,17 @@ import type { ContractCase } from './context.js';
 import { browserOperations } from './navigation.js';
 
 export const localCodes = new Map([
+  ['channel-inventory-invalid-active', 'invalid_instance_query'],
+  ['channel-inventory-invalid-history', 'invalid_instance_query'],
+  ['channel-usage-zero-limit', 'invalid_query'],
+  ['channel-usage-large-limit', 'invalid_query'],
+  ['channel-usage-invalid-cursor', 'invalid_query'],
+  ['artifact-invalid-name', 'invalid_artifact_request'],
+  ['artifact-invalid-media_type', 'invalid_artifact_request'],
+  ['artifact-invalid-content_base64', 'invalid_artifact_request'],
+  ['artifact-zero-limit', 'invalid_artifact_request'],
+  ['artifact-large-limit', 'invalid_artifact_request'],
+  ['artifact-invalid-cursor', 'invalid_artifact_request'],
   ['shared-sandbox-inventory-mixed-scope', 'invalid_query'],
   ['shared-sandbox-inventory-invalid-shared', 'invalid_query'],
   ['sandbox-command-invalid-revision', 'invalid_sandbox_command'],

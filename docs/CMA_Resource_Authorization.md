@@ -204,7 +204,7 @@ established full provenance and current publication behavior. Layer 2 fences
 both successful results and dependency errors after IO; membership expiry or a
 policy change refuses the buffered result. Legacy source composition also reads
 the explicit owner kind and cannot reinterpret an organization as a person.
-This does not implement channel provenance or channel-usage history.
+Channel binding and usage history uses a separate authorized projection described below.
 
 ## Organization inventory
 
@@ -462,3 +462,50 @@ provider or store outages leave the command queued for a bounded retry. Receipt
 reads require the original actor plus current target visibility and the same
 resource incarnation. Internal records and their authorization references must
 not be serialized directly into public responses.
+
+## Approved Agent artifact registry
+
+Explicitly approved artifacts are immutable content associated with one retained
+Agent, its full ancestry and owner kind. Publication requires current
+`ManageSharing`, actual human/API actor attribution and a non-reconstructible
+live publication fence; a persisted audit cannot authorize another write.
+Memory checks under its write lock. Mongo checks current resource policy and
+ancestry, capacity and publication identity in one transaction, then atomically
+inserts the record and fences the policy. A retry after uncertain commit returns
+the same artifact, while a changed body or actor under that key refuses conflict.
+Existing native history, first input, profiles and runtime files are not changed.
+
+`ViewArtifacts` covers only this approved registry. Narrow history readers gain
+this capability while `ViewFiles` retains whole-parent scope. No arbitrary URL,
+archive extraction or runtime filesystem export can populate it. Every list,
+metadata and download request holds original authorization, validates immutable
+binding/content, and rechecks current policy after IO. Hidden lookahead receives
+the same validation. Buffered downloads validate SHA-256 and byte count before
+release. No reusable signed URL bypasses later membership or grant checks.
+
+REST and SDK content limits are 1 MiB per artifact, 256 retained artifacts per
+Agent and 50 records per page. Publication and read operations have bounded
+lifetimes; current/future readers may access published content, and revocation
+cannot recall copies already downloaded. UI publication explicitly acknowledges
+this exposure and retains the original key/body through an uncertain retry.
+
+## Explicit channel usage
+
+Channel usage is an additive sidecar bound to retained Agent and parent lineage.
+It never rewrites creation origin or grants resource rights. Authorized readers
+receive safe active/history flags and first/last actual accepted-command times.
+Attachment records a binding event without inventing command use. Only current
+`manage_bridge` authority can read binding references and paginated immutable
+history, including actor, timestamp, reason and before/after generations.
+
+Memory and Mongo apply sidecar state and immutable events atomically. Active
+binding references are bounded to 16; history remains paginated without eviction.
+Service reads recheck current resource policy and the original membership deadline
+after storage IO. Inventory joins the validated channel state with creation facts
+inside its bounded storage snapshot, applies filters before returning a page, and
+retains the existing final resource and membership checks. Broad rows never carry
+binding IDs, owner credentials or raw external actor/partition identifiers.
+
+These read contracts are implemented; bridge dispatch must still connect actual
+accepted commands and lifecycle changes to the durable mutation path. Public
+callers cannot assign or clear channel-use attribution.

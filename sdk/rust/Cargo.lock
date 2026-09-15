@@ -122,6 +122,7 @@ name = "cma-sdk"
 version = "0.0.0"
 dependencies = [
  "axum",
+ "base64",
  "eventsource-stream",
  "futures-util",
  "httpdate",

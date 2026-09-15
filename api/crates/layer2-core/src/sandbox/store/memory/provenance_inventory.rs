@@ -1,6 +1,6 @@
 use super::*;
 use crate::resource_access::ResourceOwner;
-use crate::sandbox::store::{AgentProvenanceInventoryStore, AgentProvenanceSnapshot};
+use crate::sandbox::store::{AgentChannelUsageSnapshot, AgentProvenanceInventoryStore};
 use crate::sandbox::AgentListQuery;
 
 #[async_trait::async_trait]
@@ -10,7 +10,7 @@ impl AgentProvenanceInventoryStore for InMemorySandboxStore {
         scope: &ResourceOwner,
         query: &AgentListQuery,
         page: &PageRequest,
-    ) -> Result<Vec<AgentProvenanceSnapshot>, SandboxStoreError> {
+    ) -> Result<Vec<AgentChannelUsageSnapshot>, SandboxStoreError> {
         PageRequest::new(page.limit, page.cursor.clone())?;
         let state = self.lock();
         let ids = match scope {
@@ -39,7 +39,7 @@ impl AgentProvenanceInventoryStore for InMemorySandboxStore {
             }
         };
         ids.iter()
-            .map(|id| super::provenance::snapshot(&state, id))
+            .map(|id| super::channel_usage::snapshot(&state, id))
             .collect()
     }
     async fn scan_shared_agent_provenance_inventory(
@@ -48,7 +48,7 @@ impl AgentProvenanceInventoryStore for InMemorySandboxStore {
         organizations: &[SubjectId],
         query: &AgentListQuery,
         page: &PageRequest,
-    ) -> Result<Vec<AgentProvenanceSnapshot>, SandboxStoreError> {
+    ) -> Result<Vec<AgentChannelUsageSnapshot>, SandboxStoreError> {
         use crate::resource_access::ResourceSelector;
         PageRequest::new(page.limit, page.cursor.clone())?;
         let state = self.lock();
@@ -70,8 +70,9 @@ impl AgentProvenanceInventoryStore for InMemorySandboxStore {
         ids.truncate(usize::from(page.limit) + 1);
         ids.iter()
             .map(|id| {
-                let value = super::provenance::snapshot(&state, id)?;
+                let value = super::channel_usage::snapshot(&state, id)?;
                 value
+                    .provenance
                     .resource
                     .shared_agent(recipient, organizations)
                     .map_err(|error| SandboxStoreError::Corrupt(error.to_string()))?;

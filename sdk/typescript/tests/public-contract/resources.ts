@@ -3,6 +3,20 @@ import type { AgentProvenanceInventoryOptions } from '../../src/agents.js';
 import type { AccessibleSandboxListOptions } from '../../src/sandboxes.js';
 
 export const resourceDispatch: Record<string, Dispatch> = {
+  'GET /api/v1/agents/{id}/channel-usage': ({ client, param }) =>
+    client.agents.channelUsage(param('id')),
+  'GET /api/v1/agents/{id}/channel-usage/history': ({ client, param, options }) =>
+    client.agents.channelUsageHistory(param('id'), options),
+  'GET /api/v1/agents/{id}/artifacts': ({ client, param, options }) =>
+    client.agents.listArtifacts(param('id'), options),
+  'GET /api/v1/agents/{id}/artifacts/{artifact_id}': ({ client, param }) =>
+    client.agents.readArtifact(param('id'), param('artifact_id')),
+  'POST /api/v1/agents/{id}/artifacts': ({ client, param, body, command }) =>
+    client.agents.publishArtifact(param('id'), body, command),
+  'GET /api/v1/agents/{id}/artifacts/{artifact_id}/download': async ({ client, param }) =>
+    new TextDecoder('utf-8', { fatal: true }).decode(
+      await client.agents.downloadArtifact(param('id'), param('artifact_id')),
+    ),
   'GET /api/v1/organizations': ({ client }) => client.resourceAccess.organizations(),
   'GET /api/v1/resource-access/{kind}/{id}': ({ client, param }) =>
     client.resourceAccess.effective(param('kind'), param('id')),
@@ -71,6 +85,20 @@ export const resourceDispatch: Record<string, Dispatch> = {
       creationOrigin:
         (query.get('creation_origin') as AgentProvenanceInventoryOptions['creationOrigin']) ??
         undefined,
+      channelActive: query.has('channel_active')
+        ? query.get('channel_active') === 'true'
+          ? true
+          : query.get('channel_active') === 'false'
+            ? false
+            : (query.get('channel_active') as never)
+        : undefined,
+      channelHistory: query.has('channel_history')
+        ? query.get('channel_history') === 'true'
+          ? true
+          : query.get('channel_history') === 'false'
+            ? false
+            : (query.get('channel_history') as never)
+        : undefined,
     }),
   'GET /api/v1/agents/{id}': ({ client, param }) => client.agents.readAccessible(param('id')),
   'GET /api/v1/agents/{id}/provenance': ({ client, param }) =>

@@ -1,4 +1,5 @@
 import { resourceActor } from '../resource-access.js';
+import { channelUsageSummary } from './channel-usage.js';
 import { agentStatus } from '../instances/types.js';
 import { enumeration, integer, nullable, object, optional, text, type Output } from '../schema.js';
 
@@ -38,5 +39,6 @@ export const agentProvenanceInventoryItem = object({
   created_at: text,
   updated_at: text,
   creation_origin: agentCreationCategory,
+  channel_usage: optional(channelUsageSummary),
 });
 export type AgentProvenanceInventoryItem = Output<typeof agentProvenanceInventoryItem>;

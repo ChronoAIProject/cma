@@ -190,3 +190,78 @@ async fn read_creation_inventory(client: &Client, organization: String) -> Resul
     Ok(())
 }
 ```
+
+## Approved artifacts
+
+Use `agents().list_artifacts(agent_id, &page)`, `read_artifact(agent_id, artifact_id)`
+and `download_artifact(agent_id, artifact_id)` for explicit published content.
+Downloads return opaque bytes; dropping the request future stops observation.
+Every request requires current authorization. Narrow Agent shares can inspect
+these artifacts without gaining raw repository or parent file access.
+
+```rust,no_run
+use cma_sdk::{Client, IdempotencyKey, agents::PublishAgentArtifactRequest};
+# async fn publish(client: &Client, agent_id: &str, key: &IdempotencyKey) -> cma_sdk::Result<()> {
+let artifact = client.agents().publish_artifact(agent_id, &PublishAgentArtifactRequest {
+    name: "Review.txt".into(),
+    media_type: "text/plain".into(),
+    content_base64: "cmV2aWV3".into(),
+}, key).await?;
+let bytes = client.agents().download_artifact(agent_id, &artifact.id).await?;
+# Ok(())
+# }
+```
+
+Only current sharing managers can publish. Explicitly approve content for the
+Agent's current and future readers, retaining the same key/body across uncertain
+results. No Agent input or runtime filesystem read occurs. Content is 1 byte
+through 1 MiB, canonical standard base64, with a safe display name of at most
+160 UTF-8 bytes. Plain text, Markdown, JSON, PDF, opaque binary, PNG, JPEG and
+WebP are supported. At most 256 immutable artifacts are retained per Agent;
+pages contain at most 50. Revoked authority prevents future reads but cannot
+recall a file already downloaded.
+
+
+## Channel usage
+
+`agents().channel_usage(agent_id)` returns explicit channel facts independently
+of immutable creation origin. `channel_usage` contains `active`, `has_history`,
+and optional first/last accepted-command timestamps. Attachment alone leaves
+those use timestamps absent; detachment preserves history. Manual and Trigger
+Agents keep their creation category.
+
+Only current resource managers receive `bindings`, including bridge/partition
+references and generation lineage. Shared viewers receive the safe summary.
+`channel_usage_history(agent_id, &page)` requires resource management authority.
+The response includes the exact `agent_id`, ordered events, and an optional next
+revision cursor. Pages default to 50 and accept limits from 1 through 200. Events
+retain actor, timestamp, reason, changed binding identities, detach time, and
+bounded before/after binding facts. The SDK checks identity, consecutive revisions,
+and continuation integrity before returning a page.
+
+```rust,no_run
+use cma_sdk::{Client, PageOptions, Result};
+
+async fn inspect_channel_use(client: &Client, agent_id: &str) -> Result<()> {
+    let usage = client.agents().channel_usage(agent_id).await?;
+    if usage.bindings.is_some() {
+        let page = client.agents().channel_usage_history(agent_id, &PageOptions {
+            limit: Some(25), cursor: None,
+        }).await?;
+        for event in page.items { println!("{} {:?}", event.revision, event.reason); }
+    }
+    Ok(())
+}
+```
+
+These methods only observe facts. Binding history never grants authority, and
+these routes cannot write or clear channel usage. Every request rechecks current
+resource authority after membership or sharing changes.
+
+
+`AgentProvenanceInventoryOptions` combines `channel_active` and `channel_history`
+with `creation_origin` and existing personal, organization or shared scope.
+`Some(false)` for active and `Some(true)` for history selects detached historical
+bindings. The optional row `channel_usage` field supports older servers. Continue
+with `next` after an empty filtered page: each request scans at most 200 authorized
+candidates. Channel filters never relabel Manual or Trigger creation categories.

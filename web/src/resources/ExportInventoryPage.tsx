@@ -17,6 +17,16 @@ export function inventoryExport(rows: readonly AgentProvenanceInventoryItem[]): 
           created_at: row.created_at,
           updated_at: row.updated_at,
           creation_origin: row.creation_origin,
+          ...(row.channel_usage === undefined
+            ? {}
+            : {
+                channel_usage: {
+                  active: row.channel_usage.active,
+                  has_history: row.channel_usage.has_history,
+                  first_used_at: row.channel_usage.first_used_at,
+                  last_used_at: row.channel_usage.last_used_at,
+                },
+              }),
         })),
       },
       null,

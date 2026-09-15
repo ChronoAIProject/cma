@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "openapi_operations": 137,
+  "openapi_operations": 143,
   "operations": {
     "GET /api/v1/organizations": {
       "classification": "openapi",
@@ -2073,6 +2073,72 @@
         "sandbox_command_busy",
         "sandbox_command_conflict",
         "sandbox_command_unavailable"
+      ]
+    },
+    "GET /api/v1/agents/{id}/artifacts": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/agent_artifacts.rs# Explicit approved artifacts preserve current publication and viewing authority across durable storage and downloads.",
+      "required_problems": [
+        "invalid_artifact_request",
+        "not_authenticated",
+        "organization_authority_unavailable",
+        "resource_not_found"
+      ]
+    },
+    "GET /api/v1/agents/{id}/artifacts/{artifact_id}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/agent_artifacts.rs# Explicit approved artifacts preserve current publication and viewing authority across durable storage and downloads.",
+      "required_problems": [
+        "not_authenticated",
+        "organization_authority_unavailable",
+        "resource_not_found"
+      ]
+    },
+    "GET /api/v1/agents/{id}/artifacts/{artifact_id}/download": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/agent_artifacts.rs# Explicit approved artifacts preserve current publication and viewing authority across durable storage and downloads.",
+      "required_problems": [
+        "not_authenticated",
+        "organization_authority_unavailable",
+        "resource_not_found"
+      ]
+    },
+    "GET /api/v1/agents/{id}/channel-usage": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/agent_channel_usage.rs# Current resource authority fences explicit channel facts; private binding history requires management authority.",
+      "required_problems": [
+        "not_authenticated",
+        "organization_authority_unavailable",
+        "resource_access_changed",
+        "resource_access_unavailable",
+        "resource_not_found"
+      ]
+    },
+    "GET /api/v1/agents/{id}/channel-usage/history": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/agent_channel_usage.rs# Current resource authority fences explicit channel facts; private binding history requires management authority.",
+      "required_problems": [
+        "invalid_query",
+        "not_authenticated",
+        "organization_authority_unavailable",
+        "resource_access_changed",
+        "resource_access_unavailable",
+        "resource_forbidden",
+        "resource_not_found"
+      ]
+    },
+    "POST /api/v1/agents/{id}/artifacts": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/agent_artifacts.rs# Explicit approved artifacts preserve current publication and viewing authority across durable storage and downloads.",
+      "required_problems": [
+        "artifact_capacity",
+        "idempotency_key_reused",
+        "invalid_artifact_request",
+        "missing_idempotency_key",
+        "not_authenticated",
+        "organization_authority_unavailable",
+        "resource_forbidden",
+        "resource_not_found"
       ]
     }
   }

@@ -12,6 +12,10 @@ pub struct AgentProvenanceInventoryOptions {
     pub scope: super::AccessibleAgentListOptions,
     /// Original category. Follow `next` even when a filtered page is empty.
     pub creation_origin: Option<AgentCreationCategory>,
+    /// Filter explicitly active channel bindings; independent of creation origin.
+    pub channel_active: Option<bool>,
+    /// Filter retained channel attachment/use history, including detached bindings.
+    pub channel_history: Option<bool>,
 }
 
 /// Safe creation summary without private source or creator references.
@@ -29,6 +33,8 @@ pub struct AgentProvenanceInventoryItem {
     pub updated_at: String,
     /// Immutable creation category.
     pub creation_origin: AgentCreationCategory,
+    /// Safe explicit channel facts; absent when reading an older server.
+    pub channel_usage: Option<super::ChannelUsageSummary>,
 }
 
 string_enum! { /// Original creation category; later use never relabels it.

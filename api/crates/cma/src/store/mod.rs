@@ -3,6 +3,7 @@
 pub mod activity;
 mod agent_admission;
 mod agent_admission_records;
+mod agent_channel_usage;
 mod agent_commands;
 mod agent_control_lineage;
 mod agent_control_receipt;
@@ -26,6 +27,8 @@ mod agent_worker_store;
 mod agent_worker_transaction;
 mod agents;
 pub mod auth;
+mod bridge_credentials;
+mod bridge_definitions;
 mod checkpoint_capture;
 mod checkpoint_objects;
 mod checkpoint_storage;
@@ -95,6 +98,9 @@ mod worktrees;
 
 pub use activity::MongoActivityStore;
 pub use auth::MongoAuthStore;
+pub(crate) use bridge_credentials::MongoBridgeCredentialStore;
+pub use bridge_definitions::MongoBridgeStore;
+pub(crate) use bridge_definitions::MongoCallbackInbox;
 pub use checkpoint_objects::MongoCheckpointObjectStore;
 pub(crate) use checkpoint_storage::{CheckpointBlobStore, ChronoStorage};
 pub(crate) use codex_subscriptions::MongoSubscriptionStore;

@@ -396,8 +396,10 @@ service shutdown. New facts are captured transactionally; existing provenance is
 never rewritten. Missing or inconsistent ancestry refuses capture, and missing
 creation evidence produces `legacy_unknown` without inventing a creator. Mongo
 uses metadata lineage guards while preserving serialized resource records,
-revisions, conversations, runtime attachments and history. Channel allocation/
-history remains unfinished; the channel category is reserved for that work.
+revisions, conversations, runtime attachments and history. Channel allocation
+remains unfinished; the channel category is reserved for that allocation path.
+Explicit channel binding and accepted-command history is available through the
+separate channel-usage routes below.
 The web provides authorized organization hierarchy navigation and owner share management.
 
 `GET /api/v1/agents/provenance` lists safe creation summaries in stable Agent-ID
@@ -466,7 +468,7 @@ survive a foreground classification refresh; an actual refusal removes them.
 Scoped inventory/history values refresh every 30 seconds, expire no later than
 55 seconds from the read start (or the earlier server authority deadline), and
 clear on foreground, viewer/client/scope change or refusal. A 15-second timeout
-also clears an unverified result. Scoped artifact UI remains unfinished.
+also clears an unverified result. Approved Agent artifacts use the separately authorized routes below.
 
 The sidebar offers Personal and named Organization navigation. Organization
 Sandboxes use the SDK's authorized paginated inventory, with fresh previous/next
@@ -778,6 +780,62 @@ above applies even when an operation annotates only its principal responses.
 | `POST /api/v1/sandbox-profiles/{id}/revisions` | PublishProfileRequest; key | - | 201 SandboxProfileRevisionView |
 | `GET /api/v1/sandbox-profiles/{id}/revisions/{revision}` | - | - | 200 SandboxProfileRevisionView |
 | `PUT /api/v1/sandbox-profiles/{id}/visibility` | SetProfileVisibilityRequest; key | - | 200 SandboxProfileView |
+
+### Agent channel usage
+
+| Operation | Body / Key | Query | Response |
+|---|---|---|---|
+| `GET /api/v1/agents/{id}/channel-usage` | - | - | 200 AgentChannelUsageView |
+| `GET /api/v1/agents/{id}/channel-usage/history` | - | cursor, limit | 200 AgentChannelUsageHistoryView |
+
+Channel usage is separate from immutable creation origin. An authorized summary
+contains `agent_id` and `channel_usage` with `active`, `has_history`, nullable
+`first_used_at` and nullable `last_used_at`. Only current bridge managers receive
+`bindings` or can request paginated history. Binding attachment records history
+without inventing an accepted external command. History retains actor, time,
+reason and before/after binding generations, including reset, rebind and detach.
+Current policy, original authority deadline and retained Agent identity are
+rechecked after buffering. Public callers cannot write channel facts through
+these routes, and channel use grants no additional CMA resource rights.
+
+The creation inventory also returns the safe `channel_usage` summary on each row.
+`channel_active=true|false` and `channel_history=true|false` combine with creation
+origin, status and resource scope before pagination. For example, a manual Agent
+with `channel_active=false&channel_history=true` retains its manual creation
+origin after detachment. Empty filtered pages can have a continuation cursor.
+Private binding, actor and external conversation references are absent from
+inventory rows and exports.
+
+### Approved Agent artifacts
+
+| Operation | Body / Key | Query | Response |
+|---|---|---|---|
+| `GET /api/v1/agents/{id}/artifacts` | - | cursor, limit (1–50) | 200 AgentArtifactPageView |
+| `POST /api/v1/agents/{id}/artifacts` | PublishAgentArtifactRequest; key | - | 201 AgentArtifactView, including idempotent replay |
+| `GET /api/v1/agents/{id}/artifacts/{artifact_id}` | - | - | 200 AgentArtifactView |
+| `GET /api/v1/agents/{id}/artifacts/{artifact_id}/download` | - | - | 200 application/octet-stream attachment |
+
+Publication requires current `manage_sharing` authority and an explicit selected
+`{name, media_type, content_base64}` body. No caller owner, actor, filesystem path
+or remote URL is accepted. It records immutable bytes and publication audit
+under exact retained Agent ancestry. Content must be 1 byte through 1 MiB of
+canonical standard base64. Display names contain 1–160 UTF-8 bytes, trimmed,
+without controls, slash/backslash or `.`/`..`. Supported types are `text/plain`,
+`text/markdown`, `application/json`, `application/pdf`, `application/octet-stream`,
+`image/png`, `image/jpeg` and `image/webp`. There are at most 256 artifacts per
+Agent. Invalid content returns `invalid_artifact_request` (400); full capacity
+returns `artifact_capacity` (429). Keep the same key/body when the result is
+uncertain; a changed request under the same key returns `idempotency_key_reused`.
+
+Metadata exposes exactly `id`, `agent_id`, `name`, `media_type`, `size_bytes`,
+`sha256` and `created_at`. `view_artifacts` grants access to this explicit registry,
+including for narrow Agent readers. It does not add `view_files` or reveal parent
+paths/archives. Reads recheck current policy and the original authority after
+buffering; revoked/expired access prevents later downloads. Download filenames
+in HTTP headers are generated from the content hash, with `nosniff` and
+`private, no-store`. SDK downloads return bytes; the web verifies size/hash and
+current permission before creating its local file. Previously downloaded copies
+cannot be recalled. Existing full Sandbox snapshot exports remain owner-only.
 
 ### Sandboxes
 

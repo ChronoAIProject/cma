@@ -677,6 +677,8 @@ async fn admission_reconciles_every_artifact_at_the_ambiguous_commit_time() {
     client.database(&database).drop().await.unwrap();
 }
 
+#[path = "agent_admission_mongo_integration_tests/channel_usage.rs"]
+mod channel_usage;
 #[path = "agent_admission_mongo_integration_tests/provenance.rs"]
 mod provenance;
 

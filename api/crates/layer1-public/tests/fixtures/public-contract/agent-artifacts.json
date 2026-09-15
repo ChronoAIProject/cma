@@ -1,0 +1,1394 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "artifact-owner-list",
+      "operation": "GET /api/v1/agents/{id}/artifacts",
+      "scenario": "artifact_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/artifacts",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "items": [
+            {
+              "id": "art_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "agent_id": "agt_shared_read",
+              "name": "report.txt",
+              "media_type": "text/plain",
+              "size_bytes": 9,
+              "sha256": "7f8518f7db5e9a55049f49c4ea6d6e8f509695231e60cbd607bcb36c88a75a14",
+              "created_at": "2026-09-15T00:00:00Z"
+            }
+          ]
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "artifact_id": "/items/0/id",
+        "created_at": "/items/0/created_at"
+      }
+    },
+    {
+      "id": "artifact-owner-read",
+      "operation": "GET /api/v1/agents/{id}/artifacts/{artifact_id}",
+      "scenario": "artifact_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/artifacts/$artifact_id",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "id": "art_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "agent_id": "agt_shared_read",
+          "name": "report.txt",
+          "media_type": "text/plain",
+          "size_bytes": 9,
+          "sha256": "7f8518f7db5e9a55049f49c4ea6d6e8f509695231e60cbd607bcb36c88a75a14",
+          "created_at": "2026-09-15T00:00:00Z"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "artifact-owner-download",
+      "operation": "GET /api/v1/agents/{id}/artifacts/{artifact_id}/download",
+      "scenario": "artifact_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/artifacts/$artifact_id/download",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-disposition": "attachment; filename=\"artifact-7f8518f7db5e9a55049f49c4ea6d6e8f509695231e60cbd607bcb36c88a75a14.bin\"",
+          "content-type": "application/octet-stream",
+          "x-content-type-options": "nosniff"
+        },
+        "body": "approved\n",
+        "bodyKind": "text"
+      },
+      "captures": {}
+    },
+    {
+      "id": "artifact-member-list",
+      "operation": "GET /api/v1/agents/{id}/artifacts",
+      "scenario": "artifact_member",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/artifacts",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "items": [
+            {
+              "id": "art_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "agent_id": "agt_shared_read",
+              "name": "report.txt",
+              "media_type": "text/plain",
+              "size_bytes": 9,
+              "sha256": "7f8518f7db5e9a55049f49c4ea6d6e8f509695231e60cbd607bcb36c88a75a14",
+              "created_at": "2026-09-15T00:00:00Z"
+            }
+          ]
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "artifact_id": "/items/0/id",
+        "created_at": "/items/0/created_at"
+      }
+    },
+    {
+      "id": "artifact-member-read",
+      "operation": "GET /api/v1/agents/{id}/artifacts/{artifact_id}",
+      "scenario": "artifact_member",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/artifacts/$artifact_id",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "id": "art_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "agent_id": "agt_shared_read",
+          "name": "report.txt",
+          "media_type": "text/plain",
+          "size_bytes": 9,
+          "sha256": "7f8518f7db5e9a55049f49c4ea6d6e8f509695231e60cbd607bcb36c88a75a14",
+          "created_at": "2026-09-15T00:00:00Z"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "artifact-member-download",
+      "operation": "GET /api/v1/agents/{id}/artifacts/{artifact_id}/download",
+      "scenario": "artifact_member",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/artifacts/$artifact_id/download",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-disposition": "attachment; filename=\"artifact-7f8518f7db5e9a55049f49c4ea6d6e8f509695231e60cbd607bcb36c88a75a14.bin\"",
+          "content-type": "application/octet-stream",
+          "x-content-type-options": "nosniff"
+        },
+        "body": "approved\n",
+        "bodyKind": "text"
+      },
+      "captures": {}
+    },
+    {
+      "id": "artifact-legacy-list",
+      "operation": "GET /api/v1/agents/{id}/artifacts",
+      "scenario": "artifact_legacy",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/artifacts",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "items": [
+            {
+              "id": "art_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "agent_id": "agt_shared_read",
+              "name": "report.txt",
+              "media_type": "text/plain",
+              "size_bytes": 9,
+              "sha256": "7f8518f7db5e9a55049f49c4ea6d6e8f509695231e60cbd607bcb36c88a75a14",
+              "created_at": "2026-09-15T00:00:00Z"
+            }
+          ]
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "artifact_id": "/items/0/id",
+        "created_at": "/items/0/created_at"
+      }
+    },
+    {
+      "id": "artifact-legacy-read",
+      "operation": "GET /api/v1/agents/{id}/artifacts/{artifact_id}",
+      "scenario": "artifact_legacy",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/artifacts/$artifact_id",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "id": "art_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "agent_id": "agt_shared_read",
+          "name": "report.txt",
+          "media_type": "text/plain",
+          "size_bytes": 9,
+          "sha256": "7f8518f7db5e9a55049f49c4ea6d6e8f509695231e60cbd607bcb36c88a75a14",
+          "created_at": "2026-09-15T00:00:00Z"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "artifact-legacy-download",
+      "operation": "GET /api/v1/agents/{id}/artifacts/{artifact_id}/download",
+      "scenario": "artifact_legacy",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/artifacts/$artifact_id/download",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-disposition": "attachment; filename=\"artifact-7f8518f7db5e9a55049f49c4ea6d6e8f509695231e60cbd607bcb36c88a75a14.bin\"",
+          "content-type": "application/octet-stream",
+          "x-content-type-options": "nosniff"
+        },
+        "body": "approved\n",
+        "bodyKind": "text"
+      },
+      "captures": {}
+    },
+    {
+      "id": "artifact-owner-publish",
+      "operation": "POST /api/v1/agents/{id}/artifacts",
+      "scenario": "artifact_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_shared_read/artifacts",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "published"
+        },
+        "body": {
+          "name": "new.txt",
+          "media_type": "text/plain",
+          "content_base64": "bmV3Cg=="
+        }
+      },
+      "response": {
+        "status": 201,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "id": "art_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "agent_id": "agt_shared_read",
+          "name": "new.txt",
+          "media_type": "text/plain",
+          "size_bytes": 4,
+          "sha256": "7aa7a5359173d05b63cfd682e3c38487f3cb4f7f1d60659fe59fab1505977d4c",
+          "created_at": "2026-09-15T00:00:00Z"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "created_at": "/created_at",
+        "new_artifact_id": "/id"
+      }
+    },
+    {
+      "id": "artifact-owner-replay",
+      "operation": "POST /api/v1/agents/{id}/artifacts",
+      "scenario": "artifact_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_shared_read/artifacts",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "published"
+        },
+        "body": {
+          "name": "new.txt",
+          "media_type": "text/plain",
+          "content_base64": "bmV3Cg=="
+        }
+      },
+      "response": {
+        "status": 201,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "id": "art_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "agent_id": "agt_shared_read",
+          "name": "new.txt",
+          "media_type": "text/plain",
+          "size_bytes": 4,
+          "sha256": "7aa7a5359173d05b63cfd682e3c38487f3cb4f7f1d60659fe59fab1505977d4c",
+          "created_at": "2026-09-15T00:00:00Z"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "created_at": "/created_at",
+        "new_artifact_id": "/id"
+      }
+    },
+    {
+      "id": "artifact-changed-key",
+      "operation": "POST /api/v1/agents/{id}/artifacts",
+      "scenario": "artifact_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_shared_read/artifacts",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "published"
+        },
+        "body": {
+          "name": "other.txt",
+          "media_type": "text/plain",
+          "content_base64": "bmV3Cg=="
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/idempotency_key_reused",
+          "title": "idempotency_key_reused",
+          "status": 409,
+          "detail": "The idempotency key was used for different artifact content or metadata.",
+          "code": "idempotency_key_reused"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "artifact-member-publish",
+      "operation": "POST /api/v1/agents/{id}/artifacts",
+      "scenario": "artifact_member",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_shared_read/artifacts",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "forbidden"
+        },
+        "body": {
+          "name": "new.txt",
+          "media_type": "text/plain",
+          "content_base64": "bmV3Cg=="
+        }
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource_forbidden",
+          "title": "resource_forbidden",
+          "status": 403,
+          "detail": "Current authority does not permit this operation.",
+          "code": "resource_forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "artifact-missing-key",
+      "operation": "POST /api/v1/agents/{id}/artifacts",
+      "scenario": "artifact_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_shared_read/artifacts",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "name": "new.txt",
+          "media_type": "text/plain",
+          "content_base64": "bmV3Cg=="
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/missing-idempotency-key",
+          "title": "missing idempotency key",
+          "status": 400,
+          "detail": "This operation requires an Idempotency-Key header.",
+          "code": "missing_idempotency_key"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "artifact-invalid-name",
+      "operation": "POST /api/v1/agents/{id}/artifacts",
+      "scenario": "artifact_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_shared_read/artifacts",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "invalid"
+        },
+        "body": {
+          "name": "../private",
+          "media_type": "text/plain",
+          "content_base64": "bmV3Cg=="
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid_artifact_request",
+          "title": "invalid_artifact_request",
+          "status": 400,
+          "detail": "Artifact name, media type, content or pagination is invalid.",
+          "code": "invalid_artifact_request"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "artifact-invalid-media_type",
+      "operation": "POST /api/v1/agents/{id}/artifacts",
+      "scenario": "artifact_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_shared_read/artifacts",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "invalid"
+        },
+        "body": {
+          "name": "new.txt",
+          "media_type": "text/html",
+          "content_base64": "bmV3Cg=="
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid_artifact_request",
+          "title": "invalid_artifact_request",
+          "status": 400,
+          "detail": "Artifact name, media type, content or pagination is invalid.",
+          "code": "invalid_artifact_request"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "artifact-invalid-content_base64",
+      "operation": "POST /api/v1/agents/{id}/artifacts",
+      "scenario": "artifact_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_shared_read/artifacts",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "invalid"
+        },
+        "body": {
+          "name": "new.txt",
+          "media_type": "text/plain",
+          "content_base64": "https://internal"
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid_artifact_request",
+          "title": "invalid_artifact_request",
+          "status": 400,
+          "detail": "Artifact name, media type, content or pagination is invalid.",
+          "code": "invalid_artifact_request"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "artifact-zero-limit",
+      "operation": "GET /api/v1/agents/{id}/artifacts",
+      "scenario": "artifact_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/artifacts?limit=0",
+        "headers": {}
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid_artifact_request",
+          "title": "invalid_artifact_request",
+          "status": 400,
+          "detail": "Artifact name, media type, content or pagination is invalid.",
+          "code": "invalid_artifact_request"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "artifact-large-limit",
+      "operation": "GET /api/v1/agents/{id}/artifacts",
+      "scenario": "artifact_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/artifacts?limit=51",
+        "headers": {}
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid_artifact_request",
+          "title": "invalid_artifact_request",
+          "status": 400,
+          "detail": "Artifact name, media type, content or pagination is invalid.",
+          "code": "invalid_artifact_request"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "artifact-invalid-cursor",
+      "operation": "GET /api/v1/agents/{id}/artifacts",
+      "scenario": "artifact_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/artifacts?cursor=invalid",
+        "headers": {}
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid_artifact_request",
+          "title": "invalid_artifact_request",
+          "status": 400,
+          "detail": "Artifact name, media type, content or pagination is invalid.",
+          "code": "invalid_artifact_request"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "artifact-missing-list",
+      "operation": "GET /api/v1/agents/{id}/artifacts",
+      "scenario": "artifact_missing",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/artifacts",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource_not_found",
+          "title": "resource_not_found",
+          "status": 404,
+          "detail": "Resource not found.",
+          "code": "resource_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "artifact-missing-read",
+      "operation": "GET /api/v1/agents/{id}/artifacts/{artifact_id}",
+      "scenario": "artifact_missing",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/artifacts/art_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource_not_found",
+          "title": "resource_not_found",
+          "status": 404,
+          "detail": "Resource not found.",
+          "code": "resource_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "artifact-missing-download",
+      "operation": "GET /api/v1/agents/{id}/artifacts/{artifact_id}/download",
+      "scenario": "artifact_missing",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/artifacts/art_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/download",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource_not_found",
+          "title": "resource_not_found",
+          "status": 404,
+          "detail": "Resource not found.",
+          "code": "resource_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "artifact-outage-list",
+      "operation": "GET /api/v1/agents/{id}/artifacts",
+      "scenario": "artifact_outage",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/artifacts",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/organization_authority_unavailable",
+          "title": "organization_authority_unavailable",
+          "status": 503,
+          "detail": "Current organization authorization is unavailable. Retry after the identity provider recovers.",
+          "code": "organization_authority_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "artifact-outage-read",
+      "operation": "GET /api/v1/agents/{id}/artifacts/{artifact_id}",
+      "scenario": "artifact_outage",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/artifacts/art_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/organization_authority_unavailable",
+          "title": "organization_authority_unavailable",
+          "status": 503,
+          "detail": "Current organization authorization is unavailable. Retry after the identity provider recovers.",
+          "code": "organization_authority_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "artifact-outage-download",
+      "operation": "GET /api/v1/agents/{id}/artifacts/{artifact_id}/download",
+      "scenario": "artifact_outage",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/artifacts/art_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/download",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/organization_authority_unavailable",
+          "title": "organization_authority_unavailable",
+          "status": 503,
+          "detail": "Current organization authorization is unavailable. Retry after the identity provider recovers.",
+          "code": "organization_authority_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "artifact-revoked-list",
+      "operation": "GET /api/v1/agents/{id}/artifacts",
+      "scenario": "artifact_revoked",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/artifacts",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource_not_found",
+          "title": "resource_not_found",
+          "status": 404,
+          "detail": "Resource not found.",
+          "code": "resource_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "artifact-revoked-read",
+      "operation": "GET /api/v1/agents/{id}/artifacts/{artifact_id}",
+      "scenario": "artifact_revoked",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/artifacts/art_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource_not_found",
+          "title": "resource_not_found",
+          "status": 404,
+          "detail": "Resource not found.",
+          "code": "resource_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "artifact-revoked-download",
+      "operation": "GET /api/v1/agents/{id}/artifacts/{artifact_id}/download",
+      "scenario": "artifact_revoked",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/artifacts/art_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/download",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource_not_found",
+          "title": "resource_not_found",
+          "status": 404,
+          "detail": "Resource not found.",
+          "code": "resource_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "artifact-anonymous-list",
+      "operation": "GET /api/v1/agents/{id}/artifacts",
+      "scenario": "artifact_anonymous",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/artifacts",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "artifact-anonymous-read",
+      "operation": "GET /api/v1/agents/{id}/artifacts/{artifact_id}",
+      "scenario": "artifact_anonymous",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/artifacts/art_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "artifact-anonymous-download",
+      "operation": "GET /api/v1/agents/{id}/artifacts/{artifact_id}/download",
+      "scenario": "artifact_anonymous",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/artifacts/art_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/download",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "artifact-no_credential-list",
+      "operation": "GET /api/v1/agents/{id}/artifacts",
+      "scenario": "artifact_no_credential",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/artifacts",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/organization_authority_unavailable",
+          "title": "organization_authority_unavailable",
+          "status": 503,
+          "detail": "Current organization authorization is unavailable. Retry after the identity provider recovers.",
+          "code": "organization_authority_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "artifact-no_credential-read",
+      "operation": "GET /api/v1/agents/{id}/artifacts/{artifact_id}",
+      "scenario": "artifact_no_credential",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/artifacts/art_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/organization_authority_unavailable",
+          "title": "organization_authority_unavailable",
+          "status": 503,
+          "detail": "Current organization authorization is unavailable. Retry after the identity provider recovers.",
+          "code": "organization_authority_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "artifact-no_credential-download",
+      "operation": "GET /api/v1/agents/{id}/artifacts/{artifact_id}/download",
+      "scenario": "artifact_no_credential",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/artifacts/art_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/download",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/organization_authority_unavailable",
+          "title": "organization_authority_unavailable",
+          "status": 503,
+          "detail": "Current organization authorization is unavailable. Retry after the identity provider recovers.",
+          "code": "organization_authority_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "artifact-invalid_context-list",
+      "operation": "GET /api/v1/agents/{id}/artifacts",
+      "scenario": "artifact_invalid_context",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/artifacts",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "artifact-invalid_context-read",
+      "operation": "GET /api/v1/agents/{id}/artifacts/{artifact_id}",
+      "scenario": "artifact_invalid_context",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/artifacts/art_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "artifact-invalid_context-download",
+      "operation": "GET /api/v1/agents/{id}/artifacts/{artifact_id}/download",
+      "scenario": "artifact_invalid_context",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/artifacts/art_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/download",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "artifact-missing-object",
+      "operation": "GET /api/v1/agents/{id}/artifacts/{artifact_id}",
+      "scenario": "artifact_member",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/artifacts/art_ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource_not_found",
+          "title": "resource_not_found",
+          "status": 404,
+          "detail": "Resource not found.",
+          "code": "resource_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "artifact-anonymous-publication",
+      "operation": "POST /api/v1/agents/{id}/artifacts",
+      "scenario": "artifact_anonymous",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_shared_read/artifacts",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "publication-anonymous"
+        },
+        "body": {
+          "name": "new.txt",
+          "media_type": "text/plain",
+          "content_base64": "bmV3Cg=="
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "artifact-missing-publication",
+      "operation": "POST /api/v1/agents/{id}/artifacts",
+      "scenario": "artifact_missing",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_shared_read/artifacts",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "publication-missing"
+        },
+        "body": {
+          "name": "new.txt",
+          "media_type": "text/plain",
+          "content_base64": "bmV3Cg=="
+        }
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource_not_found",
+          "title": "resource_not_found",
+          "status": 404,
+          "detail": "Resource not found.",
+          "code": "resource_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "artifact-outage-publication",
+      "operation": "POST /api/v1/agents/{id}/artifacts",
+      "scenario": "artifact_outage",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_shared_read/artifacts",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "publication-outage"
+        },
+        "body": {
+          "name": "new.txt",
+          "media_type": "text/plain",
+          "content_base64": "bmV3Cg=="
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/organization_authority_unavailable",
+          "title": "organization_authority_unavailable",
+          "status": 503,
+          "detail": "Current organization authorization is unavailable. Retry after the identity provider recovers.",
+          "code": "organization_authority_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "artifact-revoked-publication",
+      "operation": "POST /api/v1/agents/{id}/artifacts",
+      "scenario": "artifact_revoked",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_shared_read/artifacts",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "publication-revoked"
+        },
+        "body": {
+          "name": "new.txt",
+          "media_type": "text/plain",
+          "content_base64": "bmV3Cg=="
+        }
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource_not_found",
+          "title": "resource_not_found",
+          "status": 404,
+          "detail": "Resource not found.",
+          "code": "resource_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "artifact-no_credential-publication",
+      "operation": "POST /api/v1/agents/{id}/artifacts",
+      "scenario": "artifact_no_credential",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_shared_read/artifacts",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "publication-no_credential"
+        },
+        "body": {
+          "name": "new.txt",
+          "media_type": "text/plain",
+          "content_base64": "bmV3Cg=="
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/organization_authority_unavailable",
+          "title": "organization_authority_unavailable",
+          "status": 503,
+          "detail": "Current organization authorization is unavailable. Retry after the identity provider recovers.",
+          "code": "organization_authority_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "artifact-invalid_context-publication",
+      "operation": "POST /api/v1/agents/{id}/artifacts",
+      "scenario": "artifact_invalid_context",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_shared_read/artifacts",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "publication-invalid_context"
+        },
+        "body": {
+          "name": "new.txt",
+          "media_type": "text/plain",
+          "content_base64": "bmV3Cg=="
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "artifact-capacity-publication",
+      "operation": "POST /api/v1/agents/{id}/artifacts",
+      "scenario": "artifact_capacity",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_shared_read/artifacts",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "publication-capacity"
+        },
+        "body": {
+          "name": "new.txt",
+          "media_type": "text/plain",
+          "content_base64": "bmV3Cg=="
+        }
+      },
+      "response": {
+        "status": 429,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/artifact_capacity",
+          "title": "artifact_capacity",
+          "status": 429,
+          "detail": "This Agent has reached its published artifact limit.",
+          "code": "artifact_capacity"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    }
+  ]
+}

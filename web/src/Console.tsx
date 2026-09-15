@@ -29,6 +29,9 @@ import { useAgentAccess } from './resources/agentAccess';
 import { SharedAgent } from './resources/SharedAgent';
 import { AgentInventory } from './resources/AgentInventory';
 import { SharingButton } from './resources/SharingButton';
+import { ArtifactButton } from './resources/ArtifactButton';
+import { ArtifactPublicationScope } from './resources/artifactRecovery';
+import { ChannelUsage } from './resources/ChannelUsage';
 import { SandboxAccessPage } from './resources/SandboxAccessPage';
 import { WorkspaceContents } from './resources/WorkspaceContents';
 import { scopeValue } from './resources/scope';
@@ -70,6 +73,7 @@ export function Console({
     route.kind === 'inventory' ? scopeValue(route.organization, route.shared) : '',
   );
   const [detailsOpen, setDetailsOpen] = useState(false);
+  const [artifactPublicationScope] = useState(() => new ArtifactPublicationScope());
   const [revision, setRevision] = useState(0);
   const client = useCmaClient();
   const sandboxCommandScope = useMemo(() => ({ client, viewerId: user.id }), [client, user.id]);
@@ -149,6 +153,7 @@ export function Console({
       )
     ) : route.kind === 'agent' && shared !== undefined && client.resourceViews !== undefined ? (
       <SharedAgent
+        publicationScope={artifactPublicationScope}
         key={shared.id}
         client={client.resourceViews}
         web={client}
@@ -340,6 +345,25 @@ export function Console({
             onNavigate={onNavigate}
             onStop={agent.stop}
             onDelete={agent.delete}
+            channelUsage={
+              detailsOpen && ready !== undefined && client.resourceViews !== undefined ? (
+                <ChannelUsage
+                  key={ready.detail.id}
+                  client={client.resourceViews}
+                  id={ready.detail.id}
+                />
+              ) : undefined
+            }
+            artifacts={
+              detailsOpen && ready !== undefined && client.resourceViews !== undefined ? (
+                <ArtifactButton
+                  publicationScope={artifactPublicationScope}
+                  key={ready.detail.id}
+                  client={client.resourceViews}
+                  id={ready.detail.id}
+                />
+              ) : undefined
+            }
             sharing={
               detailsOpen && ready !== undefined && client.resourceViews !== undefined ? (
                 <SharingButton
@@ -386,6 +410,7 @@ export function Console({
               personal={
                 navigation.status === 'ready' ? (
                   <Tree
+                    resourceClient={user.visitor ? undefined : client.resourceViews}
                     key={user.id}
                     viewerId={user.id}
                     items={navigation.items.map((item) => ({

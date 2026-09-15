@@ -208,3 +208,87 @@ async function readCreationInventory(client: Cma, organization: string) {
   } while (cursor !== undefined);
 }
 ```
+
+## Approved artifacts
+
+`agents.listArtifacts(agentId, { limit, cursor })`, `readArtifact(agentId, artifactId)`
+and `downloadArtifact(agentId, artifactId)` read only content explicitly published
+to that Agent. Downloads return opaque `Uint8Array` bytes and honor cancellation
+through body consumption. Each request rechecks current access; narrow Agent
+shares can read these approved artifacts without gaining parent or repository
+file access. Metadata has the stable artifact/Agent IDs, safe name, media type,
+byte count, SHA-256 and publication time.
+
+An owner or current sharing manager can publish selected content once:
+
+```ts
+import { createClient } from '@chronoai/cma-sdk';
+
+export async function publishReview(agentId: string, idempotencyKey: string) {
+  const cma = createClient();
+  return cma.agents.publishArtifact(
+    agentId,
+    {
+      name: 'Review.txt',
+      media_type: 'text/plain',
+      content_base64: 'cmV2aWV3',
+    },
+    { idempotencyKey },
+  );
+}
+```
+
+Publication requires explicit content approval. Keep the identical key and body
+when its result is uncertain; there is no automatic resubmission. Files contain
+1 byte through 1 MiB, use canonical standard base64, and have a display name of
+at most 160 UTF-8 bytes without controls or path separators. Supported media
+are plain text, Markdown, JSON, PDF, opaque binary, PNG, JPEG and WebP. Each Agent
+can retain 256 immutable artifacts; pages contain at most 50. Publication does
+not send an Agent input or read a runtime filesystem. Current and future readers
+of the Agent can retrieve the published content. Revoked access prevents later
+reads; previously downloaded copies cannot be recalled.
+
+## Channel usage
+
+`agents.channelUsage(agentId)` reads explicit active and historical channel facts
+alongside the immutable creation origin. Its `channel_usage` summary contains
+`active`, `has_history`, and nullable `first_used_at`/`last_used_at`. Attaching a
+binding records history; the use timestamps remain null until a channel command
+has been accepted. Detachment preserves the recorded history and use times.
+Manual and Trigger Agents retain their original creation category.
+
+Only current resource managers receive the optional `bindings` array, containing
+binding/bridge/partition references, generation lineage, attachment and use times.
+Shared viewers receive the safe summary without those private references.
+`agents.channelUsageHistory(agentId, { limit, cursor })` requires current resource
+management authority and returns an `agent_id`, ordered `items`, and optional
+`next` cursor. The default page size is 50; accepted limits are 1 through 200.
+Each item preserves the original actor, timestamp, reason, changed binding IDs,
+nullable detachment time, and bounded before/after binding facts. SDK reads check
+the requested Agent identity, consecutive revisions, and continuation integrity.
+
+```ts
+import { createClient } from '@chronoai/cma-sdk';
+
+export async function inspectChannelUse(agentId: string) {
+  const cma = createClient();
+  const usage = await cma.agents.channelUsage(agentId);
+  if (usage.bindings !== undefined) {
+    const history = await cma.agents.channelUsageHistory(agentId, { limit: 25 });
+    return { usage, history };
+  }
+  return { usage };
+}
+```
+
+These methods are observations. Channel binding facts do not grant access and
+cannot be written or cleared through these routes. Each read requires current
+resource authority, including after membership or sharing changes.
+
+`agents.provenanceInventory({ channelActive, channelHistory, creationOrigin,
+shared, organization })` combines those safe facts with existing scoped creation
+inventory. For example, `channelActive: false, channelHistory: true` selects
+historically bound Agents whose bindings have all detached. The `channel_usage`
+row field is optional only for compatibility with older servers. A server scans
+at most 200 authorized candidates per request; keep following `next` even when a
+filtered page is empty. Channel filters never relabel a Manual or Trigger Agent.
