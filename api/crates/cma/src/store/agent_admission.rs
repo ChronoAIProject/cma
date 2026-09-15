@@ -17,13 +17,13 @@ use super::sandbox_events::{append_in_transaction, TransactionEventError};
 use super::sandbox_mongo::{
     commit_transaction, is_duplicate_key, is_transient, signed, start_transaction,
     wait_for_reconciliation, CommitOutcome, MongoSandboxStore, DOCUMENT_SCHEMA_VERSION,
-    TRANSACTION_ATTEMPTS,
 };
 use super::sandboxes::{read_sandbox, sandbox_replacement_fields};
 use super::workspaces::{read_workspace, workspace_replacement_fields};
 use super::worktrees::worktree_document;
 
 mod attribution;
+mod retry;
 #[path = "agent_admission_reuse.rs"]
 mod reuse;
 
@@ -72,10 +72,8 @@ impl MongoSandboxStore {
         initiation: Option<layer2_core::trigger_domain::LaunchInitiation>,
     ) -> Result<AgentAdmissionResult, SandboxStoreError> {
         let mut last_transient = None;
-        for attempt in 0..TRANSACTION_ATTEMPTS {
-            if attempt > 0 {
-                tokio::task::yield_now().await;
-            }
+        let mut retries = retry::AdmissionRetries::new();
+        while retries.next().await {
             let mut session = match self.client.start_session().await {
                 Ok(session) => session,
                 Err(error) if is_transient(&error) => {
