@@ -56,8 +56,8 @@ export function ChildCleanupStatus({ status }: { readonly status: BridgeChildCle
         </p>
       )}
       <p>
-        The Workspace, sibling Agents and retained history are preserved. Its Workspace reservation
-        remains in place.
+        Child cleanup preserves the Workspace, sibling Agents and retained history. Removing an
+        allocation-owned Workspace requires separate consent.
       </p>
     </div>
   );
