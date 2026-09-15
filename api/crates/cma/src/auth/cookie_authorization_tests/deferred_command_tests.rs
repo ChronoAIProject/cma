@@ -247,7 +247,7 @@ async fn restricted_owner_projection_cannot_admit_deferred_personal_authority() 
 }
 
 #[tokio::test]
-async fn command_admission_binds_exact_request_context_issuer_credential_actor_and_owner() {
+async fn command_admission_binds_exact_request_context_and_keeps_owner_independent() {
     use layer2_core::resource_access::CallerContext;
     let fixture = Fixture::new().await;
     fixture.seed().await;
@@ -280,9 +280,26 @@ async fn command_admission_binds_exact_request_context_issuer_credential_actor_a
             .await
             .unwrap()
     );
-    for change in 0..8 {
+    for resource_owner in [
+        AgentOwner::Person {
+            subject: SubjectId::new("foreign"),
+        },
+        AgentOwner::Organization {
+            subject: SubjectId::new("org"),
+        },
+    ] {
+        assert_eq!(
+            fixture
+                .auth
+                .command_admission_authority(&context, credential, &resource_owner)
+                .await
+                .unwrap(),
+            reference
+        );
+    }
+    for change in 0..6 {
         let mut context = context.clone();
-        let mut owner = owner.clone();
+        let owner = owner.clone();
         let mut selected = credential;
         match change {
             0 => context.credential.issuer = "https://foreign.test".into(),
@@ -297,16 +314,6 @@ async fn command_admission_binds_exact_request_context_issuer_credential_actor_a
                 context.actor = AgentActor::Api {
                     subject: caller().subject,
                     delegation_id: Some("delegation".into()),
-                }
-            }
-            5 => {
-                owner = AgentOwner::Organization {
-                    subject: caller().subject,
-                }
-            }
-            6 => {
-                owner = AgentOwner::Person {
-                    subject: SubjectId::new("foreign"),
                 }
             }
             _ => selected = "another-credential",

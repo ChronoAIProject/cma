@@ -178,6 +178,23 @@ async fn production_shared_preparation_revives_once_without_sending_or_rewriting
         .unwrap()
         .unwrap();
     assert_eq!(first.status, SandboxStatus::Reviving);
+    let audits = fixture
+        .store
+        .command_authorization_audits(
+            &fixture.command.receipt.envelope.command_id,
+            &PageRequest::new(20, None).unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(audits.items.len(), 1);
+    assert_eq!(
+        audits.items[0].resources[0].capability,
+        ResourceCapability::Interact
+    );
+    assert_eq!(
+        audits.items[0].resources[1].capability,
+        ResourceCapability::ManageSandbox
+    );
     worker
         .run_one(&fixture.command.receipt.envelope.command_id)
         .await
@@ -308,6 +325,15 @@ async fn revival_expiry_during_transaction_io_rolls_back_command_marker_parent_a
     let result = fixture.store.commit(mutation).await;
     disable(&admin).await;
     assert_eq!(result, Err(SandboxStoreError::Conflict));
+    assert_eq!(
+        fixture
+            .store
+            .command_authorization_audits
+            .count_documents(doc! {})
+            .await
+            .unwrap(),
+        0
+    );
     assert_eq!(fixture.documents().await, before);
     client.database(&name).drop().await.unwrap();
 }
@@ -350,6 +376,15 @@ async fn concurrent_command_refusal_prevents_revival_from_a_transaction_snapshot
     refused.unwrap();
     assert_eq!(result, Err(SandboxStoreError::Conflict));
     assert_eq!(
+        fixture
+            .store
+            .command_authorization_audits
+            .count_documents(doc! {})
+            .await
+            .unwrap(),
+        0
+    );
+    assert_eq!(
         fixture.store.get_sandbox(&fixture.parent.id).await.unwrap(),
         Some(fixture.parent.clone())
     );
@@ -391,6 +426,27 @@ async fn ambiguous_revival_commit_recovers_after_authority_expiry_without_repeat
     disable(&admin).await;
     result.unwrap();
     assert!(proof.require_current().is_err());
+    let audits = fixture
+        .store
+        .command_authorization_audits(
+            &fixture.command.receipt.envelope.command_id,
+            &PageRequest::new(20, None).unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(audits.items.len(), 1);
+    assert_eq!(audits.items[0].resources.len(), 2);
+    let reopened = MongoSandboxStore::open(&client, &name).await.unwrap();
+    assert_eq!(
+        reopened
+            .command_authorization_audits(
+                &fixture.command.receipt.envelope.command_id,
+                &PageRequest::new(20, None).unwrap()
+            )
+            .await
+            .unwrap(),
+        audits
+    );
     let before = fixture.documents().await;
     let proof = fixture.proof(MAX_MEMBERSHIP_AGE).await;
     let SandboxLifecycleCommandResult::Accepted(outcome) =

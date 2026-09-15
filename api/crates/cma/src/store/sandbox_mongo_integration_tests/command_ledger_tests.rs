@@ -1,5 +1,6 @@
 use futures_util::TryStreamExt;
 mod admission_tests;
+mod audit_tests;
 mod discovery_tests;
 mod execution_tests;
 mod work_tests;
@@ -16,6 +17,7 @@ fn request(agent: &Agent, parent: &Sandbox, key: &str) -> CommandReservation {
     let command = AgentCommand::message("Inspect this.");
     CommandReservation {
         authority_deadline: None,
+        admission_audit: None,
         envelope: AgentCommandEnvelope {
             schema_version: AGENT_IO_SCHEMA_VERSION,
             command_id: AgentCommandId::generate(),

@@ -7,6 +7,7 @@
 mod admission;
 mod admission_service;
 mod authorization;
+mod authorization_audit;
 mod binding;
 mod capabilities;
 mod claimed_service;
@@ -37,6 +38,9 @@ pub use admission_service::{
 pub use authorization::{
     AgentCommandAdmissionAuthority, AgentCommandAuthorizer, CommandAuthorizationError,
     DeferredCommandError, PersonalCommandAdmissionAuthority, ResourceCommandAuthorizationError,
+};
+pub use authorization_audit::{
+    AgentCommandAuditStore, CommandAuthorizationAudit, CommandAuthorizationEffect,
 };
 pub use binding::bind_command_dispatch;
 pub use capabilities::AgentInterfaceCapabilities;

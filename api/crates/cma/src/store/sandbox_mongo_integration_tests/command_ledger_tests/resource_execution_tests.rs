@@ -145,6 +145,39 @@ async fn resource_execution_shared_admin_preserves_owner_receipt_and_conversatio
         .await
         .is_err());
     assert_eq!(sends.load(Ordering::SeqCst), 1);
+    let audits = store
+        .command_authorization_audits(
+            &command.receipt.envelope.command_id,
+            &PageRequest::new(20, None).unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(audits.items.len(), 1);
+    let audit = &audits.items[0];
+    assert_eq!(audit.actor, context().actor);
+    assert_eq!(audit.owner, command.receipt.envelope.owner);
+    assert!(
+        matches!(&audit.effect, CommandAuthorizationEffect::Dispatch { dispatch } if Some(dispatch) == retained.work.dispatch.as_ref())
+    );
+    assert!(matches!(
+        &audit.resources[0].observations[0].basis,
+        ResourceAuthorizationBasis::Organization {
+            role: OrganizationRole::Admin,
+            share: Some(_),
+            ..
+        }
+    ));
+    let reopened = MongoSandboxStore::open(&client, &name).await.unwrap();
+    assert_eq!(
+        reopened
+            .command_authorization_audits(
+                &command.receipt.envelope.command_id,
+                &PageRequest::new(20, None).unwrap()
+            )
+            .await
+            .unwrap(),
+        audits
+    );
     client.database(&name).drop().await.unwrap();
 }
 
@@ -210,6 +243,14 @@ async fn resource_execution_transaction_fences_policy_ancestry_and_exact_command
         );
         assert_eq!(store.get_agent(&agent.id).await.unwrap(), Some(agent));
         assert_eq!(sends.load(Ordering::SeqCst), 0);
+        assert_eq!(
+            store
+                .command_authorization_audits
+                .count_documents(doc! {})
+                .await
+                .unwrap(),
+            0
+        );
         client.database(&name).drop().await.unwrap();
     }
 }
@@ -236,6 +277,14 @@ async fn resource_execution_expired_proof_cannot_bind_a_claim() {
     );
     assert_eq!(store.get_agent(&agent.id).await.unwrap(), Some(agent));
     assert_eq!(sends.load(Ordering::SeqCst), 0);
+    assert_eq!(
+        store
+            .command_authorization_audits
+            .count_documents(doc! {})
+            .await
+            .unwrap(),
+        0
+    );
     client.database(&name).drop().await.unwrap();
 }
 
@@ -295,5 +344,13 @@ async fn resource_execution_expiry_before_commit_rolls_back_parent_command_and_l
     );
     assert_eq!(store.agent_log(&agent.id, 0, 50).await.unwrap(), before_log);
     assert_eq!(sends.load(Ordering::SeqCst), 0);
+    assert_eq!(
+        store
+            .command_authorization_audits
+            .count_documents(doc! {})
+            .await
+            .unwrap(),
+        0
+    );
     client.database(&name).drop().await.unwrap();
 }

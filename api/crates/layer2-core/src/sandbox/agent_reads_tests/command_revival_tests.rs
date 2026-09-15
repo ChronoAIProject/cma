@@ -117,6 +117,29 @@ async fn shared_revival_preserves_command_and_conversation_and_uses_owner_connec
         SandboxLifecycleCommandDisposition::AlreadyScheduled
     );
     assert_eq!(replay.sandbox, first.sandbox);
+    let audits = store
+        .command_authorization_audits(
+            &command.receipt.envelope.command_id,
+            &crate::sandbox::store::PageRequest::new(20, None).unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(audits.items.len(), 1);
+    assert_eq!(
+        audits.items[0].effect,
+        CommandAuthorizationEffect::Revival {
+            sandbox_revision: first.sandbox.revision
+        }
+    );
+    assert_eq!(audits.items[0].resources.len(), 2);
+    assert_eq!(
+        audits.items[0].resources[0].capability,
+        ResourceCapability::Interact
+    );
+    assert_eq!(
+        audits.items[0].resources[1].capability,
+        ResourceCapability::ManageSandbox
+    );
     assert_eq!(
         store
             .get_command(&command.receipt.envelope.command_id)

@@ -169,6 +169,11 @@ impl AgentCommandService {
             parent: SandboxMutationGuard::capture(&authorized.snapshot.lineage.sandbox),
             policy: authorized.snapshot.fence(),
             authority_deadline: authorized.decision.revalidation_deadline(capability),
+            admission_audit: Some(authorized.authorization_audit(
+                &context.actor,
+                &target,
+                capability,
+            )?),
         };
         let expected = (
             request.scope(),
