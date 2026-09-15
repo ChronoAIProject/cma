@@ -1,4 +1,5 @@
 use super::*;
+use layer2_core::sandbox::store::AgentProvenanceInventoryStore;
 use layer2_core::sandbox::AgentListQuery;
 
 async fn add_agent(store: &MongoSandboxStore, id: &str) -> ResourceTarget {
@@ -113,6 +114,23 @@ async fn organization_inventory_filters_before_cursor_paging_and_deduplicates_ov
         .await
         .unwrap();
     assert_eq!(ids(&page), ["agt_share", "z-shared"]); // Authorized lookahead is retained internally.
+    let creation = two
+        .scan_agent_provenance_inventory(
+            &ResourceOwner::Organization {
+                subject: SubjectId::new("org"),
+            },
+            &AgentListQuery::default(),
+            &PageRequest::new(1, None).unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        ids(&creation
+            .into_iter()
+            .map(|row| row.resource)
+            .collect::<Vec<_>>()),
+        ["agt_share", "z-shared"]
+    );
     let last = two
         .organization_agents(
             &SubjectId::new("org"),
@@ -150,6 +168,23 @@ async fn organization_inventory_filters_before_cursor_paging_and_deduplicates_ov
     assert_eq!(
         ids(&all),
         ["a-private", "agt_share", "b-other-org", "z-shared"]
+    );
+    let creation = two
+        .scan_agent_provenance_inventory(
+            &ResourceOwner::Organization {
+                subject: SubjectId::new("org"),
+            },
+            &AgentListQuery::default(),
+            &PageRequest::new(200, None).unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        ids(&creation
+            .into_iter()
+            .map(|row| row.resource)
+            .collect::<Vec<_>>()),
+        ids(&all)
     );
     let empty = two
         .organization_agents(

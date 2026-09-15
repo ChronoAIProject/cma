@@ -59,6 +59,21 @@ pub struct Agents<'a> {
 }
 
 impl Agents<'_> {
+    /// List safe creation facts, including retained archived Agents. A filtered
+    /// page may be empty; keep following `next` until it is absent.
+    pub async fn provenance_inventory(
+        &self,
+        options: &AgentProvenanceInventoryOptions,
+    ) -> Result<ResourcePage<AgentProvenanceInventoryItem>> {
+        let mut query = options.scope.filters.query();
+        if let Some(id) = &options.scope.organization {
+            query.push(("organization", id.clone()));
+        }
+        if let Some(category) = options.creation_origin {
+            query.push(("creation_origin", category.as_str().into()));
+        }
+        self.client.get(&["agents", "provenance"], &query).await
+    }
     /// List owned Agents.
     pub async fn list(&self, options: &AgentListOptions) -> Result<ResourcePage<AgentSummary>> {
         let query = options.query();

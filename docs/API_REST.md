@@ -350,8 +350,30 @@ never rewritten. Missing or inconsistent ancestry refuses capture, and missing
 creation evidence produces `legacy_unknown` without inventing a creator. Mongo
 uses metadata lineage guards while preserving serialized resource records,
 revisions, conversations, runtime attachments and history. Channel allocation/
-history, REST inventory filters, org/shared inventory UI and exports remain
+history, org/shared inventory UI and exports remain
 unfinished; the channel category is reserved for that work.
+
+`GET /api/v1/agents/provenance` lists safe creation summaries in stable Agent-ID
+order. Omit `organization` for personal ownership; explicit organization scope
+requires current membership and selects organization-owned or shared Agents.
+Rows contain only `agent_id`, optional `title`, `status`, `created_at`,
+`updated_at`, and `creation_origin`. Private source/creator details and hierarchy
+IDs are omitted even for managers. The inventory includes retained Agents in
+all lifecycle states, including deleted Agents, unless `status` is supplied.
+Additional filters are `sandbox`, `workspace`, and `creation_origin`; parent
+filters require independent visibility of that parent. A narrow Agent grant
+cannot reveal the result of a parent filter.
+
+`limit` defaults to 50 and accepts 1–200; `cursor` resumes after a consumed Agent
+ID. Without a category filter the server reads at most `limit + 1` candidates.
+With `creation_origin` it examines at most 201 candidates per request, so a
+successful page can be partial or empty and still have `next`. **Continue until
+`next` is absent, even when `items` is empty.** This cursor may identify a consumed
+authorized Agent excluded by the category filter. All candidates, filtered rows
+and lookahead are authorized and rechecked before release; policy changes or
+expired authority refuse the whole page. Each request has a 15-second deadline.
+Listing reads conservative legacy evidence without mutating retained records.
+The existing `/agents` response and cursor behavior remain compatible.
 
 The web Agent header and details panel use this immutable category for creation
 labels. A later published Trigger shortcut is displayed separately and cannot
@@ -362,7 +384,8 @@ offers a creation-origin filter over Agents in that tree. It reads at most four
 optional provenance projections concurrently and retains only categories for
 tree rows. Facts refresh once per minute and on foreground, and are discarded
 on changed viewer/client context, disabled views, or read refusal. These tree
-filters do not add REST inventory filters or discover archived resources.
+filters apply to loaded tree rows. The dedicated REST inventory also covers
+retained archived Agents.
 
 `GET /api/v1/agents/{id}/source` returns authorized provisioning origin and shortcuts.
 Personal owners retain the existing source document:
@@ -527,6 +550,7 @@ above applies even when an operation annotates only its principal responses.
 | `GET /api/v1/agents/{id}` | - | - | 200 AccessibleAgentView |
 | `DELETE /api/v1/agents/{id}` | -; key | - | 202 empty |
 | `GET /api/v1/agents/{id}/events` | - | after, limit | 200 AgentEventPageView |
+| `GET /api/v1/agents/provenance` | `organization`, `sandbox`, `workspace`, `status`, `creation_origin`, `cursor`, `limit` | - | 200 AgentProvenanceInventoryPageView |
 | `GET /api/v1/agents/{id}/provenance` | - | - | 200 AgentProvenanceView |
 | `GET /api/v1/agents/{id}/source` | - | - | 200 AccessibleAgentSourceView |
 | `POST /api/v1/agents/{id}/stop` | StopAgentRequest; key | - | 202 empty |

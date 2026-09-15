@@ -30,7 +30,12 @@ import {
   type CreateAgentRequest,
   type StopAgentRequest,
 } from './agents/types.js';
-import { agentProvenance } from './agents/provenance.js';
+import {
+  agentCreationCategory,
+  agentProvenance,
+  agentProvenanceInventoryItem,
+  type AgentCreationCategory,
+} from './agents/provenance.js';
 import { agentEvent } from './agents/events.js';
 import { accessibleAgent, accessibleAgentSource, accessibleAgentSummary } from './agents/shared.js';
 import { requireRefusal } from './unsupported.js';
@@ -46,9 +51,34 @@ export interface AccessibleAgentListOptions extends AgentListOptions {
   readonly organization?: string;
 }
 
+export interface AgentProvenanceInventoryOptions extends AccessibleAgentListOptions {
+  /** Immutable category. Continue with `next` even after an empty filtered page. */
+  readonly creationOrigin?: AgentCreationCategory;
+}
+
 /** Public Agent REST commands and durable read projections. */
 export class Agents {
   constructor(private readonly config: ResolvedConfig) {}
+
+  /** Safe creation inventory, including retained archived Agents. Omit organization for personal scope. */
+  provenanceInventory(options: AgentProvenanceInventoryOptions = {}) {
+    if (options.status !== undefined) input(agentStatus, options.status);
+    if (options.creationOrigin !== undefined) input(agentCreationCategory, options.creationOrigin);
+    return read(
+      this.config,
+      query('/api/v1/agents/provenance', {
+        organization: options.organization,
+        sandbox: options.sandbox,
+        workspace: options.workspace,
+        status: options.status,
+        creation_origin: options.creationOrigin,
+        cursor: options.cursor,
+        limit: options.limit,
+      }),
+      page(agentProvenanceInventoryItem),
+      options,
+    );
+  }
 
   list(options: AgentListOptions = {}) {
     if (options.status !== undefined) input(agentStatus, options.status);

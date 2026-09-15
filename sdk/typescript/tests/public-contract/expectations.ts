@@ -3,6 +3,7 @@ import type { ContractCase } from './context.js';
 import { browserOperations } from './navigation.js';
 
 export const localCodes = new Map([
+  ['creation-inventory-invalid-category', 'invalid_instance_query'],
   ['responses-v2-field-stream', 'stream_required'],
   ['responses-v2-field-previous_response_id', 'conversation_previous_response_conflict'],
   ['responses-v2-field-tools', 'responses_field_unsupported'],
@@ -57,6 +58,7 @@ export const localCodes = new Map([
 ]);
 
 const protectedQueries = new Map([
+  ['creation-inventory-invalid-creator', ['created_by']],
   ['responses-v2-retrieve-query', ['stream']],
   ['sandbox-inventory-invalid-owner', ['owner']],
   ['agui-invalid-replay-query', ['unexpected']],

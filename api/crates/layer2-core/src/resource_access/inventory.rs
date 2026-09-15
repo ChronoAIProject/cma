@@ -191,7 +191,7 @@ impl ResourceAccessService {
         .await
     }
 
-    pub(super) async fn inventory_context(
+    pub(crate) async fn inventory_context(
         &self,
         context: &CallerContext,
         credential: Option<&str>,
@@ -226,7 +226,7 @@ impl ResourceAccessService {
         Ok(current)
     }
 
-    pub(super) fn require_inventory_membership(
+    pub(crate) fn require_inventory_membership(
         &self,
         context: &CallerContext,
         organization: &SubjectId,

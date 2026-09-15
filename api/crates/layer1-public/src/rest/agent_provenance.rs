@@ -97,12 +97,7 @@ impl From<AgentProvenanceReading> for AgentProvenanceView {
         Self {
             agent_id: value.agent_id.to_string(),
             created_at: value.created_at,
-            creation_origin: match value.creation_origin {
-                AgentCreationCategory::Manual => AgentCreationCategoryView::Manual,
-                AgentCreationCategory::Trigger => AgentCreationCategoryView::Trigger,
-                AgentCreationCategory::ChannelBridge => AgentCreationCategoryView::ChannelBridge,
-                AgentCreationCategory::LegacyUnknown => AgentCreationCategoryView::LegacyUnknown,
-            },
+            creation_origin: value.creation_origin.into(),
             details: value.details.map(|details| {
                 let mut result = AgentProvenanceDetailsView {
                     created_by: details.created_by.map(Into::into),
@@ -142,6 +137,17 @@ impl From<AgentProvenanceReading> for AgentProvenanceView {
                 }
                 result
             }),
+        }
+    }
+}
+
+impl From<AgentCreationCategory> for AgentCreationCategoryView {
+    fn from(value: AgentCreationCategory) -> Self {
+        match value {
+            AgentCreationCategory::Manual => Self::Manual,
+            AgentCreationCategory::Trigger => Self::Trigger,
+            AgentCreationCategory::ChannelBridge => Self::ChannelBridge,
+            AgentCreationCategory::LegacyUnknown => Self::LegacyUnknown,
         }
     }
 }

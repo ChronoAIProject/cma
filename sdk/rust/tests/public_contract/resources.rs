@@ -1,7 +1,7 @@
 use super::context::{Context, invalid};
 use cma_sdk::{
     Result,
-    agents::{AccessibleAgentListOptions, AgentListOptions},
+    agents::{AccessibleAgentListOptions, AgentListOptions, AgentProvenanceInventoryOptions},
     instances::{AccessibleSandboxListOptions, SandboxListOptions},
     profiles::{
         AgentProfileContent, MarketplaceListOptions, ProfileContent, Profiles,
@@ -147,6 +147,23 @@ pub async fn dispatch(c: &Context<'_>) -> Result<()> {
                         workspace: c.q("workspace"),
                         page: c.page()?,
                     },
+                })
+                .await,
+        ),
+        "GET /api/v1/agents/provenance" => c.check(
+            client
+                .agents()
+                .provenance_inventory(&AgentProvenanceInventoryOptions {
+                    scope: AccessibleAgentListOptions {
+                        organization: c.q("organization"),
+                        filters: AgentListOptions {
+                            status: c.tag("status")?,
+                            sandbox: c.q("sandbox"),
+                            workspace: c.q("workspace"),
+                            page: c.page()?,
+                        },
+                    },
+                    creation_origin: c.tag("creation_origin")?,
                 })
                 .await,
         ),

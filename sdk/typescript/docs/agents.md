@@ -164,6 +164,37 @@ index and currently report `legacy_unknown` when no supported creation category
 was captured. This read does not write historical records. A separate bounded
 background sweep captures conservatively inferred facts without rewriting
 existing provenance or resource records. Missing creation evidence stays unknown;
-inconsistent ancestry is refused. Active channel bindings, channel-use history,
-inventory filters and UI badges are separate work.
+inconsistent ancestry is refused. Active channel bindings and channel-use history
+remain separate work.
 The existing source method continues to provide its published Trigger shortcuts.
+
+`agents.provenanceInventory(options)` lists safe creation summaries from
+`GET /api/v1/agents/provenance`. Personal ownership is the default; an explicit
+organization requires current membership and includes organization-owned or
+shared Agents. Rows have only Agent ID, optional title, status, creation/update
+times and immutable category. Retained deleted and archived Agents are included
+unless filtered by status. Parent filters require independent parent visibility.
+
+The default limit is 50 (maximum 200). Category filtering scans at most 201
+candidates, so successful pages may be partial or empty while still having
+`next`. **Follow every continuation until `next` is absent**, including after
+an empty `items` array. Every consumed candidate and lookahead needs current
+access. A changed grant, expired membership or storage failure refuses the whole
+page. This method does not change the existing Agent list contract.
+
+```ts
+import type { Cma } from '@chronoai/cma-sdk';
+async function readCreationInventory(client: Cma, organization: string) {
+  let cursor: string | undefined;
+  do {
+    const page = await client.agents.provenanceInventory({
+      organization,
+      creationOrigin: 'manual',
+      limit: 50,
+      cursor,
+    });
+    for (const row of page.items) console.log(row.agent_id, row.creation_origin);
+    cursor = page.next;
+  } while (cursor !== undefined);
+}
+```

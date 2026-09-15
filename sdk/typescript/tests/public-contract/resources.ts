@@ -1,4 +1,5 @@
 import type { Dispatch } from './context.js';
+import type { AgentProvenanceInventoryOptions } from '../../src/agents.js';
 
 export const resourceDispatch: Record<string, Dispatch> = {
   'GET /api/v1/organizations': ({ client }) => client.resourceAccess.organizations(),
@@ -48,6 +49,13 @@ export const resourceDispatch: Record<string, Dispatch> = {
     client.worktrees.listAccessible(param('id'), options),
   'GET /api/v1/worktrees/{id}': ({ client, param }) => client.worktrees.readAccessible(param('id')),
   'GET /api/v1/agents': ({ client, options }) => client.agents.listAccessible(options),
+  'GET /api/v1/agents/provenance': ({ client, options, query }) =>
+    client.agents.provenanceInventory({
+      ...(options as AgentProvenanceInventoryOptions),
+      creationOrigin:
+        (query.get('creation_origin') as AgentProvenanceInventoryOptions['creationOrigin']) ??
+        undefined,
+    }),
   'GET /api/v1/agents/{id}': ({ client, param }) => client.agents.readAccessible(param('id')),
   'GET /api/v1/agents/{id}/provenance': ({ client, param }) =>
     client.agents.provenance(param('id')),

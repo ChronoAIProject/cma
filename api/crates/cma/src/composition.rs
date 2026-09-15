@@ -326,6 +326,12 @@ impl ControlPlaneComposition {
             resource_access.clone(),
         );
         let resource_routes = profiles_router(profiles)
+            .merge(layer1_public::rest::agent_provenance_inventory_router(
+                layer2_core::sandbox::AgentProvenanceInventoryService::new(
+                    stores.sandbox_model.clone(),
+                    resource_access.clone(),
+                ),
+            ))
             .merge(layer1_public::rest::agent_provenance_router(provenance))
             .merge(layer1_public::rest::resource_access_router(resource_access))
             .merge(profile_authoring_router(profile_authoring))
