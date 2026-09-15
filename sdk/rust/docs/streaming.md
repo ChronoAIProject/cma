@@ -165,3 +165,76 @@ uncertain old admission before deciding whether a new intent is needed. Optional
 discovery fields `controls` and `command_status` identify this extension while
 older discovery remains readable. Standard Responses cancellation, cancellation
 before turn dispatch and verified platform-sender controls are separate contracts.
+
+## Rich Agent replay and transport eligibility
+
+`client.agent_events_v2()` exposes authenticated `read_transport_eligibility`,
+bounded `snapshot`, and read-only `events`. The flag selects transport only for
+new tabs; it is not command authority. A missing endpoint, invalid schema, or
+unavailable eligibility result cannot select a new v2 tab. Existing v2 tabs
+retain their original accepted/uncertain input when the flag turns off; never
+replay that input through v1.
+
+Snapshots project safe `agent_events_v2::AgentEventKind` values with complete
+tool status/title, messages, approvals, usage, and original turn timestamps. A
+null kind is a withheld row that still advances history. Opaque `AgentCursor`
+coordinates bind one Agent incarnation; numeric `sequence` orders chronology
+independently of standard Responses sequence numbers. `AgentPageCursor` is a
+distinct snapshot continuation. Every page has at most 200 rows and 4 MiB through
+its original `through_cursor`; apply every page before tailing that head.
+
+```rust,no_run
+use cma_sdk::{Client, Result};
+use cma_sdk::agent_events_v2::{AgentCursor, AgentFrame, TailOptions};
+
+async fn follow_agent(
+    client: &Client,
+    agent_id: &str,
+    saved_cursor: AgentCursor,
+    apply_and_save: impl Fn(AgentFrame) -> Result<()>,
+) -> Result<()> {
+    let mut stream = client.agent_events_v2().events(agent_id, &TailOptions {
+        after_cursor: Some(saved_cursor), ..Default::default()
+    }).await?;
+    while let Some(result) = stream.consume_next(|frame| {
+        let applied = apply_and_save(frame);
+        async { applied }
+    }).await {
+        result?;
+        // Advances only after apply_and_save returned success for a durable frame.
+        let acknowledged = stream.acknowledged_cursor();
+        let _ = acknowledged;
+    }
+    Ok(())
+}
+```
+
+The application callback must handle `AgentFrame::Event` by applying the complete
+durable event and atomically persisting normalized state plus its cursor under
+the account/session and Agent scope before returning success. Handle `Live` and
+`LiveGap` only in ephemeral display state; never store reasoning summaries.
+`Error` reports safe observation failure and then closes the stream. A failed
+consumer closes observation while retaining the previous acknowledged cursor.
+Make durable application safe to repeat after a crash between processing and
+the storage commit. Live frames and gaps never advance a durable cursor;
+reconnection loss has no invented frame count and missed reasoning cannot replay.
+
+For bootstrap, call `snapshot` with `SnapshotOptions` and follow each exact
+`next_page_cursor` while preserving the page limit. Apply every row, including
+null-kind rows. Only after the final page has no continuation should the application
+atomically save normalized state with `through_cursor` and start `events` there.
+If bootstrap cannot commit that state, restart at its previous durable checkpoint.
+
+Reconnect explicitly with the retained cursor. `last_event_id` is the standard
+header alternative; supplied query/header coordinates must agree.
+`follow: Some(false)` reads through a captured head and ends. Dropping a stream
+cancels observation only. No read resubmits input, retargets control, switches
+protocol, or automatically reconnects. A normal close may reflect expired
+authority; reopen with current authorization and application backoff.
+
+Typed `Error::Api` codes distinguish malformed/future cursors, changed
+incarnation, inaccessible resources, unavailable history, and unavailable reads.
+Strict parsing refuses unrecognized/private fields, nonconsecutive chronology,
+invalid source bindings, and inconsistent pages. Changed incarnation requires
+rebuilding history for the new resource; verified response binding is still an
+observation rather than control authority.

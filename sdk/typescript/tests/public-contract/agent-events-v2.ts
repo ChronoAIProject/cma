@@ -1,0 +1,25 @@
+import type { Dispatch } from './context.js';
+
+export const agentEventsV2Dispatch: Record<string, Dispatch> = {
+  'GET /api/v2/ui/transport': ({ client }) => client.agentEventsV2.readTransportEligibility(),
+  'GET /api/v2/agents/{agent_id}/events/snapshot': ({ client, param, query }) =>
+    client.agentEventsV2.snapshot(param('agent_id'), {
+      limit: query.has('limit') ? Number(query.get('limit')) : undefined,
+      pageCursor: query.getAll('page_cursor').length === 1 ? query.get('page_cursor')! : undefined,
+    }),
+  'GET /api/v2/agents/{agent_id}/events': async ({ client, param, query, fixture }) => {
+    const events: unknown[] = [];
+    await client.agentEventsV2.events(param('agent_id'), {
+      afterCursor:
+        query.getAll('after_cursor').length === 1 ? query.get('after_cursor')! : undefined,
+      lastEventId: Object.entries(fixture.request.headers).find(
+        ([name]) => name.toLowerCase() === 'last-event-id',
+      )?.[1],
+      follow: query.has('follow') ? query.get('follow') !== 'false' : undefined,
+      onEvent: (frame) => {
+        events.push(frame.data);
+      },
+    });
+    return events;
+  },
+};

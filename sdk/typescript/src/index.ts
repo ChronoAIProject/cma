@@ -24,6 +24,7 @@ export * from './triggers.js';
 export * from './auth.js';
 export * from './responses.js';
 export * from './responses-v2.js';
+export * from './agent-events-v2/index.js';
 export * from './agui/index.js';
 export * from './launch/index.js';
 export type { CommandOptions, EventOptions, PageOptions, ResourcePage } from './resources.js';

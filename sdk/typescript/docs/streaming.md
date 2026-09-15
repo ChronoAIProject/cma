@@ -195,3 +195,81 @@ The optional discovery `controls` and `command_status` fields describe this CMA
 extension; older discovery documents remain readable. Standard Responses
 cancellation, queued-response cancellation and verified platform-sender controls
 are separate contracts.
+
+## Rich Agent replay and transport eligibility
+
+`client.agentEventsV2` exposes authenticated `readTransportEligibility`, bounded
+`snapshot`, and read-only `events`. Eligibility applies to new tabs. A missing
+endpoint, unavailable response, unknown schema, or invalid document cannot select
+a new v2 tab. Existing v2 tabs retain their transport and exact accepted or
+uncertain input when eligibility becomes false; never replay that input through
+v1. Eligibility and verified response bindings are observations, not authority.
+
+Snapshots contain the safe `V2AgentEventKind` vocabulary, including complete tool
+status/title, messages, approvals, usage, and original turn timestamps. A withheld
+row has `kind: null` and still advances chronology. Live text and reasoning arrive
+only through `cma.agent.live`; they have no SSE ID or durable cursor. Reconnection
+gaps have an unknown frame count. Missed reasoning is unrecoverable and must never
+enter durable storage.
+
+Agent cursors are opaque `ag1` coordinates bound to one Agent incarnation.
+Numeric `sequence` orders Agent history independently of standard Responses
+`sequence_number`. Snapshot continuation uses a separate `ags1` token. Every page
+stays within 200 rows and 4 MiB through its original `through_cursor`. Apply every
+page before using that frozen watermark to start the tail. Parsers reject gaps,
+duplicate rows, changed watermarks/identities, private fields, invalid response
+bindings, and unsafe JavaScript numeric coordinates.
+
+```ts
+import type { Cma, V2AgentEventItem, V2AgentStreamFrame } from '@chronoai/cma-sdk';
+
+async function recoverAgent(
+  client: Cma,
+  agentId: string,
+  applyDurable: (item: V2AgentEventItem) => Promise<void>,
+  showLive: (frame: V2AgentStreamFrame) => Promise<void>,
+  saveStateAndCursor: (cursor: string) => Promise<void>,
+  signal: AbortSignal,
+) {
+  let pageCursor: string | undefined;
+  let through: string;
+  do {
+    const page = await client.agentEventsV2.snapshot(agentId, { limit: 100, pageCursor, signal });
+    for (const item of page.items) await applyDurable(item);
+    through = page.through_cursor;
+    pageCursor = page.next_page_cursor ?? undefined;
+  } while (pageCursor !== undefined);
+  await saveStateAndCursor(through);
+  await client.agentEventsV2.events(agentId, {
+    afterCursor: through,
+    signal,
+    onEvent: async (frame) => {
+      if (frame.type === 'cma.agent.event') await applyDurable(frame.data);
+      else await showLive(frame);
+    },
+    onCursor: saveStateAndCursor,
+  });
+}
+```
+
+`saveStateAndCursor` must atomically persist normalized durable state and its
+coordinate under the account/session and Agent scope. `onCursor` runs only after
+`onEvent` succeeds for a complete durable frame. Callback or storage failure
+closes observation before the next frame; ephemeral frames never invoke
+`onCursor`. Make reducers safe for replay after a crash between application and
+the storage commit. A snapshot bootstrap that cannot commit its final state must
+restart from the preceding durable checkpoint.
+
+Reconnect explicitly with the last saved `afterCursor`. Optional `lastEventId`
+sends the standard `Last-Event-ID` alternative; if both are supplied they must
+match. `follow: false` reads through a captured tail head and ends. No read path
+automatically reconnects, retries input, falls back, retargets, or submits a
+command. A normal close can reflect expired authority; reopen with current
+authorization, the retained cursor, and application backoff. Local abort stops
+observation only.
+
+Typed `ApiError` codes include `invalid_agent_cursor`, `agent_cursor_beyond_head`,
+`agent_incarnation_changed`, `agent_not_found`, `agent_history_unavailable`, and
+`agent_read_unavailable`. A `cma.agent.error` frame reaches the consumer and then
+rejects observation without acknowledging a cursor. Changed incarnation requires
+rebuilding normalized history for the new resource.

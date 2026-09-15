@@ -55,7 +55,24 @@ impl EventStream {
     }
 }
 
-pub(crate) async fn open(client: &ClientInner, mut request: Request<'_>) -> Result<EventStream> {
+pub(crate) async fn open(client: &ClientInner, request: Request<'_>) -> Result<EventStream> {
+    open_internal(client, request, MAX_FRAME_BYTES, false).await
+}
+
+pub(crate) async fn open_bounded(
+    client: &ClientInner,
+    request: Request<'_>,
+    max_frame_bytes: usize,
+) -> Result<EventStream> {
+    open_internal(client, request, max_frame_bytes, true).await
+}
+
+async fn open_internal(
+    client: &ClientInner,
+    mut request: Request<'_>,
+    max_frame_bytes: usize,
+    strict_end: bool,
+) -> Result<EventStream> {
     request.headers.insert(
         header::ACCEPT,
         header::HeaderValue::from_static("text/event-stream"),
@@ -111,7 +128,11 @@ pub(crate) async fn open(client: &ClientInner, mut request: Request<'_>) -> Resu
     let headers = response.headers().clone();
     let envelopes = Arc::new(Mutex::new(envelope::Envelopes::default()));
     let received = envelopes.clone();
-    let mut guard = FrameBound::default();
+    let end_envelopes = envelopes.clone();
+    let mut guard = FrameBound {
+        limit: max_frame_bytes,
+        ..Default::default()
+    };
     let bytes = response.bytes_stream().map(move |chunk| {
         let chunk = chunk.map_err(|_| Error::transport("event stream body was interrupted"))?;
         if chunk.len() > 4 * 1024 * 1024 {
@@ -124,11 +145,25 @@ pub(crate) async fn open(client: &ClientInner, mut request: Request<'_>) -> Resu
             .inspect(&chunk)?;
         Ok::<_, Error>(chunk)
     });
-    let parsed = bytes.eventsource().map(move |event| {
+    let ended = futures_util::stream::once(async move {
+        if strict_end {
+            end_envelopes
+                .lock()
+                .map_err(|_| Error::protocol("event envelope lock failed"))?
+                .finish()?;
+        }
+        Ok(Default::default())
+    });
+    let parsed = bytes.chain(ended).eventsource().map(move |event| {
         let event = event.map_err(|error| match error {
             EventStreamError::Transport(error) => error,
             _ => Error::protocol("event stream contained invalid framing"),
         })?;
+        if strict_end && event.data.len() > max_frame_bytes.saturating_sub(1024) {
+            return Err(Error::protocol(
+                "Agent event data exceeded its byte boundary",
+            ));
+        }
         let data = serde_json::from_str(&event.data)
             .map_err(|_| Error::protocol("event stream data was not valid JSON"))?;
         Ok(ServerEvent {
@@ -150,6 +185,7 @@ pub(crate) async fn open(client: &ClientInner, mut request: Request<'_>) -> Resu
 
 #[derive(Default)]
 struct FrameBound {
+    limit: usize,
     bytes: usize,
     line_content: bool,
     previous_cr: bool,
@@ -159,7 +195,7 @@ impl FrameBound {
     fn inspect(&mut self, chunk: &[u8]) -> Result<()> {
         for &byte in chunk {
             self.bytes += 1;
-            if self.bytes > MAX_FRAME_BYTES {
+            if self.bytes > self.limit {
                 return Err(Error::protocol("event stream frame exceeded its bound"));
             }
             if byte == b'\n' && self.previous_cr {

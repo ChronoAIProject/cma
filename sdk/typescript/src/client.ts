@@ -23,6 +23,7 @@ import { UnsupportedInterfaces } from './unsupported.js';
 import { ProfileAuthoring } from './profile-authoring/index.js';
 import { ResourceAccess } from './resource-access.js';
 import { Bridges } from './bridges.js';
+import { AgentEventsV2 } from './agent-events-v2/index.js';
 
 /** A configured client for the public CMA resource and discovery APIs. */
 export class Cma {
@@ -40,6 +41,7 @@ export class Cma {
   readonly auth: Authentication;
   readonly responses: Responses;
   readonly responsesV2: ResponsesV2;
+  readonly agentEventsV2: AgentEventsV2;
   readonly unsupported: UnsupportedInterfaces;
   readonly agui: AgentConversations;
   readonly launches: Launches;
@@ -67,6 +69,7 @@ export class Cma {
     this.auth = new Authentication(this.#config);
     this.responses = new Responses(this.#config);
     this.responsesV2 = new ResponsesV2(this.#config);
+    this.agentEventsV2 = new AgentEventsV2(this.#config);
     this.unsupported = new UnsupportedInterfaces(this.#config);
     this.agui = new AgentConversations(this.#config);
     this.launches = new Launches(this.#config);

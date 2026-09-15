@@ -65,4 +65,10 @@ impl Envelopes {
             .pop_front()
             .ok_or_else(|| Error::protocol("event envelope tracking disagreed with SSE framing"))
     }
+    pub(super) fn finish(&self) -> Result<()> {
+        if self.data || self.id.is_some() || (!self.line.is_empty() && self.line[0] != b':') {
+            return Err(Error::protocol("Agent event stream ended inside a frame"));
+        }
+        Ok(())
+    }
 }

@@ -28,6 +28,7 @@ returns `Conformance`, containing `service`, `status`, and the currently exposed
 | `launches()` | `create_or_resume`, `list`, `read`, `start`, `cancel`, `requirements`, `events`, `stream`, `create_connection`, `read_connection` |
 | `agui()` | `read_capabilities`, `read_sandbox`, `run`, `events` |
 | `responses_v2()` | `read_capabilities`, `create`, `create_for_agent`, `read`, `read_conversation`, `list_items`, `replay`, `observe_controls`, `submit_control`, `read_command` |
+| `agent_events_v2()` | `read_transport_eligibility`, `snapshot`, `events` with `consume_next` and `acknowledged_cursor` |
 | `responses()` | `create_conversation`, `read_conversation`, `list_items`, `create`, `read`, unsupported `delete`, `cancel` |
 | `admin()` | `list_sandboxes`, `read_sandbox`, `sandbox_events`, `retire_sandbox`, `list_profiles`, `retire_profile`, `read_settings`, `replace_settings`, `patch_settings`, `reset_settings`, `pause_triggers`, `resume_triggers`, `read_runtime_inventory`, `list_activity` |
 | `Client` reads | `read_conformance`, `read_openapi`, `read_defaults`, `read_trigger_preview`, `read_trigger_badge` |
