@@ -13,7 +13,7 @@ use super::sandbox_mongo::{
     DOCUMENT_SCHEMA_VERSION, TRANSACTION_ATTEMPTS,
 };
 
-fn document(record: &AgentCreationProvenance) -> Result<Document, SandboxStoreError> {
+pub(super) fn document(record: &AgentCreationProvenance) -> Result<Document, SandboxStoreError> {
     Ok(doc! {
         "_id": record.agent_id.as_str(), "document_schema_version": DOCUMENT_SCHEMA_VERSION,
         "record": record_bson(record).map_err(SandboxStoreError::Corrupt)?,
@@ -77,40 +77,7 @@ impl AgentProvenanceStore for MongoSandboxStore {
             start_transaction(&mut session)
                 .await
                 .map_err(|_| unavailable())?;
-            let result = async {
-                let resource = read_execution_snapshot(
-                    self,
-                    &ResourceTarget::Agent {
-                        agent_id: id.clone(),
-                    },
-                    &mut session,
-                )
-                .await?;
-                let creation = self
-                    .agent_creation_provenance
-                    .find_one(doc! { "_id": id.as_str() })
-                    .session(&mut session)
-                    .await?
-                    .as_ref()
-                    .map(read)
-                    .transpose()
-                    .map_err(|_| ResourceAccessStoreError::Corrupt)?;
-                let first_log = self
-                    .agent_log
-                    .find_one(doc! { "agent_id": id.as_str(), "seq": 1_i64 })
-                    .session(&mut session)
-                    .await?
-                    .as_ref()
-                    .map(super::agent_log::read_entry)
-                    .transpose()
-                    .map_err(|_| ResourceAccessStoreError::Corrupt)?;
-                Ok::<_, ReadError>(AgentProvenanceSnapshot {
-                    resource,
-                    creation,
-                    first_log,
-                })
-            }
-            .await;
+            let result = read_snapshot(self, id, &mut session).await;
             let _ = session.abort_transaction().await;
             match result {
                 Ok(snapshot) => return Ok(snapshot),
@@ -130,4 +97,42 @@ impl AgentProvenanceStore for MongoSandboxStore {
 
 fn unavailable() -> SandboxStoreError {
     SandboxStoreError::Unavailable("Agent provenance store is unavailable".into())
+}
+
+pub(super) async fn read_snapshot(
+    store: &MongoSandboxStore,
+    id: &AgentId,
+    session: &mut ClientSession,
+) -> Result<AgentProvenanceSnapshot, ReadError> {
+    let resource = read_execution_snapshot(
+        store,
+        &ResourceTarget::Agent {
+            agent_id: id.clone(),
+        },
+        session,
+    )
+    .await?;
+    let creation = store
+        .agent_creation_provenance
+        .find_one(doc! { "_id": id.as_str() })
+        .session(&mut *session)
+        .await?
+        .as_ref()
+        .map(read)
+        .transpose()
+        .map_err(|_| ResourceAccessStoreError::Corrupt)?;
+    let first_log = store
+        .agent_log
+        .find_one(doc! { "agent_id": id.as_str(), "seq": 1_i64 })
+        .session(&mut *session)
+        .await?
+        .as_ref()
+        .map(super::agent_log::read_entry)
+        .transpose()
+        .map_err(|_| ResourceAccessStoreError::Corrupt)?;
+    Ok::<_, ReadError>(AgentProvenanceSnapshot {
+        resource,
+        creation,
+        first_log,
+    })
 }

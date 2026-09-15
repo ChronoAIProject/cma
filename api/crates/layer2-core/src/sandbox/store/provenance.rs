@@ -59,3 +59,26 @@ pub trait AgentProvenanceStore: Send + Sync {
         id: &AgentId,
     ) -> Result<AgentProvenanceSnapshot, SandboxStoreError>;
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProvenanceBackfillOutcome {
+    Recorded,
+    Retained,
+}
+
+/// Internal migration port. It never grants caller access or changes aggregates.
+#[async_trait::async_trait]
+pub trait AgentProvenanceBackfillStore: Send + Sync {
+    /// Stable ID scan, bounded independently of missing/corrupt provenance rows.
+    async fn scan_agent_provenance_backfill(
+        &self,
+        page: &super::PageRequest,
+    ) -> Result<super::Page<AgentId>, SandboxStoreError>;
+
+    /// Capture only facts proved by the current retained creation evidence.
+    /// Existing records are immutable. Missing/corrupt ancestry refuses insertion.
+    async fn backfill_agent_provenance(
+        &self,
+        id: &AgentId,
+    ) -> Result<ProvenanceBackfillOutcome, SandboxStoreError>;
+}

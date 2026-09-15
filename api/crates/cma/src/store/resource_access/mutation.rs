@@ -170,7 +170,7 @@ async fn apply(
     Ok(plan.receipt)
 }
 
-async fn fence_lineage(
+pub(in crate::store) async fn fence_lineage(
     store: &MongoSandboxStore,
     snapshot: &ResourceAccessSnapshot,
     session: &mut ClientSession,
