@@ -1,9 +1,6 @@
 //! Bounded, read-only creation inventory. Every scanned row, including filtered
 //! rows and lookahead, needs current access before its pagination can be exposed.
-use std::{
-    sync::Arc,
-    time::{Duration, SystemTime},
-};
+use std::{sync::Arc, time::Duration};
 
 use super::store::{
     AgentProvenanceInventoryStore, AgentProvenanceSnapshot, Page, PageRequest, SandboxStoreError,
@@ -11,18 +8,23 @@ use super::store::{
 };
 use super::{AgentCreationCategory, AgentListQuery, AgentStatus};
 use crate::resource_access::{
-    AccessDecision, AccessError, AccessPurpose, AuthorizedResource, CallerContext,
-    ResourceAccessError, ResourceAccessService, ResourceAccessStoreError, ResourceCapability,
-    ResourceOwner, ResourceTarget,
+    AccessError, AccessPurpose, AuthorizedResource, CallerContext, ResourceAccessError,
+    ResourceAccessService, ResourceAccessStoreError, ResourceCapability, ResourceTarget,
 };
 use crate::{AgentId, Caller, Capability, SubjectId};
 use futures_util::{stream, StreamExt, TryStreamExt};
+
+mod authority;
+use authority::{authorize_candidates, InventoryAuthority};
 
 const READ_CAPABILITY: ResourceCapability = ResourceCapability::ViewDetails;
 
 #[derive(Debug, Clone, Default)]
 pub struct AgentProvenanceInventoryQuery {
     pub organization: Option<SubjectId>,
+    /// Explicit shares to current organizations, excluding the caller's own resources.
+    /// Mutually exclusive with `organization`.
+    pub shared: bool,
     pub agents: AgentListQuery,
     pub creation_origin: Option<AgentCreationCategory>,
 }
@@ -40,12 +42,6 @@ pub struct AgentProvenanceInventoryRow {
 pub struct AgentProvenanceInventoryService {
     store: Arc<dyn AgentProvenanceInventoryStore>,
     access: Arc<ResourceAccessService>,
-}
-
-struct InventoryAuthority {
-    caller: Caller,
-    scope: ResourceOwner,
-    organization: Option<CallerContext>,
 }
 
 impl AgentProvenanceInventoryService {
@@ -68,20 +64,8 @@ impl AgentProvenanceInventoryService {
         }
         validate(&context.caller, query, page)?;
         tokio::time::timeout(Duration::from_secs(15), async {
-            let authority = match &query.organization {
-                Some(organization) => InventoryAuthority {
-                    caller: context.caller.clone(),
-                    scope: ResourceOwner::Organization {
-                        subject: organization.clone(),
-                    },
-                    organization: Some(
-                        self.access
-                            .inventory_context(context, credential, organization)
-                            .await?,
-                    ),
-                },
-                None => personal(&context.caller),
-            };
+            let authority =
+                InventoryAuthority::load(&self.access, context, credential, query).await?;
             self.read(authority, credential, query, page).await
         })
         .await
@@ -95,12 +79,12 @@ impl AgentProvenanceInventoryService {
         page: &PageRequest,
     ) -> Result<Page<AgentProvenanceInventoryRow>, ResourceAccessError> {
         validate(caller, query, page)?;
-        if query.organization.is_some() {
+        if query.organization.is_some() || query.shared {
             return Err(AccessError::Forbidden.into());
         }
         tokio::time::timeout(
             Duration::from_secs(15),
-            self.read(personal(caller), None, query, page),
+            self.read(InventoryAuthority::personal(caller), None, query, page),
         )
         .await
         .map_err(|_| ResourceAccessStoreError::Unavailable)?
@@ -126,7 +110,7 @@ impl AgentProvenanceInventoryService {
         }
         let mut parent_decisions = Vec::new();
         for target in parents {
-            let decision = match &authority.organization {
+            let decision = match &authority.context {
                 Some(context) => {
                     self.access
                         .authorize(
@@ -157,12 +141,25 @@ impl AgentProvenanceInventoryService {
             page.cursor.clone(),
         )
         .map_err(|_| ResourceAccessStoreError::Invalid)?;
-        let snapshots = self
-            .store
-            .scan_agent_provenance_inventory(&authority.scope, &query.agents, &scan)
-            .await;
+        let snapshots = match &authority.scope {
+            Some(scope) => {
+                self.store
+                    .scan_agent_provenance_inventory(scope, &query.agents, &scan)
+                    .await
+            }
+            None => {
+                self.store
+                    .scan_shared_agent_provenance_inventory(
+                        &authority.caller.subject,
+                        &authority.organization_ids(),
+                        &query.agents,
+                        &scan,
+                    )
+                    .await
+            }
+        };
         self.finish_parents(&parent_decisions).await?;
-        self.require_membership(&authority)?;
+        authority.require_membership(&self.access)?;
         let snapshots = snapshots.map_err(store_error)?;
         if snapshots.len() > usize::from(scan.limit) + 1 {
             return Err(ResourceAccessStoreError::Corrupt.into());
@@ -195,7 +192,7 @@ impl AgentProvenanceInventoryService {
             .try_collect::<Vec<_>>()
             .await?;
         self.finish_parents(&parent_decisions).await?;
-        self.require_membership(&authority)?;
+        authority.require_membership(&self.access)?;
         for held in &authorized {
             held.decision.require(READ_CAPABILITY)?;
         }
@@ -262,28 +259,6 @@ impl AgentProvenanceInventoryService {
         }
         Ok(())
     }
-
-    fn require_membership(
-        &self,
-        authority: &InventoryAuthority,
-    ) -> Result<(), ResourceAccessError> {
-        if let (Some(context), ResourceOwner::Organization { subject }) =
-            (&authority.organization, &authority.scope)
-        {
-            self.access.require_inventory_membership(context, subject)?;
-        }
-        Ok(())
-    }
-}
-
-fn personal(caller: &Caller) -> InventoryAuthority {
-    InventoryAuthority {
-        caller: caller.clone(),
-        scope: ResourceOwner::Person {
-            subject: caller.subject.clone(),
-        },
-        organization: None,
-    }
 }
 
 fn validate(
@@ -291,6 +266,9 @@ fn validate(
     query: &AgentProvenanceInventoryQuery,
     page: &PageRequest,
 ) -> Result<(), ResourceAccessError> {
+    if query.shared && query.organization.is_some() {
+        return Err(ResourceAccessStoreError::Invalid.into());
+    }
     if !caller.authorization.allows(Capability::UseOwnSandboxes) {
         return Err(AccessError::Forbidden.into());
     }
@@ -317,58 +295,6 @@ fn validate(
         return Err(ResourceAccessStoreError::Invalid.into());
     }
     Ok(())
-}
-
-fn authorize_candidates(
-    authority: &InventoryAuthority,
-    query: &AgentListQuery,
-    scan: &PageRequest,
-    snapshots: &[AgentProvenanceSnapshot],
-) -> Result<Vec<AuthorizedResource>, ResourceAccessError> {
-    let mut previous = scan.cursor.as_deref();
-    let mut result = Vec::with_capacity(snapshots.len());
-    for snapshot in snapshots {
-        let agent = snapshot
-            .resource
-            .lineage
-            .agent
-            .as_ref()
-            .ok_or(ResourceAccessStoreError::Corrupt)?;
-        if !query.matches(agent) || previous.is_some_and(|cursor| agent.id.as_str() <= cursor) {
-            return Err(ResourceAccessStoreError::Corrupt.into());
-        }
-        previous = Some(agent.id.as_str());
-        let scope = snapshot.resource.scope(&ResourceTarget::Agent {
-            agent_id: agent.id.clone(),
-        })?;
-        let decision = match &authority.organization {
-            Some(context) => {
-                let ResourceOwner::Organization { subject } = &authority.scope else {
-                    return Err(ResourceAccessStoreError::Corrupt.into());
-                };
-                snapshot.resource.organization_agent(subject)?;
-                AccessDecision::evaluate(
-                    context,
-                    &scope,
-                    &snapshot.resource.shares,
-                    AccessPurpose::Read,
-                    SystemTime::now(),
-                )?
-            }
-            None => {
-                if scope.owner != authority.scope {
-                    return Err(ResourceAccessStoreError::Corrupt.into());
-                }
-                AccessDecision::personal(&authority.caller, &authority.caller.subject)
-            }
-        };
-        decision.require(READ_CAPABILITY)?;
-        result.push(AuthorizedResource {
-            snapshot: snapshot.resource.clone(),
-            decision,
-        });
-    }
-    Ok(result)
 }
 
 fn filtered_page(

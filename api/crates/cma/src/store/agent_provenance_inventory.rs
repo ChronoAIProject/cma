@@ -10,7 +10,7 @@ use mongodb::{bson::doc, ClientSession};
 use super::{
     agent_provenance::read_snapshot,
     agents::read_agent,
-    resource_access::{read_agent_inventory, ReadError},
+    resource_access::{read_agent_inventory, read_shared_agent_inventory, ReadError},
     sandbox_mongo::{
         is_transient, record_bson, start_transaction, MongoSandboxStore, RESOURCE_POLICIES,
         TRANSACTION_ATTEMPTS,
@@ -36,6 +36,57 @@ impl AgentProvenanceInventoryStore for MongoSandboxStore {
                 .await
                 .map_err(|_| unavailable())?;
             let result = scan(self, scope, query, page, &mut session).await;
+            let _ = session.abort_transaction().await;
+            match result {
+                Ok(rows) => return Ok(rows),
+                Err(ReadError::Driver(error)) if is_transient(&error) => continue,
+                Err(ReadError::Driver(_)) => return Err(unavailable()),
+                Err(ReadError::Domain(error)) => {
+                    return Err(SandboxStoreError::Corrupt(error.to_string()))
+                }
+            }
+        }
+        Err(unavailable())
+    }
+    async fn scan_shared_agent_provenance_inventory(
+        &self,
+        recipient: &layer2_core::SubjectId,
+        organizations: &[layer2_core::SubjectId],
+        query: &AgentListQuery,
+        page: &PageRequest,
+    ) -> Result<Vec<AgentProvenanceSnapshot>, SandboxStoreError> {
+        PageRequest::new(page.limit, page.cursor.clone())?;
+        for _ in 0..TRANSACTION_ATTEMPTS {
+            let mut session = self
+                .client
+                .start_session()
+                .await
+                .map_err(|_| unavailable())?;
+            start_transaction(&mut session)
+                .await
+                .map_err(|_| unavailable())?;
+            let result = async {
+                let candidates = read_shared_agent_inventory(
+                    self,
+                    recipient,
+                    organizations,
+                    query,
+                    page,
+                    &mut session,
+                )
+                .await?;
+                let mut rows = Vec::with_capacity(candidates.len());
+                for candidate in candidates {
+                    let id = candidate
+                        .lineage
+                        .agent
+                        .ok_or(ResourceAccessStoreError::Corrupt)?
+                        .id;
+                    rows.push(read_snapshot(self, &id, &mut session).await?);
+                }
+                Ok::<_, ReadError>(rows)
+            }
+            .await;
             let _ = session.abort_transaction().await;
             match result {
                 Ok(rows) => return Ok(rows),

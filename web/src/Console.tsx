@@ -31,6 +31,7 @@ import { AgentInventory } from './resources/AgentInventory';
 import { SharingButton } from './resources/SharingButton';
 import { SandboxAccessPage } from './resources/SandboxAccessPage';
 import { WorkspaceContents } from './resources/WorkspaceContents';
+import { scopeValue } from './resources/scope';
 import { ScopedNavigation } from './resources/ScopedNavigation';
 
 const ProfileViews = lazy(() =>
@@ -66,7 +67,7 @@ export function Console({
 }: ConsoleProps) {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [navigationScope, setNavigationScope] = useState(
-    route.kind === 'inventory' ? (route.organization ?? '') : '',
+    route.kind === 'inventory' ? scopeValue(route.organization, route.shared) : '',
   );
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [revision, setRevision] = useState(0);
@@ -137,8 +138,10 @@ export function Console({
         <AgentInventory
           client={client.resourceViews}
           organization={route.organization}
+          shared={route.shared}
           onNavigate={(next) => {
-            if (next.kind === 'inventory') setNavigationScope(next.organization ?? '');
+            if (next.kind === 'inventory')
+              setNavigationScope(scopeValue(next.organization, next.shared));
             onNavigate(next);
           }}
         />
@@ -372,7 +375,7 @@ export function Console({
           navigation={
             <ScopedNavigation
               client={user.visitor ? undefined : client.resourceViews}
-              organization={navigationScope}
+              scope={navigationScope}
               onScopeChange={setNavigationScope}
               onNavigate={(next) => {
                 onSidebarNavigate();

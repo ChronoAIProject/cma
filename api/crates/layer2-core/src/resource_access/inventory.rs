@@ -10,6 +10,33 @@ use crate::{Authorization, Capability, SubjectId};
 use futures_util::{stream, StreamExt, TryStreamExt};
 
 impl ResourceAccessSnapshot {
+    /// Aggregate discovery requires a covering explicit incoming grant even if
+    /// some independent authority would allow reading the same resource.
+    pub fn shared_agent(
+        &self,
+        recipient: &SubjectId,
+        organizations: &[SubjectId],
+    ) -> Result<&Agent, ResourceAccessStoreError> {
+        let agent = self
+            .lineage
+            .agent
+            .as_ref()
+            .ok_or(ResourceAccessStoreError::Corrupt)?;
+        let scope = self.scope(&ResourceTarget::Agent {
+            agent_id: agent.id.clone(),
+        })?;
+        if matches!(&scope.owner, ResourceOwner::Person { subject } if subject == recipient)
+            || !self.shares.iter().any(|share| {
+                organizations.contains(&share.target_org_id)
+                    && share.revoked_at.is_none()
+                    && share.selector.covers(&scope)
+            })
+        {
+            return Err(ResourceAccessStoreError::Corrupt);
+        }
+        Ok(agent)
+    }
+
     /// Validate an inventory candidate against authoritative ancestry and current
     /// ownership/grants. A raw owner string never establishes organization scope.
     pub fn organization_agent(
