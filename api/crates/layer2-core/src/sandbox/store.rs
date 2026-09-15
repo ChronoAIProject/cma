@@ -28,7 +28,10 @@ pub use reconciliation::{
     SandboxRuntimeLossOutcome, SandboxRuntimeLossRequest,
 };
 mod provenance;
-pub use provenance::{AgentProvenanceSnapshot, AgentProvenanceStore};
+pub use provenance::{
+    AgentProvenanceBackfillStore, AgentProvenanceSnapshot, AgentProvenanceStore,
+    ProvenanceBackfillOutcome,
+};
 mod agent_admission;
 pub use agent_admission::{
     AgentAdmission, AgentAdmissionResult, AgentAdmissionStore, AgentCreation,

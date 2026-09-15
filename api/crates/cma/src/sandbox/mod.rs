@@ -12,6 +12,8 @@ mod home;
 mod live_agent_stopper;
 mod live_agents;
 mod policy;
+mod provenance_backfill;
+pub(crate) use provenance_backfill::AgentProvenanceBackfill;
 mod reconciliation;
 mod runtime_attachment;
 mod runtime_mapping;

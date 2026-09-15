@@ -37,6 +37,7 @@ use crate::{
 pub(crate) struct ControlPlaneComposition {
     pub router: Router,
     pub launch_scheduler: super::trigger::LaunchScheduler,
+    pub provenance_backfill: crate::sandbox::AgentProvenanceBackfill,
     pub command_scheduler: super::commands::CommandScheduler,
     pub sandbox_lifecycle: SandboxLifecycleComposition,
 }
@@ -349,6 +350,8 @@ impl ControlPlaneComposition {
                 auth,
                 crate::auth::attach_subject,
             ));
+        let provenance_backfill =
+            crate::sandbox::AgentProvenanceBackfill::new(stores.sandbox_model.clone());
         let router = Router::new()
             .merge(public)
             .merge(crate::health::router(stores))
@@ -360,6 +363,7 @@ impl ControlPlaneComposition {
 
         Ok(Self {
             router,
+            provenance_backfill,
             launch_scheduler,
             command_scheduler,
             sandbox_lifecycle,

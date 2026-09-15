@@ -341,8 +341,17 @@ requires the matching initial creation log and canonical creation key and never
 invents a creator from the owner. Workspace profile origins are retained with
 unknown creation category when no supported category can be proved. Retries,
 profile changes, sharing and runtime recovery preserve creation facts. This read
-does not persist backfill. Channel allocation/history, inventory filters and UI
-integration remain unfinished; the channel category is reserved for that work.
+does not write historical records. A separate online worker starts 30 seconds
+after startup, scans at most 25 Agent IDs per page and spaces individual captures
+by 250 milliseconds. Each store call has a 15-second deadline. It repeats complete
+sweeps after five minutes, retries refused rows on a later sweep and stops with
+service shutdown. New facts are captured transactionally; existing provenance is
+never rewritten. Missing or inconsistent ancestry refuses capture, and missing
+creation evidence produces `legacy_unknown` without inventing a creator. Mongo
+uses metadata lineage guards while preserving serialized resource records,
+revisions, conversations, runtime attachments and history. Channel allocation/
+history, inventory filters and UI integration remain unfinished; the channel
+category is reserved for that work.
 
 `GET /api/v1/agents/{id}/source` returns current-authority creation provenance.
 Personal owners retain the existing source document:
