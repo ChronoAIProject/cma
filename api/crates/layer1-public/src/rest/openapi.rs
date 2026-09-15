@@ -438,6 +438,7 @@ pub fn document() -> utoipa::openapi::OpenApi {
     let mut document = ApiDoc::openapi();
     document.merge(crate::responses::document());
     document.merge(crate::agui::document());
+    document.merge(crate::agent_v2::document());
     let components = document
         .components
         .get_or_insert_with(openapi::Components::new);

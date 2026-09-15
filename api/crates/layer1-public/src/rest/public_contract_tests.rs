@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 mod agent_cases;
+mod agent_event_cases;
 mod artifact_cases;
 mod authoring_cases;
 mod bridge_cases;
@@ -124,6 +125,9 @@ fn paths() -> Vec<PathBuf> {
 }
 
 async fn scenario(name: &str) -> Scenario {
+    if let Some(scenario) = agent_event_cases::scenario(name).await {
+        return scenario;
+    }
     if let Some(scenario) = response_control_cases::scenario(name).await {
         return scenario;
     }
