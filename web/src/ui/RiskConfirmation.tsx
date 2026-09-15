@@ -35,6 +35,8 @@ interface RiskConfirmationProps {
   readonly onConfirm: () => void;
   /** Something is already in flight; the confirm key waits for it. */
   readonly busy?: boolean;
+  /** Current authority or revisions can prevent confirmation while keeping Cancel available. */
+  readonly confirmDisabled?: boolean;
   /** An unresolved write cannot be dismissed until its same-key result is known. */
   readonly dismissible?: boolean;
   /** A command failure announced without replacing the consequence. */
@@ -52,6 +54,7 @@ export function RiskConfirmation({
   onCancel,
   onConfirm,
   busy = false,
+  confirmDisabled = false,
   dismissible = true,
   failure,
   status,
@@ -84,7 +87,7 @@ export function RiskConfirmation({
           <Button
             variant="primary"
             placement="risk__confirm"
-            disabled={busy || !acknowledged}
+            disabled={busy || confirmDisabled || !acknowledged}
             onClick={() => {
               setAcknowledged(false);
               onConfirm();
