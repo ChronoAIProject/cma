@@ -6,6 +6,7 @@ export type AppRoute =
   | { readonly kind: 'home' }
   | { readonly kind: 'sandbox'; readonly sandboxId: string }
   | { readonly kind: 'agent'; readonly agentId: string }
+  | { readonly kind: 'inventory'; readonly organization?: string }
   | { readonly kind: 'profiles' }
   | { readonly kind: 'profile'; readonly profileKind: ProfileKind; readonly profileId: string }
   | { readonly kind: 'marketplace' }
@@ -56,6 +57,8 @@ export function parseRoute(pathname: string): AppRoute {
 
   if (path.length === 1) {
     switch (path[0]) {
+      case 'agents':
+        return { kind: 'inventory' };
       case 'profiles':
         return { kind: 'profiles' };
       case 'marketplace':
@@ -80,6 +83,8 @@ export function parseRoute(pathname: string): AppRoute {
 
   if (path.length === 3) {
     const [resource = '', qualifier = '', id = ''] = path;
+    if (resource === 'organizations' && id === 'agents')
+      return { kind: 'inventory', organization: qualifier };
     if (resource === 'profiles') {
       const profileKind = PROFILE_KINDS.find((kind) => `${kind}-profiles` === qualifier);
       if (profileKind !== undefined) return { kind: 'profile', profileKind, profileId: id };
@@ -114,6 +119,10 @@ export function routePath(route: AppRoute): string {
       return `/sandboxes/${segment(route.sandboxId)}`;
     case 'agent':
       return `/agents/${segment(route.agentId)}`;
+    case 'inventory':
+      return route.organization === undefined
+        ? '/agents'
+        : `/organizations/${segment(route.organization)}/agents`;
     case 'profiles':
       return '/profiles';
     case 'profile':

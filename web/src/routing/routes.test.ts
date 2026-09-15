@@ -6,6 +6,8 @@ const ROUTES: readonly AppRoute[] = [
   { kind: 'home' },
   { kind: 'sandbox', sandboxId: 'sbx_123' },
   { kind: 'agent', agentId: 'agt_123' },
+  { kind: 'inventory' },
+  { kind: 'inventory', organization: 'org_123' },
   { kind: 'profiles' },
   { kind: 'profile', profileKind: 'agent', profileId: 'agp_123' },
   { kind: 'profile', profileKind: 'workspace', profileId: 'wkp_123' },
@@ -35,7 +37,6 @@ describe('application routes', () => {
 
   it.each([
     'agents/agt_1',
-    '/agents',
     '/agents/',
     '/agents/a/b',
     '/agents/%',
