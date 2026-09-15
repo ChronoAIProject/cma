@@ -199,6 +199,24 @@ impl SandboxAdapter for CodexAdapter {
         self.hosted.remove_workspace(handle, request).await
     }
 
+    async fn workspace_removal_support(
+        &self,
+        handle: &RuntimeHandle,
+    ) -> crate::Result<crate::WorkspaceRemovalSupport> {
+        self.hosted.workspace_removal_support(handle).await
+    }
+
+    async fn reconcile_workspace_removal(
+        &self,
+        handle: &RuntimeHandle,
+        expected_runtime: &crate::RuntimeStatus,
+        request: &WorkspaceRemoveRequest,
+    ) -> crate::Result<crate::WorkspaceRemovalObservation> {
+        self.hosted
+            .reconcile_workspace_removal(handle, expected_runtime, request)
+            .await
+    }
+
     async fn add_worktree(
         &self,
         handle: &RuntimeHandle,
