@@ -679,3 +679,6 @@ async fn admission_reconciles_every_artifact_at_the_ambiguous_commit_time() {
 
 #[path = "agent_admission_mongo_integration_tests/provenance.rs"]
 mod provenance;
+
+#[path = "agent_admission_mongo_integration_tests/provenance_backfill.rs"]
+mod provenance_backfill;
