@@ -126,77 +126,99 @@ async function captureLayouts(page: Page, info: TestInfo, state: string) {
 
 for (const status of ['paused', 'reviving'] as const) {
   for (const kind of ['workspace', 'agent'] as const) {
-    test(`LOCAL ${status} ${kind} creation retries one command and reloads without manual revival`, async ({
+    test(`LOCAL ${status} parent blocks ${kind} creation without a browser write`, async ({
       page,
       baseURL,
-    }, info) => {
+    }) => {
       const boundary = new LocalStartup();
       boundary.sandbox = { ...boundary.sandbox, status };
-      boundary.loseCreationResponse = true;
       await boundary.route(page, baseURL!);
       await page.goto('/sandboxes/sbx_route');
-      await page
-        .locator('.sandbox-page')
-        .getByRole('button', { name: `New ${kind}`, exact: true })
-        .click();
-      const dialog = page.getByRole('dialog', { name: `New ${kind}`, exact: true });
-      if (kind === 'agent')
-        await dialog.getByRole('button', { name: 'Continue', exact: true }).click();
-      await dialog.getByRole('radio', { name: 'Default', exact: true }).check();
-      await dialog
-        .getByRole('button', { name: 'Deployment default Version 1', exact: true })
-        .click();
-      if (kind === 'agent') {
-        await dialog.getByRole('button', { name: 'Continue', exact: true }).click();
-        await dialog
-          .getByLabel('First message (optional)', { exact: true })
-          .fill('  Inspect after revival.\nKeep this request exact.  ');
-      }
-      await dialog.getByRole('button', { name: `Create ${kind}`, exact: true }).click();
-      await expect(
-        dialog.getByRole('button', { name: 'Retry creation', exact: true }),
-      ).toBeEnabled();
-      expect(boundary.writes).toHaveLength(1);
-      await captureLayouts(page, info, 'unsettled-creation');
-      await dialog.getByRole('button', { name: 'Retry creation', exact: true }).click();
-      await expect(dialog).toHaveCount(0);
-      expect(boundary.writes).toHaveLength(2);
-      expect(boundary.writes[1]).toEqual(boundary.writes[0]);
-      expect(boundary.writes[0]?.key).toBeTruthy();
-      expect(boundary.writes[0]?.body).toEqual(
-        kind === 'agent'
-          ? {
-              agent_profile: { id: 'agp_route', revision: 1 },
-              first_message: '  Inspect after revival.\nKeep this request exact.  ',
-            }
-          : { workspace_profile: { id: 'wkp_route', revision: 1 } },
-      );
-      await page.reload();
-      await expect(
-        page.getByRole('heading', {
-          name: kind === 'agent' ? 'Agent agt_contract' : 'research',
-          exact: true,
-        }),
-      ).toBeVisible();
-      await captureLayouts(page, info, 'accepted-reload');
-      expect(boundary.writes).toHaveLength(2);
-      expect(boundary.writes.some((write) => write.path.endsWith('/revive'))).toBe(false);
+      const surface = page.locator('.sandbox-page');
+      await expect(surface.getByRole('heading', { name: 'research', exact: true })).toBeVisible();
+      if (kind === 'workspace')
+        await expect(
+          surface.getByRole('button', { name: 'New workspace', exact: true }),
+        ).toBeDisabled();
+      else
+        await expect(surface.getByRole('button', { name: 'New agent', exact: true })).toHaveCount(
+          0,
+        );
+      expect(boundary.writes).toEqual([]);
       expect(boundary.unexpected).toEqual([]);
       expect(boundary.errors).toEqual([]);
-      await info.attach('local-boundary', {
-        body: JSON.stringify({
-          mocked: true,
-          boundary: 'built_browser_public_http',
-          status,
-          kind,
-          writes: 2,
-          commands: 1,
-          captures: 12,
-        }),
-        contentType: 'application/json',
-      });
     });
   }
+}
+
+for (const kind of ['workspace', 'agent'] as const) {
+  test(`LOCAL active ${kind} creation retries one command and reloads without manual revival`, async ({
+    page,
+    baseURL,
+  }, info) => {
+    const boundary = new LocalStartup();
+    boundary.loseCreationResponse = true;
+    await boundary.route(page, baseURL!);
+    await page.goto('/sandboxes/sbx_route');
+    await page
+      .locator('.sandbox-page')
+      .getByRole('button', { name: `New ${kind}`, exact: true })
+      .click();
+    const dialog = page.getByRole('dialog', { name: `New ${kind}`, exact: true });
+    if (kind === 'agent')
+      await dialog.getByRole('button', { name: 'Continue', exact: true }).click();
+    await dialog.getByRole('radio', { name: 'Default', exact: true }).check();
+    await dialog
+      .getByRole('button', { name: 'Select Deployment default Version 1', exact: true })
+      .click();
+    if (kind === 'agent') {
+      await dialog.getByRole('button', { name: 'Continue', exact: true }).click();
+      await dialog
+        .getByLabel('First message (optional)', { exact: true })
+        .fill('  Inspect after revival.\nKeep this request exact.  ');
+    }
+    await dialog.getByRole('button', { name: `Create ${kind}`, exact: true }).click();
+    await expect(dialog.getByRole('button', { name: 'Retry creation', exact: true })).toBeEnabled();
+    expect(boundary.writes).toHaveLength(1);
+    await captureLayouts(page, info, 'unsettled-creation');
+    await dialog.getByRole('button', { name: 'Retry creation', exact: true }).click();
+    await expect(dialog).toHaveCount(0);
+    expect(boundary.writes).toHaveLength(2);
+    expect(boundary.writes[1]).toEqual(boundary.writes[0]);
+    expect(boundary.writes[0]?.key).toBeTruthy();
+    expect(boundary.writes[0]?.body).toEqual(
+      kind === 'agent'
+        ? {
+            agent_profile: { id: 'agp_route', revision: 1 },
+            first_message: '  Inspect after revival.\nKeep this request exact.  ',
+          }
+        : { workspace_profile: { id: 'wkp_route', revision: 1 } },
+    );
+    await page.reload();
+    await expect(
+      page.getByRole('heading', {
+        name: kind === 'agent' ? 'Agent agt_contract' : 'research',
+        exact: true,
+      }),
+    ).toBeVisible();
+    await captureLayouts(page, info, 'accepted-reload');
+    expect(boundary.writes).toHaveLength(2);
+    expect(boundary.writes.some((write) => write.path.endsWith('/revive'))).toBe(false);
+    expect(boundary.unexpected).toEqual([]);
+    expect(boundary.errors).toEqual([]);
+    await info.attach('local-boundary', {
+      body: JSON.stringify({
+        mocked: true,
+        boundary: 'built_browser_public_http',
+        status: 'active',
+        kind,
+        writes: 2,
+        commands: 1,
+        captures: 12,
+      }),
+      contentType: 'application/json',
+    });
+  });
 }
 
 test('LOCAL provider sign-in replays after reload and clears durably without a fake turn', async ({

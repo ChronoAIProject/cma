@@ -1,0 +1,258 @@
+import { useCallback, type Dispatch, type SetStateAction, type RefObject } from 'react';
+import type { CmaWebClient, CommandKeys } from '../api/client';
+import type { AgentLiveEvent } from '../api/types';
+import type { AgentCommand, AgentResourceState, ApprovalDecision } from './controller';
+import type { AgentV2Session } from './transport/client';
+import { submitV2Control, recoverV2Control } from './transport/controls';
+
+interface Options {
+  readonly agentId?: string;
+  readonly client: CmaWebClient;
+  readonly historyIncomplete: boolean;
+  readonly activeTurn: boolean;
+  readonly inputAvailability: { readonly allowed: boolean };
+  readonly actionAbortRef: RefObject<AbortController | undefined>;
+  readonly actionKindRef: RefObject<AgentCommand | undefined>;
+  readonly replayAbortRef: RefObject<AbortController | undefined>;
+  readonly stateRef: RefObject<AgentResourceState>;
+  readonly keys: CommandKeys;
+  readonly v2?: AgentV2Session;
+  readonly setPending: Dispatch<SetStateAction<AgentCommand | undefined>>;
+  readonly setActionError: Dispatch<SetStateAction<string | undefined>>;
+  readonly setReplayRevision: Dispatch<SetStateAction<number>>;
+  readonly setRequestRevision: Dispatch<SetStateAction<number>>;
+  readonly applyLive: (event: AgentLiveEvent) => void;
+  readonly reload: () => void;
+  readonly errorMessage: (error: unknown) => string;
+  readonly onIdentityChange: (error: unknown) => boolean;
+  readonly options: { readonly onHierarchyChange?: () => void; readonly onDeleted?: () => void };
+}
+function runId(): string {
+  return typeof crypto.randomUUID === 'function'
+    ? crypto.randomUUID()
+    : `run-${String(Date.now())}-${String(Math.random()).slice(2)}`;
+}
+export function useAgentActions({
+  agentId,
+  client,
+  historyIncomplete,
+  activeTurn,
+  inputAvailability,
+  actionAbortRef,
+  actionKindRef,
+  replayAbortRef,
+  stateRef,
+  keys,
+  v2,
+  setPending,
+  setActionError,
+  setReplayRevision,
+  setRequestRevision,
+  applyLive,
+  reload,
+  errorMessage,
+  onIdentityChange,
+  options,
+}: Options) {
+  const run = useCallback(
+    async (
+      approval: { readonly id: string; readonly decision: ApprovalDecision } | string,
+      onAccepted?: () => void,
+    ) => {
+      if (
+        agentId === undefined ||
+        actionAbortRef.current !== undefined ||
+        historyIncomplete ||
+        !inputAvailability.allowed
+      )
+        return;
+      const current = stateRef.current;
+      const session = current.status === 'ready' ? current.v2 : undefined;
+      if (session === undefined) replayAbortRef.current?.abort();
+      const controller = new AbortController();
+      actionAbortRef.current = controller;
+      const approving = typeof approval !== 'string';
+      actionKindRef.current = approving ? 'approval' : 'send';
+      setPending(approving ? 'approval' : 'send');
+      setActionError(undefined);
+      let accepted = false;
+      try {
+        if (session !== undefined) {
+          if (approving) {
+            const scope = `agent:${agentId}:approval:${approval.id}:${approval.decision}`;
+            await submitV2Control(
+              session,
+              current.status === 'ready' ? current.conversation.responseBinding : undefined,
+              { type: 'resolve_approval', approval_id: approval.id, decision: approval.decision },
+              runId(),
+              controller.signal,
+            );
+            keys.settle(scope);
+          } else
+            await session.send(
+              approval,
+              () => {
+                accepted = true;
+                onAccepted?.();
+              },
+              controller.signal,
+            );
+          return;
+        }
+        await client.runAgent(
+          {
+            threadId: agentId,
+            runId: runId(),
+            ...(approving
+              ? {
+                  resume: [
+                    {
+                      interruptId: approval.id,
+                      status: 'resolved' as const,
+                      payload: { decision: approval.decision },
+                    },
+                  ],
+                }
+              : { messages: [{ role: 'user' as const, content: approval }] }),
+          },
+          {
+            signal: controller.signal,
+            onEvent: (event) => {
+              if (controller.signal.aborted || event.threadId !== agentId) return;
+              if (!accepted && event.type !== 'RUN_ERROR') {
+                accepted = true;
+                onAccepted?.();
+              }
+              applyLive(event);
+            },
+          },
+        );
+      } catch (error: unknown) {
+        if (!controller.signal.aborted && !onIdentityChange(error))
+          setActionError(errorMessage(error));
+      } finally {
+        if (actionAbortRef.current === controller) {
+          actionAbortRef.current = undefined;
+          actionKindRef.current = undefined;
+          setPending(undefined);
+          setRequestRevision((value) => value + 1);
+          if (session === undefined) setReplayRevision((value) => value + 1);
+        }
+      }
+    },
+    [
+      agentId,
+      applyLive,
+      client,
+      historyIncomplete,
+      inputAvailability.allowed,
+      keys,
+      stateRef,
+      actionAbortRef,
+      actionKindRef,
+      errorMessage,
+      onIdentityChange,
+      replayAbortRef,
+      setActionError,
+      setPending,
+      setReplayRevision,
+      setRequestRevision,
+    ],
+  );
+
+  const command = useCallback(
+    async (
+      name: Exclude<AgentCommand, 'send' | 'approval'>,
+      operation: (id: string, key: string, signal: AbortSignal) => Promise<void>,
+    ) => {
+      const mayPreemptSend = name === 'interrupt' && actionKindRef.current === 'send';
+      if (historyIncomplete) return;
+      if (name === 'interrupt' && !activeTurn) return;
+      if (agentId === undefined || (actionAbortRef.current !== undefined && !mayPreemptSend)) {
+        return;
+      }
+      if (name === 'interrupt') actionAbortRef.current?.abort();
+      const scope = `agent:${agentId}:${name}`;
+      const controller = new AbortController();
+      actionAbortRef.current = controller;
+      actionKindRef.current = name;
+      setPending(name);
+      setActionError(undefined);
+      try {
+        const current = stateRef.current;
+        if (name === 'interrupt' && current.status === 'ready' && current.v2 !== undefined)
+          await submitV2Control(
+            current.v2,
+            current.conversation.responseBinding,
+            { type: 'cancel' },
+            runId(),
+            controller.signal,
+          );
+        else {
+          const session = current.status === 'ready' ? current.v2 : undefined;
+          await session?.authorize(controller.signal);
+          await operation(agentId, keys.for(scope), controller.signal);
+          await session?.authorize(controller.signal);
+        }
+        keys.settle(scope);
+        options.onHierarchyChange?.();
+        if (name === 'delete') options.onDeleted?.();
+        else if (name !== 'interrupt' || v2 === undefined) reload();
+      } catch (error: unknown) {
+        if (!controller.signal.aborted && !onIdentityChange(error))
+          setActionError(errorMessage(error));
+      } finally {
+        if (actionAbortRef.current === controller) {
+          actionAbortRef.current = undefined;
+          actionKindRef.current = undefined;
+          setPending(undefined);
+          setRequestRevision((value) => value + 1);
+          if (name === 'interrupt' && v2 === undefined) setReplayRevision((value) => value + 1);
+        }
+      }
+    },
+    [
+      activeTurn,
+      agentId,
+      historyIncomplete,
+      keys,
+      options,
+      reload,
+      stateRef,
+      v2,
+      actionAbortRef,
+      actionKindRef,
+      errorMessage,
+      onIdentityChange,
+      setActionError,
+      setPending,
+      setReplayRevision,
+      setRequestRevision,
+    ],
+  );
+
+  const recoverPending = async () => {
+    if (v2 === undefined || actionAbortRef.current !== undefined || historyIncomplete) return;
+    const controller = new AbortController();
+    actionAbortRef.current = controller;
+    actionKindRef.current = 'send';
+    setPending('send');
+    setActionError(undefined);
+    try {
+      await v2.recover(() => {}, controller.signal);
+      await recoverV2Control(v2, controller.signal);
+    } catch (error) {
+      if (!controller.signal.aborted && !onIdentityChange(error))
+        setActionError(errorMessage(error));
+    } finally {
+      if (actionAbortRef.current === controller) {
+        actionAbortRef.current = undefined;
+        actionKindRef.current = undefined;
+        setPending(undefined);
+        setRequestRevision((value) => value + 1);
+      }
+    }
+  };
+
+  return { run, command, recoverPending };
+}
