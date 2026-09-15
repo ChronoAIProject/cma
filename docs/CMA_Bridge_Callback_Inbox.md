@@ -80,8 +80,8 @@ configured inbox retention, not indefinitely.
 The internal adapter bounds concurrent callbacks to 16 and total request lifetime
 to five seconds. Core verification caps bodies at 1 MiB, attachments at 32, text
 at 512 KiB, tokens at 16 KiB and individual fields at their documented code bounds.
-Bridge configuration can lower the body limit. The future HTTP transport must
-also enforce the body limit while streaming, before buffering. Durable per-bridge
+Bridge configuration can lower the body limit. The registered HTTP transport
+also enforces the body limit while streaming, before buffering. Durable per-bridge
 rate and queue limits are checked inside the transaction; retained accepted rows
 count conservatively toward queue capacity until a worker lifecycle is composed.
 Signature, exact-body, header and payload checks precede live provider/custody IO.
@@ -103,10 +103,12 @@ unknown acceptance must be distinguished from a confirmed rejection. There is no
 end-to-end lossless or exactly-once claim. Provider-native message identity is not
 guaranteed by the generic schema and this slice does not claim secondary dedup.
 
-Outstanding integration includes the public HTTP endpoint and its streaming body
-limit, supported deployment configuration for pinned JWKS/TTL/callback URL,
-isolated ingress scheduling, live selected-key custody composition, a worker
-lifecycle, effect-specific authority checks and real platform verification.
+The public HTTP endpoint, streaming body limit, deployment-pinned JWKS and callback
+configuration, bounded ingress pools and selected-key custody are composed.
+[The callback reference](BRIDGE_CALLBACKS.md) documents the public receipt and
+typed failures. Accepted rows retain an explicit `worker_unavailable` execution
+hold. Outstanding integration includes the processing worker, deferred
+effect-specific authority checks, allocation, replies and real platform verification.
 Ordinary CMA bearer authentication continues to reject callback, relay and reply
 credentials. No NyxID source, bot, callback configuration or live user was changed.
 
@@ -114,9 +116,12 @@ The focused core suite covers actual RSA signatures, two distinct signing keys,
 rotation, exact-byte mutation, wrong claim/binding/header values, expiry, bounded
 parsing, optional user corroboration and reply scope. Adapter tests cover duplicate
 sensitive headers, expired/failed key caches and zero live provider calls for an
-invalid attestation. Five ignored disposable Mongo
+invalid attestation. Seven ignored disposable Mongo
 tests are registered under `bridge_definitions::mongo_integration_tests::inbox`
 for duplicate races/restart, encrypted expiry, conflicts/configuration changes,
 transactional persistence failure, capacity and revocation after verification.
-Their execution is reported by
-the consolidated Mongo contract campaign; registration alone is not a pass.
+The uncertain-commit cases preserve unknown acceptance after proof expiry and
+retain an observed replay conflict; a fresh authenticated retry recovers the
+original committed receipt. Their execution is reported by the consolidated
+Mongo campaign and the final focused seven-case reconciliation campaign;
+registration alone is not a pass.

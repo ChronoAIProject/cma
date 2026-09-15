@@ -21,6 +21,7 @@ pub mod agents;
 pub mod agui;
 pub mod assets;
 pub mod auth;
+pub mod bridges;
 mod client;
 mod conformance;
 pub mod defaults;
@@ -50,6 +51,8 @@ pub mod guides {
     pub mod sandboxes {}
     #[doc = include_str!("../docs/agents.md")]
     pub mod agents {}
+    #[doc = include_str!("../docs/bridges.md")]
+    pub mod bridges {}
     #[doc = include_str!("../docs/profiles.md")]
     pub mod profiles {}
     #[doc = include_str!("../docs/streaming.md")]

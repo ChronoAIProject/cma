@@ -200,6 +200,20 @@ impl MongoCallbackInbox {
             .transpose()
     }
 
+    /// After an uncertain commit, failure to observe a matching durable receipt
+    /// cannot establish rejection. Keep authentication checks intact, but do not
+    /// report proof expiry during reconciliation as definite non-acceptance.
+    pub(super) async fn reconcile_commit(
+        &self,
+        write: &InboxWrite,
+    ) -> Result<InboxReceipt, CallbackError> {
+        match self.replay(write).await {
+            Ok(Some(receipt)) => Ok(receipt),
+            Err(CallbackError::ReplayConflict) => Err(CallbackError::ReplayConflict),
+            Ok(None) | Err(_) => Err(CallbackError::Unavailable),
+        }
+    }
+
     /// Ciphertext deletion is best-effort TTL cleanup; logical expiry is checked
     /// before opening. This is internal custody, never a public read operation.
     #[allow(dead_code)] // Deferred reply workers need independent live effect authority.
@@ -265,7 +279,7 @@ impl CallbackInboxStore for MongoCallbackInbox {
                 CommitOutcome::Committed => return Ok(receipt),
                 CommitOutcome::Retry(_) => continue,
                 CommitOutcome::Unknown(_) | CommitOutcome::Failed(_) => {
-                    return self.replay(&write).await?.ok_or(CallbackError::Unavailable)
+                    return self.reconcile_commit(&write).await
                 }
             }
         }
@@ -277,6 +291,7 @@ fn admission(value: &InboxAdmission) -> &'static str {
     match value {
         InboxAdmission::Accepted => "accepted",
         InboxAdmission::SenderDenied => "sender_denied",
+        InboxAdmission::PartitionDenied { .. } => "partition_denied",
     }
 }
 fn decode(document: &Document) -> Result<StoredInbox, CallbackError> {

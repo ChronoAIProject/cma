@@ -19,6 +19,7 @@ import type {
 } from './types';
 import type { AccessibleAgentSource, AgentProvenance, AgentResources } from '@chronoai/cma-sdk';
 import type { ResourceViewsClient } from '../resources/client';
+import type { BridgeViewsClient } from '../bridges/client';
 
 export interface ReadOptions {
   readonly signal?: AbortSignal;
@@ -40,6 +41,7 @@ export interface AgentStreamOptions extends ReadOptions {
 /** A transport-free view of the public CMA operations consumed by the web app. */
 export interface CmaWebClient {
   readonly resourceViews?: ResourceViewsClient;
+  readonly bridgeViews?: BridgeViewsClient;
   listSandboxes(options?: PageOptions): Promise<ResourcePage<SandboxSummary>>;
   readSandbox(id: string, options?: ReadOptions): Promise<SandboxDetail>;
   readWorkspace(id: string, options?: ReadOptions): Promise<WorkspaceDetail>;

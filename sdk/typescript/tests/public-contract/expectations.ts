@@ -3,6 +3,14 @@ import type { ContractCase } from './context.js';
 import { browserOperations } from './navigation.js';
 
 export const localCodes = new Map([
+  ['bridge-invoke-issue-unknown-field', 'invalid_json'],
+  ['bridge-invoke-revoke-unknown-field', 'invalid_json'],
+  ['bridge-invoke-issue-missing-consent', 'invalid_json'],
+  ['bridge-invoke-list-invalid-limit', 'invalid_bridge_invoke_request'],
+  ['bridge-invoke-list-invalid-cursor', 'invalid_bridge_invoke_request'],
+  ['bridge-invoke-detail-invalid-id', 'invalid_bridge_invoke_request'],
+  ['bridge-setup-list-zero-limit', 'invalid_bridge_configuration'],
+  ['bridge-setup-create-incompatible-context', 'invalid_bridge_configuration'],
   ['channel-inventory-invalid-active', 'invalid_instance_query'],
   ['channel-inventory-invalid-history', 'invalid_instance_query'],
   ['channel-usage-zero-limit', 'invalid_query'],
@@ -72,6 +80,7 @@ export const localCodes = new Map([
 ]);
 
 const protectedQueries = new Map([
+  ['bridge-setup-list-unknown-query', ['unexpected']],
   ['creation-inventory-invalid-creator', ['created_by']],
   ['responses-v2-retrieve-query', ['stream']],
   ['sandbox-inventory-invalid-owner', ['owner']],

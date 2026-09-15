@@ -10,6 +10,12 @@ use layer2_core::bridge::ingress::{
 use layer2_core::bridge::{BridgeConnectionValidator, BridgeId, BridgeStore};
 use tokio::sync::Semaphore;
 
+mod capabilities;
+#[cfg(test)]
+pub(crate) use capabilities::NyxidCapabilities;
+mod configured;
+pub(crate) mod http;
+pub(crate) use configured::configured;
 mod keys;
 pub(crate) use keys::PinnedCallbackKeys;
 
@@ -120,7 +126,8 @@ impl CallbackIngress {
         let signed = match verify(&keyset) {
             Err(CallbackError::KeysUnavailable) => verify(self.keys.get(true).await?.as_ref())?,
             result => result?,
-        };
+        }
+        .classify_capabilities(body, &capabilities::NyxidCapabilities)?;
         // Only cryptographically authenticated and bounded callbacks may cause
         // selected-key custody or owner/provider inventory IO. The signed
         // snapshot alone still cannot authorize durable acceptance.

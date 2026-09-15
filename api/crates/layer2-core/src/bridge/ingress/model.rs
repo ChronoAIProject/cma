@@ -74,6 +74,9 @@ impl CallbackBinding {
 pub enum InboxAdmission {
     Accepted,
     SenderDenied,
+    PartitionDenied {
+        reason: crate::bridge::partition::PartitionRefusal,
+    },
 }
 
 /// Corroboration only. Neither variant grants ambient owner authority, renewal,
@@ -143,6 +146,10 @@ pub struct StoredInbox {
     pub attestation: CallbackAttestation,
     pub relay: RelayCorroboration,
     pub admission: InboxAdmission,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub capabilities: Option<crate::bridge::partition::StoredPartitionObservation>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub execution_hold: Option<InboxExecutionHold>,
     pub accepted_at: i64,
     pub expires_at: i64,
     pub reply_expires_at: Option<i64>,
@@ -155,6 +162,16 @@ pub struct InboxReceipt {
     pub message_id: String,
     pub accepted_at: i64,
     pub admission: InboxAdmission,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub execution_hold: Option<InboxExecutionHold>,
+}
+
+/// A durable admission is not evidence that an Agent worker is available.
+/// Only a separately authorized worker transition may clear this hold later.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum InboxExecutionHold {
+    WorkerUnavailable,
 }
 
 impl StoredInbox {
@@ -165,6 +182,7 @@ impl StoredInbox {
             message_id: self.message_id.clone(),
             accepted_at: self.accepted_at,
             admission: self.admission.clone(),
+            execution_hold: self.execution_hold,
         }
     }
 }
@@ -192,8 +210,15 @@ pub struct SignedCallback {
 }
 
 impl SignedCallback {
-    pub fn bind(self, binding: CallbackBinding) -> Result<InboxWrite, CallbackError> {
+    pub fn bind(mut self, binding: CallbackBinding) -> Result<InboxWrite, CallbackError> {
         binding.require_current(&self.bridge)?;
+        if self.record.admission != InboxAdmission::Accepted {
+            self.reply_token = None;
+            self.thread_context = None;
+            self.record.reply_expires_at = None;
+            self.record.execution_hold = None;
+            self.record.envelope.protected_thread_context_present = false;
+        }
         let write = InboxWrite {
             binding,
             record: self.record,

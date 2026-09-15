@@ -74,6 +74,7 @@ pub struct BridgeWrite {
     pub(super) receipt: StoredBridgeReceipt,
     pub(super) deadline: tokio::time::Instant,
     pub(super) custody: Option<BridgeCustodyPin>,
+    pub(super) enable_grant: Option<super::invoke::BridgeInvokeEnableProof>,
 }
 
 impl BridgeWrite {
@@ -92,11 +93,34 @@ impl BridgeWrite {
         self.custody.as_ref()
     }
 
+    pub fn enable_grant(&self) -> Option<&super::invoke::BridgeInvokeEnableProof> {
+        self.enable_grant.as_ref()
+    }
+
     pub fn require_current(&self) -> Result<(), BridgeError> {
         if tokio::time::Instant::now() >= self.deadline {
             return Err(BridgeError::AuthorityUnavailable);
         }
         self.record.validate()?;
+        if self.receipt.receipt.command == "enable"
+            && matches!(
+                self.record.current()?.config.placement,
+                super::BridgePlacementPolicy::ExistingAgent { .. }
+            )
+        {
+            self.enable_grant
+                .as_ref()
+                .ok_or(BridgeError::ConnectionRequired(
+                    super::BridgeSetupBlock::InvokeConsentRequired,
+                ))?
+                .require_write(
+                    &self.record,
+                    &self.receipt.receipt.actor,
+                    self.expected_revision,
+                )?;
+        } else if self.enable_grant.is_some() {
+            return Err(BridgeError::Corrupt);
+        }
         if self.custody.as_ref().is_some_and(|pin| {
             self.record
                 .current()
@@ -137,6 +161,9 @@ pub trait BridgeStore: Send + Sync {
     /// before revision checks; a reused key with different body always conflicts.
     /// When custody_pin is present, durable adapters must check that exact
     /// active custody in the same transaction and conflict with revocation.
+    /// When enable_grant is present, compare/fence the exact current active
+    /// grant and retained resource identity in that same transaction. Adapters
+    /// without this shared boundary must refuse the write.
     async fn apply(&self, write: BridgeWrite) -> Result<StoredBridgeReceipt, BridgeError>;
 }
 

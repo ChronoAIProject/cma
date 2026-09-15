@@ -14,11 +14,13 @@ use layer2_core::resource_access::{
 use crate::auth::AuthMode;
 use crate::store::MongoBridgeStore;
 
+pub(crate) mod composition;
 pub(crate) mod custody;
 #[allow(dead_code)] // #861 awaits a composed route with live selected-key custody.
 pub(crate) mod ingress;
 mod managed_credentials;
 mod provider;
+pub(crate) mod setup;
 mod types;
 
 use custody::BridgeCredentialResolver;

@@ -65,13 +65,16 @@ pub struct BridgeConnector {
     pub callback_url: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum BridgePartitionPolicy {
     Conversation,
+    #[default]
     ConversationSender,
     Thread,
     ThreadSender,
+    FixedSharedAgent,
+    SenderAcrossChats,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -100,7 +103,12 @@ pub enum BridgePlacementPolicy {
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum BridgeAdmissionPolicy {
     All,
-    Allowlist { sender_ids: Vec<String> },
+    Allowlist {
+        sender_ids: Vec<String>,
+    },
+    Scoped {
+        policy: super::partition::ChannelAdmissionPolicy,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -227,6 +235,9 @@ impl BridgeConfig {
                 return Err(bad("sender_ids"));
             }
         }
+        if let BridgeAdmissionPolicy::Scoped { policy } = &self.admission {
+            policy.validate().map_err(|_| bad("admission_policy"))?;
+        }
         let l = &self.limits;
         if l.max_partitions == 0
             || l.max_partitions > 100_000
@@ -246,6 +257,14 @@ impl BridgeConfig {
             return Err(bad("limits"));
         }
         Ok(())
+    }
+
+    /// Fresh setup/enable and partition admission require explicit context
+    /// sharing. Historical generation reads retain their original syntax.
+    pub fn validate_partition_admission(&self) -> Result<(), BridgeError> {
+        self.validate()?;
+        super::partition::validate_placement(self)
+            .map_err(|_| BridgeError::InvalidConfiguration("partition_context"))
     }
 }
 

@@ -6,6 +6,8 @@ security declarations and response media types. The operation inventory below
 is checked against that document, including its AG-UI and Responses projections.
 [CMA Model](CMA_Model.md) defines lifecycle and profile semantics;
 [CMA Trigger](CMA_Trigger.md) defines publishing, consent and visitor reuse.
+[NyxID bridge callbacks](BRIDGE_CALLBACKS.md) documents the dedicated signed
+connector endpoint, durable inbox receipts and explicit execution holds.
 
 There are no `/sessions`, `/chats`, environment-profile, contribution,
 sponsorship or terminal-attachment APIs in this release. Resource management
@@ -926,6 +928,21 @@ SDKs expose this scope through their accessible Sandbox list method.
 | `GET /api/v1/workspaces/{id}/worktrees` | - | - | 200 AccessibleWorktreeListView |
 | `GET /api/v1/worktrees/{id}` | - | - | 200 AccessibleWorktreeView |
 
+| `GET /api/v1/bridge-connectors` | Bridge setup and management with current owner or organization authority. |
+| `GET /api/v1/bridge-invoke-grants/{id}` | Read a retained-Agent invocation grant under current bridge management authority. |
+| `POST /api/v1/bridge-invoke-grants/{id}/revoke` | Revoke an exact invocation-grant revision with retained idempotent attribution. |
+| `GET /api/v1/bridges/{id}/invoke-grants` | Page current and revoked invocation grants for this bridge. |
+| `POST /api/v1/bridges/{id}/invoke-grants` | Explicitly authorize the selected retained Agent context for this saved bridge configuration. |
+| `GET /api/v1/bridges/{id}/invoke-readiness` | Observe current retained-Agent consent without granting execution or enable authority. |
+| `GET /api/v1/bridges` | Bridge setup and management with current owner or organization authority. |
+| `GET /api/v1/bridges/{id}` | Bridge setup and management with current owner or organization authority. |
+| `GET /api/v1/bridges/{id}/configuration` | Bridge setup and management with current owner or organization authority. |
+| `POST /api/v1/bridges` | Bridge setup and management with current owner or organization authority. |
+| `POST /api/v1/bridges/{id}/commands` | Bridge setup and management with current owner or organization authority. |
+| `POST /api/v1/bridges/{id}/credential/revoke` | Bridge setup and management with current owner or organization authority. |
+| `POST /api/v1/bridges/{id}/validate` | Bridge setup and management with current owner or organization authority. |
+| `PUT /api/v1/bridges/{id}/configuration` | Bridge setup and management with current owner or organization authority. |
+| `PUT /api/v1/bridges/{id}/credential` | Bridge setup and management with current owner or organization authority. |
 <!-- openapi-operations:end -->
 
 ## Contract Verification
@@ -978,3 +995,50 @@ membership is required even for an empty page; failures do not become a false
 successful empty scope. Ownership and whole-Sandbox grants are filtered and
 deduplicated before pagination. The hidden lookahead and held evidence are
 checked after count IO, before releasing either rows or `next`.
+
+
+### Channel bridge setup
+
+Bridge management uses `/api/v1/bridges`; `/api/v1/bridge-connectors?organization={id}` lists complete bounded existing NyxID bot/key/route choices only for the personal owner or current organization administrator. CMA performs read-only discovery. A deployment without a NyxID provider and HTTPS CMA public origin returns `503 bridge_setup_unavailable`.
+
+Creation starts disabled. The caller selects an owner, existing bot/key/routes, partition and placement, sender/chat/group policy, reply policy, and bounded limits. CMA derives the issuer, provider endpoint, callback URL, and internal custody locator; these fields are rejected in client configuration. Read `/bridges/{id}/configuration` as a manager to obtain the callback URL and selected configuration. Configure that exact callback on a dedicated matching NyxID key manually while preserving unrelated routes, then PUT the exact selected key to `/bridges/{id}/credential` with `expected_revision`. The key is write-only and its response contains only custody revision/presence/revocation. Identical selected-key import is idempotent; different material under the retained selected custody identity conflicts. A replacement key selection creates distinct custody.
+
+POST `/bridges/{id}/validate` with `expected_revision` performs current verification. Its success proves the current setup check only. POST `/bridges/{id}/commands` with an Idempotency-Key and expected revision applies `enable`, `disable`, `retire`, or independent emergency controls. Disable/retire require `accepted_work` (`drain_original` or `suspend_original`); retained Agents and historical resources are preserved. Configuration PUT also requires an idempotency key and expected revision; fixed-target rebinding requires an explicit previous-work policy. Retained generations keep their original routing. Retrying an unacknowledged management command uses the same key and body.
+
+Current organization members can list/read safe bridge summaries; configuration, selected identities, credential custody and provider choices require manager authority. None of these responses include key material or local custody references. Revocation uses `/bridges/{id}/credential/revoke` with both expected bridge and custody revisions plus an idempotency key.
+
+New partition configuration defaults to a sender in each actual chat, with explicit alternatives for shared chat/thread context, one fixed shared Agent, or a sender across chats. Existing-Agent placement requires the `fixed_shared_agent` selection. Sender/chat allowlists, deliberate open admission, and group addressing policy are separate. Unsupported platform addressing/thread evidence is refused. New Sandbox placement remains blocked by `bridge_renewable_authority_required` until distinct scoped issuance and renewal are verified.
+
+The message path is Telegram/Lark → NyxID → CMA, with asynchronous CMA → NyxID channel-relay reply → the original bot/chat/thread. The callback HTTP body is an acknowledgment, not the Agent's answer. The current setup API does not establish completed execution/outbox integration or live platform acceptance.
+
+### Retained Agent invocation permission
+
+Fixed placement requires explicit `use_retained_agent_context` consent through
+POST `/api/v1/bridges/{id}/invoke-grants`. Supply `expected_bridge_revision`, the
+exact Sandbox/Workspace/Worktree/Agent `target`, `shared_context`, and an
+Idempotency-Key. Issuance is allowed while the bridge is disabled so permission
+can be reviewed before enabling. The actual manager must currently have both
+bridge-management and Agent-interaction authority. The resulting grant pins
+configuration, owner, full target lineage and retained resource creation facts.
+
+GET `/api/v1/bridges/{id}/invoke-readiness` returns `not_applicable`,
+`consent_required` or `consent_present`, with a candidate only for the latter.
+It observes consent only. Connection validation remains independent; fixed-Agent
+enable requires a separate opaque proof and transactionally checks the exact
+current grant and target. Revocation, reconfiguration or resource replacement
+between validation and commit refuses enable. A missing live grant produces
+`409 bridge_invoke_consent_required`.
+
+GET `/api/v1/bridges/{id}/invoke-grants` pages safe current and revoked grant
+records; GET `/api/v1/bridge-invoke-grants/{id}` reads one. POST
+`/api/v1/bridge-invoke-grants/{id}/revoke` requires both
+`expected_bridge_revision` and `expected_revision`, plus an Idempotency-Key.
+Revocation is terminal and preserves history. Issuing a new grant does not alter
+the authority or routing pinned to already accepted work. Safe public grant and
+receipt DTOs contain no credential or internal custody reference. All five
+operations require current bridge management authority.
+
+The separately authenticated callback endpoint is registered at
+`POST /api/v1/bridge-callbacks/{bridge_id}`. Its signed protocol, private response
+statuses, durable-before-ack behavior, capability refusals and retained
+`worker_unavailable` hold are documented in [Bridge callbacks](BRIDGE_CALLBACKS.md).

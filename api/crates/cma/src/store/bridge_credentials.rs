@@ -36,9 +36,26 @@ impl MongoBridgeCredentialStore {
         pin: &BridgeCustodyPin,
         session: &mut ClientSession,
     ) -> Result<(), BridgeError> {
+        self.require_retained_binding(bridge, &bridge.current()?.config, pin, session)
+            .await
+    }
+
+    /// Accepted work may retain an older exact generation under an explicit
+    /// drain policy. This still resolves only that generation's selected key.
+    pub(crate) async fn require_retained_binding(
+        &self,
+        bridge: &BridgeRecord,
+        config: &layer2_core::bridge::BridgeConfig,
+        pin: &BridgeCustodyPin,
+        session: &mut ClientSession,
+    ) -> Result<(), BridgeError> {
         let unavailable = || BridgeError::ConnectionRequired(BridgeSetupBlock::CustodyUnavailable);
-        let config = &bridge.current()?.config;
-        if pin.reference() != &config.connector.custody {
+        if pin.reference() != &config.connector.custody
+            || !bridge
+                .generations
+                .iter()
+                .any(|generation| generation.config == *config)
+        {
             return Err(unavailable());
         }
         let document = self

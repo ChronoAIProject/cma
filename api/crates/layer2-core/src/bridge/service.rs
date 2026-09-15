@@ -6,6 +6,7 @@ use super::authority::{authorize, BridgeAuthority};
 use super::store::digest;
 use super::*;
 
+#[derive(Clone)]
 pub struct BridgeMutation {
     pub id: BridgeId,
     pub expected_revision: u64,
@@ -166,7 +167,7 @@ impl BridgeService {
         validation.require(&record.owner, &record.current()?.config)
     }
 
-    async fn connection(
+    pub(super) async fn connection(
         &self,
         owner: &ResourceOwner,
         config: &BridgeConfig,
@@ -186,6 +187,31 @@ impl BridgeService {
         context: &CallerContext,
         credential: Option<&str>,
         mutation: BridgeMutation,
+    ) -> Result<BridgeReceipt, BridgeError> {
+        self.mutate_checked(context, credential, mutation, None)
+            .await
+    }
+
+    pub async fn mutate_with_enable_proof(
+        &self,
+        context: &CallerContext,
+        credential: Option<&str>,
+        mutation: BridgeMutation,
+        proof: super::invoke::BridgeInvokeEnableProof,
+    ) -> Result<BridgeReceipt, BridgeError> {
+        if !matches!(mutation.change, BridgeChange::Enable) {
+            return Err(BridgeError::InvalidConfiguration("enable_proof"));
+        }
+        self.mutate_checked(context, credential, mutation, Some(proof))
+            .await
+    }
+
+    async fn mutate_checked(
+        &self,
+        context: &CallerContext,
+        credential: Option<&str>,
+        mutation: BridgeMutation,
+        enable_grant: Option<super::invoke::BridgeInvokeEnableProof>,
     ) -> Result<BridgeReceipt, BridgeError> {
         let mut deadline = tokio::time::Instant::now() + Duration::from_secs(15);
         validate_key(&mutation.idempotency_key)?;
@@ -244,6 +270,20 @@ impl BridgeService {
             return Ok(prior.receipt);
         }
         let mut record = plan(original, &mutation, &context.actor)?;
+        if matches!(mutation.change, BridgeChange::Enable)
+            && matches!(
+                record.current()?.config.placement,
+                BridgePlacementPolicy::ExistingAgent { .. }
+            )
+        {
+            let proof = enable_grant
+                .as_ref()
+                .ok_or(BridgeError::ConnectionRequired(
+                    BridgeSetupBlock::InvokeConsentRequired,
+                ))?;
+            proof.require_write(&record, &context.actor, mutation.expected_revision)?;
+            deadline = deadline.min(proof.deadline());
+        }
         let needs_connection = record.state == BridgeState::Enabled
             && matches!(
                 mutation.change,
@@ -277,6 +317,7 @@ impl BridgeService {
             receipt,
             deadline,
             custody,
+            enable_grant,
         };
         write.require_current()?;
         Ok(self.store.apply(write).await?.receipt)

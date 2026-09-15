@@ -25,6 +25,7 @@ The changelog at the end is **append-only**. Entries are never edited or deleted
 | Public Trigger | A visitor's landing, consent, review, connection assistance and progress. |
 | Operations | Capability-gated inventory, Profiles, activity and settings. |
 | Developer | Public TypeScript and Rust SDK guides bundled with the frontend. |
+| Bridges | Personal and organization channel connections, explicit context permission, configuration and lifecycle controls. |
 
 Each view has a canonical route. Refresh and browser history restore it without
 admitting work. The terminal plane, separate Chat model, session list, canvas
@@ -808,6 +809,32 @@ accessible numeric values. Without a reported ceiling, show only the known
 figure. Context-summary boundaries use neutral metadata, not failure colour.
 
 ### Organization inventory and shared Agent views
+
+The scoped navigation's **Bridges** entry opens `/bridges` or
+`/organizations/{organization}/bridges`. Creation uses the corresponding `/new`
+route and saved details use `/bridges/{bridge_id}`. Use existing Button, Picker,
+Input, fieldset, confirmation and surface tokens. Forms use the existing
+24/16/12/8px spacing, with capacity fields and inventory rows stacking on narrow
+screens. Personal and organization scope is explicit; only current owners or
+organization admins load management settings, bot/key/route choices or grants.
+
+Bridge setup starts disabled with separate Sandbox placement and sender-in-chat
+context. Explain resource ownership, CMA visibility, context sharing and where
+group replies appear before the user's exposure acknowledgment. Retained Agents
+need separate explicit permission to use their existing history and execution
+context. Show unsupported placement and platform controls as disabled choices
+with reasons. Saving settings, validating the connection, recording permission,
+enabling the bridge and observing successful execution/delivery are distinct.
+Never claim processing is available from a settings or connection result alone.
+
+Show the exact callback for manual NyxID configuration. Import the selected key
+through a password input without browser storage; clear it on submission and
+never display raw provider failure text. Retain nonsecret edited settings across
+ordinary access refreshes, clear protected choices while access is unavailable,
+and retain the exact command and key for uncertain-result recovery. Changing
+viewer, client or owner resets that management context. Retirement uses the
+existing risk confirmation and explicitly preserves retained resources/history;
+key and invocation-grant revocation use inline confirmation.
 
 The account menu's **Agents** entry opens `/agents`; an organization selection
 uses `/organizations/{organization}/agents` so reload and deep links retain the
