@@ -64,6 +64,8 @@ impl FirstMessageFailure {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct FirstMessageRecord {
+    #[serde(skip)]
+    pub common_binding: Option<super::agent_io::TriggerFirstMessageBinding>,
     pub origin_key: String,
     pub text: String,
     pub payload_sha256: String,
@@ -98,6 +100,7 @@ impl FirstMessageRecord {
     ) -> Result<Self, SandboxModelError> {
         let text = text.into();
         let record = Self {
+            common_binding: None,
             origin_key: origin_key.into(),
             payload_sha256: hex_sha256(text.as_bytes()),
             text,
@@ -174,7 +177,7 @@ impl FirstMessageRecord {
                 fenced && self.completed_at.is_some() && self.failure.is_none()
             }
             FirstMessageDelivery::Failed => {
-                (fenced || self.unattempted_runtime_loss())
+                (fenced || self.unattempted_runtime_loss() || self.unattempted_common_failure())
                     && self.failed_at.is_some()
                     && self.completed_at.is_none()
                     && self.failure.is_some()
@@ -208,6 +211,8 @@ impl FirstMessageRecord {
         at: String,
     ) -> Result<(), SandboxModelError> {
         if self.state != FirstMessageDelivery::Queued
+            || (self.common_binding.is_some()
+                && (self.attempt != 0 || self.recovery_generation != 0))
             || turn_sequence == 0
             || fence_sequence == 0
             || dispatch_generation == 0
@@ -233,7 +238,12 @@ impl FirstMessageRecord {
     }
 
     pub fn mark_write_confirmed(&mut self, at: String) -> Result<(), SandboxModelError> {
-        self.require_state(FirstMessageDelivery::DispatchFenced)?;
+        if self.common_binding.is_some() && self.state == FirstMessageDelivery::RecoveryRequired {
+            self.failed_at = None;
+            self.failure = None;
+        } else {
+            self.require_state(FirstMessageDelivery::DispatchFenced)?;
+        }
         self.state = FirstMessageDelivery::WriteConfirmed;
         self.write_confirmed_at = Some(at);
         self.validate()
@@ -313,6 +323,11 @@ impl FirstMessageRecord {
     }
 
     pub fn retry_after_pre_write_failure(&mut self) -> Result<(), SandboxModelError> {
+        if self.common_binding.is_some() {
+            return Err(SandboxModelError::invalid_value(
+                "first_message.common_retry",
+            ));
+        }
         self.require_state(FirstMessageDelivery::DispatchFenced)?;
         self.state = FirstMessageDelivery::Queued;
         self.dispatch_fenced_at = None;
@@ -327,6 +342,7 @@ impl FirstMessageRecord {
         queued_at: String,
     ) -> Result<(), SandboxModelError> {
         if self.state != FirstMessageDelivery::RecoveryRequired
+            || self.common_binding.is_some()
             || payload_sha256 != self.payload_sha256
             || !duplicate_execution_acknowledged
         {
@@ -370,6 +386,39 @@ impl FirstMessageRecord {
             at,
         )?);
         self.validate()
+    }
+
+    pub fn fail_common_before_dispatch(&mut self, at: String) -> Result<(), SandboxModelError> {
+        if self.common_binding.is_none()
+            || self.state != FirstMessageDelivery::Queued
+            || self.attempt != 0
+        {
+            return Err(SandboxModelError::invalid_value(
+                "first_message.common_failure",
+            ));
+        }
+        self.state = FirstMessageDelivery::Failed;
+        self.failed_at = Some(at.clone());
+        self.failure = Some(FirstMessageFailure::new(
+            "trigger_command_refused_before_dispatch",
+            "the accepted Trigger command ended before its first prompt was dispatched",
+            false,
+            at,
+        )?);
+        self.validate()
+    }
+    fn unattempted_common_failure(&self) -> bool {
+        self.attempt == 0
+            && self.recovery_generation == 0
+            && self.fence_sequence == 0
+            && self.dispatch_generation == 0
+            && self.turn_sequence.is_none()
+            && self.dispatch_fenced_at.is_none()
+            && self.write_confirmed_at.is_none()
+            && self.execution_observed_at.is_none()
+            && self.failure.as_ref().is_some_and(|failure| {
+                failure.code == "trigger_command_refused_before_dispatch" && !failure.retryable
+            })
     }
 
     fn unattempted_runtime_loss(&self) -> bool {

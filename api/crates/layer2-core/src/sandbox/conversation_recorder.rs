@@ -95,6 +95,7 @@ impl AgentUpdateRecorder for DurableAgentUpdateRecorder {
                 command_claim: None,
                 execution_fence: None,
                 channel_execution_fence: None,
+                trigger_execution_fence: None,
                 admission_guard: None,
                 expected_agent_revision: current.revision,
                 expected_last_seq: current.conversation.last_seq,

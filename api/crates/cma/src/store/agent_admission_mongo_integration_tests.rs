@@ -646,6 +646,7 @@ async fn admission_reconciles_every_artifact_at_the_ambiguous_commit_time() {
             "sandboxes",
             "worktrees",
             "agents",
+            "trigger_first_message_bindings",
             "agent_creation_provenance",
             "agent_log",
             "sandbox_events",

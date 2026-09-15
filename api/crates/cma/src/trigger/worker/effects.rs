@@ -105,6 +105,29 @@ impl LaunchWorker {
                 return Ok(EffectOutcome::Halted);
             }
         };
+        if kind == LaunchEffectKind::CreateAgent && launch.input_protocol.is_some() {
+            let durable = self
+                .launches
+                .launch(&launch.id, &launch.owner)
+                .await?
+                .ok_or_else(|| LaunchWorkerError::Corrupt("accepted Launch disappeared".into()))?;
+            let mut expected = launch.clone();
+            if expected.input_binding_sha256.is_none() && durable.input_binding_sha256.is_some() {
+                expected.input_binding_sha256 = durable.input_binding_sha256.clone();
+                expected.revision = expected
+                    .revision
+                    .checked_add(1)
+                    .ok_or_else(|| LaunchWorkerError::Corrupt("Launch revision overflow".into()))?;
+            }
+            if durable != expected {
+                return Err(layer2_core::trigger_domain::LaunchStoreError::Conflict {
+                    expected: launch.revision,
+                    actual: durable.revision,
+                }
+                .into());
+            }
+            launch = durable;
+        }
         let expected = launch.revision;
         let fence = self.fence(&launch)?;
         let at = rfc3339_at(now);

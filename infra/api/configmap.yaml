@@ -19,6 +19,8 @@ data:
   CHRONO_BRIDGE_LARK_ENABLED: "false"
   CHRONO_BRIDGE_FEISHU_ENABLED: "false"
   CHRONO_BRIDGE_V2_UI_TRANSPORT_ENABLED: "false"
+  # Admission-only protocol selector. Requires a compatible worker/rollback floor.
+  CHRONO_TRIGGER_COMMAND_ADMISSION_ENABLED: "false"
   # Bounded policy pinned before each Sandbox/Workspace provisioning effect.
   CHRONO_INSTALL_COMMAND_TIMEOUT_SECONDS: "600"
   CHRONO_INSTALL_TOTAL_TIMEOUT_SECONDS: "1800"

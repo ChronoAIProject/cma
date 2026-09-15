@@ -131,7 +131,9 @@ pub fn command_ready_for_claim(
                     .conversation
                     .first_message
                     .as_ref()
-                    .is_none_or(|first| first.is_terminal())
+                    .is_none_or(|first| {
+                        first.is_terminal() || super::is_bound_trigger_first(command, agent)
+                    })
         }
         _ => true,
     }

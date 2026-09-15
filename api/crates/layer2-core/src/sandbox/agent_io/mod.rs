@@ -29,6 +29,7 @@ mod revival_authority;
 mod service;
 mod status;
 mod targeted_control;
+pub(in crate::sandbox) mod trigger;
 mod work;
 mod worker;
 mod worker_store;
@@ -82,6 +83,10 @@ pub use targeted_control::{
     TargetedControlBinding, TargetedControlError, TargetedControlInspection,
     TargetedControlReservation, TargetedControlStatusView, TargetedControlSubmission,
     TargetedResponse,
+};
+pub use trigger::{
+    is_bound_trigger_first, TriggerExecutionAuthorization, TriggerExecutionFence,
+    TriggerExecutionProof, TriggerFirstMessageBinding,
 };
 pub use work::{
     CommandClaim, CommandClaimRequest, CommandDispatch, CommandFailure, CommandFailureCode,

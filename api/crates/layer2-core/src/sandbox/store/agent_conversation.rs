@@ -15,6 +15,9 @@ pub struct AgentConversationMutation {
     /// Exact Channel invoke authority, independently fenced with original source.
     pub channel_execution_fence:
         Option<std::sync::Arc<crate::sandbox::agent_io::ChannelExecutionFence>>,
+    /// Exact immutable Trigger first-message binding and current store proof.
+    pub trigger_execution_fence:
+        Option<std::sync::Arc<crate::sandbox::agent_io::TriggerExecutionFence>>,
     /// Exact parent authority for newly admitted input; absent for runtime evidence.
     pub admission_guard: Option<SandboxMutationGuard>,
     pub expected_agent_revision: u64,
@@ -34,10 +37,21 @@ pub fn validate_agent_conversation_admission(
     mutation: &AgentConversationMutation,
 ) -> Result<(), SandboxStoreError> {
     let admission = admits_input(current, mutation);
-    if mutation.execution_fence.is_some() && mutation.channel_execution_fence.is_some() {
+    if [
+        mutation.execution_fence.is_some(),
+        mutation.channel_execution_fence.is_some(),
+        mutation.trigger_execution_fence.is_some(),
+    ]
+    .into_iter()
+    .filter(|present| *present)
+    .count()
+        > 1
+    {
         return Err(SandboxStoreError::Conflict);
     }
-    if (mutation.execution_fence.is_some() || mutation.channel_execution_fence.is_some())
+    if (mutation.execution_fence.is_some()
+        || mutation.channel_execution_fence.is_some()
+        || mutation.trigger_execution_fence.is_some())
         && (mutation.command_claim.is_none() || mutation.admission_guard.is_none() || !admission)
     {
         return Err(SandboxStoreError::Conflict);

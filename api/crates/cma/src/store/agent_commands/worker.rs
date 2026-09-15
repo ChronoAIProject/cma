@@ -43,6 +43,19 @@ impl AgentCommandWorkerStore for MongoSandboxStore {
             .get_command(id)
             .await?
             .ok_or(CommandLedgerError::NotFound)?;
+        if matches!(
+            command.receipt.envelope.actor,
+            layer2_core::sandbox::agent_io::AgentActor::Trigger { .. }
+        ) {
+            return super::super::trigger_first_messages::reject_unclaimed(
+                self,
+                &command,
+                expected_revision,
+                code,
+                now,
+            )
+            .await;
+        }
         command.reject_unclaimed(expected_revision, code, now)?;
         let mut fields = super::records::document(&command)?;
         fields.remove("_id");

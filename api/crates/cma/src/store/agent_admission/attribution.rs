@@ -57,6 +57,16 @@ pub(super) async fn fence_initiation(
         .map(|value| mongodb::bson::deserialize_from_bson(value.clone()))
         .transpose()
         .map_err(|_| ApplyError::Domain(SandboxStoreError::Conflict))?;
+    launch.input_protocol = document
+        .get("trigger_input_protocol")
+        .map(|value| mongodb::bson::deserialize_from_bson(value.clone()))
+        .transpose()
+        .map_err(|_| ApplyError::Domain(SandboxStoreError::Conflict))?;
+    launch.input_binding_sha256 = document
+        .get("trigger_input_binding_sha256")
+        .map(|value| mongodb::bson::deserialize_from_bson(value.clone()))
+        .transpose()
+        .map_err(|_| ApplyError::Domain(SandboxStoreError::Conflict))?;
     launch
         .validate()
         .map_err(|_| ApplyError::Domain(SandboxStoreError::Conflict))?;
