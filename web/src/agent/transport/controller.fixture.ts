@@ -3,6 +3,7 @@ import { createClient } from '@chronoai/cma-sdk';
 import { agentClient } from '../../test/agent';
 import { createAgentTransport } from './client';
 import { commandStatus, controlReceipt, observation } from './controls.fixture';
+import { queuedObservation, queuedReceipt } from './queued.fixture';
 
 export const incarnation = 'a'.repeat(64);
 export const cursor = (seq: number) => `ag1.${incarnation}.${seq}`;
@@ -44,6 +45,12 @@ export function harness() {
     .mockImplementation(async () => json(page([], 0)));
   const cancel = vi.fn();
   const currentUser = vi.fn(async () => 'alice' as string | undefined);
+  const observeQueued = vi.fn(async (responseId: string) =>
+    json(queuedObservation(responseId, 7, false)),
+  );
+  const cancelQueued = vi.fn(async (responseId: string, init?: RequestInit) =>
+    json(queuedReceipt(responseId, JSON.parse(String(init?.body)))),
+  );
   const observe = vi.fn(async (responseId: string) => json(observation(responseId)));
   const control = vi.fn(async (responseId: string, init?: RequestInit) =>
     json(controlReceipt(responseId, JSON.parse(String(init?.body))), 202),
@@ -78,6 +85,9 @@ export function harness() {
     const url = String(input);
     if (url === '/api/v2/ui/transport') return eligibility();
     if (url === '/api/v2/commands/cmd_control') return command();
+    const queued = /^\/api\/v2\/agents\/agt_1\/responses\/([^/]+)\/queued-cancellation$/.exec(url);
+    if (queued)
+      return init?.method === 'POST' ? cancelQueued(queued[1]!, init) : observeQueued(queued[1]!);
     const target = /^\/api\/v2\/agents\/agt_1\/responses\/([^/]+)\/controls$/.exec(url);
     if (target) return init?.method === 'POST' ? control(target[1]!, init) : observe(target[1]!);
     if (url.startsWith('/api/v2/agents/agt_1/events/snapshot')) return snapshot(url);
@@ -119,6 +129,8 @@ export function harness() {
     snapshot,
     cancel,
     currentUser,
+    observeQueued,
+    cancelQueued,
     observe,
     control,
     command,
