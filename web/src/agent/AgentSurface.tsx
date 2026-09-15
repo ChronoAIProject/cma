@@ -22,6 +22,7 @@ import { BrandLoading } from '../landing/LandingCharacter';
 import { LifecycleProgress } from '../sandbox/LifecycleProgress';
 import { AgentSourceLabel, useAgentSource } from './source';
 import { useAgentProvenance } from './provenance';
+import { QueuedMessageNotice } from './QueuedMessageNotice';
 
 interface AgentSurfaceProps {
   readonly viewerId?: string;
@@ -242,6 +243,8 @@ export function AgentSurface({
           {controller.controlNotice}
         </div>
       )}
+
+      <QueuedMessageNotice control={controller.queuedMessage} readOnly={readOnly} />
 
       <div className="agent-surface__conversation">
         {status === 'starting' ||

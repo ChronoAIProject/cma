@@ -2,6 +2,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'node:ht
 import type { Page } from '@playwright/test';
 import { LocalStartup } from './agent-startup-fixtures';
 import { commandStatus } from './agent-v2-command.fixture';
+import { LocalQueuedCancellation } from './agent-v2-queued.fixture';
 
 const agent = 'agt_contract';
 const incarnation = 'a'.repeat(64);
@@ -24,6 +25,7 @@ interface CapturedWrite {
 export class LocalAgentV2 {
   readonly boundary = new LocalStartup();
   readonly started = new Date(Date.now() - 120_000).toISOString();
+  readonly queued = new LocalQueuedCancellation(this.started);
   readonly items: EventItem[] = [];
   readonly writes: CapturedWrite[] = [];
   readonly reads: string[] = [];
@@ -186,6 +188,10 @@ export class LocalAgentV2 {
       const body = JSON.parse(source) as Record<string, unknown>;
       const key = request.headers['idempotency-key'];
       this.writes.push({ path, body, key: typeof key === 'string' ? key : undefined });
+      if (
+        this.queued.handle('POST', path, response, body, typeof key === 'string' ? key : undefined)
+      )
+        return;
       if (path === `/api/v2/agents/${agent}/responses`) {
         if (this.loseInput) {
           this.loseInput = false;
@@ -229,6 +235,7 @@ export class LocalAgentV2 {
       }
     } else if (request.method === 'GET') {
       this.reads.push(`${path}${url.search}`);
+      if (this.queued.handle('GET', path, response)) return;
       if (path === '/api/v2/ui/transport')
         return this.json(response, {
           object: 'cma.ui.transport',

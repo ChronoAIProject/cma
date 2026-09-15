@@ -20,6 +20,7 @@ import { followV2Agent } from './transport/replay';
 import { useAgentActions } from './actions';
 import { IdentityChangedError, isIdentityChanged } from './transport/identity';
 import { useControlStatus } from './transport/controlStatus';
+import { useQueuedMessage, type QueuedMessageControl } from './transport/queuedStatus';
 
 export type AgentResourceState =
   | { readonly status: 'idle' }
@@ -31,6 +32,7 @@ export type AgentCommand = 'send' | 'interrupt' | 'approval' | 'stop' | 'delete'
 export type ApprovalDecision = 'allow' | 'deny' | 'abort';
 
 export interface AgentController {
+  readonly queuedMessage?: QueuedMessageControl;
   readonly pendingMessage?: string;
   readonly acceptedMessage?: string;
   readonly pendingControl?: boolean;
@@ -394,7 +396,14 @@ export function useAgentController(
       : undefined;
   const retained = v2?.pending();
   const controlNotice = useControlStatus(v2, onIdentityChange);
+  const queuedMessage = useQueuedMessage(
+    v2,
+    !historyIncomplete,
+    pending !== undefined,
+    onIdentityChange,
+  );
   return {
+    queuedMessage: v2 === undefined ? undefined : queuedMessage,
     pendingMessage: retained?.input,
     acceptedMessage: retained?.accepted,
     pendingControl: retained?.control,
