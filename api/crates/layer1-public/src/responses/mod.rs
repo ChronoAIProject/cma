@@ -98,7 +98,7 @@ fn field_refusal(field: &str, detail: &str) -> Response {
     crate::rest::problem_response(StatusCode::UNPROCESSABLE_ENTITY, body)
 }
 
-fn previous_conflict() -> Response {
+pub(crate) fn previous_conflict() -> Response {
     let mut body = crate::rest::problem_document(
         StatusCode::CONFLICT,
         "previous-response-conflict",
@@ -107,12 +107,4 @@ fn previous_conflict() -> Response {
     );
     body["field"] = "previous_response_id".into();
     crate::rest::problem_response(StatusCode::CONFLICT, body)
-}
-
-fn response_in_progress() -> Response {
-    failure(
-        StatusCode::CONFLICT,
-        "response_in_progress",
-        "This conversation already has a response in progress.",
-    )
 }

@@ -67,6 +67,12 @@ pub(super) struct Case {
     pub response: ResponseFixture,
     #[serde(default)]
     pub captures: BTreeMap<String, String>,
+    #[serde(
+        default,
+        rename = "headerCaptures",
+        skip_serializing_if = "BTreeMap::is_empty"
+    )]
+    pub header_captures: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -96,6 +102,12 @@ pub(super) struct ResponseFixture {
     pub body: Value,
     #[serde(rename = "bodyKind")]
     pub body_kind: BodyKind,
+    #[serde(default, rename = "streamPrefix", skip_serializing_if = "is_false")]
+    pub stream_prefix: bool,
+}
+
+fn is_false(value: &bool) -> bool {
+    !value
 }
 
 #[derive(Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -241,6 +253,25 @@ async fn shared_public_contract_matches_real_backend() {
         assert_eq!(corpus.version, 1);
         let mut canonical: BTreeMap<String, BTreeMap<String, Value>> = BTreeMap::new();
         for case in &corpus.cases {
+            for (name, header) in &case.header_captures {
+                let value = Value::String(
+                    case.response
+                        .headers
+                        .get(header)
+                        .expect("declared header capture")
+                        .clone(),
+                );
+                if let Some(previous) = canonical
+                    .entry(case.scenario.clone())
+                    .or_default()
+                    .insert(name.clone(), value.clone())
+                {
+                    assert_eq!(
+                        previous, value,
+                        "conflicting canonical header capture {name}"
+                    );
+                }
+            }
             for (name, pointer) in &case.captures {
                 let value = case
                     .response

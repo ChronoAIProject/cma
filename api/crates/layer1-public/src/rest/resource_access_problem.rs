@@ -6,7 +6,7 @@ use layer2_core::resource_access::{
     AccessError, MembershipError, ResourceAccessError, ResourceAccessStoreError,
 };
 
-pub(super) struct ResourceProblem(pub ResourceAccessError);
+pub(crate) struct ResourceProblem(pub ResourceAccessError);
 impl From<ResourceAccessError> for ResourceProblem {
     fn from(value: ResourceAccessError) -> Self {
         Self(value)

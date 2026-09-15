@@ -15,6 +15,9 @@ const MAX_RAW_BODY_REPEAT: usize = 2 * 1024 * 1024 + 1;
 const MAX_RAW_BODY_BYTES: usize = 8 * 1024 * 1024;
 
 pub(super) async fn run(scenario: &Scenario, symbols: &mut Symbols, case: &mut Case, record: bool) {
+    if record {
+        eprintln!("recording {}", case.id);
+    }
     let path = symbols.resolve_text(&case.request.path);
     let mut request = Request::builder()
         .method(case.request.method.as_str())
@@ -82,7 +85,7 @@ pub(super) async fn run(scenario: &Scenario, symbols: &mut Symbols, case: &mut C
                 .expect("SSE fixture body must be an array")
                 .len();
             assert!(frames > 0, "SSE fixtures must prove at least one frame");
-            read_sse(response.into_body(), frames).await
+            read_sse(response.into_body(), frames, case.response.stream_prefix).await
         }
     };
     if let Some(expected) = case.response.body["code"]
@@ -110,11 +113,28 @@ pub(super) async fn run(scenario: &Scenario, symbols: &mut Symbols, case: &mut C
             .unwrap_or_else(|| panic!("{} missing canonical capture {pointer}", case.id));
         symbols.capture(symbol, actual, canonical);
     }
-    let headers: BTreeMap<String, String> = serde_json::from_value(symbols.response_tokens(
-        serde_json::to_value(headers).unwrap(),
-        &serde_json::to_value(&case.response.headers).unwrap(),
-    ))
-    .unwrap();
+    for (symbol, header) in &case.header_captures {
+        let actual = Value::String(
+            headers
+                .get(header)
+                .unwrap_or_else(|| panic!("{} missing receipt header {header}", case.id))
+                .clone(),
+        );
+        let canonical = Value::String(
+            case.response
+                .headers
+                .get(header)
+                .expect("canonical receipt header")
+                .clone(),
+        );
+        symbols.capture(symbol, &actual, &canonical);
+    }
+    let headers: BTreeMap<String, String> =
+        serde_json::from_value(symbols.normalize(symbols.response_tokens(
+            serde_json::to_value(headers).unwrap(),
+            &serde_json::to_value(&case.response.headers).unwrap(),
+        )))
+        .unwrap();
     let normalized = symbols.normalize(symbols.response_tokens(body, &case.response.body));
     if record {
         case.response.headers = headers;
@@ -170,9 +190,17 @@ async fn response_timeout<F: std::future::Future>(
 ) -> Result<F::Output, tokio::time::error::Elapsed> {
     let virtual_time = matches!(
         scenario,
-        "experience_timeout_input" | "experience_timeout_context"
+        "experience_timeout_input"
+            | "experience_timeout_context"
+            | "experience_working"
+            | "experience_no_steer"
+            | "experience_pending"
+            | "experience_checkpoint"
+            | "experience_owner"
+            | "experience_agui_ambiguous"
+            | "experience_responses_ambiguous"
     );
-    // Only Core's ten-minute provisioning deadlines need accelerated time.
+    // Provisioning and queued legacy binding observation have bounded deadlines.
     let seconds = if virtual_time {
         tokio::time::pause();
         610
@@ -257,7 +285,7 @@ async fn ordinary_cases_keep_the_five_second_deadline() {
     assert_eq!(start.elapsed(), Duration::from_secs(5));
 }
 
-async fn read_sse(body: Body, expected_frames: usize) -> Value {
+async fn read_sse(body: Body, expected_frames: usize, prefix: bool) -> Value {
     let mut stream = body.into_data_stream();
     let mut bytes = Vec::new();
     tokio::time::timeout(Duration::from_secs(5), async {
@@ -267,7 +295,19 @@ async fn read_sse(body: Body, expected_frames: usize) -> Value {
                 bytes.len() <= 8 * 1024 * 1024,
                 "SSE fixture exceeded byte budget"
             );
+            if prefix {
+                if let Ok(text) = std::str::from_utf8(&bytes) {
+                    let frames = parse_sse(text);
+                    if frames.len() >= expected_frames {
+                        return Value::Array(frames.into_iter().take(expected_frames).collect());
+                    }
+                }
+            }
         }
+        assert!(
+            !prefix,
+            "a declared open-stream prefix unexpectedly reached EOF"
+        );
         let text = std::str::from_utf8(&bytes).expect("SSE response is UTF-8");
         assert!(
             text.replace("\r\n", "\n").ends_with("\n\n"),
@@ -347,13 +387,13 @@ async fn split_trailing_sse_frames_are_rejected_after_the_expected_prefix() {
         Ok::<_, std::io::Error>("event: first\ndata: {}\n\n"),
         Ok("event: unexpected\ndata: {}\n\n"),
     ]);
-    read_sse(Body::from_stream(stream), 1).await;
+    read_sse(Body::from_stream(stream), 1, false).await;
 }
 
 #[tokio::test]
 #[should_panic(expected = "incomplete final SSE frame")]
 async fn incomplete_trailing_sse_frames_are_rejected_at_eof() {
-    read_sse(Body::from("data: {}\n\ndata: unfinished\n"), 1).await;
+    read_sse(Body::from("data: {}\n\ndata: unfinished\n"), 1, false).await;
 }
 
 #[test]

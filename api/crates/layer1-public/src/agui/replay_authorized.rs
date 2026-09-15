@@ -8,6 +8,7 @@ pub(super) async fn open(
     id: AgentId,
     after: u64,
     follow: bool,
+    run: Option<u64>,
     watching: Option<AgentLiveSubscription>,
 ) -> Response {
     let authorization = match state
@@ -36,6 +37,10 @@ pub(super) async fn open(
         problem["head"] = snapshot.head.into();
         return crate::rest::problem_response(StatusCode::BAD_REQUEST, problem);
     }
+    if run.is_some_and(|turn| !snapshot.history.iter().any(|entry| entry.seq == turn
+        && matches!(entry.kind, Some(AgentLogKind::TurnStarted { turn_sequence, .. }) if turn_sequence == turn))) {
+        return crate::rest::instance_problem::InstanceProblem::Unavailable.into_response();
+    }
     let mut open = Following {
         state,
         caller: resource.context.caller,
@@ -44,7 +49,7 @@ pub(super) async fn open(
         turn: 0,
         pending: VecDeque::new(),
         follow,
-        run: None,
+        run,
         ended: false,
         watching,
         committed_message_seq: 0,
@@ -60,6 +65,20 @@ pub(super) async fn open(
             open.turn = turn_sequence;
         }
     }
+    if let Some(turn) = run {
+        open.turn = turn;
+        if after >= turn {
+            open.pending.push_back(AguiEvent {
+                kind: "RUN_STARTED",
+                thread_id: open.id.to_string(),
+                run_id: turn.to_string(),
+                body: serde_json::json!({}),
+                timestamp: None,
+                seq: None,
+                live: false,
+            });
+        }
+    }
     open.committed_message_seq = snapshot
         .history
         .iter()
@@ -72,7 +91,22 @@ pub(super) async fn open(
 
 impl Following {
     pub(super) fn queue_authorized(&mut self, snapshot: AgentEventStreamSnapshot) {
+        let retained: Vec<_> = snapshot
+            .history
+            .iter()
+            .filter_map(|entry| {
+                Some(AgentLogEntry {
+                    agent_id: snapshot.id.clone(),
+                    seq: entry.seq,
+                    appended_at: entry.appended_at.clone(),
+                    kind: entry.kind.clone()?,
+                })
+            })
+            .collect();
         for entry in snapshot.history {
+            if self.ended {
+                break;
+            }
             if entry.seq <= self.after {
                 continue;
             }
@@ -98,6 +132,7 @@ impl Following {
                 });
             }
         }
+        self.interrupt_current(snapshot.active_turn, &retained);
         self.queue_fragments(
             &snapshot.id,
             snapshot.runtime_generation,

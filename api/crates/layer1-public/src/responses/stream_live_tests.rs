@@ -27,6 +27,7 @@ async fn opening() -> (Open, Agent) {
             next_output_index: 0,
             ended: false,
             live: LiveState::new(watching),
+            authorization: None,
         },
         agent,
     )
