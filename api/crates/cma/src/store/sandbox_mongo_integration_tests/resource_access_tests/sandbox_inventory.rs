@@ -1,5 +1,7 @@
 use super::*;
 use layer2_core::sandbox::OwnerSandboxQuery;
+#[path = "sandbox_inventory/shared.rs"]
+mod shared;
 
 fn query(limit: u16, cursor: Option<&str>) -> OwnerSandboxQuery {
     OwnerSandboxQuery {

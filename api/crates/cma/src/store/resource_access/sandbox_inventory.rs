@@ -20,6 +20,42 @@ pub(super) async fn read(
     query: &OwnerSandboxQuery,
     session: &mut ClientSession,
 ) -> Result<Vec<ResourceAccessSnapshot>, ReadError> {
+    read_scope(store, Scope::Organization(organization), query, session).await
+}
+
+pub(super) async fn read_shared(
+    store: &MongoSandboxStore,
+    recipient: &SubjectId,
+    organizations: &[SubjectId],
+    query: &OwnerSandboxQuery,
+    session: &mut ClientSession,
+) -> Result<Vec<ResourceAccessSnapshot>, ReadError> {
+    read_scope(
+        store,
+        Scope::Shared {
+            recipient,
+            organizations,
+        },
+        query,
+        session,
+    )
+    .await
+}
+
+enum Scope<'a> {
+    Organization(&'a SubjectId),
+    Shared {
+        recipient: &'a SubjectId,
+        organizations: &'a [SubjectId],
+    },
+}
+
+async fn read_scope(
+    store: &MongoSandboxStore,
+    scope: Scope<'_>,
+    query: &OwnerSandboxQuery,
+    session: &mut ClientSession,
+) -> Result<Vec<ResourceAccessSnapshot>, ReadError> {
     PageRequest::new(query.page.limit, query.page.cursor.clone())
         .map_err(|_| ResourceAccessStoreError::Invalid)?;
     let mut filter = Document::new();
@@ -30,18 +66,29 @@ pub(super) async fn read(
         filter.insert("_id", doc! {"$gt":cursor});
     }
     let limit = i64::from(query.page.limit) + 1;
-    let branches = [
-        (
-            &store.resource_policies,
-            doc! {"owner_kind":"organization","owner_subject":organization.as_str()},
-            "_id",
-        ),
-        (
-            &store.resource_shares,
-            doc! {"target_org_id":organization.as_str(),"revoked":false,"selector_kind":"sandbox"},
-            "selector_id",
-        ),
-    ];
+    let mut branches = Vec::new();
+    let admission = match &scope {
+        Scope::Organization(organization) => {
+            branches.push((
+                &store.resource_policies,
+                doc! {"owner_kind":"organization","owner_subject":organization.as_str()},
+                "_id",
+            ));
+            doc! {"target_org_id":organization.as_str(),"revoked":false,"selector_kind":"sandbox"}
+        }
+        Scope::Shared {
+            recipient,
+            organizations,
+        } => {
+            if organizations.is_empty() {
+                return Ok(Vec::new());
+            }
+            doc! {"target_org_id":{"$in":organizations.iter().map(SubjectId::as_str).collect::<Vec<_>>()},
+            "revoked":false,"selector_kind":"sandbox",
+            "$nor":[{"record.owner.kind":"person","record.owner.subject":recipient.as_str()}]}
+        }
+    };
+    branches.push((&store.resource_shares, admission, "selector_id"));
     let mut candidates = BTreeMap::<String, Sandbox>::new();
     // Read both indexed branches in one transaction. Each returns a bounded,
     // deduplicated prefix; narrow Agent shares never enter this parent inventory.
@@ -81,7 +128,14 @@ pub(super) async fn read(
             session,
         )
         .await?;
-        if value.organization_sandbox(organization)? != &candidate {
+        let sandbox = match &scope {
+            Scope::Organization(organization) => value.organization_sandbox(organization)?,
+            Scope::Shared {
+                recipient,
+                organizations,
+            } => value.shared_sandbox(recipient, organizations)?,
+        };
+        if sandbox != &candidate {
             return Err(ResourceAccessStoreError::Corrupt.into());
         }
         items.push(value);

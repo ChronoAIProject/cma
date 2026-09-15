@@ -5,6 +5,8 @@ use crate::resource_access::*;
 use buffered::BufferedStore;
 #[path = "inventory.rs"]
 mod inventory;
+#[path = "shared_inventory.rs"]
+mod shared_inventory;
 use std::sync::Mutex;
 use std::time::{Duration, SystemTime};
 
@@ -65,7 +67,14 @@ impl OrganizationAuthority for Authority {
         _: &Caller,
         _: &str,
     ) -> Result<Vec<OrganizationChoice>, MembershipError> {
-        unreachable!()
+        Ok(["org", "org-two"]
+            .into_iter()
+            .map(|id| OrganizationChoice {
+                id: SubjectId::new(id),
+                role: OrganizationRole::Viewer,
+                display_name: None,
+            })
+            .collect())
     }
 }
 struct Fixture {

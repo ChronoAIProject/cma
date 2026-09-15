@@ -7,6 +7,8 @@ mod authority;
 mod context;
 mod identity;
 mod inventory;
+mod inventory_memberships;
+pub(crate) use inventory_memberships::InventoryMemberships;
 mod lineage;
 mod personal;
 mod policy;

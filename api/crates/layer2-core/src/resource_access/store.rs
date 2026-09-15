@@ -206,6 +206,16 @@ pub trait ResourceAccessStore: Send + Sync {
         query: &crate::sandbox::OwnerSandboxQuery,
     ) -> Result<Vec<ResourceAccessSnapshot>, ResourceAccessStoreError>;
 
+    /// Whole-Sandbox incoming grants across verified current organizations.
+    /// Exclude the recipient's own personal resources and deduplicate before
+    /// returning at most limit + 1 ordered snapshots, including the lookahead.
+    async fn shared_sandboxes(
+        &self,
+        recipient: &SubjectId,
+        organizations: &[SubjectId],
+        query: &crate::sandbox::OwnerSandboxQuery,
+    ) -> Result<Vec<ResourceAccessSnapshot>, ResourceAccessStoreError>;
+
     /// Agent-ID ordered organization inventory, filtered before pagination and
     /// deduplicated across org ownership and overlapping grants. Return at most
     /// limit + 1 snapshots so the service can authorize the lookahead too. These
