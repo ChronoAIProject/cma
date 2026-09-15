@@ -46,12 +46,16 @@
 }
 .agent-inventory__rows li {
   display: grid;
-  grid-template-columns: minmax(160px, 2fr) repeat(2, minmax(100px, 1fr)) minmax(80px, 1fr);
+  grid-template-columns: minmax(160px, 2fr) repeat(3, minmax(100px, 1fr)) minmax(80px, 1fr);
   align-items: center;
   gap: 12px;
   padding: 16px 0;
   border-bottom: 1px solid var(--dsw-alias-border-l2);
   overflow-wrap: anywhere;
+}
+.agent-inventory__access {
+  grid-column: 1 / -1;
+  grid-row: 2;
 }
 .agent-inventory__rows a {
   color: var(--dsw-alias-brand-text);

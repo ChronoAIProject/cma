@@ -23,13 +23,35 @@ export function BridgeCredential({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
   const [confirm, setConfirm] = useState(false);
+  const [retainAuthority, setRetainAuthority] = useState(false);
+  const [scope, setScope] = useState({
+    client,
+    id: detail.bridge.id,
+    revision: detail.bridge.revision,
+    allowed,
+  });
+  if (
+    scope.client !== client ||
+    scope.id !== detail.bridge.id ||
+    scope.revision !== detail.bridge.revision ||
+    scope.allowed !== allowed
+  ) {
+    setScope({ client, id: detail.bridge.id, revision: detail.bridge.revision, allowed });
+    setRetainAuthority(false);
+    setMaterial('');
+  }
   const active = useRef<AbortController | undefined>(undefined);
   const localCommand = useBridgeCommand(allowed);
   const command = sharedCommand ?? localCommand;
   useEffect(() => () => active.current?.abort(), []);
   useEffect(() => {
-    if (!allowed) active.current?.abort();
+    if (!allowed) {
+      active.current?.abort();
+    }
   }, [allowed]);
+  useEffect(() => {
+    active.current?.abort();
+  }, [client, detail.bridge.id, detail.bridge.revision]);
   const status = detail.credential;
   const importKey = async () => {
     if (!allowed || busy || command.locked || material === '') return;
@@ -43,6 +65,7 @@ export function BridgeCredential({
     try {
       await client.bridges.importKey(detail.bridge.id, detail.bridge.revision, selectedKey, {
         signal: request.signal,
+        retainControlPlaneAuthority: retainAuthority,
       });
       request.signal.throwIfAborted();
       onChanged();
@@ -88,6 +111,25 @@ export function BridgeCredential({
         <p>
           The key is sent once to CMA and cleared from this field. It is never included in a bridge
           detail response.
+        </p>
+        <label>
+          <input
+            type="checkbox"
+            checked={retainAuthority}
+            disabled={!allowed || busy || command.locked}
+            onChange={(event) => setRetainAuthority(event.target.checked)}
+          />
+          Allow this bridge to use my NyxID connection for 30 days
+        </label>
+        <p>
+          This permission applies only to this bridge for{' '}
+          {detail.bridge.owner.kind === 'organization'
+            ? `organization ${detail.bridge.owner.subject}`
+            : `personal account ${detail.bridge.owner.subject}`}
+          . It continues after browser logout. CMA checks current account and organization access
+          before each operation. Revoke the imported key here to end this permission early. Signing
+          in again or expiration requires reconnecting this bridge. Your personal token stays in CMA
+          and is never installed in a Sandbox.
         </p>
         <Button type="submit" disabled={!allowed || material === '' || busy || command.locked}>
           {busy ? 'Importing key' : 'Import key'}

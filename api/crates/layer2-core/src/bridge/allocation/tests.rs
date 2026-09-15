@@ -1,5 +1,8 @@
 use super::*;
+mod channel_creation;
 mod fixtures;
+mod renewal;
+mod sandbox_admission;
 use fixtures::*;
 
 #[test]

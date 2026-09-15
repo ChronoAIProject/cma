@@ -74,16 +74,8 @@ impl BridgeSetupCredentials for ManagedBridgeCredentials {
         credential: Option<&str>,
         request: BridgeCredentialImport,
     ) -> Result<BridgeCredentialStatus, BridgeError> {
-        let metadata = ManagedBridgeCredentials::import(
-            self,
-            service,
-            context,
-            credential,
-            &request.id,
-            request.expected_revision,
-            SecretValue::new(request.material.expose().to_owned()),
-        )
-        .await?;
+        let metadata =
+            ManagedBridgeCredentials::import(self, service, context, credential, request).await?;
         Ok(status(&metadata))
     }
     async fn revoke(

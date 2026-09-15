@@ -1,3 +1,4 @@
+import { ResourceAccessDetails } from './ResourceAccessSummary';
 import { useMemo, useState, type ReactNode } from 'react';
 import type { ResourceViewsClient } from './client';
 import type { AppRoute } from '../routing/routes';
@@ -84,6 +85,7 @@ export function SandboxAccessPage({
       <header>
         <p>Shared Sandbox</p>
         <h1>{sandbox.name}</h1>
+        <ResourceAccessDetails client={client} access={current.state.value.access} />
         <p>
           {statusLabel(sandbox.status)} · {resourceCount(sandbox.workspace_count, 'Workspace')} ·{' '}
           {resourceCount(sandbox.agent_count, 'Agent')}

@@ -21,6 +21,7 @@ pub(super) use inventory::{
 mod mutation;
 pub(super) use mutation::fence_lineage;
 mod records;
+pub(super) use records::policy_document;
 mod sandbox_inventory;
 mod snapshot;
 

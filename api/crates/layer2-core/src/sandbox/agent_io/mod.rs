@@ -10,6 +10,8 @@ mod authorization;
 mod authorization_audit;
 mod binding;
 mod capabilities;
+mod channel;
+mod channel_claimed_service;
 mod claimed_service;
 mod command;
 mod event;
@@ -44,6 +46,12 @@ pub use authorization_audit::{
 };
 pub use binding::bind_command_dispatch;
 pub use capabilities::AgentInterfaceCapabilities;
+pub use channel::{
+    ChannelAgentCommandService, ChannelCommandAdmissionError, ChannelCommandExecutionSource,
+    ChannelCommandHold, ChannelCommandReservation, ChannelCommandSidecar, ChannelCommandStore,
+    ChannelExecutionAuthorization, ChannelExecutionFence, ChannelHoldRefusal,
+    ChannelHoldRefusalReason,
+};
 pub use command::{AgentCommand, AgentInputOrder};
 pub use event::{
     AgentEphemeralEvent, AgentEvent, AgentEventKind, AgentMessageRole, AGENT_IO_SCHEMA_VERSION,

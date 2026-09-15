@@ -10,6 +10,10 @@ const SECRET: &str = "fixture-bridge-control-secret";
 fn encryption(byte: u8) -> AuthEncryptionKey {
     AuthEncryptionKey::from_base64(&STANDARD.encode([byte; 32])).unwrap()
 }
+
+#[path = "custody_grants_tests.rs"]
+mod grants;
+
 pub(super) fn material(
     management: &layer2_core::bridge::BridgeManagementLease,
 ) -> StoredBridgeCredential {
@@ -38,6 +42,7 @@ pub(super) fn material(
             revocation_key_digest: None,
         },
         value: SecretValue::new(SECRET.into()),
+        control_plane: None,
     }
 }
 

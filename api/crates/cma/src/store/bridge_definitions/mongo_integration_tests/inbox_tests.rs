@@ -12,6 +12,8 @@ use sha2::{Digest, Sha256};
 
 use super::*;
 use crate::store::AuthEncryptionKey;
+#[path = "inbox_work.rs"]
+mod work;
 
 const KEY: &[u8] = include_bytes!(concat!(
     env!("CARGO_MANIFEST_DIR"),
@@ -48,7 +50,7 @@ fn sign(claims: Value) -> String {
     .unwrap();
     format!("{input}.{}", URL_SAFE_NO_PAD.encode(signature))
 }
-fn callback(message: &str, text: &str) -> (Vec<u8>, String, String) {
+pub(super) fn callback(message: &str, text: &str) -> (Vec<u8>, String, String) {
     let reply = sign(
         json!({"iss":"https://nyx.example","aud":"channel-relay/reply","iat":now(),"exp":now()+1800,"jti":"reply-1","token_type":"relay_reply",
         "api_key_id":"key-1","conversation_id":"route-1","inbound_message_id":message,"platform":"telegram"}),
@@ -64,7 +66,12 @@ fn callback(message: &str, text: &str) -> (Vec<u8>, String, String) {
     );
     (body, signed, reply)
 }
-async fn write(store: &MongoBridgeStore, id: &BridgeId, body: &[u8], token: &str) -> InboxWrite {
+pub(super) async fn write(
+    store: &MongoBridgeStore,
+    id: &BridgeId,
+    body: &[u8],
+    token: &str,
+) -> InboxWrite {
     write_with_key_lease(store, id, body, token, Duration::from_secs(60)).await
 }
 async fn write_with_key_lease(

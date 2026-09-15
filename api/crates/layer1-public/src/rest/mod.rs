@@ -17,6 +17,7 @@ pub use agent_artifacts::agent_artifacts_router;
 #[cfg(test)]
 mod agent_artifacts_tests;
 mod agent_channel_usage;
+mod agent_command_admission;
 mod agent_operate;
 pub use agent_channel_usage::agent_channel_usage_router;
 #[cfg(test)]
@@ -41,12 +42,16 @@ mod bridges_tests;
 pub use bridges::bridge_router;
 mod bridge_invokes;
 pub use bridge_invokes::bridge_invoke_router;
+mod bridge_outbox;
+pub use bridge_outbox::bridge_outbox_router;
 mod badge;
 mod badge_mark;
 #[cfg(test)]
 mod badge_tests;
 #[cfg(test)]
 mod bridge_invokes_tests;
+#[cfg(test)]
+mod bridge_outbox_tests;
 mod defaults;
 mod embed;
 #[cfg(test)]

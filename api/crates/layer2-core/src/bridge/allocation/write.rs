@@ -67,7 +67,7 @@ impl AllocationReservation {
             pin: admission.source.work_pin().clone(),
             config: admission
                 .bridge
-                .current()
+                .pinned(admission.source.work_pin())
                 .map_err(|_| AllocationError::Corrupt)?
                 .config
                 .clone(),

@@ -65,6 +65,45 @@ impl AgentCommandService {
         })
     }
 
+    /// Revalidate operation visibility before returning an older adapter's
+    /// exact receipt. Input validation and execution custody are deliberately
+    /// separate: a historical validation/refusal receipt is still replayable.
+    pub async fn authorize_intent(
+        &self,
+        context: &CallerContext,
+        credential: &str,
+        agent_id: &AgentId,
+        command: &AgentCommand,
+    ) -> Result<(), CommandAdmissionError> {
+        if !context.validate_principal()
+            || !matches!(
+                &context.actor,
+                AgentActor::Human { .. }
+                    | AgentActor::Api {
+                        delegation_id: None,
+                        ..
+                    }
+            )
+        {
+            return Err(ResourceAccessError::Access(AccessError::NotFound).into());
+        }
+        let target = ResourceTarget::Agent {
+            agent_id: agent_id.clone(),
+        };
+        let capability = command_capability(command);
+        let authorized = bounded(self.access.authorize(
+            context,
+            Some(credential),
+            &target,
+            capability,
+            AccessPurpose::Mutation {
+                started_at: SystemTime::now(),
+            },
+        ))
+        .await??;
+        self.fence(&authorized, &target, capability).await
+    }
+
     /// Current access and durable credential custody precede reservation. No
     /// runtime or lifecycle work occurs in this service; acceptance means the
     /// receipt is durable and the worker can independently revalidate execution.
@@ -75,6 +114,71 @@ impl AgentCommandService {
         source: CommandSubmissionSource,
         submission: CommandSubmission,
     ) -> Result<CommandStatusView, CommandAdmissionError> {
+        let (authorized, request) = self
+            .prepare(context, credential, source, submission)
+            .await?;
+        let target = ResourceTarget::Agent {
+            agent_id: request.envelope.agent_id.clone(),
+        };
+        let capability = command_capability(&request.envelope.command);
+        let expected = request.clone();
+        let result = self
+            .with_authority_bound(&authorized, capability, self.store.reserve_command(request))
+            .await;
+        // Admission can be durable even if this final fence refuses the reply.
+        self.fence(&authorized, &target, capability).await?;
+        let record = match result?? {
+            CommandReservationResult::Created(record)
+            | CommandReservationResult::Existing(record) => *record,
+        };
+        let CommandReservationResult::Existing(record) = expected.replay(record)? else {
+            return Err(CommandLedgerError::Corrupt.into());
+        };
+        Ok(CommandStatusView::from_record(&record))
+    }
+
+    /// Recover only an already admitted exact request under fresh mutation
+    /// authority. This never reserves a key or creates work for an ambiguous
+    /// pre-migration operation whose execution may have happened elsewhere.
+    pub async fn lookup_admitted(
+        &self,
+        context: &CallerContext,
+        credential: &str,
+        source: CommandSubmissionSource,
+        submission: CommandSubmission,
+    ) -> Result<Option<CommandStatusView>, CommandAdmissionError> {
+        let (authorized, request) = self
+            .prepare(context, credential, source, submission)
+            .await?;
+        let target = ResourceTarget::Agent {
+            agent_id: request.envelope.agent_id.clone(),
+        };
+        let capability = command_capability(&request.envelope.command);
+        let result = self
+            .with_authority_bound(
+                &authorized,
+                capability,
+                self.store
+                    .get_admitted_command(&request.scope(), &request.key_sha256),
+            )
+            .await;
+        self.fence(&authorized, &target, capability).await?;
+        let Some(record) = result?? else {
+            return Ok(None);
+        };
+        let CommandReservationResult::Existing(record) = request.replay(record)? else {
+            return Err(CommandLedgerError::Corrupt.into());
+        };
+        Ok(Some(CommandStatusView::from_record(&record)))
+    }
+
+    async fn prepare(
+        &self,
+        context: &CallerContext,
+        credential: &str,
+        source: CommandSubmissionSource,
+        submission: CommandSubmission,
+    ) -> Result<(AuthorizedResource, CommandReservation), CommandAdmissionError> {
         let started_at = SystemTime::now();
         if !context.validate_principal()
             || !matches!(
@@ -175,32 +279,7 @@ impl AgentCommandService {
                 capability,
             )?),
         };
-        let expected = (
-            request.scope(),
-            request.key_sha256.clone(),
-            request.envelope.owner.clone(),
-            request.envelope.request_fingerprint.clone(),
-        );
-        let result = self
-            .with_authority_bound(&authorized, capability, self.store.reserve_command(request))
-            .await;
-        // Admission can be durable even if this final fence refuses the reply.
-        // A same-key retry recovers it under fresh current authorization.
-        self.fence(&authorized, &target, capability).await?;
-        let record = match result?? {
-            CommandReservationResult::Created(record)
-            | CommandReservationResult::Existing(record) => *record,
-        };
-        record.validate()?;
-        if record.receipt.envelope.agent_id != submission.agent_id
-            || record.scope() != expected.0
-            || record.key_sha256 != expected.1
-            || record.receipt.envelope.owner != expected.2
-            || record.receipt.envelope.request_fingerprint != expected.3
-        {
-            return Err(CommandLedgerError::Corrupt.into());
-        }
-        Ok(CommandStatusView::from_record(&record))
+        Ok((authorized, request))
     }
 
     pub(super) async fn fence(

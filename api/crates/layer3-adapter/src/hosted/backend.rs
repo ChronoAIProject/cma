@@ -12,6 +12,7 @@ use crate::{
 pub struct HostedAgentOpenSettings {
     pub permission_mode: Option<String>,
     pub own_credential: bool,
+    pub channel_tool: Option<super::HostedChannelToolBinding>,
 }
 
 /// Provider-specific rendering needed by the otherwise shared hosted adapter.
@@ -23,6 +24,7 @@ pub trait HostedAgentRuntime: Send + Sync {
         Ok(HostedAgentOpenSettings {
             permission_mode: None,
             own_credential: request.options.own_credential,
+            channel_tool: None,
         })
     }
 }

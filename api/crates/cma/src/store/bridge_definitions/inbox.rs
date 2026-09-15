@@ -22,6 +22,7 @@ use crate::store::{
 };
 
 use super::{decode_bridge, MongoBridgeStore};
+mod work;
 
 #[derive(Clone)]
 pub(crate) struct MongoCallbackInbox {
@@ -120,7 +121,7 @@ impl MongoCallbackInbox {
             let queued = self
                 .inbox
                 .count_documents(
-                    doc! {"bridge_id":current.id.as_str(),"admission":"accepted",
+                    doc! {"bridge_id":current.id.as_str(),"admission":"accepted", "command_correlation":{"$exists":false},
                     "expires_at":{"$gt":DateTime::from_millis(record.accepted_at * 1000)}},
                 )
                 .session(&mut *session)
@@ -294,7 +295,7 @@ fn admission(value: &InboxAdmission) -> &'static str {
         InboxAdmission::PartitionDenied { .. } => "partition_denied",
     }
 }
-fn decode(document: &Document) -> Result<StoredInbox, CallbackError> {
+pub(in crate::store) fn decode(document: &Document) -> Result<StoredInbox, CallbackError> {
     let record: StoredInbox = read_record(document).map_err(|_| CallbackError::Unavailable)?;
     if document.get_str("_id").ok() != Some(record.id.as_str())
         || document.get_str("bridge_id").ok() != Some(record.pin.bridge_id.as_str())

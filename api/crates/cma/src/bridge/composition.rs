@@ -17,6 +17,10 @@ pub(crate) struct BridgeComposition {
     pub callbacks: Router,
     pub invokes: BridgeInvokeService,
     pub allocations: Arc<MongoBridgeAllocationStore>,
+    pub replies: Arc<crate::store::MongoBridgeReplyToolStore>,
+    pub invoke_store: Arc<MongoBridgeInvokeStore>,
+    pub inbox: Arc<MongoCallbackInbox>,
+    pub channel: Arc<layer2_core::sandbox::agent_io::ChannelAgentCommandService>,
 }
 
 impl BridgeComposition {
@@ -45,12 +49,29 @@ impl BridgeComposition {
             .await
             .map_err(|error| format!("bridge allocation storage is not usable: {error}"))?,
         );
+        let channel = Arc::new(
+            layer2_core::sandbox::agent_io::ChannelAgentCommandService::new(Arc::new(
+                crate::store::MongoChannelCommandStore::new(invoke_store.clone()),
+            )),
+        );
         let invokes = BridgeInvokeService::new(
             definitions.clone(),
             access,
             stores.sandbox_model.clone(),
-            invoke_store,
+            invoke_store.clone(),
         );
+        let replies = Arc::new(
+            crate::store::MongoBridgeReplyToolStore::new(
+                invoke_store.clone(),
+                definitions.connection_validator(),
+            )
+            .await
+            .map_err(|error| format!("bridge reply storage is not usable: {error}"))?,
+        );
+        let outbox = Arc::new(layer2_core::bridge::outbox::BridgeOutboxService::new(
+            definitions.clone(),
+            replies.clone(),
+        ));
         let setup = super::setup::service(&config.auth_mode, definitions, credentials.clone())
             .map_err(|error| format!("bridge setup is not usable: {error}"))?
             .map(|setup| {
@@ -60,9 +81,11 @@ impl BridgeComposition {
                         .with_invoke_grants(Arc::new(invokes.clone())),
                 )
             });
-        let management = layer1_public::rest::bridge_router(setup).merge(
-            layer1_public::rest::bridge_invoke_router(Some(Arc::new(invokes.clone()))),
-        );
+        let management = layer1_public::rest::bridge_router(setup)
+            .merge(layer1_public::rest::bridge_invoke_router(Some(Arc::new(
+                invokes.clone(),
+            ))))
+            .merge(layer1_public::rest::bridge_outbox_router(Some(outbox)));
         let inbox = Arc::new(
             MongoCallbackInbox::open(
                 &stores.bridge_definitions,
@@ -79,7 +102,7 @@ impl BridgeComposition {
             stores.bridge_definitions.clone(),
             credentials,
             stores.sandbox_model.clone(),
-            inbox,
+            inbox.clone(),
         )
         .map_err(|error| format!("bridge callback verifier is not usable: {error}"))?;
         Ok(Self {
@@ -87,6 +110,10 @@ impl BridgeComposition {
             callbacks: super::ingress::http::router(ingress),
             invokes,
             allocations,
+            replies,
+            invoke_store,
+            inbox,
+            channel,
         })
     }
 }

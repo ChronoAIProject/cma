@@ -18,10 +18,11 @@ pub(super) mod binding;
 mod lane_records;
 mod reconcile;
 mod records;
-mod reserve;
+pub(in crate::store) mod reserve;
 mod worker;
 mod worker_apply;
 
+pub(super) use records::document as command_document;
 pub(super) use records::ensure_indexes;
 pub(super) use records::read as read_command;
 
@@ -44,6 +45,20 @@ impl From<mongodb::error::Error> for ApplyError {
 
 #[async_trait::async_trait]
 impl AgentCommandStore for MongoSandboxStore {
+    async fn get_admitted_command(
+        &self,
+        scope: &str,
+        key_sha256: &str,
+    ) -> Result<Option<AdmittedAgentCommand>, CommandLedgerError> {
+        self.agent_commands
+            .find_one(doc! { "scope": scope, "key_sha256": key_sha256 })
+            .await
+            .map_err(|_| CommandLedgerError::Unavailable)?
+            .as_ref()
+            .map(records::read)
+            .transpose()
+    }
+
     async fn get_response_command(
         &self,
         id: &layer2_core::ids::AgentResponseId,
@@ -61,6 +76,7 @@ impl AgentCommandStore for MongoSandboxStore {
         &self,
         request: CommandReservation,
     ) -> Result<CommandReservationResult, CommandLedgerError> {
+        request.require_non_channel()?;
         request.validate()?;
         for _ in 0..TRANSACTION_ATTEMPTS {
             request.require_current_authority()?;
@@ -97,7 +113,7 @@ impl AgentCommandStore for MongoSandboxStore {
                 // Nothing has executed. Never acknowledge an unconfirmed
                 // reservation or discard its permanent idempotency identity.
                 CommitOutcome::Unknown(_) | CommitOutcome::Failed(_) => {
-                    return Err(CommandLedgerError::Unavailable)
+                    return Err(CommandLedgerError::Unavailable);
                 }
             }
         }

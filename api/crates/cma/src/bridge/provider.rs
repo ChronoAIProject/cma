@@ -12,6 +12,7 @@ use zeroize::Zeroizing;
 use super::types::*;
 use crate::auth::persistence::SecretValue;
 
+mod relay;
 mod setup;
 
 const MAX_BYTES: usize = 1_048_576;
@@ -42,20 +43,22 @@ impl NyxBridgeProvider {
         owner: &ResourceOwner,
         secret: &SecretValue,
         connector: &BridgeConnector,
+        human_subject: &SubjectId,
+        human_credential: &str,
     ) -> Result<VerifiedProviderBinding, BridgeError> {
         if !raw_agent_key(secret.expose()) {
             return Err(binding_mismatch());
         }
         tokio::time::timeout(DEADLINE, async {
             let start = tokio::time::Instant::now();
-            let mut endpoint = self.base_url.clone();
-            endpoint.set_path("/api/v1/users/me/authorization");
-            let account: Account = self.fetch(endpoint, secret).await?;
-            if !account.is_active || account.id != owner_subject(owner).as_str() {
-                return Err(binding_mismatch());
-            }
+            self.verify_human(human_subject, human_credential).await?;
             let mut binding = self
-                .read_binding(owner, owner_subject(owner), secret, connector)
+                .read_binding(
+                    owner,
+                    human_subject,
+                    &SecretValue::new(human_credential.to_owned()),
+                    connector,
+                )
                 .await?;
             let mut endpoint = self.base_url.clone();
             endpoint.set_path("/api/v1/channel-relay/messages");
@@ -82,6 +85,27 @@ impl NyxBridgeProvider {
         .map_err(|_| BridgeError::AuthorityUnavailable)?
     }
 
+    /// NyxID fences this route against API keys, service accounts, delegation
+    /// and relay credentials. Its subject must remain the actual human actor.
+    pub(crate) async fn verify_human(
+        &self,
+        subject: &SubjectId,
+        credential: &str,
+    ) -> Result<(), BridgeError> {
+        if credential.starts_with("nyx_") || credential.starts_with("nyxid_") {
+            return Err(super::control_plane::reconnect());
+        }
+        let mut endpoint = self.base_url.clone();
+        endpoint.set_path("/api/v1/users/me/authorization");
+        let account: Account = self
+            .fetch(endpoint, &SecretValue::new(credential.to_owned()))
+            .await?;
+        if !account.is_active || account.id != subject.as_str() {
+            return Err(super::control_plane::reconnect());
+        }
+        Ok(())
+    }
+
     pub fn new(base_url: &str) -> Result<Self, BridgeError> {
         let base_url = reqwest::Url::parse(base_url)
             .map_err(|_| BridgeError::InvalidConfiguration("provider_url"))?;
@@ -103,6 +127,7 @@ impl NyxBridgeProvider {
     fn with_endpoint(base_url: reqwest::Url) -> Result<Self, BridgeError> {
         let http = reqwest::Client::builder()
             .redirect(reqwest::redirect::Policy::none())
+            .retry(reqwest::retry::never())
             .timeout(DEADLINE)
             .build()
             .map_err(|_| BridgeError::AuthorityUnavailable)?;
@@ -112,6 +137,7 @@ impl NyxBridgeProvider {
     /// Use the exact supplied credential only. No NyxID mutation, token refresh,
     /// bot verification call (which can contact a real platform), or callback
     /// rewrite is reachable through this adapter.
+    #[cfg(test)]
     pub async fn inspect(
         &self,
         owner: &ResourceOwner,

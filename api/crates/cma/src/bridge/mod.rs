@@ -7,22 +7,28 @@ use layer2_core::bridge::{
     BridgeConfig, BridgeConnectionObservation, BridgeConnectionValidator, BridgeError,
     BridgePlacementPolicy, BridgeService, BridgeSetupBlock, BridgeValidation,
 };
-use layer2_core::resource_access::{
-    OrganizationAuthority, ResourceOwner, ResourceShareStore, ResourceTarget,
-};
+use layer2_core::resource_access::{ResourceOwner, ResourceShareStore, ResourceTarget};
 
 use crate::auth::AuthMode;
 use crate::store::MongoBridgeStore;
 
+pub(crate) mod channel_scheduler;
+pub(crate) mod channel_tools;
+pub(crate) mod channel_work;
 pub(crate) mod composition;
+pub(crate) mod control_plane;
 pub(crate) mod custody;
 #[allow(dead_code)] // #861 awaits a composed route with live selected-key custody.
 pub(crate) mod ingress;
 mod managed_credentials;
+pub(crate) mod outbox_delivery;
+pub(crate) mod outbox_scheduler;
 mod provider;
+pub(crate) mod provisioning;
 pub(crate) mod setup;
 mod types;
 
+pub(crate) use control_plane::BridgeControlPlaneLease;
 use custody::BridgeCredentialResolver;
 pub(crate) use managed_credentials::ManagedBridgeCredentials;
 use provider::NyxBridgeProvider;
@@ -30,9 +36,10 @@ use provider::NyxBridgeProvider;
 pub(crate) fn service(
     mode: &AuthMode,
     store: Arc<MongoBridgeStore>,
-    organizations: Arc<dyn OrganizationAuthority>,
+    organizations: Arc<crate::auth::AuthState>,
     resources: Arc<dyn ResourceShareStore>,
     credential_store: Arc<dyn custody::BridgeCredentialStore>,
+    provisioning: Option<Arc<provisioning::BridgeProvisioningDependencies>>,
 ) -> Result<(BridgeService, Option<Arc<ManagedBridgeCredentials>>), BridgeError> {
     if let AuthMode::Provider { base_url, .. } = mode {
         let provider = Arc::new(NyxBridgeProvider::new(base_url)?);
@@ -40,11 +47,13 @@ pub(crate) fn service(
             store: credential_store,
             provider: provider.clone(),
             bridges: store.clone(),
+            auth: organizations.clone(),
+            provisioning: provisioning.clone(),
         });
         let connections = Arc::new(NyxBridgeValidator {
-            provider,
             custody: credentials.clone(),
             resources,
+            provisioning,
         });
         Ok((
             BridgeService::new(store, organizations, connections),
@@ -73,9 +82,9 @@ impl BridgeConnectionValidator for UnavailableConnections {
 }
 
 struct NyxBridgeValidator {
-    provider: Arc<NyxBridgeProvider>,
     custody: Arc<dyn BridgeCredentialResolver>,
     resources: Arc<dyn ResourceShareStore>,
+    provisioning: Option<Arc<provisioning::BridgeProvisioningDependencies>>,
 }
 
 #[async_trait::async_trait]
@@ -103,46 +112,47 @@ impl BridgeConnectionValidator for NyxBridgeValidator {
                 BridgeSetupBlock::CustodyUnavailable,
             ));
         }
-        let verified = self
-            .provider
-            .inspect(
-                owner,
-                &lease.credential_subject,
-                &lease.value,
-                &config.connector,
-            )
-            .await?;
-        if verified.key_state_version != lease.key_state_version {
-            return Err(types::binding_mismatch());
-        }
-        let target = match &config.placement {
-            BridgePlacementPolicy::ExistingAgent { target } => ResourceTarget::Agent {
+        let existing_target = match &config.placement {
+            BridgePlacementPolicy::ExistingAgent { target } => Some(ResourceTarget::Agent {
                 agent_id: target.agent_id.clone(),
-            },
+            }),
             BridgePlacementPolicy::NewSandbox { .. } => {
-                // A matching key and callback prove no ability to mint a separate
-                // profile-scoped Sandbox key or renew it after relay expiry.
-                return Err(BridgeError::ConnectionRequired(
-                    BridgeSetupBlock::RenewableAuthorityUnavailable,
-                ));
+                self.provisioning
+                    .as_ref()
+                    .ok_or_else(control_plane::reconnect)?
+                    .preflight(
+                        &lease.control_plane,
+                        config,
+                        lease.control_plane.bridge_id().as_str(),
+                        None,
+                    )
+                    .await?;
+                None
             }
         };
-        let snapshot = self
-            .resources
-            .resource_access_snapshot(&target)
-            .await
-            .map_err(target_error)?;
+        let current = if let Some(target) = existing_target {
+            let snapshot = self
+                .resources
+                .resource_access_snapshot(&target)
+                .await
+                .map_err(target_error)?;
+            self.custody.revalidate(&lease).await?;
+            let current = self
+                .resources
+                .resource_access_snapshot(&target)
+                .await
+                .map_err(target_error)?;
+            if current.fence() != snapshot.fence() || current.lineage != snapshot.lineage {
+                return Err(BridgeError::ConnectionRequired(
+                    BridgeSetupBlock::TargetMismatch,
+                ));
+            }
+            Some(current)
+        } else {
+            None
+        };
         self.custody.revalidate(&lease).await?;
-        let current = self
-            .resources
-            .resource_access_snapshot(&target)
-            .await
-            .map_err(target_error)?;
-        if current.fence() != snapshot.fence() || current.lineage != snapshot.lineage {
-            return Err(BridgeError::ConnectionRequired(
-                BridgeSetupBlock::TargetMismatch,
-            ));
-        }
+        let creates_sandbox = matches!(config.placement, BridgePlacementPolicy::NewSandbox { .. });
         BridgeValidation::from_observation(
             owner,
             config,
@@ -150,20 +160,17 @@ impl BridgeConnectionValidator for NyxBridgeValidator {
                 connector: config.connector.clone(),
                 bot_owner: owner.clone(),
                 key_owner: owner.clone(),
-                routes: verified.routes,
+                routes: lease.routes,
                 custody_owner: lease.owner,
                 custody_revision: lease.custody_revision,
                 key_state_version: lease.key_state_version,
                 key_active: true,
                 custody_available: true,
                 callback_conflict: false,
-                renewable_sandbox_authority: false,
-                exact_profiles_available: false,
-                existing_target: Some(current),
-                deadline: verified
-                    .deadline
-                    .min(lease.deadline)
-                    .min(started + Duration::from_secs(60)),
+                renewable_sandbox_authority: creates_sandbox,
+                exact_profiles_available: creates_sandbox,
+                existing_target: current,
+                deadline: lease.deadline.min(started + Duration::from_secs(60)),
             },
         )
     }

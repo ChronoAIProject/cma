@@ -1,6 +1,9 @@
 //! Production control-plane service and router assembly.
 
 use std::sync::Arc;
+mod adapter;
+mod bridge;
+use adapter::production_adapter;
 
 use axum::{extract::DefaultBodyLimit, Router};
 use layer1_public::rest::{
@@ -17,7 +20,7 @@ use layer2_core::{
 
 use crate::{
     activity::ActivityRecorder,
-    auth::{keys::KeyIssuer, AuthMode, AuthState, SignInRecords},
+    auth::{AuthMode, AuthState, SignInRecords},
     config::Config,
     profile_authoring::CmaProfileAuthoringSource,
     profile_policy::profile_route_policy,
@@ -49,6 +52,8 @@ pub(crate) struct ControlPlaneComposition {
     pub command_scheduler: super::commands::CommandScheduler,
     pub sandbox_control_scheduler: super::commands::SandboxControlScheduler,
     pub sandbox_lifecycle: SandboxLifecycleComposition,
+    pub channel_schedulers: Vec<crate::bridge::channel_scheduler::ChannelScheduler>,
+    pub bridge_outbox: Option<crate::bridge::outbox_scheduler::BridgeOutboxScheduler>,
 }
 
 impl ControlPlaneComposition {
@@ -110,6 +115,16 @@ impl ControlPlaneComposition {
         ));
         let subscriptions =
             crate::connections::CodexSubscriptions::new(stores.codex_subscriptions.clone());
+        let channel_tools = Arc::new(
+            crate::store::MongoChannelToolStore::open(
+                stores.sandbox_model.clone(),
+                &config.deployment_id,
+                &config.auth_encryption_key,
+                &config.public_url,
+            )
+            .await
+            .map_err(|error| format!("channel tool storage is not usable: {error}"))?,
+        );
         let adapter = production_adapter(
             config,
             Arc::clone(&stores.checkpoint_objects),
@@ -117,6 +132,7 @@ impl ControlPlaneComposition {
                 stores.sandbox_model.clone(),
                 subscriptions.clone(),
             ),
+            channel_tools.clone(),
         )
         .await?;
         let checkpoint_export = if config.runtime.home_policy.is_some() {
@@ -143,12 +159,22 @@ impl ControlPlaneComposition {
             stores.auth.clone(),
             config.nyxid_public_url.clone(),
         );
+        let key_issuer = bridge::key_issuer(config);
+        let bridge_provisioning = bridge::provisioning(
+            config,
+            &stores,
+            sandbox_policy.clone(),
+            adapter.clone(),
+            authoring_bounds,
+            key_issuer.clone(),
+        )?;
         let (bridge_definitions, bridge_credentials) = crate::bridge::service(
             &config.auth_mode,
             stores.bridge_definitions.clone(),
             auth.clone(),
             stores.sandbox_model.clone(),
             stores.bridge_credentials.clone(),
+            bridge_provisioning,
         )
         .map_err(|error| format!("bridge verifier is not usable: {error}"))?;
         let broker = Arc::new(
@@ -223,21 +249,13 @@ impl ControlPlaneComposition {
             authoring_bounds,
             CmaProfileAuthoringSource::production(config, Arc::clone(&auth))?,
         );
-        let sandbox_credentials: Arc<dyn SandboxCredentialController> = match &config.auth_mode {
-            AuthMode::Provider { base_url, .. } => ManagedSandboxCredentials::new(
-                Arc::new(KeyIssuer::new(
-                    reqwest::Client::builder()
-                        .timeout(std::time::Duration::from_secs(15))
-                        .redirect(reqwest::redirect::Policy::none())
-                        .build()
-                        .expect("the rustls HTTP client builds"),
-                    base_url,
-                    &config.deployment_id,
-                )),
+        let sandbox_credentials: Arc<dyn SandboxCredentialController> = match key_issuer {
+            Some(issuer) => ManagedSandboxCredentials::new(
+                issuer,
                 Arc::clone(&auth),
                 Arc::clone(&stores.sandbox_credentials),
             ),
-            AuthMode::Trusted { .. } => Arc::new(UnavailableSandboxCredentials),
+            None => Arc::new(UnavailableSandboxCredentials),
         };
         if !auth.requires_credential() {
             tracing::warn!(
@@ -269,7 +287,7 @@ impl ControlPlaneComposition {
                     ),
                     deployment_id: config.deployment_id.clone(),
                 }),
-                adapter,
+                adapter: adapter.clone(),
                 credentials: sandbox_credentials,
                 checkpoints: Arc::new(DurableCheckpointObjectPurger::new(
                     stores.checkpoint_objects.clone(),
@@ -314,6 +332,14 @@ impl ControlPlaneComposition {
             stores.sandbox_profiles.clone(),
             settings,
         );
+        let bridge = crate::bridge::composition::BridgeComposition::build(
+            config,
+            &stores,
+            bridge_definitions.clone(),
+            bridge_credentials.clone(),
+            resource_access.clone(),
+        )
+        .await?;
         let command_worker = layer2_core::sandbox::agent_io::AgentCommandWorker::new(
             stores.sandbox_model.clone(),
             Arc::new(crate::commands::ResourceCommandExecution {
@@ -322,6 +348,8 @@ impl ControlPlaneComposition {
                 store: stores.sandbox_model.clone(),
                 operations: projections.operations(),
                 context: context.clone(),
+                channel: Some(bridge.channel.clone()),
+                invokes: Some(Arc::new(bridge.invokes.clone())),
             }),
             worker_holder,
         )
@@ -345,6 +373,7 @@ impl ControlPlaneComposition {
             resource_access.clone(),
             auth.clone(),
         );
+        let projections = projections.with_commands(command_service.clone());
         let responses_v2 = layer1_public::responses::v2::router(
             layer1_public::responses::v2::ResponsesV2State::new(
                 command_service,
@@ -355,14 +384,14 @@ impl ControlPlaneComposition {
             stores.sandbox_model.clone(),
             resource_access.clone(),
         );
-        let bridge = crate::bridge::composition::BridgeComposition::build(
+        let channel_schedulers = bridge::channel_schedulers(
             config,
             &stores,
-            bridge_definitions.clone(),
+            &bridge,
+            &bridge_definitions,
             bridge_credentials.clone(),
-            resource_access.clone(),
-        )
-        .await?;
+            adapter,
+        )?;
         let resource_routes = profiles_router(profiles)
             .merge(bridge.management)
             .merge(layer1_public::rest::agent_artifacts_router(
@@ -412,9 +441,26 @@ impl ControlPlaneComposition {
             ));
         let provenance_backfill =
             crate::sandbox::AgentProvenanceBackfill::new(stores.sandbox_model.clone());
+        let bridge_outbox = bridge_credentials.as_ref().map(|credentials| {
+            crate::bridge::outbox_scheduler::BridgeOutboxScheduler::new(
+                bridge.replies.clone(),
+                Arc::new(crate::bridge::outbox_delivery::NyxOutboxDelivery::new(
+                    bridge.replies.clone(),
+                    credentials.clone(),
+                )),
+                format!("{}:reply:{}", config.deployment_id, uuid::Uuid::new_v4()),
+            )
+        });
         let router = Router::new()
             .merge(public)
             .merge(bridge.callbacks)
+            .merge(crate::bridge::channel_tools::router(
+                Arc::new(crate::bridge::channel_tools::StoredChannelTools {
+                    capabilities: channel_tools,
+                    replies: bridge.replies.clone(),
+                }),
+                &config.public_url,
+            ))
             .merge(crate::health::router(stores))
             .layer(axum::middleware::from_fn_with_state(
                 limits,
@@ -433,68 +479,8 @@ impl ControlPlaneComposition {
             command_scheduler,
             sandbox_control_scheduler,
             sandbox_lifecycle,
+            bridge_outbox,
+            channel_schedulers,
         })
     }
-}
-
-async fn production_adapter(
-    config: &Config,
-    checkpoint_objects: Arc<crate::store::MongoCheckpointObjectStore>,
-    subscriptions: Arc<dyn layer3_adapter::hosted::HostedSubscriptionSource>,
-) -> Result<Arc<dyn layer3_adapter::SandboxAdapter>, String> {
-    use layer3_adapter::codex::{CodexAdapter, CodexSandboxSpec};
-    use layer3_adapter::hosted::{
-        CheckpointArchiveStoreFactory, HostedDeployment, ProviderHostedBackend,
-        ProviderHostedControlTransport,
-    };
-    use layer3_adapter::provider::{BatchSandboxReclaimer, SandboxClient};
-
-    let reclaimer =
-        BatchSandboxReclaimer::infer_namespaced(config.runtime.sandbox_namespace.clone())
-            .await
-            .map_err(|error| format!("sandbox cleanup authority is not usable: {error}"))?
-            .for_creator(config.deployment_id.clone());
-    reclaimer
-        .preflight_cleanup_authority()
-        .await
-        .map_err(|error| format!("sandbox cleanup authority is not readable: {error}"))?;
-    let client = SandboxClient::new(
-        config.runtime.sandbox_base_url.clone(),
-        config.runtime.sandbox_api_key.clone(),
-    )
-    .with_reclaimer(reclaimer);
-    let archive_factory: Arc<dyn CheckpointArchiveStoreFactory> = checkpoint_objects;
-    let transport = ProviderHostedControlTransport::new(client.clone(), archive_factory)
-        .map_err(|error| format!("hosted runtime transport is not usable: {error}"))?
-        .with_subscriptions(subscriptions);
-    let backend = ProviderHostedBackend::new(client, Arc::new(transport));
-    let mut deployment = HostedDeployment::default();
-    deployment.image.uri = config.runtime.sandbox_image.clone();
-    deployment.upstream_base_url = config.runtime.upstream_base_url.clone();
-    deployment.upstream_wire_api = config.runtime.upstream_wire_api.clone();
-    deployment.platform_base_url = config.runtime.platform_base_url.clone();
-    deployment
-        .contract()
-        .map_err(|error| format!("hosted runtime image is not usable: {error}"))?;
-    let mut adapter = CodexAdapter::with_backend(
-        backend,
-        CodexSandboxSpec {
-            deployment,
-            ..CodexSandboxSpec::default()
-        },
-    );
-    if let Some(policy) = &config.runtime.home_policy {
-        let homes = layer3_adapter::provider::PersistentHomeVolumes::infer_namespaced(
-            &config.runtime.sandbox_namespace,
-            &config.deployment_id,
-        )
-        .await
-        .map_err(|error| format!("durable home authority is not usable: {error}"))?;
-        homes
-            .preflight(policy)
-            .await
-            .map_err(|error| format!("durable home seed is not usable: {error}"))?;
-        adapter = adapter.with_home_volumes(Arc::new(homes));
-    }
-    Ok(Arc::new(adapter))
 }

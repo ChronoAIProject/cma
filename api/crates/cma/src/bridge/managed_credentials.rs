@@ -13,6 +13,8 @@ pub(crate) struct ManagedBridgeCredentials {
     pub store: Arc<dyn BridgeCredentialStore>,
     pub provider: Arc<NyxBridgeProvider>,
     pub bridges: Arc<dyn BridgeStore>,
+    pub auth: Arc<crate::auth::AuthState>,
+    pub provisioning: Option<Arc<super::provisioning::BridgeProvisioningDependencies>>,
 }
 
 pub(crate) struct BridgeSecretRevocation {
@@ -32,10 +34,11 @@ impl ManagedBridgeCredentials {
         service: &BridgeService,
         context: &CallerContext,
         credential: Option<&str>,
-        id: &BridgeId,
-        expected_revision: u64,
-        value: SecretValue,
+        request: layer2_core::bridge::setup::BridgeCredentialImport,
     ) -> Result<BridgeCustodyMetadata, BridgeError> {
+        let id = &request.id;
+        let expected_revision = request.expected_revision;
+        let value = SecretValue::new(request.material.expose().to_owned());
         let mut management = service
             .management_lease(context, credential, id, expected_revision)
             .await?;
@@ -47,10 +50,33 @@ impl ManagedBridgeCredentials {
         }
         let record = management.record();
         let config = &record.current()?.config;
+        let credential = credential.ok_or_else(super::control_plane::reconnect)?;
+        let human = self
+            .auth
+            .capture_bridge_human(context, credential, &record.owner)
+            .await?;
         let verified = self
             .provider
-            .verify_secret(&record.owner, &value, &config.connector)
+            .verify_secret(
+                &record.owner,
+                &value,
+                &config.connector,
+                human.subject(),
+                human.credential(),
+            )
             .await?;
+        let now = std::time::SystemTime::now();
+        let control_plane = request.retain_control_plane_authority.then(|| {
+            super::control_plane::BridgeControlPlaneGrant {
+                bridge_id: id.clone(),
+                owner: record.owner.clone(),
+                connector: config.connector.clone(),
+                subject: human.subject().clone(),
+                incarnation: human.incarnation().to_owned(),
+                issued_at: layer2_core::rfc3339_at(now),
+                expires_at: layer2_core::rfc3339_at(now + super::control_plane::GRANT_LIFETIME),
+            }
+        });
         let metadata = BridgeCustodyMetadata {
             bridge_id: id.clone(),
             owner: record.owner.clone(),
@@ -70,12 +96,21 @@ impl ManagedBridgeCredentials {
         };
         metadata.validate()?;
         management.bound_deadline(verified.deadline);
+        management.bound_deadline(human.deadline());
         service.validate_management(&management).await?;
+        self.auth.revalidate_bridge_human(&human).await?;
         if tokio::time::Instant::now() >= verified.deadline {
             return Err(BridgeError::AuthorityUnavailable);
         }
         self.store
-            .admit(&management, StoredBridgeCredential { metadata, value })
+            .admit(
+                &management,
+                StoredBridgeCredential {
+                    metadata,
+                    value,
+                    control_plane,
+                },
+            )
             .await
     }
 
@@ -153,9 +188,16 @@ impl BridgeCredentialResolver for ManagedBridgeCredentials {
         {
             return Err(unavailable());
         }
+        let control_plane = self.resolve_control_plane(owner, config).await?;
         let verified = self
             .provider
-            .verify_secret(owner, &material.value, &config.connector)
+            .verify_secret(
+                owner,
+                &material.value,
+                &config.connector,
+                control_plane.actor_subject(),
+                control_plane.credential(),
+            )
             .await?;
         if verified.key_state_version != metadata.key_state_version
             || verified.scopes != metadata.scopes
@@ -175,7 +217,9 @@ impl BridgeCredentialResolver for ManagedBridgeCredentials {
             custody_revision: metadata.revision,
             key_state_version: metadata.key_state_version,
             value: material.value,
-            deadline: verified.deadline,
+            deadline: verified.deadline.min(control_plane.deadline()),
+            routes: verified.routes,
+            control_plane,
         };
         self.revalidate(&lease).await?;
         Ok(lease)
@@ -199,7 +243,7 @@ impl BridgeCredentialResolver for ManagedBridgeCredentials {
         {
             return Err(unavailable());
         }
-        Ok(())
+        self.revalidate_control_plane(&lease.control_plane).await
     }
 }
 

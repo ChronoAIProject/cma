@@ -20,7 +20,7 @@ pub(crate) fn configured(
         return Ok(None);
     };
     let connections = Arc::new(NyxBridgeValidator {
-        provider: credentials.provider.clone(),
+        provisioning: credentials.provisioning.clone(),
         custody: credentials,
         resources,
     });

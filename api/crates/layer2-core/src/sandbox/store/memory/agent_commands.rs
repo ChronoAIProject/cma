@@ -9,6 +9,29 @@ use crate::sandbox::store::InMemorySandboxStore;
 
 #[async_trait]
 impl AgentCommandStore for InMemorySandboxStore {
+    async fn get_admitted_command(
+        &self,
+        scope: &str,
+        key_sha256: &str,
+    ) -> Result<Option<AdmittedAgentCommand>, CommandLedgerError> {
+        let state = self.lock();
+        let Some(id) = state
+            .agent_command_keys
+            .get(&(scope.into(), key_sha256.into()))
+        else {
+            return Ok(None);
+        };
+        let record = state
+            .agent_commands
+            .get(id)
+            .ok_or(CommandLedgerError::Corrupt)?;
+        record.validate()?;
+        if record.scope() != scope || record.key_sha256 != key_sha256 {
+            return Err(CommandLedgerError::Corrupt);
+        }
+        Ok(Some(record.clone()))
+    }
+
     async fn get_response_command(
         &self,
         id: &crate::ids::AgentResponseId,
@@ -32,6 +55,7 @@ impl AgentCommandStore for InMemorySandboxStore {
         &self,
         request: CommandReservation,
     ) -> Result<CommandReservationResult, CommandLedgerError> {
+        request.require_non_channel()?;
         request.validate()?;
         let mut state = self.lock();
         request.require_current_authority()?;

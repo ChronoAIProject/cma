@@ -116,6 +116,16 @@ impl CommandLedgerError {
 
 #[async_trait]
 pub trait AgentCommandStore: Send + Sync {
+    /// Read the permanent scope/key index without reserving, changing queue
+    /// order or creating a receipt. Unsupported older compositions fail closed.
+    async fn get_admitted_command(
+        &self,
+        _scope: &str,
+        _key_sha256: &str,
+    ) -> Result<Option<AdmittedAgentCommand>, CommandLedgerError> {
+        Err(CommandLedgerError::Unavailable)
+    }
+
     /// Atomically deduplicate, assign a per-Agent order, check the bounded queue
     /// and retain the receipt. No TTL may silently make an old key reusable.
     async fn reserve_command(
@@ -198,7 +208,16 @@ impl CommandReservation {
             },
             key_sha256: self.key_sha256.clone(),
             queue_deadline: self.queue_deadline.clone(),
-            status: AgentResponseStatus::Queued,
+            // Existing status/work variants remain readable by old workers,
+            // which skip this unbound wait. Exact hold identity lives in the
+            // versioned Channel sidecar, outside the ordinary record.
+            status: if matches!(self.envelope.actor, super::AgentActor::Channel { .. })
+                || self.envelope.source.kind == super::AgentSourceKind::Channel
+            {
+                AgentResponseStatus::WaitingAction
+            } else {
+                AgentResponseStatus::Queued
+            },
             revision: 1,
             target_turn,
             work: Default::default(),
@@ -272,6 +291,13 @@ pub fn validate_command_reservation(
         _ => None,
     };
     if required_control.is_some_and(|capability| !agent.capabilities.supports(capability)) {
+        return Err(CommandLedgerError::NotAdmissible);
+    }
+    if !matches!(
+        request.envelope.command,
+        super::AgentCommand::Message { .. }
+    ) && agent.conversation.active_turn.is_none()
+    {
         return Err(CommandLedgerError::NotAdmissible);
     }
     Ok(())

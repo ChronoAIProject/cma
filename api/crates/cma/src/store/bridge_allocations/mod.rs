@@ -1,6 +1,10 @@
 //! Transactional partition heads and immutable allocation generations. No
 //! provider creation or Agent command submission occurs in this store.
+mod channel_children;
+mod channel_provisioning;
+mod channel_startup;
 mod records;
+mod sandbox_admission;
 mod transaction;
 
 use std::sync::Arc;
@@ -23,7 +27,8 @@ use crate::store::{
     MongoBridgeInvokeStore, MongoBridgeStore,
 };
 
-use records::{decode_head, decode_record};
+use records::decode_head;
+pub(super) use records::decode_record;
 
 #[derive(Clone)]
 pub(crate) struct MongoBridgeAllocationStore {

@@ -31,6 +31,12 @@ pub(crate) enum SharedContextConsentShape {
     UseRetainedAgentContext,
 }
 #[derive(ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum InvokeGrantConsentShape {
+    UseRetainedAgentContext,
+    UseChannelCreatedAgent,
+}
+#[derive(ToSchema)]
 pub(crate) struct InvokeGrantPinShape {
     bridge_id: String,
     config_revision: u64,
@@ -60,7 +66,7 @@ pub(crate) struct InvokeGrantShape {
     owner: ResourceOwnerView,
     pin: InvokeGrantPinShape,
     target: InvokeTargetShape,
-    consent: SharedContextConsentShape,
+    consent: InvokeGrantConsentShape,
     issued_at: String,
     issued_by: ResourceActorView,
     state: InvokeGrantStateShape,

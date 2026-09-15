@@ -282,4 +282,15 @@ fn openapi_bridge_configuration_excludes_custody_and_marks_import_secret_write_o
         schemas["ImportBridgeKeyRequest"]["properties"]["key"]["writeOnly"],
         true
     );
+    let old: super::bridges::shapes::ImportBridgeKeyRequest =
+        serde_json::from_value(json!({"expected_revision":1,"key":"fixture-selected-secret"}))
+            .unwrap();
+    assert!(!old.retain_control_plane_authority);
+    let explicit: super::bridges::shapes::ImportBridgeKeyRequest = serde_json::from_value(
+        json!({"expected_revision":1,"key":"fixture-selected-secret","retain_control_plane_authority":true}),
+    ).unwrap();
+    assert!(explicit.retain_control_plane_authority);
+    assert!(serde_json::from_value::<super::bridges::shapes::ImportBridgeKeyRequest>(
+        json!({"expected_revision":1,"key":"fixture-selected-secret","retain_control_plane_authority":"true"}),
+    ).is_err());
 }

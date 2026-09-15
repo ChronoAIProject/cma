@@ -14,6 +14,8 @@ use super::*;
 use crate::auth::persistence::{AuthStore, DurableSubjectTokens, MemoryAuthStore, SecretValue};
 use crate::auth::{profile::Profile, AuthMode};
 
+#[path = "cookie_authorization_tests/bridge_grants.rs"]
+mod bridge_grants;
 #[path = "cookie_authorization_tests/concurrency_tests.rs"]
 mod concurrency_tests;
 #[path = "cookie_authorization_tests/deferred_command_tests.rs"]
