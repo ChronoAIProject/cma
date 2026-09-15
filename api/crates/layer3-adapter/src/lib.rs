@@ -20,6 +20,7 @@ mod home_volume;
 mod runtime;
 mod runtime_status;
 mod workspace;
+mod workspace_removal;
 
 pub mod codex;
 pub mod hosted;
@@ -84,4 +85,8 @@ pub use workspace::{
     SetupReceipt, WorkspaceReceipt, WorkspaceRemoveReceipt, WorkspaceRemoveRequest,
     WorkspaceRequest, WorkspaceSetupRequest, WorkspaceSource, WorktreeReceipt, WorktreeRef,
     WorktreeRemoveReceipt, WorktreeRequest,
+};
+pub use workspace_removal::{
+    same_runtime_writer, WorkspaceRemovalObservation, WorkspaceRemovalOutcome,
+    WorkspaceRemovalRequest, WorkspaceRemovalSupport, WORKSPACE_REMOVAL_PROTOCOL,
 };

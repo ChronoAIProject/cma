@@ -64,7 +64,18 @@ pub(super) fn uninitialized(config: &RuntimeConfig) -> Result<bool> {
         return Ok(true);
     }
     for entry in std::fs::read_dir(&config.state_root).map_err(unavailable)? {
-        if entry.map_err(unavailable)?.file_name() != DIRECTORY {
+        let entry = entry.map_err(unavailable)?;
+        // A fresh supervisor acquires this empty lock before home creation;
+        // its ownership record is published only after the home binding. A
+        // missing binding alongside any actual writer record still refuses.
+        if entry.file_name() == "workspace-removal-writer-v1.lock" {
+            let metadata = std::fs::symlink_metadata(entry.path()).map_err(unavailable)?;
+            if !metadata.is_file() || metadata.file_type().is_symlink() || metadata.len() != 0 {
+                return Err(invalid("home initialization writer lock is unsafe"));
+            }
+            continue;
+        }
+        if entry.file_name() != DIRECTORY {
             return Ok(false);
         }
     }

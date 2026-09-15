@@ -5,7 +5,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use async_trait::async_trait;
 
-use crate::ids::{AgentId, SandboxId, SubjectId};
+use crate::ids::{AgentId, SandboxId, SubjectId, WorkspaceId};
 use crate::sandbox::{
     Agent, AgentLogKind, RuntimeBinding, Sandbox, SandboxCheckpointRef, SandboxEventKind,
     SandboxLifecycleOperation, SandboxStatus, SandboxWorkLease, SandboxWorkStep,
@@ -29,9 +29,27 @@ pub const MAX_SANDBOX_LIFECYCLE_EVENTS: usize = MAX_SANDBOX_LIFECYCLE_AGENTS + 1
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RetiredAgentRuntimePaths {
     pub agent_id: AgentId,
+    pub workspace_id: WorkspaceId,
     pub workspace_name: String,
     pub worktree_name: String,
     pub authority_fence: u64,
+}
+
+/// One bounded atomic read of every permanent restore exclusion.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct RetiredRuntimeCleanupPlan {
+    pub agents: Vec<RetiredAgentRuntimePaths>,
+    pub workspaces: Vec<RetiredWorkspaceRuntimePath>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RetiredWorkspaceRuntimePath {
+    pub workspace_id: WorkspaceId,
+    pub workspace_name: String,
+    pub workspace_created_at: String,
+    pub cleanup_receipt_id: String,
+    pub cleanup_sha256: String,
+    pub removal_request_sha256: String,
 }
 
 /// Exact persisted authority a lifecycle side effect was observed under.
@@ -143,6 +161,18 @@ pub struct SandboxLifecycleMutation {
 
 #[async_trait]
 pub trait SandboxLifecycleExecutionStore: Send + Sync {
+    /// Implementations with Workspace exclusions must read both sets within
+    /// the same transaction and validate the exact current lifecycle parent.
+    async fn retired_runtime_cleanup_plan(
+        &self,
+        sandbox: &Sandbox,
+    ) -> Result<RetiredRuntimeCleanupPlan, SandboxStoreError> {
+        Ok(RetiredRuntimeCleanupPlan {
+            agents: self.retired_agent_runtime_paths(sandbox).await?,
+            workspaces: Vec::new(),
+        })
+    }
+
     /// Stores admitting exact child removal override this method and retain
     /// tombstones independently of Agent/checkpoint history retention.
     async fn retired_agent_runtime_paths(
