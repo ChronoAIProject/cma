@@ -29,6 +29,9 @@ import { useAgentAccess } from './resources/agentAccess';
 import { SharedAgent } from './resources/SharedAgent';
 import { AgentInventory } from './resources/AgentInventory';
 import { SharingButton } from './resources/SharingButton';
+import { SandboxAccessPage } from './resources/SandboxAccessPage';
+import { WorkspaceContents } from './resources/WorkspaceContents';
+import { ScopedNavigation } from './resources/ScopedNavigation';
 
 const ProfileViews = lazy(() =>
   import('./profiles/ProfileViews').then((module) => ({ default: module.ProfileViews })),
@@ -62,6 +65,9 @@ export function Console({
   hierarchyRevision = 0,
 }: ConsoleProps) {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [navigationScope, setNavigationScope] = useState(
+    route.kind === 'inventory' ? (route.organization ?? '') : '',
+  );
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [revision, setRevision] = useState(0);
   const client = useCmaClient();
@@ -131,7 +137,10 @@ export function Console({
         <AgentInventory
           client={client.resourceViews}
           organization={route.organization}
-          onNavigate={onNavigate}
+          onNavigate={(next) => {
+            if (next.kind === 'inventory') setNavigationScope(next.organization ?? '');
+            onNavigate(next);
+          }}
         />
       )
     ) : route.kind === 'agent' && shared !== undefined && client.resourceViews !== undefined ? (
@@ -169,17 +178,43 @@ export function Console({
         onNavigate={onNavigate}
       />
     ) : route.kind === 'sandbox' ? (
-      <SandboxPage
+      <SandboxAccessPage
         key={route.sandboxId}
-        client={client}
-        sandboxId={route.sandboxId}
-        viewerId={user.id}
-        revision={revision}
-        permissions={permissions}
-        busy={actions.pending}
-        onAction={actions.select}
+        client={client.resourceViews}
+        id={route.sandboxId}
         onNavigate={onNavigate}
+        personal={
+          <SandboxPage
+            key={route.sandboxId}
+            client={client}
+            sandboxId={route.sandboxId}
+            viewerId={user.id}
+            revision={revision}
+            permissions={permissions}
+            busy={actions.pending}
+            onAction={actions.select}
+            onNavigate={onNavigate}
+          />
+        }
       />
+    ) : route.kind === 'workspace' ? (
+      <section className="shared-hierarchy">
+        <header>
+          <h1>Workspace</h1>
+        </header>
+        <div className="shared-hierarchy__body">
+          {client.resourceViews === undefined ? (
+            <p>Workspace unavailable</p>
+          ) : (
+            <WorkspaceContents
+              key={route.workspaceId}
+              client={client.resourceViews}
+              id={route.workspaceId}
+              onNavigate={onNavigate}
+            />
+          )}
+        </div>
+      </section>
     ) : route.kind === 'profiles' ||
       route.kind === 'profile' ||
       route.kind === 'marketplace' ||
@@ -335,44 +370,55 @@ export function Console({
             onNavigate({ kind: 'home' });
           }}
           navigation={
-            navigation.status === 'ready' ? (
-              <Tree
-                key={user.id}
-                viewerId={user.id}
-                items={navigation.items.map((item) => ({
-                  ...item,
-                  workspaces: item.workspaces.map((workspace) => ({
-                    ...workspace,
-                    agents: workspace.agents.map((summary) =>
-                      route.kind === 'agent' &&
-                      agent.state.status === 'ready' &&
-                      agent.state.detail.id === route.agentId &&
-                      sameAgent(agent.state.detail, summary)
-                        ? { ...summary, status: agent.state.detail.status }
-                        : summary,
-                    ),
-                  })),
-                }))}
-                refreshError={navigation.refreshError}
-                lifecycleBusy={actions.pending}
-                route={route}
-                permissions={permissions}
-                onNavigate={(next) => {
-                  onSidebarNavigate();
-                  onNavigate(next);
-                }}
-                onAction={actions.select}
-              />
-            ) : navigation.status === 'loading' ? (
-              <p className="console__navigation-status" role="status">
-                Loading Sandboxes
-              </p>
-            ) : (
-              <div className="console__navigation-status" role="alert">
-                <p>{navigation.message}</p>
-                <Button onClick={navigation.refresh}>Try again</Button>
-              </div>
-            )
+            <ScopedNavigation
+              client={user.visitor ? undefined : client.resourceViews}
+              organization={navigationScope}
+              onScopeChange={setNavigationScope}
+              onNavigate={(next) => {
+                onSidebarNavigate();
+                onNavigate(next);
+              }}
+              personal={
+                navigation.status === 'ready' ? (
+                  <Tree
+                    key={user.id}
+                    viewerId={user.id}
+                    items={navigation.items.map((item) => ({
+                      ...item,
+                      workspaces: item.workspaces.map((workspace) => ({
+                        ...workspace,
+                        agents: workspace.agents.map((summary) =>
+                          route.kind === 'agent' &&
+                          agent.state.status === 'ready' &&
+                          agent.state.detail.id === route.agentId &&
+                          sameAgent(agent.state.detail, summary)
+                            ? { ...summary, status: agent.state.detail.status }
+                            : summary,
+                        ),
+                      })),
+                    }))}
+                    refreshError={navigation.refreshError}
+                    lifecycleBusy={actions.pending}
+                    route={route}
+                    permissions={permissions}
+                    onNavigate={(next) => {
+                      onSidebarNavigate();
+                      onNavigate(next);
+                    }}
+                    onAction={actions.select}
+                  />
+                ) : navigation.status === 'loading' ? (
+                  <p className="console__navigation-status" role="status">
+                    Loading Sandboxes
+                  </p>
+                ) : (
+                  <div className="console__navigation-status" role="alert">
+                    <p>{navigation.message}</p>
+                    <Button onClick={navigation.refresh}>Try again</Button>
+                  </div>
+                )
+              }
+            />
           }
           account={
             <ProfileMenu
