@@ -24,16 +24,22 @@ pub(in crate::store) async fn apply(
     {
         return Ok(request.replay(records::read(&existing)?)?);
     }
-    let agent = store
+    let agent_row = store
         .agents
         .find_one(doc! { "_id": request.envelope.agent_id.as_str() })
         .session(&mut *session)
         .await?
-        .as_ref()
-        .map(read_agent)
-        .transpose()
-        .map_err(|_| CommandLedgerError::Corrupt)?
         .ok_or(CommandLedgerError::NotFound)?;
+    // Already accepted scope/key replay returned above. Controls for accepted
+    // turns keep their existing validation; only new messages are closed.
+    if matches!(
+        request.envelope.command,
+        layer2_core::sandbox::agent_io::AgentCommand::Message { .. }
+    ) && agent_row.contains_key(crate::sandbox::channel_reuse_cleanup::CLEANUP_ADMISSION_FIELD)
+    {
+        return Err(CommandLedgerError::NotAdmissible.into());
+    }
+    let agent = read_agent(&agent_row).map_err(|_| CommandLedgerError::Corrupt)?;
     let parent = store
         .sandboxes
         .find_one(doc! { "_id": agent.sandbox_id.as_str() })

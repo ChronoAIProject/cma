@@ -31,6 +31,12 @@ mod profiles;
 use connection::{connection, connection_with_target};
 pub(crate) mod retirement;
 mod reuse;
+// Stage A is deliberately disconnected from deletion and public routes.
+#[allow(
+    dead_code,
+    reason = "cleanup request seal awaits effect and restore integration"
+)]
+pub(crate) mod reuse_cleanup;
 pub(crate) mod reuse_revival;
 pub(crate) mod revival;
 

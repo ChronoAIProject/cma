@@ -25,6 +25,7 @@ use super::sandbox_mongo::{
 mod admission;
 #[cfg(test)]
 mod admission_tests;
+mod cleanup_admission;
 
 #[cfg_attr(test, derive(Clone))]
 pub(super) struct ConversationReceipt {
@@ -150,17 +151,14 @@ async fn apply_mutation(
     mutation: &AgentConversationMutation,
     session: &mut mongodb::ClientSession,
 ) -> Result<ConversationReceipt, ApplyError> {
-    let current = store
+    let current_row = store
         .agents
         .find_one(doc! { "_id": mutation.agent.id.as_str() })
         .session(&mut *session)
         .await
         .map_err(ApplyError::Driver)?
-        .as_ref()
-        .map(read_agent)
-        .transpose()
-        .map_err(ApplyError::Domain)?
         .ok_or(ApplyError::Domain(SandboxStoreError::NotFound))?;
+    let current = read_agent(&current_row).map_err(ApplyError::Domain)?;
     let mut actual_last_seq = 0;
     let mut latest_turn = None;
     let log_summary = scan_complete_log_with_session(
@@ -180,6 +178,7 @@ async fn apply_mutation(
     )
     .await?;
     validate_mutation(&current, actual_last_seq, mutation).map_err(ApplyError::Domain)?;
+    cleanup_admission::require(&current_row, &current, mutation).map_err(ApplyError::Domain)?;
     let logs = conversation_logs(mutation).map_err(ApplyError::Domain)?;
     ensure_append_capacity(&log_summary, &logs, AppendCapacity::Normal)
         .map_err(ApplyError::Domain)?;
