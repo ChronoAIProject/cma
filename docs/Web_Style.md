@@ -840,8 +840,33 @@ Scoped results refresh every 30 seconds and expire at the earlier server deadlin
 or 55 seconds from request start, even while another refresh is pending. A read
 that exceeds 15 seconds loses its display authority. Foreground, scope/client
 changes and denied access clear old shared values and cancel streams/exports.
-Organization Sandbox trees, aggregate Shared-with-me scope, share editing, scoped
+Organization Sandbox trees, aggregate Shared-with-me scope, scoped
 artifact controls and shared lifecycle controls remain subsequent work.
+
+### Owner sharing
+
+The existing **Sharing** button in personal Agent Details and Sandbox actions
+appears only after current effective permission allows sharing management. Use
+the existing Modal, Picker and Button primitives. The dialog starts on the Agent
+when opened from Agent Details. Whole-Sandbox scope is a separate explicit
+selection; creation requires acknowledging its current and future children.
+
+Use named current organization choices and explain **View only** versus **Use
+organization roles** before submission. Agent grants provide no implicit parent,
+sibling or file exposure. Whole-Sandbox previews include children, scoped files
+and the extra admin controls permitted by organization-role mode. A server
+refusal for unproved Agent execution isolation explains view access and the
+explicit whole-Sandbox option. It never changes scope or moves the Agent.
+
+Direct grants show their current mode, an editable choice and an in-place revoke
+confirmation. Explain that other grants may still provide access. Refresh after
+changes and conflicts; a newer revision needs another explicit action. Unconfirmed
+commands retain their request identity while the resource view remains mounted.
+Organization lookup failure uses an unavailable-name label and still permits
+independently authorized revocation. No internal organization, actor or grant IDs
+are primary copy. Share changes preserve personal draft/controller state and
+creation labels. The dialog follows current permission, expiry and context
+cancellation and keeps every control within phone and desktop viewports.
 
 ## 13a. Agent resources
 

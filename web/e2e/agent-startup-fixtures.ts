@@ -138,6 +138,13 @@ export class LocalStartup {
         );
       }
       switch (url.pathname) {
+        case '/api/v1/resource-access/agent/agt_contract':
+        case '/api/v1/resource-access/sandbox/sbx_route':
+          return reply({
+            capabilities: ['view_details', 'view_history', 'manage_sharing'],
+            revalidate_at: null,
+            policy_revision: 1,
+          });
         case '/api/v1/profile-authoring/services':
           return reply([{ id: 'api-github', catalog_id: 'catalog-github', name: 'GitHub' }]);
         case '/api/v1/profile-authoring/skills':
