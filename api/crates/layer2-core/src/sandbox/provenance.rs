@@ -145,6 +145,33 @@ impl AgentCreationProvenance {
         Ok(record)
     }
 
+    /// Called only while creating the Agent, with exact admitted Launch evidence.
+    pub fn for_trigger_admission(
+        admission: &super::store::AgentAdmission,
+        initiation: &crate::trigger_domain::LaunchInitiation,
+        agent: &Agent,
+        parent: &Sandbox,
+        owner: ResourceOwner,
+    ) -> Result<Self, SandboxStoreError> {
+        initiation.require_agent_admission(admission)?;
+        if agent.origin != admission.origin
+            || agent.owner != admission.owner
+            || agent.workspace_id != admission.workspace_id
+        {
+            return Err(SandboxStoreError::Conflict);
+        }
+        let mut record = Self::for_admission(agent, parent, owner, admission.created_by.as_ref())?;
+        let AgentCreationOrigin::Trigger {
+            launching_actor, ..
+        } = &mut record.creation_origin
+        else {
+            return Err(SandboxStoreError::Conflict);
+        };
+        *launching_actor = Some(initiation.actor().clone());
+        record.validate_against(agent, parent)?;
+        Ok(record)
+    }
+
     /// Read-only online interpretation for retained records. No caller, current
     /// owner, Trigger reuse binding or display label may invent a creating actor.
     pub fn from_legacy(
@@ -281,7 +308,7 @@ impl AgentCreationProvenance {
                 },
             ) if trigger_id == expected_trigger
                 && launch_id == expected_launch
-                && launching_actor == &self::launching_actor(self.created_by.as_ref()) => {}
+                && valid_launching_actor(launching_actor.as_ref(), self.created_by.as_ref()) => {}
             (AgentCreationOrigin::LegacyUnknown, _) if self.created_by.is_none() => {}
             _ => return Err(corrupt()),
         }
@@ -331,4 +358,26 @@ fn launching_actor(actor: Option<&ResourceActor>) -> Option<ResourceActor> {
             )
         })
         .cloned()
+}
+
+fn valid_launching_actor(
+    initiator: Option<&ResourceActor>,
+    creator: Option<&ResourceActor>,
+) -> bool {
+    match (initiator, creator) {
+        (Some(initiator), Some(ResourceActor::Trigger { subject, .. })) => {
+            valid_creator(Some(initiator))
+                && match initiator {
+                    ResourceActor::Human { subject: actual }
+                    | ResourceActor::Api {
+                        subject: actual, ..
+                    }
+                    | ResourceActor::Trigger {
+                        subject: actual, ..
+                    } => actual == subject,
+                    ResourceActor::Channel { .. } => false,
+                }
+        }
+        _ => initiator.cloned() == launching_actor(creator),
+    }
 }

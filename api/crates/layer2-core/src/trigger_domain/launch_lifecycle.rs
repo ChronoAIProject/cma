@@ -17,6 +17,7 @@ impl Launch {
             FirstMessageDelivery::Completed
         };
         let mut launch = Self {
+            initiation: None,
             id: crate::LaunchId::generate(),
             trigger_id: seed.trigger_id,
             revision_digest: seed.revision_digest,

@@ -27,7 +27,7 @@ mod agent_worker_store;
 mod agent_worker_transaction;
 mod agents;
 pub mod auth;
-mod bridge_allocations;
+pub(crate) mod bridge_allocations;
 mod bridge_credentials;
 mod bridge_definitions;
 mod bridge_invokes;
@@ -48,7 +48,7 @@ mod launch_context;
 #[cfg(test)]
 mod launch_context_mongo_integration_tests;
 mod lifecycle_execution;
-mod lifecycle_transaction;
+pub(crate) mod lifecycle_transaction;
 mod marketplace;
 #[cfg(test)]
 mod marketplace_mongo_integration_tests;

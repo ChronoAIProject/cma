@@ -64,7 +64,7 @@ async fn real_ready_channel_issues_one_exact_grant_and_replays_after_reopening_s
     let snapshot = store.channel_target(&f.record.id).await.unwrap();
     assert!(snapshot.basis.allocation == f.record);
     assert_eq!(snapshot.basis.allocation.state, AllocationState::Ready);
-    let control_plane = Arc::new(f.lease);
+    let control_plane = f.lease.clone();
     let grant = service
         .issue_channel(
             control_plane.clone(),
@@ -164,7 +164,7 @@ async fn real_channel_new_inbound_profiles_drain_original_tree_and_suspension_re
     let inbound = f.authority.bridge().admission_pin().unwrap();
     assert_ne!(inbound, original.pin);
     let (store, service) = invokes(&f).await;
-    let control_plane = Arc::new(f.lease);
+    let control_plane = f.lease.clone();
     let grant = service
         .issue_channel(
             control_plane.clone(),
@@ -217,7 +217,7 @@ async fn real_channel_revoked_grant_replay_keeps_terminal_revocation_and_origina
     f.record = f.ready().await;
     f.authority = renew_retained(&f.svc, &f.bridges, &f.record).await.unwrap();
     let (store, service) = invokes(&f).await;
-    let control_plane = Arc::new(f.lease);
+    let control_plane = f.lease.clone();
     let grant = service
         .issue_channel(
             control_plane.clone(),
@@ -312,7 +312,7 @@ async fn real_channel_exact_human_grant_replacement_refuses_new_issuance_and_rep
             .incarnation
             .push_str("-replacement");
         let (store, service) = invokes(&f).await;
-        let control_plane = Arc::new(f.lease);
+        let control_plane = f.lease.clone();
         let issued = if issue_first {
             Some(
                 service

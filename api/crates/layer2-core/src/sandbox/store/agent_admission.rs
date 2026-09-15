@@ -317,6 +317,18 @@ impl AgentAdmissionResult {
 
 #[async_trait]
 pub trait AgentAdmissionStore: Send + Sync {
+    /// New Trigger creation must persist its proven initiator in the same write.
+    async fn admit_agent_with_trigger_initiator(
+        &self,
+        _admission: AgentAdmission,
+        _initiation: crate::trigger_domain::LaunchInitiation,
+        _reuse_existing: bool,
+    ) -> Result<AgentAdmissionResult, SandboxStoreError> {
+        Err(SandboxStoreError::InvalidTransaction(
+            "atomic Trigger attribution is unavailable",
+        ))
+    }
+
     async fn admit_agent_reusing_profile(
         &self,
         _admission: AgentAdmission,

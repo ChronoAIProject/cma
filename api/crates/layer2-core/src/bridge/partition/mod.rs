@@ -13,9 +13,9 @@ pub use key::{NormalizedPartitionKey, PartitionContextSharing, ReplyVisibility};
 pub(super) use policy::validate_placement;
 pub use policy::{ChannelAdmissionPolicy, GroupAdmission, IdentityAdmission};
 pub use source::{
-    ChannelConversationKind, ChannelEventKind, ChannelSenderKind, LoopEvidence,
-    NormalizedPartitionSource, PartitionSourcePin, PlatformCapabilityObservation, StableThreadKind,
-    StableThreadReference, ThreadEvidence, VerifiedFlag,
+    ChannelConversationKind, ChannelEventKind, ChannelSenderKind, ConfirmedReplyReceipt,
+    LoopEvidence, NormalizedPartitionSource, PartitionSourcePin, PlatformCapabilityObservation,
+    StableThreadKind, StableThreadReference, ThreadEvidence, VerifiedFlag,
 };
 pub use stored::{CapabilityContract, StoredPartitionObservation};
 

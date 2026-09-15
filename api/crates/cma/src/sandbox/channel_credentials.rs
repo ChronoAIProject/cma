@@ -13,8 +13,10 @@ pub(crate) trait SandboxCredentialProvenance: Send + Sync {
 pub(crate) struct ChannelGuardedCredentials {
     ordinary: Arc<dyn SandboxCredentialController>,
     provenance: Arc<dyn SandboxCredentialProvenance>,
+    lifecycle: Option<Arc<dyn super::channel_lifecycle_credentials::ChannelLifecycleCredentials>>,
 }
 impl ChannelGuardedCredentials {
+    #[cfg(test)]
     pub fn new(
         ordinary: Arc<dyn SandboxCredentialController>,
         provenance: Arc<dyn SandboxCredentialProvenance>,
@@ -22,14 +24,71 @@ impl ChannelGuardedCredentials {
         Arc::new(Self {
             ordinary,
             provenance,
+            lifecycle: None,
+        })
+    }
+    pub fn with_lifecycle(
+        ordinary: Arc<dyn SandboxCredentialController>,
+        provenance: Arc<dyn SandboxCredentialProvenance>,
+        lifecycle: Option<
+            Arc<dyn super::channel_lifecycle_credentials::ChannelLifecycleCredentials>,
+        >,
+    ) -> Arc<Self> {
+        Arc::new(Self {
+            ordinary,
+            provenance,
+            lifecycle,
+        })
+    }
+    fn lifecycle(
+        &self,
+    ) -> Result<
+        &Arc<dyn super::channel_lifecycle_credentials::ChannelLifecycleCredentials>,
+        CredentialError,
+    > {
+        self.lifecycle.as_ref().ok_or_else(|| {
+            CredentialError::Unavailable("Channel lifecycle authority is not available".into())
         })
     }
 }
 #[async_trait::async_trait]
 impl SandboxCredentialController for ChannelGuardedCredentials {
+    async fn commit_channel_phase(
+        &self,
+        sandbox: &Sandbox,
+        mutation: &layer2_core::sandbox::store::SandboxLifecycleMutation,
+    ) -> Result<bool, CredentialError> {
+        match self.provenance.require_ordinary(&sandbox.id).await {
+            Ok(()) => self.ordinary.commit_channel_phase(sandbox, mutation).await,
+            Err(_) => {
+                self.lifecycle()?.commit_phase(sandbox, mutation).await?;
+                Ok(true)
+            }
+        }
+    }
     async fn require_lifecycle_restore(&self, sandbox: &Sandbox) -> Result<(), CredentialError> {
-        self.provenance.require_ordinary(&sandbox.id).await?;
-        self.ordinary.require_lifecycle_restore(sandbox).await
+        match self.provenance.require_ordinary(&sandbox.id).await {
+            Ok(()) => self.ordinary.require_lifecycle_restore(sandbox).await,
+            Err(_) => self.lifecycle()?.require_restore(sandbox).await,
+        }
+    }
+    async fn restore_channel_credential(&self, sandbox: &Sandbox) -> Result<bool, CredentialError> {
+        match self.provenance.require_ordinary(&sandbox.id).await {
+            Ok(()) => self.ordinary.restore_channel_credential(sandbox).await,
+            Err(_) => {
+                self.lifecycle()?.restore_credential(sandbox).await?;
+                Ok(true)
+            }
+        }
+    }
+    async fn publish_channel_active(&self, sandbox: &Sandbox) -> Result<bool, CredentialError> {
+        match self.provenance.require_ordinary(&sandbox.id).await {
+            Ok(()) => self.ordinary.publish_channel_active(sandbox).await,
+            Err(_) => {
+                self.lifecycle()?.publish_active(sandbox).await?;
+                Ok(true)
+            }
+        }
     }
     async fn issue(
         &self,

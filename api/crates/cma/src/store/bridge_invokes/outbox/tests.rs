@@ -4,6 +4,7 @@ use layer2_core::resource_access::ResourceAccessStore;
 use serde_json::json;
 mod feature_gates_tests;
 mod management;
+mod reply_addressing;
 
 /// Retained historical outbox fixture, not a production admission proof. New
 /// Channel-created admission remains unavailable until the real creator exists.

@@ -35,11 +35,13 @@ pub trait CallbackCapabilityExtractor {
 }
 
 impl SignedCallback {
-    pub fn classify_capabilities(
-        mut self,
-        body: &[u8],
-        extractor: &dyn CallbackCapabilityExtractor,
-    ) -> Result<Self, CallbackError> {
+    /// A borrowed view of exactly this cryptographically authenticated body.
+    /// Read-only enrichment may use it before capability admission; it grants
+    /// no custody, allocation or effect authority and preserves the deadline.
+    pub fn authenticated_payload<'a>(
+        &'a self,
+        body: &'a [u8],
+    ) -> Result<AuthenticatedCallbackPayload<'a>, CallbackError> {
         if tokio::time::Instant::now() >= self.deadline
             || body.len() > 1_048_576
             || format!("{:x}", Sha256::digest(body)) != self.record.attestation.body_sha256
@@ -47,10 +49,18 @@ impl SignedCallback {
         {
             return Err(CallbackError::Authentication);
         }
-        let facts = extractor.observe(&AuthenticatedCallbackPayload {
+        Ok(AuthenticatedCallbackPayload {
             body,
             record: &self.record,
-        })?;
+        })
+    }
+
+    pub fn classify_capabilities(
+        mut self,
+        body: &[u8],
+        extractor: &dyn CallbackCapabilityExtractor,
+    ) -> Result<Self, CallbackError> {
+        let facts = extractor.observe(&self.authenticated_payload(body)?)?;
         // NyxID's route-level conversation type can describe a wildcard route.
         // The trusted extractor uses actual authenticated platform chat facts.
         self.record.envelope.conversation_type = facts.conversation.as_wire().into();

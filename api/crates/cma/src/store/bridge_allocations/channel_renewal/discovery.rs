@@ -180,6 +180,13 @@ impl MongoBridgeAllocationStore {
             sandbox,
             creation,
             provisioning,
+            lifecycle_credential: document
+                .get("channel_lifecycle_credential")
+                .map(|value| {
+                    mongodb::bson::deserialize_from_bson(value.clone())
+                        .map_err(|_| AllocationError::Corrupt)
+                })
+                .transpose()?,
             renewal: document
                 .get("channel_renewal")
                 .map(|value| {

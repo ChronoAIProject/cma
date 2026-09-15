@@ -27,6 +27,7 @@ use super::{
 use crate::{auth::keys::KeyIssuer, sandbox::OrnnAgentSkillResolver};
 
 mod profiles;
+pub(crate) mod revival;
 
 pub(crate) struct BridgeProvisioningDependencies {
     pub sandbox_profiles: Arc<dyn SandboxProfileStore>,

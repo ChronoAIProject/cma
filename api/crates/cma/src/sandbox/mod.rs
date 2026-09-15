@@ -5,6 +5,7 @@ mod agent_skills;
 mod agent_worker;
 pub(crate) mod channel_children;
 pub(crate) mod channel_credentials;
+pub(crate) mod channel_lifecycle_credentials;
 pub(crate) mod channel_renewal;
 mod checkpoint_maintenance;
 pub(crate) use checkpoint_maintenance::ExportDependencies;
@@ -28,7 +29,7 @@ mod title_worker;
 mod titles;
 mod unavailable_credentials;
 mod warmup;
-mod worker;
+pub(crate) mod worker;
 mod workspace_worker;
 
 pub(crate) use agent_skills::OrnnAgentSkillResolver;

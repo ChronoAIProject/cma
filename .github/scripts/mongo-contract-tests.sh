@@ -31,10 +31,14 @@ trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
+# The growing suite creates many short-lived databases. Reserve disk headroom
+# for Mongo's index-build threshold, and bound cache/oplog within the memory cap.
 docker run --detach --name "$contract_name" --label "$contract_label" \
-  --publish 127.0.0.1::27017 --memory 2g --cpus 2 --pids-limit 256 \
-  --tmpfs /data/db:rw,size=1073741824 --tmpfs /data/configdb:rw,size=16777216 \
-  "$mongo_image" --replSet cma_ci --bind_ip_all --setParameter enableTestCommands=1 >/dev/null
+  --publish 127.0.0.1::27017 --memory 3g --cpus 2 --pids-limit 256 \
+  --tmpfs /data/db:rw,size=2147483648 --tmpfs /data/configdb:rw,size=16777216 \
+  "$mongo_image" --replSet cma_ci --bind_ip_all \
+  --wiredTigerCacheSizeGB 0.25 --oplogSize 64 \
+  --setParameter enableTestCommands=1 >/dev/null
 for attempt in $(seq 1 60); do
   if docker exec "$contract_name" mongosh --quiet --eval 'db.adminCommand({ping:1}).ok' >/dev/null 2>&1; then
     break

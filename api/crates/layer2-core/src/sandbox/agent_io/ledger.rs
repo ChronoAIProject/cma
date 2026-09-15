@@ -209,8 +209,9 @@ impl CommandReservation {
             key_sha256: self.key_sha256.clone(),
             queue_deadline: self.queue_deadline.clone(),
             // Existing status/work variants remain readable by old workers,
-            // which skip this unbound wait. Exact hold identity lives in the
-            // versioned Channel sidecar, outside the ordinary record.
+            // which cannot execute this unbound wait. Current selectors also
+            // preserve its normal-message queue position. Exact hold identity
+            // lives in the versioned Channel sidecar, outside the ordinary record.
             status: if matches!(self.envelope.actor, super::AgentActor::Channel { .. })
                 || self.envelope.source.kind == super::AgentSourceKind::Channel
             {

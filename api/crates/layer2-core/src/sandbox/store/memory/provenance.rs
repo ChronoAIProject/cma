@@ -42,6 +42,7 @@ pub(super) fn creation_record(
     admission: &crate::sandbox::store::AgentAdmission,
     agent: &Agent,
     parent: &Sandbox,
+    initiation: Option<&crate::trigger_domain::LaunchInitiation>,
 ) -> Result<crate::sandbox::AgentCreationProvenance, SandboxStoreError> {
     let owner = match state.resource_policies.get(&parent.id) {
         Some(policy) => {
@@ -54,12 +55,17 @@ pub(super) fn creation_record(
             subject: parent.owner.clone(),
         },
     };
-    crate::sandbox::AgentCreationProvenance::for_admission(
-        agent,
-        parent,
-        owner,
-        admission.created_by.as_ref(),
-    )
+    match initiation {
+        Some(initiation) => crate::sandbox::AgentCreationProvenance::for_trigger_admission(
+            admission, initiation, agent, parent, owner,
+        ),
+        None => crate::sandbox::AgentCreationProvenance::for_admission(
+            agent,
+            parent,
+            owner,
+            admission.created_by.as_ref(),
+        ),
+    }
 }
 
 #[async_trait::async_trait]

@@ -725,6 +725,7 @@ impl LaunchResourceDriver for FakeDriver {
                 workspace_id,
                 request,
                 reuse_existing: _,
+                initiation: _,
             } => {
                 let (trigger_id, launch_id) = match &request.origin {
                     AgentOrigin::Trigger {

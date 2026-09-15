@@ -23,6 +23,7 @@ use crate::store::{
 
 use super::{decode_bridge, MongoBridgeStore};
 pub(in crate::store) mod receipts;
+mod reply_addressing;
 mod work;
 
 #[derive(Clone)]
@@ -154,6 +155,7 @@ impl MongoCallbackInbox {
             return Ok(receipt);
         }
         let record = write.record();
+        self.require_confirmed_reply(record, session).await?;
         let config = &current
             .current()
             .map_err(|_| CallbackError::BindingUnavailable)?
@@ -323,6 +325,13 @@ impl MongoCallbackInbox {
 
 #[async_trait::async_trait]
 impl CallbackInboxStore for MongoCallbackInbox {
+    async fn recover_receipt(
+        &self,
+        write: &InboxWrite,
+    ) -> Result<Option<InboxReceipt>, CallbackError> {
+        self.replay(write).await
+    }
+
     async fn accept(&self, write: InboxWrite) -> Result<InboxReceipt, CallbackError> {
         for _ in 0..8 {
             write.require_current(write.bridge())?;
