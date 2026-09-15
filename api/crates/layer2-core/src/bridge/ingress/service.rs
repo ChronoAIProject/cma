@@ -117,6 +117,7 @@ impl CallbackVerifier {
         }
         let platform = match config.connector.platform {
             BridgePlatform::Telegram => "telegram",
+            BridgePlatform::TelegramNew => "telegram-new",
             BridgePlatform::Discord => "discord",
             BridgePlatform::Lark => "lark",
             BridgePlatform::Feishu => "feishu",

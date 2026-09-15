@@ -20,7 +20,7 @@ fn interval(source: &OutboxSource) -> i64 {
     // Conservative CMA ceilings include Telegram's group pacing. These are
     // shared by every Bridge/key using this actual bot, including old pins.
     match source.config().connector.platform {
-        BridgePlatform::Telegram => 3_000,
+        BridgePlatform::Telegram | BridgePlatform::TelegramNew => 3_000,
         BridgePlatform::Discord | BridgePlatform::Lark | BridgePlatform::Feishu => 1_000,
     }
 }

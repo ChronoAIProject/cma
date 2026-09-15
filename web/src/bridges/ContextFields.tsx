@@ -40,12 +40,12 @@ export function ContextFields({
                   : 'Organization target selection needs an authorized full ancestry view',
             },
             {
-              value: 'new_agent',
+              value: 'worktree_agent_per_partition',
               label: 'A new Agent in an existing Workspace',
               unavailable: 'Shared Workspace placement is not available yet',
             },
             {
-              value: 'new_workspace',
+              value: 'workspace_per_partition',
               label: 'A new Workspace in an existing Sandbox',
               unavailable: 'Shared Sandbox placement is not available yet',
             },
@@ -85,7 +85,11 @@ export function ContextFields({
           onChange={(partition) => onChange({ ...value, partition })}
         />
       </label>
-      <p>{partitions.find((item) => item.value === value.partition)?.explanation}</p>
+      <p>
+        {placement.kind === 'new_sandbox' || placement.kind === 'existing_agent'
+          ? partitions.find((item) => item.value === value.partition)?.explanation
+          : 'Each partition has its own Agent conversation inside the selected shared Sandbox.'}
+      </p>
       {placement.kind === 'new_sandbox' ? (
         <>
           <p>
@@ -118,13 +122,19 @@ export function ContextFields({
             resources and profile revisions.
           </p>
         </>
-      ) : (
+      ) : placement.kind === 'existing_agent' ? (
         <RetainedAgent
           client={client}
           value={placement.target}
           disabled={disabled || organization !== undefined}
           onChange={(target) => changePlacement({ kind: 'existing_agent', target })}
         />
+      ) : (
+        <p>
+          This Bridge uses a shared Sandbox. All participants share its filesystem, processes and
+          credentials. Separate Worktrees and Agent homes keep conversations distinct; they do not
+          isolate access to sibling work. Editing this placement is not available yet.
+        </p>
       )}
       <p>
         {organization === undefined

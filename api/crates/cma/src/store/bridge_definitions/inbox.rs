@@ -23,6 +23,7 @@ use crate::store::{
 
 use super::{decode_bridge, MongoBridgeStore};
 pub(in crate::store) mod receipts;
+mod redelivery;
 mod reply_addressing;
 mod work;
 
@@ -33,6 +34,7 @@ pub(crate) struct MongoCallbackInbox {
     replies: Collection<Document>,
     rates: Collection<Document>,
     receipts: Collection<Document>,
+    redeliveries: Collection<Document>,
     receipt_cursor: Arc<tokio::sync::Mutex<Option<String>>>,
     cipher: Arc<AuthCipher>,
 }
@@ -52,6 +54,7 @@ impl MongoCallbackInbox {
                 "bridge_callback_replies",
                 "bridge_callback_rates",
                 "bridge_callback_receipts",
+                "bridge_callback_platform_messages",
             ],
         )
         .await?;
@@ -61,6 +64,7 @@ impl MongoCallbackInbox {
             replies: majority_collection(&database, "bridge_callback_replies"),
             rates: majority_collection(&database, "bridge_callback_rates"),
             receipts: majority_collection(&database, "bridge_callback_receipts"),
+            redeliveries: majority_collection(&database, "bridge_callback_platform_messages"),
             receipt_cursor: Arc::new(tokio::sync::Mutex::new(None)),
             cipher: Arc::new(AuthCipher::new(deployment, key)?),
         };
@@ -154,6 +158,12 @@ impl MongoCallbackInbox {
             .await?;
             return Ok(receipt);
         }
+        if let Some(receipt) = self
+            .resolve_platform_redelivery(write, session, true)
+            .await?
+        {
+            return Ok(receipt);
+        }
         let record = write.record();
         self.require_confirmed_reply(record, session).await?;
         let config = &current
@@ -208,6 +218,7 @@ impl MongoCallbackInbox {
             "expires_at":DateTime::from_millis(record.expires_at*1000),"record":record_bson(record).map_err(|_|CallbackError::Unavailable)?})
             .session(&mut *session).await?;
         self.retain_acceptance(record, None, session).await?;
+        self.retain_platform_identity(write, session).await?;
         if let Some(expires) = record.reply_expires_at {
             let mut document = doc! {"_id":&record.id,"document_schema_version":DOCUMENT_SCHEMA_VERSION,
             "expires_at":DateTime::from_millis(expires*1000)};
@@ -269,12 +280,21 @@ impl MongoCallbackInbox {
                 receipts::model::AcceptedCallbackReceipt::read(&document)?.replay(write)?,
             ));
         }
-        self.inbox
+        if let Some(document) = self
+            .inbox
             .find_one(doc! {"_id": &write.record().id})
+            .session(&mut session)
             .await
             .map_err(|_| CallbackError::Unavailable)?
-            .map(|document| write.match_replay(&decode(&document)?))
-            .transpose()
+        {
+            return Ok(Some(write.match_replay(&decode(&document)?)?));
+        }
+        self.resolve_platform_redelivery(write, &mut session, false)
+            .await
+            .map_err(|error| match error {
+                MutationError::Core(error) => error,
+                MutationError::Mongo(_) => CallbackError::Unavailable,
+            })
     }
 
     /// After an uncertain commit, failure to observe a matching durable receipt

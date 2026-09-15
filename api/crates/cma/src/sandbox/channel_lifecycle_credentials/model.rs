@@ -36,6 +36,8 @@ pub(crate) struct ChannelLifecycleCredentialState {
     pub previous_credential_id: String,
     pub previous: SandboxCredentialAuthority,
     pub replacement: Option<SandboxCredentialAuthority>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mint_intent: Option<crate::auth::keys::bridge::mint_intent::BridgeSandboxMintIntent>,
 }
 impl ChannelLifecycleCredentialState {
     pub fn require_completed_key(
@@ -56,6 +58,14 @@ impl ChannelLifecycleCredentialState {
         Ok(())
     }
     pub(crate) fn validate(&self) -> Result<(), AllocationError> {
+        if let Some(intent) = &self.mint_intent {
+            intent.validate().map_err(|_| AllocationError::Corrupt)?;
+            if let Some(key) = &self.replacement {
+                intent
+                    .require_material(key)
+                    .map_err(|_| AllocationError::IdentityMismatch)?;
+            }
+        }
         if self.schema_version != 1
             || self.revision == 0
             || self.mint_fence == 0

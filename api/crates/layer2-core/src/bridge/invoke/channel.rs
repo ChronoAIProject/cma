@@ -35,9 +35,11 @@ impl ChannelInvokeBasis {
         allocation
             .validate()
             .map_err(|_| BridgeInvokeError::Corrupt)?;
-        let AllocationPlacement::NewSandbox { profiles, target } = &allocation.placement else {
-            return Err(BridgeInvokeError::TargetMismatch);
-        };
+        let profiles = allocation
+            .placement
+            .profiles()
+            .ok_or(BridgeInvokeError::TargetMismatch)?;
+        let target = allocation.placement.target();
         let creation = &self.creation;
         if allocation.state != AllocationState::Ready
             || allocation.lease.is_some()
@@ -71,6 +73,38 @@ impl ChannelInvokeBasis {
         Ok(())
     }
 
+    /// Existing commands retain their original Ready creation evidence. Reset
+    /// changes only this exact terminal state, revision and timestamp; storage
+    /// must additionally prove/fence the canonical successor and current head.
+    /// This comparison never authorizes a new grant or command admission.
+    pub fn require_retained_allocation(
+        &self,
+        current: &AllocationRecord,
+    ) -> Result<(), BridgeInvokeError> {
+        current.validate().map_err(|_| BridgeInvokeError::Corrupt)?;
+        if current == &self.allocation {
+            return Ok(());
+        }
+        let mut retired = self.allocation.clone();
+        if retired.state != AllocationState::Ready
+            || current.state != AllocationState::Retired
+            || current.updated_at_ms < retired.updated_at_ms
+        {
+            return Err(BridgeInvokeError::TargetMismatch);
+        }
+        retired.state = AllocationState::Retired;
+        retired.lease = None;
+        retired.revision = retired
+            .revision
+            .checked_add(1)
+            .ok_or(BridgeInvokeError::Corrupt)?;
+        retired.updated_at_ms = current.updated_at_ms;
+        if &retired != current {
+            return Err(BridgeInvokeError::TargetMismatch);
+        }
+        Ok(())
+    }
+
     /// Inbound policy and creation policy are independent immutable generations.
     /// Both must remain admitted under this same current Bridge snapshot.
     pub fn require_bridge(
@@ -95,10 +129,17 @@ impl ChannelInvokeBasis {
         &self,
         resources: &ResourceAccessSnapshot,
     ) -> Result<(), BridgeInvokeError> {
-        let AllocationPlacement::NewSandbox { profiles, target } = &self.allocation.placement
-        else {
-            return Err(BridgeInvokeError::TargetMismatch);
-        };
+        let profiles = self
+            .allocation
+            .placement
+            .profiles()
+            .ok_or(BridgeInvokeError::TargetMismatch)?;
+        let target = self.allocation.placement.target();
+        if let AllocationPlacement::ReuseParent { parent, .. } = &self.allocation.placement {
+            parent
+                .require(&self.allocation.config, profiles, resources)
+                .map_err(|_| BridgeInvokeError::TargetMismatch)?;
+        }
         let agent = resources
             .lineage
             .agent
@@ -128,10 +169,8 @@ fn same_partition_namespace(
     left: &crate::bridge::BridgeConfig,
     right: &crate::bridge::BridgeConfig,
 ) -> bool {
-    matches!(
-        right.placement,
-        crate::bridge::BridgePlacementPolicy::NewSandbox { .. }
-    ) && left.connector.issuer == right.connector.issuer
+    right.placement.creates_partition_agent()
+        && left.connector.issuer == right.connector.issuer
         && left.connector.bot_id == right.connector.bot_id
         && left.connector.platform == right.connector.platform
         && left.partition == right.partition

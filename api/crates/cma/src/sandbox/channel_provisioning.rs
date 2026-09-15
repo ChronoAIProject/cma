@@ -114,6 +114,12 @@ impl ChannelProvisioningDriver {
             Mint => self.mint(authority, lease, snapshot).await?,
             Deliver => self.deliver(authority, lease, snapshot).await?,
             MintStarted => {
+                // Observation and exact orphan revocation cannot reopen the mint.
+                let _ = crate::sandbox::channel_mint_reconciliation::reconcile(
+                    &self.dependencies.allocations, self.dependencies.credentials.as_ref(), &self.dependencies.issuer,
+                    crate::sandbox::channel_mint_reconciliation::authority::ChannelMintAttempt::Provisioning {
+                        authority, human: lease, snapshot: &snapshot,
+                    }).await;
                 // The provider has no key-create idempotency contract. Missing
                 // local custody cannot establish that the POST did not run.
                 let claim = snapshot

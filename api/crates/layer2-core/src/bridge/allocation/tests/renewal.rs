@@ -46,7 +46,7 @@ impl BridgeConnectionValidator for Connections {
     }
 }
 
-fn context(subject: &str) -> CallerContext {
+pub(super) fn context(subject: &str) -> CallerContext {
     let subject = crate::SubjectId::new(subject);
     CallerContext {
         caller: crate::Caller::new(
@@ -63,7 +63,7 @@ fn context(subject: &str) -> CallerContext {
     }
 }
 
-async fn manager(
+pub(super) async fn manager(
     bridge: BridgeRecord,
     actor: &str,
     role: OrganizationRole,

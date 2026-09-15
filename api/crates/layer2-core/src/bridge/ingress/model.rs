@@ -191,6 +191,7 @@ impl StoredInbox {
 /// bridge state fence, queue/rate limits and encrypted expiring reply context.
 /// There is no Serialize/Deserialize or Debug implementation for this proof.
 pub struct InboxWrite {
+    pub(super) platform_redelivery: Option<super::VerifiedPlatformRedelivery>,
     pub(super) binding: CallbackBinding,
     pub(super) record: StoredInbox,
     pub(super) reply_token: Option<Zeroizing<String>>,
@@ -220,6 +221,7 @@ impl SignedCallback {
             self.record.envelope.protected_thread_context_present = false;
         }
         let write = InboxWrite {
+            platform_redelivery: None,
             binding,
             record: self.record,
             reply_token: self.reply_token,
@@ -232,6 +234,20 @@ impl SignedCallback {
 }
 
 impl InboxWrite {
+    pub fn with_platform_redelivery(
+        mut self,
+        proof: Option<super::VerifiedPlatformRedelivery>,
+    ) -> Result<Self, CallbackError> {
+        if let Some(proof) = &proof {
+            proof.require_source(&self.record)?;
+        }
+        self.platform_redelivery = proof;
+        Ok(self)
+    }
+    pub fn platform_redelivery(&self) -> Option<&super::VerifiedPlatformRedelivery> {
+        self.platform_redelivery.as_ref()
+    }
+
     pub fn record(&self) -> &StoredInbox {
         &self.record
     }

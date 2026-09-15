@@ -9,6 +9,8 @@ mod children;
 pub(crate) mod fixture;
 #[path = "tests/renewal.rs"]
 mod renewal;
+#[path = "tests/reuse.rs"]
+pub(crate) mod reuse;
 #[path = "tests/startup.rs"]
 mod startup;
 
@@ -19,8 +21,20 @@ use crate::{
 use fixture::Fixture;
 #[path = "tests/channel_reply_tests.rs"]
 mod channel_reply;
+#[path = "tests/command_reset_tests.rs"]
+mod command_reset_tests;
 #[path = "tests/command_revival_tests.rs"]
 mod command_revival;
+#[path = "tests/reuse_command_fixture.rs"]
+mod reuse_command_fixture;
+#[path = "tests/reuse_command_reset_tests.rs"]
+mod reuse_command_reset_tests;
+#[path = "tests/reuse_command_tests.rs"]
+mod reuse_command_tests;
+#[path = "tests/reuse_pause_tests.rs"]
+mod reuse_pause_tests;
+#[path = "tests/stopped_reply_tests.rs"]
+mod stopped_reply;
 use layer2_core::sandbox::store::{SandboxStore, SandboxWorkerStore};
 use layer3_adapter::{wire::WireOperation, RuntimeHandle};
 use std::sync::atomic::Ordering;

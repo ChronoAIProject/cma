@@ -118,6 +118,27 @@ impl MongoBridgeStore {
             )
             .await?;
         }
+        if let Some(current) = &current {
+            super::bridge_invokes::apply_management_usage(self, current, write, session)
+                .await
+                .map_err(|error| match error {
+                    super::bridge_invokes::MutationError::Mongo(error) => {
+                        MutationError::Mongo(error)
+                    }
+                    super::bridge_invokes::MutationError::Invoke(error) => {
+                        MutationError::Core(match error {
+                            layer2_core::bridge::invoke::BridgeInvokeError::Conflict => {
+                                BridgeError::Conflict
+                            }
+                            layer2_core::bridge::invoke::BridgeInvokeError::Corrupt
+                            | layer2_core::bridge::invoke::BridgeInvokeError::TargetMismatch => {
+                                BridgeError::Corrupt
+                            }
+                            _ => BridgeError::Unavailable,
+                        })
+                    }
+                })?;
+        }
         let document = encode_bridge(write.record())?;
         if current.is_some() {
             let changed = self.definitions.replace_one(doc! { "_id": write.record().id.as_str(), "revision": write.expected_revision() as i64 }, document)

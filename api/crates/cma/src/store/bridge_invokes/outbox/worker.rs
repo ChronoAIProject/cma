@@ -38,11 +38,29 @@ impl MongoBridgeReplyToolStore {
                 // Positive no-send evidence while checking authority. Backoff
                 // is durable and bounded; a provider outage cannot busy-loop.
                 Err(_) => {
-                    self.defer_claim(&item, holder).await?;
+                    self.defer_claim(&item, holder, DeliveryFailure::ConnectUnavailable)
+                        .await?;
                     return Ok(true);
                 }
             };
-            let sending = self.begin_delivery(&item, holder, &validation).await?;
+            let sending = match self.begin_delivery(&item, holder, &validation).await {
+                Ok(sending) => sending,
+                Err(error) => {
+                    let reason = if matches!(error, OutboxError::Unavailable) {
+                        DeliveryFailure::ConnectUnavailable
+                    } else {
+                        DeliveryFailure::RouteUnavailable
+                    };
+                    // Exact Claimed CAS plus rate release share a transaction.
+                    // An uncertain Sending commit cannot match this revision,
+                    // so its unknown-send boundary and lease remain intact.
+                    match self.defer_claim(&item, holder, reason).await {
+                        Ok(()) => return Ok(true),
+                        Err(OutboxError::Conflict) => return Err(error),
+                        Err(failure) => return Err(failure),
+                    }
+                }
+            };
             let bridge = match self.read_current_bridge(&sending.source).await {
                 Ok(bridge) => bridge,
                 Err(_) => {
@@ -232,6 +250,8 @@ impl MongoBridgeReplyToolStore {
                     .ok_or(OutboxError::SourceMismatch)?;
                 let bridge = crate::store::bridge_definitions::decode_bridge(&bridge_doc)
                     .map_err(|_| OutboxError::Corrupt)?;
+                self.fence_retained_delivery_source(&item.source, &mut session)
+                    .await?;
                 self.fence_delivery(&bridge, &item.source, validation, &mut session)
                     .await?;
                 let attempt = match &item.state {

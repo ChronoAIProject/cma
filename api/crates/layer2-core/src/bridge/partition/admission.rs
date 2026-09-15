@@ -17,6 +17,8 @@ pub enum PartitionRefusal {
     BotSender,
     SystemSender,
     UnknownEvent,
+    AttachmentDownloadRequired,
+    ContentUnsupported,
     MessageEdit,
     InteractiveActionUnsupported,
     SystemEvent,
@@ -100,6 +102,8 @@ impl NormalizedPartitionSource {
             ChannelEventKind::MessageEdit => return Some(R::MessageEdit),
             ChannelEventKind::InteractiveAction => return Some(R::InteractiveActionUnsupported),
             ChannelEventKind::Unknown => return Some(R::UnknownEvent),
+            ChannelEventKind::AttachmentMessage => return Some(R::AttachmentDownloadRequired),
+            ChannelEventKind::UnsupportedContent => return Some(R::ContentUnsupported),
             ChannelEventKind::SystemEvent => return Some(R::SystemEvent),
             ChannelEventKind::CallbackEcho => return Some(R::CallbackLoop),
             ChannelEventKind::UserMessage => {}

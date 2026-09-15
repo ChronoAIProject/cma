@@ -51,8 +51,8 @@ pub(super) fn observe(
     };
     facts.event_kind = if kind.starts_with("edited_") {
         ChannelEventKind::MessageEdit
-    } else if text_matches(inbox, message.get("text").and_then(Value::as_str)) {
-        ChannelEventKind::UserMessage
+    } else if message.get("via_bot").is_some() {
+        ChannelEventKind::CallbackEcho
     } else if [
         "new_chat_members",
         "left_chat_member",
@@ -64,7 +64,22 @@ pub(super) fn observe(
     {
         ChannelEventKind::SystemEvent
     } else {
-        ChannelEventKind::Unknown
+        message_event(
+            inbox,
+            message.get("text").and_then(Value::as_str),
+            [
+                "photo",
+                "document",
+                "video",
+                "audio",
+                "voice",
+                "animation",
+                "sticker",
+                "video_note",
+            ]
+            .iter()
+            .any(|field| message.get(*field).is_some()),
+        )
     };
     facts.loop_evidence = if message.get("via_bot").is_some() {
         LoopEvidence::Loop

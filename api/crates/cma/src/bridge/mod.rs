@@ -12,6 +12,7 @@ use layer2_core::resource_access::{ResourceOwner, ResourceShareStore, ResourceTa
 use crate::auth::AuthMode;
 use crate::store::MongoBridgeStore;
 
+mod capability_catalog;
 pub(crate) mod channel_renewal_work;
 pub(crate) mod channel_scheduler;
 pub(crate) mod channel_tools;
@@ -82,6 +83,9 @@ pub(crate) fn service(
 struct UnavailableConnections;
 #[async_trait::async_trait]
 impl BridgeConnectionValidator for UnavailableConnections {
+    fn capabilities(&self) -> layer2_core::bridge::BridgeCapabilityCatalog {
+        capability_catalog::catalog(false)
+    }
     async fn validate_connection(
         &self,
         _: &ResourceOwner,
@@ -101,6 +105,9 @@ struct NyxBridgeValidator {
 
 #[async_trait::async_trait]
 impl BridgeConnectionValidator for NyxBridgeValidator {
+    fn capabilities(&self) -> layer2_core::bridge::BridgeCapabilityCatalog {
+        capability_catalog::catalog(true)
+    }
     async fn validate_connection(
         &self,
         owner: &ResourceOwner,
@@ -124,7 +131,19 @@ impl BridgeConnectionValidator for NyxBridgeValidator {
                 BridgeSetupBlock::CustodyUnavailable,
             ));
         }
+        let mut reused_snapshot = None;
         let existing_target = match &config.placement {
+            BridgePlacementPolicy::WorkspacePerPartition { .. }
+            | BridgePlacementPolicy::WorktreeAgentPerPartition { .. } => {
+                let (_, authorized, _) = self
+                    .provisioning
+                    .as_ref()
+                    .ok_or_else(control_plane::reconnect)?
+                    .reuse_preflight(&lease.control_plane, config, None)
+                    .await?;
+                reused_snapshot = Some(authorized.snapshot);
+                config.placement.reused_parent()
+            }
             BridgePlacementPolicy::ExistingAgent { target } => Some(ResourceTarget::Agent {
                 agent_id: target.agent_id.clone(),
             }),
@@ -143,11 +162,14 @@ impl BridgeConnectionValidator for NyxBridgeValidator {
             }
         };
         let current = if let Some(target) = existing_target {
-            let snapshot = self
-                .resources
-                .resource_access_snapshot(&target)
-                .await
-                .map_err(target_error)?;
+            let snapshot = if let Some(snapshot) = reused_snapshot {
+                snapshot
+            } else {
+                self.resources
+                    .resource_access_snapshot(&target)
+                    .await
+                    .map_err(target_error)?
+            };
             self.custody.revalidate(&lease).await?;
             let current = self
                 .resources
@@ -164,7 +186,7 @@ impl BridgeConnectionValidator for NyxBridgeValidator {
             None
         };
         self.custody.revalidate(&lease).await?;
-        let creates_sandbox = matches!(config.placement, BridgePlacementPolicy::NewSandbox { .. });
+        let creates_children = config.placement.creates_partition_agent();
         BridgeValidation::from_observation(
             owner,
             config,
@@ -179,8 +201,8 @@ impl BridgeConnectionValidator for NyxBridgeValidator {
                 key_active: true,
                 custody_available: true,
                 callback_conflict: false,
-                renewable_sandbox_authority: creates_sandbox,
-                exact_profiles_available: creates_sandbox,
+                renewable_sandbox_authority: creates_children,
+                exact_profiles_available: creates_children,
                 existing_target: current,
                 deadline: lease.deadline.min(started + Duration::from_secs(60)),
             },

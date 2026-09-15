@@ -176,9 +176,10 @@ impl Fixture {
     }
 }
 
-fn platforms() -> [BridgePlatform; 4] {
+fn platforms() -> [BridgePlatform; 5] {
     [
         BridgePlatform::Telegram,
+        BridgePlatform::TelegramNew,
         BridgePlatform::Discord,
         BridgePlatform::Lark,
         BridgePlatform::Feishu,
@@ -187,7 +188,9 @@ fn platforms() -> [BridgePlatform; 4] {
 
 fn stable_thread(platform: &BridgePlatform, id: &str) -> ThreadEvidence {
     let kind = match platform {
-        BridgePlatform::Telegram => StableThreadKind::TelegramForumTopic,
+        BridgePlatform::Telegram | BridgePlatform::TelegramNew => {
+            StableThreadKind::TelegramForumTopic
+        }
         BridgePlatform::Discord => StableThreadKind::DiscordChannelThread,
         BridgePlatform::Lark => StableThreadKind::LarkThread,
         BridgePlatform::Feishu => StableThreadKind::FeishuThread,

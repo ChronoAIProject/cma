@@ -53,7 +53,7 @@ impl MongoBridgeInvokeStore {
             reservation: request,
             command,
         };
-        let binding = match &prior {
+        let (binding, historical) = match &prior {
             Some(prior) => {
                 prior
                     .binding
@@ -65,7 +65,20 @@ impl MongoBridgeInvokeStore {
                 {
                     return Err(BridgeInvokeError::TargetMismatch.into());
                 }
-                prior.binding.clone()
+                let row = self
+                    .resources
+                    .channel_usage_events
+                    .find_one(doc! {"_id":&prior.event_id})
+                    .session(&mut *session)
+                    .await?
+                    .ok_or(BridgeInvokeError::Corrupt)?;
+                let event = agent_channel_usage::read_usage_event(&row)
+                    .map_err(|_| BridgeInvokeError::Corrupt)?;
+                if event.digest() != prior.event_digest {
+                    return Err(BridgeInvokeError::Corrupt.into());
+                }
+                let historical = event.predecessor.as_ref() == Some(&prior.binding);
+                (prior.binding.clone(), historical)
             }
             None => {
                 self.ensure_usage_link(
@@ -78,18 +91,30 @@ impl MongoBridgeInvokeStore {
                 .await?
             }
         };
-        let event = append_fenced_change(
-            &self.resources,
-            &command.receipt.envelope.agent_id,
-            actor,
-            digest(&("cma.bridge.usage.command.v1", id))?,
-            ChannelUsageChange::Use {
-                binding_id: binding.binding_id.clone(),
-            },
-            ChannelBindingChangeReason::AcceptedCommand,
-            session,
-        )
-        .await?;
+        let event = if historical {
+            agent_channel_usage::bridge_historical::append_historical_use(
+                &self.resources,
+                &command.receipt.envelope.agent_id,
+                actor,
+                digest(&("cma.bridge.usage.command.v1", id))?,
+                &binding,
+                session,
+            )
+            .await?
+        } else {
+            append_fenced_change(
+                &self.resources,
+                &command.receipt.envelope.agent_id,
+                actor,
+                digest(&("cma.bridge.usage.command.v1", id))?,
+                ChannelUsageChange::Use {
+                    binding_id: binding.binding_id.clone(),
+                },
+                ChannelBindingChangeReason::AcceptedCommand,
+                session,
+            )
+            .await?
+        };
         if let Some(prior) = prior {
             if event.operation_id != prior.event_id || event.digest() != prior.event_digest {
                 return Err(BridgeInvokeError::Corrupt.into());

@@ -19,13 +19,13 @@ use super::sandboxes::{read_sandbox, sandbox_origin_fields, sandbox_replacement_
 use super::workspaces::{read_workspace, workspace_replacement_fields};
 use super::worktrees::{read_worktree, worktree_document};
 
+mod channel_reuse;
 mod command_revival;
 
 enum ApplyError {
     Domain(SandboxStoreError),
     Driver(mongodb::error::Error),
 }
-
 enum Receipt {
     Create(SandboxEvent),
     SaveSandbox(SandboxEvent, Option<command_revival::Receipt>),
@@ -170,6 +170,7 @@ async fn apply_transaction(
             if current.revision != *expected_revision {
                 return Err(ApplyError::Domain(SandboxStoreError::Conflict));
             }
+            channel_reuse::require(store, &current, sandbox, session).await?;
             let revival_receipt = command_revival::fence(
                 store,
                 session,

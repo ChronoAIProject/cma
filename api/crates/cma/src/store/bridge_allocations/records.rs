@@ -47,7 +47,7 @@ pub(super) fn head_document(record: &AllocationRecord) -> Result<Document, Alloc
     )
 }
 
-pub(super) fn decode_head(
+pub(in crate::store) fn decode_head(
     document: &Document,
     identity: &AllocationIdentity,
 ) -> Result<String, AllocationError> {

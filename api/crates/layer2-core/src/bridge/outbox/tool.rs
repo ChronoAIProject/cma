@@ -99,10 +99,7 @@ impl ChannelReplyTurnAuthorization {
         provenance
             .validate_against(agent, sandbox)
             .map_err(|_| OutboxError::ToolUnavailable)?;
-        if matches!(
-            allocation.placement,
-            crate::bridge::allocation::AllocationPlacement::NewSandbox { .. }
-        ) {
+        if allocation.placement.profiles().is_some() {
             let basis = crate::bridge::invoke::ChannelInvokeBasis {
                 allocation: allocation.clone(),
                 creation: provenance.clone(),

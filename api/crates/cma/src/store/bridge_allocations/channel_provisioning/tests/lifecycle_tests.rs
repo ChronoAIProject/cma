@@ -91,6 +91,25 @@ async fn channel_revive_unknown_mint_is_held_and_does_not_repeat_post() {
     f.step().await;
     assert_eq!(f.f.state.mint_count.load(Ordering::SeqCst), 1);
     assert_eq!(f.sandbox().await.credential.key_generation, 1);
+    assert_eq!(f.f.state.revoke_count.load(Ordering::SeqCst), 1);
+    let row =
+        f.f.original
+            .client
+            .database(&f.f.original.database)
+            .collection::<Document>("channel_mint_orphans")
+            .find_one(doc! {"allocation_id":&f.f.original.record.id})
+            .await
+            .unwrap()
+            .unwrap();
+    assert!(row
+        .get_document("receipt")
+        .unwrap()
+        .get_bool("revoked")
+        .unwrap());
+    f.release_for_retry().await;
+    f.step().await;
+    assert_eq!(f.f.state.mint_count.load(Ordering::SeqCst), 1);
+    assert_eq!(f.f.state.revoke_count.load(Ordering::SeqCst), 1);
     f.close().await;
 }
 

@@ -10,6 +10,10 @@ mod fixture;
 mod guard_tests;
 #[path = "lifecycle_tests.rs"]
 pub(crate) mod lifecycle_tests;
+#[path = "mint_reconciliation_tests.rs"]
+mod mint_reconciliation_tests;
+#[path = "retirement_tests.rs"]
+mod retirement_tests;
 use crate::sandbox::{channel_renewal::model::RenewalPhase, SandboxCredentialCustody};
 use fixture::RenewalFixture;
 use layer2_core::sandbox::{store::SandboxWorkerStore, SandboxStatus, SandboxWorkStep};
@@ -163,7 +167,7 @@ async fn unknown_channel_renewal_mint_holds_same_key_and_never_blind_retries() {
     assert!(f
         .original
         .allocations
-        .due_channel_renewal_sandboxes(None, f.due)
+        .due_channel_renewal_sandboxes(None, SystemTime::now())
         .await
         .unwrap()
         .is_empty());

@@ -36,6 +36,8 @@ pub(crate) struct HttpState {
     pub mint_unknown: AtomicBool,
     pub keys: Mutex<BTreeMap<String, Value>>,
     pub scopes_unavailable: AtomicBool,
+    pub list_override: Mutex<Option<Value>>,
+    pub revoke_unknown: AtomicBool,
     source: Value,
     owner: Value,
     actor: String,
@@ -84,6 +86,8 @@ impl RenewalFixture {
             mint_unknown: AtomicBool::new(false),
             keys: Mutex::new(keys),
             scopes_unavailable: AtomicBool::new(false),
+            list_override: Mutex::new(None),
+            revoke_unknown: AtomicBool::new(false),
             owner,
             source,
             actor: original.lease.actor_subject().to_string(),
@@ -91,7 +95,7 @@ impl RenewalFixture {
         let router = Router::new()
             .route("/api/v1/user-services", get(services))
             .route("/api/v1/api-keys/scope-plan", post(scope))
-            .route("/api/v1/api-keys", post(mint))
+            .route("/api/v1/api-keys", post(mint).get(list))
             .route("/api/v1/api-keys/{id}", get(metadata).delete(revoke))
             .with_state(state.clone());
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -193,7 +197,7 @@ fn require_owner(state: &HttpState, body: &Value) {
     }
 }
 fn key_metadata(id: &str, body: &Value, source: Value, state_version: i64) -> Value {
-    json!({"id":id,"name":body["name"],"expires_at":body["expires_at"],"is_active":true,
+    json!({"id":id,"name":body["name"],"expires_at":body["expires_at"],"is_active":true,"created_at":layer2_core::rfc3339_at(SystemTime::now()),
         "scopes":"proxy read","state_version":state_version,"allowed_service_ids":["service-models"],"allowed_node_ids":["node-models"],
         "allow_all_services":false,"allow_all_nodes":false,"credential_source":source,"purpose":"general","scheduled_write_enabled":false})
 }
@@ -246,5 +250,30 @@ async fn revoke(
         return Err(StatusCode::NOT_FOUND);
     }
     state.revoke_count.fetch_add(1, Ordering::SeqCst);
+    if state.revoke_unknown.load(Ordering::SeqCst) {
+        return Err(StatusCode::SERVICE_UNAVAILABLE);
+    }
     Ok(StatusCode::NO_CONTENT)
+}
+
+async fn list(
+    State(state): State<Arc<HttpState>>,
+    headers: HeaderMap,
+    axum::extract::Query(query): axum::extract::Query<BTreeMap<String, String>>,
+) -> Result<Json<Value>, StatusCode> {
+    authorized(&headers)?;
+    match state.owner["type"].as_str() {
+        Some("personal") => assert!(!query.contains_key("org_id")),
+        Some("organization") => assert_eq!(
+            query.get("org_id").map(String::as_str),
+            state.owner["id"].as_str()
+        ),
+        _ => unreachable!(),
+    }
+    if let Some(value) = state.list_override.lock().unwrap().clone() {
+        return Ok(Json(value));
+    }
+    Ok(Json(
+        json!({"keys":state.keys.lock().unwrap().values().cloned().collect::<Vec<_>>()}),
+    ))
 }

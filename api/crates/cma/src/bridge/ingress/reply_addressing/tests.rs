@@ -7,12 +7,12 @@ use serde_json::json;
 fn callback(platform: BridgePlatform) -> Fixture {
     let mut fixture = Fixture::new(platform.clone());
     let parent = match platform {
-        BridgePlatform::Telegram => "40",
+        BridgePlatform::Telegram | BridgePlatform::TelegramNew => "40",
         _ => "provider-parent",
     };
     fixture.body["reply_to_platform_message_id"] = json!(parent);
     match platform {
-        BridgePlatform::Telegram => {
+        BridgePlatform::Telegram | BridgePlatform::TelegramNew => {
             fixture.raw_mut()["message"]["reply_to_message"] = json!({"message_id":40,"chat":{"id":-100123,"type":"supergroup"},"from":{"id":999,"is_bot":true}})
         }
         BridgePlatform::Discord => {
@@ -85,6 +85,7 @@ pub(in crate::bridge::ingress) fn sent(fixture: &Fixture) -> OutboxItem {
 fn signed_reply_to_exact_confirmed_bot_chat_qualifies_on_all_platforms_without_mention_claims() {
     for platform in [
         BridgePlatform::Telegram,
+        BridgePlatform::TelegramNew,
         BridgePlatform::Discord,
         BridgePlatform::Lark,
         BridgePlatform::Feishu,
@@ -140,6 +141,7 @@ fn signed_reply_to_exact_confirmed_bot_chat_qualifies_on_all_platforms_without_m
 fn signed_parent_cross_chat_forward_and_body_substitution_cannot_supply_reply_proof() {
     for platform in [
         BridgePlatform::Telegram,
+        BridgePlatform::TelegramNew,
         BridgePlatform::Discord,
         BridgePlatform::Lark,
         BridgePlatform::Feishu,
@@ -244,4 +246,20 @@ pub(crate) fn sent_for_bridge(bridge: layer2_core::bridge::BridgeRecord) -> Outb
     let mut fixture = callback(BridgePlatform::Telegram);
     fixture.bridge = bridge;
     sent(&fixture)
+}
+
+#[test]
+fn telegram_and_telegram_new_cannot_share_confirmed_reply_authority() {
+    for (platform, foreign) in [
+        (BridgePlatform::Telegram, BridgePlatform::TelegramNew),
+        (BridgePlatform::TelegramNew, BridgePlatform::Telegram),
+    ] {
+        let fixture = callback(platform);
+        let signed = fixture.signed().unwrap();
+        let body = fixture.bytes();
+        let lookup = ReplyLookup::authenticated(&signed.authenticated_payload(&body).unwrap())
+            .unwrap()
+            .unwrap();
+        assert!(lookup.confirm(&sent(&callback(foreign))).unwrap().is_none());
+    }
 }
