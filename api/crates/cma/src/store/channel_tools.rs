@@ -177,6 +177,29 @@ pub(in crate::store) async fn validate_and_fence_session(
     capability: &ChannelReplySessionAuthorization,
     session: &mut ClientSession,
 ) -> Result<(), OutboxError> {
+    validate_and_fence_session_detailed(resources, capability, session)
+        .await
+        .map_err(|error| match error {
+            SessionFenceError::Core(error) => error,
+            SessionFenceError::Driver(_) => OutboxError::Unavailable,
+        })
+}
+
+#[derive(Debug, thiserror::Error)]
+pub(in crate::store) enum SessionFenceError {
+    #[error(transparent)]
+    Core(#[from] OutboxError),
+    #[error(transparent)]
+    Driver(#[from] mongodb::error::Error),
+}
+
+/// Preserve transaction retry labels without turning retained session data
+/// into authority or replacing the caller's pinned source/deadline.
+pub(in crate::store) async fn validate_and_fence_session_detailed(
+    resources: &MongoSandboxStore,
+    capability: &ChannelReplySessionAuthorization,
+    session: &mut ClientSession,
+) -> Result<(), SessionFenceError> {
     capability.require_current()?;
     let collection = super::durability::majority_collection::<Document>(
         &resources
@@ -187,19 +210,23 @@ pub(in crate::store) async fn validate_and_fence_session(
     let document = collection
         .find_one(doc! {"_id":capability.capability_incarnation(),"revoked":false})
         .session(&mut *session)
-        .await
-        .map_err(unavailable)?
+        .await?
         .ok_or(OutboxError::ToolUnavailable)?;
     let record = records::read(&document)?;
     let snapshot = super::agent_provenance::read_snapshot(resources, &record.agent_id, session)
         .await
-        .map_err(|_| OutboxError::ToolUnavailable)?;
+        .map_err(|error| match error {
+            super::resource_access::ReadError::Driver(error) => SessionFenceError::Driver(error),
+            super::resource_access::ReadError::Domain(_) => {
+                SessionFenceError::Core(OutboxError::ToolUnavailable)
+            }
+        })?;
     let current = record.authorize(&snapshot)?;
     if current.namespace() != capability.namespace()
         || current.runtime_generation() != capability.runtime_generation()
         || current.owner() != capability.owner()
     {
-        return Err(OutboxError::SourceMismatch);
+        return Err(OutboxError::SourceMismatch.into());
     }
     let changed = collection
         .update_one(
@@ -207,12 +234,11 @@ pub(in crate::store) async fn validate_and_fence_session(
             doc! {"$inc":{"authorization_fence":1_i64}},
         )
         .session(&mut *session)
-        .await
-        .map_err(unavailable)?;
+        .await?;
     if changed.matched_count != 1 {
-        return Err(OutboxError::Conflict);
+        return Err(OutboxError::Conflict.into());
     }
-    capability.require_current()
+    capability.require_current().map_err(Into::into)
 }
 
 fn sha(bytes: &[u8]) -> String {

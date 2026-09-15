@@ -66,13 +66,20 @@ async fn opening_session_can_negotiate_and_discover_before_publication_but_canno
     )
     .unwrap();
     let tools = body["result"]["tools"].as_array().unwrap();
-    assert_eq!(tools.len(), 2);
+    assert_eq!(tools.len(), 3);
     assert_eq!(tools[1]["name"], "reply_to_channel");
     assert_eq!(
         tools[1]["inputSchema"]["required"],
         json!(["reply_context", "request_key", "text"])
     );
     assert_eq!(tools[1]["inputSchema"]["additionalProperties"], false);
+    assert_eq!(tools[2]["name"], "read_channel_control_context");
+    assert_eq!(tools[2]["annotations"]["readOnlyHint"], true);
+    assert_eq!(tools[2]["inputSchema"]["additionalProperties"], false);
+    assert!(tools[2]["description"]
+        .as_str()
+        .unwrap()
+        .contains("operations is empty"));
     let response=discovery_request(json!({"jsonrpc":"2.0","id":2,"method":"tools/call",
         "params":{"name":"reply_to_channel","arguments":{"reply_context":format!("brctx_{}","a".repeat(64)),"request_key":"ack-1","text":"Starting"}}})).await;
     assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
