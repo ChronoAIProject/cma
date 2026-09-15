@@ -33,7 +33,8 @@ arrangement, pricing and contribution-specific workflow are retired.
 
 - The surface owns the remaining width. Details concede before the tree;
   narrow layouts keep the primary conversation or task usable.
-- The first-party client uses public REST and AG-UI, never private routes.
+- The first-party client uses public REST, AG-UI and the flagged Responses v2
+  transport with rich Agent replay. It never uses private routes.
 - Agent output and user-authored commands remain intact; styling applies to
   their reading frame.
 - Progress comes from public records and events, not a local timer. Navigation
@@ -719,6 +720,23 @@ After the first authorized event-history page, show the known transcript while
 remaining activity pages load. Use the same status band to name loading, retain
 the editable draft, and hold Send, approvals, lifecycle controls and live replay
 until history is complete. The snapshot's sequence does not skip activity pages.
+
+For new Agent tabs, the authenticated transport eligibility selects Responses v2
+input with independent rich Agent snapshot/tail observation. Retain the tab's
+selection through reloads and flag changes; existing AG-UI tabs keep their
+transport. Preserve an uncertain message or response action with its exact key,
+body and original target. Use the existing status band and compact Button for
+**Recover pending request**; recovery is explicit and never retargets an action.
+Keep the draft editable and clear only the draft matching a retained acceptance.
+A refused intent may be corrected after an authoritative admission refusal.
+
+Read accepted action receipts to show queued, delivered or failed delivery in
+the existing status band. Delivery does not finish the displayed response; only
+its recorded outcome does. A turn lacking a safe response binding keeps history
+readable and disables response controls with an explanatory title. Account or
+local sign-in epoch changes clear the prior view before any new-account read is
+shown. A live gap discards uncommitted partial text and Thinking while preserving
+recorded messages, settled tools and the turn's original start time.
 
 The composer uses its existing capsule, send/stop icon seat, focus treatment, and
 bounded growth. Stop interrupts the current turn; it does not delete the Agent.
@@ -1898,6 +1916,7 @@ Append-only. Never edit or delete an entry.
 | 2026-09-09 | Add the Sandbox Profile Availability band with public-only warmup, a one-to-five target and Always keep alive, using existing fields and checkbox rows. Clarify the editable private-copy Marketplace action and its fresh Sandbox provisioning behavior. |
 | 2026-09-14 | Keep active Thinking visible above the composer with the rotating compact CMA character and elapsed time restored from the recorded turn start. Limit its disclosure to live reasoning and pending tools; show each settled tool in its own chronological container, preserving replay identity, unknown outcomes and accessible bounded details. |
 | 2026-09-15 | Display immutable Agent creation categories independently of published Trigger shortcuts, add creation facts to Details, and use existing tree metadata and native-select patterns for per-Agent categories, complete child summaries and current-tree origin filtering. Clear optional facts on changed view/access context and keep private source references out of tree rows. |
+| 2026-09-16 | Document authenticated per-tab Agent transport selection, explicit retained-request recovery, response action delivery status, account-change clearing and live-gap handling using the existing Agent status band, Button and composer patterns. |
 
 ### Approved Agent artifacts
 

@@ -31,7 +31,7 @@ export interface LocalEvent {
 
 // Models only the public boundary; no provider or backend execution is claimed.
 export class LocalStartup {
-  sandbox = recorded<SandboxDetail>('instances.json', 'sandbox-read');
+  sandbox = { ...recorded<SandboxDetail>('instances.json', 'sandbox-read'), owner: 'local-owner' };
   workspace = recorded<WorkspaceDetail>('instances.json', 'workspace-read');
   agent = recorded<Agent>('agents.json', 'agent-read');
   events: LocalEvent[] = [];
@@ -60,6 +60,8 @@ export class LocalStartup {
           display_name: 'Local owner',
           capabilities: ['use_own_sandboxes', 'create_sandbox', 'delete_own_sandbox'],
         });
+      if (url.pathname === '/auth/connections/check')
+        return reply({ owner: 'local-owner', ready: true, checked_at: localTime, services: [] });
       if (!url.pathname.startsWith('/api/')) return route.continue();
       if (url.pathname === `/api/v1/agents/${this.agent.id}/channel-usage`)
         return reply({
@@ -148,6 +150,9 @@ export class LocalStartup {
         );
       }
       switch (url.pathname) {
+        case '/api/v2/ui/transport':
+          // This legacy boundary intentionally models a server without v2 selection.
+          return reply({ code: 'not_found', detail: 'Unknown optional endpoint.' }, 404);
         case '/api/v1/organizations':
           return reply({ items: [] });
         case '/api/v1/resource-access/agent/agt_contract':

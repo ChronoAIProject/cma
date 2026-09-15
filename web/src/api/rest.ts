@@ -2,6 +2,7 @@ import { ProtocolError, type Cma } from '@chronoai/cma-sdk';
 import type { CmaWebClient, ReadOptions } from './client';
 import type { ProfileReference } from './types';
 import { agentDetail, sandboxDetail, sandboxSummary, workspaceDetail } from './rest/hierarchy';
+import { createAgentTransport, type AgentTransportOptions } from '../agent/transport/client';
 
 /** The write succeeded; a failed detail read must not release its command key. */
 export class CreatedResourceReadError extends Error {
@@ -31,7 +32,7 @@ async function createdDetail<Value>(
 }
 
 /** One public SDK transport, with explicit wire-to-view conversion at the boundary. */
-export function createRestWebClient(sdk: Cma): CmaWebClient {
+export function createRestWebClient(sdk: Cma, transport?: AgentTransportOptions): CmaWebClient {
   const pinnedSandboxProfile = async (reference: ProfileReference, options?: ReadOptions) => {
     const profile = await sdk.sandboxProfiles.readRevision(
       reference.id,
@@ -47,6 +48,7 @@ export function createRestWebClient(sdk: Cma): CmaWebClient {
     return profile.content;
   };
   return {
+    agentTransport: transport === undefined ? undefined : createAgentTransport(sdk, transport),
     resourceViews: sdk,
     bridgeViews: sdk,
     listSandboxes: async (options) => {

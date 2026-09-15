@@ -9,8 +9,13 @@ import type {
 } from '../api/types';
 import { mergeTranscriptSnapshot } from './chronology';
 import { conversationFromTranscript, foldAgentEvent, type ConversationState } from './conversation';
+import { loadV2Agent } from './transport/load';
+import type { AgentV2Session } from './transport/client';
+import type { V2AgentEventItem } from '@chronoai/cma-sdk';
 
 export interface ReadyAgent {
+  readonly v2?: AgentV2Session;
+  readonly v2Items?: readonly V2AgentEventItem[];
   readonly detail: AgentDetail;
   readonly workspace: WorkspaceDetail;
   readonly conversation: ConversationState;
@@ -34,6 +39,9 @@ export async function loadAgent(
   allowIncompleteHistory = false,
   onHistoryProgress?: (ready: ReadyAgent) => void,
 ): Promise<ReadyAgent & { readonly durableEvents: readonly AgentEvent[] }> {
+  const v2 = await client.agentTransport?.open(agentId, { signal });
+  if (v2 !== undefined)
+    return loadV2Agent(client, agentId, signal, v2, allowIncompleteHistory, onHistoryProgress);
   const [detail, transcript, usage] = await Promise.all([
     client.readAgent(agentId, { signal }),
     client.readAgentTranscript(agentId, { signal }),
