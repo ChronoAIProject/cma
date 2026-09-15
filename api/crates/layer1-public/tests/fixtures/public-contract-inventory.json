@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "openapi_operations": 170,
+  "openapi_operations": 173,
   "operations": {
     "GET /api/v1/organizations": {
       "classification": "openapi",
@@ -2449,6 +2449,47 @@
         "queued_response_cancellation_conflict",
         "queued_response_cancellation_not_admitted",
         "response_not_found"
+      ]
+    },
+    "GET /api/v1/bridges/{id}/allocations": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/bridge_cleanup/mod.rs# Current Bridge and whole-parent management exposes explicit retained child cleanup and exact keyed recovery.",
+      "required_problems": [
+        "bridge_child_cleanup_conflict",
+        "bridge_child_cleanup_evidence_inconsistent",
+        "bridge_child_cleanup_unavailable",
+        "bridge_not_found",
+        "invalid_bridge_child_cleanup",
+        "not_authenticated"
+      ]
+    },
+    "GET /api/v1/bridges/{id}/allocations/{allocation}/child-cleanup": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/bridge_cleanup/mod.rs# Current Bridge and whole-parent management exposes explicit retained child cleanup and exact keyed recovery.",
+      "required_problems": [
+        "bridge_child_cleanup_conflict",
+        "bridge_child_cleanup_evidence_inconsistent",
+        "bridge_child_cleanup_not_found",
+        "bridge_child_cleanup_unavailable",
+        "bridge_not_found",
+        "invalid_bridge_child_cleanup",
+        "not_authenticated"
+      ]
+    },
+    "POST /api/v1/bridges/{id}/allocations/{allocation}/child-cleanup": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/bridge_cleanup/mod.rs# Current Bridge and whole-parent management exposes explicit retained child cleanup and exact keyed recovery.",
+      "required_problems": [
+        "bridge_child_cleanup_conflict",
+        "bridge_child_cleanup_evidence_inconsistent",
+        "bridge_child_cleanup_not_found",
+        "bridge_child_cleanup_original_actor_required",
+        "bridge_child_cleanup_unavailable",
+        "bridge_not_found",
+        "invalid_bridge_child_cleanup",
+        "invalid_json",
+        "missing_idempotency_key",
+        "not_authenticated"
       ]
     }
   }

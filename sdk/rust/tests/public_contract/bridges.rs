@@ -7,6 +7,19 @@ use cma_sdk::{
 pub async fn dispatch(c: &Context<'_>) -> Result<()> {
     let bridges = c.client.bridges();
     match c.case.operation.as_str() {
+        "GET /api/v1/bridges/{id}/allocations" => {
+            c.check(bridges.list_allocations(c.param("id"), &c.page()?).await)
+        }
+        "GET /api/v1/bridges/{id}/allocations/{allocation}/child-cleanup" => c.check(
+            bridges
+                .read_child_cleanup(c.param("id"), c.param("allocation"))
+                .await,
+        ),
+        "POST /api/v1/bridges/{id}/allocations/{allocation}/child-cleanup" => c.check(
+            bridges
+                .request_child_cleanup(c.param("id"), c.param("allocation"), &c.body()?, &c.key()?)
+                .await,
+        ),
         "GET /api/v1/bridges/{id}/deliveries" => {
             c.check(bridges.list_deliveries(c.param("id"), &c.page()?).await)
         }

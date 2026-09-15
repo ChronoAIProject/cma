@@ -15,9 +15,24 @@ pub(crate) struct ChannelReuseCleanupAuthority {
     management: BridgeManagementLease,
     parent: AuthorizedResource,
     human: Arc<BridgeControlPlaneLease>,
+    job: Option<(String, layer2_core::bridge::cleanup::CleanupJobClaim)>,
 }
 
 impl ChannelReuseCleanupAuthority {
+    pub(crate) fn bind_job(
+        &mut self,
+        id: &str,
+        claim: &layer2_core::bridge::cleanup::CleanupJobClaim,
+    ) {
+        self.job = Some((id.into(), claim.clone()));
+    }
+    pub(crate) fn job(&self) -> Option<(&str, &layer2_core::bridge::cleanup::CleanupJobClaim)> {
+        self.job.as_ref().map(|(id, claim)| (id.as_str(), claim))
+    }
+
+    pub(crate) fn bound_deadline(&mut self, deadline: tokio::time::Instant) {
+        self.management.bound_deadline(deadline);
+    }
     #[cfg(test)]
     pub(crate) fn fixture(
         allocation: AllocationRecord,
@@ -30,6 +45,7 @@ impl ChannelReuseCleanupAuthority {
             management,
             parent,
             human,
+            job: None,
         }
     }
 
@@ -212,6 +228,7 @@ impl BridgeProvisioningAuthority {
             management,
             parent,
             human: Arc::new(key.control_plane),
+            job: None,
         };
         permit.require_current().map_err(allocation_error)?;
         Ok(permit)

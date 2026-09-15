@@ -2,6 +2,7 @@
 //! dashboard authentication, and setup receipts never grant deferred execution.
 mod capabilities;
 mod choices;
+mod cleanup;
 mod config;
 mod invoke;
 mod mutations;
@@ -10,6 +11,7 @@ mod types;
 mod validation;
 pub use capabilities::*;
 pub use choices::*;
+pub use cleanup::*;
 pub use config::*;
 pub use invoke::*;
 pub use outbox::*;

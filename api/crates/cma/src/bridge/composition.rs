@@ -57,7 +57,7 @@ impl BridgeComposition {
         );
         let invokes = BridgeInvokeService::new(
             definitions.clone(),
-            access,
+            access.clone(),
             stores.sandbox_model.clone(),
             invoke_store.clone(),
         );
@@ -73,6 +73,15 @@ impl BridgeComposition {
             definitions.clone(),
             replies.clone(),
         ));
+        let cleanup = Arc::new(layer2_core::bridge::cleanup::BridgeCleanupService::new(
+            definitions.clone(),
+            access,
+            Arc::new(super::cleanup::ManagedBridgeCleanup::new(
+                definitions.clone(),
+                allocations.clone(),
+                credentials.clone(),
+            )),
+        ));
         let setup = super::setup::service(&config.auth_mode, definitions, credentials.clone())
             .map_err(|error| format!("bridge setup is not usable: {error}"))?
             .map(|setup| {
@@ -86,7 +95,8 @@ impl BridgeComposition {
             .merge(layer1_public::rest::bridge_invoke_router(Some(Arc::new(
                 invokes.clone(),
             ))))
-            .merge(layer1_public::rest::bridge_outbox_router(Some(outbox)));
+            .merge(layer1_public::rest::bridge_outbox_router(Some(outbox)))
+            .merge(layer1_public::rest::bridge_cleanup_router(Some(cleanup)));
         let inbox = Arc::new(
             MongoCallbackInbox::open(
                 &stores.bridge_definitions,

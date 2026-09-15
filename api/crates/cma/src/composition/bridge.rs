@@ -31,6 +31,7 @@ pub(super) async fn channel_schedulers(
     definitions: &layer2_core::bridge::BridgeService,
     credentials: Option<Arc<crate::bridge::ManagedBridgeCredentials>>,
     adapter: Arc<dyn layer3_adapter::SandboxAdapter>,
+    registry: Arc<crate::sandbox::LiveAgentRegistry>,
 ) -> Result<Vec<crate::bridge::channel_scheduler::ChannelScheduler>, String> {
     use crate::bridge::{
         channel_scheduler::ChannelScheduler,
@@ -44,11 +45,34 @@ pub(super) async fn channel_schedulers(
             ChannelProvisioningDriver,
         },
     };
+    let cleanup_authority = credentials.as_ref().and_then(|credentials| {
+        credentials.provisioning.clone().map(|dependencies| {
+            Arc::new(BridgeProvisioningAuthority::new(
+                credentials.clone(),
+                dependencies,
+            ))
+        })
+    });
+    // New cleanup admission follows management feature policy. Already accepted
+    // jobs continue their independently authorized drain when message execution
+    // or allocation is disabled; those flags never supply removal authority.
+    let cleanup = crate::bridge::cleanup_work::ChannelCleanupWork {
+        allocations: bridge.allocations.clone(),
+        authority: Arc::new(crate::bridge::cleanup_work::ManagedCleanupWorkAuthority {
+            definitions: definitions.clone(),
+            authority: cleanup_authority,
+        }),
+        adapter: adapter.clone(),
+        registry,
+        deployment_id: config.deployment_id.clone(),
+        holder: format!("{}:cleanup:{}", config.deployment_id, uuid::Uuid::new_v4()),
+    };
+    let cleanup = ChannelScheduler::new(Arc::new(cleanup));
     let Some(credentials) = credentials else {
-        return Ok(Vec::new());
+        return Ok(vec![cleanup]);
     };
     let Some(dependencies) = credentials.provisioning.clone() else {
-        return Ok(Vec::new());
+        return Ok(vec![cleanup]);
     };
     let authority = Arc::new(BridgeProvisioningAuthority::new(
         credentials.clone(),
@@ -143,6 +167,7 @@ pub(super) async fn channel_schedulers(
         ChannelScheduler::new(Arc::new(inputs)),
         ChannelScheduler::new(Arc::new(allocations)),
         ChannelScheduler::new(Arc::new(renewals)),
+        cleanup,
     ])
 }
 
