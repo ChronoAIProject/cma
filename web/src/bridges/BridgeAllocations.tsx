@@ -8,6 +8,8 @@ import { Button } from '../ui/Button';
 import { RiskConfirmation } from '../ui/RiskConfirmation';
 import { ChildCleanupStatus } from './ChildCleanupStatus';
 import { sameCleanupTarget, useChildCleanup } from './useChildCleanup';
+import { useWorkspaceCleanup } from './useWorkspaceCleanup';
+import { WorkspaceCleanup } from './WorkspaceCleanup';
 
 interface Props {
   readonly client: BridgeViewsClient;
@@ -101,7 +103,17 @@ function AllocationBrowser({ client, id, revision, allowed, onNavigate, onAccess
       onAccessChanged();
     },
   });
-  const retained = command.pending !== undefined;
+  const workspace = useWorkspaceCleanup({
+    client,
+    id,
+    selected,
+    child: status,
+    revision,
+    allowed,
+    onAccessChanged,
+  });
+  const busy = command.busy || workspace.command.busy;
+  const retained = command.pending !== undefined || workspace.command.pending !== undefined;
   const alreadyAccepted = command.accepted?.allocation_id === selected?.id;
   const canRequest =
     status?.progress === 'not_requested' &&
@@ -119,16 +131,16 @@ function AllocationBrowser({ client, id, revision, allowed, onNavigate, onAccess
   if (!allowed) return null;
   return (
     <section className="bridges__fields" aria-labelledby="bridge-allocations-title">
-      <h2 id="bridge-allocations-title">Allocations and child cleanup</h2>
+      <h2 id="bridge-allocations-title">Allocations and cleanup</h2>
       <p>
-        Inspect the children retained by this Bridge. Cleanup removes an explicitly selected retired
-        Agent and Worktree while preserving its Workspace, sibling Agents and history.
+        Inspect the children retained by this Bridge. Child cleanup removes an explicitly selected
+        retired Agent and Worktree while preserving its Workspace, sibling Agents and history.
       </p>
       {!opened ? (
         <Button onClick={() => setOpened(true)}>Show allocations</Button>
       ) : (
         <>
-          <Button disabled={command.busy} onClick={inventory.reload}>
+          <Button disabled={busy} onClick={inventory.reload}>
             Refresh allocations
           </Button>
           {inventory.state.status === 'loading' ? (
@@ -159,7 +171,7 @@ function AllocationBrowser({ client, id, revision, allowed, onNavigate, onAccess
                       </span>
                       <AllocationLinks allocation={allocation} onNavigate={onNavigate} />
                       <Button
-                        disabled={retained || command.busy}
+                        disabled={retained || busy}
                         onClick={() => {
                           setSelected(allocation);
                           setReview(undefined);
@@ -173,13 +185,13 @@ function AllocationBrowser({ client, id, revision, allowed, onNavigate, onAccess
               )}
               <div className="bridges__actions">
                 <Button
-                  disabled={command.busy || cursors.length === 1}
+                  disabled={busy || cursors.length === 1}
                   onClick={() => setCursors((values) => values.slice(0, -1))}
                 >
                   Previous allocations
                 </Button>
                 <Button
-                  disabled={command.busy || page.next_cursor === null}
+                  disabled={busy || page.next_cursor === null}
                   onClick={() => {
                     if (page.next_cursor !== null)
                       setCursors((values) => [...values, page.next_cursor!]);
@@ -216,7 +228,7 @@ function AllocationBrowser({ client, id, revision, allowed, onNavigate, onAccess
                   {selected.placement === 'reuse_parent' && selected.state === 'retired' ? (
                     <Button
                       variant="danger"
-                      disabled={!canRequest || command.busy}
+                      disabled={!canRequest || busy}
                       onClick={() => {
                         if (revision !== undefined) setReview({ allocation: selected, revision });
                       }}
@@ -231,7 +243,7 @@ function AllocationBrowser({ client, id, revision, allowed, onNavigate, onAccess
                 </>
               )}
               <div className="bridges__actions">
-                <Button disabled={command.busy} onClick={observation.reload}>
+                <Button disabled={busy} onClick={observation.reload}>
                   Refresh cleanup status
                 </Button>
               </div>
@@ -239,7 +251,7 @@ function AllocationBrowser({ client, id, revision, allowed, onNavigate, onAccess
                 <p role="status">Checking acceptance of the original cleanup request</p>
               ) : null}
               {command.message === undefined ? null : <p role="status">{command.message}</p>}
-              {!retained ? null : (
+              {command.pending === undefined ? null : (
                 <Button
                   disabled={command.busy || status === undefined || revision === undefined}
                   onClick={command.recover}
@@ -249,6 +261,7 @@ function AllocationBrowser({ client, id, revision, allowed, onNavigate, onAccess
               )}
             </section>
           )}
+          <WorkspaceCleanup controller={workspace} onNavigate={onNavigate} />
         </>
       )}
       <RiskConfirmation
