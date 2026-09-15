@@ -1,5 +1,7 @@
 //! Encrypted custody for one-time NyxID values awaiting sandbox delivery.
 
+pub(crate) mod channel;
+
 use layer2_core::{seconds_from_rfc3339, SandboxId, StoreError, SubjectId};
 use mongodb::bson::doc;
 use mongodb::options::IndexOptions;

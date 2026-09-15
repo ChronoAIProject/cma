@@ -23,6 +23,8 @@ async fn custody_probe_proves_selected_key_possession_and_active_owner_without_r
                 &personal(),
                 &SecretValue::new(format!("nyxid_ag_{}", "a".repeat(64))),
                 &f.connector,
+                &SubjectId::new("person-one"),
+                "fixture-human-oauth",
             )
             .await;
         assert_eq!(result.is_ok(), probe_status == StatusCode::OK);
@@ -47,7 +49,9 @@ async fn custody_probe_proves_selected_key_possession_and_active_owner_without_r
         .verify_secret(
             &personal(),
             &SecretValue::new(format!("nyxid_ag_{}", "a".repeat(64))),
-            &f.connector
+            &f.connector,
+            &SubjectId::new("person-one"),
+            "fixture-human-oauth",
         )
         .await
         .is_err());
@@ -65,7 +69,13 @@ async fn relay_reply_and_human_tokens_cannot_be_retained_as_bridge_keys() {
     ] {
         assert!(f
             .provider
-            .verify_secret(&personal(), &SecretValue::new(token.into()), &f.connector)
+            .verify_secret(
+                &personal(),
+                &SecretValue::new(token.into()),
+                &f.connector,
+                &SubjectId::new("person-one"),
+                "fixture-human-oauth"
+            )
             .await
             .is_err());
     }
@@ -89,6 +99,7 @@ impl crate::bridge::custody::BridgeCredentialStore for CredentialMemory {
             .map(|m| crate::bridge::custody::StoredBridgeCredential {
                 metadata: m.metadata.clone(),
                 value: m.value.clone(),
+                control_plane: m.control_plane.clone(),
             }))
     }
     async fn admit(
@@ -175,8 +186,45 @@ async fn managed_import_resolves_exact_retained_key_and_local_revocation_stops_o
             json!({"messages":[],"total":0,"page":1,"per_page":1}),
         ),
     );
+    rows.insert(
+        "/userinfo".into(),
+        (
+            StatusCode::OK,
+            json!({"sub":"person-one","permissions":["cma:sandbox:use"]}),
+        ),
+    );
     let f = fixture(rows).await;
-    let context = CallerContext {
+    let auth_store = Arc::new(crate::auth::persistence::MemoryAuthStore::default());
+    let auth = crate::auth::AuthState::with_store(
+        crate::auth::AuthMode::Provider {
+            base_url: f.connector.base_url.clone(),
+            client_id: "fixture".into(),
+            client_secret: "fixture-client-secret".into(),
+            public_url: "https://cma.example".into(),
+        },
+        None,
+        auth_store.clone(),
+    );
+    *auth.metadata.write().await = Some(crate::auth::ProviderMetadata {
+        authorization_endpoint: format!("{}/authorize", f.connector.base_url),
+        token_endpoint: format!("{}/token", f.connector.base_url),
+        userinfo_endpoint: Some(format!("{}/userinfo", f.connector.base_url)),
+        introspection_endpoint: None,
+    });
+    auth_store
+        .put_subject(crate::auth::persistence::SubjectAuthState::new(
+            SubjectId::new("person-one"),
+            layer2_core::Authorization::new([layer2_core::Capability::UseOwnSandboxes]),
+            crate::auth::profile::Profile::default(),
+            Some(crate::auth::persistence::DurableSubjectTokens {
+                access_token: SecretValue::new("fixture-human-oauth".into()),
+                refresh_token: Some(SecretValue::new("fixture-human-refresh".into())),
+                expires_at: SystemTime::now() + Duration::from_secs(3600),
+            }),
+        ))
+        .await
+        .unwrap();
+    let mut context = CallerContext {
         caller: layer2_core::Caller::new(
             SubjectId::new("person-one"),
             layer2_core::Authorization::new([layer2_core::Capability::UseOwnSandboxes]),
@@ -191,6 +239,14 @@ async fn managed_import_resolves_exact_retained_key_and_local_revocation_stops_o
         },
         memberships: vec![],
     };
+    context.credential = auth
+        .resource_request_context(&crate::auth::RequestAuth {
+            subject: SubjectId::new("person-one"),
+            authorization: context.caller.authorization.clone(),
+            profile: crate::auth::profile::Profile::default(),
+            delegated_credential: Some("fixture-human-oauth".into()),
+        })
+        .credential;
     let config = BridgeConfig {
         display_name: "Disposable".into(),
         connector: f.connector.clone(),
@@ -251,15 +307,23 @@ async fn managed_import_resolves_exact_retained_key_and_local_revocation_stops_o
                 .unwrap(),
         ),
         bridges: definitions,
+        auth,
+        provisioning: None,
     };
     let imported = manager
         .import(
             &service,
             &context,
-            None,
-            &id,
-            1,
-            SecretValue::new(format!("nyxid_ag_{}", "a".repeat(64))),
+            Some("fixture-human-oauth"),
+            layer2_core::bridge::setup::BridgeCredentialImport {
+                id: id.clone(),
+                expected_revision: 1,
+                material: layer2_core::bridge::setup::BridgeKeyMaterial::new(format!(
+                    "nyxid_ag_{}",
+                    "a".repeat(64)
+                )),
+                retain_control_plane_authority: true,
+            },
         )
         .await
         .unwrap();
@@ -268,6 +332,55 @@ async fn managed_import_resolves_exact_retained_key_and_local_revocation_stops_o
     let lease = manager.resolve(&personal(), &config).await.unwrap();
     assert_eq!(lease.credential_subject, SubjectId::new("person-one"));
     assert_eq!(lease.key_id, "key-one");
+    let control = manager
+        .resolve_control_plane(&personal(), &config)
+        .await
+        .unwrap();
+    assert_eq!(control.owner(), &personal());
+    assert_eq!(control.actor_subject(), &SubjectId::new("person-one"));
+    assert_eq!(control.credential(), "fixture-human-oauth");
+    assert_ne!(control.credential(), lease.value.expose());
+    for (_, uri, auth) in f.state.requests.lock().unwrap().iter() {
+        assert_eq!(
+            auth.starts_with("Bearer nyxid_ag_"),
+            uri.starts_with("/api/v1/channel-relay/")
+        );
+    }
+    let key_reference = config.connector.custody.clone();
+    let mut stored = manager.store.get(&key_reference).await.unwrap().unwrap();
+    let grant = stored.control_plane.clone().unwrap();
+    assert_eq!(
+        layer2_core::seconds_from_rfc3339(&grant.expires_at).unwrap()
+            - layer2_core::seconds_from_rfc3339(&grant.issued_at).unwrap(),
+        super::super::super::control_plane::GRANT_LIFETIME.as_secs()
+    );
+    // Historical key-only custody cannot silently borrow the creator's login.
+    stored.control_plane = None;
+    let management = service
+        .management_lease(&context, None, &id, 1)
+        .await
+        .unwrap();
+    manager.store.admit(&management, stored).await.unwrap();
+    assert!(matches!(
+        manager.resolve(&personal(), &config).await,
+        Err(BridgeError::ConnectionRequired(
+            BridgeSetupBlock::RenewableAuthorityUnavailable
+        ))
+    ));
+    assert!(manager.revalidate_control_plane(&control).await.is_err());
+    let mut stored = manager.store.get(&key_reference).await.unwrap().unwrap();
+    let mut expired = grant.clone();
+    expired.issued_at = "2020-01-01T00:00:00Z".into();
+    expired.expires_at = "2020-01-31T00:00:00Z".into();
+    stored.control_plane = Some(expired);
+    manager.store.admit(&management, stored).await.unwrap();
+    assert!(manager
+        .resolve_control_plane(&personal(), &config)
+        .await
+        .is_err());
+    let mut stored = manager.store.get(&key_reference).await.unwrap().unwrap();
+    stored.control_plane = Some(grant);
+    manager.store.admit(&management, stored).await.unwrap();
     let before_revoke = f.state.requests.lock().unwrap().len();
     let revoked = manager
         .revoke(

@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { Fragment, useMemo, useState } from 'react';
 import type { ChannelBinding, ChannelUsageEvent, EffectiveAccess } from '@chronoai/cma-sdk';
 import type { ResourceViewsClient } from './client';
 import { useAuthorizedRead } from './useAuthorizedRead';
@@ -13,17 +13,56 @@ const reasons: Record<ChannelUsageEvent['reason'], string> = {
   administrative_intervention: 'Administrator intervention',
   accepted_command: 'Channel message accepted',
 };
+const platformLabels: Record<string, string> = {
+  telegram: 'Telegram',
+  lark: 'Lark',
+  discord: 'Discord',
+};
 function actorLabel(actor: ChannelUsageEvent['actor']): string {
   switch (actor.kind) {
     case 'human':
-      return `Person ${actor.subject}`;
+      return 'Person';
     case 'api':
-      return `API caller ${actor.subject}`;
+      return 'API caller';
     case 'trigger':
-      return `Trigger launch ${actor.launch_id}`;
+      return 'Trigger launch';
     case 'channel':
-      return `${actor.platform} channel through bridge ${actor.bridge_id}`;
+      return `${platformLabels[actor.platform] ?? 'External channel'} participant`;
   }
+}
+
+/** Exact audit references remain available only inside the manager's details. */
+function ActorDetails({ actor }: { readonly actor: ChannelUsageEvent['actor'] }) {
+  const references: readonly (readonly [string, string])[] =
+    actor.kind === 'channel'
+      ? [
+          ['Platform', actor.platform],
+          ['Sender reference', actor.sender_id],
+          ['Conversation reference', actor.chat_id],
+          ['Bridge reference', actor.bridge_id],
+          ['Grant reference', actor.grant_id],
+        ]
+      : actor.kind === 'trigger'
+        ? [
+            ['Actor reference', actor.subject],
+            ['Launch reference', actor.launch_id],
+          ]
+        : actor.kind === 'api' && actor.delegation_id !== null
+          ? [
+              ['Actor reference', actor.subject],
+              ['Delegation reference', actor.delegation_id],
+            ]
+          : [['Actor reference', actor.subject]];
+  return (
+    <dl>
+      {references.map(([label, reference]) => (
+        <Fragment key={label}>
+          <dt>{label}</dt>
+          <dd>{reference}</dd>
+        </Fragment>
+      ))}
+    </dl>
+  );
 }
 function deadline(access: EffectiveAccess, started: number): number {
   const value = Math.min(
@@ -146,6 +185,8 @@ export function ChannelHistory({
                   </p>
                   <details>
                     <summary>Binding changes for event {event.revision}</summary>
+                    <h4>Actor attribution</h4>
+                    <ActorDetails actor={event.actor} />
                     <h4>Before</h4>
                     <Bindings items={event.before} />
                     <h4>After</h4>

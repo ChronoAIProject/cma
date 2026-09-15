@@ -6,6 +6,7 @@ mod acp_inbound;
 mod acp_turn;
 mod adapter;
 mod backend;
+mod channel_tools;
 mod checkpoint_store;
 mod checkpoint_transport;
 mod control_correlation;
@@ -24,6 +25,7 @@ mod update_relay;
 
 pub use adapter::HostedAdapter;
 pub use backend::{HostedAgentOpenSettings, HostedAgentRuntime, HostedBackend};
+pub use channel_tools::{HostedChannelToolBinding, HostedChannelToolSource};
 pub use checkpoint_store::{
     CheckpointArchiveDownload, CheckpointArchiveReceipt, CheckpointArchiveStore,
     CheckpointArchiveStoreFactory, CheckpointArchiveUpload, MAX_CHECKPOINT_ARCHIVE_BYTES,

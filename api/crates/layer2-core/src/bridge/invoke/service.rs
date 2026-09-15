@@ -208,6 +208,9 @@ pub(super) fn require_resource_owner(
     resources: &crate::resource_access::ResourceAccessSnapshot,
 ) -> Result<(), BridgeInvokeError> {
     grant.target.require(&grant.owner, resources)?;
+    if let Some(basis) = &grant.channel {
+        basis.require_resources(resources)?;
+    }
     if resources
         .policy
         .as_ref()

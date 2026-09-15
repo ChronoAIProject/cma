@@ -10,6 +10,7 @@ use layer2_core::{Authorization, Capability, StoreError, SubjectId};
 use tokio::sync::RwLock;
 
 pub mod bearer;
+pub(crate) mod bridge_control_plane;
 mod cookie_authorization;
 pub mod deferred_commands;
 pub mod entitlements;

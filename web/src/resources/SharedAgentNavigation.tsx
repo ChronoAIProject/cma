@@ -1,3 +1,5 @@
+import { useAccessSummaries } from './useAccessSummaries';
+import { ResourceAccessSummary } from './ResourceAccessSummary';
 import { useMemo, useState } from 'react';
 import type { ResourceViewsClient } from './client';
 import type { AppRoute } from '../routing/routes';
@@ -42,6 +44,11 @@ export function SharedAgentNavigation({
     [client, cursor],
   );
   const current = useAuthorizedRead(read);
+  const accessSummaries = useAccessSummaries(
+    client,
+    'agent',
+    current.state.status === 'ready' ? current.state.value.items.map((row) => row.agent_id) : [],
+  );
   return (
     <div className="scoped-navigation__tree">
       <ResourceLink route={{ kind: 'inventory', shared: true }} onNavigate={onNavigate}>
@@ -68,6 +75,7 @@ export function SharedAgentNavigation({
                   >
                     {row.title?.trim() || 'Untitled agent'}
                   </ResourceLink>
+                  <ResourceAccessSummary value={accessSummaries.get(row.agent_id)} />
                   <p>
                     {statusLabel(row.status)} · {creationLabels[row.creation_origin]} ·{' '}
                     {channelLabel(row.channel_usage)}

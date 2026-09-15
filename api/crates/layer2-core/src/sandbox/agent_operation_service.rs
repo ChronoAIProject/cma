@@ -134,6 +134,7 @@ impl AgentOperationError {
 pub struct AgentOperationService {
     pub(super) command_claim: Option<super::agent_io::CommandClaim>,
     pub(super) execution_authority: Option<super::agent_io::CommandExecutionAuthorization>,
+    pub(super) channel_authority: Option<super::agent_io::ChannelExecutionAuthorization>,
     pub(super) connections: Arc<dyn super::SandboxCredentialPrerequisite>,
     pub(super) store: Arc<dyn AgentOperationStore>,
     pub(super) runtimes: Arc<dyn AgentRuntimeRegistry>,
@@ -148,6 +149,7 @@ impl AgentOperationService {
         Arc::new(Self {
             command_claim: None,
             execution_authority: None,
+            channel_authority: None,
             store,
             runtimes,
             connections: Arc::new(super::FixedSandboxCredentialPrerequisite::Ready),
@@ -161,6 +163,7 @@ impl AgentOperationService {
         Arc::new(Self {
             command_claim: self.command_claim.clone(),
             execution_authority: self.execution_authority.clone(),
+            channel_authority: self.channel_authority.clone(),
             connections,
             store: self.store.clone(),
             runtimes: self.runtimes.clone(),
@@ -226,7 +229,7 @@ impl AgentOperationService {
                         return self
                             .dispatch_prepared(prepared)
                             .await
-                            .map(AgentMessageOutcome::Dispatched)
+                            .map(AgentMessageOutcome::Dispatched);
                     }
                     Err(AgentOperationError::Conflict) => continue,
                     Err(error) => return Err(error),
@@ -389,7 +392,10 @@ impl AgentOperationService {
             .ok_or(AgentOperationError::NoActiveTurn)
     }
 
-    fn require_first_message_settled(&self, agent: &Agent) -> Result<(), AgentOperationError> {
+    pub(super) fn require_first_message_settled(
+        &self,
+        agent: &Agent,
+    ) -> Result<(), AgentOperationError> {
         if let Some(record) = agent
             .conversation
             .first_message
@@ -422,7 +428,10 @@ impl AgentOperationService {
         Ok(())
     }
 
-    fn require_dispatch_available(&self, agent: &Agent) -> Result<(), AgentOperationError> {
+    pub(super) fn require_dispatch_available(
+        &self,
+        agent: &Agent,
+    ) -> Result<(), AgentOperationError> {
         match agent.conversation.operation.as_ref() {
             Some(record) if record.state == AgentOperationDelivery::DispatchFenced => {
                 Err(AgentOperationError::DispatchInProgress {

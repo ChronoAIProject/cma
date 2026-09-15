@@ -1,5 +1,11 @@
+import { useAccessSummaries } from './useAccessSummaries';
+import { ResourceAccessSummary } from './ResourceAccessSummary';
 import { useMemo, useState } from 'react';
-import { ApiError, type AccessibleSandboxSummary } from '@chronoai/cma-sdk';
+import {
+  ApiError,
+  type AccessibleSandboxSummary,
+  type AgentCreationCategory,
+} from '@chronoai/cma-sdk';
 import type { ResourceViewsClient } from './client';
 import type { AppRoute } from '../routing/routes';
 import { Button } from '../ui/Button';
@@ -10,18 +16,63 @@ import { ResourceLink } from './ResourceLink';
 import { statusLabel } from '../vocabulary/status';
 import { resourceCount } from '../vocabulary/count';
 import { IconChevronDownOutline14, IconChevronRightOutline14 } from '../ui/icons';
+import { Picker } from '../ui/Picker';
+import { creationLabels } from '../agent/provenance';
+import { channelFilters, type ChannelFilter } from './channelLabels';
+import { scopeValue } from './scope';
+import { SandboxTreeAgents, type SandboxAgentFilters } from './SandboxTreeAgents';
 
-export function SandboxTree({
-  client,
-  organization,
-  shared,
-  onNavigate,
-}: {
+interface Props {
   readonly client: ResourceViewsClient;
   readonly organization?: string;
   readonly shared?: boolean;
   readonly onNavigate: (route: AppRoute) => void;
-}) {
+}
+
+const categories = [
+  { value: 'all' as const, label: 'All creation origins' },
+  ...Object.entries(creationLabels).map(([value, label]) => ({
+    value: value as AgentCreationCategory,
+    label,
+  })),
+];
+
+export function SandboxTree(props: Props) {
+  return <ScopedSandboxTree key={scopeValue(props.organization, props.shared)} {...props} />;
+}
+
+function ScopedSandboxTree(props: Props) {
+  const [creation, setCreation] = useState<SandboxAgentFilters['creation']>('all');
+  const [channel, setChannel] = useState<ChannelFilter>('all');
+  return (
+    <>
+      <Picker
+        label="Sandbox Agent creation"
+        value={creation}
+        options={categories}
+        onChange={setCreation}
+      />
+      <Picker
+        label="Sandbox Agent channel activity"
+        value={channel}
+        options={channelFilters}
+        onChange={setChannel}
+      />
+      {creation === 'all' && channel === 'all' ? null : (
+        <p>Expand a Sandbox to browse Agents matching these filters.</p>
+      )}
+      <SandboxTreePage key={`${creation}:${channel}`} {...props} filters={{ creation, channel }} />
+    </>
+  );
+}
+
+function SandboxTreePage({
+  client,
+  organization,
+  shared,
+  onNavigate,
+  filters,
+}: Props & { readonly filters: SandboxAgentFilters }) {
   const [cursors, setCursors] = useState<readonly (string | undefined)[]>([undefined]);
   const cursor = cursors.at(-1);
   const read = useMemo(
@@ -49,6 +100,12 @@ export function SandboxTree({
     [client, organization, shared, cursor],
   );
   const current = useAuthorizedRead(read);
+  const accessSummaries = useAccessSummaries(
+    client,
+    'sandbox',
+    current.state.status === 'ready' ? current.state.value.items.map((row) => row.id) : [],
+    scopeValue(organization, shared),
+  );
   return (
     <div className="scoped-navigation__tree">
       <Button size="sm" onClick={current.reload}>
@@ -75,8 +132,12 @@ export function SandboxTree({
                   key={sandbox.id}
                   client={client}
                   sandbox={sandbox}
+                  accessSummary={accessSummaries.get(sandbox.id)}
                   onNavigate={onNavigate}
                   onAccessChanged={current.reload}
+                  organization={organization}
+                  shared={shared}
+                  filters={filters}
                 />
               ))}
             </ul>
@@ -111,13 +172,21 @@ export function SandboxTree({
 function SandboxBranch({
   client,
   sandbox,
+  accessSummary,
   onNavigate,
   onAccessChanged,
+  organization,
+  shared,
+  filters,
 }: {
   readonly client: ResourceViewsClient;
   readonly sandbox: AccessibleSandboxSummary;
+  readonly accessSummary?: import('./accessSummary').AccessSummary;
   readonly onNavigate: (route: AppRoute) => void;
   readonly onAccessChanged: () => void;
+  readonly organization?: string;
+  readonly shared?: boolean;
+  readonly filters: SandboxAgentFilters;
 }) {
   const [open, setOpen] = useState(false);
   return (
@@ -133,10 +202,21 @@ function SandboxBranch({
       <p>
         {statusLabel(sandbox.status)} · {resourceCount(sandbox.agent_count, 'Agent')}
       </p>
+      <ResourceAccessSummary value={accessSummary} />
       <ResourceLink route={{ kind: 'sandbox', sandboxId: sandbox.id }} onNavigate={onNavigate}>
         Open Sandbox details
       </ResourceLink>
-      {open ? (
+      {open && (filters.creation !== 'all' || filters.channel !== 'all') ? (
+        <SandboxTreeAgents
+          client={client}
+          sandboxId={sandbox.id}
+          organization={organization}
+          shared={shared}
+          filters={filters}
+          onNavigate={onNavigate}
+          onAccessChanged={onAccessChanged}
+        />
+      ) : open ? (
         <SandboxContents
           client={client}
           id={sandbox.id}

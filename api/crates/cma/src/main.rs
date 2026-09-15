@@ -87,6 +87,12 @@ async fn serve() -> Result<(), String> {
     let worker_signal = shutdown.subscribe();
     shutdown.push(composition.launch_scheduler.spawn(worker_signal));
     shutdown.push(composition.command_scheduler.spawn(shutdown.subscribe()));
+    for scheduler in composition.channel_schedulers {
+        shutdown.push(scheduler.spawn(shutdown.subscribe()));
+    }
+    if let Some(outbox) = composition.bridge_outbox {
+        shutdown.push(outbox.spawn(shutdown.subscribe()));
+    }
     shutdown.push(
         composition
             .sandbox_control_scheduler

@@ -11,7 +11,7 @@ use super::super::sandbox_mongo::{
 use super::super::sandboxes::read_sandbox;
 use super::{records, ApplyError};
 
-pub(super) async fn apply(
+pub(in crate::store) async fn apply(
     store: &MongoSandboxStore,
     request: &CommandReservation,
     session: &mut ClientSession,
@@ -78,7 +78,10 @@ pub(super) async fn apply(
 
     let waiting = store
         .agent_commands
-        .count_documents(doc! { "agent_id": agent.id.as_str(), "status": "queued" })
+        .count_documents(doc! { "agent_id": agent.id.as_str(), "$or": [
+            {"status": "queued"},
+            {"status": "waiting_action", "channel_admission.execution_hold": "worker_unavailable"}
+        ] })
         .session(&mut *session)
         .await?;
     if waiting >= u64::from(request.queue_capacity) {

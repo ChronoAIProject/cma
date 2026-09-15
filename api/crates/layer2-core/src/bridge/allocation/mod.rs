@@ -3,12 +3,14 @@
 mod authority;
 mod model;
 mod profiles;
+mod sandbox_admission;
 mod store;
 mod write;
 
 pub use authority::*;
 pub use model::*;
 pub use profiles::*;
+pub use sandbox_admission::*;
 pub use store::*;
 pub use write::*;
 

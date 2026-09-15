@@ -59,6 +59,8 @@ pub struct BridgeCredentialImport {
     pub id: BridgeId,
     pub expected_revision: u64,
     pub material: BridgeKeyMaterial,
+    /// Explicit permission to use this exact sign-in for this Bridge for 30 days.
+    pub retain_control_plane_authority: bool,
 }
 pub struct BridgeCredentialRevocation {
     pub id: BridgeId,

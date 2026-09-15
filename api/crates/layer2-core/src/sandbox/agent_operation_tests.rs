@@ -1,4 +1,5 @@
 mod admission_fence_tests;
+mod channel_hold_tests;
 mod command_authorization_tests;
 mod command_driver_tests;
 mod command_evidence_tests;

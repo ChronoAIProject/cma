@@ -114,7 +114,12 @@ pub enum BridgeAdmissionPolicy {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum BridgeReplyPolicy {
+    /// Legacy wire spelling retained for rollback. Delivery requires explicit
+    /// reply tool calls by a channel-created Agent, including during its turn.
+    /// This policy never creates an automatic final-response producer.
     FinalResponse,
+    /// Reserved until verified approval controls are available. It does not
+    /// authorize automatic final-answer delivery.
     FinalResponseAndApprovals,
     Disabled,
 }

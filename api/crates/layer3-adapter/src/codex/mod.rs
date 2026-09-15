@@ -60,6 +60,7 @@ impl HostedAgentRuntime for CodexRuntime {
         Ok(HostedAgentOpenSettings {
             permission_mode: Some(permission_mode.into()),
             own_credential: request.options.own_credential,
+            channel_tool: None,
         })
     }
 }
@@ -98,6 +99,14 @@ impl CodexAdapter {
 
     pub fn with_home_volumes(mut self, store: Arc<dyn crate::HomeVolumeStore>) -> Self {
         self.hosted = self.hosted.with_home_volumes(store);
+        self
+    }
+
+    pub fn with_channel_tools(
+        mut self,
+        source: Arc<dyn crate::hosted::HostedChannelToolSource>,
+    ) -> Self {
+        self.hosted = self.hosted.with_channel_tools(source);
         self
     }
 }

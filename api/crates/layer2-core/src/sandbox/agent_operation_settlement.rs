@@ -43,6 +43,21 @@ impl AgentOperationService {
                                 ),
                             )
                             .await
+                    } else if let Some(authority) = &self.channel_authority {
+                        connection
+                            .input
+                            .send_guarded(
+                                prepared.input.clone(),
+                                std::sync::Arc::new(
+                                    super::agent_io::execution_dispatch::ChannelDispatchGuard {
+                                        authority: authority.clone(),
+                                        target: prepared.target.clone(),
+                                        operation_sequence: prepared.operation_sequence,
+                                        turn_sequence: prepared.turn_sequence,
+                                    },
+                                ),
+                            )
+                            .await
                     } else {
                         connection
                             .input
@@ -225,6 +240,10 @@ impl AgentOperationService {
             execution_fence: admission_guard
                 .as_ref()
                 .and(self.execution_authority.as_ref())
+                .map(|authority| authority.fence()),
+            channel_execution_fence: admission_guard
+                .as_ref()
+                .and(self.channel_authority.as_ref())
                 .map(|authority| authority.fence()),
             admission_guard,
             expected_agent_revision: current.revision,

@@ -187,7 +187,18 @@ pub(crate) struct ActiveShareList {
 }
 
 #[derive(Serialize, ToSchema)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub(crate) enum ResourceOwnershipView {
+    /// Personal owner identity is private to the owner.
+    Person { is_current_person: bool },
+    /// Resolve the name only through the caller's authorized organization choices.
+    Organization { organization_id: String },
+}
+
+#[derive(Serialize, ToSchema)]
 pub(crate) struct EffectiveAccessView {
+    /// Safe ownership attribution without parent identities or private person IDs.
+    pub owner: ResourceOwnershipView,
     /// Current policy permissions; individual operations also check lifecycle
     /// and runtime support. This document cannot authorize a later operation.
     pub capabilities: Vec<String>,

@@ -17,7 +17,7 @@ use super::agents::{execute_command, execute_empty_command, AgentRoutesState};
 use super::idempotency::{operation_scope, IdempotencyKey, RequestBody};
 use super::instance_problem::InstanceProblem;
 use super::BodyProblem;
-use crate::AuthenticatedCaller;
+use crate::{AuthenticatedCaller, AuthenticatedResourceCaller};
 
 pub(super) fn routes() -> Router<AgentRoutesState> {
     Router::new()
@@ -42,10 +42,23 @@ pub(super) fn routes() -> Router<AgentRoutesState> {
 pub(crate) async fn input(
     State(state): State<AgentRoutesState>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
+    resource: Option<AuthenticatedResourceCaller>,
     Path(id): Path<String>,
     key: IdempotencyKey,
     body: Result<RequestBody<AgentTextRequest>, BodyProblem>,
 ) -> Response {
+    if state.commands.is_some() {
+        return super::agent_command_admission::with_body(
+            &state,
+            resource,
+            key,
+            format!("agent:input:{id}"),
+            AgentId(id),
+            body,
+            |body| layer2_core::sandbox::agent_io::AgentCommand::message(body.text),
+        )
+        .await;
+    }
     let service = state.agent_operations.clone();
     let operation_caller = caller.clone();
     execute_command(
@@ -82,10 +95,25 @@ pub(crate) async fn input(
 pub(crate) async fn steer(
     State(state): State<AgentRoutesState>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
+    resource: Option<AuthenticatedResourceCaller>,
     Path(id): Path<String>,
     key: IdempotencyKey,
     body: Result<RequestBody<AgentTextRequest>, BodyProblem>,
 ) -> Response {
+    if state.commands.is_some() {
+        return super::agent_command_admission::with_body(
+            &state,
+            resource,
+            key,
+            format!("agent:steer:{id}"),
+            AgentId(id),
+            body,
+            |body| layer2_core::sandbox::agent_io::AgentCommand::Steer {
+                input: layer2_core::sandbox::agent_io::AgentInput::text(body.text),
+            },
+        )
+        .await;
+    }
     let service = state.agent_operations.clone();
     let operation_caller = caller.clone();
     execute_command(
@@ -115,9 +143,21 @@ pub(crate) async fn steer(
 pub(crate) async fn interrupt(
     State(state): State<AgentRoutesState>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
+    resource: Option<AuthenticatedResourceCaller>,
     Path(id): Path<String>,
     key: IdempotencyKey,
 ) -> Response {
+    if state.commands.is_some() {
+        return super::agent_command_admission::without_body(
+            &state,
+            resource,
+            key,
+            format!("agent:interrupt:{id}"),
+            AgentId(id),
+            layer2_core::sandbox::agent_io::AgentCommand::Interrupt,
+        )
+        .await;
+    }
     let service = state.agent_operations.clone();
     let operation_caller = caller.clone();
     execute_empty_command(
@@ -151,10 +191,26 @@ pub(crate) async fn interrupt(
 pub(crate) async fn approval(
     State(state): State<AgentRoutesState>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
+    resource: Option<AuthenticatedResourceCaller>,
     Path((id, request_id)): Path<(String, String)>,
     key: IdempotencyKey,
     body: Result<RequestBody<ApprovalDecisionRequest>, BodyProblem>,
 ) -> Response {
+    if state.commands.is_some() {
+        return super::agent_command_admission::with_body(
+            &state,
+            resource,
+            key,
+            operation_scope("agent:approval", &[&id, &request_id]),
+            AgentId(id),
+            body,
+            |body| layer2_core::sandbox::agent_io::AgentCommand::AnswerApproval {
+                approval_id: request_id,
+                decision: body.decision.into(),
+            },
+        )
+        .await;
+    }
     let service = state.agent_operations.clone();
     let operation_caller = caller.clone();
     execute_command(

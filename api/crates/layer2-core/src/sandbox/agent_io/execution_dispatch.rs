@@ -53,3 +53,54 @@ impl ConversationInputGuard for CommandDispatchGuard {
             .map_err(|_| refused())
     }
 }
+
+pub(in crate::sandbox) struct ChannelDispatchGuard {
+    pub authority: super::ChannelExecutionAuthorization,
+    pub target: AgentRuntimeTarget,
+    pub operation_sequence: u64,
+    pub turn_sequence: u64,
+}
+
+#[async_trait::async_trait]
+impl ConversationInputGuard for ChannelDispatchGuard {
+    async fn check(&self) -> layer3_adapter::Result<()> {
+        let refused =
+            || AdapterError::Rejected("Channel execution authority is no longer current".into());
+        let proof = self
+            .authority
+            .current_proof()
+            .await
+            .map_err(|_| refused())?;
+        let snapshot = proof.resources();
+        let agent = snapshot.lineage.agent.as_ref().ok_or_else(refused)?;
+        let parent = &snapshot.lineage.sandbox;
+        if agent.id != self.target.agent_id
+            || agent.conversation.conversation_id.as_ref() != Some(&self.target.conversation_id)
+            || agent.conversation.runtime_generation != Some(self.target.runtime_generation)
+            || agent.conversation.active_turn != Some(self.turn_sequence)
+            || agent.requested_stop_reason.is_some()
+            || !agent.status.is_live()
+            || parent.lifecycle.checkpoint_capture.is_some()
+            || !matches!(
+                parent.status,
+                SandboxStatus::Active | SandboxStatus::CredentialRotating
+            )
+            || !agent
+                .conversation
+                .operation
+                .as_ref()
+                .is_some_and(|operation| {
+                    operation.sequence == self.operation_sequence
+                        && operation.turn_sequence == self.turn_sequence
+                        && operation.runtime_generation == self.target.runtime_generation
+                        && operation.state == AgentOperationDelivery::DispatchFenced
+                })
+        {
+            return Err(refused());
+        }
+        self.authority
+            .fence()
+            .require_current()
+            .map_err(|_| refused())
+    }
+}

@@ -104,13 +104,10 @@ async fn independent_authorities_share_one_bounded_order_and_retries_keep_their_
     let first_record = record(store.reserve_command(first.clone()).await.unwrap());
     let mut second = reservation(&agent, &parent, "request-one");
     second.envelope.authorization.authority_id = "another-verified-grant".into();
-    second.envelope.source.kind = AgentSourceKind::Channel;
-    second.envelope.actor = AgentActor::Channel {
-        bridge_id: "bridge-one".into(),
-        grant_id: "grant-one".into(),
-        platform: "fixture".into(),
-        chat_id: "chat-one".into(),
-        sender_id: "sender-one".into(),
+    second.envelope.source.kind = AgentSourceKind::Api;
+    second.envelope.actor = AgentActor::Api {
+        subject: agent.owner.clone(),
+        delegation_id: None,
     };
     let second_record = record(store.reserve_command(second).await.unwrap());
     assert_eq!(second_record.receipt.agent_order, 2);

@@ -12,6 +12,9 @@ use crate::{
 
 type ServerSocket = tokio_tungstenite::WebSocketStream<tokio::net::TcpStream>;
 
+#[path = "acp_channel_tool_tests.rs"]
+mod channel_tool_tests;
+
 async fn socket_pair() -> (Socket, ServerSocket) {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
@@ -97,6 +100,7 @@ fn settings(permission_mode: Option<&str>, own_credential: bool) -> HostedAgentO
     HostedAgentOpenSettings {
         permission_mode: permission_mode.map(str::to_string),
         own_credential,
+        channel_tool: None,
     }
 }
 
@@ -171,6 +175,7 @@ async fn fresh_bridge_routes_startup_prompt_permission_cancel_and_gap_frames() {
 
         let new_session = receive_json(&mut server).await;
         assert_eq!(new_session["method"], "session/new");
+        assert_eq!(new_session["params"]["mcpServers"], serde_json::json!([]));
         assert_eq!(new_session["params"]["cwd"], "/workspace");
         respond(
             &mut server,
@@ -327,6 +332,7 @@ async fn fresh_resume_loads_the_exact_held_session() {
         respond(&mut server, &initialize, serde_json::json!({})).await;
         let load = receive_json(&mut server).await;
         assert_eq!(load["method"], "session/load");
+        assert_eq!(load["params"]["mcpServers"], serde_json::json!([]));
         assert_eq!(load["params"]["sessionId"], "conversation-held");
         assert_eq!(load["params"]["cwd"], "/workspace");
         respond(&mut server, &load, serde_json::json!({})).await;
@@ -441,6 +447,7 @@ async fn owner_authentication_precedes_a_fresh_session() {
         respond(&mut server, &authenticate, serde_json::json!({})).await;
         let new_session = receive_json(&mut server).await;
         assert_eq!(new_session["method"], "session/new");
+        assert_eq!(new_session["params"]["mcpServers"], serde_json::json!([]));
         respond(
             &mut server,
             &new_session,

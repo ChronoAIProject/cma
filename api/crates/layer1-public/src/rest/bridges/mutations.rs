@@ -162,6 +162,7 @@ pub(crate) async fn import(
                     id: BridgeId(id),
                     expected_revision: request.expected_revision,
                     material: BridgeKeyMaterial::new(request.key),
+                    retain_control_plane_authority: request.retain_control_plane_authority,
                 },
             )
             .await,
