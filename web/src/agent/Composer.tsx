@@ -11,6 +11,7 @@ interface ComposerProps {
   readonly status: AgentStatus;
   readonly pausedNotice?: string;
   readonly running: boolean;
+  readonly queueWhileRunning?: boolean;
   readonly starting?: boolean;
   readonly controlsUnavailable?: boolean;
   readonly requestPending?: boolean;
@@ -45,6 +46,7 @@ export function Composer({
   status,
   pausedNotice,
   running,
+  queueWhileRunning = false,
   starting = false,
   controlsUnavailable = false,
   requestPending = false,
@@ -102,7 +104,7 @@ export function Composer({
       composing.current ||
       !usable ||
       busy ||
-      running ||
+      (running && !queueWhileRunning) ||
       starting ||
       inputBlocked ||
       requestPending ||
@@ -127,7 +129,13 @@ export function Composer({
       <QuickMessages
         messages={quickMessages}
         disabled={
-          !usable || busy || running || starting || inputBlocked || submitting || requestPending
+          !usable ||
+          busy ||
+          (running && !queueWhileRunning) ||
+          starting ||
+          inputBlocked ||
+          submitting ||
+          requestPending
         }
         onSend={submit}
       />
@@ -150,7 +158,7 @@ export function Composer({
         )}
       </Presence>
       <form
-        className="agent-composer__form"
+        className={`agent-composer__form${running && queueWhileRunning ? ' agent-composer__form--queue' : ''}`}
         aria-label="Message Agent"
         onSubmit={(event) => {
           event.preventDefault();
@@ -197,6 +205,20 @@ export function Composer({
           />
           <div className="agent-composer__row" />
         </div>
+        {!running || queueWhileRunning ? (
+          <Button
+            placement="agent-composer__submit"
+            variant="primary"
+            type="submit"
+            icon={<IconSendOutline16 />}
+            aria-label={running ? 'Queue message' : 'Send message'}
+            title={running ? 'Queue message' : 'Send message'}
+            disabled={
+              !usable || busy || starting || inputBlocked || requestPending || content.trim() === ''
+            }
+            aria-describedby={hasNotice ? noticeId : undefined}
+          />
+        ) : null}
         {running ? (
           <Button
             placement="agent-composer__submit agent-composer__submit--stop"
@@ -211,20 +233,7 @@ export function Composer({
             disabled={busy || controlsUnavailable}
             onClick={() => void onStop()}
           />
-        ) : (
-          <Button
-            placement="agent-composer__submit"
-            variant="primary"
-            type="submit"
-            icon={<IconSendOutline16 />}
-            aria-label="Send message"
-            title="Send message"
-            disabled={
-              !usable || busy || starting || inputBlocked || requestPending || content.trim() === ''
-            }
-            aria-describedby={hasNotice ? noticeId : undefined}
-          />
-        )}
+        ) : null}
       </form>
     </div>
   );
