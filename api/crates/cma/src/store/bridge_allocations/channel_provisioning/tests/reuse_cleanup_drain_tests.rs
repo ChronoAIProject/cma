@@ -6,6 +6,8 @@ mod effects;
 mod faults;
 #[path = "reuse_cleanup_drain_fixture.rs"]
 mod fixture;
+#[path = "reuse_cleanup_trigger_tests.rs"]
+mod trigger;
 
 #[tokio::test]
 #[ignore = "requires the disposable MongoDB replica contract runner"]
