@@ -133,3 +133,65 @@ fn validate_operation(
     }
     Ok(())
 }
+
+pub(super) async fn removal_support(
+    adapter: &HostedAdapter,
+    handle: &RuntimeHandle,
+) -> crate::Result<crate::WorkspaceRemovalSupport> {
+    let status = adapter.inspect_runtime_status(handle).await?;
+    let identity = crate::RuntimeStatusRequest {
+        sandbox_id: status.sandbox_id.clone(),
+        generation: status.generation,
+        home_identity: status.home_identity.clone(),
+    };
+    let ResponseFrame::WorkspaceRemovalSupport(support) = adapter
+        .exchange(
+            handle,
+            RequestFrame::WorkspaceRemovalSupport(identity.clone()),
+        )
+        .await?
+    else {
+        return Err(AdapterError::unexpected_reply("Workspace removal support"));
+    };
+    support.validate_for(&identity)?;
+    if !crate::same_runtime_writer(&status, &support.runtime) {
+        return Err(AdapterError::Rejected(
+            "Workspace removal probe changed runtime writer".into(),
+        ));
+    }
+    adapter.verify_bound_home(handle).await?;
+    Ok(support)
+}
+
+pub(super) async fn reconcile_removal(
+    adapter: &HostedAdapter,
+    handle: &RuntimeHandle,
+    expected_runtime: &crate::RuntimeStatus,
+    request: &WorkspaceRemoveRequest,
+) -> crate::Result<crate::WorkspaceRemovalObservation> {
+    let frame = crate::WorkspaceRemovalRequest {
+        runtime: expected_runtime.clone(),
+        request: request.clone(),
+    };
+    frame.validate()?;
+    let current = adapter.inspect_runtime_status(handle).await?;
+    if !crate::same_runtime_writer(&current, expected_runtime) {
+        return Err(AdapterError::Rejected(
+            "Workspace removal runtime writer changed".into(),
+        ));
+    }
+    let ResponseFrame::ReconcileWorkspaceRemoval(observation) = adapter
+        .exchange(
+            handle,
+            RequestFrame::ReconcileWorkspaceRemoval(frame.clone()),
+        )
+        .await?
+    else {
+        return Err(AdapterError::unexpected_reply(
+            "Workspace removal observation",
+        ));
+    };
+    observation.validate_for(&frame)?;
+    adapter.verify_bound_home(handle).await?;
+    Ok(observation)
+}

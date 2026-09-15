@@ -249,6 +249,11 @@ jobs:
       - uses: taiki-e/install-action@nextest
       - name: Tests
         run: cargo nextest run --workspace --locked
+      - name: Isolated Linux Workspace removal writer boundary
+        run: >-
+          cargo test --locked -p layer4-runtime
+          supervisor::mutation_tests::workspace_reconciliation_tests::real_linux_writer_boundary_reconciles_target_and_resumes_live_sibling
+          -- --ignored --exact --test-threads=1
       - name: Disposable real Mongo persistence contracts
         timeout-minutes: 20
         run: bash ../.github/scripts/mongo-contract-tests.sh

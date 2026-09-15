@@ -129,6 +129,8 @@ pub struct AgentHomeRemoveReceipt {
 pub enum WireOperation {
     CacheSkillArchive,
     RuntimeStatus,
+    WorkspaceRemovalSupport,
+    ReconcileWorkspaceRemoval,
     Install,
     BootstrapRestore,
     PrepareWorkspace,
@@ -185,6 +187,8 @@ pub enum CheckpointUploadResponse {
 pub enum RequestFrame {
     CacheSkillArchive(crate::SkillArchive),
     RuntimeStatus(crate::RuntimeStatusRequest),
+    WorkspaceRemovalSupport(crate::RuntimeStatusRequest),
+    ReconcileWorkspaceRemoval(crate::WorkspaceRemovalRequest),
     Install(InstallRequest),
     BootstrapRestore(RestoreBootstrapRequest),
     PrepareWorkspace(WorkspaceRequest),
@@ -210,6 +214,8 @@ impl RequestFrame {
         match self {
             Self::CacheSkillArchive(_) => WireOperation::CacheSkillArchive,
             Self::RuntimeStatus(_) => WireOperation::RuntimeStatus,
+            Self::WorkspaceRemovalSupport(_) => WireOperation::WorkspaceRemovalSupport,
+            Self::ReconcileWorkspaceRemoval(_) => WireOperation::ReconcileWorkspaceRemoval,
             Self::Install(_) => WireOperation::Install,
             Self::BootstrapRestore(_) => WireOperation::BootstrapRestore,
             Self::PrepareWorkspace(_) => WireOperation::PrepareWorkspace,
@@ -238,6 +244,8 @@ impl RequestFrame {
 pub enum ResponseFrame {
     CacheSkillArchive { sha256: String },
     RuntimeStatus(crate::RuntimeStatus),
+    WorkspaceRemovalSupport(crate::WorkspaceRemovalSupport),
+    ReconcileWorkspaceRemoval(crate::WorkspaceRemovalObservation),
     Install(InstallReceipt),
     BootstrapRestore(RestoreBootstrapReceipt),
     PrepareWorkspace(WorkspaceReceipt),

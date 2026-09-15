@@ -13,12 +13,14 @@ pub(crate) async fn dispatch(
     config: RuntimeConfig,
     operation_guard: OwnedMutexGuard<()>,
     held_checkpoint: Arc<Mutex<Option<crate::supervisor::HeldCheckpoint>>>,
+    removal_writer: Option<std::fs::File>,
     request: RequestFrame,
 ) -> Result<ResponseFrame> {
     tokio::spawn(async move {
         // The supervisor checked live and durable Agent inventory while
         // holding this same gate; retain it even if the caller disconnects.
         let _operation = operation_guard;
+        let _removal_writer = removal_writer;
         crate::persistent_home::verify(&config)?;
         if held_checkpoint.lock().await.is_some() {
             return Err(RuntimeError::rejected(
@@ -280,9 +282,25 @@ fn remove(
         &request.request_sha256,
         &request,
     )? {
-        Begin::Completed(receipt) => Ok(ResponseFrame::RemoveWorkspace(receipt)),
+        Begin::Completed(receipt) => {
+            match crate::workspace_removal_paths::inspect(&config.home, &request.workspace_id, &request.name)? {
+                crate::workspace_removal_paths::Presence::Original => Err(RuntimeError::rejected(
+                    "workspace_removal_reconciliation_required",
+                    "the removed Workspace reappeared; a current boot-correlated reconciliation is required",
+                )),
+                crate::workspace_removal_paths::Presence::Absent | crate::workspace_removal_paths::Presence::Successor => Ok(ResponseFrame::RemoveWorkspace(receipt)),
+            }
+        }
         Begin::Failed(error) | Begin::Indeterminate(error) => Err(error),
-        Begin::New(ticket) | Begin::Started(ticket) => execute_remove(config, request, ticket),
+        Begin::New(ticket) | Begin::Started(ticket) => {
+            if crate::workspace_removal_intent::requires_current(config, &request)? {
+                return Err(RuntimeError::rejected(
+                    "workspace_removal_reconciliation_required",
+                    "this removal requires a current boot-correlated reconciliation",
+                ));
+            }
+            execute_remove(config, request, ticket)
+        }
     }
 }
 
@@ -332,6 +350,10 @@ async fn recover_remove(
     if !request.has_valid_sha256() {
         return Err(invalid_digest());
     }
+    if crate::workspace_removal_intent::requires_current(config, &request)? {
+        return Ok(());
+    }
+    let _removal_writer = supervisor.removal_writer_guard()?;
     match supervisor.ensure_workspace_idle(&request.name).await {
         // Keep the original intent pending while allowing the Agent's close
         // request to run. Recovery will retry after its durable close receipt.

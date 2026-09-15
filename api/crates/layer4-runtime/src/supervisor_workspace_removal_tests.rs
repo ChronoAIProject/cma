@@ -2,7 +2,11 @@ use super::*;
 use crate::workspace_journal::{self, Begin as WorkspaceBegin};
 use layer3_adapter::WorkspaceRemoveReceipt;
 
-async fn prepare_child(config: &RuntimeConfig, supervisor: &Supervisor, name: &str) -> AgentLaunch {
+pub(super) async fn prepare_child(
+    config: &RuntimeConfig,
+    supervisor: &Supervisor,
+    name: &str,
+) -> AgentLaunch {
     let workspace_id = format!("wks_{name}");
     let prepared = supervisor
         .dispatch(RequestFrame::PrepareWorkspace(WorkspaceRequest::new(
@@ -46,7 +50,7 @@ async fn prepare_child(config: &RuntimeConfig, supervisor: &Supervisor, name: &s
     request
 }
 
-async fn open(supervisor: &Supervisor, launch: &AgentLaunch) {
+pub(super) async fn open(supervisor: &Supervisor, launch: &AgentLaunch) {
     let response = supervisor
         .dispatch(open_agent_request(launch.clone()))
         .await;
@@ -57,7 +61,7 @@ async fn open(supervisor: &Supervisor, launch: &AgentLaunch) {
     wait_for_file(&PathBuf::from(&launch.cwd).join("started")).await;
 }
 
-async fn close(supervisor: &Supervisor, launch: &AgentLaunch) {
+pub(super) async fn close(supervisor: &Supervisor, launch: &AgentLaunch) {
     let response = supervisor
         .dispatch(close_agent_request(AgentCloseRequest::new(
             format!("agent:{}:close:v1", launch.agent_id.as_str()),
@@ -247,6 +251,7 @@ async fn detached_workspace_remove_retains_transferred_gate_after_caller_cancell
         config.clone(),
         gate,
         Arc::clone(&supervisor.held_checkpoint),
+        None,
         RequestFrame::RemoveWorkspace(request.clone()),
     ));
     assert!(futures_util::poll!(dispatch.as_mut()).is_pending());

@@ -288,6 +288,22 @@ impl SandboxAdapter for HostedAdapter {
         workspace::remove(self, handle, request).await
     }
 
+    async fn workspace_removal_support(
+        &self,
+        handle: &RuntimeHandle,
+    ) -> crate::Result<crate::WorkspaceRemovalSupport> {
+        workspace::removal_support(self, handle).await
+    }
+
+    async fn reconcile_workspace_removal(
+        &self,
+        handle: &RuntimeHandle,
+        expected_runtime: &crate::RuntimeStatus,
+        request: &WorkspaceRemoveRequest,
+    ) -> crate::Result<crate::WorkspaceRemovalObservation> {
+        workspace::reconcile_removal(self, handle, expected_runtime, request).await
+    }
+
     async fn add_worktree(
         &self,
         handle: &RuntimeHandle,
