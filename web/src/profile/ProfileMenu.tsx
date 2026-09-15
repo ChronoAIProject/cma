@@ -31,6 +31,7 @@ interface ProfileMenuProps {
 }
 
 const MENU_ROUTES: Readonly<Record<string, AppRoute>> = {
+  inventory: { kind: 'inventory' },
   profiles: { kind: 'profiles' },
   marketplace: { kind: 'marketplace' },
   triggers: { kind: 'triggers' },
@@ -60,6 +61,9 @@ export function ProfileMenu({ user, onSignOut, onNavigate, collapsed = false }: 
   const [avatarBroken, setAvatarBroken] = useState(false);
   const canOperate = canOpenOperations(user.capabilities);
   const items: MenuEntry[] = [
+    ...(user.capabilities.includes('use_own_sandboxes')
+      ? [{ id: 'inventory', icon: <IconBrowseOutline16 />, label: 'Agents' }]
+      : []),
     { id: 'profiles', icon: <IconPersonalizationOutline16 />, label: 'Profiles' },
     { id: 'marketplace', icon: <IconBrowseOutline16 />, label: 'Marketplace' },
     ...(!user.visitor && user.capabilities.includes('publish_triggers')
