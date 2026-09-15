@@ -31,6 +31,7 @@ use super::{
 use crate::{rate_limit::CmaLaunchQuota, rate_limit::RateLimiters, store::MongoStores};
 
 pub(crate) struct TriggerCompositionDependencies {
+    pub common_first_messages: bool,
     pub credentials: Arc<dyn SandboxCredentialPrerequisite>,
     pub stores: Arc<MongoStores>,
     pub directory: Arc<UserDirectory>,
@@ -70,7 +71,8 @@ impl TriggerComposition {
             dependencies.broker.clone(),
             launch_policy,
             dependencies.credentials,
-        );
+        )
+        .with_common_first_messages(dependencies.common_first_messages);
         let connections =
             ServiceConnectionService::new(definitions.clone(), dependencies.broker.clone());
         let launch_quota: Arc<dyn LaunchQuota> = Arc::new(CmaLaunchQuota::new(

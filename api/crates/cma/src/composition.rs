@@ -320,6 +320,9 @@ impl ControlPlaneComposition {
             },
         );
         let trigger = TriggerComposition::new(TriggerCompositionDependencies {
+            common_first_messages: config
+                .bridge_flags
+                .enabled(crate::config::bridge_flags::BridgeFlag::TriggerCommandAdmission),
             agent_reads: projections.reads(),
             credentials: connection_prerequisite.clone(),
             stores: Arc::clone(&stores),

@@ -35,14 +35,23 @@ pub fn bind_command_dispatch(
         fence
             .require_dispatch(command)
             .map_err(|_| CommandLedgerError::Conflict)?;
+    } else if let Some(fence) = &mutation.trigger_execution_fence {
+        fence
+            .require_dispatch(command)
+            .map_err(|_| CommandLedgerError::Conflict)?;
+        if !super::is_bound_trigger_first(command, current) {
+            return Err(CommandLedgerError::Conflict);
+        }
     } else if matches!(
         command.receipt.envelope.actor,
-        super::AgentActor::Channel { .. }
-    ) || command.receipt.envelope.source.kind == super::AgentSourceKind::Channel
-        || command.receipt.envelope.owner
-            != (AgentOwner::Person {
-                subject: current.owner.clone(),
-            })
+        super::AgentActor::Channel { .. } | super::AgentActor::Trigger { .. }
+    ) || matches!(
+        command.receipt.envelope.source.kind,
+        super::AgentSourceKind::Channel | super::AgentSourceKind::Trigger
+    ) || command.receipt.envelope.owner
+        != (AgentOwner::Person {
+            subject: current.owner.clone(),
+        })
     {
         return Err(CommandLedgerError::Conflict);
     }
@@ -107,7 +116,11 @@ pub fn bind_command_dispatch(
                     .conversation
                     .first_message
                     .as_ref()
-                    .is_some_and(|first| !first.is_terminal())
+                    .is_some_and(|first| {
+                        !(first.is_terminal()
+                            || mutation.trigger_execution_fence.is_some()
+                                && super::is_bound_trigger_first(command, current))
+                    })
                 || command.target_turn.is_some()
                 || operation.turn_sequence
                     != operation

@@ -134,6 +134,7 @@ impl AgentOperationError {
 pub struct AgentOperationService {
     pub(super) command_claim: Option<super::agent_io::CommandClaim>,
     pub(super) execution_authority: Option<super::agent_io::CommandExecutionAuthorization>,
+    pub(super) trigger_authority: Option<super::agent_io::TriggerExecutionAuthorization>,
     pub(super) channel_authority: Option<super::agent_io::ChannelExecutionAuthorization>,
     pub(super) connections: Arc<dyn super::SandboxCredentialPrerequisite>,
     pub(super) store: Arc<dyn AgentOperationStore>,
@@ -150,6 +151,7 @@ impl AgentOperationService {
             command_claim: None,
             execution_authority: None,
             channel_authority: None,
+            trigger_authority: None,
             store,
             runtimes,
             connections: Arc::new(super::FixedSandboxCredentialPrerequisite::Ready),
@@ -164,6 +166,7 @@ impl AgentOperationService {
             command_claim: self.command_claim.clone(),
             execution_authority: self.execution_authority.clone(),
             channel_authority: self.channel_authority.clone(),
+            trigger_authority: self.trigger_authority.clone(),
             connections,
             store: self.store.clone(),
             runtimes: self.runtimes.clone(),

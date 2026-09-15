@@ -54,6 +54,12 @@ pub(super) fn launch_document(
     if let Some(initiation) = &launch.initiation {
         document.insert("launch_initiation", encode(initiation)?);
     }
+    if let Some(protocol) = &launch.input_protocol {
+        document.insert("trigger_input_protocol", encode(protocol)?);
+    }
+    if let Some(binding) = &launch.input_binding_sha256 {
+        document.insert("trigger_input_binding_sha256", binding);
+    }
     Ok(document)
 }
 
@@ -62,6 +68,20 @@ pub(super) fn read_launch(document: &Document) -> Result<StoredLaunch, LaunchSto
     let mut launch: Launch = read_record(document).map_err(corrupt)?;
     launch.initiation = document
         .get("launch_initiation")
+        .map(|value| {
+            mongodb::bson::deserialize_from_bson(value.clone())
+                .map_err(|error| corrupt(error.to_string()))
+        })
+        .transpose()?;
+    launch.input_protocol = document
+        .get("trigger_input_protocol")
+        .map(|value| {
+            mongodb::bson::deserialize_from_bson(value.clone())
+                .map_err(|error| corrupt(error.to_string()))
+        })
+        .transpose()?;
+    launch.input_binding_sha256 = document
+        .get("trigger_input_binding_sha256")
         .map(|value| {
             mongodb::bson::deserialize_from_bson(value.clone())
                 .map_err(|error| corrupt(error.to_string()))

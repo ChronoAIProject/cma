@@ -143,6 +143,19 @@ impl AgentOperationService {
                 metadata,
             });
         }
+        if let Some(authority) = &self.trigger_authority {
+            super::agent_io::trigger::fence_first(
+                authority,
+                &current,
+                &mut next,
+                self.command_claim
+                    .as_ref()
+                    .ok_or(AgentOperationError::Conflict)?
+                    .fence,
+                &at,
+                &mut logs,
+            )?;
+        }
         self.commit_admission(&current, next, logs, at, parent)
             .await?;
         Ok(PreparedAgentOperation {

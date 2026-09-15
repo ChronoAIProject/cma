@@ -57,6 +57,7 @@ const SANDBOX_COLLECTIONS: &[&str] = &[
     WORKTREES,
     AGENTS,
     AGENT_REUSE_BINDINGS,
+    super::trigger_first_messages::COLLECTION,
     AGENT_LOG,
     "agent_channel_usage",
     "channel_usage_events",
@@ -175,6 +176,7 @@ impl MongoSandboxStore {
         super::workspaces::ensure_indexes(&store.workspaces).await?;
         super::worktrees::ensure_indexes(&store.worktrees).await?;
         super::agents::ensure_indexes(&store.agents).await?;
+        super::trigger_first_messages::ensure_indexes(&store).await?;
         super::agent_log::ensure_indexes(&store.agent_log).await?;
         super::agent_channel_usage::ensure_indexes(&store.channel_usage_events).await?;
         super::agent_commands::ensure_indexes(&store.agent_commands).await?;

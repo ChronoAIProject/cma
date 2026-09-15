@@ -19,6 +19,9 @@ use super::durability::majority_collection;
 use super::sandbox_mongo::{is_duplicate_key, require_transaction_topology, MongoProfileStore};
 use super::schema::initialize_collections;
 
+pub(in crate::store) use launches::decode_launch_aggregate;
+pub(in crate::store) use launches::input_protocol::require_document as require_input_protocol_document;
+
 mod documents;
 mod indexes;
 mod launches;

@@ -3,7 +3,7 @@ use crate::resource_access::{CallerContext, CredentialContext, ResourceActor, Re
 use crate::sandbox::store::AgentAdmission;
 use crate::sandbox::{AgentCreationOrigin, AgentCreationProvenance};
 
-fn context(f: &Fixture, api: bool) -> CallerContext {
+pub(super) fn context(f: &Fixture, api: bool) -> CallerContext {
     CallerContext {
         caller: f.caller.clone(),
         credential: CredentialContext {

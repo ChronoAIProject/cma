@@ -22,3 +22,9 @@ mod worker_tests;
 pub(crate) use self::{connections_nyxid::CmaServiceConnectionBroker, policy::LiveLaunchPolicy};
 pub(crate) use composition::{TriggerComposition, TriggerCompositionDependencies};
 pub(crate) use scheduler::LaunchScheduler;
+
+#[cfg(test)]
+pub(crate) use worker::{
+    LaunchResourceDriver, LaunchResourceEffect, LaunchResourceError, LaunchWorker,
+    LaunchWorkerConfig,
+};

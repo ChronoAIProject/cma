@@ -13,6 +13,7 @@ use super::{
 pub struct CommandEvidence {
     dispatch: CommandDispatch,
     message: bool,
+    trigger_first: bool,
     kind: crate::sandbox::AgentOperationKind,
     cursor: u64,
     turn: Option<u64>,
@@ -34,6 +35,10 @@ impl CommandEvidence {
             .ok_or(CommandLedgerError::Conflict)?;
         Ok(Self {
             dispatch,
+            trigger_first: matches!(
+                command.receipt.envelope.actor,
+                super::AgentActor::Trigger { .. }
+            ),
             message: matches!(
                 command.receipt.envelope.command,
                 AgentCommand::Message { .. }
@@ -179,6 +184,16 @@ impl CommandEvidence {
         match next {
             WriteConfirmed | ExecutionObserved if !self.message => {
                 self.finish(AgentResponseStatus::Completed, None)?
+            }
+            RecoveryRequired if self.trigger_first && !self.status.is_terminal() => {
+                self.status = AgentResponseStatus::WaitingAction;
+            }
+            WriteConfirmed | ExecutionObserved
+                if self.trigger_first
+                    && !self.status.is_terminal()
+                    && self.approvals.is_empty() =>
+            {
+                self.status = AgentResponseStatus::InProgress;
             }
             PreWriteFailed | RuntimeLost => self.finish(
                 AgentResponseStatus::Failed,

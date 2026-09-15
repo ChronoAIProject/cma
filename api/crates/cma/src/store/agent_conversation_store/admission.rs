@@ -21,6 +21,10 @@ pub(super) async fn require_current(
             .channel_execution_fence
             .as_ref()
             .is_some_and(|fence| fence.require_current().is_err())
+        || mutation
+            .trigger_execution_fence
+            .as_ref()
+            .is_some_and(|fence| fence.require_current().is_err())
     {
         let _ = session.abort_transaction().await;
         return Err(SandboxStoreError::Conflict);
@@ -63,7 +67,10 @@ pub(super) async fn validate_and_fence(
         fence
             .validate_snapshot(&snapshot)
             .map_err(|_| ApplyError::Domain(SandboxStoreError::Conflict))?;
-    } else if mutation.command_claim.is_some() && mutation.channel_execution_fence.is_none() {
+    } else if mutation.command_claim.is_some()
+        && mutation.channel_execution_fence.is_none()
+        && mutation.trigger_execution_fence.is_none()
+    {
         let policy = store
             .resource_policies
             .find_one(doc! { "_id": parent.id.as_str() })

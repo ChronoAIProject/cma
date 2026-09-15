@@ -159,6 +159,9 @@ async fn apply_mutation(
         .map_err(ApplyError::Driver)?
         .ok_or(ApplyError::Domain(SandboxStoreError::NotFound))?;
     let current = read_agent(&current_row).map_err(ApplyError::Domain)?;
+    super::trigger_first_messages::require_mutation(store, &current, mutation, session)
+        .await
+        .map_err(ApplyError::Domain)?;
     let mut actual_last_seq = 0;
     let mut latest_turn = None;
     let log_summary = scan_complete_log_with_session(
