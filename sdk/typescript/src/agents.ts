@@ -39,6 +39,14 @@ import {
 import { agentEvent } from './agents/events.js';
 import { accessibleAgent, accessibleAgentSource, accessibleAgentSummary } from './agents/shared.js';
 import { requireRefusal } from './unsupported.js';
+import { readAgentChannelUsage, listAgentChannelUsageHistory } from './agents/channel-usage.js';
+import {
+  listAgentArtifacts,
+  readAgentArtifact,
+  publishAgentArtifact,
+  downloadAgentArtifact,
+  type PublishAgentArtifactRequest,
+} from './agents/artifacts.js';
 
 export interface AgentListOptions extends PageOptions {
   readonly sandbox?: string;
@@ -56,16 +64,47 @@ export interface AgentProvenanceInventoryOptions extends AccessibleAgentListOpti
   readonly shared?: boolean;
   /** Immutable category. Continue with `next` even after an empty filtered page. */
   readonly creationOrigin?: AgentCreationCategory;
+  /** Filter explicit current bindings without changing creation categories. */
+  readonly channelActive?: boolean;
+  /** Filter any retained channel attachment/use history, including detached bindings. */
+  readonly channelHistory?: boolean;
 }
 
 /** Public Agent REST commands and durable read projections. */
 export class Agents {
   constructor(private readonly config: ResolvedConfig) {}
 
+  /** Explicit active/historical channel facts under current resource visibility. */
+  channelUsage(id: string, options: OperationOptions = {}) {
+    return readAgentChannelUsage(this.config, id, options);
+  }
+  /** Current bridge managers can page retained channel binding history. */
+  channelUsageHistory(id: string, options: PageOptions = {}) {
+    return listAgentChannelUsageHistory(this.config, id, options);
+  }
+
+  /** List explicitly approved artifacts under current Agent visibility. */
+  listArtifacts(id: string, options: PageOptions = {}) {
+    return listAgentArtifacts(this.config, id, options);
+  }
+  readArtifact(id: string, artifactId: string, options: OperationOptions = {}) {
+    return readAgentArtifact(this.config, id, artifactId, options);
+  }
+  /** Publish immutable selected content; requires current sharing-management authority. */
+  publishArtifact(id: string, body: PublishAgentArtifactRequest, options: CommandOptions) {
+    return publishAgentArtifact(this.config, id, body, options);
+  }
+  /** Download selected artifact bytes with current authorization; does not execute or render them. */
+  downloadArtifact(id: string, artifactId: string, options: OperationOptions = {}) {
+    return downloadAgentArtifact(this.config, id, artifactId, options);
+  }
+
   /** Safe creation inventory. Omit organization and shared for personal scope. */
   provenanceInventory(options: AgentProvenanceInventoryOptions = {}) {
     if (options.status !== undefined) input(agentStatus, options.status);
     if (options.creationOrigin !== undefined) input(agentCreationCategory, options.creationOrigin);
+    if (options.channelActive !== undefined) input(boolean, options.channelActive);
+    if (options.channelHistory !== undefined) input(boolean, options.channelHistory);
     return read(
       this.config,
       query('/api/v1/agents/provenance', {
@@ -75,6 +114,10 @@ export class Agents {
         workspace: options.workspace,
         status: options.status,
         creation_origin: options.creationOrigin,
+        channel_active:
+          options.channelActive === undefined ? undefined : String(options.channelActive),
+        channel_history:
+          options.channelHistory === undefined ? undefined : String(options.channelHistory),
         cursor: options.cursor,
         limit: options.limit,
       }),

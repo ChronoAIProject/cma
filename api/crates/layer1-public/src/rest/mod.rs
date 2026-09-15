@@ -11,8 +11,16 @@ use axum::{
 use layer2_core::StoreError;
 
 pub mod admin;
+mod agent_artifacts;
 mod agent_openapi_shapes;
+pub use agent_artifacts::agent_artifacts_router;
+#[cfg(test)]
+mod agent_artifacts_tests;
+mod agent_channel_usage;
 mod agent_operate;
+pub use agent_channel_usage::agent_channel_usage_router;
+#[cfg(test)]
+mod agent_channel_usage_tests;
 mod agent_provenance;
 mod agent_provenance_inventory;
 pub use agent_provenance_inventory::agent_provenance_inventory_router;

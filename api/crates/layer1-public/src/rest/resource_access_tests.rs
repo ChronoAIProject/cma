@@ -238,7 +238,7 @@ async fn recipient_effective_access_is_narrow_and_revalidated_without_inventory_
     assert_eq!(status, StatusCode::OK, "{access}");
     assert_eq!(
         access["capabilities"],
-        json!(["view_details", "view_history"])
+        json!(["view_details", "view_history", "view_artifacts"])
     );
     assert!(access["revalidate_at"].is_string());
     for private in [

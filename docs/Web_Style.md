@@ -840,7 +840,7 @@ Scoped results refresh every 30 seconds and expire at the earlier server deadlin
 or 55 seconds from request start, even while another refresh is pending. A read
 that exceeds 15 seconds loses its display authority. Foreground, scope/client
 changes and denied access clear old shared values and cancel streams/exports.
-Scoped artifact controls and channel-use presentation remain subsequent work.
+Channel-use presentation remains subsequent work.
 
 The sidebar's existing Picker chooses Personal, a named Organization or Shared
 with me without
@@ -1871,3 +1871,45 @@ Append-only. Never edit or delete an entry.
 | 2026-09-09 | Add the Sandbox Profile Availability band with public-only warmup, a one-to-five target and Always keep alive, using existing fields and checkbox rows. Clarify the editable private-copy Marketplace action and its fresh Sandbox provisioning behavior. |
 | 2026-09-14 | Keep active Thinking visible above the composer with the rotating compact CMA character and elapsed time restored from the recorded turn start. Limit its disclosure to live reasoning and pending tools; show each settled tool in its own chronological container, preserving replay identity, unknown outcomes and accessible bounded details. |
 | 2026-09-15 | Display immutable Agent creation categories independently of published Trigger shortcuts, add creation facts to Details, and use existing tree metadata and native-select patterns for per-Agent categories, complete child summaries and current-tree origin filtering. Clear optional facts on changed view/access context and keep private source references out of tree rows. |
+
+### Approved Agent artifacts
+
+Personal Agent Details offers **Artifacts** under current artifact visibility;
+current sharing managers may publish a selected file after explicit exposure
+acknowledgment. Shared Agents offer lazy artifact browsing alongside history.
+No parent, repository, credential or runtime files are requested by this view.
+Use the standard Modal and Button primitives, safe display names, byte counts,
+independent paging and clear empty/denied states. Downloads recheck access before
+and after byte buffering and verify the immutable size/hash before creating a
+local file. Content is downloaded as opaque bytes and never executed or rendered.
+
+Keep publication key and body after an uncertain response, including dialog
+close/reopen and Agent navigation within the mounted viewer Console. A retry cannot swap
+selected content. New content requires a new deliberate selection and exposure
+acknowledgment. Current scope/access loss clears artifact rows, disables
+publication and cancels pending downloads while preserving independent personal
+conversation work. Explain that published content is retained with the Agent
+and existing downloads cannot be recalled.
+
+### Channel activity and management history
+
+Show channel activity independently of immutable creation origin. Agent Details
+and shared Agent headers distinguish current linkage, past linkage and absent
+history. Inventory and personal tree filters combine creation origin with current linkage,
+any history, detached history or no history. Tree facts use at most four optional
+reads concurrently and expire under the existing bounded read policy. Sandbox
+and Workspace channel counts require facts for every represented child; an
+unknown child suppresses the summary instead of relabeling its siblings. Use the existing Picker and page controls;
+changing a filter resets pagination. A filtered page can be empty with a next page.
+Rows and JSON exports include only the safe active/history flags and recorded
+first/last accepted-message times. An older server that omits these facts shows
+activity unavailable rather than guessing absence.
+
+Managers can open **Channel history** in the standard Modal. Load history lazily,
+page immutable events, label the actor and time, and place before/after binding
+references inside an expandable event detail. Attachment alone shows no accepted
+message time. Keep raw external conversation identifiers out of the presentation.
+Check current management access before and after each buffered page and retain
+the initial authority deadline. Changed scope, revoked authority or an expired
+read clears private history. Viewing history preserves the personal composer and
+draft. Summary readers never receive the management history control.

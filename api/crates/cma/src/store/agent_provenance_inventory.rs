@@ -2,13 +2,12 @@ use std::time::Duration;
 
 use layer2_core::resource_access::{ResourceAccessStoreError, ResourceOwner};
 use layer2_core::sandbox::store::{
-    AgentProvenanceInventoryStore, AgentProvenanceSnapshot, PageRequest, SandboxStoreError,
+    AgentChannelUsageSnapshot, AgentProvenanceInventoryStore, PageRequest, SandboxStoreError,
 };
 use layer2_core::sandbox::AgentListQuery;
 use mongodb::{bson::doc, ClientSession};
 
 use super::{
-    agent_provenance::read_snapshot,
     agents::read_agent,
     resource_access::{read_agent_inventory, read_shared_agent_inventory, ReadError},
     sandbox_mongo::{
@@ -24,7 +23,7 @@ impl AgentProvenanceInventoryStore for MongoSandboxStore {
         scope: &ResourceOwner,
         query: &AgentListQuery,
         page: &PageRequest,
-    ) -> Result<Vec<AgentProvenanceSnapshot>, SandboxStoreError> {
+    ) -> Result<Vec<AgentChannelUsageSnapshot>, SandboxStoreError> {
         PageRequest::new(page.limit, page.cursor.clone())?;
         for _ in 0..TRANSACTION_ATTEMPTS {
             let mut session = self
@@ -54,7 +53,7 @@ impl AgentProvenanceInventoryStore for MongoSandboxStore {
         organizations: &[layer2_core::SubjectId],
         query: &AgentListQuery,
         page: &PageRequest,
-    ) -> Result<Vec<AgentProvenanceSnapshot>, SandboxStoreError> {
+    ) -> Result<Vec<AgentChannelUsageSnapshot>, SandboxStoreError> {
         PageRequest::new(page.limit, page.cursor.clone())?;
         for _ in 0..TRANSACTION_ATTEMPTS {
             let mut session = self
@@ -107,7 +106,7 @@ async fn scan(
     query: &AgentListQuery,
     page: &PageRequest,
     session: &mut ClientSession,
-) -> Result<Vec<AgentProvenanceSnapshot>, ReadError> {
+) -> Result<Vec<AgentChannelUsageSnapshot>, ReadError> {
     let mut ids = Vec::new();
     match scope {
         ResourceOwner::Organization { subject } => {
@@ -168,4 +167,24 @@ async fn scan(
 
 fn unavailable() -> SandboxStoreError {
     SandboxStoreError::Unavailable("Agent provenance inventory is unavailable".into())
+}
+
+async fn read_snapshot(
+    store: &MongoSandboxStore,
+    id: &layer2_core::AgentId,
+    session: &mut ClientSession,
+) -> Result<AgentChannelUsageSnapshot, ReadError> {
+    super::agent_channel_usage::read_inventory_snapshot(store, id, session)
+        .await
+        .map_err(|error| match error {
+            super::agent_channel_usage::UsageError::Driver(error) => ReadError::Driver(error),
+            super::agent_channel_usage::UsageError::Domain(error) => {
+                ReadError::Domain(match error {
+                    SandboxStoreError::NotFound => ResourceAccessStoreError::NotFound,
+                    SandboxStoreError::Conflict => ResourceAccessStoreError::Conflict,
+                    SandboxStoreError::Unavailable(_) => ResourceAccessStoreError::Unavailable,
+                    _ => ResourceAccessStoreError::Corrupt,
+                })
+            }
+        })
 }

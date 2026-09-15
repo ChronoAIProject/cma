@@ -29,6 +29,8 @@ export type { CommandOptions, EventOptions, PageOptions, ResourcePage } from './
 export type * from './agents/types.js';
 export type * from './agents/shared.js';
 export type * from './agents/provenance.js';
+export type * from './agents/artifacts.js';
+export type * from './agents/channel-usage.js';
 export type * from './instances/shared.js';
 export type * from './agents/events.js';
 export type * from './instances/types.js';

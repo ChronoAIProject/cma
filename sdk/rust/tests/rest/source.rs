@@ -13,6 +13,7 @@ async fn provenance_inventory_preserves_empty_continuations_and_typed_scope_filt
             },
         },
         creation_origin: Some(AgentCreationCategory::ChannelBridge),
+        ..Default::default()
     };
     server.expect(
         "GET",

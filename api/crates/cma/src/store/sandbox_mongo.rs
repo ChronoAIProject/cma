@@ -33,6 +33,7 @@ pub(super) const AGENTS: &str = "agents";
 pub(super) const AGENT_REUSE_BINDINGS: &str = "agent_reuse_bindings";
 pub(super) const AGENT_LOG: &str = "agent_log";
 pub(super) const AGENT_COMMANDS: &str = "agent_commands";
+pub(super) const AGENT_ARTIFACTS: &str = "agent_artifacts";
 pub(super) const SANDBOX_CONTROLS: &str = "sandbox_controls";
 pub(super) const COMMAND_AUTHORIZATION_AUDITS: &str = "command_authorization_audits";
 pub(super) const AGENT_COMMAND_ORDERS: &str = "agent_command_orders";
@@ -57,7 +58,10 @@ const SANDBOX_COLLECTIONS: &[&str] = &[
     AGENTS,
     AGENT_REUSE_BINDINGS,
     AGENT_LOG,
+    "agent_channel_usage",
+    "channel_usage_events",
     AGENT_COMMANDS,
+    AGENT_ARTIFACTS,
     SANDBOX_CONTROLS,
     AGENT_COMMAND_ORDERS,
     RESOURCE_POLICIES,
@@ -90,7 +94,10 @@ pub struct MongoSandboxStore {
     pub(super) agent_reuse_bindings: Collection<Document>,
     pub(super) agent_log: Collection<Document>,
     pub(super) agent_creation_provenance: Collection<Document>,
+    pub(super) agent_channel_usage: Collection<Document>,
+    pub(super) channel_usage_events: Collection<Document>,
     pub(super) agent_commands: Collection<Document>,
+    pub(super) agent_artifacts: Collection<Document>,
     pub(super) sandbox_controls: Collection<Document>,
     pub(super) command_authorization_audits: Collection<Document>,
     pub(super) agent_command_orders: Collection<Document>,
@@ -136,7 +143,10 @@ impl MongoSandboxStore {
             agent_reuse_bindings: majority_collection(&database, AGENT_REUSE_BINDINGS),
             agent_log: majority_collection(&database, AGENT_LOG),
             agent_creation_provenance: majority_collection(&database, "agent_creation_provenance"),
+            agent_channel_usage: majority_collection(&database, "agent_channel_usage"),
+            channel_usage_events: majority_collection(&database, "channel_usage_events"),
             agent_commands: majority_collection(&database, AGENT_COMMANDS),
+            agent_artifacts: majority_collection(&database, AGENT_ARTIFACTS),
             sandbox_controls: majority_collection(&database, SANDBOX_CONTROLS),
             command_authorization_audits: majority_collection(
                 &database,
@@ -163,10 +173,12 @@ impl MongoSandboxStore {
         super::worktrees::ensure_indexes(&store.worktrees).await?;
         super::agents::ensure_indexes(&store.agents).await?;
         super::agent_log::ensure_indexes(&store.agent_log).await?;
+        super::agent_channel_usage::ensure_indexes(&store.channel_usage_events).await?;
         super::agent_commands::ensure_indexes(&store.agent_commands).await?;
         super::sandbox_controls::ensure_indexes(&store.sandbox_controls).await?;
         super::agent_commands::audit::ensure_indexes(&store.command_authorization_audits).await?;
         super::resource_access::ensure_indexes(&store).await?;
+        super::resource_access::ensure_artifact_indexes(&store.agent_artifacts).await?;
         super::sandbox_events::ensure_indexes(&store.sandbox_events).await?;
         super::checkpoints::ensure_indexes(&store.checkpoints).await?;
         super::warm_sandboxes::ensure_indexes(&store.warm_sandboxes).await?;

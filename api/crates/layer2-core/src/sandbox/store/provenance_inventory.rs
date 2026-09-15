@@ -1,7 +1,7 @@
 use crate::resource_access::ResourceOwner;
 use crate::sandbox::AgentListQuery;
 
-use super::{AgentProvenanceSnapshot, PageRequest, SandboxStoreError};
+use super::{AgentChannelUsageSnapshot, PageRequest, SandboxStoreError};
 
 /// Internal selection scope, never caller-supplied authority. Organization scope
 /// includes explicit ownership and active grants, with overlap deduplicated.
@@ -16,7 +16,7 @@ pub trait AgentProvenanceInventoryStore: Send + Sync {
         scope: &ResourceOwner,
         query: &AgentListQuery,
         page: &PageRequest,
-    ) -> Result<Vec<AgentProvenanceSnapshot>, SandboxStoreError>;
+    ) -> Result<Vec<AgentChannelUsageSnapshot>, SandboxStoreError>;
 
     /// Explicit incoming shares only, across freshly verified organizations.
     /// Excludes the recipient's personally owned Agents before bounding the page.
@@ -26,5 +26,5 @@ pub trait AgentProvenanceInventoryStore: Send + Sync {
         organizations: &[crate::SubjectId],
         query: &AgentListQuery,
         page: &PageRequest,
-    ) -> Result<Vec<AgentProvenanceSnapshot>, SandboxStoreError>;
+    ) -> Result<Vec<AgentChannelUsageSnapshot>, SandboxStoreError>;
 }

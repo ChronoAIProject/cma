@@ -31,6 +31,40 @@ pub async fn dispatch(c: &Context<'_>) -> Result<()> {
         };
     }
     match op {
+        "GET /api/v1/agents/{id}/channel-usage" => {
+            c.check(client.agents().channel_usage(c.param("id")).await)
+        }
+        "GET /api/v1/agents/{id}/channel-usage/history" => c.check(
+            client
+                .agents()
+                .channel_usage_history(c.param("id"), &c.page()?)
+                .await,
+        ),
+        "GET /api/v1/agents/{id}/artifacts" => c.check(
+            client
+                .agents()
+                .list_artifacts(c.param("id"), &c.page()?)
+                .await,
+        ),
+        "GET /api/v1/agents/{id}/artifacts/{artifact_id}" => c.check(
+            client
+                .agents()
+                .read_artifact(c.param("id"), c.param("artifact_id"))
+                .await,
+        ),
+        "POST /api/v1/agents/{id}/artifacts" => c.check(
+            client
+                .agents()
+                .publish_artifact(c.param("id"), &c.body()?, &c.key()?)
+                .await,
+        ),
+        "GET /api/v1/agents/{id}/artifacts/{artifact_id}/download" => c.check(
+            client
+                .agents()
+                .download_artifact(c.param("id"), c.param("artifact_id"))
+                .await
+                .map(|bytes| String::from_utf8(bytes).unwrap()),
+        ),
         "POST /api/v1/sandboxes/{id}/commands" => c.check(
             client
                 .sandboxes()
@@ -175,6 +209,8 @@ pub async fn dispatch(c: &Context<'_>) -> Result<()> {
                         },
                     },
                     creation_origin: c.tag("creation_origin")?,
+                    channel_active: c.number::<bool>("channel_active")?,
+                    channel_history: c.number::<bool>("channel_history")?,
                 })
                 .await,
         ),

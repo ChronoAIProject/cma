@@ -21,6 +21,7 @@ use crate::sandbox::{
 
 use super::InMemorySandboxStore;
 
+mod channel_usage;
 mod creation_revival;
 mod provenance;
 mod provenance_backfill;

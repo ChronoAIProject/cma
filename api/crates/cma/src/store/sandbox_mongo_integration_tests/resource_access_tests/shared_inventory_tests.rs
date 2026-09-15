@@ -47,7 +47,7 @@ async fn shared_provenance_inventory_merges_orgs_and_excludes_owner_before_pagin
     assert_eq!(
         ids(&first
             .into_iter()
-            .map(|row| row.resource)
+            .map(|row| row.provenance.resource)
             .collect::<Vec<_>>()),
         ["agt_share", "z-shared"]
     );
@@ -61,7 +61,10 @@ async fn shared_provenance_inventory_merges_orgs_and_excludes_owner_before_pagin
         .await
         .unwrap();
     assert_eq!(
-        ids(&last.into_iter().map(|row| row.resource).collect::<Vec<_>>()),
+        ids(&last
+            .into_iter()
+            .map(|row| row.provenance.resource)
+            .collect::<Vec<_>>()),
         ["z-shared"]
     );
     assert!(two
@@ -112,7 +115,10 @@ async fn shared_provenance_inventory_merges_orgs_and_excludes_owner_before_pagin
         .await
         .unwrap();
     assert_eq!(
-        ids(&all.into_iter().map(|row| row.resource).collect::<Vec<_>>()),
+        ids(&all
+            .into_iter()
+            .map(|row| row.provenance.resource)
+            .collect::<Vec<_>>()),
         ["a-private", "agt_share", "b-other-org", "z-shared"]
     );
     assert_eq!(

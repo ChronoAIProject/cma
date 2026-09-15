@@ -14,6 +14,24 @@ pub enum Classification {
 // against its source shape or the SDK's real preflight, then its shared error is decoded.
 pub const LOCAL_CASES: &[(&str, Classification)] = &[
     (
+        "channel-inventory-invalid-active",
+        Classification::TypedShape,
+    ),
+    (
+        "channel-inventory-invalid-history",
+        Classification::TypedShape,
+    ),
+    ("channel-usage-zero-limit", Classification::Local),
+    ("channel-usage-large-limit", Classification::Local),
+    ("channel-usage-invalid-cursor", Classification::Local),
+    ("artifact-missing-key", Classification::Local),
+    ("artifact-invalid-name", Classification::Local),
+    ("artifact-invalid-media_type", Classification::Local),
+    ("artifact-invalid-content_base64", Classification::Local),
+    ("artifact-zero-limit", Classification::Local),
+    ("artifact-large-limit", Classification::Local),
+    ("artifact-invalid-cursor", Classification::Local),
+    (
         "shared-sandbox-inventory-mixed-scope",
         Classification::Local,
     ),

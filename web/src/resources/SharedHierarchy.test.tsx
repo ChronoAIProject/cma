@@ -79,6 +79,11 @@ function fixture(shared = false) {
         { code: 'resource_not_found', detail: 'Access removed' },
         { status: 404 },
       );
+    if (url.pathname === '/api/v1/agents/agt_shared/channel-usage')
+      return Response.json({
+        agent_id: 'agt_shared',
+        channel_usage: { active: true, has_history: true, first_used_at: null, last_used_at: null },
+      });
     if (url.pathname.includes('/resource-access/'))
       return Response.json({
         capabilities: ['view_details'],
@@ -147,9 +152,9 @@ it('opens a shared Sandbox using safe metadata and loads a Workspace only when e
   expect(test.navigate).toHaveBeenCalledWith({ kind: 'agent', agentId: agent.id });
   for (const read of [test.readSandbox, test.readWorkspace, test.readAgent])
     expect(read).not.toHaveBeenCalled();
-  expect(test.paths.some((path) => /profiles|resources|connections|events|usage/.test(path))).toBe(
-    false,
-  );
+  expect(
+    test.paths.some((path) => /profiles|resources|connections|events|\/usage(?:\?|$)/.test(path)),
+  ).toBe(false);
 });
 
 it('clears parent and descendant labels after revoked hierarchy access', async () => {

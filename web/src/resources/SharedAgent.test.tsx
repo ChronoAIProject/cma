@@ -226,7 +226,19 @@ it('preserves a personal draft during foreground access refresh and clears the p
   let finish: ((response: Response) => void) | undefined;
   const sdk = createClient({
     baseUrl: 'https://fixture.invalid',
-    fetch: async () => {
+    fetch: async (input) => {
+      const path = new URL(String(input)).pathname;
+      if (path === '/api/v1/organizations') return Response.json({ items: [] });
+      if (path.endsWith('/channel-usage'))
+        return Response.json({
+          agent_id: 'agt_1',
+          channel_usage: {
+            active: false,
+            has_history: false,
+            first_used_at: null,
+            last_used_at: null,
+          },
+        });
       if (hold)
         return new Promise<Response>((resolve) => {
           finish = resolve;

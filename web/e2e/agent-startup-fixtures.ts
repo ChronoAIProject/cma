@@ -61,6 +61,16 @@ export class LocalStartup {
           capabilities: ['use_own_sandboxes', 'create_sandbox', 'delete_own_sandbox'],
         });
       if (!url.pathname.startsWith('/api/')) return route.continue();
+      if (url.pathname === `/api/v1/agents/${this.agent.id}/channel-usage`)
+        return reply({
+          agent_id: this.agent.id,
+          channel_usage: {
+            active: false,
+            has_history: false,
+            first_used_at: null,
+            last_used_at: null,
+          },
+        });
       if (request.method() === 'POST') {
         this.writes.push({
           path: url.pathname,

@@ -7,10 +7,14 @@ use crate::{
 };
 use reqwest::{Method, StatusCode};
 
+mod artifacts;
+mod channel_usage;
 mod events;
 mod provenance;
 mod shared;
 mod types;
+pub use artifacts::*;
+pub use channel_usage::*;
 pub use events::*;
 pub use provenance::*;
 pub use shared::*;
@@ -74,6 +78,12 @@ impl Agents<'_> {
         }
         if let Some(category) = options.creation_origin {
             query.push(("creation_origin", category.as_str().into()));
+        }
+        if let Some(active) = options.channel_active {
+            query.push(("channel_active", active.to_string()));
+        }
+        if let Some(history) = options.channel_history {
+            query.push(("channel_history", history.to_string()));
         }
         self.client.get(&["agents", "provenance"], &query).await
     }

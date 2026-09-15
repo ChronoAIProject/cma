@@ -11,6 +11,7 @@ const row = {
   created_at: '2026-09-01T00:00:00Z',
   updated_at: '2026-09-01T00:00:00Z',
   creation_origin: 'trigger' as const,
+  channel_usage: { active: false, has_history: true, first_used_at: null, last_used_at: null },
 };
 afterEach(() => {
   vi.restoreAllMocks();
@@ -23,6 +24,7 @@ it('exports only documented safe creation fields even if an object includes priv
     owner: 'private-owner',
     details: { trigger_id: 'private-trigger' },
     workspace_id: 'private-parent',
+    channel_usage: { ...row.channel_usage, binding_id: 'private-binding' },
   };
   const encoded = inventoryExport([value]);
   expect(JSON.parse(encoded)).toEqual({ agents: [row] });

@@ -28,22 +28,31 @@ impl OrganizationAuthority for NoAuthority {
     }
 }
 
-fn service(store: Arc<MongoSandboxStore>) -> Arc<AgentProvenanceInventoryService> {
+pub(super) fn service(store: Arc<MongoSandboxStore>) -> Arc<AgentProvenanceInventoryService> {
     let access = Arc::new(ResourceAccessService::new(
         store.clone(),
         Arc::new(NoAuthority),
     ));
     AgentProvenanceInventoryService::new(store, access)
 }
-fn owner() -> Caller {
+pub(super) fn owner() -> Caller {
     Caller::new(
         SubjectId::new("owner"),
         Authorization::new([Capability::UseOwnSandboxes]),
     )
 }
-fn ids(rows: &[layer2_core::sandbox::store::AgentProvenanceSnapshot]) -> Vec<&str> {
+fn ids(rows: &[layer2_core::sandbox::store::AgentChannelUsageSnapshot]) -> Vec<&str> {
     rows.iter()
-        .map(|row| row.resource.lineage.agent.as_ref().unwrap().id.as_str())
+        .map(|row| {
+            row.provenance
+                .resource
+                .lineage
+                .agent
+                .as_ref()
+                .unwrap()
+                .id
+                .as_str()
+        })
         .collect()
 }
 
@@ -278,6 +287,7 @@ async fn provenance_inventory_explicit_org_owner_excludes_same_subject_personal_
     assert_eq!(ids(&result), [request.agent_id.as_str()]);
     assert_eq!(
         result[0]
+            .provenance
             .creation_provenance(&request.agent_id)
             .unwrap()
             .owner,
