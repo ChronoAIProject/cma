@@ -1,6 +1,7 @@
 import { parseRecord, type InputRecord, type TransportRecord } from './journalRecord';
 import type { ControlRecord } from './controlRecord';
 import { IdentityChangedError } from './identity';
+import { QueuedCancellationJournal } from './queuedJournal';
 
 const PREFIX = 'cma:agent-transport:v1:';
 const IDENTITY = `${PREFIX}identity`;
@@ -63,6 +64,7 @@ export function agentTransportJournal(
 export class AgentTransportJournal {
   private readonly key: string;
   private invalidated = false;
+  readonly queuedCancellation: QueuedCancellationJournal;
 
   constructor(
     private readonly storage: BrowserStorage,
@@ -71,6 +73,16 @@ export class AgentTransportJournal {
     private readonly makeKey: () => string,
   ) {
     this.key = `${PREFIX}${encodeURIComponent(identity.user)}:${encodeURIComponent(agent)}`;
+    this.queuedCancellation = new QueuedCancellationJournal(
+      storage,
+      `${this.key}:queued-cancellation:v1`,
+      agent,
+      identity.epoch,
+      () => {
+        if (this.current()?.transport !== 'responses_v2')
+          throw new Error('This Agent has not selected the Responses transport.');
+      },
+    );
   }
 
   get agentId(): string {

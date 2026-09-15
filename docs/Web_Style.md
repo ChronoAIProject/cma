@@ -730,6 +730,16 @@ body and original target. Use the existing status band and compact Button for
 Keep the draft editable and clear only the draft matching a retained acceptance.
 A refused intent may be corrected after an authoritative admission refusal.
 
+For the latest locally accepted message, a fresh public observation may offer
+**Cancel queued message** before execution starts. Reuse the existing status
+band and compact Button, with a bounded preview identifying that message. Keep
+queued cancellation separate from Stop response. Retain its original message,
+source revision and key before submission; **Recover cancellation** repeats only
+that exact intent after uncertainty. A completed cancellation receipt confirms
+that the message was cancelled before starting. Account changes clear this view;
+incomplete history and read-only access hold its actions. The draft and any other
+active response stay visible while status observation and cancellation proceed.
+
 Read accepted action receipts to show queued, delivered or failed delivery in
 the existing status band. Delivery does not finish the displayed response; only
 its recorded outcome does. A turn lacking a safe response binding keeps history
@@ -1917,6 +1927,7 @@ Append-only. Never edit or delete an entry.
 | 2026-09-14 | Keep active Thinking visible above the composer with the rotating compact CMA character and elapsed time restored from the recorded turn start. Limit its disclosure to live reasoning and pending tools; show each settled tool in its own chronological container, preserving replay identity, unknown outcomes and accessible bounded details. |
 | 2026-09-15 | Display immutable Agent creation categories independently of published Trigger shortcuts, add creation facts to Details, and use existing tree metadata and native-select patterns for per-Agent categories, complete child summaries and current-tree origin filtering. Clear optional facts on changed view/access context and keep private source references out of tree rows. |
 | 2026-09-16 | Document authenticated per-tab Agent transport selection, explicit retained-request recovery, response action delivery status, account-change clearing and live-gap handling using the existing Agent status band, Button and composer patterns. |
+| 2026-09-16 | Add explicit cancellation and exact recovery for the latest locally accepted queued message using the existing Agent status band and Button. Preserve active-response controls, pending input, account isolation and editable drafts. |
 
 ### Approved Agent artifacts
 
