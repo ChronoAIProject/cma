@@ -151,7 +151,7 @@ impl MongoBridgeInvokeStore {
             .map_err(|_| Error::SourceMismatch)?;
         let fields = sandbox_replacement_fields(&next).map_err(|_| Error::SourceMismatch)?;
         let changed = self.resources.sandboxes.update_one(
-            doc! {"_id":current.id.as_str(),"revision":current.revision as i64,"record":record_bson(current).map_err(|_| Error::SourceMismatch)?},
+            doc! {"channel_reuse_cleanup_execution":{"$exists":false},"_id":current.id.as_str(),"revision":current.revision as i64,"record":record_bson(current).map_err(|_| Error::SourceMismatch)?},
             doc! {"$set":fields},
         ).session(&mut *session).await?;
         if changed.matched_count != 1 {

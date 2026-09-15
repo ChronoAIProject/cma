@@ -29,7 +29,7 @@ mod policy;
 mod provenance_backfill;
 pub(crate) use provenance_backfill::AgentProvenanceBackfill;
 mod reconciliation;
-mod runtime_attachment;
+pub(crate) mod runtime_attachment;
 mod runtime_mapping;
 mod scheduler;
 mod title_scheduler;
@@ -55,6 +55,11 @@ pub(crate) use policy::LiveSandboxPolicy;
 pub(crate) use runtime_mapping::{runtime_capabilities, runtime_options};
 pub(crate) use title_worker::ProviderTitleEndpoint;
 pub(crate) use unavailable_credentials::UnavailableSandboxCredentials;
+
+#[cfg(test)]
+pub(crate) use workspace_worker::{
+    WorkspaceWorker, WorkspaceWorkerConfig, WorkspaceWorkerDependencies,
+};
 
 #[cfg(test)]
 mod agent_worker_tests;

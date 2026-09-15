@@ -136,6 +136,7 @@ fn workspace_revision_filter(
     Ok(doc! {
         "_id": id.as_str(),
         "document_schema_version": DOCUMENT_SCHEMA_VERSION,
+        "channel_reuse_cleanup_execution": { "$exists": false },
         "revision": signed(revision, "workspace removal revision")
             .map_err(|_| ApplyError::Domain(SandboxStoreError::Conflict))?,
     })

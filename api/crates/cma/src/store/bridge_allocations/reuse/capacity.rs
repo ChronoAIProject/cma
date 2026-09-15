@@ -61,6 +61,9 @@ impl MongoBridgeAllocationStore {
                 return Err(AllocationError::Capacity.into());
             }
             let retained = records::decode_record(&row)?;
+            let agent_released = self
+                .cleanup_released_agent_capacity(&retained, session)
+                .await?;
             if let AllocationPlacement::ReuseParent {
                 target: reserved,
                 parent,
@@ -70,7 +73,7 @@ impl MongoBridgeAllocationStore {
                 if parent.workspace_created_at.is_none() {
                     workspaces.insert(reserved.workspace_id.clone());
                 }
-                if reserved.workspace_id == target.workspace_id {
+                if reserved.workspace_id == target.workspace_id && !agent_released {
                     agents.insert(reserved.agent_id);
                 }
             }

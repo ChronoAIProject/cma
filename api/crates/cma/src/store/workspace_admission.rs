@@ -306,6 +306,7 @@ async fn apply_admission(
             let updated = store.sandboxes.update_one(doc! {
             "_id": sandbox.id.as_str(),
             "document_schema_version": DOCUMENT_SCHEMA_VERSION,
+            "channel_reuse_cleanup_execution": { "$exists": false },
             "revision": signed(sandbox.revision, "sandbox revision")
                 .map_err(|error| ApplyError::Domain(SandboxStoreError::Corrupt(error)))?,
         }, doc! { "$set": sandbox_replacement_fields(&next).map_err(ApplyError::Domain)? })
@@ -362,6 +363,7 @@ pub(super) async fn lock_sandbox(
             doc! {
                 "_id": sandbox_id,
                 "document_schema_version": DOCUMENT_SCHEMA_VERSION,
+                "channel_reuse_cleanup_execution": { "$exists": false },
             },
             doc! { "$inc": { "workspace_admission_fence": 1_i64 } },
         )

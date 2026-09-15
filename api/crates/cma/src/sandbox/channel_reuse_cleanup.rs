@@ -11,10 +11,12 @@ use layer2_core::{
 use serde::{Deserialize, Serialize};
 
 mod admission;
+mod removal;
 mod seal;
 pub(crate) use admission::{
     ChannelReuseCleanupAdmission, ChannelReuseCleanupObservation, CLEANUP_ADMISSION_FIELD,
 };
+pub(crate) use removal::*;
 pub(crate) use seal::agent_busy;
 #[cfg(test)]
 mod tests;

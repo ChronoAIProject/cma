@@ -6,8 +6,8 @@ mod effects;
 mod faults;
 #[path = "reuse_cleanup_drain_fixture.rs"]
 mod fixture;
-#[path = "reuse_cleanup_trigger_tests.rs"]
-mod trigger;
+#[path = "reuse_cleanup_removal_tests.rs"]
+mod removal;
 
 #[tokio::test]
 #[ignore = "requires the disposable MongoDB replica contract runner"]
@@ -163,3 +163,6 @@ async fn shared_child_cleanup_drain_reopened_store_rechecks_audit_and_current_li
         .contains_key(CLEANUP_ADMISSION_FIELD));
     f.close().await;
 }
+
+#[path = "reuse_cleanup_trigger_tests.rs"]
+mod trigger;

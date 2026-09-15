@@ -74,7 +74,7 @@ impl MongoBridgeAllocationStore {
         Err(AllocationError::Unavailable)
     }
 
-    async fn cleanup_drain_transaction(
+    pub(super) async fn cleanup_drain_transaction(
         &self,
         permit: &ChannelReuseCleanupAuthority,
         request: &ChannelReuseCleanupRequest,
@@ -138,7 +138,7 @@ impl MongoBridgeAllocationStore {
         })
     }
 
-    async fn require_cleanup_admission(
+    pub(super) async fn require_cleanup_admission(
         &self,
         database: &Database,
         saved: &ChannelReuseCleanupState,

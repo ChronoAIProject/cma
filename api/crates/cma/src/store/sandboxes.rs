@@ -388,6 +388,7 @@ impl SandboxStore for MongoSandboxStore {
                     "_id": sandbox.id.as_str(),
                     "document_schema_version": DOCUMENT_SCHEMA_VERSION,
                     "revision": expected,
+                    "channel_reuse_cleanup_execution": { "$exists": false },
                     "origin_type": origin_type,
                     "origin_launch_id": origin_launch_id,
                 },

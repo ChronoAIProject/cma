@@ -38,6 +38,9 @@ use crate::store::{
     MongoBridgeInvokeStore, MongoBridgeStore,
 };
 
+pub(in crate::store) use channel_reuse_cleanup::{
+    read_removal as read_cleanup_tombstone, require_complete as require_completed_cleanup_child,
+};
 pub(super) use records::{decode_head, decode_record};
 
 #[derive(Clone)]
@@ -69,6 +72,8 @@ impl MongoBridgeAllocationStore {
                 "channel_reuse_cleanup_audits",
                 "channel_reuse_cleanup_admissions",
                 "channel_reuse_cleanup_admission_audits",
+                "channel_reuse_cleanup_tombstones",
+                "channel_reuse_cleanup_removal_audits",
             ],
         )
         .await?;
