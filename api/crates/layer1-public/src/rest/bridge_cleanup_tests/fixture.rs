@@ -7,11 +7,12 @@ use layer2_core::{
     sandbox::store::{InMemorySandboxStore, SandboxStore, WorkspaceStore},
 };
 use std::sync::{
-    atomic::{AtomicUsize, Ordering},
+    atomic::{AtomicBool, AtomicUsize, Ordering},
     Arc, Mutex,
 };
 
 mod retained;
+mod workspace;
 
 pub(in crate::rest) fn context(subject: &str) -> CallerContext {
     let mut context = resource_access_tests::context(subject);
@@ -25,6 +26,9 @@ pub(in crate::rest) struct Memory {
     pub records: Vec<AllocationRecord>,
     pub failure: AtomicUsize,
     state: Mutex<Option<(String, ChildCleanupStatus)>>,
+    workspace_state: Mutex<Option<(String, WorkspaceCleanupStatus)>>,
+    pub runtime_supported: AtomicBool,
+    pub child_complete: AtomicBool,
 }
 impl Memory {
     fn available(&self) -> Result<(), CleanupError> {
@@ -103,6 +107,26 @@ impl BridgeCleanupStore for Memory {
         }
         Ok(Some(status.clone()))
     }
+    async fn workspace_status(
+        &self,
+        access: &CleanupAccess,
+    ) -> Result<WorkspaceCleanupStatus, CleanupError> {
+        self.read_workspace(access)
+    }
+    async fn workspace_recover(
+        &self,
+        access: &CleanupAccess,
+        id: &str,
+        digest: &str,
+    ) -> Result<Option<WorkspaceCleanupStatus>, CleanupError> {
+        self.recover_workspace(access, id, digest)
+    }
+    async fn workspace_submit(
+        &self,
+        write: WorkspaceCleanupWrite,
+    ) -> Result<WorkspaceCleanupStatus, CleanupError> {
+        self.submit_workspace(write)
+    }
     async fn submit(&self, write: CleanupWrite) -> Result<ChildCleanupStatus, CleanupError> {
         write.require_current()?;
         self.available()?;
@@ -137,10 +161,32 @@ pub(in crate::rest) struct Fixture {
     pub allocation: String,
 }
 pub(in crate::rest) async fn fixture() -> Fixture {
+    fixture_for(false).await
+}
+pub(in crate::rest) async fn owned_fixture() -> Fixture {
+    fixture_for(true).await
+}
+async fn fixture_for(owned: bool) -> Fixture {
     let resources = Arc::new(InMemorySandboxStore::default());
     let mut sandbox = agents_tests::sandbox("sbx_cleanup_parent", "owner-a");
     let mut workspace =
         agents_tests::workspace("wks_cleanup_parent", sandbox.id.as_str(), "owner-a");
+    if owned {
+        let bridge =
+            BridgeService::creation_id(&context("owner-a"), "cleanup-http-fixture").unwrap();
+        let identity = AllocationIdentity {
+            bridge_id: bridge,
+            key: serde_json::from_value(serde_json::json!({"version":1,"hash":"1".repeat(64)}))
+                .unwrap(),
+            generation: 1,
+        };
+        let id = identity.id().unwrap();
+        let suffix =
+            layer2_core::profiles::content_digest(&("cma.bridge.resource.v1", &id, "workspace"))
+                .unwrap();
+        workspace.id = layer2_core::WorkspaceId(format!("wks_{}", &suffix[..32]));
+        workspace.profile.content.agent_profiles.clear();
+    }
     sandbox.profile.digest =
         layer2_core::profiles::content_digest(&sandbox.profile.content).unwrap();
     workspace.profile.digest =
@@ -159,7 +205,18 @@ pub(in crate::rest) async fn fixture() -> Fixture {
     );
     let caller = context("owner-a");
     let bridge = BridgeService::creation_id(&caller, "cleanup-http-fixture").unwrap();
-    let config = retained::config(&sandbox, &workspace);
+    let mut config = retained::config(&sandbox, &workspace);
+    if owned {
+        let mut value = serde_json::to_value(&config).unwrap();
+        value["placement"]["kind"] = serde_json::json!("workspace_per_partition");
+        value["placement"]
+            .as_object_mut()
+            .unwrap()
+            .remove("workspace_id");
+        value["placement"]["workspace_profile"] =
+            serde_json::json!({"id":workspace.profile.id,"revision":workspace.profile.revision});
+        config = serde_json::from_value(value).unwrap();
+    }
     definitions
         .mutate(
             &caller,
@@ -184,6 +241,9 @@ pub(in crate::rest) async fn fixture() -> Fixture {
         records: vec![record],
         failure: AtomicUsize::new(0),
         state: Mutex::new(None),
+        workspace_state: Mutex::new(None),
+        runtime_supported: AtomicBool::new(true),
+        child_complete: AtomicBool::new(true),
     });
     let service = BridgeCleanupService::new(
         definitions.clone(),
@@ -201,4 +261,10 @@ pub(in crate::rest) async fn fixture() -> Fixture {
 
 pub(in crate::rest) fn body() -> serde_json::Value {
     serde_json::json!({"expected_bridge_revision":1,"expected_allocation_revision":4,"action":"remove_child"})
+}
+
+pub(in crate::rest) fn workspace_body() -> serde_json::Value {
+    serde_json::json!({"expected_bridge_revision":1,"expected_allocation_revision":4,
+    "expected_workspace_revision":3,"child_cleanup_receipt_id":workspace::child_receipt_id(),
+    "action":"remove_owned_workspace"})
 }

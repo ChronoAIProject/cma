@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "openapi_operations": 173,
+  "openapi_operations": 175,
   "operations": {
     "GET /api/v1/organizations": {
       "classification": "openapi",
@@ -2487,6 +2487,35 @@
         "bridge_child_cleanup_unavailable",
         "bridge_not_found",
         "invalid_bridge_child_cleanup",
+        "invalid_json",
+        "missing_idempotency_key",
+        "not_authenticated"
+      ]
+    },
+    "GET /api/v1/bridges/{id}/allocations/{allocation}/workspace-cleanup": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/bridge_cleanup/workspace.rs# Current Bridge and whole-parent management exposes separate allocation-owned Workspace cleanup and exact keyed recovery.",
+      "required_problems": [
+        "bridge_workspace_cleanup_conflict",
+        "bridge_workspace_cleanup_evidence_inconsistent",
+        "bridge_workspace_cleanup_not_found",
+        "bridge_workspace_cleanup_unavailable",
+        "bridge_not_found",
+        "invalid_bridge_workspace_cleanup",
+        "not_authenticated"
+      ]
+    },
+    "POST /api/v1/bridges/{id}/allocations/{allocation}/workspace-cleanup": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/bridge_cleanup/workspace.rs# Current Bridge and whole-parent management exposes separate allocation-owned Workspace cleanup and exact keyed recovery.",
+      "required_problems": [
+        "bridge_workspace_cleanup_conflict",
+        "bridge_workspace_cleanup_evidence_inconsistent",
+        "bridge_workspace_cleanup_not_found",
+        "bridge_workspace_cleanup_original_actor_required",
+        "bridge_workspace_cleanup_unavailable",
+        "bridge_not_found",
+        "invalid_bridge_workspace_cleanup",
         "invalid_json",
         "missing_idempotency_key",
         "not_authenticated"
