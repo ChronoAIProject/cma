@@ -14,6 +14,7 @@ mod agent_log_integrity;
 mod agent_profiles;
 mod agent_provenance;
 mod agent_provenance_backfill;
+mod agent_provenance_inventory;
 mod agent_reads;
 mod agent_title_claims;
 mod agent_title_state;

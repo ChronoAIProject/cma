@@ -52,10 +52,27 @@ impl ResourceAccessStore for InMemorySandboxStore {
         query: &crate::sandbox::AgentListQuery,
         page: &crate::sandbox::store::PageRequest,
     ) -> Result<Vec<ResourceAccessSnapshot>, ResourceAccessStoreError> {
-        crate::sandbox::store::PageRequest::new(page.limit, page.cursor.clone())
-            .map_err(|_| ResourceAccessStoreError::Invalid)?;
+        organization_agent_snapshots(&self.lock(), organization, query, page)
+    }
+
+    async fn resource_access_snapshot(
+        &self,
+        target: &ResourceTarget,
+    ) -> Result<ResourceAccessSnapshot, ResourceAccessStoreError> {
         let state = self.lock();
-        let mut candidates: Vec<_> = state.agents.values().filter(|agent| {
+        snapshot(&state, target)
+    }
+}
+
+pub(super) fn organization_agent_snapshots(
+    state: &super::super::State,
+    organization: &crate::SubjectId,
+    query: &crate::sandbox::AgentListQuery,
+    page: &crate::sandbox::store::PageRequest,
+) -> Result<Vec<ResourceAccessSnapshot>, ResourceAccessStoreError> {
+    crate::sandbox::store::PageRequest::new(page.limit, page.cursor.clone())
+        .map_err(|_| ResourceAccessStoreError::Invalid)?;
+    let mut candidates: Vec<_> = state.agents.values().filter(|agent| {
             if !query.matches(agent)
                 || page.cursor.as_deref().is_some_and(|cursor| agent.id.as_str() <= cursor)
             {
@@ -74,30 +91,21 @@ impl ResourceAccessStore for InMemorySandboxStore {
                     }
             })
         }).collect();
-        candidates.sort_by(|left, right| left.id.as_str().cmp(right.id.as_str()));
-        candidates
-            .into_iter()
-            .take(usize::from(page.limit) + 1)
-            .map(|agent| {
-                let value = snapshot(
-                    &state,
-                    &ResourceTarget::Agent {
-                        agent_id: agent.id.clone(),
-                    },
-                )?;
-                value.organization_agent(organization)?;
-                Ok(value)
-            })
-            .collect()
-    }
-
-    async fn resource_access_snapshot(
-        &self,
-        target: &ResourceTarget,
-    ) -> Result<ResourceAccessSnapshot, ResourceAccessStoreError> {
-        let state = self.lock();
-        snapshot(&state, target)
-    }
+    candidates.sort_by(|left, right| left.id.as_str().cmp(right.id.as_str()));
+    candidates
+        .into_iter()
+        .take(usize::from(page.limit) + 1)
+        .map(|agent| {
+            let value = snapshot(
+                state,
+                &ResourceTarget::Agent {
+                    agent_id: agent.id.clone(),
+                },
+            )?;
+            value.organization_agent(organization)?;
+            Ok(value)
+        })
+        .collect()
 }
 
 pub(super) fn snapshot(

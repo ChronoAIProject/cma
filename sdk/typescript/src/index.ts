@@ -2,7 +2,12 @@
 
 export { Cma, createClient } from './client.js';
 export * from './resource-access.js';
-export { Agents, type AgentListOptions, type AccessibleAgentListOptions } from './agents.js';
+export {
+  Agents,
+  type AgentListOptions,
+  type AccessibleAgentListOptions,
+  type AgentProvenanceInventoryOptions,
+} from './agents.js';
 export {
   Sandboxes,
   type SandboxListOptions,

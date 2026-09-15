@@ -1,8 +1,53 @@
 import { describe, expect, it } from 'vitest';
-import { ProtocolError } from '../src/index.js';
+import { ProtocolError, ValidationError, type AgentCreationCategory } from '../src/index.js';
 import { agent, now, transport } from './resource-fixtures.js';
 
 describe('immutable Agent provenance', () => {
+  it('pages safe inventory across empty filtered pages and maps all scope filters', async () => {
+    const test = transport();
+    test.answer({ items: [], next: 'agt_scanned' });
+    const first = await test.client.agents.provenanceInventory({
+      organization: 'org',
+      sandbox: 'sbx_one',
+      workspace: 'wks_one',
+      status: 'deleted',
+      creationOrigin: 'channel_bridge',
+      limit: 2,
+    });
+    expect(first).toEqual({ items: [], next: 'agt_scanned' });
+    const url = new URL(test.calls.at(-1)!.url);
+    expect(url.pathname).toBe('/api/v1/agents/provenance');
+    expect(Object.fromEntries(url.searchParams)).toEqual({
+      organization: 'org',
+      sandbox: 'sbx_one',
+      workspace: 'wks_one',
+      status: 'deleted',
+      creation_origin: 'channel_bridge',
+      limit: '2',
+    });
+    const row = {
+      agent_id: 'agt_later',
+      status: 'deleted',
+      created_at: now,
+      updated_at: now,
+      creation_origin: 'channel_bridge',
+    };
+    test.answer({ items: [row] });
+    expect(
+      await test.client.agents.provenanceInventory({
+        creationOrigin: 'channel_bridge',
+        cursor: first.next,
+      }),
+    ).toEqual({ items: [row] });
+    expect(new URL(test.calls.at(-1)!.url).searchParams.get('cursor')).toBe('agt_scanned');
+    test.answer({ items: [{ ...row, creation_origin: 'spoofed' }] });
+    await expect(test.client.agents.provenanceInventory()).rejects.toBeInstanceOf(ProtocolError);
+    expect(() =>
+      test.client.agents.provenanceInventory({
+        creationOrigin: 'spoofed' as AgentCreationCategory,
+      }),
+    ).toThrow(ValidationError);
+  });
   it('reads categories and authorized attribution with an exact Agent identity', async () => {
     const test = transport();
     for (const creation_origin of ['manual', 'trigger', 'channel_bridge', 'legacy_unknown']) {

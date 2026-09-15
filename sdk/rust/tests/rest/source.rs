@@ -1,6 +1,49 @@
 use super::*;
 
 #[tokio::test]
+async fn provenance_inventory_preserves_empty_continuations_and_typed_scope_filters() {
+    let server = Server::new().await;
+    let mut options = AgentProvenanceInventoryOptions {
+        scope: AccessibleAgentListOptions {
+            organization: Some("org".into()),
+            filters: AgentListOptions {
+                status: Some(AgentStatus::Deleted),
+                ..Default::default()
+            },
+        },
+        creation_origin: Some(AgentCreationCategory::ChannelBridge),
+    };
+    server.expect(
+        "GET",
+        "/agents/provenance?status=deleted&organization=org&creation_origin=channel_bridge",
+        None,
+        200,
+        Some(json!({"items":[],"next":"agt_scanned"})),
+    );
+    let first = server
+        .client
+        .agents()
+        .provenance_inventory(&options)
+        .await
+        .unwrap();
+    assert!(first.items.is_empty());
+    options.scope.filters.page.cursor = first.next;
+    server.expect("GET", "/agents/provenance?cursor=agt_scanned&status=deleted&organization=org&creation_origin=channel_bridge", None, 200, Some(json!({"items":[{"agent_id":"agt_later","status":"deleted","created_at":"2026-09-05T00:00:00Z","updated_at":"2026-09-05T00:00:00Z","creation_origin":"channel_bridge"}]})));
+    let page = server
+        .client
+        .agents()
+        .provenance_inventory(&options)
+        .await
+        .unwrap();
+    assert_eq!(
+        page.items[0].creation_origin,
+        AgentCreationCategory::ChannelBridge
+    );
+    assert!(page.next.is_none());
+    server.assert_drained();
+}
+
+#[tokio::test]
 async fn shared_source_categories_are_explicit_and_identity_checked() {
     let server = Server::new().await;
     let path = "/agents/agent-1/source";

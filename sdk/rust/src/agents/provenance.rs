@@ -2,6 +2,32 @@
 use crate::resource_access::ResourceActor;
 use serde::Deserialize;
 
+/// Personal or organization creation inventory, with optional category filtering.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct AgentProvenanceInventoryOptions {
+    /// Organization, status, parent and page filters.
+    pub scope: super::AccessibleAgentListOptions,
+    /// Original category. Follow `next` even when a filtered page is empty.
+    pub creation_origin: Option<AgentCreationCategory>,
+}
+
+/// Safe creation summary without private source or creator references.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct AgentProvenanceInventoryItem {
+    /// CMA Agent identity.
+    pub agent_id: String,
+    /// Authorized Agent title when present.
+    pub title: Option<String>,
+    /// Current recorded lifecycle status, including retained deleted Agents.
+    pub status: crate::instances::AgentStatus,
+    /// Original creation time.
+    pub created_at: String,
+    /// Latest recorded update time.
+    pub updated_at: String,
+    /// Immutable creation category.
+    pub creation_origin: AgentCreationCategory,
+}
+
 string_enum! { /// Original creation category; later use never relabels it.
     pub enum AgentCreationCategory {
         Manual => "manual", Trigger => "trigger", ChannelBridge => "channel_bridge", LegacyUnknown => "legacy_unknown"

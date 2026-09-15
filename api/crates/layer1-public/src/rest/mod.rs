@@ -14,6 +14,10 @@ pub mod admin;
 mod agent_openapi_shapes;
 mod agent_operate;
 mod agent_provenance;
+mod agent_provenance_inventory;
+pub use agent_provenance_inventory::agent_provenance_inventory_router;
+#[cfg(test)]
+mod agent_provenance_inventory_tests;
 mod agent_reads;
 mod agent_shared_shapes;
 mod agent_source;
