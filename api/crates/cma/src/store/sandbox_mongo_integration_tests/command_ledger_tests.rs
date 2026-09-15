@@ -3,6 +3,7 @@ mod admission_tests;
 mod audit_tests;
 mod discovery_tests;
 mod execution_tests;
+mod queued_cancellation_tests;
 mod sandbox_controls_tests;
 mod targeted_control_tests;
 mod work_tests;

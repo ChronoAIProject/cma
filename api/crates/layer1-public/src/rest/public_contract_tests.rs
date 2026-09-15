@@ -24,6 +24,7 @@ mod inventory_cases;
 mod invoke_cases;
 mod outbox_cases;
 mod provenance_cases;
+mod queued_cancellation_cases;
 mod replay;
 mod response_control_cases;
 mod responses_v2_cases;
@@ -125,6 +126,9 @@ fn paths() -> Vec<PathBuf> {
 }
 
 async fn scenario(name: &str) -> Scenario {
+    if let Some(scenario) = queued_cancellation_cases::scenario(name).await {
+        return scenario;
+    }
     if let Some(scenario) = agent_event_cases::scenario(name).await {
         return scenario;
     }

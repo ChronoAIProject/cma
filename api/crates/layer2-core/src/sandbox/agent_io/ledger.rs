@@ -116,6 +116,15 @@ impl CommandLedgerError {
 
 #[async_trait]
 pub trait AgentCommandStore: Send + Sync {
+    /// Atomically cancel an exact unbound response and retain its effect receipt.
+    /// Older stores cannot claim that a cancellation was applied.
+    async fn cancel_queued_response(
+        &self,
+        _request: super::QueuedCancellationReservation,
+    ) -> Result<super::QueuedCancellationOutcome, CommandLedgerError> {
+        Err(CommandLedgerError::Unavailable)
+    }
+
     /// Atomic explicit-target admission; older store compositions fail closed.
     async fn reserve_targeted_control(
         &self,

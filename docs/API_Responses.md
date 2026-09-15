@@ -35,6 +35,8 @@ provisioning remain separate capabilities under development.
 | `GET /api/v2/conversations/{conversation_id}/items` | Read standard user/assistant message items under current history authority |
 | `GET /api/v2/agents/{agent_id}/responses/{response_id}/controls` | CMA extension: observe the bound response turn, Agent revision and runtime control support |
 | `POST /api/v2/agents/{agent_id}/responses/{response_id}/controls` | CMA extension: durably request cancellation, steering or approval resolution for that exact turn |
+| `GET /api/v2/agents/{agent_id}/responses/{response_id}/queued-cancellation` | CMA extension: observe the exact unbound source command revision and cancellation eligibility under current operation authority |
+| `POST /api/v2/agents/{agent_id}/responses/{response_id}/queued-cancellation` | CMA extension: atomically cancel that unbound source and retain a completed cancellation receipt |
 | `GET /api/v2/commands/{command_id}` | CMA extension: poll a safe durable command receipt and delivery state |
 
 Creating conversations, stateless Agent auto-creation, response deletion and
@@ -169,9 +171,9 @@ operation returns `422 capability_unsupported`. Capability loss during a later
 race remains a conflict or existing durable execution failure. Never silently
 issue a fresh key against a newer turn.
 
-These are authenticated human/API controls. Verified platform-sender controls,
-queued-response cancellation, SDK convenience methods and the web v2 transport
-are separate followups. Existing v1 controls and standard Responses events retain
+These are authenticated human/API controls, also exposed by both CMA SDKs.
+Verified platform-sender controls and web transport rollout have separate
+acceptance gates. Existing v1 controls and standard Responses events retain
 their established contracts.
 
 ```python
@@ -220,6 +222,62 @@ official clients on the disposable worker fixture. Reproduce with
 [`responses_v2_fixture.rs`](../sdk/rust/tests/responses_v2_fixture.rs), setting
 `CMA_SDK_FIXTURE_ROOT` to the loopback server root; Rust requires `--ignored`.
 See the SDK streaming guides for recovery examples.
+
+### CMA queued response cancellation
+
+Use `/api/v2/agents/{agent_id}/responses/{response_id}/queued-cancellation` for
+a Message response with no durable runtime dispatch or assigned turn. Both GET
+and POST require current human or nondelegated API `operate_agent` authority;
+history access alone does not permit eligibility observation. An unbound Channel
+response held in `waiting_action` is also eligible under that human/API authority.
+This endpoint does not authorize an external platform sender to cancel work.
+
+GET returns object `cma.response.queued_cancellation.observation`, the existing
+safe `response` command-status view, `command_revision`, and `cancellable`.
+The revision identifies the source command, independently of the Agent aggregate.
+POST requires exactly one retained `Idempotency-Key` and this strict body:
+
+```json
+{
+  "source_command_id": "cmd_SOURCE",
+  "expected_command_revision": 1
+}
+```
+
+A `200` response has object `cma.response.queued_cancellation`, a `cancellation`
+command-status view, a current source `response` view, and immutable `target`
+containing `response_id`, `source_command_id`, and `expected_command_revision`.
+The transaction has already settled the source as `cancelled` and the cancellation
+receipt as `completed`. The cancellation receipt has no response ID, turn,
+delivery, observed cursor, or failure. It can be polled using the existing command
+status endpoint. Cancellation works while the Agent is paused or has no runtime
+and does not consume a waiting queue slot or create an Agent turn or log event.
+
+A worker claim alone does not prevent cancellation: the exact source lease is
+invalidated atomically. Any durable dispatch binding, including uncertain dispatch
+or a pre-write failure, prevents this operation from applying. For an unbound
+cancelled response, standard Responses replay emits `response.created` followed
+by `response.incomplete` with reason `interrupted`; it emits no fabricated
+`response.in_progress`, output item, or turn event.
+
+After a lost or uncertain reply, retry the original key and exact body. An existing
+receipt recovers before current source eligibility is checked. The cancellation
+receipt and target remain immutable; the accompanying source status is a separate
+current view. Reusing the key with a changed target or revision returns
+`409 agent_command_key_conflict`. The key shares the existing Interrupt scope;
+an incompatible older control receipt also returns that conflict.
+
+`409 queued_response_cancellation_not_admitted` is definitive: the server committed
+that the original scope/key has no receipt and the source command revision is now
+strictly newer. Its source and resource writes exclude an older cancellation from
+committing afterward. Only this code permits discarding that old intent before a
+fresh observation and explicit new action. `409 queued_response_cancellation_conflict`
+is uncertain; retain the original body and key. Unknown database commits and
+unavailable authority return an unavailable response, never a refusal proof.
+Success and definitive refusal are exposed only after a final current authority
+check. Unknown fields, invalid revisions, and query parameters return
+`422 invalid_queued_cancellation_request`; malformed JSON returns `400 invalid_json`.
+Missing or invalid keys return `422 invalid_idempotency_key`.
 
 ## Retained Responses v1 contract
 

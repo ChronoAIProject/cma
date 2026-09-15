@@ -9,6 +9,13 @@ use crate::sandbox::store::InMemorySandboxStore;
 
 #[async_trait]
 impl AgentCommandStore for InMemorySandboxStore {
+    async fn cancel_queued_response(
+        &self,
+        request: crate::sandbox::agent_io::QueuedCancellationReservation,
+    ) -> Result<crate::sandbox::agent_io::QueuedCancellationOutcome, CommandLedgerError> {
+        super::queued_cancellations::apply(self, request)
+    }
+
     async fn reserve_targeted_control(
         &self,
         request: crate::sandbox::agent_io::TargetedControlReservation,
