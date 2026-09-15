@@ -27,6 +27,15 @@
   padding: 0;
   list-style: none;
 }
+.sandbox-controls {
+  margin-top: 12px;
+  overflow-wrap: anywhere;
+}
+.sandbox-controls__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
 .shared-hierarchy__workspace {
   padding: 12px 0;
   border-bottom: 1px solid var(--dsw-alias-border-l2);
