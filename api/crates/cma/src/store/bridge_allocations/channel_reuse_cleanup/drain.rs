@@ -56,7 +56,7 @@ impl MongoBridgeAllocationStore {
                         MutationError::Mongo(error)
                             if is_transient(&error) || is_duplicate_key(&error) =>
                         {
-                            continue
+                            continue;
                         }
                         MutationError::Mongo(_) => return Err(AllocationError::Unavailable),
                         MutationError::Core(error) => return Err(error),
@@ -67,7 +67,7 @@ impl MongoBridgeAllocationStore {
                 CommitOutcome::Committed => return Ok(result),
                 CommitOutcome::Retry(_) => continue,
                 CommitOutcome::Unknown(_) | CommitOutcome::Failed(_) => {
-                    return Err(AllocationError::Unavailable)
+                    return Err(AllocationError::Unavailable);
                 }
             }
         }
@@ -206,7 +206,7 @@ fn admission_document(value: &ChannelReuseCleanupAdmission) -> Result<Document, 
     )
 }
 
-fn read_admission(
+pub(super) fn read_admission(
     row: &Document,
     saved: &ChannelReuseCleanupState,
 ) -> Result<ChannelReuseCleanupAdmission, AllocationError> {

@@ -16,6 +16,8 @@ mod effects;
 mod fixture;
 #[path = "reuse_cleanup_refusals.rs"]
 mod refusals;
+#[path = "workspace_cleanup_tests.rs"]
+mod workspace_cleanup;
 use fixture::CleanupFixture;
 
 #[tokio::test]

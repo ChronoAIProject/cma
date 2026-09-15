@@ -80,6 +80,7 @@ impl BridgeComposition {
                 definitions.clone(),
                 allocations.clone(),
                 credentials.clone(),
+                config.deployment_id.clone(),
             )),
         ));
         let setup = super::setup::service(&config.auth_mode, definitions, credentials.clone())

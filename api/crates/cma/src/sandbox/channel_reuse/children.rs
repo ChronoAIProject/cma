@@ -32,30 +32,8 @@ impl ReuseWorkspaceCreation {
         snapshot: &ChannelReuseSnapshot,
         workspace: &Workspace,
     ) -> Result<(), AllocationError> {
-        let AllocationPlacement::ReuseParent {
-            target,
-            profiles,
-            parent,
-        } = &snapshot.allocation.placement
-        else {
-            return Err(AllocationError::IdentityMismatch);
-        };
-        if parent.workspace_created_at.is_some()
-            || self.schema_version != 1
-            || self.allocation_id != snapshot.allocation.id
-            || self.source != snapshot.allocation.first_source
-            || self.workspace_id != workspace.id
-            || self.workspace_created_at != workspace.created_at
-            || self.sandbox_created_at != snapshot.sandbox.created_at
-            || self.profile_digest != profiles.workspace.digest
-            || workspace.id != target.workspace_id
-            || workspace.sandbox_id != target.sandbox_id
-            || workspace.owner != snapshot.sandbox.owner
-            || workspace.profile != profiles.workspace
-            || workspace.name != workspace_name(&snapshot.allocation)?
-            || workspace.source != source(&profiles.workspace.content.location)
-            || workspace.origin != WorkspaceOrigin::Manual
-            || workspace.work.step != WorkspaceWorkStep::None
+        self.require_identity(&snapshot.allocation, &snapshot.sandbox, workspace)?;
+        if workspace.work.step != WorkspaceWorkStep::None
             || workspace.work.lease.is_some()
             || workspace.work.execution.is_some()
             || workspace.removed_at.is_some()
@@ -66,8 +44,45 @@ impl ReuseWorkspaceCreation {
         {
             return Err(AllocationError::IdentityMismatch);
         }
+        Ok(())
+    }
+
+    /// Immutable creation identity is shared by live provisioning and terminal
+    /// cleanup proof. Each caller independently requires its lifecycle shape.
+    pub(crate) fn require_identity(
+        &self,
+        allocation: &AllocationRecord,
+        sandbox: &Sandbox,
+        workspace: &Workspace,
+    ) -> Result<(), AllocationError> {
+        let AllocationPlacement::ReuseParent {
+            target,
+            profiles,
+            parent,
+        } = &allocation.placement
+        else {
+            return Err(AllocationError::IdentityMismatch);
+        };
+        if parent.workspace_created_at.is_some()
+            || self.schema_version != 1
+            || self.allocation_id != allocation.id
+            || self.source != allocation.first_source
+            || self.workspace_id != workspace.id
+            || self.workspace_created_at != workspace.created_at
+            || self.sandbox_created_at != sandbox.created_at
+            || self.profile_digest != profiles.workspace.digest
+            || workspace.id != target.workspace_id
+            || workspace.sandbox_id != target.sandbox_id
+            || workspace.owner != sandbox.owner
+            || workspace.profile != profiles.workspace
+            || workspace.name != workspace_name(allocation)?
+            || workspace.source != source(&profiles.workspace.content.location)
+            || workspace.origin != WorkspaceOrigin::Manual
+        {
+            return Err(AllocationError::IdentityMismatch);
+        }
         workspace
-            .validate_for_admission(&snapshot.sandbox, snapshot.sandbox.status)
+            .validate_for_admission(sandbox, sandbox.status)
             .map_err(|_| AllocationError::Corrupt)
     }
 }

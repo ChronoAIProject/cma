@@ -47,6 +47,63 @@ impl CleanupWorkAuthority for DispatchAuthority {
 struct FixtureStore(Arc<CleanupFixture>);
 #[async_trait::async_trait]
 impl BridgeCleanupStore for FixtureStore {
+    async fn workspace_status(
+        &self,
+        access: &CleanupAccess,
+    ) -> Result<WorkspaceCleanupStatus, CleanupError> {
+        self.0
+            .f
+            .f
+            .original
+            .allocations
+            .managed_workspace_cleanup_status(access, true)
+            .await
+    }
+    async fn workspace_recover(
+        &self,
+        access: &CleanupAccess,
+        id: &str,
+        digest: &str,
+    ) -> Result<Option<WorkspaceCleanupStatus>, CleanupError> {
+        self.0
+            .f
+            .f
+            .original
+            .allocations
+            .recover_workspace_cleanup_job(access, id, digest)
+            .await
+    }
+    async fn workspace_submit(
+        &self,
+        write: WorkspaceCleanupWrite,
+    ) -> Result<WorkspaceCleanupStatus, CleanupError> {
+        let permit = self.0.permit().await;
+        let sandbox = &permit.parent().lineage.sandbox;
+        let runtime = self
+            .0
+            .f
+            .f
+            .original
+            .adapter
+            .runtime_status(&layer3_adapter::RuntimeHandle(
+                sandbox.runtime.as_ref().unwrap().runtime_id.clone(),
+            ))
+            .await
+            .unwrap();
+        // Explicit transport simulation for Mongo consent tests only.
+        let support = layer3_adapter::WorkspaceRemovalSupport {
+            runtime,
+            protocol_version: layer3_adapter::WORKSPACE_REMOVAL_PROTOCOL,
+        };
+        self.0
+            .f
+            .f
+            .original
+            .allocations
+            .admit_workspace_cleanup_job(&write, &permit, &support)
+            .await
+    }
+
     async fn allocations(
         &self,
         manager: &BridgeManagementLease,

@@ -16,6 +16,7 @@ pub(crate) mod channel_reuse;
 )]
 pub(crate) mod channel_reuse_cleanup;
 mod checkpoint_maintenance;
+pub(crate) mod owned_workspace_cleanup;
 pub(crate) use checkpoint_maintenance::ExportDependencies;
 pub(crate) mod channel_provisioning;
 pub(crate) mod channel_startup;

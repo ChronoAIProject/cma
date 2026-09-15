@@ -11,6 +11,17 @@ pub(super) async fn fence(
     permit: &ChannelReuseCleanupAuthority,
     session: &mut ClientSession,
 ) -> Result<Document, MutationError> {
+    let row = fence_common(store, permit, session).await?;
+    store
+        .fence_cleanup_execution_job(permit, &row, session)
+        .await
+}
+
+pub(super) async fn fence_common(
+    store: &MongoBridgeAllocationStore,
+    permit: &ChannelReuseCleanupAuthority,
+    session: &mut ClientSession,
+) -> Result<Document, MutationError> {
     permit.require_current()?;
     let allocation = permit.allocation();
     let bridge = permit.management().record();
@@ -97,9 +108,6 @@ pub(super) async fn fence(
         return Err(AllocationError::Conflict.into());
     }
     fence_head(store, allocation, session).await?;
-    let row = store
-        .fence_cleanup_execution_job(permit, &row, session)
-        .await?;
     permit.require_current()?;
     Ok(row)
 }

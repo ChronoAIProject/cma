@@ -7,12 +7,19 @@ mod job;
 mod pagination;
 mod service;
 mod views;
+mod workspace_access;
+mod workspace_job;
+mod workspace_service;
+mod workspace_views;
 
 use crate::bridge::{allocation::AllocationRecord, BridgeError, BridgeManagementLease};
 pub use access::{CleanupAccess, CleanupWrite};
 pub use job::*;
 pub use service::BridgeCleanupService;
 pub use views::*;
+pub use workspace_access::WorkspaceCleanupWrite;
+pub use workspace_job::*;
+pub use workspace_views::*;
 
 #[derive(Debug, thiserror::Error)]
 pub enum CleanupError {
@@ -56,6 +63,33 @@ pub trait BridgeCleanupStore: Send + Sync {
         request_sha256: &str,
     ) -> Result<Option<ChildCleanupStatus>, CleanupError>;
     async fn submit(&self, write: CleanupWrite) -> Result<ChildCleanupStatus, CleanupError>;
+    async fn workspace_status(
+        &self,
+        _access: &CleanupAccess,
+    ) -> Result<WorkspaceCleanupStatus, CleanupError> {
+        Err(CleanupError::Unavailable)
+    }
+    async fn workspace_recover(
+        &self,
+        _access: &CleanupAccess,
+        _receipt_id: &str,
+        _request_sha256: &str,
+    ) -> Result<Option<WorkspaceCleanupStatus>, CleanupError> {
+        Err(CleanupError::Unavailable)
+    }
+    async fn workspace_submit(
+        &self,
+        _write: WorkspaceCleanupWrite,
+    ) -> Result<WorkspaceCleanupStatus, CleanupError> {
+        Err(CleanupError::Unavailable)
+    }
+}
+
+fn workspace_hash(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
 
 fn digest(value: &impl serde::Serialize) -> Result<String, CleanupError> {
