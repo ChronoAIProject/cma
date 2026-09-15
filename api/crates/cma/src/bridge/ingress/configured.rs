@@ -12,18 +12,25 @@ pub(crate) fn configured(
     credentials: Option<Arc<ManagedBridgeCredentials>>,
     resources: Arc<dyn ResourceShareStore>,
     inbox: Arc<dyn CallbackInboxStore>,
+    flags: crate::config::BridgeFeatureFlags,
 ) -> Result<Option<Arc<CallbackIngress>>, CallbackError> {
+    if !flags.enabled(crate::config::bridge_flags::BridgeFlag::Ingress) {
+        return Ok(None);
+    }
     let Some(credentials) = credentials else {
         return Ok(None);
     };
     let Some(deployment) = deployment(mode, nyxid_public_url)? else {
         return Ok(None);
     };
-    let connections = Arc::new(NyxBridgeValidator {
-        provisioning: credentials.provisioning.clone(),
-        custody: credentials,
-        resources,
-    });
+    let connections = crate::bridge::feature_policy::configured(
+        Arc::new(NyxBridgeValidator {
+            provisioning: credentials.provisioning.clone(),
+            custody: credentials,
+            resources,
+        }),
+        flags,
+    );
     Ok(Some(Arc::new(CallbackIngress::new(
         bridges,
         connections,

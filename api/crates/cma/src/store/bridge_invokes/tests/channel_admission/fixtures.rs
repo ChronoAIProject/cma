@@ -120,21 +120,31 @@ pub(crate) async fn signed_inbox(
     bridge: &layer2_core::bridge::BridgeRecord,
     proof: layer2_core::bridge::BridgeValidation,
 ) -> InboxWrite {
+    signed_inbox_named(bridge, proof, "external-message", "callback-1", 42).await
+}
+
+pub(crate) async fn signed_inbox_named(
+    bridge: &layer2_core::bridge::BridgeRecord,
+    proof: layer2_core::bridge::BridgeValidation,
+    message_id: &str,
+    callback_id: &str,
+    platform_message_id: i64,
+) -> InboxWrite {
     let config = &bridge.current().unwrap().config;
     let body = serde_json::to_vec(&json!({
-        "message_id":"external-message", "correlation_id":"callback-1", "platform":"telegram",
+        "message_id":message_id, "correlation_id":callback_id, "platform":"telegram",
         "agent":{"api_key_id":config.connector.key_id, "name":"Fixture"},
         "conversation":{"id":config.connector.route_ids[0], "platform_id":"-100123", "type":"private"},
         "sender":{"platform_id":"12345"}, "content":{"type":"text", "text":"Explain the result."},
         "timestamp":layer2_core::now_rfc3339(),
-        "raw_platform_data":{"update_id":99, "message":{"message_id":42, "date":1700000000,
+        "raw_platform_data":{"update_id":99, "message":{"message_id":platform_message_id, "date":1700000000,
             "chat":{"id":-100123,"type":"supergroup"},
             "from":{"id":12345,"is_bot":false}, "text":"Explain the result."}}
     }))
     .unwrap();
     let claims = json!({"iss":config.connector.issuer, "aud":"channel-relay/callback",
-        "iat":now(), "exp":now()+300, "jti":"callback-1", "token_type":"relay_callback",
-        "api_key_id":config.connector.key_id, "message_id":"external-message", "platform":"telegram",
+        "iat":now(), "exp":now()+300, "jti":callback_id, "token_type":"relay_callback",
+        "api_key_id":config.connector.key_id, "message_id":message_id, "platform":"telegram",
         "body_sha256":format!("{:x}", Sha256::digest(&body))});
     let pair = RsaKeyPair::from_pkcs8(include_bytes!(concat!(
         env!("CARGO_MANIFEST_DIR"),
@@ -181,7 +191,7 @@ pub(crate) async fn signed_inbox(
             CallbackHeaders {
                 callback_token: &token,
                 user_token: None,
-                message_id: "external-message",
+                message_id,
                 platform: "telegram",
                 timestamp: &layer2_core::now_rfc3339(),
             },

@@ -430,7 +430,7 @@ impl SandboxWorker {
         match self
             .dependencies
             .credentials
-            .revoke(&sandbox.owner, &debt.provider_key_id)
+            .revoke(&sandbox, &debt.provider_key_id)
             .await
         {
             Ok(()) => {

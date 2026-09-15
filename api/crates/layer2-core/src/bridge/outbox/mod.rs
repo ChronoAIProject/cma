@@ -59,6 +59,8 @@ pub enum OutboxError {
     Expired,
     #[error("outbox delivery is suspended")]
     Suspended,
+    #[error("outbox bot is waiting for its next permitted send")]
+    RateLimited,
     #[error("outbox delivery requires a retained matching key")]
     RetainedKeyRequired,
     #[error("outbox original route or edit capability is unsupported")]

@@ -7,6 +7,8 @@ mod channel_grants;
 mod children;
 #[path = "tests/fixture.rs"]
 pub(crate) mod fixture;
+#[path = "tests/renewal.rs"]
+mod renewal;
 #[path = "tests/startup.rs"]
 mod startup;
 

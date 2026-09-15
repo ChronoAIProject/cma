@@ -8,8 +8,10 @@ use crate::resource_access::{ResourceActor, ResourcePolicyFence};
 use crate::sandbox::store::SandboxStoreError;
 use crate::sandbox::AgentCreationProvenance;
 
+mod detachment;
 mod service;
 mod transition;
+pub use detachment::plan_retained_channel_detachment;
 pub use service::{AgentChannelUsageReading, AgentChannelUsageService};
 pub use transition::{plan_channel_usage, ChannelUsageMutation};
 

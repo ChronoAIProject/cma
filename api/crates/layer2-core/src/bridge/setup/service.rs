@@ -103,14 +103,50 @@ impl BridgeSetupService {
             .definitions
             .authority(context, credential, owner, true)
             .await?;
+        let platforms = [
+            BridgePlatform::Telegram,
+            BridgePlatform::Discord,
+            BridgePlatform::Lark,
+            BridgePlatform::Feishu,
+        ];
+        if !platforms.iter().any(|platform| {
+            self.definitions
+                .check_feature(BridgeFeature::Management, platform)
+                .is_ok()
+        }) {
+            return Err(BridgeError::Unavailable);
+        }
         let credential = credential.ok_or(BridgeError::AuthorityUnavailable)?;
-        let choices = tokio::time::timeout(
+        let mut choices = tokio::time::timeout(
             Duration::from_secs(5),
             self.credentials.choices(context, credential, owner),
         )
         .await
         .map_err(|_| BridgeError::AuthorityUnavailable)??;
         authority.require(true)?;
+        choices.bots.retain(|bot| {
+            self.definitions
+                .check_feature(BridgeFeature::Management, &bot.platform)
+                .is_ok()
+        });
+        choices.routes.retain(|route| {
+            let platform = match route.platform.as_str() {
+                "telegram" => BridgePlatform::Telegram,
+                "discord" => BridgePlatform::Discord,
+                "lark" => BridgePlatform::Lark,
+                "feishu" => BridgePlatform::Feishu,
+                _ => return false,
+            };
+            self.definitions
+                .check_feature(BridgeFeature::Management, &platform)
+                .is_ok()
+        });
+        let keys: std::collections::BTreeSet<_> = choices
+            .routes
+            .iter()
+            .map(|route| route.key_id.clone())
+            .collect();
+        choices.keys.retain(|key| keys.contains(&key.id));
         Ok(choices)
     }
     pub async fn create(
@@ -287,6 +323,10 @@ impl BridgeSetupService {
             .definitions
             .management_lease(context, credential, &request.id, request.expected_revision)
             .await?;
+        self.definitions.check_feature(
+            super::super::BridgeFeature::Management,
+            &lease.record().current()?.config.connector.platform,
+        )?;
         let result = self
             .credentials
             .import(&self.definitions, context, credential, request)

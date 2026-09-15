@@ -45,14 +45,17 @@ impl NyxOutboxDelivery {
         {
             return Err(DeliveryFailure::CredentialRevoked);
         }
-        self.store
-            .require_sending(request)
-            .await
-            .map_err(|_| DeliveryFailure::RouteUnavailable)?;
         self.credentials
             .revalidate(&lease)
             .await
             .map_err(|_| DeliveryFailure::CredentialRevoked)?;
+        self.store
+            .require_sending(request)
+            .await
+            .map_err(|error| match error {
+                OutboxError::RateLimited => DeliveryFailure::RateLimited,
+                _ => DeliveryFailure::RouteUnavailable,
+            })?;
         request
             .require_current()
             .map_err(|_| DeliveryFailure::CredentialExpired)?;
@@ -66,6 +69,16 @@ impl RelayDeliveryPort for NyxOutboxDelivery {
         // starts, every uncertain result is reported as Unknown by that port.
         let lease = match tokio::time::timeout_at(request.deadline(), self.ready(&request)).await {
             Ok(Ok(lease)) => lease,
+            Ok(Err(DeliveryFailure::RateLimited)) => {
+                // No provider bytes have been written in this invocation.
+                // The durable claim gate will honor the full bot cooldown
+                // before creating another attempt, even if it exceeds a day.
+                return DeliveryOutcome::RetryableNotSent {
+                    reason: DeliveryFailure::RateLimited,
+                    retry_at_ms: mongodb::bson::DateTime::now().timestamp_millis() + 30_000,
+                    evidence: NotSentEvidence::NoRequestBytesWritten,
+                };
+            }
             Ok(Err(reason)) => return DeliveryOutcome::DefinitiveRejection(reason),
             Err(_) => {
                 return DeliveryOutcome::DefinitiveRejection(DeliveryFailure::CredentialExpired)

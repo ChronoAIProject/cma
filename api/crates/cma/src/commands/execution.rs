@@ -97,6 +97,22 @@ impl AgentCommandExecution for ResourceCommandExecution {
                     .refuse_execution_hold(command, ChannelHoldRefusalReason::GrantRevoked)
                     .await;
             }
+            Err(ChannelCommandAdmissionError::Invoke(
+                layer2_core::bridge::invoke::BridgeInvokeError::NotFound,
+            )) => {
+                // The authorization lookup does not identify which retained
+                // source disappeared. The refusal store independently proves
+                // each exact absence alongside the unchanged command write.
+                for reason in [
+                    ChannelHoldRefusalReason::TargetMissing,
+                    ChannelHoldRefusalReason::BridgeMissing,
+                    ChannelHoldRefusalReason::GrantMissing,
+                ] {
+                    if channel.refuse_execution_hold(command, reason).await.is_ok() {
+                        break;
+                    }
+                }
+            }
             Err(_) => {}
         }
     }
