@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "openapi_operations": 162,
+  "openapi_operations": 165,
   "operations": {
     "GET /api/v1/organizations": {
       "classification": "openapi",
@@ -2350,6 +2350,39 @@
         "bridge_setup_unavailable",
         "invalid_query",
         "not_authenticated"
+      ]
+    },
+    "GET /api/v2/agents/{agent_id}/responses/{response_id}/controls": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/responses/v2/controls.rs# Additive response controls and safe command polling use core authorization and exact retained intent.",
+      "required_problems": [
+        "authentication_required",
+        "response_not_found",
+        "controls_field_unsupported"
+      ]
+    },
+    "POST /api/v2/agents/{agent_id}/responses/{response_id}/controls": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/responses/v2/controls.rs# Additive response controls and safe command polling use core authorization and exact retained intent.",
+      "required_problems": [
+        "authentication_required",
+        "response_not_found",
+        "agent_command_key_conflict",
+        "response_control_conflict",
+        "capability_unsupported",
+        "invalid_control_request",
+        "invalid_control_observation",
+        "invalid_idempotency_key",
+        "invalid_json"
+      ]
+    },
+    "GET /api/v2/commands/{command_id}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/responses/v2/controls.rs# Additive response controls and safe command polling use core authorization and exact retained intent.",
+      "required_problems": [
+        "authentication_required",
+        "response_not_found",
+        "controls_field_unsupported"
       ]
     }
   }

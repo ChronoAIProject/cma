@@ -116,7 +116,7 @@ impl AgentCommand {
 
 // Explicit recursive key ordering makes the persisted fingerprint independent
 // of Rust field declaration order and dependency feature unification.
-fn write_canonical(
+pub(super) fn write_canonical(
     value: &serde_json::Value,
     output: &mut Vec<u8>,
 ) -> Result<(), serde_json::Error> {

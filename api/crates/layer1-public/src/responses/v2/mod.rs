@@ -7,6 +7,7 @@ use axum::{
 use layer2_core::sandbox::{agent_io::AgentCommandService, AgentReadService};
 use std::sync::Arc;
 
+pub(crate) mod controls;
 mod conversation;
 mod error;
 mod parse;
@@ -37,6 +38,11 @@ pub fn router(state: ResponsesV2State) -> Router {
             post(routes::create_alias),
         )
         .route("/api/v2/responses/{response_id}", get(routes::retrieve))
+        .route("/api/v2/commands/{command_id}", get(controls::status))
+        .route(
+            "/api/v2/agents/{agent_id}/responses/{response_id}/controls",
+            get(controls::observe).post(controls::submit),
+        )
         .route(
             "/api/v2/responses/{response_id}/events",
             get(routes::replay),
@@ -61,6 +67,9 @@ pub(super) fn document() -> utoipa::openapi::OpenApi {
             routes::create_alias,
             routes::retrieve,
             routes::replay,
+            controls::observe,
+            controls::submit,
+            controls::status,
             conversation::retrieve,
             conversation::items
         ),

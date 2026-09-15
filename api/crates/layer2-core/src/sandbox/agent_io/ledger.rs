@@ -116,6 +116,23 @@ impl CommandLedgerError {
 
 #[async_trait]
 pub trait AgentCommandStore: Send + Sync {
+    /// Atomic explicit-target admission; older store compositions fail closed.
+    async fn reserve_targeted_control(
+        &self,
+        _request: super::TargetedControlReservation,
+    ) -> Result<super::AdmittedTargetedControl, CommandLedgerError> {
+        Err(CommandLedgerError::Unavailable)
+    }
+
+    /// Recover an exact targeted receipt under a fresh mutation observation.
+    /// This never creates work and still fences current resource authority.
+    async fn lookup_targeted_control(
+        &self,
+        _request: super::TargetedControlReservation,
+    ) -> Result<Option<super::AdmittedTargetedControl>, CommandLedgerError> {
+        Err(CommandLedgerError::Unavailable)
+    }
+
     /// Read the permanent scope/key index without reserving, changing queue
     /// order or creating a receipt. Unsupported older compositions fail closed.
     async fn get_admitted_command(
