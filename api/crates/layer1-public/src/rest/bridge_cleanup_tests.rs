@@ -1,4 +1,5 @@
 pub(super) mod fixture;
+mod workspace;
 use axum::http::{Method, StatusCode};
 use serde_json::json;
 use tower::ServiceExt;
