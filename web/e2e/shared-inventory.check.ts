@@ -63,6 +63,27 @@ test('LOCAL shared aggregate preserves personal work and supports filtered pages
     agent_count: 1,
   };
   const branchReads: string[] = [];
+  await page.route('**/api/v1/resource-access/agent/*', (route) => {
+    const id = new URL(route.request().url()).pathname.split('/').at(-1);
+    return route.fulfill(
+      revoked
+        ? {
+            status: 404,
+            json: { code: 'resource_not_found', detail: 'Shared access removed' },
+          }
+        : {
+            json: {
+              capabilities: id === 'agt_shared_b' ? ['view_details', 'interact'] : ['view_details'],
+              owner:
+                id === 'agt_shared_a'
+                  ? { kind: 'person', is_current_person: false }
+                  : { kind: 'organization', organization_id: 'org_research' },
+              revalidate_at: null,
+              policy_revision: 1,
+            },
+          },
+    );
+  });
   await page.route('**/api/v1/agents/agt_branch/channel-usage', (route) =>
     route.fulfill(
       revoked
@@ -104,7 +125,12 @@ test('LOCAL shared aggregate preserves personal work and supports filtered pages
         });
       if (path.startsWith('resource-access/'))
         return route.fulfill({
-          json: { capabilities: ['view_details'], revalidate_at: null, policy_revision: 1 },
+          json: {
+            capabilities: ['view_details'],
+            revalidate_at: null,
+            policy_revision: 1,
+            owner: { kind: 'organization', organization_id: 'org_research' },
+          },
         });
       if (path.startsWith('sandboxes/'))
         return route.fulfill({ json: { ...sandbox, workspaces: [workspace] } });
@@ -140,7 +166,7 @@ test('LOCAL shared aggregate preserves personal work and supports filtered pages
   await page.route('**/api/v1/organizations', (route) =>
     route.fulfill({
       json: {
-        items: revoked ? [] : [{ id: 'org_research', display_name: 'Research', role: 'viewer' }],
+        items: revoked ? [] : [{ id: 'org_research', display_name: 'Research', role: 'admin' }],
       },
     }),
   );
@@ -174,17 +200,23 @@ test('LOCAL shared aggregate preserves personal work and supports filtered pages
   await page.getByRole('menuitemradio', { name: 'Shared with me', exact: true }).click();
   const navigation = page.locator('.scoped-navigation');
   await expect(navigation.getByRole('link', { name: rows[0].title })).toBeVisible();
+  await expect(
+    navigation.getByText('Owner: Personal owner · Your access: View only'),
+  ).toBeVisible();
   await expect(navigation.getByText(/No shared Sandboxes on this page/)).toBeVisible();
   expect(branchReads).toEqual([]);
   await navigation.getByRole('button', { name: 'Next Sandboxes', exact: true }).click();
   await navigation.getByRole('button', { name: sandbox.name, exact: true }).click();
-  expect(branchReads.some((path) => path.includes('wks_shared'))).toBe(false);
+  expect(branchReads.includes('workspaces/wks_shared')).toBe(false);
   await navigation.getByRole('button', { name: workspace.name, exact: true }).click();
   await expect(
     navigation.getByRole('link', { name: 'Authorized branch conversation' }),
   ).toHaveAttribute('href', '/agents/agt_branch');
   await expect(navigation.getByRole('link', { name: rows[0].title })).toBeVisible();
   await expect(navigation.getByRole('button', { name: 'Next shared Agents' })).toBeDisabled();
+  await expect(
+    navigation.getByText('Owner: Research · Your access: View only').first(),
+  ).toBeVisible();
   for (const theme of ['light', 'dark']) {
     await page.evaluate((value) => {
       document.body.toggleAttribute('data-ds-dark-theme', value === 'dark');
@@ -269,6 +301,7 @@ test('LOCAL shared aggregate preserves personal work and supports filtered pages
   await expect(
     inventory.getByText('Previously linked to a channel', { exact: true }),
   ).toBeVisible();
+  await expect(inventory.getByText('Owner: Research · Your access: Can interact')).toBeVisible();
   expect(reads.at(-1)?.searchParams.get('channel_active')).toBe('false');
   expect(reads.at(-1)?.searchParams.get('channel_history')).toBe('true');
   const download = page.waitForEvent('download');

@@ -352,6 +352,13 @@ it('pages shared navigation without parent reads and clears it on revocation', a
         expect(url.searchParams.get('shared')).toBe('true');
         return Response.json({ items: [] });
       }
+      if (url.pathname === '/api/v1/resource-access/agent/agt_shared')
+        return Response.json({
+          owner: { kind: 'person', is_current_person: false },
+          capabilities: ['view_details'],
+          revalidate_at: null,
+          policy_revision: 1,
+        });
       expect(url.pathname).toBe('/api/v1/agents/provenance');
       expect(url.searchParams.get('shared')).toBe('true');
       if (revoked)
@@ -391,7 +398,12 @@ it('pages shared navigation without parent reads and clears it on revocation', a
     'href',
     '/shared/agents',
   );
-  expect(calls.at(-1)?.searchParams.get('cursor')).toBe('agt_scanned');
+  expect(
+    calls
+      .filter((url) => url.pathname === '/api/v1/agents/provenance')
+      .at(-1)
+      ?.searchParams.get('cursor'),
+  ).toBe('agt_scanned');
   revoked = true;
   await user.click(screen.getByRole('button', { name: 'Refresh shared Agents' }));
   expect(screen.queryByText('Narrow shared Agent')).not.toBeInTheDocument();

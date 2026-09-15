@@ -149,17 +149,22 @@ export function PolicyFields({
             value={value.reply}
             disabled={disabled}
             options={[
-              { value: 'final_response', label: 'Send the Agent’s final response' },
+              { value: 'final_response', label: 'Let the Agent choose when to reply' },
               {
                 value: 'final_response_and_approvals',
-                label: 'Final responses and approval prompts',
+                label: 'Agent replies and approval controls',
                 unavailable: 'Verified channel approval controls are not available yet',
               },
-              { value: 'disabled', label: 'Keep responses in CMA' },
+              { value: 'disabled', label: 'Disable channel replies' },
             ]}
             onChange={(reply) => onChange({ ...value, reply })}
           />
         </label>
+        <p>
+          Agents created by this channel can send updates while they work. Each reply is an explicit
+          Agent tool call; final answers are not sent automatically. Manually created Agents and
+          Trigger sessions do not receive the reply tool.
+        </p>
       </fieldset>
       <fieldset disabled={disabled} className="bridges__fields">
         <legend>Capacity and retention</legend>

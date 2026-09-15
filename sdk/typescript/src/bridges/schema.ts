@@ -67,6 +67,8 @@ const configShape = object({
   partition,
   placement,
   admission,
+  // Legacy wire spelling: final_response allows explicit mid-turn reply tool
+  // calls only for channel-created Agents; it never auto-sends final answers.
   reply: enumeration('final_response', 'final_response_and_approvals', 'disabled'),
   limits: object({
     max_partitions: positiveInteger,

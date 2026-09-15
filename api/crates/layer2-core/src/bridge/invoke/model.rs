@@ -54,6 +54,8 @@ impl BridgeInvokeGrantId {
 #[serde(rename_all = "snake_case")]
 pub enum BridgeSharedContextConsent {
     UseRetainedAgentContext,
+    /// Derived only from verified channel allocation and immutable creation.
+    UseChannelCreatedAgent,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -79,6 +81,8 @@ pub struct BridgeInvokeGrant {
     pub issued_at: String,
     pub issued_by: ResourceActor,
     pub resource_audit: Vec<ResourceAuthorizationAudit>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub channel: Option<Box<super::ChannelInvokeBasis>>,
     pub state: BridgeInvokeGrantState,
 }
 
@@ -95,11 +99,21 @@ impl BridgeInvokeGrant {
             || !actual_actor(&self.issued_by)
             || !stamp(&self.issued_at)
             || self.resource_audit.len() != 2
-            || !matches!(&self.config.placement,
-                super::super::BridgePlacementPolicy::ExistingAgent { target }
-                if target == &self.target.ids)
         {
             return Err(BridgeInvokeError::Corrupt);
+        }
+        match (&self.config.placement, &self.consent, &self.channel) {
+            (
+                super::super::BridgePlacementPolicy::ExistingAgent { target },
+                BridgeSharedContextConsent::UseRetainedAgentContext,
+                None,
+            ) if target == &self.target.ids => {}
+            (
+                super::super::BridgePlacementPolicy::NewSandbox { .. },
+                BridgeSharedContextConsent::UseChannelCreatedAgent,
+                Some(basis),
+            ) => basis.validate(self)?,
+            _ => return Err(BridgeInvokeError::Corrupt),
         }
         for (audit, capability) in self.resource_audit.iter().zip([
             crate::resource_access::ResourceCapability::ManageBridge,

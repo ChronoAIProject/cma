@@ -244,6 +244,23 @@ async fn selected_key_is_write_only_redacted_and_import_does_not_send_an_idempot
         .await
         .unwrap();
     assert!(status.present);
+    expect(
+        &server,
+        "PUT",
+        "/api/v1/bridges/brg-1/credential",
+        Some(json!({"expected_revision":1,"key":body.key,"retain_control_plane_authority":true})),
+        json!({"revision":1,"present":true,"revoked":false}),
+        false,
+    );
+    assert!(
+        server
+            .client
+            .bridges()
+            .import_key_with_control_plane_authority("brg-1", &body)
+            .await
+            .unwrap()
+            .present
+    );
     assert!(!format!("{:?}", server.client.bridges()).contains(body.key));
     expect(
         &server,

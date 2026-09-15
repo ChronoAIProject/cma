@@ -1,3 +1,4 @@
+use super::channel_execution::is_channel;
 use std::sync::Arc;
 
 use layer2_core::now_rfc3339;
@@ -10,6 +11,8 @@ use layer2_core::sandbox::{
 };
 
 pub(crate) struct ResourceCommandExecution {
+    pub channel: Option<Arc<ChannelAgentCommandService>>,
+    pub invokes: Option<Arc<layer2_core::bridge::invoke::BridgeInvokeService>>,
     pub authority: Arc<dyn AgentCommandAuthorizer>,
     pub access: Arc<ResourceAccessService>,
     pub store: Arc<dyn AgentCommandWorkerStore>,
@@ -70,7 +73,42 @@ impl ResourceCommandExecution {
 
 #[async_trait::async_trait]
 impl AgentCommandExecution for ResourceCommandExecution {
+    async fn release_held(&self, command: &AdmittedAgentCommand) {
+        if !is_channel(command) {
+            return;
+        }
+        let (Some(channel), Some(invokes)) = (&self.channel, &self.invokes) else {
+            return;
+        };
+        if command.queue_expired(&now_rfc3339()) {
+            let _ = channel
+                .refuse_execution_hold(command, ChannelHoldRefusalReason::QueueTimeout)
+                .await;
+            return;
+        }
+        match channel.authorize_execution(invokes, command).await {
+            Ok(authority) => {
+                let _ = channel.release_execution_hold(&authority, command).await;
+            }
+            Err(ChannelCommandAdmissionError::Invoke(
+                layer2_core::bridge::invoke::BridgeInvokeError::Revoked,
+            )) => {
+                let _ = channel
+                    .refuse_execution_hold(command, ChannelHoldRefusalReason::GrantRevoked)
+                    .await;
+            }
+            Err(_) => {}
+        }
+    }
+
     async fn check_queued(&self, command: &AdmittedAgentCommand) -> CommandReadiness {
+        if is_channel(command) {
+            return self
+                .channel_checked(command)
+                .await
+                .map(|_| CommandReadiness::Ready)
+                .unwrap_or_else(|readiness| readiness);
+        }
         match self.checked(command).await {
             Ok(_) => CommandReadiness::Ready,
             Err(readiness) => readiness,
@@ -78,6 +116,10 @@ impl AgentCommandExecution for ResourceCommandExecution {
     }
 
     async fn prepare_queued(&self, command: &AdmittedAgentCommand) {
+        // Invoke authority permits message execution, not lifecycle revival.
+        if is_channel(command) {
+            return;
+        }
         if !matches!(
             command.receipt.envelope.command,
             AgentCommand::Message { .. }
@@ -114,6 +156,9 @@ impl AgentCommandExecution for ResourceCommandExecution {
     }
 
     async fn execute(&self, command: &AdmittedAgentCommand) -> CommandAttempt {
+        if is_channel(command) {
+            return self.execute_channel(command).await;
+        }
         let authority = match self.checked(command).await {
             Ok(authority) => authority,
             Err(CommandReadiness::Reject(code)) => return CommandAttempt::Reject(code),
@@ -156,7 +201,7 @@ impl AgentCommandExecution for ResourceCommandExecution {
     }
 }
 
-fn classify(error: AgentOperationError) -> CommandAttempt {
+pub(super) fn classify(error: AgentOperationError) -> CommandAttempt {
     use AgentOperationError::*;
     use CommandFailureCode as Failure;
     // The driver rereads binding state before acting on any classification.

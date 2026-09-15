@@ -4,11 +4,13 @@ mod choices;
 mod config;
 mod invoke;
 mod mutations;
+mod outbox;
 mod types;
 mod validation;
 pub use choices::*;
 pub use config::*;
 pub use invoke::*;
+pub use outbox::*;
 pub use types::*;
 
 use crate::{Client, Error, PageOptions, Result, resources::identity};

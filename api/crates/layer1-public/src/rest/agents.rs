@@ -33,6 +33,7 @@ const DEFAULT_PAGE_LIMIT: u16 = 200;
 
 #[derive(Clone)]
 pub struct AgentRoutesState {
+    pub(super) commands: Option<Arc<layer2_core::sandbox::agent_io::AgentCommandService>>,
     pub(super) agents: Arc<AgentService>,
     pub(super) reads: Arc<AgentReadService>,
     pub(super) agent_operations: Arc<AgentOperationService>,
@@ -47,11 +48,22 @@ impl AgentRoutesState {
         operation_records: Arc<dyn OperationStore>,
     ) -> Self {
         Self {
+            commands: None,
             agents,
             reads,
             agent_operations,
             operation_records,
         }
+    }
+
+    /// Production adapters share the durable command ledger. Older service
+    /// compositions keep their established operation behavior until migrated.
+    pub fn with_commands(
+        mut self,
+        commands: Arc<layer2_core::sandbox::agent_io::AgentCommandService>,
+    ) -> Self {
+        self.commands = Some(commands);
+        self
     }
 }
 

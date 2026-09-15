@@ -1,4 +1,4 @@
-import { BridgeInvokes } from './bridges/invoke.js';
+import { BridgeOutbox } from './bridges/outbox.js';
 import { ProtocolError, ValidationError } from './errors.js';
 import type { OperationOptions } from './http.js';
 import {
@@ -14,6 +14,15 @@ import {
 import { positiveInteger } from './schema.js';
 import * as schema from './bridges/schema.js';
 export type * from './bridges/schema.js';
+export type {
+  BridgeDelivery,
+  BridgeDeliveryStatus,
+  BridgeDeliveryAttempt,
+  BridgeDeliveryPage,
+  BridgeDeliveryRecoveryAction,
+  BridgeDeliveryRecoveryRequest,
+  BridgeDeliveryRecoveryReceipt,
+} from './bridges/outbox-schema.js';
 export type {
   BridgeAgentTarget,
   BridgeInvokeGrant,
@@ -52,7 +61,7 @@ function receipt(id: string, expected: number, kind: string) {
   };
 }
 /** Current bridge management. Channel callback and reply credentials are not dashboard authentication. */
-export class Bridges extends BridgeInvokes {
+export class Bridges extends BridgeOutbox {
   list(options: BridgeListOptions = {}) {
     if (options.limit !== undefined && input(positiveInteger, options.limit) > 100)
       throw new ValidationError('bridge limit must be at most 100');
@@ -182,13 +191,31 @@ export class Bridges extends BridgeInvokes {
     );
   }
   /** Import the exact selected key into CMA control-plane custody; this method never retains it. */
-  importKey(id: string, expectedRevision: number, key: string, options: OperationOptions = {}) {
+  importKey(
+    id: string,
+    expectedRevision: number,
+    key: string,
+    options: OperationOptions & { readonly retainControlPlaneAuthority?: boolean } = {},
+  ) {
     if (typeof key !== 'string' || key.length === 0 || key.length > 4096)
       throw new ValidationError('selected bridge key must contain 1 through 4096 characters');
+    if (
+      options.retainControlPlaneAuthority !== undefined &&
+      typeof options.retainControlPlaneAuthority !== 'boolean'
+    )
+      throw new ValidationError('bridge background authority consent must be a boolean');
     return read(this.config, `${path(id)}/credential`, schema.credentialStatus, {
       ...options,
       method: 'PUT',
-      body: { expected_revision: input(positiveInteger, expectedRevision), key },
+      body: {
+        expected_revision: input(positiveInteger, expectedRevision),
+        key,
+        ...(options.retainControlPlaneAuthority === undefined
+          ? {}
+          : {
+              retain_control_plane_authority: options.retainControlPlaneAuthority,
+            }),
+      },
     });
   }
   revokeKey(

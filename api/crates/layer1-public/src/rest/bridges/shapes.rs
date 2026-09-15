@@ -45,6 +45,10 @@ pub(crate) struct ImportBridgeKeyRequest {
     /// Exact selected NyxID Agent key; write-only, never echoed or logged.
     #[schema(write_only, min_length = 1, max_length = 4096)]
     pub key: String,
+    /// Retain this exact human OAuth authority for this Bridge for 30 days.
+    /// Defaults to false; the selected key alone cannot enable background work.
+    #[serde(default)]
+    pub retain_control_plane_authority: bool,
 }
 #[derive(Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]

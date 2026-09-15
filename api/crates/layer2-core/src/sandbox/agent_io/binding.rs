@@ -31,10 +31,18 @@ pub fn bind_command_dispatch(
         fence
             .require_envelope(&command.receipt.envelope)
             .map_err(|_| CommandLedgerError::Conflict)?;
-    } else if command.receipt.envelope.owner
-        != (AgentOwner::Person {
-            subject: current.owner.clone(),
-        })
+    } else if let Some(fence) = &mutation.channel_execution_fence {
+        fence
+            .require_dispatch(command)
+            .map_err(|_| CommandLedgerError::Conflict)?;
+    } else if matches!(
+        command.receipt.envelope.actor,
+        super::AgentActor::Channel { .. }
+    ) || command.receipt.envelope.source.kind == super::AgentSourceKind::Channel
+        || command.receipt.envelope.owner
+            != (AgentOwner::Person {
+                subject: current.owner.clone(),
+            })
     {
         return Err(CommandLedgerError::Conflict);
     }

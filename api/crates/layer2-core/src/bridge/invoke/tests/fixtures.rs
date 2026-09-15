@@ -69,6 +69,7 @@ pub(super) fn grant() -> BridgeInvokeGrant {
     })
     .collect();
     BridgeInvokeGrant {
+        channel: None,
         id: BridgeInvokeGrantId(format!("brinv_{}", "c".repeat(64))),
         revision: 1,
         owner,

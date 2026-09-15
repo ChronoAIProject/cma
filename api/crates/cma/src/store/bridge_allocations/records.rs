@@ -15,7 +15,9 @@ pub(super) fn record_document(record: &AllocationRecord) -> Result<Document, All
     )
 }
 
-pub(super) fn decode_record(document: &Document) -> Result<AllocationRecord, AllocationError> {
+pub(in crate::store) fn decode_record(
+    document: &Document,
+) -> Result<AllocationRecord, AllocationError> {
     let record: AllocationRecord = read_record(document).map_err(|_| AllocationError::Corrupt)?;
     let expected = record_document(&record)?;
     for field in [

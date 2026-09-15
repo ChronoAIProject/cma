@@ -143,6 +143,8 @@ impl BridgeInvokeStore for Memory {
     }
 }
 pub(in crate::rest) struct Fixture {
+    pub definitions: BridgeService,
+    pub bridge_store: Arc<MemoryBridgeStore>,
     pub router: Router,
     pub service: Arc<BridgeInvokeService>,
     pub id: String,
@@ -158,11 +160,9 @@ pub(in crate::rest) async fn fixture() -> Fixture {
     let authority = Arc::new(Authority {
         resources: resources.clone(),
     });
-    let definitions = BridgeService::new(
-        Arc::new(MemoryBridgeStore::default()),
-        authority.clone(),
-        authority.clone(),
-    );
+    let bridge_store = Arc::new(MemoryBridgeStore::default());
+    let definitions =
+        BridgeService::new(bridge_store.clone(), authority.clone(), authority.clone());
     let id = BridgeService::creation_id(&context("owner-a"), "invoke-bridge").unwrap();
     let config:BridgeConfig=serde_json::from_value(json!({
         "display_name":"Retained grant fixture","connector":{"issuer":"https://identity.test","base_url":"https://identity.test","bot_id":"bot","platform":"telegram",
@@ -189,12 +189,14 @@ pub(in crate::rest) async fn fixture() -> Fixture {
         .await
         .unwrap();
     let service = Arc::new(BridgeInvokeService::new(
-        definitions,
+        definitions.clone(),
         Arc::new(ResourceAccessService::new(resources.clone(), authority)),
         resources,
         Arc::new(Memory::default()),
     ));
     Fixture {
+        definitions,
+        bridge_store,
         router: super::super::bridge_invoke_router(Some(service.clone())),
         service,
         id: id.as_str().into(),

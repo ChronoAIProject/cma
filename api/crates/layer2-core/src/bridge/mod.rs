@@ -9,6 +9,7 @@ pub mod invoke;
 mod management;
 mod memory;
 mod model;
+pub mod outbox;
 pub mod partition;
 mod service;
 pub mod setup;

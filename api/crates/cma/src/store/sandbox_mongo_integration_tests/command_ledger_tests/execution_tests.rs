@@ -170,6 +170,8 @@ async fn composed(
         Arc::new(PlatformDefaults::default()),
     );
     let execution = Arc::new(crate::commands::ResourceCommandExecution {
+        channel: None,
+        invokes: None,
         authority: authority.clone(),
         access: Arc::new(ResourceAccessService::new(store.clone(), authority.clone())),
         store: store.clone(),
@@ -314,7 +316,19 @@ async fn replaced_control_turn_has_typed_refusal_before_runtime_or_lifecycle_wor
         reservation.response_id = None;
         reservation.envelope.request_fingerprint =
             reservation.envelope.command.fingerprint().unwrap();
-        let command = record(store.reserve_command(reservation).await.unwrap());
+        let reserved = store.reserve_command(reservation).await;
+        if original_turn.is_none() {
+            assert!(matches!(reserved, Err(CommandLedgerError::NotAdmissible)));
+            assert_eq!(sends.load(Ordering::SeqCst), 0);
+            assert_eq!(store.get_agent(&agent.id).await.unwrap(), Some(agent));
+            assert_eq!(
+                store.agent_commands.count_documents(doc! {}).await.unwrap(),
+                0
+            );
+            client.database(&name).drop().await.unwrap();
+            continue;
+        }
+        let command = record(reserved.unwrap());
         agent.conversation.active_turn = Some(2);
         agent.status = AgentStatus::Working;
         agent.revision += 1;

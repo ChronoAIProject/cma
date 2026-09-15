@@ -41,7 +41,9 @@ CMA returns `202` only after the store confirms a majority-durable matching inbo
 }
 ```
 
-`execution_hold` is persisted with the admitted inbox record. It states that this release has not dispatched the message to an Agent worker. A future worker must acquire exact current invoke/allocation authority and advance the durable state through its own trusted store transition. An absent hold on an older retained receipt does not establish execution or delivery.
+`execution_hold` is persisted with the admitted inbox record. It states that the callback request has not dispatched the message to an Agent worker. The background inbox/allocation workers acquire exact current invoke/allocation authority, create or reuse the pinned placement, and admit the input through the common Agent command ledger. The ordinary command worker releases an eligible hold only after a fresh current-authority check. The original callback receipt remains immutable; its hold does not describe the command's later execution status. An absent hold on an older retained receipt does not establish execution or delivery.
+
+Accepted commands retain their authenticated source separately from expiring inbox records, so inbox TTL cleanup cannot erase an already admitted turn's identity or reply correlation. A durably revoked invoke grant or an expired queue deadline can terminally refuse an exact unleased command and release queue capacity. Suspended work remains recoverable; transient authority outages do not terminally refuse it.
 
 A policy refusal also receives `202` after durable recording, with a typed admission such as:
 
@@ -96,4 +98,4 @@ Telegram requires explicit human sender evidence and an original text message. L
 
 Selected-bot mention/reply identity is currently unavailable from the verified connector binding. Group policies requiring that fact return `addressing_evidence_unavailable`. Deliberate owner-open group admission and matching sender/chat allowlists work independently. Stable thread policies require actual typed platform thread evidence; raw Discord interaction routing values are never stable thread IDs.
 
-Accepted reply tokens and Discord interaction context remain encrypted in separate expiring custody. They do not appear in inbox/receipt JSON, keys, logs or UI. Group context partitioning does not change the audience of a reply. Attachment retrieval, outbound dispatch and live Telegram/Lark parity remain separate implementation and verification work.
+Accepted reply tokens and Discord interaction context remain encrypted in separate expiring custody. They do not appear in inbox/receipt JSON, keys, logs or UI. Group context partitioning does not change the audience of a reply. Channel-created sessions can call the [reply tools](CHANNEL_REPLY_TOOLS.md) multiple times during an active turn; the durable outbox sends each admitted message through NyxID to its original recipient. Final answers are not automatically forwarded. Attachment retrieval and live Telegram/Lark parity remain separate implementation and verification work.

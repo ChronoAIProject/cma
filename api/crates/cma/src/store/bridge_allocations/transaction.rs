@@ -156,15 +156,17 @@ impl MongoBridgeAllocationStore {
         Ok(())
     }
 
-    async fn replace(
+    pub(super) async fn replace(
         &self,
         previous: &AllocationRecord,
         next: &AllocationRecord,
         session: &mut ClientSession,
     ) -> Result<(), MutationError> {
-        let changed = self.records.replace_one(
+        let mut fields = record_document(next)?;
+        fields.remove("_id");
+        let changed = self.records.update_one(
             doc! {"_id":&previous.id,"revision":previous.revision as i64,"lease_fence":previous.lease_fence as i64},
-            record_document(next)?,
+            doc! {"$set": fields},
         ).session(&mut *session).await?;
         if changed.matched_count != 1 {
             return Err(AllocationError::Conflict.into());

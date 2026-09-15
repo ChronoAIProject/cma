@@ -1,3 +1,4 @@
+import { ResourceAccessDetails } from './ResourceAccessSummary';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { SharedAgent as SharedAgentDetail } from '@chronoai/cma-sdk';
 import { ApiError } from '@chronoai/cma-sdk';
@@ -148,6 +149,9 @@ export function SharedAgent({ client, web, detail, onAccessChanged, publicationS
           <span>{statusLabel(detail.status)}</span>
         </div>
         <p>{creationLabel(provenance)}</p>
+        {ready === undefined ? null : (
+          <ResourceAccessDetails client={client} access={ready.access} />
+        )}
         {ready === undefined ? null : <ChannelUsage client={client} id={agentId} />}
         <Button size="sm" onClick={onAccessChanged}>
           Refresh access

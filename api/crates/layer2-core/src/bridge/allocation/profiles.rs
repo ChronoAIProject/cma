@@ -106,6 +106,10 @@ pub struct AllocationCapabilityObservation {
     pub owner: ResourceOwner,
     pub profiles_digest: String,
     pub capacity_bounds: ProfileCapacityBounds,
+    /// Current deployment/owner policy. Storage serializes the live count with
+    /// ordinary Sandbox admission; this limit is not callback-supplied.
+    pub owner_live_sandbox_limit: u16,
+    pub baseline_services: Vec<crate::ServiceId>,
     pub one_sandbox_workspace_worktree_agent_available: bool,
     pub runtime_model_services_skills_available: bool,
     pub deadline: tokio::time::Instant,
@@ -120,6 +124,8 @@ pub struct AllocationProfilePlan {
     pub(super) bridge: crate::bridge::BridgeRecord,
     pub(super) pin: crate::bridge::BridgeWorkPin,
     pub(super) deadline: tokio::time::Instant,
+    pub(super) owner_live_sandbox_limit: u16,
+    pub(super) baseline_services: Vec<crate::ServiceId>,
 }
 
 impl AllocationProfilePlan {
@@ -158,11 +164,6 @@ impl AllocationProfilePlan {
         accepted_digest: &str,
         observation: AllocationCapabilityObservation,
     ) -> Result<Self, AllocationError> {
-        management
-            .require_current()
-            .map_err(|_| AllocationError::AuthorityUnavailable)?;
-        let bridge = management.record();
-        super::authority::require_accepted_generation(bridge, &pin)?;
         let profiles = AllocationProfiles {
             sandbox,
             workspace,
@@ -170,6 +171,50 @@ impl AllocationProfilePlan {
             trust_digest: accepted_digest.to_owned(),
             approved_by: management.actor().clone(),
         };
+        Self::checked(management, pin, profiles, observation)
+    }
+
+    /// Revalidate a retained allocation under a fresh manager without rewriting
+    /// the human who approved its immutable selected templates. A new manager
+    /// may continue accepted work only for the original owner and generation.
+    pub fn renew_for_record(
+        management: &BridgeManagementLease,
+        record: &super::AllocationRecord,
+        observation: AllocationCapabilityObservation,
+    ) -> Result<Self, AllocationError> {
+        record.validate()?;
+        let super::AllocationPlacement::NewSandbox { profiles, .. } = &record.placement else {
+            return Err(AllocationError::InvalidProfiles);
+        };
+        if record.owner != management.record().owner
+            || management
+                .record()
+                .pinned(&record.pin)
+                .map_err(|_| AllocationError::IdentityMismatch)?
+                .config
+                != record.config
+        {
+            return Err(AllocationError::IdentityMismatch);
+        }
+        Self::checked(
+            management,
+            record.pin.clone(),
+            profiles.as_ref().clone(),
+            observation,
+        )
+    }
+
+    fn checked(
+        management: &BridgeManagementLease,
+        pin: crate::bridge::BridgeWorkPin,
+        profiles: AllocationProfiles,
+        observation: AllocationCapabilityObservation,
+    ) -> Result<Self, AllocationError> {
+        management
+            .require_current()
+            .map_err(|_| AllocationError::AuthorityUnavailable)?;
+        let bridge = management.record();
+        super::authority::require_accepted_generation(bridge, &pin)?;
         profiles.validate(
             &bridge
                 .pinned(&pin)
@@ -185,6 +230,7 @@ impl AllocationProfilePlan {
             || observation.profiles_digest != profiles.trust_digest
             || !observation.one_sandbox_workspace_worktree_agent_available
             || !observation.runtime_model_services_skills_available
+            || observation.owner_live_sandbox_limit == 0
         {
             return Err(AllocationError::InvalidProfiles);
         }
@@ -197,6 +243,8 @@ impl AllocationProfilePlan {
             bridge: bridge.clone(),
             pin,
             deadline,
+            owner_live_sandbox_limit: observation.owner_live_sandbox_limit,
+            baseline_services: observation.baseline_services,
         })
     }
     pub fn profiles(&self) -> &AllocationProfiles {

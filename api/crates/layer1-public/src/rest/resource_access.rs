@@ -76,6 +76,7 @@ pub(crate) async fn effective(
     caller: AuthenticatedResourceCaller,
     Path((kind, id)): Path<(String, String)>,
 ) -> Result<Json<EffectiveAccessView>, ResourceProblem> {
+    let target = target(&kind, id)?;
     let authorized = service
         .authorize(
             &caller.context,
@@ -83,7 +84,7 @@ pub(crate) async fn effective(
                 .credential
                 .as_ref()
                 .map(|credential| credential.value()),
-            &target(&kind, id)?,
+            &target,
             ResourceCapability::ViewDetails,
             AccessPurpose::Read,
         )
@@ -109,6 +110,23 @@ pub(crate) async fn effective(
         })
         .collect();
     Ok(Json(EffectiveAccessView {
+        owner: match authorized
+            .snapshot
+            .scope(&target)
+            .map_err(|error| ResourceProblem(error.into()))?
+            .owner
+        {
+            layer2_core::resource_access::ResourceOwner::Person { subject } => {
+                ResourceOwnershipView::Person {
+                    is_current_person: subject == caller.context.caller.subject,
+                }
+            }
+            layer2_core::resource_access::ResourceOwner::Organization { subject } => {
+                ResourceOwnershipView::Organization {
+                    organization_id: subject.to_string(),
+                }
+            }
+        },
         capabilities,
         revalidate_at: authorized
             .decision

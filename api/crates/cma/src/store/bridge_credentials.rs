@@ -1,6 +1,8 @@
 //! Local encrypted custody for exactly selected bridge credentials. Both import
 //! and revocation fence the current Bridge definition in the same transaction.
 
+pub(crate) mod control_plane;
+
 use layer2_core::bridge::{
     BridgeCustodyPin, BridgeError, BridgeManagementLease, BridgeRecord, BridgeSecretRef,
     BridgeSetupBlock, BridgeState,
@@ -107,11 +109,24 @@ impl MongoBridgeCredentialStore {
                 material.value.expose(),
             )
             .map_err(|_| BridgeError::Unavailable)?;
-        Ok(
-            doc! { "_id": material.metadata.connector.custody.as_str(), "document_schema_version": DOCUMENT_SCHEMA_VERSION,
-            "metadata": record_bson(&material.metadata).map_err(|_| BridgeError::Corrupt)?,
-            "secret": record_bson(&encrypted).map_err(|_| BridgeError::Corrupt)? },
-        )
+        let mut document = doc! { "_id": material.metadata.connector.custody.as_str(), "document_schema_version": DOCUMENT_SCHEMA_VERSION,
+        "metadata": record_bson(&material.metadata).map_err(|_| BridgeError::Corrupt)?,
+        "secret": record_bson(&encrypted).map_err(|_| BridgeError::Corrupt)? };
+        if let Some(grant) = &material.control_plane {
+            validate_grant(grant, &material.metadata)?;
+            let clear = zeroize::Zeroizing::new(
+                serde_json::to_string(grant).map_err(|_| BridgeError::Corrupt)?,
+            );
+            let encrypted = self
+                .cipher
+                .seal("bridge-control-plane", &aad, "grant", &clear)
+                .map_err(|_| BridgeError::Unavailable)?;
+            document.insert(
+                "control_plane",
+                record_bson(&encrypted).map_err(|_| BridgeError::Corrupt)?,
+            );
+        }
+        Ok(document)
     }
 
     fn decode(&self, document: Document) -> Result<StoredBridgeCredential, BridgeError> {
@@ -140,7 +155,27 @@ impl MongoBridgeCredentialStore {
                 .open("bridge-credential", &aad, "selected-key", encrypted)
                 .map_err(|_| BridgeError::Corrupt)?,
         );
-        Ok(StoredBridgeCredential { metadata, value })
+        let control_plane = document
+            .get("control_plane")
+            .map(|encrypted| {
+                let encrypted: CipherEnvelope =
+                    mongodb::bson::deserialize_from_bson(encrypted.clone())
+                        .map_err(|_| BridgeError::Corrupt)?;
+                let clear = zeroize::Zeroizing::new(
+                    self.cipher
+                        .open("bridge-control-plane", &aad, "grant", encrypted)
+                        .map_err(|_| BridgeError::Corrupt)?,
+                );
+                let grant = serde_json::from_str(&clear).map_err(|_| BridgeError::Corrupt)?;
+                validate_grant(&grant, &metadata)?;
+                Ok::<_, BridgeError>(grant)
+            })
+            .transpose()?;
+        Ok(StoredBridgeCredential {
+            metadata,
+            value,
+            control_plane,
+        })
     }
 
     async fn apply(
@@ -223,6 +258,7 @@ impl MongoBridgeCredentialStore {
             .await?
             .map(|document| self.decode(document))
             .transpose()?;
+        let existed = current.is_some();
         let material = match change {
             Change::Admit(material) => {
                 let record = management.record();
@@ -235,18 +271,52 @@ impl MongoBridgeCredentialStore {
                 {
                     return Err(BridgeError::Conflict.into());
                 }
+                if material.control_plane.as_ref().is_some_and(|grant| {
+                    !matches!(management.actor(),
+                        layer2_core::resource_access::ResourceActor::Human { subject }
+                        | layer2_core::resource_access::ResourceActor::Api { subject, delegation_id: None }
+                        if subject == &grant.subject)
+                }) {
+                    return Err(BridgeError::Corrupt.into());
+                }
                 if let Some(current) = current {
                     let mut comparable = material.metadata.clone();
                     comparable.created_at = current.metadata.created_at.clone();
+                    // The original selected-key importer remains immutable.
+                    // Explicit new consent may come from another current org
+                    // admin; its subject is recorded in the separate grant.
+                    comparable.created_by = current.metadata.created_by.clone();
                     if current.metadata != comparable || current.value != material.value {
                         return Err(BridgeError::IdempotencyConflict.into());
                     }
                     management.require_current()?;
-                    return Ok(current.metadata);
-                }
-                StoredBridgeCredential {
-                    metadata: material.metadata.clone(),
-                    value: material.value.clone(),
+                    // An unchanged explicit request replays the original expiry.
+                    // Deliberate reconnect may attach or renew an expired grant
+                    // while the Bridge is disabled, under the same definition fence.
+                    let renew = material.control_plane.as_ref().is_some_and(|next| {
+                        current.control_plane.as_ref().is_none_or(|old| {
+                                old.subject != next.subject
+                                    || old.incarnation != next.incarnation
+                                    || layer2_core::seconds_from_rfc3339(&old.expires_at)
+                                        <= layer2_core::seconds_from_rfc3339(
+                                            &layer2_core::now_rfc3339(),
+                                        )
+                            })
+                    });
+                    if !renew {
+                        return Ok(current.metadata);
+                    }
+                    StoredBridgeCredential {
+                        metadata: current.metadata,
+                        value: current.value,
+                        control_plane: material.control_plane.clone(),
+                    }
+                } else {
+                    StoredBridgeCredential {
+                        metadata: material.metadata.clone(),
+                        value: material.value.clone(),
+                        control_plane: material.control_plane.clone(),
+                    }
                 }
             }
             Change::Revoke {
@@ -279,10 +349,20 @@ impl MongoBridgeCredentialStore {
         material.metadata.validate()?;
         match change {
             Change::Admit(_) => {
-                self.credentials
-                    .insert_one(self.encode(&material)?)
-                    .session(&mut *session)
-                    .await?;
+                if existed {
+                    self.credentials
+                        .replace_one(
+                            doc! { "_id": reference.as_str(), "metadata.revision": 1_i64 },
+                            self.encode(&material)?,
+                        )
+                        .session(&mut *session)
+                        .await?;
+                } else {
+                    self.credentials
+                        .insert_one(self.encode(&material)?)
+                        .session(&mut *session)
+                        .await?;
+                }
             }
             Change::Revoke {
                 expected_revision, ..
@@ -337,6 +417,20 @@ impl BridgeCredentialStore for MongoBridgeCredentialStore {
         )
         .await
     }
+}
+
+fn validate_grant(
+    grant: &crate::bridge::control_plane::BridgeControlPlaneGrant,
+    metadata: &BridgeCustodyMetadata,
+) -> Result<(), BridgeError> {
+    grant.validate()?;
+    if grant.bridge_id != metadata.bridge_id
+        || grant.owner != metadata.owner
+        || grant.connector != metadata.connector
+    {
+        return Err(BridgeError::Corrupt);
+    }
+    Ok(())
 }
 
 enum Change {

@@ -1,0 +1,7 @@
+.resource-access-summary {
+  display: block;
+  min-width: 0;
+  margin-block: 4px;
+  color: var(--dsw-alias-label-secondary);
+  overflow-wrap: anywhere;
+}

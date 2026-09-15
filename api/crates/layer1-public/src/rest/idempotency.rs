@@ -199,11 +199,29 @@ pub(super) enum Idempotency {
         claim: OperationClaim,
     },
     Replay(Response),
+    /// A newer domain ledger may prove acceptance without repeating execution.
+    /// Generic legacy commands continue returning their original refusal.
+    Fenced(IdempotencyProblem),
 }
 
 impl Idempotency {
     /// Reserve a key, identify a duplicate, or leave an unkeyed request alone.
     pub(super) async fn begin(
+        key: IdempotencyKey,
+        store: Arc<dyn OperationStore>,
+        caller: &Caller,
+        operation: impl Into<String>,
+        fingerprint: [u8; 32],
+    ) -> Result<Self, Response> {
+        match Self::begin_recoverable(key, store, caller, operation, fingerprint).await? {
+            Self::Fenced(problem) => Err(problem.into_response()),
+            other => Ok(other),
+        }
+    }
+
+    /// Inspect the existing outer receipt before consulting an additive ledger.
+    /// Pending/recovery never grants permission to run the command again.
+    pub(super) async fn begin_recoverable(
         key: IdempotencyKey,
         store: Arc<dyn OperationStore>,
         caller: &Caller,
@@ -228,11 +246,9 @@ impl Idempotency {
             .map_err(|error| RequestFailure::from(error).into_response())?;
         Ok(match reservation {
             OperationReservation::Acquired => Self::Acquired { store, claim },
-            OperationReservation::Pending => {
-                return Err(IdempotencyProblem::Pending.into_response())
-            }
+            OperationReservation::Pending => Self::Fenced(IdempotencyProblem::Pending),
             OperationReservation::RecoveryRequired => {
-                return Err(IdempotencyProblem::RecoveryRequired.into_response())
+                Self::Fenced(IdempotencyProblem::RecoveryRequired)
             }
             OperationReservation::FingerprintMismatch => {
                 return Err(IdempotencyProblem::Reused.into_response())

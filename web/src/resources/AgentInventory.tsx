@@ -1,3 +1,5 @@
+import { useAccessSummaries } from './useAccessSummaries';
+import { ResourceAccessSummary } from './ResourceAccessSummary';
 import { useMemo, useState } from 'react';
 import type {
   AgentCreationCategory,
@@ -125,6 +127,12 @@ function Inventory({ client, organization, shared, onNavigate }: Props) {
   if (organization !== undefined && selected === undefined)
     scopes.push({ value: scopeValue(organization), label: 'Selected organization' });
   const page = inventory.state.status === 'ready' ? inventory.state.value : undefined;
+  const accessSummaries = useAccessSummaries(
+    client,
+    'agent',
+    page?.items.map((row) => row.agent_id) ?? [],
+    scopeValue(organization, shared),
+  );
   return (
     <section className="agent-inventory" aria-labelledby="inventory-title">
       <header className="agent-inventory__header">
@@ -220,6 +228,10 @@ function Inventory({ client, organization, shared, onNavigate }: Props) {
                       >
                         {row.title?.trim() || 'Untitled agent'}
                       </a>
+                      <ResourceAccessSummary
+                        className="agent-inventory__access"
+                        value={accessSummaries.get(row.agent_id)}
+                      />
                       <span>{statusLabel(row.status)}</span>
                       <span>{creationLabels[row.creation_origin]}</span>
                       <span>{channelLabel(row.channel_usage)}</span>

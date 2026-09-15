@@ -11,7 +11,7 @@ use layer2_core::resource_access::{
 use layer2_core::{Authorization, Caller, Capability, SubjectId};
 use std::time::Duration;
 
-pub(super) struct Authority {
+pub(in crate::store::bridge_invokes) struct Authority {
     pub role: std::sync::Mutex<Option<OrganizationRole>>,
     pub snapshot: std::sync::Mutex<Option<ResourceAccessSnapshot>>,
 }
@@ -110,7 +110,7 @@ pub(super) fn caller() -> CallerContext {
         memberships: vec![],
     }
 }
-pub(super) struct Fixture {
+pub(in crate::store::bridge_invokes) struct Fixture {
     pub client: mongodb::Client,
     pub database: String,
     pub bridges: Arc<MongoBridgeStore>,
@@ -263,6 +263,7 @@ impl Fixture {
                         revocation_key_digest: None,
                     },
                     value: SecretValue::new("fixture-invoke-secret".into()),
+                    control_plane: None,
                 },
             )
             .await

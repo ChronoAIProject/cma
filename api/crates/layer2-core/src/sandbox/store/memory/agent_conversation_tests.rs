@@ -141,6 +141,7 @@ fn begin_turn(
     AgentConversationMutation {
         command_claim: None,
         execution_fence: None,
+        channel_execution_fence: None,
         admission_guard,
         expected_agent_revision,
         expected_last_seq,
@@ -183,6 +184,7 @@ fn begin_first_message(
     AgentConversationMutation {
         command_claim: None,
         execution_fence: None,
+        channel_execution_fence: None,
         admission_guard,
         expected_agent_revision,
         expected_last_seq,

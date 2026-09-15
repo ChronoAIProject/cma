@@ -265,3 +265,9 @@ with `creation_origin` and existing personal, organization or shared scope.
 bindings. The optional row `channel_usage` field supports older servers. Continue
 with `next` after an empty filtered page: each request scans at most 200 authorized
 candidates. Channel filters never relabel Manual or Trigger creation categories.
+
+Resource access responses include an optional safe ownership summary, absent on
+older servers. Personal ownership reports only whether the current caller owns
+the resource; organization ownership supplies an ID for matching the caller's
+current organization choices. Use the resource's current capabilities to display
+access levels. Organization membership alone does not establish resource permissions.

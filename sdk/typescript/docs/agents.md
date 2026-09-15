@@ -292,3 +292,9 @@ historically bound Agents whose bindings have all detached. The `channel_usage`
 row field is optional only for compatibility with older servers. A server scans
 at most 200 authorized candidates per request; keep following `next` even when a
 filtered page is empty. Channel filters never relabel a Manual or Trigger Agent.
+
+Resource access responses include an optional safe ownership summary, absent on
+older servers. Personal ownership reports only whether the current caller owns
+the resource; organization ownership supplies an ID for matching the caller's
+current organization choices. Use the resource's current capabilities to display
+access levels. Organization membership alone does not establish resource permissions.

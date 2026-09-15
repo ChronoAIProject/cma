@@ -11,6 +11,7 @@ import {
 } from './resources.js';
 import {
   array,
+  boolean,
   enumeration,
   integer,
   nullable,
@@ -84,7 +85,17 @@ export const shareReceipt = object({
   at: text,
   policy_revision: positiveInteger,
 });
+/** Safe owner attribution; personal identities and ancestry are never exposed. */
+export const resourceOwnership = tagged(
+  {
+    person: object({ kind: enumeration('person'), is_current_person: boolean }),
+    organization: object({ kind: enumeration('organization'), organization_id: text }),
+  },
+  'kind',
+);
+export type ResourceOwnership = Output<typeof resourceOwnership>;
 export const effectiveAccess = object({
+  owner: optional(resourceOwnership),
   capabilities: array(text),
   revalidate_at: nullable(text),
   policy_revision: integer,

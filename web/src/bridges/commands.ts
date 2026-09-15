@@ -11,7 +11,7 @@ const failures: Readonly<Record<string, string>> = {
     'The selected bot, key and routes do not have a verified matching owner and connection.',
   bridge_custody_required: 'Import the exact active Agent key selected in these saved settings.',
   bridge_renewable_authority_required:
-    'Separate Sandboxes require scoped credentials that CMA can renew. This connection does not provide that capability yet.',
+    'Disable this bridge, then import its selected key with permission to use your NyxID connection for 30 days. Current account and organization admin access are required. Separate Sandboxes also need supported scoped key setup.',
   bridge_target_mismatch:
     'The retained Agent does not match the selected owner and resource ancestry.',
   bridge_profile_unavailable:

@@ -2,6 +2,7 @@
 //! dispatch and secret custody are separate stores and authority boundaries.
 
 mod inbox;
+pub(in crate::store) use inbox::decode as decode_inbox;
 pub(crate) use inbox::MongoCallbackInbox;
 
 use futures_util::TryStreamExt;

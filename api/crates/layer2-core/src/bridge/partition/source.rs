@@ -168,6 +168,11 @@ impl NormalizedPartitionSource {
     pub fn conversation_kind(&self) -> ChannelConversationKind {
         self.observation.conversation
     }
+    /// Verified stable platform thread facts only. Protected generic callback
+    /// context is never exposed as thread identity or routing authority.
+    pub fn thread(&self) -> &ThreadEvidence {
+        &self.observation.thread
+    }
     pub(super) fn require_config(&self, config: &BridgeConfig) -> Result<(), PartitionError> {
         if &self.config != config {
             return Err(PartitionError::SourceMismatch);

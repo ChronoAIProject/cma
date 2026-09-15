@@ -29,6 +29,11 @@ pub struct BridgeService {
 }
 
 impl BridgeService {
+    /// Share the same fresh connection verifier with trusted reply admission and
+    /// delivery composition. This exposes no retained provider credentials.
+    pub fn connection_validator(&self) -> Arc<dyn BridgeConnectionValidator> {
+        self.connections.clone()
+    }
     pub fn new(
         store: Arc<dyn BridgeStore>,
         organizations: Arc<dyn OrganizationAuthority>,

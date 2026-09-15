@@ -12,6 +12,26 @@ const receipt = schema.receipt(fixture('control-success').response.body);
 const command = schema.controlRequest(fixture('control-success').request.body);
 
 describe('bridge management protocol boundaries', () => {
+  it('retains background human authority only with explicit boolean consent', async () => {
+    const test = transport();
+    test.answer({ revision: 1, present: true, revoked: false });
+    for (const consent of [undefined, false, true]) {
+      await test.client.bridges.importKey(bridge.id, 1, 'selected-secret', {
+        retainControlPlaneAuthority: consent,
+      });
+      expect(JSON.parse(String(test.calls.at(-1)!.init.body))).toEqual({
+        expected_revision: 1,
+        key: 'selected-secret',
+        ...(consent === undefined ? {} : { retain_control_plane_authority: consent }),
+      });
+    }
+    expect(() =>
+      test.client.bridges.importKey(bridge.id, 1, 'selected-secret', {
+        retainControlPlaneAuthority: 'true' as never,
+      }),
+    ).toThrow(ValidationError);
+    expect(test.calls).toHaveLength(3);
+  });
   it('keeps idempotent command input fixed and rejects a receipt for another command or actor', async () => {
     const test = transport();
     test.answer(receipt);

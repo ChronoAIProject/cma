@@ -148,6 +148,8 @@ async fn production_shared_preparation_revives_once_without_sending_or_rewriting
         .await
         .unwrap();
     let execution = Arc::new(crate::commands::ResourceCommandExecution {
+        channel: None,
+        invokes: None,
         authority: Arc::new(ResourceAuthority),
         access: Arc::new(ResourceAccessService::new(
             fixture.store.clone(),

@@ -39,6 +39,9 @@ impl BridgeInvokeService {
         let started_at = SystemTime::now();
         let mut deadline = tokio::time::Instant::now() + Duration::from_secs(15);
         key(&request.idempotency_key)?;
+        if request.shared_context != BridgeSharedContextConsent::UseRetainedAgentContext {
+            return Err(BridgeInvokeError::Invalid("shared_context"));
+        }
         let mut management = self
             .management(context, credential, &request.bridge_id, deadline)
             .await?;
@@ -130,6 +133,7 @@ impl BridgeInvokeService {
             })
             .collect::<Result<_, _>>()?,
             state: BridgeInvokeGrantState::Active,
+            channel: None,
         };
         record.validate()?;
         super::service::require_resource_owner(&record, &authorized.snapshot)?;
@@ -158,6 +162,8 @@ impl BridgeInvokeService {
             resources: Some(authorized.snapshot),
             custody: Some(connection.custody_pin().clone()),
             deadline,
+            channel_authority: None,
+            channel_control_plane: None,
         };
         write.require_current()?;
         self.store.apply(write).await
@@ -213,6 +219,8 @@ impl BridgeInvokeService {
             resources: None,
             custody: None,
             deadline,
+            channel_authority: None,
+            channel_control_plane: None,
         };
         write.require_current()?;
         self.store.apply(write).await

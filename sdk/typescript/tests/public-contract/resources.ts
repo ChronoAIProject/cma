@@ -3,6 +3,12 @@ import type { AgentProvenanceInventoryOptions } from '../../src/agents.js';
 import type { AccessibleSandboxListOptions } from '../../src/sandboxes.js';
 
 export const resourceDispatch: Record<string, Dispatch> = {
+  'GET /api/v1/bridges/{id}/deliveries': ({ client, param, options }) =>
+    client.bridges.listDeliveries(param('id'), options),
+  'GET /api/v1/bridges/{id}/deliveries/{item}': ({ client, param }) =>
+    client.bridges.readDelivery(param('id'), param('item')),
+  'POST /api/v1/bridges/{id}/delivery-recovery': ({ client, param, body, command }) =>
+    client.bridges.recoverDelivery(param('id'), body, command),
   'GET /api/v1/bridges/{id}/invoke-grants': ({ client, param, options }) =>
     client.bridges.listInvokeGrants(param('id'), options),
   'GET /api/v1/bridges/{id}/invoke-readiness': ({ client, param }) =>
