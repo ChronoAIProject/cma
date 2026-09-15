@@ -254,6 +254,7 @@ async fn apply_publication(
             doc! {
                 "_id": current.id.as_str(),
                 "document_schema_version": DOCUMENT_SCHEMA_VERSION,
+                "channel_reuse_cleanup_execution": { "$exists": false },
                 "revision": signed(current.revision, "checkpoint sandbox revision")
                     .map_err(|_| PublishError::Domain(SandboxStoreError::Conflict))?,
             },

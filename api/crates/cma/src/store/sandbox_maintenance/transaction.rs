@@ -150,6 +150,7 @@ pub(super) async fn apply(
             doc! {
                 "_id": current.id.as_str(),
                 "document_schema_version": DOCUMENT_SCHEMA_VERSION,
+                "channel_reuse_cleanup_execution": { "$exists": false },
                 "revision": signed(expected_revision, "sandbox maintenance revision")
                     .map_err(|_| ApplyError::Domain(SandboxStoreError::Conflict))?,
                 "last_seq": signed(last_seq, "sandbox maintenance event sequence")

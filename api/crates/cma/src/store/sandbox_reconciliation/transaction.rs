@@ -101,6 +101,7 @@ pub(super) async fn apply(
         doc! {
             "_id": current.id.as_str(),
             "document_schema_version": DOCUMENT_SCHEMA_VERSION,
+            "channel_reuse_cleanup_execution": { "$exists": false },
             "revision": signed(mutation.expected_revision, "runtime-loss Sandbox revision")
                 .map_err(|_| ApplyError::Domain(SandboxStoreError::Conflict))?,
             "record.runtime": record_bson(&request.expected_runtime)

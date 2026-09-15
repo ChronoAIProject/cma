@@ -62,7 +62,7 @@ pub(super) async fn apply(
                     let fields = sandboxes::sandbox_replacement_fields(&sandbox)
                         .map_err(|_| SandboxControlError::Corrupt)?;
                     let result = store.sandboxes.update_one(
-                        doc! { "_id": sandbox.id.as_str(), "revision": snapshot.lineage.sandbox.revision as i64, "document_schema_version": DOCUMENT_SCHEMA_VERSION },
+                        doc! { "channel_reuse_cleanup_execution": { "$exists": false }, "_id": sandbox.id.as_str(), "revision": snapshot.lineage.sandbox.revision as i64, "document_schema_version": DOCUMENT_SCHEMA_VERSION },
                         doc! { "$set": fields },
                     ).session(&mut *session).await?;
                     if result.matched_count != 1 {

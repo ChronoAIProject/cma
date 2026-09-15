@@ -7,7 +7,7 @@ use layer3_adapter::{
 use super::runtime_mapping::sandbox_spec;
 
 /// Attach this replica to durable authority without allocating another runtime.
-pub(super) async fn adopt_bound_runtime(
+pub(crate) async fn adopt_bound_runtime(
     adapter: &dyn SandboxAdapter,
     sandbox: &Sandbox,
     deployment_id: &str,

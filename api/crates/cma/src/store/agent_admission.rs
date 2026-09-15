@@ -409,6 +409,7 @@ async fn advance_workspace(
             doc! {
                 "_id": previous.id.as_str(),
                 "document_schema_version": DOCUMENT_SCHEMA_VERSION,
+                "channel_reuse_cleanup_execution": { "$exists": false },
                 "revision": signed(previous.revision, "workspace revision")
                     .map_err(|_| ApplyError::Domain(SandboxStoreError::Conflict))?,
                 "next_worktree_number": signed(
@@ -441,6 +442,7 @@ async fn advance_sandbox(
             doc! {
                 "_id": previous.id.as_str(),
                 "document_schema_version": DOCUMENT_SCHEMA_VERSION,
+                "channel_reuse_cleanup_execution": { "$exists": false },
                 "revision": signed(previous.revision, "sandbox revision")
                     .map_err(|_| ApplyError::Domain(SandboxStoreError::Conflict))?,
             },
