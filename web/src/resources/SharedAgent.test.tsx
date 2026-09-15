@@ -259,4 +259,56 @@ it('preserves a personal draft during foreground access refresh and clears the p
   );
   expect(await screen.findByRole('heading', { name: 'Agent unavailable' })).toBeInTheDocument();
   expect(screen.queryByRole('textbox', { name: 'Message' })).not.toBeInTheDocument();
+  finish = undefined;
+  await userEvent.setup().click(screen.getByRole('button', { name: 'Check access again' }));
+  await waitFor(() => expect(finish).toBeDefined());
+  expect(screen.queryByRole('textbox', { name: 'Message' })).not.toBeInTheDocument();
+  expect(screen.getByRole('heading', { name: 'Opening Agent' })).toBeInTheDocument();
+});
+
+it('discards personal classification as soon as a shared response arrives and keeps it discarded during refresh', async () => {
+  const sdk = createClient({
+    baseUrl: 'https://fixture.invalid',
+    fetch: async () => Response.json({ ...WIRE_AGENT, id: 'agt_1' }),
+  });
+  const web = agentClient({ resourceViews: sdk });
+  render(
+    <CmaClientProvider client={web}>
+      <Console
+        user={{ id: 'owner', handle: 'Owner', visitor: false, capabilities: ['use_own_sandboxes'] }}
+        route={{ kind: 'agent', agentId: 'agt_1' }}
+        onNavigate={vi.fn()}
+        onSignOut={vi.fn()}
+      />
+    </CmaClientProvider>,
+  );
+  await screen.findByRole('textbox', { name: 'Message' });
+  const current = fixture();
+  vi.spyOn(sdk.agents, 'readAccessible').mockImplementation((...args) =>
+    current.sdk.agents.readAccessible(...args),
+  );
+  let finish:
+    ((value: Awaited<ReturnType<typeof sdk.resourceAccess.effective>>) => void) | undefined;
+  const effective = vi.spyOn(sdk.resourceAccess, 'effective').mockImplementation(
+    () =>
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+  );
+  act(() => window.dispatchEvent(new Event('focus')));
+  await waitFor(() => expect(finish).toBeDefined());
+  expect(screen.queryByRole('textbox', { name: 'Message' })).not.toBeInTheDocument();
+  effective.mockImplementation((...args) => current.sdk.resourceAccess.effective(...args));
+  await act(async () =>
+    finish?.({
+      capabilities: ['view_details', 'view_history'],
+      revalidate_at: null,
+      policy_revision: 1,
+    }),
+  );
+  await screen.findByText(/Your current access does not allow interaction/);
+  vi.spyOn(sdk.agents, 'readAccessible').mockImplementation(() => new Promise(() => {}));
+  await userEvent.setup().click(screen.getByRole('button', { name: 'Refresh access' }));
+  expect(screen.queryByRole('textbox', { name: 'Message' })).not.toBeInTheDocument();
+  expect(screen.getByRole('heading', { name: 'Opening Agent' })).toBeInTheDocument();
 });
