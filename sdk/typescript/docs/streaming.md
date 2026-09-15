@@ -187,10 +187,14 @@ means delivered: call `observeControls` again and inspect its source
 `response.status` to confirm actual `cancelled`, `completed` or `failed` outcome.
 The target may finish normally before a cancel takes effect.
 
-`response_control_conflict` means a new intent's revision/turn/approval is stale;
-`agent_command_key_conflict` means the retained key was reused for changed intent;
-`capability_unsupported` means the observed runtime cannot perform the command.
-Recover an uncertain old admission before deciding whether to form a new intent.
+Inspect the ordinary API error's `code`: `response_control_not_admitted` proves
+that the original scope/key has no receipt and its submitted revision is permanently
+stale in the same Agent incarnation. Discard that pending intent, observe again,
+and require a new explicit action before submitting another control.
+`response_control_conflict` remains uncertain even on the first client call;
+retain the original key and body for recovery. `agent_command_key_conflict` means
+the key was reused for changed intent; `capability_unsupported` means the observed
+runtime cannot perform the command.
 The optional discovery `controls` and `command_status` fields describe this CMA
 extension; older discovery documents remain readable. Standard Responses
 cancellation, queued-response cancellation and verified platform-sender controls

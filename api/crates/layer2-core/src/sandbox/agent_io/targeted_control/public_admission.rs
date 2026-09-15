@@ -4,7 +4,10 @@ use super::super::admission_service::command_capability;
 use super::super::{
     AgentCommandService, CommandAdmissionError, CommandLedgerError, CommandSubmissionSource,
 };
-use super::{ResponseControlRuntimeSupport, TargetedControlStatusView, TargetedControlSubmission};
+use super::{
+    ResponseControlRuntimeSupport, TargetedControlInspection, TargetedControlStatusView,
+    TargetedControlSubmission,
+};
 
 /// Additive interface error; v1 admission errors and persisted failures retain
 /// their existing meanings. A later capability race remains a generic conflict.
@@ -14,6 +17,8 @@ pub enum TargetedControlError {
     Admission(#[from] CommandAdmissionError),
     #[error("the observed runtime does not support this control operation")]
     CapabilityUnsupported,
+    #[error("the original response control intent was not admitted and is permanently stale")]
+    NotAdmitted,
 }
 
 impl From<CommandLedgerError> for TargetedControlError {
@@ -41,8 +46,12 @@ impl AgentCommandService {
         let capability = command_capability(&request.command.envelope.command);
         let result = self
             .with_authority_bound(&authorized, capability, async {
-                if let Some(existing) = self.store.lookup_targeted_control(request.clone()).await? {
-                    return Ok::<_, TargetedControlError>(existing);
+                match self.store.inspect_targeted_control(request.clone()).await? {
+                    TargetedControlInspection::Existing(existing) => return Ok(*existing),
+                    TargetedControlInspection::NotAdmitted => {
+                        return Err(TargetedControlError::NotAdmitted)
+                    }
+                    TargetedControlInspection::Missing => {}
                 }
                 let agent = authorized
                     .snapshot

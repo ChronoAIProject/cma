@@ -7,6 +7,8 @@ mod failures;
 #[path = "targeted_controls_fixtures.rs"]
 mod fixtures;
 use fixtures::*;
+#[path = "targeted_controls_inspection_tests.rs"]
+mod inspection;
 
 #[tokio::test]
 async fn explicit_replay_survives_completion_new_turn_and_full_queue() {

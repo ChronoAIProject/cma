@@ -23,6 +23,13 @@ impl AgentCommandStore for InMemorySandboxStore {
         super::targeted_controls::apply(self, request, false)
     }
 
+    async fn inspect_targeted_control(
+        &self,
+        request: crate::sandbox::agent_io::TargetedControlReservation,
+    ) -> Result<crate::sandbox::agent_io::TargetedControlInspection, CommandLedgerError> {
+        super::targeted_controls::inspect(self, request)
+    }
+
     async fn get_admitted_command(
         &self,
         scope: &str,

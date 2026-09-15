@@ -7,6 +7,8 @@ mod failures;
 #[path = "targeted_control_fixtures.rs"]
 mod fixtures;
 use fixtures::*;
+#[path = "targeted_control_inspection_tests.rs"]
+mod inspection;
 
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
