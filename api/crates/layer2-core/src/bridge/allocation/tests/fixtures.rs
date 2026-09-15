@@ -93,7 +93,7 @@ pub(super) fn fixture() -> (AllocationAdmission, AllocationAuthority) {
     let source = NormalizedPartitionSource::from_observation(&inbox, &bridge, observation).unwrap();
     let admission = AllocationAdmission::new(bridge.clone(), &source).unwrap();
     let sandbox_content: SandboxProfileContent = serde_json::from_value(serde_json::json!({
-        "cpu_millis":1000,"memory_mib":1024,"agent_provider":"codex",
+        "cpu_millis":1000,"memory_mib":1024,"agent_provider":crate::profiles::AgentProvider::default(),
         "model_access":"chronoai_managed","max_workspaces":1,"max_agents_per_workspace":1
     }))
     .unwrap();
