@@ -10,6 +10,7 @@ pub(super) fn reservation(agent: &Agent, parent: &Sandbox, key: &str) -> Command
     let command = AgentCommand::message("Inspect this.");
     CommandReservation {
         authority_deadline: None,
+        admission_audit: None,
         envelope: AgentCommandEnvelope {
             schema_version: AGENT_IO_SCHEMA_VERSION,
             command_id: AgentCommandId::generate(),

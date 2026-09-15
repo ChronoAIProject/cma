@@ -103,6 +103,23 @@ async fn finish(
 }
 
 impl CommandRevivalAuthorization {
+    pub fn authorization_audits(
+        &self,
+    ) -> Result<Vec<crate::resource_access::ResourceAuthorizationAudit>, ResourceAccessError> {
+        self.require_current()?;
+        let target = ResourceTarget::Sandbox {
+            sandbox_id: self.parent.snapshot.lineage.sandbox.id.clone(),
+        };
+        Ok(vec![
+            self.execution.fence().authorization_audit()?,
+            self.parent.authorization_audit(
+                &self.command.receipt.envelope.actor,
+                &target,
+                ResourceCapability::ManageSandbox,
+            )?,
+        ])
+    }
+
     pub fn command(&self) -> &AdmittedAgentCommand {
         &self.command
     }

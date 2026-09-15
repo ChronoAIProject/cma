@@ -13,6 +13,7 @@ use super::sandbox_mongo::{
     MongoSandboxStore, TRANSACTION_ATTEMPTS,
 };
 
+pub(super) mod audit;
 pub(super) mod binding;
 mod lane_records;
 mod reconcile;

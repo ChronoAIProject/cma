@@ -31,5 +31,22 @@ pub fn validate_command_reservation_policy(
     {
         return Err(CommandLedgerError::Conflict);
     }
+    if let Some(audit) = &request.admission_audit {
+        audit.validate().map_err(|_| CommandLedgerError::Invalid)?;
+        if audit.actor != request.envelope.actor
+            || audit.owner != owner
+            || audit.target
+                != (crate::resource_access::ResourceTarget::Agent {
+                    agent_id: request.envelope.agent_id.clone(),
+                })
+            || audit.sandbox_id != request.policy.sandbox_id
+            || audit.sandbox_created_at != request.policy.sandbox_created_at
+            || audit.policy_revision != request.policy.policy_revision
+            || audit.capability
+                != super::admission_service::command_capability(&request.envelope.command)
+        {
+            return Err(CommandLedgerError::Invalid);
+        }
+    }
     Ok(())
 }

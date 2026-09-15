@@ -54,7 +54,7 @@ pub(super) fn bind_dispatch(
         .agent_commands
         .get_mut(&claim.command_id)
         .ok_or(SandboxStoreError::Conflict)?;
-    crate::sandbox::agent_io::bind_command_dispatch(
+    let dispatch = crate::sandbox::agent_io::bind_command_dispatch(
         command,
         lane,
         current,
@@ -66,6 +66,18 @@ pub(super) fn bind_dispatch(
         CommandLedgerError::Corrupt => SandboxStoreError::Corrupt(error.to_string()),
         _ => SandboxStoreError::Conflict,
     })?;
+    if let Some(fence) = &mutation.execution_fence {
+        let evidence = fence
+            .authorization_audit()
+            .map_err(|_| SandboxStoreError::Conflict)?;
+        let audit = crate::sandbox::agent_io::CommandAuthorizationAudit::new(
+            command,
+            crate::sandbox::agent_io::CommandAuthorizationEffect::Dispatch { dispatch },
+            vec![evidence],
+        )
+        .map_err(|_| SandboxStoreError::Conflict)?;
+        super::command_audit::append(state, audit).map_err(|_| SandboxStoreError::Conflict)?;
+    }
     Ok(())
 }
 

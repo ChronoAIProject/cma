@@ -33,6 +33,7 @@ pub(super) const AGENTS: &str = "agents";
 pub(super) const AGENT_REUSE_BINDINGS: &str = "agent_reuse_bindings";
 pub(super) const AGENT_LOG: &str = "agent_log";
 pub(super) const AGENT_COMMANDS: &str = "agent_commands";
+pub(super) const COMMAND_AUTHORIZATION_AUDITS: &str = "command_authorization_audits";
 pub(super) const AGENT_COMMAND_ORDERS: &str = "agent_command_orders";
 pub(super) const RESOURCE_POLICIES: &str = "resource_policies";
 pub(super) const RESOURCE_SHARE_COMMANDS: &str = "resource_share_commands";
@@ -87,6 +88,7 @@ pub struct MongoSandboxStore {
     pub(super) agent_reuse_bindings: Collection<Document>,
     pub(super) agent_log: Collection<Document>,
     pub(super) agent_commands: Collection<Document>,
+    pub(super) command_authorization_audits: Collection<Document>,
     pub(super) agent_command_orders: Collection<Document>,
     pub(super) resource_policies: Collection<Document>,
     pub(super) resource_share_commands: Collection<Document>,
@@ -130,6 +132,10 @@ impl MongoSandboxStore {
             agent_reuse_bindings: majority_collection(&database, AGENT_REUSE_BINDINGS),
             agent_log: majority_collection(&database, AGENT_LOG),
             agent_commands: majority_collection(&database, AGENT_COMMANDS),
+            command_authorization_audits: majority_collection(
+                &database,
+                COMMAND_AUTHORIZATION_AUDITS,
+            ),
             agent_command_orders: majority_collection(&database, AGENT_COMMAND_ORDERS),
             resource_policies: majority_collection(&database, RESOURCE_POLICIES),
             resource_share_commands: majority_collection(&database, RESOURCE_SHARE_COMMANDS),
@@ -152,6 +158,7 @@ impl MongoSandboxStore {
         super::agents::ensure_indexes(&store.agents).await?;
         super::agent_log::ensure_indexes(&store.agent_log).await?;
         super::agent_commands::ensure_indexes(&store.agent_commands).await?;
+        super::agent_commands::audit::ensure_indexes(&store.command_authorization_audits).await?;
         super::resource_access::ensure_indexes(&store).await?;
         super::sandbox_events::ensure_indexes(&store.sandbox_events).await?;
         super::checkpoints::ensure_indexes(&store.checkpoints).await?;

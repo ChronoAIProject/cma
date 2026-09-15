@@ -27,17 +27,13 @@ impl AgentCommandAdmissionAuthority for AuthState {
         &self,
         context: &layer2_core::resource_access::CallerContext,
         credential: &str,
-        owner: &AgentOwner,
+        _owner: &AgentOwner,
     ) -> Result<AgentAuthorizationRevision, CommandAuthorizationError> {
         if !context.validate_principal()
             || self
                 .provider_credential_context(&context.caller.subject, credential)
                 .as_ref()
                 != Some(&context.credential)
-            || owner
-                != &(AgentOwner::Person {
-                    subject: context.caller.subject.clone(),
-                })
             || !matches!(
                 &context.actor,
                 AgentActor::Human { .. }
@@ -49,6 +45,8 @@ impl AgentCommandAdmissionAuthority for AuthState {
         {
             return Err(CommandAuthorizationError::Revoked);
         }
+        // Resource policy was independently checked by AgentCommandService.
+        // Capture only this actual human's custody; the owner supplies no login.
         self.personal_command_authority(&context.caller, credential)
             .await
     }

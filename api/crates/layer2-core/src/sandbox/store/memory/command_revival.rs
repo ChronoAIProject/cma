@@ -2,7 +2,7 @@ use super::*;
 use crate::sandbox::agent_io::CommandRevivalAuthorization;
 
 pub(super) fn validate(
-    state: &State,
+    state: &mut State,
     proof: &CommandRevivalAuthorization,
     candidate: &Sandbox,
     at: &str,
@@ -20,5 +20,17 @@ pub(super) fn validate(
     proof
         .validate_snapshot(&snapshot)
         .map_err(|_| SandboxStoreError::Conflict)?;
-    validate_command_revival_transition(&snapshot.lineage.sandbox, candidate, at, event)
+    validate_command_revival_transition(&snapshot.lineage.sandbox, candidate, at, event)?;
+    let resources = proof
+        .authorization_audits()
+        .map_err(|_| SandboxStoreError::Conflict)?;
+    let audit = crate::sandbox::agent_io::CommandAuthorizationAudit::new(
+        command,
+        crate::sandbox::agent_io::CommandAuthorizationEffect::Revival {
+            sandbox_revision: candidate.revision,
+        },
+        resources,
+    )
+    .map_err(|_| SandboxStoreError::Conflict)?;
+    super::command_audit::append(state, audit).map_err(|_| SandboxStoreError::Conflict)
 }

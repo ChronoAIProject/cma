@@ -94,6 +94,14 @@ impl AgentCommandStore for InMemorySandboxStore {
         .flatten();
         let record = request.record(order, agent.conversation.last_seq, target_turn)?;
         let id = record.receipt.envelope.command_id.clone();
+        if let Some(evidence) = &request.admission_audit {
+            let audit = crate::sandbox::agent_io::CommandAuthorizationAudit::new(
+                &record,
+                crate::sandbox::agent_io::CommandAuthorizationEffect::Admission,
+                vec![evidence.clone()],
+            )?;
+            super::command_audit::append(&mut state, audit)?;
+        }
         state
             .agent_command_orders
             .entry(request.envelope.agent_id.clone())

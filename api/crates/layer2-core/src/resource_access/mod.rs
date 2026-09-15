@@ -2,6 +2,7 @@
 //! actual attribution. Evidence is supplied by trusted adapters, never by DTOs
 //! or historical command receipts. Legacy aggregates remain personally owned.
 
+mod audit;
 mod authority;
 mod context;
 mod identity;
@@ -16,6 +17,10 @@ mod share_command;
 mod sharing_service;
 mod store;
 
+pub use audit::{
+    ResourceAuthorityObservation, ResourceAuthorizationAudit, ResourceAuthorizationBasis,
+    ResourceGrantObservation,
+};
 pub use authority::{OrganizationAuthority, OrganizationChoice};
 pub use context::{
     CallerContext, CredentialContext, MembershipError, OrganizationMembership, OrganizationRole,

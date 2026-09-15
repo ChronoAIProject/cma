@@ -43,6 +43,23 @@ pub(super) async fn fence(
     let command = agent_commands::read_command(&document)
         .map_err(|error| ApplyError::Domain(agent_commands::binding::domain_error(error)))?;
     proof.require_command(&command).map_err(|_| conflict())?;
+    let resources = proof.authorization_audits().map_err(|_| conflict())?;
+    let audit = layer2_core::sandbox::agent_io::CommandAuthorizationAudit::new(
+        &command,
+        layer2_core::sandbox::agent_io::CommandAuthorizationEffect::Revival {
+            sandbox_revision: candidate.revision,
+        },
+        resources,
+    )
+    .map_err(|error| ApplyError::Domain(agent_commands::binding::domain_error(error)))?;
+    agent_commands::audit::append(store, &audit, session)
+        .await
+        .map_err(|error| match error {
+            agent_commands::ApplyError::Domain(error) => {
+                ApplyError::Domain(agent_commands::binding::domain_error(error))
+            }
+            agent_commands::ApplyError::Driver(error) => ApplyError::Driver(error),
+        })?;
     // A real write serializes with command claims/refusals. Repeated identical
     // $set values can be no-ops, so every transaction attempt gets a fresh nonce.
     // Receipt/schema fields stay byte-for-byte unchanged.

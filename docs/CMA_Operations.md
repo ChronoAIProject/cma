@@ -133,7 +133,7 @@ remaining attempts; their durable leases/bindings support the next replica.
 Unclaimed message preparation obtains fresh authority and checks the current
 record again before entering the existing Sandbox revival pipeline. It holds no
 short dispatch lease and sends no input. Preparation is bounded to 15 seconds;
-an admitted revival remains durable if the attempt is cancelled. The personal
+an admitted revival remains durable if the attempt is cancelled. The resource
 execution adapter checks current owner kind and target state, rereads the renewed
 claim after credential IO, and retains the actual actor. It obtains an opaque
 resource execution proof before dispatch. The proof binds the exact command,
@@ -154,13 +154,37 @@ handler invocation begins, uncertain delivery retires the writer generation and
 requires reconciliation. Outcome evidence can commit after authority expires or
 is revoked.
 
-The core execution boundary supports an independently authorized human actor on
-a shared or organization-owned Agent, preserving the resource owner's runtime
-credentials. Production shared admission still requires fresh human credential
-custody and authorized Sandbox revival; organization credential provisioning and
-bridge delegation also remain incomplete. These internal execution foundations
-do not enable those public mutation paths. Durable personal admission and replay
-are available through the source-level [Responses v2 contract](API_Responses.md).
+The production admission and execution boundaries support an independently
+authorized human actor on a shared or organization-owned Agent. The actor supplies
+their own retained sign-in; runtime and connector credentials remain with the
+resource owner. Preparation obtains separate Agent interaction and Sandbox
+management decisions, fences the exact pending command and schedules one durable
+revival step. Mongo writes a fresh command-row marker alongside the parent and
+event to serialize concurrent claim/refusal writers. Ambiguous commit recovery
+uses that exact marker and remains possible after the proof expires. Organization
+resource creation/credential provisioning and bridge delegation remain incomplete.
+Human command admission and replay use the [Responses v2 contract](API_Responses.md).
+
+`command_authorization_audits` is an additive collection with an immutable audit
+ID and a `(command_id, _id)` index. New human admission, resource dispatch binding
+and command-authorized Sandbox revival append evidence in the same transaction
+as the accepted effect. Admission retries and AlreadyScheduled/AlreadySatisfied
+revival observations retain prior evidence without appending another entry.
+Each entry separates credential custody from the actual resource policy revision,
+owner and actor, and records the capabilities supplied by personal ownership,
+operator authority, organization roles and exact share revisions/modes. Revival
+has separate Agent and Sandbox observations. These are historical observations,
+never current permission; revocation does not delete them or replay accepted work.
+
+No raw access/refresh token, input content, private runtime configuration or native
+conversation identity is copied into audit evidence. Audit persistence is internal
+and does not widen command status or recipient history projections. Audit IO is
+part of acceptance: an audit write failure or expiry before commit rolls back the
+whole effect. Old serialized command receipts and Agent/Sandbox aggregates retain
+their existing formats. Older code can continue reading them during rollback,
+while historical unaudited effects remain explicitly unaudited. There is no audit
+TTL or cleanup migration in this change. Release upgrade/rollback evidence still
+requires the disposable continuity campaign.
 
 Ordinary CMA provider authentication refuses NyxID relay access, callback and
 reply tokens, including relay key/scope claims. NyxID userinfo can project the

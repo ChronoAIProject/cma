@@ -63,6 +63,7 @@ pub struct AccessDecision {
     /// operator capabilities remain usable through independent authority.
     pub revalidate_at: Option<SystemTime>,
     pub share_revisions: Vec<(String, u64)>,
+    observations: Vec<super::ResourceAuthorityObservation>,
 }
 
 impl AccessDecision {
@@ -124,6 +125,7 @@ impl AccessDecision {
             if subject == &context.caller.subject && authority.allows(Capability::UseOwnSandboxes) {
                 result.grant_owner();
                 result.independent = result.capabilities.clone();
+                result.observe_independent(super::ResourceAuthorizationBasis::PersonalOwner);
                 return Ok(result);
             }
         }
@@ -140,25 +142,25 @@ impl AccessDecision {
                 .insert(ResourceCapability::ManageSandbox);
         }
         result.independent = result.capabilities.clone();
+        result.observe_independent(super::ResourceAuthorizationBasis::GlobalOperator);
         if !authority.allows(Capability::UseOwnSandboxes) {
             return Ok(result);
         }
         let mut needs_revalidation = false;
         if let ResourceOwner::Organization { subject } = &scope.owner {
-            if let Some((role, expires, deadline)) =
-                match membership(context, subject, purpose, now) {
-                    Ok(evidence) => evidence,
-                    Err(_) => {
-                        needs_revalidation = true;
-                        None
-                    }
+            if let Some(evidence) = match membership(context, subject, purpose, now) {
+                Ok(evidence) => evidence,
+                Err(_) => {
+                    needs_revalidation = true;
+                    None
                 }
-            {
-                result.grant_view(true);
-                if role == OrganizationRole::Admin {
-                    result.grant_owner();
+            } {
+                let mut granted = Self::empty();
+                granted.grant_view(true);
+                if evidence.role == OrganizationRole::Admin {
+                    granted.grant_owner();
                 }
-                result.observe(expires, deadline);
+                result.observe_membership(evidence, granted, None);
             }
         }
         for share in shares.iter().filter(|share| {
@@ -167,18 +169,18 @@ impl AccessDecision {
                 && share.revoked_at.is_none()
                 && share.selector.covers(scope)
         }) {
-            let (role, expires, deadline) =
-                match membership(context, &share.target_org_id, purpose, now) {
-                    Ok(Some(evidence)) => evidence,
-                    Ok(None) => continue,
-                    Err(_) => {
-                        needs_revalidation = true;
-                        continue;
-                    }
-                };
+            let evidence = match membership(context, &share.target_org_id, purpose, now) {
+                Ok(Some(evidence)) => evidence,
+                Ok(None) => continue,
+                Err(_) => {
+                    needs_revalidation = true;
+                    continue;
+                }
+            };
             let whole_sandbox = matches!(share.selector, ResourceSelector::Sandbox { .. });
-            result.grant_view(whole_sandbox);
-            if share.mode == ShareMode::OrgRoles && role == OrganizationRole::Admin {
+            let mut granted = Self::empty();
+            granted.grant_view(whole_sandbox);
+            if share.mode == ShareMode::OrgRoles && evidence.role == OrganizationRole::Admin {
                 // An unsafe narrow grant never gains interaction, even if a
                 // historical creation check ran before the Sandbox changed.
                 if whole_sandbox
@@ -193,15 +195,15 @@ impl AccessDecision {
                                 if sandbox_id == &scope.sandbox_id)
                     })
                 {
-                    result.grant_interaction();
+                    granted.grant_interaction();
                     if whole_sandbox {
-                        result
+                        granted
                             .capabilities
                             .insert(ResourceCapability::ManageSandbox);
                     }
                 }
             }
-            result.observe(expires, deadline);
+            result.observe_membership(evidence, granted, Some(share));
             result
                 .share_revisions
                 .push((share.id.clone(), share.revision));
@@ -219,6 +221,7 @@ impl AccessDecision {
         if &caller.subject == owner && caller.authorization.allows(Capability::UseOwnSandboxes) {
             result.grant_owner();
             result.independent = result.capabilities.clone();
+            result.observe_independent(super::ResourceAuthorizationBasis::PersonalOwner);
         }
         result
     }
@@ -230,7 +233,47 @@ impl AccessDecision {
             deadline: None,
             revalidate_at: None,
             share_revisions: Vec::new(),
+            observations: Vec::new(),
         }
+    }
+
+    pub(super) fn audit_observations(&self) -> &[super::ResourceAuthorityObservation] {
+        &self.observations
+    }
+
+    fn observe_independent(&mut self, basis: super::ResourceAuthorizationBasis) {
+        if !self.independent.is_empty() {
+            self.observations.push(super::ResourceAuthorityObservation {
+                capabilities: self.independent.iter().copied().collect(),
+                basis,
+            });
+        }
+    }
+
+    fn observe_membership(
+        &mut self,
+        evidence: &super::OrganizationMembership,
+        granted: Self,
+        share: Option<&ResourceShare>,
+    ) {
+        self.capabilities.extend(&granted.capabilities);
+        self.observe(evidence.expires_at, evidence.monotonic_deadline());
+        self.observations.push(super::ResourceAuthorityObservation {
+            capabilities: granted.capabilities.into_iter().collect(),
+            basis: super::ResourceAuthorizationBasis::Organization {
+                issuer: evidence.credential.issuer.clone(),
+                organization: evidence.organization.clone(),
+                role: evidence.role,
+                observed_at: crate::rfc3339_at(evidence.observed_at),
+                expires_at: crate::rfc3339_at(evidence.expires_at),
+                share: share.map(|share| super::ResourceGrantObservation {
+                    id: share.id.clone(),
+                    revision: share.revision,
+                    mode: share.mode,
+                    selector: share.selector.clone(),
+                }),
+            },
+        });
     }
 
     fn observe(&mut self, expires: SystemTime, deadline: tokio::time::Instant) {
@@ -267,12 +310,12 @@ impl AccessDecision {
     }
 }
 
-fn membership(
-    context: &CallerContext,
+fn membership<'a>(
+    context: &'a CallerContext,
     organization: &SubjectId,
     purpose: AccessPurpose,
     now: SystemTime,
-) -> Result<Option<(OrganizationRole, SystemTime, tokio::time::Instant)>, AccessError> {
+) -> Result<Option<&'a super::OrganizationMembership>, AccessError> {
     let mut matches = context.memberships.iter().filter(|evidence| {
         &evidence.organization == organization && evidence.credential == context.credential
     });
@@ -286,9 +329,5 @@ fn membership(
     {
         return Err(AccessError::RevalidationRequired);
     }
-    Ok(Some((
-        evidence.role,
-        evidence.expires_at,
-        evidence.monotonic_deadline(),
-    )))
+    Ok(Some(evidence))
 }
