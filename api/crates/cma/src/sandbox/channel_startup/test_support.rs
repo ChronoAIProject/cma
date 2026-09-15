@@ -39,3 +39,35 @@ pub(crate) async fn publish_connections(
     }
     registry
 }
+
+pub(crate) fn retirement_workers(
+    resources: Arc<crate::store::MongoSandboxStore>,
+    adapter: Arc<dyn SandboxAdapter>,
+    registry: Arc<LiveAgentRegistry>,
+    holder: &str,
+) -> (
+    Arc<dyn crate::sandbox::worker::LiveAgentStopper>,
+    Arc<AgentWorker>,
+) {
+    let stopper = Arc::new(
+        crate::sandbox::live_agent_stopper::DurableLiveAgentStopper::new(
+            resources.clone(),
+            registry.clone(),
+        ),
+    );
+    let mut config = AgentWorkerConfig::new(holder, "fixture-deployment");
+    // Durable retries require a strictly later second-precision timestamp.
+    config.retry_delay = std::time::Duration::from_secs(1);
+    let worker = AgentWorker::new(
+        AgentWorkerDependencies {
+            store: resources.clone(),
+            adapter,
+            skills: Arc::new(EmptyAgentSkillResolver),
+            registry: registry.clone(),
+            updates: DurableAgentUpdateRecorder::new(resources.clone()),
+            operations: AgentOperationService::new(resources, registry),
+        },
+        config,
+    );
+    (stopper, worker)
+}
