@@ -147,6 +147,13 @@ pub(super) async fn load(
         ("agent_creation_provenance", creation_row),
     ] {
         if let Some(row) = row {
+            if collection == "workspaces"
+                && (row.contains_key("owned_workspace_cleanup_admission_v1")
+                    || row.contains_key("channel_reuse_cleanup_execution"))
+            {
+                return Err(AllocationError::Conflict.into());
+            }
+
             let rows: Collection<Document> = majority_collection(&database, collection);
             let changed = rows
                 .update_one(row, doc! {"$inc":{"channel_reuse_fence":1_i64}})

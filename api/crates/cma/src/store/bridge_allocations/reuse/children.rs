@@ -46,6 +46,11 @@ pub(super) async fn apply(
             ChannelProvisioningPhase::WorkspaceAdmission,
             ChannelChildEvidence::WorkspaceAdmission,
         ) if current.workspace.is_none() => {
+            if workspaces.find_one(doc! {
+                "owned_workspace_cleanup_admission_v1":{"$exists":true},
+                "$and":[{"$or":[{"sandbox_id":workspace.sandbox_id.as_str()},{"record.sandbox_id":workspace.sandbox_id.as_str()}]},
+                    {"$or":[{"name":&workspace.name},{"record.name":&workspace.name},{"path":&workspace.path},{"record.path":&workspace.path}]}]
+            }).session(&mut *session).await?.is_some() { return Err(AllocationError::IncompatibleTarget.into()); }
             if workspaces
                 .count_documents(
                     doc! {"sandbox_id":workspace.sandbox_id.as_str(),"removed_at":Bson::Null,

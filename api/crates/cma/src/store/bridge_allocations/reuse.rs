@@ -80,6 +80,41 @@ impl MongoBridgeAllocationStore {
 }
 
 impl MongoBridgeAllocationStore {
+    pub(super) async fn fence_reuse_cleanup(
+        &self,
+        authority: &AllocationAuthority,
+        session: &mut ClientSession,
+    ) -> Result<(), MutationError> {
+        let AllocationAuthority::Reuse(proof) = authority else {
+            return Ok(());
+        };
+        let resources = &self
+            .invokes
+            .as_ref()
+            .ok_or(AllocationError::AuthorityUnavailable)?
+            .resources;
+        let current = proof.resources();
+        let guarded = resources.sandboxes.update_one(
+            doc! {"_id":current.lineage.sandbox.id.as_str(),"channel_reuse_cleanup_execution":{"$exists":false}},
+            doc! {"$inc":{"owned_workspace_admission_fence":1_i64}},
+        ).session(&mut *session).await?;
+        if guarded.matched_count != 1 {
+            return Err(AllocationError::Conflict.into());
+        }
+        if let Some(workspace) = &current.lineage.workspace {
+            let guarded = resources.workspaces.update_one(
+                doc! {"_id":workspace.id.as_str(),"revision":workspace.revision as i64,
+                    "channel_reuse_cleanup_execution":{"$exists":false},"owned_workspace_cleanup_admission_v1":{"$exists":false}},
+                doc! {"$inc":{"owned_workspace_admission_fence":1_i64}},
+            ).session(&mut *session).await?;
+            if guarded.matched_count != 1 {
+                return Err(AllocationError::Conflict.into());
+            }
+        }
+
+        Ok(())
+    }
+
     pub(crate) async fn begin_channel_reuse(
         &self,
         authority: &AllocationAuthority,
@@ -162,7 +197,7 @@ impl MongoBridgeAllocationStore {
                 CommitOutcome::Committed => return Ok(result),
                 CommitOutcome::Retry(_) => continue,
                 CommitOutcome::Unknown(_) | CommitOutcome::Failed(_) => {
-                    return Err(AllocationError::Unavailable)
+                    return Err(AllocationError::Unavailable);
                 }
             }
         }

@@ -60,7 +60,7 @@ pub(super) async fn channel_schedulers(
         allocations: bridge.allocations.clone(),
         authority: Arc::new(crate::bridge::cleanup_work::ManagedCleanupWorkAuthority {
             definitions: definitions.clone(),
-            authority: cleanup_authority,
+            authority: cleanup_authority.clone(),
         }),
         adapter: adapter.clone(),
         registry,
@@ -68,11 +68,27 @@ pub(super) async fn channel_schedulers(
         holder: format!("{}:cleanup:{}", config.deployment_id, uuid::Uuid::new_v4()),
     };
     let cleanup = ChannelScheduler::new(Arc::new(cleanup));
+    let workspace_cleanup = ChannelScheduler::new(Arc::new(
+        crate::bridge::workspace_cleanup_work::WorkspaceCleanupWork {
+            allocations: bridge.allocations.clone(),
+            authority: Arc::new(crate::bridge::cleanup_work::ManagedCleanupWorkAuthority {
+                definitions: definitions.clone(),
+                authority: cleanup_authority,
+            }),
+            adapter: adapter.clone(),
+            deployment_id: config.deployment_id.clone(),
+            holder: format!(
+                "{}:workspace-cleanup:{}",
+                config.deployment_id,
+                uuid::Uuid::new_v4()
+            ),
+        },
+    ));
     let Some(credentials) = credentials else {
-        return Ok(vec![cleanup]);
+        return Ok(vec![cleanup, workspace_cleanup]);
     };
     let Some(dependencies) = credentials.provisioning.clone() else {
-        return Ok(vec![cleanup]);
+        return Ok(vec![cleanup, workspace_cleanup]);
     };
     let authority = Arc::new(BridgeProvisioningAuthority::new(
         credentials.clone(),
@@ -168,6 +184,7 @@ pub(super) async fn channel_schedulers(
         ChannelScheduler::new(Arc::new(allocations)),
         ChannelScheduler::new(Arc::new(renewals)),
         cleanup,
+        workspace_cleanup,
     ])
 }
 

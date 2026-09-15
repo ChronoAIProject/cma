@@ -12,7 +12,7 @@ const JOBS: &str = "channel_child_cleanup_jobs_v1";
 const JOB_AUDITS: &str = "channel_child_cleanup_job_admissions_v1";
 const JOB_MARKER: &str = "channel_child_cleanup_job_v1";
 
-enum JobError {
+pub(super) enum JobError {
     Core(CleanupError),
     Mongo(mongodb::error::Error),
 }
@@ -45,10 +45,10 @@ impl From<MutationError> for JobError {
     }
 }
 impl JobError {
-    fn retryable(&self) -> bool {
+    pub(super) fn retryable(&self) -> bool {
         matches!(self, Self::Mongo(error) if is_transient(error) || is_duplicate_key(error))
     }
-    fn core(self) -> CleanupError {
+    pub(super) fn core(self) -> CleanupError {
         match self {
             Self::Core(error) => error,
             Self::Mongo(_) => CleanupError::Unavailable,
@@ -74,7 +74,7 @@ fn job_document(job: &CleanupJob) -> Result<Document, CleanupError> {
         "record":record_bson(job).map_err(|_| CleanupError::Corrupt)?},
     )
 }
-fn read_job(row: &Document) -> Result<CleanupJob, CleanupError> {
+pub(super) fn read_job(row: &Document) -> Result<CleanupJob, CleanupError> {
     let job: CleanupJob = read_record(row).map_err(|_| CleanupError::Corrupt)?;
     if job_document(&job)?
         .iter()
@@ -92,7 +92,7 @@ fn admission_document(admission: &CleanupJobAdmission) -> Result<Document, Clean
         "record":record_bson(admission).map_err(|_| CleanupError::Corrupt)?},
     )
 }
-fn read_admission(row: &Document) -> Result<CleanupJobAdmission, CleanupError> {
+pub(super) fn read_admission(row: &Document) -> Result<CleanupJobAdmission, CleanupError> {
     let admission: CleanupJobAdmission = read_record(row).map_err(|_| CleanupError::Corrupt)?;
     if admission_document(&admission)?
         .iter()
@@ -152,7 +152,7 @@ impl MongoBridgeAllocationStore {
         manager.require_current()?;
         Ok(())
     }
-    async fn cleanup_job_access(
+    pub(super) async fn cleanup_job_access(
         &self,
         access: &CleanupAccess,
         session: &mut ClientSession,

@@ -64,13 +64,16 @@ impl MongoBridgeAllocationStore {
             let agent_released = self
                 .cleanup_released_agent_capacity(&retained, session)
                 .await?;
+            let workspace_released = self
+                .cleanup_released_workspace_capacity(&retained, session)
+                .await?;
             if let AllocationPlacement::ReuseParent {
                 target: reserved,
                 parent,
                 ..
             } = retained.placement
             {
-                if parent.workspace_created_at.is_none() {
+                if parent.workspace_created_at.is_none() && !workspace_released {
                     workspaces.insert(reserved.workspace_id.clone());
                 }
                 if reserved.workspace_id == target.workspace_id && !agent_released {
