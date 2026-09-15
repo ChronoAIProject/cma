@@ -1,4 +1,6 @@
 use super::*;
+#[path = "retirement_async_tests.rs"]
+mod asynchronous;
 #[path = "retirement_fixture.rs"]
 mod fixture;
 #[path = "retirement_recovery_tests.rs"]
