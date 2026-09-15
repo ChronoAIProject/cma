@@ -35,10 +35,18 @@ mod agent_provenance_tests;
 mod agents;
 #[cfg(test)]
 pub(crate) mod agents_tests;
+mod bridges;
+#[cfg(test)]
+mod bridges_tests;
+pub use bridges::bridge_router;
+mod bridge_invokes;
+pub use bridge_invokes::bridge_invoke_router;
 mod badge;
 mod badge_mark;
 #[cfg(test)]
 mod badge_tests;
+#[cfg(test)]
+mod bridge_invokes_tests;
 mod defaults;
 mod embed;
 #[cfg(test)]

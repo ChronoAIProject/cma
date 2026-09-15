@@ -1,4 +1,5 @@
 import { Presence } from './ui/Presence';
+import { BridgeEntry } from './bridges/BridgeEntry';
 import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from 'react';
 import { LandingCharacter } from './landing/LandingCharacter';
 import {
@@ -43,6 +44,7 @@ const ProfileViews = lazy(() =>
 const Operations = lazy(() =>
   import('./operator/Operations').then((module) => ({ default: module.Operations })),
 );
+
 const TriggerPublisherPage = lazy(() =>
   import('./trigger-publisher/TriggerPublisherPage').then((module) => ({
     default: module.TriggerPublisherPage,
@@ -70,7 +72,11 @@ export function Console({
 }: ConsoleProps) {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [navigationScope, setNavigationScope] = useState(
-    route.kind === 'inventory' ? scopeValue(route.organization, route.shared) : '',
+    route.kind === 'inventory'
+      ? scopeValue(route.organization, route.shared)
+      : route.kind === 'bridges' || route.kind === 'bridge_new'
+        ? scopeValue(route.organization)
+        : '',
   );
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [artifactPublicationScope] = useState(() => new ArtifactPublicationScope());
@@ -134,7 +140,18 @@ export function Console({
   };
   const ready = agent.state.status === 'ready' ? agent.state : undefined;
   const content =
-    route.kind === 'inventory' ? (
+    route.kind === 'bridges' || route.kind === 'bridge' || route.kind === 'bridge_new' ? (
+      <BridgeEntry
+        client={user.visitor ? undefined : client.bridgeViews}
+        viewerId={user.id}
+        route={route}
+        onNavigate={(next) => {
+          if (next.kind === 'bridges' || next.kind === 'bridge_new')
+            setNavigationScope(scopeValue(next.organization));
+          onNavigate(next);
+        }}
+      />
+    ) : route.kind === 'inventory' ? (
       client.resourceViews === undefined ? (
         <section className="console__empty">
           <h1>Agent inventory unavailable</h1>
@@ -401,6 +418,7 @@ export function Console({
           navigation={
             <ScopedNavigation
               client={user.visitor ? undefined : client.resourceViews}
+              bridges={!user.visitor && client.bridgeViews !== undefined}
               scope={navigationScope}
               onScopeChange={setNavigationScope}
               onNavigate={(next) => {

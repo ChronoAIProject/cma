@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "openapi_operations": 143,
+  "openapi_operations": 158,
   "operations": {
     "GET /api/v1/organizations": {
       "classification": "openapi",
@@ -2139,6 +2139,170 @@
         "organization_authority_unavailable",
         "resource_forbidden",
         "resource_not_found"
+      ]
+    },
+    "GET /api/v1/bridge-connectors": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/bridges/mod.rs# Deployment-pinned bridge setup uses current owner/admin authority, safe projections and durable revision/idempotency receipts.",
+      "required_problems": [
+        "bridge_management_required",
+        "bridge_setup_unavailable",
+        "not_authenticated"
+      ]
+    },
+    "GET /api/v1/bridges": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/bridges/mod.rs# Deployment-pinned bridge setup uses current owner/admin authority, safe projections and durable revision/idempotency receipts.",
+      "required_problems": [
+        "bridge_setup_unavailable",
+        "invalid_bridge_configuration",
+        "invalid_query",
+        "not_authenticated"
+      ]
+    },
+    "GET /api/v1/bridges/{id}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/bridges/mod.rs# Deployment-pinned bridge setup uses current owner/admin authority, safe projections and durable revision/idempotency receipts.",
+      "required_problems": [
+        "bridge_authority_unavailable",
+        "bridge_not_found",
+        "bridge_setup_unavailable",
+        "not_authenticated"
+      ]
+    },
+    "GET /api/v1/bridges/{id}/configuration": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/bridges/mod.rs# Deployment-pinned bridge setup uses current owner/admin authority, safe projections and durable revision/idempotency receipts.",
+      "required_problems": [
+        "bridge_management_required",
+        "bridge_setup_unavailable",
+        "not_authenticated"
+      ]
+    },
+    "POST /api/v1/bridges": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/bridges/mod.rs# Deployment-pinned bridge setup uses current owner/admin authority, safe projections and durable revision/idempotency receipts.",
+      "required_problems": [
+        "bridge_management_required",
+        "bridge_setup_unavailable",
+        "idempotency_key_reused",
+        "invalid_bridge_configuration",
+        "invalid_json",
+        "missing_idempotency_key",
+        "not_authenticated"
+      ]
+    },
+    "POST /api/v1/bridges/{id}/commands": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/bridges/mod.rs# Deployment-pinned bridge setup uses current owner/admin authority, safe projections and durable revision/idempotency receipts.",
+      "required_problems": [
+        "bridge_invoke_consent_required",
+        "bridge_management_required",
+        "bridge_renewable_authority_required",
+        "bridge_revision_conflict",
+        "bridge_setup_unavailable",
+        "missing_idempotency_key",
+        "not_authenticated"
+      ]
+    },
+    "POST /api/v1/bridges/{id}/credential/revoke": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/bridges/mod.rs# Deployment-pinned bridge setup uses current owner/admin authority, safe projections and durable revision/idempotency receipts.",
+      "required_problems": [
+        "bridge_management_required",
+        "bridge_revision_conflict",
+        "bridge_setup_unavailable",
+        "missing_idempotency_key",
+        "not_authenticated"
+      ]
+    },
+    "POST /api/v1/bridges/{id}/validate": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/bridges/mod.rs# Deployment-pinned bridge setup uses current owner/admin authority, safe projections and durable revision/idempotency receipts.",
+      "required_problems": [
+        "bridge_management_required",
+        "bridge_renewable_authority_required",
+        "bridge_revision_conflict",
+        "bridge_setup_unavailable",
+        "not_authenticated"
+      ]
+    },
+    "PUT /api/v1/bridges/{id}/configuration": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/bridges/mod.rs# Deployment-pinned bridge setup uses current owner/admin authority, safe projections and durable revision/idempotency receipts.",
+      "required_problems": [
+        "bridge_identity_immutable",
+        "bridge_management_required",
+        "bridge_revision_conflict",
+        "bridge_setup_unavailable",
+        "missing_idempotency_key",
+        "not_authenticated"
+      ]
+    },
+    "PUT /api/v1/bridges/{id}/credential": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/bridges/mod.rs# Deployment-pinned bridge setup uses current owner/admin authority, safe projections and durable revision/idempotency receipts.",
+      "required_problems": [
+        "bridge_binding_mismatch",
+        "bridge_management_required",
+        "bridge_revision_conflict",
+        "bridge_setup_unavailable",
+        "not_authenticated"
+      ]
+    },
+    "POST /api/v1/bridges/{id}/invoke-grants": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/bridge_invokes/mod.rs# Explicit grant consent is required and actual owner/admin management remains independent from narrow execution proofs.",
+      "required_problems": [
+        "bridge_invoke_revision_conflict",
+        "bridge_invoke_target_mismatch",
+        "bridge_invoke_unavailable",
+        "bridge_not_found",
+        "idempotency_key_reused",
+        "invalid_json",
+        "missing_idempotency_key",
+        "not_authenticated"
+      ]
+    },
+    "GET /api/v1/bridges/{id}/invoke-grants": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/bridge_invokes/mod.rs# Explicit grant consent is required and actual owner/admin management remains independent from narrow execution proofs.",
+      "required_problems": [
+        "bridge_invoke_unavailable",
+        "bridge_not_found",
+        "invalid_bridge_invoke_request",
+        "not_authenticated"
+      ]
+    },
+    "GET /api/v1/bridges/{id}/invoke-readiness": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/bridge_invokes/mod.rs# Explicit grant consent is required and actual owner/admin management remains independent from narrow execution proofs.",
+      "required_problems": [
+        "bridge_invoke_unavailable",
+        "bridge_not_found",
+        "not_authenticated"
+      ]
+    },
+    "GET /api/v1/bridge-invoke-grants/{id}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/bridge_invokes/mod.rs# Explicit grant consent is required and actual owner/admin management remains independent from narrow execution proofs.",
+      "required_problems": [
+        "bridge_invoke_not_found",
+        "bridge_invoke_unavailable",
+        "invalid_bridge_invoke_request",
+        "not_authenticated"
+      ]
+    },
+    "POST /api/v1/bridge-invoke-grants/{id}/revoke": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/bridge_invokes/mod.rs# Explicit grant consent is required and actual owner/admin management remains independent from narrow execution proofs.",
+      "required_problems": [
+        "bridge_invoke_not_found",
+        "bridge_invoke_revision_conflict",
+        "bridge_invoke_unavailable",
+        "invalid_json",
+        "missing_idempotency_key",
+        "not_authenticated"
       ]
     }
   }

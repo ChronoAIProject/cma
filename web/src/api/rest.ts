@@ -48,6 +48,7 @@ export function createRestWebClient(sdk: Cma): CmaWebClient {
   };
   return {
     resourceViews: sdk,
+    bridgeViews: sdk,
     listSandboxes: async (options) => {
       const page = await sdk.sandboxes.list(options);
       return { items: page.items.map(sandboxSummary), next: page.next };
