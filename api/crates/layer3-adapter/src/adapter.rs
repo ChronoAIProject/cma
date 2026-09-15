@@ -114,6 +114,27 @@ pub trait SandboxAdapter: Send + Sync {
         request: &WorkspaceRemoveRequest,
     ) -> Result<()>;
 
+    /// Probe the actual bound supervisor. Contract/image labels are insufficient.
+    async fn workspace_removal_support(
+        &self,
+        _handle: &RuntimeHandle,
+    ) -> Result<crate::WorkspaceRemovalSupport> {
+        Err(crate::AdapterError::Unsupported(
+            "guarded Workspace removal is unavailable".into(),
+        ))
+    }
+
+    async fn reconcile_workspace_removal(
+        &self,
+        _handle: &RuntimeHandle,
+        _expected_runtime: &crate::RuntimeStatus,
+        _request: &WorkspaceRemoveRequest,
+    ) -> Result<crate::WorkspaceRemovalObservation> {
+        Err(crate::AdapterError::Unsupported(
+            "current Workspace removal observation is unavailable".into(),
+        ))
+    }
+
     async fn add_worktree(
         &self,
         handle: &RuntimeHandle,

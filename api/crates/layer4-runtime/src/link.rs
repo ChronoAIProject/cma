@@ -118,6 +118,7 @@ async fn control(State(supervisor): State<Arc<Supervisor>>, body: Bytes) -> Resp
             | RequestFrame::CheckpointForTeardown(_)
             | RequestFrame::BootstrapRestore(_)
             | RequestFrame::Restore(_)
+            | RequestFrame::ReconcileWorkspaceRemoval(_)
     ) {
         let result = tokio::spawn(async move { supervisor.dispatch(request).await });
         return heartbeat_json(result, CONTROL_HEARTBEAT);
