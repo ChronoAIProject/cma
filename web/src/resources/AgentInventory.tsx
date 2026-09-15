@@ -15,6 +15,7 @@ import { routePath } from '../routing/routes';
 import './AgentInventory.css';
 import { scopeValue, scopeRoute } from './scope';
 import { ExportInventoryPage } from './ExportInventoryPage';
+import { channelFilters, channelQuery, channelLabel, type ChannelFilter } from './channelLabels';
 
 type Category = 'all' | AgentCreationCategory;
 type Status = 'all' | AgentStatus;
@@ -64,6 +65,7 @@ export function AgentInventory({ client, organization, shared, onNavigate }: Pro
 function Inventory({ client, organization, shared, onNavigate }: Props) {
   const [category, setCategory] = useState<Category>('all');
   const [status, setStatus] = useState<Status>('all');
+  const [channel, setChannel] = useState<ChannelFilter>('all');
   const [cursors, setCursors] = useState<readonly (string | undefined)[]>([undefined]);
   const cursor = cursors.at(-1);
   const options = useMemo<AgentProvenanceInventoryOptions>(
@@ -72,10 +74,11 @@ function Inventory({ client, organization, shared, onNavigate }: Props) {
       shared,
       creationOrigin: category === 'all' ? undefined : category,
       status: status === 'all' ? undefined : status,
+      ...channelQuery(channel),
       cursor,
       limit: 50,
     }),
-    [organization, shared, category, status, cursor],
+    [organization, shared, category, status, channel, cursor],
   );
   const read = useMemo(
     () => async (signal: AbortSignal) => {
@@ -126,7 +129,7 @@ function Inventory({ client, organization, shared, onNavigate }: Props) {
     <section className="agent-inventory" aria-labelledby="inventory-title">
       <header className="agent-inventory__header">
         <h1 id="inventory-title">Agents</h1>
-        <p>Browse current and retained Agents by their original creation source.</p>
+        <p>Browse current and retained Agents by creation source and channel activity.</p>
         <div className="agent-inventory__filters">
           <Picker
             label="Resource scope"
@@ -149,6 +152,15 @@ function Inventory({ client, organization, shared, onNavigate }: Props) {
             options={statuses}
             onChange={(value) => {
               setStatus(value);
+              setCursors([undefined]);
+            }}
+          />
+          <Picker
+            label="Channel activity"
+            value={channel}
+            options={channelFilters}
+            onChange={(value) => {
+              setChannel(value);
               setCursors([undefined]);
             }}
           />
@@ -210,6 +222,7 @@ function Inventory({ client, organization, shared, onNavigate }: Props) {
                       </a>
                       <span>{statusLabel(row.status)}</span>
                       <span>{creationLabels[row.creation_origin]}</span>
+                      <span>{channelLabel(row.channel_usage)}</span>
                       <time dateTime={row.created_at}>
                         {new Date(row.created_at).toLocaleDateString()}
                       </time>

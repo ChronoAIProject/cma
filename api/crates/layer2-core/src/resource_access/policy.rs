@@ -15,6 +15,8 @@ use super::{
 pub enum ResourceCapability {
     ViewDetails,
     ViewHistory,
+    /// Owner-approved immutable Agent exports; never a runtime filesystem grant.
+    ViewArtifacts,
     ViewFiles,
     Interact,
     ResolveApproval,
@@ -285,6 +287,7 @@ impl AccessDecision {
         self.capabilities.extend([
             ResourceCapability::ViewDetails,
             ResourceCapability::ViewHistory,
+            ResourceCapability::ViewArtifacts,
         ]);
         if files {
             self.capabilities.insert(ResourceCapability::ViewFiles);

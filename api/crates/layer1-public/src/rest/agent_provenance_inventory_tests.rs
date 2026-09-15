@@ -11,7 +11,7 @@ use layer2_core::{
     resource_access::*,
     sandbox::{
         store::{
-            AgentProvenanceInventoryStore, AgentProvenanceSnapshot, InMemorySandboxStore,
+            AgentChannelUsageSnapshot, AgentProvenanceInventoryStore, InMemorySandboxStore,
             PageRequest, SandboxStoreError,
         },
         AgentListQuery, AgentProvenanceInventoryService,
@@ -159,18 +159,33 @@ impl AgentProvenanceInventoryStore for GatedInventory {
         scope: &ResourceOwner,
         query: &AgentListQuery,
         page: &PageRequest,
-    ) -> Result<Vec<AgentProvenanceSnapshot>, SandboxStoreError> {
+    ) -> Result<Vec<AgentChannelUsageSnapshot>, SandboxStoreError> {
         let mut result = self
             .inner
             .scan_agent_provenance_inventory(scope, query, page)
             .await?;
         if self.corrupt {
-            result[0].creation = Some(
+            result[0].provenance.creation = Some(
                 result[0]
-                    .creation_provenance(&result[0].resource.lineage.agent.as_ref().unwrap().id)
+                    .provenance
+                    .creation_provenance(
+                        &result[0]
+                            .provenance
+                            .resource
+                            .lineage
+                            .agent
+                            .as_ref()
+                            .unwrap()
+                            .id,
+                    )
                     .unwrap(),
             );
-            result[0].creation.as_mut().unwrap().agent_created_at = "corrupt".into();
+            result[0]
+                .provenance
+                .creation
+                .as_mut()
+                .unwrap()
+                .agent_created_at = "corrupt".into();
         }
         self.entered.notify_one();
         self.resume.notified().await;
@@ -182,7 +197,7 @@ impl AgentProvenanceInventoryStore for GatedInventory {
         organizations: &[SubjectId],
         query: &AgentListQuery,
         page: &PageRequest,
-    ) -> Result<Vec<AgentProvenanceSnapshot>, SandboxStoreError> {
+    ) -> Result<Vec<AgentChannelUsageSnapshot>, SandboxStoreError> {
         let result = self
             .inner
             .scan_shared_agent_provenance_inventory(recipient, organizations, query, page)

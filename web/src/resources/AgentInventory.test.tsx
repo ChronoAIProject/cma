@@ -12,6 +12,7 @@ const row = {
   created_at: '2026-09-01T00:00:00Z',
   updated_at: '2026-09-02T00:00:00Z',
   creation_origin: 'manual',
+  channel_usage: { active: true, has_history: true, first_used_at: null, last_used_at: null },
 };
 
 it('continues through an empty filtered page, preserves the filter, and opens a retained Agent', async () => {
@@ -30,15 +31,18 @@ it('continues through an empty filtered page, preserves the filter, and opens a 
   const user = userEvent.setup();
   await screen.findByRole('link', { name: row.title });
   await chooseOption(user, 'Creation origin', 'Created manually');
+  await chooseOption(user, 'Channel activity', 'Currently linked to a channel');
   expect(
     await screen.findByText('No matches on this page. Continue to check the next page.'),
   ).toBeInTheDocument();
   await user.click(screen.getByRole('button', { name: 'Next page' }));
   await screen.findByRole('link', { name: row.title });
   expect(queries.at(-1)?.get('creation_origin')).toBe('manual');
+  expect(queries.at(-1)?.get('channel_active')).toBe('true');
   expect(queries.at(-1)?.get('cursor')).toBe('agt_0');
   expect(screen.getByRole('button', { name: 'Next page' })).toBeDisabled();
   expect(screen.getByText('Deleted')).toBeInTheDocument();
+  expect(screen.getByText('Linked to a channel')).toBeInTheDocument();
   await user.click(screen.getByRole('link', { name: row.title }));
   expect(navigate).toHaveBeenCalledWith({ kind: 'agent', agentId: 'agt_1' });
 });

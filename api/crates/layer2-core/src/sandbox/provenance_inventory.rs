@@ -3,7 +3,7 @@
 use std::{sync::Arc, time::Duration};
 
 use super::store::{
-    AgentProvenanceInventoryStore, AgentProvenanceSnapshot, Page, PageRequest, SandboxStoreError,
+    AgentChannelUsageSnapshot, AgentProvenanceInventoryStore, Page, PageRequest, SandboxStoreError,
     MAX_PAGE_SIZE,
 };
 use super::{AgentCreationCategory, AgentListQuery, AgentStatus};
@@ -27,6 +27,9 @@ pub struct AgentProvenanceInventoryQuery {
     pub shared: bool,
     pub agents: AgentListQuery,
     pub creation_origin: Option<AgentCreationCategory>,
+    /// Explicit channel facts; neither filter changes immutable creation origin.
+    pub channel_active: Option<bool>,
+    pub channel_history: Option<bool>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -37,6 +40,7 @@ pub struct AgentProvenanceInventoryRow {
     pub created_at: String,
     pub updated_at: String,
     pub creation_origin: AgentCreationCategory,
+    pub channel_usage: super::channel_usage::ChannelUsageSummary,
 }
 
 pub struct AgentProvenanceInventoryService {
@@ -133,7 +137,10 @@ impl AgentProvenanceInventoryService {
         // A category filter may return a partial/empty page with continuation.
         // Its scan always advances and never accumulates an unbounded inventory.
         let scan = PageRequest::new(
-            if query.creation_origin.is_some() {
+            if query.creation_origin.is_some()
+                || query.channel_active.is_some()
+                || query.channel_history.is_some()
+            {
                 MAX_PAGE_SIZE
             } else {
                 page.limit
@@ -177,7 +184,12 @@ impl AgentProvenanceInventoryService {
                     .ok_or(ResourceAccessStoreError::Corrupt)?
                     .id
                     .clone();
-                snapshot.creation_provenance(&id).map_err(store_error)
+                snapshot.validate(&id).map_err(store_error)?;
+                let creation = snapshot
+                    .provenance
+                    .creation_provenance(&id)
+                    .map_err(store_error)?;
+                Ok::<_, ResourceAccessError>((creation, snapshot.state.summary()))
             })
             .collect::<Result<Vec<_>, _>>();
 
@@ -201,7 +213,7 @@ impl AgentProvenanceInventoryService {
         }
         let records = records?;
         let mut rows = Vec::with_capacity(records.len());
-        for (record, snapshot) in records.into_iter().zip(current) {
+        for ((record, channel_usage), snapshot) in records.into_iter().zip(current) {
             super::provenance_service::require_identity(&record, &snapshot)?;
             let agent = snapshot
                 .lineage
@@ -217,14 +229,10 @@ impl AgentProvenanceInventoryService {
                 created_at: record.agent_created_at,
                 updated_at: agent.updated_at,
                 creation_origin: record.creation_origin.category(),
+                channel_usage,
             });
         }
-        Ok(filtered_page(
-            rows,
-            query.creation_origin,
-            &scan,
-            page.limit,
-        ))
+        Ok(filtered_page(rows, query, &scan, page.limit))
     }
 
     async fn finish_agent(
@@ -299,7 +307,7 @@ fn validate(
 
 fn filtered_page(
     mut rows: Vec<AgentProvenanceInventoryRow>,
-    category: Option<AgentCreationCategory>,
+    query: &AgentProvenanceInventoryQuery,
     scan: &PageRequest,
     limit: u16,
 ) -> Page<AgentProvenanceInventoryRow> {
@@ -310,7 +318,17 @@ fn filtered_page(
     let scanned = rows.last().map(|row| row.agent_id.to_string());
     let mut matches: Vec<_> = rows
         .into_iter()
-        .filter(|row| category.is_none_or(|category| row.creation_origin == category))
+        .filter(|row| {
+            query
+                .creation_origin
+                .is_none_or(|category| row.creation_origin == category)
+                && query
+                    .channel_active
+                    .is_none_or(|active| row.channel_usage.active == active)
+                && query
+                    .channel_history
+                    .is_none_or(|history| row.channel_usage.has_history == history)
+        })
         .collect();
     let next = if matches.len() > usize::from(limit) {
         matches.truncate(usize::from(limit));

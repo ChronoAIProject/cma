@@ -2,7 +2,9 @@
 
 use utoipa::{openapi, OpenApi};
 
+mod identity;
 mod projections;
+use identity::{anonymous_path, operation_id};
 
 use self::projections::{
     EmbedContentSecurityPolicy, EmbedDescriptor, EmbedSnippets, SignupOptions,
@@ -36,6 +38,10 @@ use super::trigger_openapi_shapes::*;
 #[derive(OpenApi)]
 #[openapi(
     paths(
+        super::agent_artifacts::publish,
+        super::agent_artifacts::list,
+        super::agent_artifacts::read,
+        super::agent_artifacts::download,
         super::conformance,
         super::organizations::list,
         super::resource_access::effective,
@@ -113,6 +119,8 @@ use super::trigger_openapi_shapes::*;
         super::agents::read,
         super::agent_source::read,
         super::agent_provenance::read,
+        super::agent_channel_usage::read,
+        super::agent_channel_usage::history,
         super::agent_provenance_inventory::list,
         super::agents::delete_agent,
         super::agent_operate::input,
@@ -157,6 +165,9 @@ use super::trigger_openapi_shapes::*;
         super::admin::activity,
     ),
     components(schemas(
+        super::agent_artifacts::AgentArtifactView,
+        super::agent_artifacts::AgentArtifactPageView,
+        super::agent_artifacts::PublishAgentArtifactRequest,
         ConformanceDocument,
         super::defaults::DefaultProfilesView,
         ProblemDocument,
@@ -182,6 +193,13 @@ use super::trigger_openapi_shapes::*;
         TriggerContentBody,
         TriggerQuickMessageBody,
         super::agent_provenance::AgentProvenanceView,
+        super::agent_channel_usage::AgentChannelUsageView,
+        super::agent_channel_usage::AgentChannelUsageHistoryView,
+        super::agent_channel_usage::ChannelUsageSummaryView,
+        super::agent_channel_usage::ChannelBindingView,
+        super::agent_channel_usage::ChannelUsageEventView,
+        super::agent_channel_usage::ChannelBindingChangeReasonView,
+        super::agent_channel_usage::ChannelUsageChangeView,
         super::agent_provenance_inventory::AgentProvenanceInventoryItemView,
         super::agent_provenance_inventory::AgentProvenanceInventoryPageView,
         super::agent_provenance::AgentProvenanceDetailsView,
@@ -450,43 +468,6 @@ pub fn document() -> utoipa::openapi::OpenApi {
         }
     }
     document
-}
-
-fn anonymous_path(path: &str) -> bool {
-    matches!(
-        path,
-        "/auth/signup-options"
-            | "/api/v1/conformance"
-            | "/api/v1/agui/capabilities"
-            | "/api/v1/triggers/public/{public_id}"
-            | "/api/v1/triggers/public/{public_id}/badge.svg"
-            | "/api/v1/triggers/public/{public_id}/open/{placement_id}"
-            | "/api/v1/triggers/public/{public_id}/entry-intent"
-    )
-}
-
-fn operation_id(method: &str, path: &str) -> String {
-    let mut id = method.to_owned();
-    for segment in path.split('/').filter(|segment| !segment.is_empty()) {
-        id.push('_');
-        if segment.starts_with('{') && segment.ends_with('}') {
-            id.push_str("by_");
-        }
-        let mut previous_was_separator = false;
-        for character in segment.trim_matches(['{', '}']).chars() {
-            if character.is_ascii_alphanumeric() || character == '_' {
-                id.push(character.to_ascii_lowercase());
-                previous_was_separator = false;
-            } else if !previous_was_separator {
-                id.push('_');
-                previous_was_separator = true;
-            }
-        }
-        if id.ends_with('_') {
-            id.pop();
-        }
-    }
-    id
 }
 
 #[cfg(test)]

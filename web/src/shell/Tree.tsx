@@ -19,7 +19,6 @@ import { TreeRow } from './TreeRow';
 import { agentActions, sandboxActions, workspaceActions } from './treeActions';
 import {
   CreationBadge,
-  CreationSummary,
   filterTreeCreation,
   TreeCreationFilter,
   useTreeCreation,
@@ -27,6 +26,16 @@ import {
 } from './treeCreation';
 import './Tree.css';
 import { statusLabel } from '../vocabulary/status';
+import type { ResourceViewsClient } from '../resources/client';
+import { useChannelFacts } from '../resources/useChannelFacts';
+import type { ChannelFilter } from '../resources/channelLabels';
+import {
+  ChannelBadge,
+  TreeFactsSummary,
+  TreeChannelFilter,
+  filterTreeChannel,
+  treeAgentIds,
+} from './treeChannel';
 
 export interface TreePermissions {
   readonly createWorkspace: boolean;
@@ -49,6 +58,7 @@ export type TreeAction =
   | { readonly kind: 'delete_agent'; readonly agentId: string };
 
 interface TreeProps {
+  readonly resourceClient?: ResourceViewsClient;
   readonly viewerId: string;
   readonly items: readonly NavigationSandbox[];
   readonly refreshError?: string;
@@ -156,6 +166,7 @@ function keyboardNavigation(event: KeyboardEvent<HTMLDivElement>) {
 }
 
 export function Tree({
+  resourceClient,
   viewerId,
   items,
   refreshError,
@@ -166,11 +177,25 @@ export function Tree({
   onAction,
 }: TreeProps) {
   const facts = useTreeCreation(viewerId, items, refreshError === undefined);
+  const channelIds = treeAgentIds(items);
+  const channelFacts = useChannelFacts(
+    resourceClient,
+    channelIds,
+    refreshError === undefined,
+    viewerId,
+  );
+  const [channelSelection, setChannelSelection] = useState({
+    viewerId,
+    value: 'all' as ChannelFilter,
+  });
+  const channelFilter = channelSelection.viewerId === viewerId ? channelSelection.value : 'all';
   const [selection, setSelection] = useState({ viewerId, value: 'all' as CreationFilter });
   const filter = selection.viewerId === viewerId ? selection.value : 'all';
-  const visibleItems = filterTreeCreation(items, facts, filter).filter(
-    ({ sandbox }) => sandbox.status !== 'retired',
-  );
+  const visibleItems = filterTreeChannel(
+    filterTreeCreation(items, facts, filter),
+    channelFacts,
+    channelFilter,
+  ).filter(({ sandbox }) => sandbox.status !== 'retired');
   const groupId = useId();
   const groups = [
     {
@@ -203,6 +228,14 @@ export function Tree({
         value={filter}
         onChange={(value) => setSelection({ viewerId, value })}
       />
+      {resourceClient === undefined ? null : (
+        <TreeChannelFilter
+          ids={channelIds}
+          facts={channelFacts}
+          value={channelFilter}
+          onChange={(value) => setChannelSelection({ viewerId, value })}
+        />
+      )}
       <Presence>
         {refreshError === undefined ? null : (
           <p className="resource-tree__notice" role="alert">
@@ -271,7 +304,8 @@ export function Tree({
                                 />
                                 {sandboxLifecycleLabel(sandbox)}
                               </span>
-                              <CreationSummary
+                              <TreeFactsSummary
+                                channelFacts={channelFacts}
                                 facts={facts}
                                 ids={originalWorkspaces
                                   .filter((workspace) => workspace.status !== 'removed')
@@ -340,7 +374,8 @@ export function Tree({
                                           {workspace.status === 'removing'
                                             ? 'Deleting'
                                             : statusLabel(workspace.status)}
-                                          <CreationSummary
+                                          <TreeFactsSummary
+                                            channelFacts={channelFacts}
                                             facts={facts}
                                             ids={(
                                               originalWorkspaces.find(
@@ -395,6 +430,10 @@ export function Tree({
                                                   effectiveStatus,
                                                   <>
                                                     <CreationBadge id={agent.id} facts={facts} />
+                                                    <ChannelBadge
+                                                      id={agent.id}
+                                                      facts={channelFacts}
+                                                    />
                                                     <time dateTime={agent.updatedAt}>
                                                       {activityLabel(agent.updatedAt)}
                                                     </time>
@@ -432,7 +471,9 @@ export function Tree({
       })}
       {visibleItems.length === 0 ? (
         <p className="resource-tree__empty">
-          {filter === 'all' ? 'No Sandboxes' : 'No matching Agents in this tree'}
+          {filter === 'all' && channelFilter === 'all'
+            ? 'No Sandboxes'
+            : 'No matching Agents in this tree'}
         </p>
       ) : null}
     </div>

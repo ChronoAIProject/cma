@@ -455,7 +455,7 @@ fn audit_org_owner_and_unsafe_narrow_share_never_invent_capabilities() {
     );
     assert_eq!(
         narrow.audit_observations()[0].capabilities,
-        vec![ViewDetails, ViewHistory]
+        vec![ViewDetails, ViewHistory, ViewArtifacts]
     );
     assert!(!narrow.allows(Interact));
     let own = decision(

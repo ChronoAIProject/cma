@@ -23,6 +23,7 @@ test('LOCAL shared aggregate preserves personal work and supports filtered pages
       created_at: localTime,
       updated_at: localTime,
       creation_origin: 'manual',
+      channel_usage: { active: true, has_history: true, first_used_at: null, last_used_at: null },
     },
     {
       agent_id: 'agt_shared_b',
@@ -31,6 +32,12 @@ test('LOCAL shared aggregate preserves personal work and supports filtered pages
       created_at: localTime,
       updated_at: localTime,
       creation_origin: 'trigger',
+      channel_usage: {
+        active: false,
+        has_history: true,
+        first_used_at: localTime,
+        last_used_at: localTime,
+      },
     },
   ] as const;
   const sandbox = {
@@ -56,6 +63,16 @@ test('LOCAL shared aggregate preserves personal work and supports filtered pages
     agent_count: 1,
   };
   const branchReads: string[] = [];
+  await page.route('**/api/v1/agents/agt_branch/channel-usage', (route) =>
+    route.fulfill(
+      revoked
+        ? {
+            status: 404,
+            json: { code: 'resource_not_found', detail: 'Shared access removed' },
+          }
+        : { json: { agent_id: 'agt_branch', channel_usage: rows[0].channel_usage } },
+    ),
+  );
   await page.route('**/api/v1/sandboxes?*', async (route) => {
     const url = new URL(route.request().url());
     if (!url.searchParams.has('shared')) return route.fallback();
@@ -237,6 +254,10 @@ test('LOCAL shared aggregate preserves personal work and supports filtered pages
   );
   await inventory.getByRole('button', { name: 'Creation origin' }).click();
   await page.getByRole('menuitemradio', { name: 'Created by Trigger', exact: true }).click();
+  await inventory.getByRole('button', { name: 'Channel activity' }).click();
+  await page
+    .getByRole('menuitemradio', { name: 'Previously linked, now detached', exact: true })
+    .click();
   await expect(
     inventory.getByText('No matches on this page. Continue to check the next page.'),
   ).toBeVisible();
@@ -245,6 +266,11 @@ test('LOCAL shared aggregate preserves personal work and supports filtered pages
     'href',
     '/agents/agt_shared_b',
   );
+  await expect(
+    inventory.getByText('Previously linked to a channel', { exact: true }),
+  ).toBeVisible();
+  expect(reads.at(-1)?.searchParams.get('channel_active')).toBe('false');
+  expect(reads.at(-1)?.searchParams.get('channel_history')).toBe('true');
   const download = page.waitForEvent('download');
   const beforeExport = reads.length;
   await inventory.getByRole('button', { name: 'Export this page' }).click();
