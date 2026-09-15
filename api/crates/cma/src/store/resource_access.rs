@@ -79,6 +79,35 @@ impl ResourceAccessStore for MongoSandboxStore {
         Err(ResourceAccessStoreError::Unavailable)
     }
 
+    async fn shared_sandboxes(
+        &self,
+        recipient: &layer2_core::SubjectId,
+        organizations: &[layer2_core::SubjectId],
+        query: &layer2_core::sandbox::OwnerSandboxQuery,
+    ) -> Result<Vec<ResourceAccessSnapshot>, ResourceAccessStoreError> {
+        for _ in 0..TRANSACTION_ATTEMPTS {
+            let mut session = self
+                .client
+                .start_session()
+                .await
+                .map_err(|_| ResourceAccessStoreError::Unavailable)?;
+            start_transaction(&mut session)
+                .await
+                .map_err(|_| ResourceAccessStoreError::Unavailable)?;
+            let result =
+                sandbox_inventory::read_shared(self, recipient, organizations, query, &mut session)
+                    .await;
+            let _ = session.abort_transaction().await;
+            match result {
+                Ok(page) => return Ok(page),
+                Err(ReadError::Domain(error)) => return Err(error),
+                Err(ReadError::Driver(error)) if is_transient(&error) => continue,
+                Err(ReadError::Driver(_)) => return Err(ResourceAccessStoreError::Unavailable),
+            }
+        }
+        Err(ResourceAccessStoreError::Unavailable)
+    }
+
     async fn organization_agents(
         &self,
         organization: &layer2_core::SubjectId,
