@@ -133,3 +133,16 @@ pins both observed revisions and `RemoveChild`; HTTP 202 returns an immutable
 exact request and 200-byte-bounded key after uncertain responses. Capacity is
 released only at `Complete`, with Workspace and history retained. See
 [Bridge setup](bridges.md#explicit-child-cleanup) for consent and replay examples.
+
+
+### Separate owned Workspace cleanup
+
+`bridges.read_workspace_cleanup` reads `BridgeWorkspaceCleanupStatus` for one allocation;
+`bridges.request_workspace_cleanup` submits the independent `BridgeWorkspaceCleanupRequest`.
+The request pins three revisions and the completed child receipt, with only
+`BridgeWorkspaceCleanupAction`'s `remove_owned_workspace` action.
+`BridgeWorkspaceCleanupReceipt`, `BridgeWorkspaceCleanupProgress`, and
+`BridgeWorkspaceCleanupHold` keep acceptance, current eligibility and permanent
+completion distinct. Both methods use the separate `workspace-cleanup` route;
+child `remove_child` retains its original Workspace-preserving scope. See
+[Bridge management](bridges.md#separate-owned-workspace-cleanup).

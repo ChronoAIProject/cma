@@ -288,3 +288,68 @@ progress after fresh authorization. Do not silently choose new revisions, a new
 key or another target. The SDK performs no automatic retries. Cleanup keys
 permit 1 through 200 visible ASCII characters without spaces; response decoders
 reject inconsistent scope, receipt, target, capacity, retention or hold order.
+
+## Separate owned Workspace cleanup
+
+Child `remove_child` always keeps the Workspace within that operation's effect
+scope. A later, separately authorized Workspace cleanup can remove the exact
+Workspace originally created by a retired `workspace_per_partition` allocation,
+after its named child cleanup is physically Complete. It preserves the parent
+Sandbox, sibling Workspaces and retained history. It never cascades to additional
+Agent or Worktree history. A reused Workspace is not eligible.
+
+The Workspace request has exactly `expected_bridge_revision`,
+`expected_allocation_revision`, `expected_workspace_revision`,
+`child_cleanup_receipt_id`, and `BridgeWorkspaceCleanupAction::RemoveOwnedWorkspace`. Read and review
+the exact target and current input revisions, then obtain separate consent before
+submitting. `eligible` is true only when the current checks and demonstrated
+runtime capability permit new consent; `runtime_supported` never follows merely
+from an existing receipt or source-level tests. A missing capability or incomplete
+child cleanup keeps new consent unavailable.
+
+The `BridgeWorkspaceCleanupStatus` separates its immutable
+`BridgeWorkspaceCleanupReceipt` from current `BridgeWorkspaceCleanupProgress`
+and ordered `BridgeWorkspaceCleanupHold` observations. Nullable Workspace revision,
+child receipt and observation fields are always present in JSON. Ineligible reads
+may have unavailable inputs; eligible reads and accepted jobs must retain their
+reviewable Workspace revision and child receipt. Current Workspace revision may
+advance after the original consent. Progress is `not_requested`, `requested`,
+`admission_closed`, `removal_started`, `runtime_removed`, or `complete`.
+
+Only `workspace_capacity_released: true` at `complete` confirms release of this
+Workspace reservation, backed by permanent completion evidence. Acceptance and
+runtime-removal progress do not release it. `parent_retained` and
+`history_retained` stay true. The original child receipt's `workspace_retained`
+continues to describe its own limited effect; it does not forbid this later
+separately consented operation.
+
+Keep the original five-field request and key after cancellation, timeout, a lost
+response, 409 or 503. An explicit identical replay recovers the same receipt after
+fresh authority checks, even when Bridge revision or current runtime capability
+has changed. Never substitute current revisions, a replacement child receipt,
+a different key or another target during recovery. These methods submit once and
+perform no automatic mutation retry. Keys contain 1 through 200 visible ASCII
+characters without spaces.
+
+`read_workspace_cleanup(bridge_id, allocation_id)` inspects current safe status.
+`request_workspace_cleanup(bridge_id, allocation_id, &request, &original_key)`
+requires HTTP 202 and validates the exact returned consent. Dropping its future
+stops observation; the accepted server operation may continue.
+
+```rust,no_run
+use cma_sdk::{Client, IdempotencyKey};
+use cma_sdk::bridges::{BridgeWorkspaceCleanupRequest, BridgeWorkspaceCleanupStatus};
+
+async fn remove_explicitly_reviewed_owned_workspace(
+    client: &Client,
+    bridge_id: &str,
+    allocation_id: &str,
+    original_request: &BridgeWorkspaceCleanupRequest,
+    original_key: &IdempotencyKey,
+) -> Result<BridgeWorkspaceCleanupStatus, cma_sdk::Error> {
+    // Preserve all five original fields and this key with separate Workspace consent.
+    client.bridges().request_workspace_cleanup(
+        bridge_id, allocation_id, original_request, original_key,
+    ).await
+}
+```

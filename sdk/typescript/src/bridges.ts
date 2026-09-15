@@ -3,7 +3,8 @@ export type {
   BridgeCapabilityCatalog,
   BridgeConnectorCapabilities,
 } from './bridges/capabilities-schema.js';
-import { BridgeCleanup } from './bridges/cleanup.js';
+import { BridgeWorkspaceCleanup } from './bridges/workspace-cleanup.js';
+export type * from './bridges/workspace-cleanup-schema.js';
 export type {
   BridgeChildCleanupAction,
   BridgeChildCleanupRequest,
@@ -78,7 +79,7 @@ function receipt(id: string, expected: number, kind: string) {
   };
 }
 /** Current bridge management. Channel callback and reply credentials are not dashboard authentication. */
-export class Bridges extends BridgeCleanup {
+export class Bridges extends BridgeWorkspaceCleanup {
   list(options: BridgeListOptions = {}) {
     if (options.limit !== undefined && input(positiveInteger, options.limit) > 100)
       throw new ValidationError('bridge limit must be at most 100');

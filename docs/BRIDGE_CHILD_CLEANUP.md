@@ -108,3 +108,12 @@ mixed-version or rollback safety.
 Existing authentication, Bridge management, body-format and idempotency-header
 problems retain their existing public names. A transport failure does not prove
 that a command was rejected or that a runtime effect did not happen.
+
+
+## Later separate Workspace removal
+
+`workspace_retained: true` describes this child operation's permanent effect
+boundary. A later [separately consented owned Workspace cleanup](BRIDGE_WORKSPACE_CLEANUP.md)
+may remove the originally created Workspace after child completion. Its own
+request, receipt and permanent completion proof authorize that additional effect;
+this child receipt and its original bytes remain retained and unchanged.

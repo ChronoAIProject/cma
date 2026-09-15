@@ -41,6 +41,7 @@ mod source_cases;
 mod state_cases;
 mod symbols;
 mod trigger_cases;
+mod workspace_cleanup_cases;
 
 use symbols::Symbols;
 
@@ -139,6 +140,9 @@ fn paths() -> Vec<PathBuf> {
 }
 
 async fn scenario(name: &str) -> Scenario {
+    if let Some(scenario) = workspace_cleanup_cases::scenario(name).await {
+        return scenario;
+    }
     if let Some(scenario) = cleanup_cases::scenario(name).await {
         return scenario;
     }
