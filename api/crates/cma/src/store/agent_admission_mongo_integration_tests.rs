@@ -687,3 +687,6 @@ mod provenance;
 mod provenance_backfill;
 #[path = "agent_admission_mongo_integration_tests/provenance_inventory.rs"]
 mod provenance_inventory;
+
+#[path = "agent_admission_mongo_integration_tests/contention.rs"]
+mod contention;
