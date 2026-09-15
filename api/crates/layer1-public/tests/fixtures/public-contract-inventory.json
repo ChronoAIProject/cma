@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "openapi_operations": 165,
+  "openapi_operations": 168,
   "operations": {
     "GET /api/v1/organizations": {
       "classification": "openapi",
@@ -2383,6 +2383,41 @@
         "authentication_required",
         "response_not_found",
         "controls_field_unsupported"
+      ]
+    },
+    "GET /api/v2/agents/{agent_id}/events/snapshot": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/agent_v2/snapshot.rs# Authenticated bounded immutable Agent replay uses current-policy frame fences and distinct incarnation-bound cursors.",
+      "required_problems": [
+        "not_authenticated",
+        "agent_not_found",
+        "invalid_agent_events_query",
+        "invalid_agent_cursor",
+        "agent_cursor_beyond_head",
+        "agent_incarnation_changed",
+        "agent_history_unavailable",
+        "agent_read_unavailable"
+      ]
+    },
+    "GET /api/v2/agents/{agent_id}/events": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/agent_v2/stream.rs# Authenticated bounded immutable Agent replay uses current-policy frame fences and distinct incarnation-bound cursors.",
+      "required_problems": [
+        "not_authenticated",
+        "agent_not_found",
+        "invalid_agent_events_query",
+        "invalid_agent_cursor",
+        "agent_cursor_beyond_head",
+        "agent_incarnation_changed",
+        "agent_history_unavailable",
+        "agent_read_unavailable"
+      ]
+    },
+    "GET /api/v2/ui/transport": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/agent_v2/eligibility.rs# Current process flag and complete composition select new tabs only; authenticated no-store discovery is not command authority.",
+      "required_problems": [
+        "not_authenticated"
       ]
     }
   }

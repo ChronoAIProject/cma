@@ -32,7 +32,7 @@ impl AgentEventStreamAuthorization {
             .map_err(|error| authorized::access_error(error.into()))
     }
 
-    async fn bounded<T>(
+    pub(in crate::sandbox) async fn bounded<T>(
         &self,
         operation: impl Future<Output = Result<T, AgentReadError>>,
     ) -> Result<T, AgentReadError> {
@@ -133,7 +133,7 @@ impl AgentReadService {
         })
     }
 
-    async fn current_event_stream_snapshot(
+    pub(super) async fn current_event_stream_snapshot(
         &self,
         authorization: &AgentEventStreamAuthorization,
     ) -> Result<ResourceAccessSnapshot, AgentReadError> {
