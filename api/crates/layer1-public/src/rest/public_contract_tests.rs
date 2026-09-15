@@ -38,6 +38,7 @@ mod shared_source_cases;
 mod shared_stream_cases;
 mod snapshot_cases;
 mod source_cases;
+mod source_consent_cases;
 mod state_cases;
 mod symbols;
 mod trigger_cases;
@@ -141,6 +142,9 @@ fn paths() -> Vec<PathBuf> {
 
 async fn scenario(name: &str) -> Scenario {
     if let Some(scenario) = workspace_cleanup_cases::scenario(name).await {
+        return scenario;
+    }
+    if let Some(scenario) = source_consent_cases::scenario(name).await {
         return scenario;
     }
     if let Some(scenario) = cleanup_cases::scenario(name).await {

@@ -144,12 +144,15 @@ impl BridgeInvokeStore for Memory {
 }
 pub(in crate::rest) struct Fixture {
     pub definitions: BridgeService,
-    pub bridge_store: Arc<MemoryBridgeStore>,
+    pub bridge_store: Arc<dyn BridgeStore>,
     pub router: Router,
     pub service: Arc<BridgeInvokeService>,
     pub id: String,
 }
 pub(in crate::rest) async fn fixture() -> Fixture {
+    fixture_with_store(Arc::new(MemoryBridgeStore::default())).await
+}
+pub(in crate::rest) async fn fixture_with_store(bridge_store: Arc<dyn BridgeStore>) -> Fixture {
     let resources = agents_tests::fixture().await.store;
     agents_tests::insert_agent(
         &resources,
@@ -160,7 +163,6 @@ pub(in crate::rest) async fn fixture() -> Fixture {
     let authority = Arc::new(Authority {
         resources: resources.clone(),
     });
-    let bridge_store = Arc::new(MemoryBridgeStore::default());
     let definitions =
         BridgeService::new(bridge_store.clone(), authority.clone(), authority.clone());
     let id = BridgeService::creation_id(&context("owner-a"), "invoke-bridge").unwrap();

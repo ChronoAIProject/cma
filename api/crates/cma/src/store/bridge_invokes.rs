@@ -25,6 +25,7 @@ pub(crate) mod channel_source;
 mod enable;
 mod fence;
 pub(in crate::store) mod outbox;
+mod source_controls;
 mod usage;
 pub(super) use enable::fence_enable;
 pub(in crate::store) use usage::apply_management_usage;
@@ -79,6 +80,7 @@ impl MongoBridgeInvokeStore {
             .map_err(|_| {
                 layer2_core::StoreError::Unavailable("create invoke grant index".into())
             })?;
+        source_controls::initialize(&store).await?;
         Ok(store)
     }
 
