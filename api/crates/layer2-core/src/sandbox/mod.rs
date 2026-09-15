@@ -118,9 +118,10 @@ pub use agent_read_types::{
     AgentUsageReading, SandboxResourceReadError, SandboxResourceReader, SandboxResourceReading,
 };
 pub use agent_reads::{
-    AgentDetailReading, AgentEventStreamAuthorization, AgentEventStreamSnapshot, AgentReadService,
-    AgentSourceReadError, AgentSourceReading, AgentVisibleLogEntry, SharedAgentDetail,
-    SharedAgentOrigin,
+    AgentDetailReading, AgentEventStreamAuthorization, AgentEventStreamHeader,
+    AgentEventStreamSnapshot, AgentReadService, AgentReplayEntry, AgentReplayWindow,
+    AgentResponseBinding, AgentSourceReadError, AgentSourceReading, AgentVisibleLogEntry,
+    SharedAgentDetail, SharedAgentOrigin,
 };
 pub use agent_runtime::{
     AgentRuntimeConnection, AgentRuntimeError, AgentRuntimeInputError, AgentRuntimeInputSender,

@@ -32,6 +32,11 @@ pub use visibility::AgentVisibleLogEntry;
 #[path = "agent_reads/stream.rs"]
 mod stream;
 pub use stream::{AgentEventStreamAuthorization, AgentEventStreamSnapshot};
+#[path = "agent_reads/window.rs"]
+mod window;
+pub use window::{
+    AgentEventStreamHeader, AgentReplayEntry, AgentReplayWindow, AgentResponseBinding,
+};
 
 impl AgentReadService {
     pub fn new<S, R>(store: Arc<S>, resources: Arc<R>) -> Arc<Self>

@@ -21,6 +21,7 @@ pub(in crate::sandbox) mod execution_dispatch;
 mod input;
 mod lane;
 mod ledger;
+mod replay_binding;
 mod reservation_policy;
 mod response_read;
 mod revival_authority;

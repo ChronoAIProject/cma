@@ -430,6 +430,9 @@ impl ControlPlaneComposition {
             .merge(projections.router(Arc::clone(&operations)))
             .merge(projections.conversation_router(context, sandbox_lifecycle.updates()))
             .merge(responses_v2)
+            .merge(
+                projections.agent_events_router(config.bridge_flags, sandbox_lifecycle.updates()),
+            )
             .merge(trigger_routes)
             .merge(layer1_public::rest::admin::router(admin));
         let public = super::rest_router(resource_routes)

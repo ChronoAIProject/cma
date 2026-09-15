@@ -13,6 +13,8 @@ use layer2_core::sandbox::{
 };
 use layer2_core::{OperationStore, RuntimeCapabilities};
 use layer3_adapter::{AdapterError, RuntimeHandle, SandboxAdapter};
+#[path = "projections/agent_v2.rs"]
+mod agent_v2;
 
 pub(crate) struct AgentProjectionServices {
     commands: Option<Arc<layer2_core::sandbox::agent_io::AgentCommandService>>,

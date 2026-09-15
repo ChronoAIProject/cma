@@ -464,3 +464,8 @@ SDK's `index.mjs`; the Python runner uses its environment's installed `openai`
 package. No real API key is needed. The fixture accepts only its static local
 test credential and exposes an authenticated `POST /__sdk/shutdown` for orderly
 shutdown, with a ten-minute lifetime bound as a fallback.
+
+Agent chronology, bounded snapshot/tail replay, ephemeral text and Thinking, and
+authenticated new-tab transport eligibility are documented in
+[Agent event replay v2](API_Agent_Events_V2.md). Agent cursors are independent of
+Responses sequence numbers; retained response bindings identify control targets.
