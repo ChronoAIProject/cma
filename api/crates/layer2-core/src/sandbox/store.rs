@@ -403,6 +403,8 @@ struct State {
     resource_policies: HashMap<SandboxId, crate::resource_access::ResourcePolicyRecord>,
     resource_shares: HashMap<String, crate::resource_access::ShareMutationReceipt>,
     resource_share_commands: HashMap<String, crate::resource_access::ShareMutationReceipt>,
+    sandbox_controls: HashMap<crate::ids::SandboxCommandId, super::control::SandboxControlRecord>,
+    sandbox_control_keys: HashMap<(String, String), crate::ids::SandboxCommandId>,
     agent_commands: HashMap<crate::ids::AgentCommandId, super::agent_io::AdmittedAgentCommand>,
     command_authorization_audits:
         std::collections::BTreeMap<String, super::agent_io::CommandAuthorizationAudit>,
