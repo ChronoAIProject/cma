@@ -167,8 +167,59 @@ retain the original key and body for recovery. `agent_command_key_conflict` mean
 the key was reused for changed intent; `capability_unsupported` means the observed
 runtime cannot perform the command. Optional
 discovery fields `controls` and `command_status` identify this extension while
-older discovery remains readable. Standard Responses cancellation, cancellation
-before turn dispatch and verified platform-sender controls are separate contracts.
+older discovery remains readable. Standard Responses cancellation and verified
+platform-sender controls are separate contracts. Cancellation before turn binding
+uses the dedicated methods below.
+
+## Queued response cancellation
+
+`observe_queued_cancellation(agent_id, response_id)` returns the source command,
+its `command_revision`, and current `cancellable` observation. Eligible sources
+are queued messages or unbound Channel messages waiting for action. CMA rechecks
+fresh human/API operation authority and source state atomically; this observation
+does not authorize a verified platform sender.
+
+`cancel_queued_response` requires a `QueuedCancellationRequest` containing the
+original source command identity and source command revision, plus a retained
+string key. The revision belongs to the command, not the Agent. Persist the
+route, body and key before sending; the client never retries mutations,
+generates another key, or replaces a source selection after a lost reply.
+
+```rust,no_run
+use cma_sdk::{Client, responses_v2::QueuedCancellationRequest};
+# async fn run(client: Client, persist: impl FnOnce(&[u8]) -> std::io::Result<()>) -> Result<(), Box<dyn std::error::Error>> {
+let agent = std::env::var("CMA_AGENT_ID")?;
+let response = std::env::var("CMA_RESPONSE_ID")?;
+let key = std::env::var("CMA_DURABLE_CANCEL_KEY")?;
+let api = client.responses_v2();
+let observed = api.observe_queued_cancellation(&agent, &response).await?;
+if !observed.cancellable { return Err("response is no longer cancellable before dispatch".into()); }
+let body = QueuedCancellationRequest {
+    source_command_id: observed.response.receipt.command_id,
+    expected_command_revision: observed.command_revision,
+};
+persist(&serde_json::to_vec(&(&agent, &response, &key, &body))?)?;
+let accepted = api.cancel_queued_response(&agent, &response, &body, &key).await?;
+println!("source outcome: {}", accepted.response.status.as_str());
+# Ok(())
+# }
+```
+
+HTTP 200 returns a completed `cancellation` receipt without a response ID, turn
+or runtime delivery, the original immutable `target`, and the source command's
+current `response` view. The receipt establishes committed cancellation before
+dispatch. Exact recovery preserves the cancellation receipt and target while the
+current source view may change. Standard Responses event variants stay unchanged.
+
+Recover an uncertain reply by explicitly resubmitting the identical route, body
+and key. `queued_response_cancellation_conflict` remains uncertain even on the
+first call. `queued_response_cancellation_not_admitted` proves a committed absence
+of the original receipt and permanent staleness of the original source revision;
+discard that pending intent, observe again and require a new explicit action
+before forming another intent. `agent_command_key_conflict` identifies changed
+input under a retained key. The ordinary API error retains each exact code.
+Optional discovery `queued_cancellation` describes the extension; older discovery
+remains readable.
 
 ## Rich Agent replay and transport eligibility
 

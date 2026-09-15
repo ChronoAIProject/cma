@@ -15,6 +15,22 @@ export const experienceDispatch: Record<string, Dispatch> = {
           ([name]) => name.toLowerCase() === 'idempotency-key',
         )?.[1] ?? '',
     }),
+  'GET /api/v2/agents/{agent_id}/responses/{response_id}/queued-cancellation': ({
+    client,
+    param,
+  }) => client.responsesV2.observeQueuedCancellation(param('agent_id'), param('response_id')),
+  'POST /api/v2/agents/{agent_id}/responses/{response_id}/queued-cancellation': ({
+    client,
+    param,
+    body,
+    fixture,
+  }) =>
+    client.responsesV2.cancelQueuedResponse(param('agent_id'), param('response_id'), body, {
+      idempotencyKey:
+        Object.entries(fixture.request.headers).find(
+          ([name]) => name.toLowerCase() === 'idempotency-key',
+        )?.[1] ?? '',
+    }),
   'GET /api/v2/commands/{command_id}': ({ client, param }) =>
     client.responsesV2.readCommand(param('command_id')),
   'GET /api/v2': ({ client }) => client.responsesV2.readCapabilities(),

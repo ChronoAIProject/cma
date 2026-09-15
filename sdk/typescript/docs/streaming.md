@@ -197,8 +197,65 @@ the key was reused for changed intent; `capability_unsupported` means the observ
 runtime cannot perform the command.
 The optional discovery `controls` and `command_status` fields describe this CMA
 extension; older discovery documents remain readable. Standard Responses
-cancellation, queued-response cancellation and verified platform-sender controls
-are separate contracts.
+cancellation and verified platform-sender controls are separate contracts.
+Cancellation before turn binding uses the dedicated methods below.
+
+## Queued response cancellation
+
+`observeQueuedCancellation(agentId, responseId)` returns the source command,
+its `command_revision` and current `cancellable` observation. Eligible sources
+are queued messages or unbound Channel messages waiting for action. CMA checks
+fresh human/API operation authority and source state again during cancellation;
+this observation does not authorize a verified platform sender.
+
+`cancelQueuedResponse` requires a strict `V2QueuedCancellationRequest` with the
+original `source_command_id` and `expected_command_revision`, plus a retained
+key in `CommandOptions`. This revision belongs to the source command, not the
+Agent. The client sends one POST and never generates keys, repeats mutations,
+or replaces the original source selection after a lost reply.
+
+```ts
+import { createClient, type V2QueuedCancellationRequest } from '@chronoai/cma-sdk';
+
+const client = createClient();
+export async function cancelPendingResponse(
+  agentId: string,
+  responseId: string,
+  key: string,
+  persist: (savedIntent: string) => Promise<void>,
+  signal: AbortSignal,
+) {
+  const observed = await client.responsesV2.observeQueuedCancellation(agentId, responseId, {
+    signal,
+  });
+  if (!observed.cancellable) throw new Error('Response is no longer cancellable before dispatch');
+  const body: V2QueuedCancellationRequest = {
+    source_command_id: observed.response.receipt.command_id,
+    expected_command_revision: observed.command_revision,
+  };
+  await persist(JSON.stringify({ agentId, responseId, key, body }));
+  return client.responsesV2.cancelQueuedResponse(agentId, responseId, body, {
+    idempotencyKey: key,
+    signal,
+  });
+}
+```
+
+HTTP 200 returns a completed `cancellation` receipt with no response ID, turn or
+runtime delivery, the immutable `target`, and the source command's current
+`response` view. This receipt establishes committed cancellation before dispatch.
+On exact retry, the receipt and target remain stable while the current source
+view may change. Existing standard Responses event shapes stay unchanged.
+
+After any uncertain reply, retry explicitly with the same route, body and key.
+`queued_response_cancellation_conflict` remains uncertain even on the first call.
+`queued_response_cancellation_not_admitted` is the dedicated committed proof that
+the original intent has no receipt and cannot be admitted at its old source
+revision; it allows discarding that pending intent. Observe again and require a
+new explicit action before creating another intent. `agent_command_key_conflict`
+means that a retained key was reused for changed input. Ordinary `ApiError.code`
+preserves these distinctions. Optional discovery `queued_cancellation` identifies
+this extension, and older discovery documents remain readable.
 
 ## Rich Agent replay and transport eligibility
 

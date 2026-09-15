@@ -13,6 +13,27 @@ pub enum Classification {
 // Exact backend-invalid cases not claimed as typed HTTP replay. Each is checked
 // against its source shape or the SDK's real preflight, then its shared error is decoded.
 pub const LOCAL_CASES: &[(&str, Classification)] = &[
+    ("queued-cancellation-v2-missing-key", Classification::Local),
+    (
+        "queued-cancellation-v2-invalid-revision",
+        Classification::Local,
+    ),
+    (
+        "queued-cancellation-v2-unknown-field",
+        Classification::TypedShape,
+    ),
+    (
+        "queued-cancellation-v2-invalid-json",
+        Classification::RawJson,
+    ),
+    (
+        "queued-cancellation-v2-query-observe",
+        Classification::QueryShape,
+    ),
+    (
+        "queued-cancellation-v2-query-submit",
+        Classification::QueryShape,
+    ),
     ("agent-events-v2-snapshot-invalid", Classification::Local),
     ("agent-events-v2-events-invalid", Classification::Local),
     ("agent-events-v2-snapshot-query", Classification::QueryShape),
@@ -959,7 +980,11 @@ pub fn assert_unrepresentable(case: &Case, class: Classification) {
                 "GET /api/v1/responses/{response_id}"
                 | "GET /api/v2/responses/{response_id}"
                 | "GET /api/v2/agents/{agent_id}/responses/{response_id}/controls"
-                | "GET /api/v2/commands/{command_id}" => &[],
+                | "GET /api/v2/commands/{command_id}"
+                | "GET /api/v2/agents/{agent_id}/responses/{response_id}/queued-cancellation"
+                | "POST /api/v2/agents/{agent_id}/responses/{response_id}/queued-cancellation" => {
+                    &[]
+                }
                 _ => panic!("unclassified query shape {}", case.id),
             };
             assert!(

@@ -105,6 +105,8 @@ pub struct Capabilities {
     pub controls: Option<ControlCapabilities>,
     /// Optional safe durable command status path.
     pub command_status: Option<String>,
+    /// Optional extension for cancellation before a source binds a turn.
+    pub queued_cancellation: Option<super::QueuedCancellationCapabilities>,
 }
 /// Discovery of explicitly targeted CMA response controls.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
