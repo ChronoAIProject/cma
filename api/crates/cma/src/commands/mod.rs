@@ -5,6 +5,7 @@ mod channel_revival;
 mod execution;
 mod sandbox_scheduler;
 mod scheduler;
+mod trigger_execution;
 pub(crate) use sandbox_scheduler::SandboxControlScheduler;
 
 pub(crate) use channel_revival::ChannelCommandRevival;

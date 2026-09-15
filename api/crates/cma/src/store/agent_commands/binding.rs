@@ -45,6 +45,15 @@ pub(in crate::store) async fn bind(
             return Err(CommandLedgerError::Conflict.into());
         }
     }
+    if let Some(fence) = &mutation.trigger_execution_fence {
+        let proof =
+            super::super::trigger_first_messages::proof_in_session(store, &command, session)
+                .await
+                .map_err(|_| CommandLedgerError::Conflict)?;
+        fence
+            .require_proof(&proof)
+            .map_err(|_| CommandLedgerError::Conflict)?;
+    }
     let dispatch =
         bind_command_dispatch(&mut command, &lane, current, latest_turn, mutation, &now)?;
     if let Some(fence) = &mutation.execution_fence {

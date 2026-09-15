@@ -149,6 +149,9 @@ pub(super) async fn write(
     lane: &CommandLane,
     session: &mut ClientSession,
 ) -> Result<(), ApplyError> {
+    super::super::trigger_first_messages::project_terminal(store, command, session)
+        .await
+        .map_err(|_| CommandLedgerError::Conflict)?;
     let mut fields = records::document(command)?;
     fields.remove("_id");
     let result = store.agent_commands.update_one(doc! { "_id": command.receipt.envelope.command_id.as_str(), "revision": signed(expected_revision, "command revision").map_err(|_| CommandLedgerError::Corrupt)? }, doc! { "$set": fields }).session(&mut *session).await?;

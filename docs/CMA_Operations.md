@@ -434,6 +434,7 @@ are referenced in `infra/api/secret.yaml`, never stored in ConfigMaps.
 | `CHRONO_BRIDGE_LARK_ENABLED` | Lark fresh-effect gate, independent of Feishu; false by default |
 | `CHRONO_BRIDGE_FEISHU_ENABLED` | Feishu fresh-effect gate, independent of Lark; false by default |
 | `CHRONO_BRIDGE_V2_UI_TRANSPORT_ENABLED` | Eligibility for the separately integrated v2 browser transport; false by default; does not disable existing public v2 API routes or change an accepted request protocol |
+| `CHRONO_TRIGGER_COMMAND_ADMISSION_ENABLED` | New authenticated Launch admission selects common first-message commands under retained personal ownership; false by default. Proven pre-write failure is terminal for new common prompts; ambiguous writes retain the same command/response and refuse legacy recovery. Accepted protocol is immutable; disabling the selector retains accepted common commands and legacy launches retain their original delivery/recovery behavior. Keep false until every worker and permitted rollback version recognizes and transactionally excludes common/legacy dispatch; older workers ignore additive sidecars. |
 | `CHRONO_TRUSTED_SUBJECT` | Local trusted-mode subject; default `local-developer`, irrelevant in provider mode |
 | `CHRONO_NYXID_BASE_URL` | Required API/OAuth HTTP(S) origin in provider mode |
 | `CHRONO_NYXID_PUBLIC_URL` | Required exact canonical HTTPS browser origin in provider mode |

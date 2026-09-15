@@ -29,7 +29,8 @@ impl AgentWorker {
             .await
             .map_err(dispatch_error)?;
         match outcome {
-            FirstMessageDispatchOutcome::NotConfigured
+            FirstMessageDispatchOutcome::CommonCommand(_)
+            | FirstMessageDispatchOutcome::NotConfigured
             | FirstMessageDispatchOutcome::Accepted(_)
             | FirstMessageDispatchOutcome::RecoveryRequired(_) => {
                 let current = self.current_dispatch(&agent, &authority).await?;

@@ -211,6 +211,11 @@ pub struct Launch {
     /// Stored beside the legacy aggregate; never accepted from public JSON.
     #[serde(skip)]
     pub initiation: Option<super::LaunchInitiation>,
+    /// Persisted sidecar, never accepted from a serialized legacy aggregate.
+    #[serde(skip)]
+    pub input_protocol: Option<super::LaunchInputProtocol>,
+    #[serde(skip)]
+    pub input_binding_sha256: Option<String>,
     pub id: LaunchId,
     pub trigger_id: TriggerId,
     pub revision_digest: String,

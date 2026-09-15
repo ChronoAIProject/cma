@@ -34,6 +34,7 @@ mod bridge_invokes;
 mod bridge_reuse_lifecycle;
 mod bridge_reuse_parent;
 pub(crate) mod channel_tools;
+mod trigger_first_messages;
 pub(crate) use channel_tools::MongoChannelToolStore;
 mod checkpoint_capture;
 mod checkpoint_objects;
