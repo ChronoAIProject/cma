@@ -4,8 +4,8 @@ use std::{sync::Arc, time::Duration};
 
 use axum::http::HeaderMap;
 use layer2_core::bridge::ingress::{
-    CallbackBinding, CallbackError, CallbackHeaders, CallbackInboxStore, CallbackTokenPolicy,
-    CallbackVerifier, InboxReceipt,
+    CallbackAcceptance, CallbackBinding, CallbackError, CallbackHeaders, CallbackInboxStore,
+    CallbackTokenPolicy, CallbackVerifier,
 };
 use layer2_core::bridge::{BridgeConnectionValidator, BridgeId, BridgeStore};
 use tokio::sync::Semaphore;
@@ -81,7 +81,7 @@ impl CallbackIngress {
         id: &BridgeId,
         headers: &HeaderMap,
         body: &[u8],
-    ) -> Result<InboxReceipt, CallbackError> {
+    ) -> Result<CallbackAcceptance, CallbackError> {
         let _worker = self
             .workers
             .try_acquire()
@@ -100,7 +100,7 @@ impl CallbackIngress {
         id: &BridgeId,
         headers: CallbackHeaders<'_>,
         body: &[u8],
-    ) -> Result<InboxReceipt, CallbackError> {
+    ) -> Result<CallbackAcceptance, CallbackError> {
         let bridge = self
             .bridges
             .bridge(id)

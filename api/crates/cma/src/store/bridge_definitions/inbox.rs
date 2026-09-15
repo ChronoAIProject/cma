@@ -3,7 +3,7 @@
 use std::{sync::Arc, time::Duration};
 
 use layer2_core::bridge::ingress::{
-    CallbackError, CallbackInboxStore, InboxAdmission, InboxReceipt, InboxWrite, StoredInbox,
+    CallbackAcceptance, CallbackError, CallbackInboxStore, InboxAdmission, InboxWrite, StoredInbox,
 };
 use mongodb::{
     bson::{doc, DateTime, Document},
@@ -22,6 +22,7 @@ use crate::store::{
 };
 
 use super::{decode_bridge, MongoBridgeStore};
+mod disposition;
 pub(in crate::store) mod receipts;
 mod redelivery;
 mod reply_addressing;
@@ -35,6 +36,7 @@ pub(crate) struct MongoCallbackInbox {
     rates: Collection<Document>,
     receipts: Collection<Document>,
     redeliveries: Collection<Document>,
+    dispositions: Collection<Document>,
     receipt_cursor: Arc<tokio::sync::Mutex<Option<String>>>,
     cipher: Arc<AuthCipher>,
 }
@@ -55,6 +57,7 @@ impl MongoCallbackInbox {
                 "bridge_callback_rates",
                 "bridge_callback_receipts",
                 "bridge_callback_platform_messages",
+                "bridge_callback_dispositions",
             ],
         )
         .await?;
@@ -65,6 +68,7 @@ impl MongoCallbackInbox {
             rates: majority_collection(&database, "bridge_callback_rates"),
             receipts: majority_collection(&database, "bridge_callback_receipts"),
             redeliveries: majority_collection(&database, "bridge_callback_platform_messages"),
+            dispositions: majority_collection(&database, "bridge_callback_dispositions"),
             receipt_cursor: Arc::new(tokio::sync::Mutex::new(None)),
             cipher: Arc::new(AuthCipher::new(deployment, key)?),
         };
@@ -118,7 +122,7 @@ impl MongoCallbackInbox {
         &self,
         write: &InboxWrite,
         session: &mut ClientSession,
-    ) -> Result<InboxReceipt, MutationError> {
+    ) -> Result<CallbackAcceptance, MutationError> {
         write.require_current(write.bridge())?;
         let current = self
             .bridges
@@ -140,7 +144,9 @@ impl MongoCallbackInbox {
             .session(&mut *session)
             .await?
         {
-            return Ok(receipts::model::AcceptedCallbackReceipt::read(&document)?.replay(write)?);
+            return Ok(CallbackAcceptance::Message(
+                receipts::model::AcceptedCallbackReceipt::read(&document)?.replay(write)?,
+            ));
         }
         if let Some(document) = self
             .inbox
@@ -156,21 +162,30 @@ impl MongoCallbackInbox {
                 session,
             )
             .await?;
-            return Ok(receipt);
+            return Ok(CallbackAcceptance::Message(receipt));
         }
         if let Some(receipt) = self
             .resolve_platform_redelivery(write, session, true)
             .await?
         {
+            return Ok(CallbackAcceptance::Message(receipt));
+        }
+        if let Some(receipt) = self.resolve_disposition(write, session, true).await? {
             return Ok(receipt);
         }
         let record = write.record();
+        // A transport-only verifier can construct InboxWrite before trusted raw
+        // identity/text classification. It may recover history above, but cannot
+        // bypass the reserved-control guard to create fresh Message work.
+        if record.capabilities.is_none() {
+            return Err(CallbackError::Payload.into());
+        }
         self.require_confirmed_reply(record, session).await?;
         let config = &current
             .current()
             .map_err(|_| CallbackError::BindingUnavailable)?
             .config;
-        if record.admission == InboxAdmission::Accepted {
+        if record.admission == InboxAdmission::Accepted && write.control_refusal().is_none() {
             let queued = self
                 .inbox
                 .count_documents(
@@ -213,6 +228,11 @@ impl MongoCallbackInbox {
         }
         self.rates.update_one(doc!{"_id":&rate_id},doc!{"$inc":{"count":1_i64},"$setOnInsert":{"document_schema_version":DOCUMENT_SCHEMA_VERSION,"expires_at":DateTime::from_millis((minute+2)*60000)}})
             .upsert(true).session(&mut *session).await?;
+        if let Some(refusal) = disposition::refusal(write) {
+            let receipt = self.retain_disposition(write, refusal, session).await?;
+            write.require_current(&current)?;
+            return Ok(receipt);
+        }
         self.inbox.insert_one(doc!{"_id":&record.id,"document_schema_version":DOCUMENT_SCHEMA_VERSION,
             "bridge_id":record.pin.bridge_id.as_str(),"admission":admission(&record.admission),
             "expires_at":DateTime::from_millis(record.expires_at*1000),"record":record_bson(record).map_err(|_|CallbackError::Unavailable)?})
@@ -242,11 +262,21 @@ impl MongoCallbackInbox {
                 .session(&mut *session)
                 .await?;
         }
+        let receipt = self
+            .retain_disposition(
+                write,
+                CallbackAcceptance::Message(record.receipt()),
+                session,
+            )
+            .await?;
         write.require_current(&current)?;
-        Ok(record.receipt())
+        Ok(receipt)
     }
 
-    async fn replay(&self, write: &InboxWrite) -> Result<Option<InboxReceipt>, CallbackError> {
+    async fn replay(
+        &self,
+        write: &InboxWrite,
+    ) -> Result<Option<CallbackAcceptance>, CallbackError> {
         write.require_current(write.bridge())?;
         let mut session = self
             .bridges
@@ -276,9 +306,9 @@ impl MongoCallbackInbox {
             .await
             .map_err(|_| CallbackError::Unavailable)?
         {
-            return Ok(Some(
+            return Ok(Some(CallbackAcceptance::Message(
                 receipts::model::AcceptedCallbackReceipt::read(&document)?.replay(write)?,
-            ));
+            )));
         }
         if let Some(document) = self
             .inbox
@@ -287,14 +317,24 @@ impl MongoCallbackInbox {
             .await
             .map_err(|_| CallbackError::Unavailable)?
         {
-            return Ok(Some(write.match_replay(&decode(&document)?)?));
+            return Ok(Some(CallbackAcceptance::Message(
+                write.match_replay(&decode(&document)?)?,
+            )));
         }
-        self.resolve_platform_redelivery(write, &mut session, false)
-            .await
-            .map_err(|error| match error {
-                MutationError::Core(error) => error,
-                MutationError::Mongo(_) => CallbackError::Unavailable,
-            })
+        let result = async {
+            if let Some(receipt) = self
+                .resolve_platform_redelivery(write, &mut session, false)
+                .await?
+            {
+                return Ok(Some(CallbackAcceptance::Message(receipt)));
+            }
+            self.resolve_disposition(write, &mut session, false).await
+        }
+        .await;
+        result.map_err(|error| match error {
+            MutationError::Core(error) => error,
+            MutationError::Mongo(_) => CallbackError::Unavailable,
+        })
     }
 
     /// After an uncertain commit, failure to observe a matching durable receipt
@@ -303,7 +343,7 @@ impl MongoCallbackInbox {
     pub(super) async fn reconcile_commit(
         &self,
         write: &InboxWrite,
-    ) -> Result<InboxReceipt, CallbackError> {
+    ) -> Result<CallbackAcceptance, CallbackError> {
         match self.replay(write).await {
             Ok(Some(receipt)) => Ok(receipt),
             Err(CallbackError::ReplayConflict) => Err(CallbackError::ReplayConflict),
@@ -348,11 +388,11 @@ impl CallbackInboxStore for MongoCallbackInbox {
     async fn recover_receipt(
         &self,
         write: &InboxWrite,
-    ) -> Result<Option<InboxReceipt>, CallbackError> {
+    ) -> Result<Option<CallbackAcceptance>, CallbackError> {
         self.replay(write).await
     }
 
-    async fn accept(&self, write: InboxWrite) -> Result<InboxReceipt, CallbackError> {
+    async fn accept(&self, write: InboxWrite) -> Result<CallbackAcceptance, CallbackError> {
         for _ in 0..8 {
             write.require_current(write.bridge())?;
             let mut session = self

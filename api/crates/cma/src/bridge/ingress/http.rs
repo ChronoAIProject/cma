@@ -34,11 +34,16 @@ async fn callback(
 ) -> Response {
     let result = accept(state, id, request).await;
     let mut response = match result {
-        Ok(receipt) => (
+        Ok(CallbackAcceptance::Message(receipt)) => (
             StatusCode::ACCEPTED,
             Json(serde_json::json!({
                 "status":"inbox_persisted", "receipt":receipt,
             })),
+        )
+            .into_response(),
+        Ok(CallbackAcceptance::ControlRefused(receipt)) => (
+            StatusCode::ACCEPTED,
+            Json(serde_json::json!({"status":"control_refused", "receipt":receipt})),
         )
             .into_response(),
         Err(error) => error.response(),
@@ -53,7 +58,7 @@ async fn accept(
     state: Arc<CallbackHttp>,
     id: String,
     request: Request,
-) -> Result<InboxReceipt, HttpFailure> {
+) -> Result<CallbackAcceptance, HttpFailure> {
     let id = id
         .strip_prefix("brg_")
         .filter(|suffix| {

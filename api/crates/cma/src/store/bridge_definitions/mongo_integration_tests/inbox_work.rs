@@ -11,6 +11,7 @@ async fn inbox_work_discovery_survives_corruption_and_reopens_with_exact_accepte
             inbox
                 .accept(write(&store, &id, &body, &token).await)
                 .await
+                .map(|value| value.into_message().unwrap())
                 .unwrap(),
         );
     }
@@ -79,12 +80,16 @@ async fn command_correlated_callbacks_release_inbox_capacity_without_deleting_ac
             inbox
                 .accept(write(&store, &id, &body, &token).await)
                 .await
+                .map(|value| value.into_message().unwrap())
                 .unwrap(),
         );
     }
     let (body, token, _) = callback("extra", "next input");
     assert_eq!(
-        inbox.accept(write(&store, &id, &body, &token).await).await,
+        inbox
+            .accept(write(&store, &id, &body, &token).await)
+            .await
+            .map(|value| value.into_message().unwrap()),
         Err(CallbackError::Capacity)
     );
     let rows = client
@@ -104,6 +109,7 @@ async fn command_correlated_callbacks_release_inbox_capacity_without_deleting_ac
     inbox
         .accept(write(&store, &id, &body, &token).await)
         .await
+        .map(|value| value.into_message().unwrap())
         .unwrap();
     assert_eq!(rows.count_documents(doc! {}).await.unwrap(), 6);
     assert!(inbox

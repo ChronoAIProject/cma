@@ -121,7 +121,10 @@ async fn confirmed_reply_acceptance_fences_exact_sent_evidence_and_replay_keeps_
             }
         }
         assert_eq!(
-            inbox.accept(pending).await,
+            inbox
+                .accept(pending)
+                .await
+                .map(|value| value.into_message().unwrap()),
             Err(CallbackError::Unavailable),
             "{change}"
         );
@@ -146,6 +149,7 @@ async fn confirmed_reply_acceptance_fences_exact_sent_evidence_and_replay_keeps_
     let accepted = inbox
         .accept(positive_write(&store, &id, &body, &token, &item).await)
         .await
+        .map(|value| value.into_message().unwrap())
         .unwrap();
     assert_eq!(
         items
@@ -164,6 +168,7 @@ async fn confirmed_reply_acceptance_fences_exact_sent_evidence_and_replay_keeps_
         inbox
             .accept(write(&store, &id, &body, &token).await)
             .await
+            .map(|value| value.into_message().unwrap())
             .unwrap(),
         accepted
     );

@@ -8,6 +8,7 @@ async fn ambiguous_alias_commit_recovers_only_the_durable_alias_and_original_rec
     let original = first_inbox
         .accept(proven_write(&store, &id, &body, &token).await)
         .await
+        .map(|value| value.into_message().unwrap())
         .unwrap();
     let uri = std::env::var("CHRONO_TEST_MONGODB_FAILPOINT_URI").unwrap();
     let app_name = format!(
@@ -52,7 +53,10 @@ async fn ambiguous_alias_commit_recovers_only_the_durable_alias_and_original_rec
     }).await.unwrap();
     commits.store(0, std::sync::atomic::Ordering::SeqCst);
     ambiguous.store(0, std::sync::atomic::Ordering::SeqCst);
-    let outcome = inbox.accept(pending).await;
+    let outcome = inbox
+        .accept(pending)
+        .await
+        .map(|value| value.into_message().unwrap());
     admin
         .database("admin")
         .run_command(doc! {"configureFailPoint":"failCommand","mode":"off"})
@@ -97,7 +101,8 @@ async fn ambiguous_alias_commit_recovers_only_the_durable_alias_and_original_rec
     assert_eq!(
         inbox
             .recover_receipt(&proven_write(&store, &id, &alias, &alias_token).await)
-            .await,
+            .await
+            .map(|value| value.map(|value| value.into_message().unwrap())),
         Ok(Some(original.clone()))
     );
     for name in [
@@ -117,6 +122,7 @@ async fn ambiguous_alias_commit_recovers_only_the_durable_alias_and_original_rec
         inbox
             .reconcile_commit(&proven_write(&store, &id, &alias, &alias_token).await)
             .await
+            .map(|value| value.into_message().unwrap())
             .unwrap(),
         original
     );
@@ -131,6 +137,7 @@ async fn failed_alias_insert_does_not_acknowledge_or_increment_admission_effects
     let original = inbox
         .accept(proven_write(&store, &id, &body, &token).await)
         .await
+        .map(|value| value.into_message().unwrap())
         .unwrap();
     let db = client.database(&database);
     // This validator belongs solely to this disposable test database.
@@ -139,13 +146,15 @@ async fn failed_alias_insert_does_not_acknowledge_or_increment_admission_effects
     assert_eq!(
         inbox
             .accept(proven_write(&store, &id, &alias, &alias_token).await)
-            .await,
+            .await
+            .map(|value| value.into_message().unwrap()),
         Err(CallbackError::Unavailable)
     );
     assert_eq!(
         inbox
             .reconcile_commit(&proven_write(&store, &id, &alias, &alias_token).await)
-            .await,
+            .await
+            .map(|value| value.into_message().unwrap()),
         Err(CallbackError::Unavailable)
     );
     assert_eq!(
@@ -182,6 +191,7 @@ async fn failed_alias_insert_does_not_acknowledge_or_increment_admission_effects
         inbox
             .accept(proven_write(&store, &id, &body, &token).await)
             .await
+            .map(|value| value.into_message().unwrap())
             .unwrap(),
         original
     );
@@ -196,6 +206,7 @@ async fn aliases_preserve_command_disposition_and_reject_corrupt_primary_or_alia
     let original = inbox
         .accept(proven_write(&store, &id, &body, &token).await)
         .await
+        .map(|value| value.into_message().unwrap())
         .unwrap();
     let db = client.database(&database);
     let receipts = db.collection::<Document>("bridge_callback_receipts");
@@ -218,6 +229,7 @@ async fn aliases_preserve_command_disposition_and_reject_corrupt_primary_or_alia
         inbox
             .accept(proven_write(&store, &id, &alias, &alias_token).await)
             .await
+            .map(|value| value.into_message().unwrap())
             .unwrap(),
         original
     );
@@ -244,7 +256,8 @@ async fn aliases_preserve_command_disposition_and_reject_corrupt_primary_or_alia
     assert_eq!(
         inbox
             .accept(proven_write(&store, &id, &alias, &alias_token).await)
-            .await,
+            .await
+            .map(|value| value.into_message().unwrap()),
         Err(CallbackError::Unavailable)
     );
     ledger
@@ -261,7 +274,8 @@ async fn aliases_preserve_command_disposition_and_reject_corrupt_primary_or_alia
     assert_eq!(
         inbox
             .reconcile_commit(&proven_write(&store, &id, &alias, &alias_token).await)
-            .await,
+            .await
+            .map(|value| value.into_message().unwrap()),
         Err(CallbackError::Unavailable)
     );
     assert_eq!(

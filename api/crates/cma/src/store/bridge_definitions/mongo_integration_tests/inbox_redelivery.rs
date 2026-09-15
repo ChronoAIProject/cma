@@ -4,11 +4,21 @@ use crate::store::bridge_definitions::inbox::receipts::model::{
     AcceptanceDisposition, AcceptedCallbackReceipt,
 };
 
-async fn proven_write(
+pub(super) async fn proven_write(
     store: &MongoBridgeStore,
     id: &BridgeId,
     body: &[u8],
     token: &str,
+) -> InboxWrite {
+    proven_write_with_lease(store, id, body, token, Duration::from_secs(60)).await
+}
+
+pub(super) async fn proven_write_with_lease(
+    store: &MongoBridgeStore,
+    id: &BridgeId,
+    body: &[u8],
+    token: &str,
+    lease: Duration,
 ) -> InboxWrite {
     let bridge = store.bridge(id).await.unwrap().unwrap();
     let proof = Authority
@@ -19,7 +29,7 @@ async fn proven_write(
     let keys = CallbackKeySet::from_pinned_jwks(
         "https://nyx.example".into(),
         JWKS,
-        tokio::time::Instant::now() + Duration::from_secs(60),
+        tokio::time::Instant::now() + lease,
     )
     .unwrap();
     let verifier = CallbackVerifier::new(CallbackTokenPolicy {

@@ -11,8 +11,8 @@ async fn concurrent_platform_redeliveries_keep_one_inbox_rate_and_reply_route() 
     let later_write = proven_write(&store, &id, &later_body, &later_token).await;
     let later_id = later_write.record().id.clone();
     let (first, later) = tokio::join!(inbox.accept(first_write), inbox.accept(later_write));
-    let accepted = first.unwrap();
-    assert_eq!(later.unwrap(), accepted);
+    let accepted = first.unwrap().into_message().unwrap();
+    assert_eq!(later.unwrap().into_message().unwrap(), accepted);
     assert!([&first_id, &later_id].contains(&&accepted.inbox_id));
     let db = client.database(&database);
     for name in [
@@ -56,6 +56,7 @@ async fn concurrent_platform_redeliveries_keep_one_inbox_rate_and_reply_route() 
             reopened
                 .accept(proven_write(&store, &id, body, token).await)
                 .await
+                .map(|value| value.into_message().unwrap())
                 .unwrap(),
             accepted
         );
@@ -95,6 +96,7 @@ async fn exact_alias_is_required_for_read_only_reconciliation_and_content_confli
     let original = inbox
         .accept(proven_write(&store, &id, &body, &token).await)
         .await
+        .map(|value| value.into_message().unwrap())
         .unwrap();
     let (alias_body, alias_token, _) = callback("alias", "original text");
     let pending_alias = proven_write(&store, &id, &alias_body, &alias_token).await;
@@ -102,21 +104,40 @@ async fn exact_alias_is_required_for_read_only_reconciliation_and_content_confli
     assert!(inbox
         .recover_receipt(&pending_alias)
         .await
+        .map(|value| value.map(|value| value.into_message().unwrap()))
         .unwrap()
         .is_none());
     assert_eq!(
-        inbox.reconcile_commit(&pending_alias).await,
+        inbox
+            .reconcile_commit(&pending_alias)
+            .await
+            .map(|value| value.into_message().unwrap()),
         Err(CallbackError::Unavailable)
     );
-    assert_eq!(inbox.accept(pending_alias).await.unwrap(), original);
+    assert_eq!(
+        inbox
+            .accept(pending_alias)
+            .await
+            .map(|value| value.into_message().unwrap())
+            .unwrap(),
+        original
+    );
     let fresh = proven_write(&store, &id, &alias_body, &alias_token).await;
-    assert_eq!(inbox.reconcile_commit(&fresh).await.unwrap(), original);
+    assert_eq!(
+        inbox
+            .reconcile_commit(&fresh)
+            .await
+            .map(|value| value.into_message().unwrap())
+            .unwrap(),
+        original
+    );
     for message in ["original", "alias", "fresh-conflicting-alias"] {
         let (changed, changed_token, _) = callback(message, "changed command");
         assert_eq!(
             inbox
                 .accept(proven_write(&store, &id, &changed, &changed_token).await)
-                .await,
+                .await
+                .map(|value| value.into_message().unwrap()),
             Err(CallbackError::ReplayConflict),
             "{message}"
         );
@@ -128,7 +149,10 @@ async fn exact_alias_is_required_for_read_only_reconciliation_and_content_confli
         .await
         .unwrap();
     assert_eq!(
-        inbox.reconcile_commit(&fresh).await,
+        inbox
+            .reconcile_commit(&fresh)
+            .await
+            .map(|value| value.into_message().unwrap()),
         Err(CallbackError::Unavailable)
     );
     assert_eq!(ledger.count_documents(doc! {}).await.unwrap(), 1);
@@ -169,6 +193,7 @@ async fn expired_original_payload_accepts_alias_without_restoring_command_or_rep
     let original = inbox
         .accept(proven_write(&store, &id, &body, &token).await)
         .await
+        .map(|value| value.into_message().unwrap())
         .unwrap();
     tokio::time::sleep(Duration::from_millis(1100)).await;
     let db = client.database(&database);
@@ -197,6 +222,7 @@ async fn expired_original_payload_accepts_alias_without_restoring_command_or_rep
         reopened
             .accept(proven_write(&store, &id, &later, &later_token).await)
             .await
+            .map(|value| value.into_message().unwrap())
             .unwrap(),
         original
     );
@@ -232,6 +258,7 @@ async fn legacy_receipts_do_not_speculate_provider_identity_and_missing_primary_
     let legacy = inbox
         .accept(write(&store, &id, &body, &token).await)
         .await
+        .map(|value| value.into_message().unwrap())
         .unwrap();
     let reopened =
         MongoCallbackInbox::open(&store, &database, "disposable-callback", &encryption_key())
@@ -244,6 +271,7 @@ async fn legacy_receipts_do_not_speculate_provider_identity_and_missing_primary_
         reopened
             .accept(proven_write(&store, &id, &body, &token).await)
             .await
+            .map(|value| value.into_message().unwrap())
             .unwrap(),
         legacy
     );
@@ -253,6 +281,7 @@ async fn legacy_receipts_do_not_speculate_provider_identity_and_missing_primary_
     let new = reopened
         .accept(proven_write(&store, &id, &fresh, &fresh_token).await)
         .await
+        .map(|value| value.into_message().unwrap())
         .unwrap();
     assert_ne!(new.inbox_id, legacy.inbox_id);
     let (alias, alias_token, _) = callback("new-writer-alias", "legacy text");
@@ -260,6 +289,7 @@ async fn legacy_receipts_do_not_speculate_provider_identity_and_missing_primary_
         reopened
             .accept(proven_write(&store, &id, &alias, &alias_token).await)
             .await
+            .map(|value| value.into_message().unwrap())
             .unwrap(),
         new
     );
@@ -270,7 +300,8 @@ async fn legacy_receipts_do_not_speculate_provider_identity_and_missing_primary_
     assert_eq!(
         reopened
             .accept(proven_write(&store, &id, &alias, &alias_token).await)
-            .await,
+            .await
+            .map(|value| value.into_message().unwrap()),
         Err(CallbackError::Unavailable)
     );
     assert_eq!(
