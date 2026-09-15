@@ -7,7 +7,7 @@ use crate::{RuntimeCapabilities, RuntimeCapability};
 
 pub(super) const NOW: &str = "2026-09-05T00:00:00Z";
 
-pub(super) async fn fixture() -> (
+pub(in crate::sandbox::store::memory) async fn fixture() -> (
     InMemorySandboxStore,
     Agent,
     TargetedControlReservation,

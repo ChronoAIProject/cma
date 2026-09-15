@@ -19,6 +19,9 @@ mod execution;
 #[path = "targeted_control_tests.rs"]
 mod targeted_controls;
 
+#[path = "queued_cancellation_tests.rs"]
+mod queued_cancellations;
+
 fn context(subject: &str) -> CallerContext {
     CallerContext {
         caller: caller(subject, true),
