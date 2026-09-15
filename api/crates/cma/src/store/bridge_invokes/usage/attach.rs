@@ -12,6 +12,17 @@ impl MongoBridgeInvokeStore {
         let Some(basis) = &write.record().channel else {
             return Ok(());
         };
+        if self
+            .usage_closure(&basis.allocation, write.record(), session)
+            .await?
+            .is_some()
+        {
+            // An old Channel-created grant can still be issued under its real
+            // DrainOriginal proof. Its first accepted common command records
+            // historical use; grant issue alone creates no historical binding.
+            write.require_current()?;
+            return Ok(());
+        }
         self.ensure_usage_link(
             write.record(),
             &basis.allocation,
@@ -31,7 +42,7 @@ impl MongoBridgeInvokeStore {
         actor: FencedUsageActor<'_>,
         action_id: &str,
         session: &mut ClientSession,
-    ) -> Result<ChannelBindingReference, MutationError> {
+    ) -> Result<(ChannelBindingReference, bool), MutationError> {
         grant.require_active()?;
         let (allocation, previous) = self
             .usage_allocation(&expected_allocation.id, session)
@@ -53,6 +64,19 @@ impl MongoBridgeInvokeStore {
             return Err(BridgeInvokeError::Conflict.into());
         }
         let existing_link = GrantLink::read(&grant_document, grant)?;
+        if let Some(closure) = self.usage_closure(&allocation, grant, session).await? {
+            let binding = self
+                .historical_usage_link(
+                    grant,
+                    &allocation,
+                    previous.as_ref(),
+                    existing_link.as_ref(),
+                    &closure,
+                    session,
+                )
+                .await?;
+            return Ok((binding, true));
+        }
         if let Some(link) = &existing_link {
             if link.allocation_id == allocation.id {
                 let head = previous.as_ref().ok_or(BridgeInvokeError::Corrupt)?;
@@ -60,7 +84,7 @@ impl MongoBridgeInvokeStore {
                 if !link.active || head.linked_grants == 0 {
                     return Err(BridgeInvokeError::Conflict.into());
                 }
-                return Ok(link.binding.clone());
+                return Ok((link.binding.clone(), false));
             }
             let (outgoing, outgoing_head) =
                 self.usage_allocation(&link.allocation_id, session).await?;
@@ -156,10 +180,10 @@ impl MongoBridgeInvokeStore {
         if changed.matched_count != 1 {
             return Err(BridgeInvokeError::Conflict.into());
         }
-        Ok(next.binding)
+        Ok((next.binding, false))
     }
 
-    async fn previous_usage_binding(
+    pub(super) async fn previous_usage_binding(
         &self,
         allocation: &AllocationRecord,
         session: &mut ClientSession,

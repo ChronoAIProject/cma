@@ -13,6 +13,13 @@ pub(super) async fn append(
 ) -> Result<(), MutationError> {
     let state = snapshot.renewal.as_ref().ok_or(AllocationError::Corrupt)?;
     let action = match change {
+        Change::Admit { previous, .. }
+            if previous.renewal.as_ref().is_some_and(|state| {
+                state.phase == crate::sandbox::channel_renewal::model::RenewalPhase::MintStarted
+            }) =>
+        {
+            "reconcile"
+        }
         Change::Admit { .. }
             if state.phase == crate::sandbox::channel_renewal::model::RenewalPhase::MintStarted =>
         {

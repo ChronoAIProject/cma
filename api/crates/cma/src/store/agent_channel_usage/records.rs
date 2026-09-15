@@ -150,6 +150,11 @@ pub(in crate::store) async fn ensure_indexes(
     collection: &Collection<Document>,
 ) -> Result<(), layer2_core::StoreError> {
     let indexes = [
+        // Historical-only DrainOriginal use has no synthetic Attach event.
+        // This index resolves its exact reference for a later explicit reset.
+        IndexModel::builder()
+            .keys(doc! {"record.predecessor.binding_id":1})
+            .build(),
         IndexModel::builder()
             .keys(doc! {"agent_id":1,"revision":1})
             .options(IndexOptions::builder().unique(true).build())

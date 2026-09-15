@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "openapi_operations": 161,
+  "openapi_operations": 162,
   "operations": {
     "GET /api/v1/organizations": {
       "classification": "openapi",
@@ -2337,6 +2337,18 @@
         "idempotency_key_reused",
         "invalid_json",
         "missing_idempotency_key",
+        "not_authenticated"
+      ]
+    },
+    "GET /api/v1/bridge-connectors/capabilities": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/bridges/capabilities.rs# Capability diagnostics require fresh owner or organization administrator authority and remain available with rollout switches disabled.",
+      "required_problems": [
+        "bridge_authority_unavailable",
+        "bridge_management_required",
+        "bridge_not_found",
+        "bridge_setup_unavailable",
+        "invalid_query",
         "not_authenticated"
       ]
     }

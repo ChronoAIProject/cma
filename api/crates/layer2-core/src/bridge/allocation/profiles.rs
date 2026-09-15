@@ -31,19 +31,31 @@ impl AllocationProfiles {
     }
 
     pub fn validate(&self, config: &BridgeConfig) -> Result<(), AllocationError> {
-        let BridgePlacementPolicy::NewSandbox {
-            sandbox_profile,
-            workspace_profile,
-            agent_profile,
-        } = &config.placement
-        else {
-            return Err(AllocationError::InvalidProfiles);
+        let (sandbox_profile, workspace_profile, agent_profile) = match &config.placement {
+            BridgePlacementPolicy::NewSandbox {
+                sandbox_profile,
+                workspace_profile,
+                agent_profile,
+            } => (
+                Some(sandbox_profile),
+                Some(workspace_profile),
+                agent_profile,
+            ),
+            BridgePlacementPolicy::WorkspacePerPartition {
+                workspace_profile,
+                agent_profile,
+                ..
+            } => (None, Some(workspace_profile), agent_profile),
+            BridgePlacementPolicy::WorktreeAgentPerPartition { agent_profile, .. } => {
+                (None, None, agent_profile)
+            }
+            _ => return Err(AllocationError::InvalidProfiles),
         };
-        if self.sandbox.id != sandbox_profile.id
-            || self.sandbox.revision != sandbox_profile.revision
-            || self.workspace.id != workspace_profile.id
-            || self.workspace.revision != workspace_profile.revision
-            || self.agent.id != agent_profile.id
+        if sandbox_profile.is_some_and(|profile| {
+            self.sandbox.id != profile.id || self.sandbox.revision != profile.revision
+        }) || workspace_profile.is_some_and(|profile| {
+            self.workspace.id != profile.id || self.workspace.revision != profile.revision
+        }) || self.agent.id != agent_profile.id
             || self.agent.revision != agent_profile.revision
             || self.sandbox.digest
                 != content_digest(&self.sandbox.content)
@@ -215,6 +227,16 @@ impl AllocationProfilePlan {
             .map_err(|_| AllocationError::AuthorityUnavailable)?;
         let bridge = management.record();
         super::authority::require_accepted_generation(bridge, &pin)?;
+        if !matches!(
+            bridge
+                .pinned(&pin)
+                .map_err(|_| AllocationError::IdentityMismatch)?
+                .config
+                .placement,
+            BridgePlacementPolicy::NewSandbox { .. }
+        ) {
+            return Err(AllocationError::InvalidProfiles);
+        }
         profiles.validate(
             &bridge
                 .pinned(&pin)

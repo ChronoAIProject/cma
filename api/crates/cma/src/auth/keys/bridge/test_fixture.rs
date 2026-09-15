@@ -1,5 +1,6 @@
 //! Local HTTP authority fixture. Its tokens are deliberately disposable.
 use super::KeyIssuer;
+mod reconciliation;
 use crate::{
     auth::{
         bridge_control_plane::BridgeHumanLease,
@@ -92,6 +93,11 @@ pub(crate) struct HttpState {
     pub wrong_metadata_owner: AtomicBool,
     pub mint_unavailable: AtomicBool,
     pub create_body: Mutex<Option<Value>>,
+    pub list_count: AtomicUsize,
+    pub revoke_count: AtomicUsize,
+    pub listing_override: Mutex<Option<Value>>,
+    pub revoked: AtomicBool,
+    pub delete_unknown: AtomicBool,
 }
 impl HttpState {
     fn owner(&self) -> Value {
@@ -128,12 +134,20 @@ impl Server {
             wrong_metadata_owner: AtomicBool::new(false),
             mint_unavailable: AtomicBool::new(false),
             create_body: Mutex::new(None),
+            list_count: AtomicUsize::new(0),
+            revoke_count: AtomicUsize::new(0),
+            listing_override: Mutex::new(None),
+            revoked: AtomicBool::new(false),
+            delete_unknown: AtomicBool::new(false),
         });
         let router = Router::new()
             .route("/api/v1/user-services", get(services))
             .route("/api/v1/api-keys/scope-plan", post(scope))
-            .route("/api/v1/api-keys", post(mint))
-            .route("/api/v1/api-keys/key-created", get(metadata))
+            .route("/api/v1/api-keys", post(mint).get(reconciliation::list))
+            .route(
+                "/api/v1/api-keys/key-created",
+                get(metadata).delete(reconciliation::revoke),
+            )
             .with_state(state.clone());
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let base_url = format!("http://{}", listener.local_addr().unwrap());
@@ -234,6 +248,9 @@ async fn metadata(
     headers: HeaderMap,
 ) -> Result<Json<Value>, StatusCode> {
     authorized(&headers)?;
+    if state.revoked.load(Ordering::SeqCst) {
+        return Err(StatusCode::NOT_FOUND);
+    }
     let body = state
         .create_body
         .lock()

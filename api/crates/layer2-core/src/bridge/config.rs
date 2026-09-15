@@ -5,10 +5,15 @@ use crate::{AgentId, SandboxId, WorkspaceId, WorktreeId};
 
 use super::BridgeError;
 
+mod reuse;
+pub use reuse::{BridgeSharedCapacity, BridgeSharedTrust};
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum BridgePlatform {
     Telegram,
+    #[serde(rename = "telegram-new")]
+    TelegramNew,
     Discord,
     Lark,
     Feishu,
@@ -89,6 +94,20 @@ pub struct BridgeAgentTarget {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum BridgePlacementPolicy {
+    WorkspacePerPartition {
+        sandbox_id: SandboxId,
+        workspace_profile: WorkspaceProfileRef,
+        agent_profile: AgentProfileRef,
+        shared_trust: BridgeSharedTrust,
+        capacity: BridgeSharedCapacity,
+    },
+    WorktreeAgentPerPartition {
+        sandbox_id: SandboxId,
+        workspace_id: WorkspaceId,
+        agent_profile: AgentProfileRef,
+        shared_trust: BridgeSharedTrust,
+        capacity: BridgeSharedCapacity,
+    },
     ExistingAgent {
         target: BridgeAgentTarget,
     },
@@ -200,7 +219,10 @@ impl BridgeConfig {
         {
             return Err(bad("route_ids"));
         }
+        self.placement.validate_reuse()?;
         match &self.placement {
+            BridgePlacementPolicy::WorkspacePerPartition { .. }
+            | BridgePlacementPolicy::WorktreeAgentPerPartition { .. } => {}
             BridgePlacementPolicy::ExistingAgent { target } => {
                 if [
                     target.sandbox_id.as_str(),

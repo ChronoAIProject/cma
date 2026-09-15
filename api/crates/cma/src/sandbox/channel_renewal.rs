@@ -70,14 +70,29 @@ impl ChannelCredentialRenewalDriver {
         } else {
             None
         };
+        let intent = plan
+            .as_ref()
+            .map(BridgeSandboxKeyPlan::mint_intent)
+            .transpose()
+            .map_err(|_| AllocationError::Corrupt)?;
         let admission = self
             .allocations
-            .admit_channel_renewal(authority, lease, &previous, &self.holder, now)
+            .admit_channel_renewal(
+                authority,
+                lease,
+                &previous,
+                (&self.holder, now),
+                intent.as_ref(),
+            )
             .await?;
         let now = SystemTime::now();
         match admission {
             RenewalAdmission::NotDue => Ok(()),
             RenewalAdmission::MintOutcomeUnknown => Err(AllocationError::Unavailable),
+            RenewalAdmission::Reconcile(snapshot) => {
+                crate::sandbox::channel_mint_reconciliation::reconcile(&self.allocations, self.credentials.as_ref(), &self.issuer,
+                    crate::sandbox::channel_mint_reconciliation::authority::ChannelMintAttempt::Renewal { authority, human: lease, snapshot: &snapshot }).await
+            },
             RenewalAdmission::Started(snapshot) => {
                 self.mint(
                     authority,

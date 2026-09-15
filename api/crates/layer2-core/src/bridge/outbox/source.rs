@@ -65,7 +65,7 @@ impl OutboxSource {
             && chat_id == normalized.chat_id() && sender_id == normalized.sender_id()
             && match &allocation.placement {
                 AllocationPlacement::ExistingAgent { grant_id: original, .. } => grant_id == original,
-                AllocationPlacement::NewSandbox { .. } => true,
+                AllocationPlacement::NewSandbox { .. } | AllocationPlacement::ReuseParent { .. } => true,
             });
         let AgentCommand::Message { metadata, .. } = &envelope.command else {
             return Err(OutboxError::SourceMismatch);
@@ -259,16 +259,13 @@ fn allocation_matches(
         AllocationPlacement::ExistingAgent { .. } => {
             allocation.pin == *inbound && allocation.config == *config
         }
-        AllocationPlacement::NewSandbox { .. } => {
+        AllocationPlacement::NewSandbox { .. } | AllocationPlacement::ReuseParent { .. } => {
             let original = &allocation.config;
             allocation.pin.bridge_id == inbound.bridge_id
                 && bridge
                     .pinned(&allocation.pin)
                     .is_ok_and(|generation| generation.config == *original)
-                && matches!(
-                    config.placement,
-                    crate::bridge::BridgePlacementPolicy::NewSandbox { .. }
-                )
+                && config.placement.creates_partition_agent()
                 && original.connector.issuer == config.connector.issuer
                 && original.connector.bot_id == config.connector.bot_id
                 && original.connector.platform == config.connector.platform

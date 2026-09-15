@@ -80,6 +80,11 @@ pub(super) async fn apply(
         {
             return Err(AllocationError::IdentityMismatch.into());
         }
+        if let Some(intent) = &snapshot.state.mint_intent {
+            intent
+                .require_material(&material.authority)
+                .map_err(|_| AllocationError::IdentityMismatch)?;
+        }
         custody
             .insert_for_channel(&resources.database, material, session)
             .await
@@ -139,6 +144,8 @@ fn require_successor(
         || change.state.settings != snapshot.state.settings
         || (snapshot.state.mint_credential_id.is_some()
             && change.state.mint_credential_id != snapshot.state.mint_credential_id)
+        || (snapshot.state.mint_intent.is_some()
+            && change.state.mint_intent != snapshot.state.mint_intent)
         || change.state.phase == ChannelProvisioningPhase::Ready
         || change.sandbox.work != snapshot.sandbox.work
         || change.sandbox.updated_at < snapshot.sandbox.updated_at

@@ -56,6 +56,26 @@ impl ChannelCommandRevival {
             return;
         }
         let _ = tokio::time::timeout_at(fence.proof().deadline(), async {
+            if matches!(
+                fence.source().allocation().placement,
+                layer2_core::bridge::allocation::AllocationPlacement::ReuseParent { .. }
+            ) {
+                let permit = self
+                    .authority
+                    .resolve_reused(fence.source().allocation(), sandbox)
+                    .await
+                    .ok()?;
+                return self
+                    .invokes
+                    .schedule_reused_channel_command_revival(
+                        &self.allocations,
+                        &permit,
+                        &fence,
+                        command,
+                    )
+                    .await
+                    .ok();
+            }
             // Invoke permission and original human lifecycle permission are
             // independently required and fenced in the same scheduling write.
             let permit = self.authority.resolve(sandbox).await.ok()?;

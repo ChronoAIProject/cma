@@ -93,6 +93,21 @@ impl BridgeSetupService {
     ) -> Result<BridgeView, BridgeError> {
         self.definitions.detail(context, credential, id).await
     }
+    /// Owner/admin diagnostics remain readable when rollout switches are off.
+    pub async fn capabilities(
+        &self,
+        context: &CallerContext,
+        credential: Option<&str>,
+        owner: &ResourceOwner,
+    ) -> Result<BridgeCapabilityCatalog, BridgeError> {
+        let authority = self
+            .definitions
+            .authority(context, credential, owner, true)
+            .await?;
+        let catalog = self.definitions.connection_validator().capabilities();
+        authority.require(true)?;
+        Ok(catalog)
+    }
     pub async fn choices(
         &self,
         context: &CallerContext,
@@ -105,6 +120,7 @@ impl BridgeSetupService {
             .await?;
         let platforms = [
             BridgePlatform::Telegram,
+            BridgePlatform::TelegramNew,
             BridgePlatform::Discord,
             BridgePlatform::Lark,
             BridgePlatform::Feishu,
@@ -132,6 +148,7 @@ impl BridgeSetupService {
         choices.routes.retain(|route| {
             let platform = match route.platform.as_str() {
                 "telegram" => BridgePlatform::Telegram,
+                "telegram-new" => BridgePlatform::TelegramNew,
                 "discord" => BridgePlatform::Discord,
                 "lark" => BridgePlatform::Lark,
                 "feishu" => BridgePlatform::Feishu,

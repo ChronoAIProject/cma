@@ -2,6 +2,7 @@ use super::*;
 mod channel_creation;
 mod fixtures;
 mod renewal;
+mod reuse;
 mod sandbox_admission;
 use fixtures::*;
 

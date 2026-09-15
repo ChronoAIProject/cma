@@ -53,7 +53,7 @@ fn bot_unknown_sender_and_callback_loops_cannot_override_explicit_open_admission
         let mut bot = Fixture::new(platform.clone());
         let mut unknown = bot.clone();
         match platform {
-            BridgePlatform::Telegram => {
+            BridgePlatform::Telegram | BridgePlatform::TelegramNew => {
                 bot.raw_mut()["message"]["from"]["is_bot"] = json!(true);
                 unknown.raw_mut()["message"]["from"]
                     .as_object_mut()
@@ -123,7 +123,7 @@ fn edits_interactive_actions_unknown_events_and_nontext_do_not_start_agent_turns
     for platform in platforms() {
         let mut fixture = Fixture::new(platform);
         fixture.body["content"]["type"] = json!("image");
-        deny(&fixture, PartitionRefusal::UnknownEvent);
+        deny(&fixture, PartitionRefusal::ContentUnsupported);
     }
 }
 
@@ -143,4 +143,67 @@ fn raw_group_addressing_hints_do_not_infer_selected_bot_identity() {
         }
         deny(&fixture, PartitionRefusal::AddressingEvidenceUnavailable);
     }
+}
+
+#[test]
+fn attachments_are_precisely_refused_without_text_fallback_or_reply_custody() {
+    for platform in platforms() {
+        let mut fixture = Fixture::new(platform.clone());
+        fixture.body["content"]["attachments"] = json!([{"content_type":"image","url":"","image_key":"private-reference","size_bytes":32}]);
+        fixture.body["thread_id"] = json!("interaction:app:private-context");
+        deny(&fixture, PartitionRefusal::AttachmentDownloadRequired);
+        let wire = serde_json::to_value(fixture.write().unwrap().record()).unwrap();
+        assert_eq!(wire["capabilities"]["event_kind"], "attachment_message");
+        assert!(!wire.to_string().contains("private-context"));
+        let retained: StoredInbox = serde_json::from_value(wire).unwrap();
+        assert!(NormalizedPartitionSource::from_stored(&retained, &fixture.bridge).is_ok());
+        assert_eq!(
+            retained.admission,
+            InboxAdmission::PartitionDenied {
+                reason: PartitionRefusal::AttachmentDownloadRequired
+            }
+        );
+        // Missing normalized media must not turn an original attachment into text input.
+        fixture.body["content"]
+            .as_object_mut()
+            .unwrap()
+            .remove("attachments");
+        match platform {
+            BridgePlatform::Telegram | BridgePlatform::TelegramNew => {
+                fixture.raw_mut()["message"]["photo"] = json!([{"file_id":"private-id"}])
+            }
+            BridgePlatform::Discord => {
+                fixture.raw_mut()["d"]["attachments"] = json!([{"id":"private-id"}])
+            }
+            _ => fixture.raw_mut()["event"]["message"]["message_type"] = json!("image"),
+        }
+        deny(&fixture, PartitionRefusal::AttachmentDownloadRequired);
+    }
+}
+
+#[test]
+fn attachment_refusals_preserve_sender_edit_action_loop_and_signature_precedence() {
+    let mut fixture = Fixture::new(BridgePlatform::Telegram);
+    fixture.body["content"]["attachments"] =
+        json!([{"content_type":"file","url":"","file_key":"opaque"}]);
+    fixture.raw_mut()["message"]["via_bot"] = json!({"id":77});
+    deny(&fixture, PartitionRefusal::CallbackLoop);
+    fixture.raw_mut()["message"]["from"]["is_bot"] = json!(true);
+    deny(&fixture, PartitionRefusal::BotSender);
+    let message = fixture
+        .raw_mut()
+        .as_object_mut()
+        .unwrap()
+        .remove("message")
+        .unwrap();
+    fixture.raw_mut()["edited_message"] = message;
+    deny(&fixture, PartitionRefusal::MessageEdit);
+    fixture.body["raw_platform_data"] = json!({"callback_query":{"data":"do-something"}});
+    deny(&fixture, PartitionRefusal::InteractiveActionUnsupported);
+    let signed = fixture.signed().unwrap();
+    fixture.body["content"]["attachments"][0]["file_key"] = json!("unsigned");
+    assert!(matches!(
+        signed.classify_capabilities(&fixture.bytes(), &NyxidCapabilities),
+        Err(CallbackError::Authentication)
+    ));
 }

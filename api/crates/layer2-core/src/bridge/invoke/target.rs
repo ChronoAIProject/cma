@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::resource_access::{ResourceAccessSnapshot, ResourceOwner, ResourceTarget};
-use crate::sandbox::{SandboxStatus, WorkspaceStatus, WorktreeStatus};
+use crate::sandbox::{AgentStatus, SandboxStatus, WorkspaceStatus, WorktreeStatus};
 
 use super::super::BridgeAgentTarget;
 use super::BridgeInvokeError;
@@ -98,7 +98,10 @@ impl BridgeInvokeTarget {
         }
     }
 
-    pub fn require(
+    /// Retained replies need the original owner/tree identity and available
+    /// parent records. Stopping the Agent does not withdraw an accepted reply.
+    /// Removed children and retired/purged parents still require separate proof.
+    pub fn require_retained_reply_target(
         &self,
         owner: &ResourceOwner,
         snapshot: &ResourceAccessSnapshot,
@@ -129,14 +132,28 @@ impl BridgeInvokeTarget {
                 .worktree
                 .as_ref()
                 .is_none_or(|v| v.status != WorktreeStatus::Ready)
-            || lineage.agent.as_ref().is_none_or(|v| {
-                !v.status.is_live()
-                    || v.requested_stop_reason.is_some()
-                    || !v
-                        .capabilities
-                        .supports(crate::RuntimeCapability::Conversation)
-            })
+            || lineage
+                .agent
+                .as_ref()
+                .is_none_or(|v| v.deleted_at.is_some() || v.status == AgentStatus::Deleted)
         {
+            return Err(BridgeInvokeError::TargetMismatch);
+        }
+        Ok(())
+    }
+    pub fn require(
+        &self,
+        owner: &ResourceOwner,
+        snapshot: &ResourceAccessSnapshot,
+    ) -> Result<(), BridgeInvokeError> {
+        self.require_retained_reply_target(owner, snapshot)?;
+        if snapshot.lineage.agent.as_ref().is_none_or(|v| {
+            !v.status.is_live()
+                || v.requested_stop_reason.is_some()
+                || !v
+                    .capabilities
+                    .supports(crate::RuntimeCapability::Conversation)
+        }) {
             return Err(BridgeInvokeError::TargetMismatch);
         }
         Ok(())

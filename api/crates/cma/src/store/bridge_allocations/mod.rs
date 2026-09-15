@@ -2,10 +2,14 @@
 //! provider creation or Agent command submission occurs in this store.
 mod channel_children;
 pub(crate) mod channel_lifecycle;
+pub(crate) mod channel_mint_reconciliation;
 mod channel_provisioning;
 mod channel_renewal;
+pub(crate) mod channel_retirement;
+mod channel_reuse_revival;
 mod channel_startup;
 mod records;
+mod reuse;
 mod sandbox_admission;
 mod transaction;
 
@@ -29,8 +33,7 @@ use crate::store::{
     MongoBridgeInvokeStore, MongoBridgeStore,
 };
 
-use records::decode_head;
-pub(super) use records::decode_record;
+pub(super) use records::{decode_head, decode_record};
 
 #[derive(Clone)]
 pub(crate) struct MongoBridgeAllocationStore {
@@ -54,6 +57,9 @@ impl MongoBridgeAllocationStore {
                 "bridge_allocations",
                 "channel_credential_renewal_audits",
                 "channel_lifecycle_credential_audits",
+                "channel_mint_orphans",
+                "channel_mint_orphan_audits",
+                "channel_retirement_audits",
             ],
         )
         .await?;
@@ -85,6 +91,12 @@ impl MongoBridgeAllocationStore {
             .map_err(|_| {
                 layer2_core::StoreError::Unavailable("create partition capacity index".into())
             })?;
+        store.records.create_index(IndexModel::builder()
+            .keys(doc! {"record.placement.target.sandbox_id":1_i32,"channel_reuse.phase":1_i32})
+            .options(mongodb::options::IndexOptions::builder()
+                .partial_filter_expression(doc! {"channel_reuse":{"$exists":true}}).build())
+            .build()).await.map_err(|_| layer2_core::StoreError::Unavailable(
+                "create shared parent lifecycle index".into()))?;
         Ok(store)
     }
 
@@ -94,6 +106,9 @@ impl MongoBridgeAllocationStore {
         session: &mut ClientSession,
     ) -> Result<(), MutationError> {
         authority.require_current()?;
+        if let AllocationAuthority::Reuse(proof) = authority {
+            self.fence_reused_parent(authority, proof, session).await?;
+        }
         if let AllocationAuthority::Existing(proof) = authority {
             self.invokes
                 .as_ref()

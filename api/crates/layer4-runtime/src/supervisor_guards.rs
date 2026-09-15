@@ -38,7 +38,7 @@ impl Supervisor {
             self.require_credentialed().await
         }
     }
-    pub(super) async fn ensure_workspace_idle(&self, workspace: &str) -> Result<()> {
+    pub(crate) async fn ensure_workspace_idle(&self, workspace: &str) -> Result<()> {
         safe_component(workspace, "workspace name")?;
         let root = self.config.home.join(workspace);
         if self

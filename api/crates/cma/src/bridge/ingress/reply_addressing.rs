@@ -47,7 +47,7 @@ impl ReplyLookup {
             return Ok(None);
         };
         let provider_parent = match facts.platform {
-            BridgePlatform::Telegram => {
+            BridgePlatform::Telegram | BridgePlatform::TelegramNew => {
                 let Some(reply) = raw.pointer("/message/reply_to_message") else {
                     return Ok(None);
                 };

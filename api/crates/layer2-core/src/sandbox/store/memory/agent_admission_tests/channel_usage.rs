@@ -5,6 +5,7 @@ use crate::sandbox::{
     store::{AgentChannelUsageStore, PageRequest},
 };
 
+mod historical_tests;
 mod inventory_tests;
 mod service_tests;
 

@@ -47,6 +47,8 @@ pub enum ChannelSenderKind {
 #[serde(rename_all = "snake_case")]
 pub enum ChannelEventKind {
     UserMessage,
+    AttachmentMessage,
+    UnsupportedContent,
     MessageEdit,
     InteractiveAction,
     SystemEvent,
@@ -107,7 +109,7 @@ impl StableThreadReference {
             (self.kind, platform),
             (
                 StableThreadKind::TelegramForumTopic,
-                BridgePlatform::Telegram
+                BridgePlatform::Telegram | BridgePlatform::TelegramNew
             ) | (
                 StableThreadKind::DiscordChannelThread,
                 BridgePlatform::Discord

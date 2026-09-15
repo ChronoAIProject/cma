@@ -6,8 +6,12 @@ use layer2_core::bridge::invoke::RevokeBridgeInvokeGrant;
 use layer2_core::sandbox::agent_io::*;
 use serde_json::json;
 
+#[path = "channel_reply_delivery_tests.rs"]
+mod delivery;
 #[path = "channel_reply_generation_test.rs"]
 mod generation;
+#[path = "channel_reply_reset_tests.rs"]
+mod reset;
 
 #[tokio::test]
 #[ignore = "requires the disposable MongoDB replica contract runner"]

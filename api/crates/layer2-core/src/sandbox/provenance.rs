@@ -75,13 +75,14 @@ impl AgentCreationProvenance {
         agent: &Agent,
         parent: &Sandbox,
     ) -> Result<Self, SandboxStoreError> {
-        use crate::bridge::allocation::AllocationPlacement;
         authority
             .require_record(allocation)
             .map_err(|_| SandboxStoreError::Conflict)?;
-        let AllocationPlacement::NewSandbox { target, profiles } = &allocation.placement else {
-            return Err(SandboxStoreError::Conflict);
-        };
+        let target = allocation.placement.target();
+        let profiles = allocation
+            .placement
+            .profiles()
+            .ok_or(SandboxStoreError::Conflict)?;
         if agent.revision != 1
             || agent.conversation.last_seq != 1
             || agent.id != target.agent_id

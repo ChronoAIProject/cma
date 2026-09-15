@@ -26,10 +26,17 @@ use super::{
 };
 use crate::{auth::keys::KeyIssuer, sandbox::OrnnAgentSkillResolver};
 
+mod connection;
 mod profiles;
+use connection::{connection, connection_with_target};
+pub(crate) mod retirement;
+mod reuse;
+pub(crate) mod reuse_revival;
 pub(crate) mod revival;
 
 pub(crate) struct BridgeProvisioningDependencies {
+    pub resources: Arc<crate::store::MongoSandboxStore>,
+    pub resource_access: Arc<layer2_core::resource_access::ResourceAccessService>,
     pub sandbox_profiles: Arc<dyn SandboxProfileStore>,
     pub workspace_profiles: Arc<dyn WorkspaceProfileStore>,
     pub agent_profiles: Arc<dyn AgentProfileStore>,
@@ -62,6 +69,11 @@ impl BridgeProvisioningAuthority {
         record: &AllocationRecord,
     ) -> Result<(AllocationAuthority, BridgeControlPlaneLease), BridgeError> {
         record.validate().map_err(allocation_error)?;
+        if matches!(record.placement, AllocationPlacement::ReuseParent { .. }) {
+            return self
+                .prepare_reuse(definitions, &record.identity, &record.pin, Some(record))
+                .await;
+        }
         let AllocationPlacement::NewSandbox { profiles, target } = &record.placement else {
             return Err(profile_unavailable());
         };
@@ -128,6 +140,9 @@ impl BridgeProvisioningAuthority {
             .await?
             .ok_or(BridgeError::NotFound)?;
         let config = &bridge.pinned(pin)?.config;
+        if config.placement.reused_parent().is_some() {
+            return self.prepare_reuse(definitions, identity, pin, None).await;
+        }
         let key = self.credentials.resolve(&bridge.owner, config).await?;
         let (profiles, observation) = self
             .dependencies
@@ -275,35 +290,6 @@ impl BridgeProvisioningDependencies {
     }
 }
 
-fn connection(
-    owner: &ResourceOwner,
-    config: &BridgeConfig,
-    key: &BridgeCredentialLease,
-) -> Result<BridgeValidation, BridgeError> {
-    BridgeValidation::from_observation(
-        owner,
-        config,
-        BridgeConnectionObservation {
-            connector: config.connector.clone(),
-            bot_owner: owner.clone(),
-            key_owner: owner.clone(),
-            routes: key.routes.clone(),
-            custody_owner: key.owner.clone(),
-            custody_revision: key.custody_revision,
-            key_state_version: key.key_state_version,
-            key_active: true,
-            custody_available: true,
-            callback_conflict: false,
-            renewable_sandbox_authority: true,
-            exact_profiles_available: true,
-            existing_target: None,
-            deadline: key
-                .deadline
-                .min(tokio::time::Instant::now() + Duration::from_secs(30)),
-        },
-    )
-}
-
 fn profile_unavailable() -> BridgeError {
     BridgeError::ConnectionRequired(BridgeSetupBlock::ProfileUnavailable)
 }
@@ -312,6 +298,9 @@ fn allocation_error(error: layer2_core::bridge::allocation::AllocationError) -> 
     use layer2_core::bridge::allocation::AllocationError;
     match error {
         AllocationError::InvalidProfiles => profile_unavailable(),
+        AllocationError::IncompatibleTarget => {
+            BridgeError::ConnectionRequired(BridgeSetupBlock::IncompatibleTarget)
+        }
         AllocationError::Corrupt => BridgeError::Corrupt,
         AllocationError::Conflict | AllocationError::IdentityMismatch => BridgeError::Conflict,
         _ => BridgeError::AuthorityUnavailable,

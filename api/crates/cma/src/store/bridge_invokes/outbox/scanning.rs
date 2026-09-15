@@ -77,19 +77,14 @@ impl MongoBridgeReplyToolStore {
         &self,
         claimed: &OutboxItem,
         holder: &str,
+        reason: DeliveryFailure,
     ) -> Result<(), OutboxError> {
         let DeliveryState::Claimed { attempt, .. } = &claimed.state else {
             return Err(OutboxError::Conflict);
         };
         let mut next = claimed.clone();
         let now = now_ms();
-        next.defer_before_send(
-            holder,
-            attempt,
-            DeliveryFailure::ConnectUnavailable,
-            now + 30_000,
-            now,
-        )?;
+        next.defer_before_send(holder, attempt, reason, now + 30_000, now)?;
         for _ in 0..TRANSACTION_ATTEMPTS {
             let mut session = self
                 .invokes

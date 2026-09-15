@@ -1,4 +1,8 @@
-use layer2_core::{bridge::BridgeManagementLease, sandbox::AgentCreationProvenance};
+use layer2_core::{
+    bridge::{BridgeManagementLease, BridgeWrite},
+    resource_access::{ResourceActor, ResourceOwner},
+    sandbox::AgentCreationProvenance,
+};
 
 use super::*;
 
@@ -14,12 +18,90 @@ pub(in crate::store) async fn append_management_detach(
     reason: ChannelBindingChangeReason,
     session: &mut ClientSession,
 ) -> Result<ChannelUsageEvent, UsageError> {
-    management.require_current().map_err(|_| conflict())?;
-    if management.record().owner != creation.owner
-        || management.record().id.as_str() != binding.bridge_id
-    {
-        return Err(conflict());
+    append_detach(
+        store,
+        creation,
+        DetachmentAuthority::Lease(management),
+        key_sha256,
+        binding,
+        reason,
+        session,
+    )
+    .await
+}
+
+/// A service-created BridgeWrite is the actual authorized management command.
+/// It never constructs a new Caller or borrows the resource owner's identity.
+pub(in crate::store) async fn append_transition_detach(
+    store: &MongoSandboxStore,
+    creation: &AgentCreationProvenance,
+    write: &BridgeWrite,
+    binding: &ChannelBindingReference,
+    reason: ChannelBindingChangeReason,
+    session: &mut ClientSession,
+) -> Result<ChannelUsageEvent, UsageError> {
+    let key = layer2_core::profiles::content_digest(&(
+        "cma.bridge.usage.management.v1",
+        &write.receipt().id,
+        &binding.binding_id,
+    ))
+    .map_err(|_| conflict())?;
+    append_detach(
+        store,
+        creation,
+        DetachmentAuthority::Write(write),
+        key,
+        binding,
+        reason,
+        session,
+    )
+    .await
+}
+
+#[derive(Clone, Copy)]
+enum DetachmentAuthority<'a> {
+    Lease(&'a BridgeManagementLease),
+    Write(&'a BridgeWrite),
+}
+impl<'a> DetachmentAuthority<'a> {
+    fn require(
+        self,
+        owner: &ResourceOwner,
+        binding: &ChannelBindingReference,
+    ) -> Result<(), UsageError> {
+        let record = match self {
+            Self::Lease(lease) => {
+                lease.require_current().map_err(|_| conflict())?;
+                lease.record()
+            }
+            Self::Write(write) => {
+                write.require_current().map_err(|_| conflict())?;
+                write.record()
+            }
+        };
+        if &record.owner != owner || record.id.as_str() != binding.bridge_id {
+            return Err(conflict());
+        }
+        Ok(())
     }
+    fn actor(self) -> &'a ResourceActor {
+        match self {
+            Self::Lease(lease) => lease.actor(),
+            Self::Write(write) => &write.receipt().receipt.actor,
+        }
+    }
+}
+
+async fn append_detach(
+    store: &MongoSandboxStore,
+    creation: &AgentCreationProvenance,
+    authority: DetachmentAuthority<'_>,
+    key_sha256: String,
+    binding: &ChannelBindingReference,
+    reason: ChannelBindingChangeReason,
+    session: &mut ClientSession,
+) -> Result<ChannelUsageEvent, UsageError> {
+    authority.require(&creation.owner, binding)?;
     let id = &creation.agent_id;
     let current = records::read_retained_state(store, id, session)
         .await?
@@ -47,7 +129,7 @@ pub(in crate::store) async fn append_management_detach(
         let expected = plan_retained_channel_detachment(
             &prior.before,
             binding,
-            management.actor(),
+            authority.actor(),
             &key_sha256,
             reason,
             &prior.at,
@@ -55,13 +137,13 @@ pub(in crate::store) async fn append_management_detach(
         if expected != prior {
             return Err(conflict());
         }
-        management.require_current().map_err(|_| conflict())?;
+        authority.require(&creation.owner, binding)?;
         return Ok(prior);
     }
     let event = plan_retained_channel_detachment(
         &current.state,
         binding,
-        management.actor(),
+        authority.actor(),
         &key_sha256,
         reason,
         &layer2_core::now_rfc3339(),
@@ -89,7 +171,7 @@ pub(in crate::store) async fn append_management_detach(
     if changed.matched_count != 1 {
         return Err(conflict());
     }
-    management.require_current().map_err(|_| conflict())?;
+    authority.require(&creation.owner, binding)?;
     Ok(event)
 }
 

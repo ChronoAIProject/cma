@@ -1,8 +1,7 @@
+use super::claim::{claim, claim_expiry};
 use super::*;
 use crate::{
-    sandbox::channel_renewal::model::{
-        credential_id, ChannelRenewalState, RenewalClaim, RenewalPhase,
-    },
+    sandbox::channel_renewal::model::RenewalPhase,
     store::{
         sandbox_credentials::channel::ChannelCredentialError, sandbox_events::event_document,
         sandbox_mongo::record_bson, sandboxes::sandbox_replacement_fields,
@@ -21,30 +20,42 @@ pub(super) async fn apply(
     let rows = majority_collection(database, "sandboxes");
     let original = snapshot.clone();
     let mut started = false;
+    let mut reconciling = false;
     let now = match change {
         Change::Read | Change::Revalidate(_) => {
             super::fence(&rows, doc! {"_id":snapshot.sandbox.id.as_str(),"revision":snapshot.sandbox.revision as i64}, session).await?;
             return Ok(RenewalAdmission::Resume(snapshot));
         }
-        Change::Admit { holder, now, .. } => {
+        Change::Admit {
+            holder,
+            now,
+            mint_intent,
+            ..
+        } => {
             if !snapshot.due(now_ms(*now)?)? {
                 return Ok(RenewalAdmission::NotDue);
             }
-            if snapshot
+            reconciling = snapshot
                 .renewal
                 .as_ref()
-                .is_some_and(|state| state.phase == RenewalPhase::MintStarted)
+                .is_some_and(|state| state.phase == RenewalPhase::MintStarted);
+            if reconciling
+                && snapshot
+                    .renewal
+                    .as_ref()
+                    .is_none_or(|state| state.mint_intent.is_none())
             {
                 return Ok(RenewalAdmission::MintOutcomeUnknown);
             }
             // The scheduler's due-time observation cannot extend a human
             // authority deadline or the canonical runtime work lease.
             let admitted_at = SystemTime::now();
-            claim(&mut snapshot, holder, admitted_at, lease)?;
-            started = snapshot
-                .renewal
-                .as_ref()
-                .is_some_and(|state| state.phase == RenewalPhase::MintStarted);
+            claim(&mut snapshot, holder, admitted_at, lease, *mint_intent)?;
+            started = !reconciling
+                && snapshot
+                    .renewal
+                    .as_ref()
+                    .is_some_and(|state| state.phase == RenewalPhase::MintStarted);
             admitted_at
         }
         Change::Mint {
@@ -66,6 +77,11 @@ pub(super) async fn apply(
                         .service_access_generation_floor()
             {
                 return Err(AllocationError::IdentityMismatch.into());
+            }
+            if let Some(intent) = &state.mint_intent {
+                intent
+                    .require_material(&material.authority)
+                    .map_err(|_| AllocationError::IdentityMismatch)?;
             }
             custody
                 .insert_for_channel(database.name(), material, session)
@@ -146,6 +162,12 @@ pub(super) async fn apply(
     super::audit::append(database, &snapshot, change, lease, session).await?;
     let mut fields =
         sandbox_replacement_fields(&snapshot.sandbox).map_err(|_| AllocationError::Corrupt)?;
+    if started {
+        fields.insert(
+            "channel_mint_reconciliation.renewal",
+            mongodb::bson::Bson::Null,
+        );
+    }
     fields.insert(
         "channel_renewal",
         record_bson(snapshot.renewal.as_ref().ok_or(AllocationError::Corrupt)?)
@@ -184,111 +206,13 @@ pub(super) async fn apply(
     if changed.matched_count != 1 {
         return Err(AllocationError::Conflict.into());
     }
-    Ok(if started {
+    Ok(if reconciling {
+        RenewalAdmission::Reconcile(snapshot)
+    } else if started {
         RenewalAdmission::Started(snapshot)
     } else {
         RenewalAdmission::Resume(snapshot)
     })
-}
-
-fn claim(
-    snapshot: &mut ChannelRenewalSnapshot,
-    holder: &str,
-    now: SystemTime,
-    lease: &BridgeControlPlaneLease,
-) -> Result<(), AllocationError> {
-    if holder.trim().is_empty() || holder.len() > 128 {
-        return Err(AllocationError::IdentityMismatch);
-    }
-    let now_ms = now_ms(now)?;
-    if snapshot
-        .renewal
-        .as_ref()
-        .is_some_and(|state| state.claim.expires_at_ms > now_ms)
-    {
-        return Err(AllocationError::LeaseUnavailable);
-    }
-    let remaining = lease
-        .deadline()
-        .saturating_duration_since(tokio::time::Instant::now())
-        .min(std::time::Duration::from_secs(60));
-    if remaining.is_zero() {
-        return Err(AllocationError::AuthorityUnavailable);
-    }
-    let fence = snapshot.sandbox.work.next_fence;
-    snapshot.sandbox.work.next_fence = fence.checked_add(1).ok_or(AllocationError::Corrupt)?;
-    let expires_at_ms = now_ms
-        .checked_add(i64::try_from(remaining.as_millis()).map_err(|_| AllocationError::Corrupt)?)
-        .ok_or(AllocationError::Corrupt)?
-        / 1000
-        * 1000;
-    if expires_at_ms <= now_ms {
-        return Err(AllocationError::AuthorityUnavailable);
-    }
-    let claim = RenewalClaim {
-        holder: holder.into(),
-        fence,
-        expires_at_ms,
-    };
-    snapshot.sandbox.work.lease = Some(layer2_core::sandbox::SandboxWorkLease {
-        holder: claim.holder.clone(),
-        fence,
-        expires_at: claim_expiry(expires_at_ms)?,
-    });
-    let revision = snapshot
-        .renewal
-        .as_ref()
-        .map_or_else(
-            || {
-                snapshot
-                    .lifecycle_credential
-                    .as_ref()
-                    .map_or(Some(1), |state| state.renewal_revision.checked_add(1))
-            },
-            |state| state.revision.checked_add(1),
-        )
-        .ok_or(AllocationError::Corrupt)?;
-    if snapshot
-        .renewal
-        .as_ref()
-        .is_none_or(|state| state.phase == RenewalPhase::Complete)
-    {
-        let previous = snapshot
-            .sandbox
-            .credential
-            .current
-            .clone()
-            .ok_or(AllocationError::Corrupt)?;
-        let generation = previous
-            .generation
-            .checked_add(1)
-            .ok_or(AllocationError::Corrupt)?;
-        snapshot.renewal = Some(ChannelRenewalState {
-            schema_version: 1,
-            allocation_id: snapshot.allocation.id.clone(),
-            revision,
-            phase: RenewalPhase::MintStarted,
-            generation,
-            credential_id: credential_id(&snapshot.sandbox.id, generation),
-            previous_credential_id: if previous.generation == 1 {
-                snapshot
-                    .provisioning
-                    .mint_credential_id
-                    .clone()
-                    .ok_or(AllocationError::Corrupt)?
-            } else {
-                credential_id(&snapshot.sandbox.id, previous.generation)
-            },
-            previous,
-            replacement: None,
-            claim,
-        });
-    } else {
-        let state = snapshot.renewal.as_mut().ok_or(AllocationError::Corrupt)?;
-        state.claim = claim;
-        state.revision = revision;
-    }
-    Ok(())
 }
 
 fn custody_error(error: ChannelCredentialError) -> MutationError {
@@ -296,11 +220,4 @@ fn custody_error(error: ChannelCredentialError) -> MutationError {
         ChannelCredentialError::Corrupt => MutationError::Core(AllocationError::Corrupt),
         ChannelCredentialError::Driver(error) => MutationError::Mongo(error),
     }
-}
-
-fn claim_expiry(milliseconds: i64) -> Result<String, AllocationError> {
-    let seconds = u64::try_from(milliseconds / 1000).map_err(|_| AllocationError::Corrupt)?;
-    Ok(layer2_core::rfc3339_at(
-        std::time::UNIX_EPOCH + std::time::Duration::from_secs(seconds),
-    ))
 }

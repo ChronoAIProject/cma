@@ -232,6 +232,9 @@ fn require_owner_authority(caller: &Caller) -> Result<(), SandboxLifecycleComman
 fn lifecycle_store_error(error: SandboxStoreError) -> SandboxLifecycleCommandError {
     match error {
         SandboxStoreError::NotFound => SandboxLifecycleCommandError::NotFound,
+        SandboxStoreError::LifecycleBusy { status, reason } => {
+            SandboxLifecycleCommandError::SandboxBusy { status, reason }
+        }
         SandboxStoreError::Corrupt(detail) => SandboxLifecycleCommandError::Corrupt(detail),
         other => SandboxLifecycleCommandError::Unavailable(other.to_string()),
     }

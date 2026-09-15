@@ -47,6 +47,7 @@ impl ChannelProvisioningDriver {
             .state
             .next(ChannelProvisioningPhase::MintStarted, &credential_id)?;
         state.mint_credential_id = Some(credential_id);
+        state.mint_intent = Some(plan.mint_intent().map_err(|_| AllocationError::Corrupt)?);
         // This transition retains the exact claim; only its successful writer
         // can dispatch the one POST, and every resumed MintStarted is held.
         let started = self

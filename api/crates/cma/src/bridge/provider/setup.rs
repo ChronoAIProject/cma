@@ -52,10 +52,14 @@ impl NyxBridgeProvider {
                 bots: bots
                     .bots
                     .into_iter()
-                    .map(|b| BridgeBotChoice {
-                        id: b.id,
-                        platform: b.platform,
-                        active: b.is_active,
+                    .filter_map(|b| {
+                        Some(BridgeBotChoice {
+                            platform: super::super::capability_catalog::supported_platform(
+                                &b.platform,
+                            )?,
+                            id: b.id,
+                            active: b.is_active,
+                        })
                     })
                     .collect(),
                 keys: keys

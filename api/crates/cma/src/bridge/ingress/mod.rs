@@ -17,6 +17,7 @@ mod configured;
 pub(crate) mod http;
 pub(crate) use configured::configured;
 mod keys;
+mod redelivery;
 pub(crate) mod reply_addressing;
 pub(crate) use keys::PinnedCallbackKeys;
 
@@ -144,6 +145,7 @@ impl CallbackIngress {
             Err(CallbackError::KeysUnavailable) => verify(self.keys.get(true).await?.as_ref())?,
             result => result?,
         };
+        let redelivery = redelivery::observe(&signed.authenticated_payload(body)?)?;
         let reply = if matches!(&config.admission,
             layer2_core::bridge::BridgeAdmissionPolicy::Scoped { policy }
                 if matches!(policy.groups, layer2_core::bridge::partition::GroupAdmission::ReplyToBot
@@ -175,7 +177,9 @@ impl CallbackIngress {
             .validate_connection(&bridge.owner, config)
             .await
             .map_err(|_| CallbackError::BindingUnavailable)?;
-        let write = signed.bind(CallbackBinding::new(bridge, proof)?)?;
+        let write = signed
+            .bind(CallbackBinding::new(bridge, proof)?)?
+            .with_platform_redelivery(redelivery)?;
         if let Some(error) = lookup_error {
             return self.inbox.recover_receipt(&write).await?.ok_or(error);
         }

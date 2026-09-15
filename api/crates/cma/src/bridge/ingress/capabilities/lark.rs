@@ -40,21 +40,26 @@ pub(super) fn observe(
         Some("app") => ChannelSenderKind::Bot,
         _ => ChannelSenderKind::Unknown,
     };
-    if message.get("message_type").and_then(Value::as_str) == Some("text") {
-        let content: Option<Value> = message
-            .get("content")
-            .and_then(Value::as_str)
-            .and_then(|content| serde_json::from_str(content).ok());
-        if text_matches(
-            inbox,
-            content
-                .as_ref()
-                .and_then(|v| v.get("text"))
-                .and_then(Value::as_str),
-        ) {
-            facts.event_kind = ChannelEventKind::UserMessage;
-        }
-    }
+    let message_type = message.get("message_type").and_then(Value::as_str);
+    let content: Option<Value> = message
+        .get("content")
+        .and_then(Value::as_str)
+        .and_then(|content| serde_json::from_str(content).ok());
+    facts.event_kind = message_event(
+        inbox,
+        (message_type == Some("text"))
+            .then(|| {
+                content
+                    .as_ref()
+                    .and_then(|v| v.get("text"))
+                    .and_then(Value::as_str)
+            })
+            .flatten(),
+        matches!(
+            message_type,
+            Some("image" | "file" | "audio" | "media" | "sticker")
+        ),
+    );
     if facts.sender_kind == ChannelSenderKind::Human
         && facts.event_kind == ChannelEventKind::UserMessage
     {

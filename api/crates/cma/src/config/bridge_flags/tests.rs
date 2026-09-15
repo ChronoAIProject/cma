@@ -1,8 +1,9 @@
 use super::*;
 use std::collections::BTreeMap;
 
-const PLATFORMS: [BridgePlatformFlag; 4] = [
+const PLATFORMS: [BridgePlatformFlag; 5] = [
     BridgePlatformFlag::Telegram,
+    BridgePlatformFlag::TelegramNew,
     BridgePlatformFlag::Discord,
     BridgePlatformFlag::Lark,
     BridgePlatformFlag::Feishu,
@@ -34,7 +35,7 @@ fn existing_deployment_defaults_close_every_new_channel_effect() {
     })
     .unwrap();
     assert_eq!(flags, BridgeFeatureFlags::default());
-    assert_eq!(seen.len(), 10);
+    assert_eq!(seen.len(), 11);
     for platform in PLATFORMS {
         for stage in STAGES {
             assert!(flags.check_new_effect(stage, platform).is_err());
@@ -44,8 +45,8 @@ fn existing_deployment_defaults_close_every_new_channel_effect() {
 }
 
 #[test]
-fn all_1024_configurations_keep_each_flag_independent() {
-    for bits in 0..1024 {
+fn all_2048_configurations_keep_each_flag_independent() {
+    for bits in 0..2048 {
         let selected: Vec<_> = BridgeFlag::ALL
             .into_iter()
             .filter(|flag| bits & (1 << (*flag as usize)) != 0)

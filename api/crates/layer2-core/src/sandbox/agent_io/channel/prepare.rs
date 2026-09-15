@@ -37,10 +37,16 @@ impl ChannelCommandReservation {
         proof.require_current()?;
         allocation.validate().map_err(|_| Error::SourceMismatch)?;
         let grant = proof.grant();
+        let retained_execution =
+            matches!(proof.effect(), BridgeInvokeEffect::ExecuteCommand { .. })
+                && grant
+                    .channel
+                    .as_ref()
+                    .is_some_and(|basis| basis.require_retained_allocation(&allocation).is_ok());
         if inbox.admission != InboxAdmission::Accepted
             || inbox.pin != grant.pin
             || inbox.owner != grant.owner
-            || allocation.state != AllocationState::Ready
+            || (allocation.state != AllocationState::Ready && !retained_execution)
             || allocation.owner != inbox.owner
             || match &allocation.placement {
                 AllocationPlacement::ExistingAgent { target, grant_id } => {
@@ -50,12 +56,12 @@ impl ChannelCommandReservation {
                         || grant_id != grant.id.as_str()
                         || grant.channel.is_some()
                 }
-                AllocationPlacement::NewSandbox { target, .. } => {
+                AllocationPlacement::NewSandbox { target, .. }
+                | AllocationPlacement::ReuseParent { target, .. } => {
                     target != &grant.target.ids
-                        || grant
-                            .channel
-                            .as_ref()
-                            .is_none_or(|basis| basis.allocation != allocation)
+                        || grant.channel.as_ref().is_none_or(|basis| {
+                            basis.allocation != allocation && !retained_execution
+                        })
                 }
             }
         {

@@ -12,6 +12,7 @@ mod missing_source_tests;
 mod refusals;
 mod retention_tests;
 mod sidecar;
+mod usage_management;
 mod usage_tests;
 use fixtures::ChannelFixture;
 use generic::{ui_command, NoExecution};

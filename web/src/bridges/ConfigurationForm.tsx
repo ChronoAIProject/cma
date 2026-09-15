@@ -1,5 +1,6 @@
 import type { BridgeConfiguration, BridgeConnectorChoices } from '@chronoai/cma-sdk';
 import type { BridgeViewsClient } from './client';
+import { BridgeCapabilities } from './BridgeCapabilities';
 import { ConnectionFields } from './ConnectionFields';
 import { ContextFields } from './ContextFields';
 import { PolicyFields } from './PolicyFields';
@@ -29,6 +30,11 @@ export function ConfigurationForm({
         disabled={disabled}
         existing={existing}
         onChange={onChange}
+      />
+      <BridgeCapabilities
+        client={client}
+        platform={value.binding.platform}
+        organization={organization}
       />
       <ContextFields
         client={client}

@@ -356,3 +356,100 @@ async fn provider_fractional_and_offset_expirations_bound_the_original_observati
 }
 
 mod custody;
+
+#[tokio::test]
+async fn upstream_only_inventory_rows_do_not_block_supported_bots_or_alias_binding_authority() {
+    let mut rows = replies("person-one", json!({"type":"personal"}));
+    let bots = &mut rows.get_mut("/api/v1/channel-bots").unwrap().1;
+    bots["bots"].as_array_mut().unwrap().push(
+        json!({"id":"upstream-bot","user_id":"person-one","platform":"slack","is_active":true}),
+    );
+    bots["total"] = json!(2);
+    let keys = &mut rows.get_mut("/api/v1/api-keys").unwrap().1["keys"];
+    let mut extra = keys[0].clone();
+    extra["id"] = json!("slack-key");
+    extra["platform"] = json!("slack");
+    keys.as_array_mut().unwrap().push(extra);
+    let f = fixture(rows.clone()).await;
+    inspect(&f, &personal(), "person-one").await.unwrap();
+    let choices = f
+        .provider
+        .choices(
+            &personal(),
+            &SubjectId::new("person-one"),
+            &SecretValue::new(SECRET.into()),
+        )
+        .await
+        .unwrap();
+    assert_eq!(choices.bots.len(), 1);
+    assert_eq!(choices.bots[0].id, "bot-one");
+    assert_eq!(choices.bots[0].platform, BridgePlatform::Telegram);
+    for list in ["/api/v1/channel-bots", "/api/v1/api-keys"] {
+        let mut changed = rows.clone();
+        let field = if list.ends_with("channel-bots") {
+            "bots"
+        } else {
+            "keys"
+        };
+        changed.get_mut(list).unwrap().1[field][0]["platform"] = json!("telegram-new");
+        let f = fixture(changed).await;
+        assert!(matches!(
+            inspect(&f, &personal(), "person-one").await,
+            Err(BridgeError::ConnectionRequired(
+                BridgeSetupBlock::BindingMismatch
+            ))
+        ));
+    }
+    rows.get_mut("/api/v1/channel-bots").unwrap().1["bots"][1]["user_id"] = json!("foreign-owner");
+    let f = fixture(rows).await;
+    assert!(f
+        .provider
+        .choices(
+            &personal(),
+            &SubjectId::new("person-one"),
+            &SecretValue::new(SECRET.into())
+        )
+        .await
+        .is_err());
+}
+
+#[tokio::test]
+async fn telegram_new_binding_requires_exact_bot_key_and_route_platform() {
+    let mut rows = replies("person-one", json!({"type":"personal"}));
+    for (path, field) in [
+        ("/api/v1/channel-bots", "bots"),
+        ("/api/v1/api-keys", "keys"),
+        ("/api/v1/channel-conversations", "conversations"),
+    ] {
+        rows.get_mut(path).unwrap().1[field][0]["platform"] = json!("telegram-new");
+    }
+    let mut f = fixture(rows.clone()).await;
+    f.connector.platform = BridgePlatform::TelegramNew;
+    inspect(&f, &personal(), "person-one").await.unwrap();
+    let choices = f
+        .provider
+        .choices(
+            &personal(),
+            &SubjectId::new("person-one"),
+            &SecretValue::new(SECRET.into()),
+        )
+        .await
+        .unwrap();
+    assert_eq!(choices.bots[0].platform, BridgePlatform::TelegramNew);
+    for (path, field) in [
+        ("/api/v1/channel-bots", "bots"),
+        ("/api/v1/api-keys", "keys"),
+        ("/api/v1/channel-conversations", "conversations"),
+    ] {
+        let mut changed = rows.clone();
+        changed.get_mut(path).unwrap().1[field][0]["platform"] = json!("telegram");
+        let mut f = fixture(changed).await;
+        f.connector.platform = BridgePlatform::TelegramNew;
+        assert!(matches!(
+            inspect(&f, &personal(), "person-one").await,
+            Err(BridgeError::ConnectionRequired(
+                BridgeSetupBlock::BindingMismatch
+            ))
+        ));
+    }
+}

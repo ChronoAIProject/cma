@@ -208,6 +208,8 @@ pub struct ChannelUsageEvent {
     pub detached_at: Option<String>,
     pub reason: ChannelBindingChangeReason,
     pub change: ChannelUsageChange,
+    /// Previous generation for Attach/Replace, or the exact detached binding
+    /// for a real historical Use accepted under DrainOriginal.
     pub predecessor: Option<ChannelBindingReference>,
     pub before: AgentChannelUsageState,
     pub after: AgentChannelUsageState,
@@ -260,7 +262,13 @@ impl ChannelUsageEvent {
                     .active_bindings
                     .iter()
                     .find(|active| &active.reference.binding_id == binding_id)
-                    .map(|active| &active.reference),
+                    .map(|active| &active.reference)
+                    .or_else(|| {
+                        matches!(self.change, ChannelUsageChange::Use { .. })
+                            .then_some(self.predecessor.as_ref())
+                            .flatten()
+                            .filter(|binding| &binding.binding_id == binding_id)
+                    }),
             };
             if binding.is_none_or(|binding| &binding.bridge_id != bridge_id) {
                 return Err(corrupt());

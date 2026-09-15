@@ -47,6 +47,7 @@ use super::trigger_openapi_shapes::*;
         super::bridge_outbox::detail,
         super::bridge_outbox::recover,
         super::bridges::choices,
+        super::bridges::capabilities,
         super::bridges::list,
         super::bridges::read,
         super::bridges::create,

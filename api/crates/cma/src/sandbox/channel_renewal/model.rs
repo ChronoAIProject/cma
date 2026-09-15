@@ -41,6 +41,8 @@ pub(crate) struct ChannelRenewalState {
     pub previous: SandboxCredentialAuthority,
     pub replacement: Option<SandboxCredentialAuthority>,
     pub claim: RenewalClaim,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mint_intent: Option<crate::auth::keys::bridge::mint_intent::BridgeSandboxMintIntent>,
 }
 
 #[derive(Clone, PartialEq, Eq)]
@@ -106,6 +108,14 @@ impl ChannelRenewalSnapshot {
             }
             return Ok(());
         };
+        if let Some(intent) = &state.mint_intent {
+            intent.validate().map_err(|_| AllocationError::Corrupt)?;
+            if let Some(key) = &state.replacement {
+                intent
+                    .require_material(key)
+                    .map_err(|_| AllocationError::IdentityMismatch)?;
+            }
+        }
         if state.schema_version != 1
             || state.allocation_id != self.allocation.id
             || state.revision == 0
@@ -234,4 +244,5 @@ pub(crate) enum RenewalAdmission {
     Started(ChannelRenewalSnapshot),
     Resume(ChannelRenewalSnapshot),
     MintOutcomeUnknown,
+    Reconcile(ChannelRenewalSnapshot),
 }

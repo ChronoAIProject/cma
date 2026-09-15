@@ -1,7 +1,7 @@
 use super::*;
 use crate::sandbox::*;
 
-fn admitted_agent() -> (AllocationRecord, AllocationAuthority, Sandbox, Agent) {
+pub(super) fn admitted_agent() -> (AllocationRecord, AllocationAuthority, Sandbox, Agent) {
     let (record, authority) = reserved();
     let request = ChannelSandboxReservation::prepare(authority.clone(), record.clone()).unwrap();
     let sandbox = request.sandbox().clone();

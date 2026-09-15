@@ -36,6 +36,11 @@ impl AllocationIdentity {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum AllocationPlacement {
+    ReuseParent {
+        target: BridgeAgentTarget,
+        profiles: Box<AllocationProfiles>,
+        parent: super::AllocationParentIdentity,
+    },
     ExistingAgent {
         target: BridgeAgentTarget,
         grant_id: String,
@@ -49,7 +54,17 @@ pub enum AllocationPlacement {
 impl AllocationPlacement {
     pub fn target(&self) -> &BridgeAgentTarget {
         match self {
-            Self::ExistingAgent { target, .. } | Self::NewSandbox { target, .. } => target,
+            Self::ExistingAgent { target, .. }
+            | Self::NewSandbox { target, .. }
+            | Self::ReuseParent { target, .. } => target,
+        }
+    }
+    pub fn profiles(&self) -> Option<&AllocationProfiles> {
+        match self {
+            Self::NewSandbox { profiles, .. } | Self::ReuseParent { profiles, .. } => {
+                Some(profiles)
+            }
+            _ => None,
         }
     }
     pub fn creates_sandbox(&self) -> bool {
@@ -156,6 +171,51 @@ impl AllocationRecord {
             .map_err(|_| AllocationError::Corrupt)?;
         match (&self.placement, &self.config.placement) {
             (
+                AllocationPlacement::ReuseParent {
+                    target,
+                    profiles,
+                    parent,
+                },
+                placement,
+            ) if placement.reused_parent().is_some() => {
+                profiles.validate(&self.config)?;
+                let mut expected = reserved_target(&self.id)?;
+                match placement {
+                    crate::bridge::BridgePlacementPolicy::WorkspacePerPartition {
+                        sandbox_id,
+                        ..
+                    } if parent.workspace_created_at.is_none() => {
+                        expected.sandbox_id = sandbox_id.clone();
+                    }
+                    crate::bridge::BridgePlacementPolicy::WorktreeAgentPerPartition {
+                        sandbox_id,
+                        workspace_id,
+                        ..
+                    } if parent
+                        .workspace_created_at
+                        .as_ref()
+                        .is_some_and(|at| crate::seconds_from_rfc3339(at).is_some()) =>
+                    {
+                        expected.sandbox_id = sandbox_id.clone();
+                        expected.workspace_id = workspace_id.clone();
+                    }
+                    _ => return Err(AllocationError::Corrupt),
+                }
+                if target != &expected
+                    || crate::seconds_from_rfc3339(&parent.sandbox_created_at).is_none()
+                    || !(1..=16).contains(&parent.limits.max_workspaces)
+                    || !(1..=16).contains(&parent.limits.max_agents_per_workspace)
+                    || parent
+                        .service_scope
+                        .iter()
+                        .collect::<std::collections::BTreeSet<_>>()
+                        .len()
+                        != parent.service_scope.len()
+                {
+                    return Err(AllocationError::Corrupt);
+                }
+            }
+            (
                 AllocationPlacement::ExistingAgent { target, grant_id },
                 crate::bridge::BridgePlacementPolicy::ExistingAgent { target: configured },
             ) if target == configured && valid_id(grant_id) => {}
@@ -220,7 +280,8 @@ impl AllocationRecord {
     pub fn profiles_digest(&self) -> Option<&str> {
         match &self.placement {
             AllocationPlacement::ExistingAgent { .. } => None,
-            AllocationPlacement::NewSandbox { profiles, .. } => Some(&profiles.trust_digest),
+            AllocationPlacement::NewSandbox { profiles, .. }
+            | AllocationPlacement::ReuseParent { profiles, .. } => Some(&profiles.trust_digest),
         }
     }
 
