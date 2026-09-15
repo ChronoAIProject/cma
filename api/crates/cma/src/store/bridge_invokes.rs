@@ -22,6 +22,7 @@ mod channel_replay;
 pub(crate) mod channel_source;
 mod enable;
 pub(in crate::store) mod outbox;
+mod usage;
 pub(super) use enable::fence_enable;
 
 pub(crate) struct MongoBridgeInvokeStore {
@@ -262,13 +263,14 @@ impl MongoBridgeInvokeStore {
             fence_lineage(&self.resources, &resources, session).await?;
         }
         self.fence_bridge(&bridge, session).await?;
-        let document = grant_document(write.record())?;
+        let mut document = grant_document(write.record())?;
         if let Some(previous) = write.previous() {
+            document.remove("_id");
             let result = self
                 .grants
-                .replace_one(
+                .update_one(
                     doc! {"_id":previous.id.as_str(),"revision":previous.revision as i64},
-                    document,
+                    doc! {"$set":document},
                 )
                 .session(&mut *session)
                 .await?;
@@ -281,6 +283,7 @@ impl MongoBridgeInvokeStore {
                 .session(&mut *session)
                 .await?;
         }
+        self.apply_grant_usage(write, session).await?;
         self.audits
             .insert_one(
                 doc! {"_id":format!("{}:{}",write.record().id.as_str(),write.record().revision),
@@ -442,7 +445,7 @@ fn read_receipt(document: &Document) -> Result<BridgeInvokeReceipt, BridgeInvoke
     Ok(receipt)
 }
 
-enum MutationError {
+pub(in crate::store) enum MutationError {
     Invoke(BridgeInvokeError),
     Mongo(mongodb::error::Error),
 }

@@ -152,6 +152,10 @@ impl BridgeOutboxService {
             return Err(OutboxManagementError::DuplicateRiskRequired);
         }
         let validation = if matches!(request.action, OutboxRecoveryAction::Retry { .. }) {
+            self.definitions.check_feature(
+                crate::bridge::BridgeFeature::Management,
+                &item.source.config().connector.platform,
+            )?;
             Some(
                 self.definitions
                     .connection(item.source.owner(), item.source.config())

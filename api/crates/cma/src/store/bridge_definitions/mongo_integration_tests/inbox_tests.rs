@@ -12,6 +12,8 @@ use sha2::{Digest, Sha256};
 
 use super::*;
 use crate::store::AuthEncryptionKey;
+#[path = "inbox_receipts.rs"]
+mod receipts;
 #[path = "inbox_work.rs"]
 mod work;
 

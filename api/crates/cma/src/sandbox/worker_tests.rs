@@ -42,6 +42,7 @@ use super::worker::{
 };
 
 mod background_checkpoint_tests;
+mod channel_lifecycle_guard_tests;
 mod checkpoint_consistency_tests;
 mod checkpoint_lease_tests;
 mod checkpoint_maintenance_tests;
@@ -239,7 +240,7 @@ impl SandboxCredentialController for MemoryCredentials {
 
     async fn revoke(
         &self,
-        _owner: &SubjectId,
+        _sandbox: &Sandbox,
         provider_key_id: &str,
     ) -> Result<(), CredentialError> {
         self.actions.push(format!("revoke:{provider_key_id}"));
@@ -313,10 +314,10 @@ impl SandboxCredentialController for BlockingCredentials {
 
     async fn revoke(
         &self,
-        owner: &SubjectId,
+        sandbox: &Sandbox,
         provider_key_id: &str,
     ) -> Result<(), CredentialError> {
-        self.inner.revoke(owner, provider_key_id).await
+        self.inner.revoke(sandbox, provider_key_id).await
     }
 }
 

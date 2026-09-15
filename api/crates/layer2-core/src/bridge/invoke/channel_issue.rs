@@ -110,6 +110,10 @@ impl BridgeInvokeService {
                 .await?;
             return Ok(prior.view());
         }
+        self.definitions.check_feature(
+            super::super::BridgeFeature::Execution,
+            &config.connector.platform,
+        )?;
         for capability in [
             ResourceCapability::ManageBridge,
             ResourceCapability::Interact,

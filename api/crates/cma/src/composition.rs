@@ -175,6 +175,7 @@ impl ControlPlaneComposition {
             stores.sandbox_model.clone(),
             stores.bridge_credentials.clone(),
             bridge_provisioning,
+            config.bridge_flags,
         )
         .map_err(|error| format!("bridge verifier is not usable: {error}"))?;
         let broker = Arc::new(
@@ -249,6 +250,14 @@ impl ControlPlaneComposition {
             authoring_bounds,
             CmaProfileAuthoringSource::production(config, Arc::clone(&auth))?,
         );
+        let bridge = crate::bridge::composition::BridgeComposition::build(
+            config,
+            &stores,
+            bridge_definitions.clone(),
+            bridge_credentials.clone(),
+            resource_access.clone(),
+        )
+        .await?;
         let sandbox_credentials: Arc<dyn SandboxCredentialController> = match key_issuer {
             Some(issuer) => ManagedSandboxCredentials::new(
                 issuer,
@@ -257,6 +266,11 @@ impl ControlPlaneComposition {
             ),
             None => Arc::new(UnavailableSandboxCredentials),
         };
+        let sandbox_credentials: Arc<dyn SandboxCredentialController> =
+            crate::sandbox::channel_credentials::ChannelGuardedCredentials::new(
+                sandbox_credentials,
+                bridge.allocations.clone(),
+            );
         if !auth.requires_credential() {
             tracing::warn!(
                 "running with a trusted fixed subject; this mode is for local development only"
@@ -332,14 +346,6 @@ impl ControlPlaneComposition {
             stores.sandbox_profiles.clone(),
             settings,
         );
-        let bridge = crate::bridge::composition::BridgeComposition::build(
-            config,
-            &stores,
-            bridge_definitions.clone(),
-            bridge_credentials.clone(),
-            resource_access.clone(),
-        )
-        .await?;
         let command_worker = layer2_core::sandbox::agent_io::AgentCommandWorker::new(
             stores.sandbox_model.clone(),
             Arc::new(crate::commands::ResourceCommandExecution {
@@ -391,7 +397,8 @@ impl ControlPlaneComposition {
             &bridge_definitions,
             bridge_credentials.clone(),
             adapter,
-        )?;
+        )
+        .await?;
         let resource_routes = profiles_router(profiles)
             .merge(bridge.management)
             .merge(layer1_public::rest::agent_artifacts_router(

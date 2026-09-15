@@ -83,11 +83,7 @@ impl SandboxWorker {
         ids.extend(custody_ids);
         let mut failures = Vec::new();
         for id in ids {
-            let result = self
-                .dependencies
-                .credentials
-                .revoke(&sandbox.owner, &id)
-                .await;
+            let result = self.dependencies.credentials.revoke(&sandbox, &id).await;
             match result {
                 Ok(()) => {
                     if let Err(error) = self
@@ -271,7 +267,7 @@ impl SandboxWorker {
         match self
             .dependencies
             .credentials
-            .revoke(&sandbox.owner, &debt.provider_key_id)
+            .revoke(&sandbox, &debt.provider_key_id)
             .await
         {
             Ok(()) => {

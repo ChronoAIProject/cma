@@ -189,12 +189,32 @@ impl BridgeValidation {
     }
 }
 
+/// Independently switchable boundaries for new Bridge effects.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BridgeFeature {
+    Management,
+    Ingress,
+    Allocation,
+    Execution,
+    Outbound,
+}
+
 /// Read-only provider/custody verification. Implementations must resolve the
 /// selected existing bot/key/routes, verify ownership and shared-key callback
 /// use, and resolve exact target ancestry or pinned profiles. This port never
 /// authorizes creating a bot or rewriting a callback/route.
 #[async_trait::async_trait]
 pub trait BridgeConnectionValidator: Send + Sync {
+    /// Additional deployment availability, never a substitute for authority.
+    /// Call only for new effects; retained receipt/outcome recovery stays open.
+    fn check_feature(
+        &self,
+        _feature: BridgeFeature,
+        _platform: &super::BridgePlatform,
+    ) -> Result<(), BridgeError> {
+        Ok(())
+    }
+
     async fn validate_connection(
         &self,
         owner: &ResourceOwner,

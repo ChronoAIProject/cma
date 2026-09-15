@@ -2,11 +2,12 @@ use super::super::tests::fixtures::Fixture;
 use super::*;
 use layer2_core::resource_access::ResourceAccessStore;
 use serde_json::json;
+mod feature_gates_tests;
 mod management;
 
 /// Retained historical outbox fixture, not a production admission proof. New
 /// Channel-created admission remains unavailable until the real creator exists.
-fn retained_item(f: &Fixture, reference: &str) -> OutboxItem {
+pub(super) fn retained_item(f: &Fixture, reference: &str) -> OutboxItem {
     let config = &f.bridge.current().unwrap().config;
     let source:OutboxSource=serde_json::from_value(json!({
         "inbox_id":"1".repeat(64),"inbox_sha256":"2".repeat(64),"allocation_id":"allocation",
@@ -43,7 +44,7 @@ fn retained_item(f: &Fixture, reference: &str) -> OutboxItem {
     item.validate().unwrap();
     item
 }
-async fn enabled_fixture() -> Fixture {
+pub(super) async fn enabled_fixture() -> Fixture {
     let mut fixture = Fixture::new().await;
     fixture
         .service
@@ -57,12 +58,12 @@ async fn enabled_fixture() -> Fixture {
     fixture.enable("outbox-retained-enable").await;
     fixture
 }
-async fn store(f: &Fixture) -> MongoBridgeReplyToolStore {
+pub(super) async fn store(f: &Fixture) -> MongoBridgeReplyToolStore {
     MongoBridgeReplyToolStore::new(f.store.clone(), f.authority.clone())
         .await
         .unwrap()
 }
-async fn seed(store: &MongoBridgeReplyToolStore, item: &OutboxItem) {
+pub(super) async fn seed(store: &MongoBridgeReplyToolStore, item: &OutboxItem) {
     store
         .items
         .insert_one(records::item_document(item).unwrap())
@@ -82,7 +83,7 @@ async fn seed(store: &MongoBridgeReplyToolStore, item: &OutboxItem) {
         .await
         .unwrap();
 }
-async fn retained(store: &MongoBridgeReplyToolStore, id: &str) -> OutboxItem {
+pub(super) async fn retained(store: &MongoBridgeReplyToolStore, id: &str) -> OutboxItem {
     records::read_item(
         &store
             .items

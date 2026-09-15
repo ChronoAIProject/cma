@@ -133,6 +133,12 @@ impl MongoBridgeReplyToolStore {
             invocation.require_request(scope.namespace(), intent.request_sha256())?;
             return self.receipt(&invocation, session).await;
         }
+        self.validator
+            .check_feature(
+                layer2_core::bridge::BridgeFeature::Outbound,
+                &scope.source().config().connector.platform,
+            )
+            .map_err(|_| OutboxError::Suspended)?;
         let head = self
             .heads
             .find_one(doc! {"_id":scope.source().response_id().as_str()})

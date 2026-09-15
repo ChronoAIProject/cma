@@ -4,6 +4,8 @@ mod agent_scheduler;
 mod agent_skills;
 mod agent_worker;
 pub(crate) mod channel_children;
+pub(crate) mod channel_credentials;
+pub(crate) mod channel_renewal;
 mod checkpoint_maintenance;
 pub(crate) use checkpoint_maintenance::ExportDependencies;
 pub(crate) mod channel_provisioning;
@@ -35,8 +37,9 @@ pub(crate) use composition::{
     SandboxLifecycleComposition, SandboxLifecycleConfig, SandboxLifecycleDependencies,
 };
 pub(crate) use credential::{
-    CredentialCustodyError, CredentialMaterial, CredentialRevocation, ManagedSandboxCredentials,
-    OwnerTokenSource, SandboxCredentialController, SandboxCredentialCustody,
+    CredentialCustodyError, CredentialError, CredentialMaterial, CredentialRevocation,
+    ManagedSandboxCredentials, OwnerTokenSource, SandboxCredentialController,
+    SandboxCredentialCustody,
 };
 pub(crate) use live_agents::LiveAgentRegistry;
 pub(crate) use policy::LiveSandboxPolicy;

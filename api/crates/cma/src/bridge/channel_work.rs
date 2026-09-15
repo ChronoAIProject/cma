@@ -62,6 +62,10 @@ impl ChannelWorkPort for ChannelAllocationWork {
         {
             return Ok(());
         }
+        self.definitions
+            .check_feature_for_pin(layer2_core::bridge::BridgeFeature::Allocation, &record.pin)
+            .await
+            .map_err(|_| Error::Suspended)?;
         let (authority, lease) = self
             .authority
             .resolve(&self.definitions, &record)
@@ -161,6 +165,13 @@ impl ChannelInboxWork {
         let record = match current {
             Some(record) => record,
             None => {
+                self.definitions
+                    .check_feature_for_pin(
+                        layer2_core::bridge::BridgeFeature::Allocation,
+                        &inbox.pin,
+                    )
+                    .await
+                    .map_err(|_| Error::Suspended)?;
                 let config = self
                     .credentials
                     .bridges
@@ -216,6 +227,10 @@ impl ChannelInboxWork {
         if record.state != AllocationState::Ready {
             return Ok(());
         }
+        self.definitions
+            .check_feature_for_pin(layer2_core::bridge::BridgeFeature::Execution, &inbox.pin)
+            .await
+            .map_err(|_| Error::Suspended)?;
         if record.pin != inbox.pin
             && matches!(record.placement, AllocationPlacement::ExistingAgent { .. })
         {

@@ -52,7 +52,8 @@ impl BridgeComposition {
         let channel = Arc::new(
             layer2_core::sandbox::agent_io::ChannelAgentCommandService::new(Arc::new(
                 crate::store::MongoChannelCommandStore::new(invoke_store.clone()),
-            )),
+            ))
+            .with_feature_gates(definitions.connection_validator()),
         );
         let invokes = BridgeInvokeService::new(
             definitions.clone(),
@@ -103,6 +104,7 @@ impl BridgeComposition {
             credentials,
             stores.sandbox_model.clone(),
             inbox.clone(),
+            config.bridge_flags,
         )
         .map_err(|error| format!("bridge callback verifier is not usable: {error}"))?;
         Ok(Self {

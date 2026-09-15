@@ -3,12 +3,15 @@ use super::*;
 use layer2_core::sandbox::agent_io::*;
 
 mod execution_tests;
+mod feature_gates;
 pub(in crate::store) mod fixtures;
 mod generic;
 mod hold_refusal_tests;
+mod missing_source_tests;
 mod refusals;
 mod retention_tests;
 mod sidecar;
+mod usage_tests;
 use fixtures::ChannelFixture;
 use generic::{ui_command, NoExecution};
 

@@ -4,6 +4,7 @@ use layer2_core::bridge::outbox::{
 use serde::Deserialize;
 
 use super::*;
+mod retry_after;
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -57,28 +58,39 @@ impl NyxBridgeProvider {
                 .json(&serde_json::json!({"message_id":message_id,"reply":{"text":text}}))
                 .send()
                 .await
-                .map_err(|_| DeliveryFailure::ResponseLost)?;
+                .map_err(|_| DeliveryOutcome::Unknown(DeliveryFailure::ResponseLost))?;
             // Pinned NyxID consumes tokens before validation and stores replies
             // after platform IO. No HTTP failure status proves absence of send.
             if response.status() != reqwest::StatusCode::OK {
-                return Err(DeliveryFailure::ProviderFailure);
+                return Err(
+                    if response.status() == reqwest::StatusCode::TOO_MANY_REQUESTS {
+                        DeliveryOutcome::RateLimitedUnknown {
+                            not_before_ms: retry_after::not_before(
+                                response.headers(),
+                                std::time::SystemTime::now(),
+                            ),
+                        }
+                    } else {
+                        DeliveryOutcome::Unknown(DeliveryFailure::ProviderFailure)
+                    },
+                );
             }
             if response.content_length().is_some_and(|size| size > 4096) {
-                return Err(DeliveryFailure::ReceiptInvalid);
+                return Err(DeliveryOutcome::Unknown(DeliveryFailure::ReceiptInvalid));
             }
             let mut bytes = Zeroizing::new(Vec::new());
             while let Some(chunk) = response
                 .chunk()
                 .await
-                .map_err(|_| DeliveryFailure::ResponseLost)?
+                .map_err(|_| DeliveryOutcome::Unknown(DeliveryFailure::ResponseLost))?
             {
                 if bytes.len().saturating_add(chunk.len()) > 4096 {
-                    return Err(DeliveryFailure::ReceiptInvalid);
+                    return Err(DeliveryOutcome::Unknown(DeliveryFailure::ReceiptInvalid));
                 }
                 bytes.extend_from_slice(&chunk);
             }
-            let response: ReplyResponse =
-                serde_json::from_slice(&bytes).map_err(|_| DeliveryFailure::ReceiptInvalid)?;
+            let response: ReplyResponse = serde_json::from_slice(&bytes)
+                .map_err(|_| DeliveryOutcome::Unknown(DeliveryFailure::ReceiptInvalid))?;
             if !canonical_id(&response.message_id)
                 || response.message_id == message_id
                 || response
@@ -86,7 +98,7 @@ impl NyxBridgeProvider {
                     .as_ref()
                     .is_some_and(|id| !canonical_id(id))
             {
-                return Err(DeliveryFailure::ReceiptInvalid);
+                return Err(DeliveryOutcome::Unknown(DeliveryFailure::ReceiptInvalid));
             }
             Ok(DeliveryReceipt {
                 nyxid_message_id: response.message_id,
@@ -96,7 +108,7 @@ impl NyxBridgeProvider {
         .await;
         match result {
             Ok(Ok(receipt)) => DeliveryOutcome::Confirmed(receipt),
-            Ok(Err(reason)) => DeliveryOutcome::Unknown(reason),
+            Ok(Err(outcome)) => outcome,
             Err(_) => DeliveryOutcome::Unknown(DeliveryFailure::ResponseLost),
         }
     }

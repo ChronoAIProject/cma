@@ -22,6 +22,7 @@ use crate::store::{
 };
 
 use super::{decode_bridge, MongoBridgeStore};
+pub(in crate::store) mod receipts;
 mod work;
 
 #[derive(Clone)]
@@ -30,6 +31,8 @@ pub(crate) struct MongoCallbackInbox {
     inbox: Collection<Document>,
     replies: Collection<Document>,
     rates: Collection<Document>,
+    receipts: Collection<Document>,
+    receipt_cursor: Arc<tokio::sync::Mutex<Option<String>>>,
     cipher: Arc<AuthCipher>,
 }
 
@@ -47,6 +50,7 @@ impl MongoCallbackInbox {
                 "bridge_callback_inbox",
                 "bridge_callback_replies",
                 "bridge_callback_rates",
+                "bridge_callback_receipts",
             ],
         )
         .await?;
@@ -55,6 +59,8 @@ impl MongoCallbackInbox {
             inbox: majority_collection(&database, "bridge_callback_inbox"),
             replies: majority_collection(&database, "bridge_callback_replies"),
             rates: majority_collection(&database, "bridge_callback_rates"),
+            receipts: majority_collection(&database, "bridge_callback_receipts"),
+            receipt_cursor: Arc::new(tokio::sync::Mutex::new(None)),
             cipher: Arc::new(AuthCipher::new(deployment, key)?),
         };
         for collection in [&store.inbox, &store.replies, &store.rates] {
@@ -81,6 +87,25 @@ impl MongoCallbackInbox {
             .map_err(|_| {
                 layer2_core::StoreError::Unavailable("create callback admission index".into())
             })?;
+        store
+            .receipts
+            .create_index(
+                IndexModel::builder()
+                    .keys(doc! {"disposition":1_i32,"_id":1_i32,"admission_expires_at":1_i32})
+                    .build(),
+            )
+            .await
+            .map_err(|error| {
+                layer2_core::StoreError::Unavailable(format!(
+                    "create callback disposition index: {error}"
+                ))
+            })?;
+        store.backfill_acceptance_receipts().await.map_err(|_| {
+            layer2_core::StoreError::Unavailable("backfill callback acceptance evidence".into())
+        })?;
+        store.settle_expired_acceptances().await.map_err(|_| {
+            layer2_core::StoreError::Unavailable("settle expired callback evidence".into())
+        })?;
         Ok(store)
     }
 
@@ -105,12 +130,28 @@ impl MongoCallbackInbox {
             .await
             .map_err(|_| CallbackError::BindingUnavailable)?;
         if let Some(document) = self
+            .receipts
+            .find_one(doc! {"_id": &write.record().id})
+            .session(&mut *session)
+            .await?
+        {
+            return Ok(receipts::model::AcceptedCallbackReceipt::read(&document)?.replay(write)?);
+        }
+        if let Some(document) = self
             .inbox
             .find_one(doc! {"_id": &write.record().id})
             .session(&mut *session)
             .await?
         {
-            return Ok(write.match_replay(&decode(&document)?)?);
+            let source = decode(&document)?;
+            let receipt = write.match_replay(&source)?;
+            self.retain_acceptance(
+                &source,
+                receipts::model::command_correlation(&document)?,
+                session,
+            )
+            .await?;
+            return Ok(receipt);
         }
         let record = write.record();
         let config = &current
@@ -164,6 +205,7 @@ impl MongoCallbackInbox {
             "bridge_id":record.pin.bridge_id.as_str(),"admission":admission(&record.admission),
             "expires_at":DateTime::from_millis(record.expires_at*1000),"record":record_bson(record).map_err(|_|CallbackError::Unavailable)?})
             .session(&mut *session).await?;
+        self.retain_acceptance(record, None, session).await?;
         if let Some(expires) = record.reply_expires_at {
             let mut document = doc! {"_id":&record.id,"document_schema_version":DOCUMENT_SCHEMA_VERSION,
             "expires_at":DateTime::from_millis(expires*1000)};
@@ -193,6 +235,38 @@ impl MongoCallbackInbox {
 
     async fn replay(&self, write: &InboxWrite) -> Result<Option<InboxReceipt>, CallbackError> {
         write.require_current(write.bridge())?;
+        let mut session = self
+            .bridges
+            .client
+            .start_session()
+            .await
+            .map_err(|_| CallbackError::Unavailable)?;
+        let current = self
+            .bridges
+            .definitions
+            .find_one(doc! {"_id":write.bridge().id.as_str()})
+            .session(&mut session)
+            .await
+            .map_err(|_| CallbackError::Unavailable)?
+            .ok_or(CallbackError::BindingUnavailable)?;
+        let current = decode_bridge(&current).map_err(|_| CallbackError::BindingUnavailable)?;
+        write.require_current(&current)?;
+        self.bridges
+            .credentials
+            .require_binding(&current, write.custody_pin(), &mut session)
+            .await
+            .map_err(|_| CallbackError::BindingUnavailable)?;
+        if let Some(document) = self
+            .receipts
+            .find_one(doc! {"_id": &write.record().id})
+            .session(&mut session)
+            .await
+            .map_err(|_| CallbackError::Unavailable)?
+        {
+            return Ok(Some(
+                receipts::model::AcceptedCallbackReceipt::read(&document)?.replay(write)?,
+            ));
+        }
         self.inbox
             .find_one(doc! {"_id": &write.record().id})
             .await
@@ -311,7 +385,7 @@ pub(in crate::store) fn decode(document: &Document) -> Result<StoredInbox, Callb
 }
 
 #[derive(Debug, thiserror::Error)]
-enum MutationError {
+pub(in crate::store) enum MutationError {
     #[error(transparent)]
     Core(#[from] CallbackError),
     #[error(transparent)]

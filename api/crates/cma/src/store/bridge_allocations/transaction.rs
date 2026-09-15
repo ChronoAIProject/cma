@@ -61,6 +61,7 @@ impl MongoBridgeAllocationStore {
                 .session(&mut *session)
                 .await?
                 .ok_or(AllocationError::Corrupt)?;
+            let has_usage = current.contains_key("channel_usage_binding");
             let current = decode_record(&current)?;
             if let Some(previous) = write.previous() {
                 if current.id == record.id {
@@ -80,7 +81,31 @@ impl MongoBridgeAllocationStore {
                 if &current != previous {
                     return Err(AllocationError::Conflict.into());
                 }
+                if has_usage && self.invokes.is_none() {
+                    return Err(AllocationError::AuthorityUnavailable.into());
+                }
                 self.require_capacity(write, false, &mut *session).await?;
+                if let Some(invokes) = &self.invokes {
+                    invokes
+                        .reset_allocation_usage(write, session)
+                        .await
+                        .map_err(|error| match error {
+                            super::super::bridge_invokes::MutationError::Mongo(error) => {
+                                MutationError::Mongo(error)
+                            }
+                            super::super::bridge_invokes::MutationError::Invoke(error) => {
+                                MutationError::Core(match error {
+                                    layer2_core::bridge::invoke::BridgeInvokeError::Conflict => {
+                                        AllocationError::Conflict
+                                    }
+                                    layer2_core::bridge::invoke::BridgeInvokeError::Corrupt => {
+                                        AllocationError::Corrupt
+                                    }
+                                    _ => AllocationError::AuthorityUnavailable,
+                                })
+                            }
+                        })?;
+                }
                 let mut retired = current.clone();
                 retired.state = AllocationState::Retired;
                 retired.lease = None;

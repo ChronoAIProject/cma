@@ -11,6 +11,7 @@ impl MongoCallbackInbox {
         &self,
         after: Option<&str>,
     ) -> Result<Vec<String>, CallbackError> {
+        self.settle_expired_acceptances().await?;
         let now = DateTime::now();
         let mut filter = doc! {
             "_id":{"$type":"string"}, "admission":"accepted", "command_correlation":{"$exists":false},
