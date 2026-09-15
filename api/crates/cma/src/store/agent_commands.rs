@@ -16,6 +16,7 @@ use super::sandbox_mongo::{
 pub(super) mod audit;
 pub(super) mod binding;
 mod lane_records;
+mod queued_cancellation;
 mod reconcile;
 mod records;
 pub(in crate::store) mod reserve;
@@ -47,6 +48,13 @@ impl From<mongodb::error::Error> for ApplyError {
 
 #[async_trait::async_trait]
 impl AgentCommandStore for MongoSandboxStore {
+    async fn cancel_queued_response(
+        &self,
+        request: layer2_core::sandbox::agent_io::QueuedCancellationReservation,
+    ) -> Result<layer2_core::sandbox::agent_io::QueuedCancellationOutcome, CommandLedgerError> {
+        queued_cancellation::run(self, request).await
+    }
+
     async fn reserve_targeted_control(
         &self,
         request: layer2_core::sandbox::agent_io::TargetedControlReservation,

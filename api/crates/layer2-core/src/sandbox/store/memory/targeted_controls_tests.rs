@@ -5,7 +5,7 @@ use crate::sandbox::{Agent, AgentApprovalDecision};
 #[path = "targeted_controls_failure_tests.rs"]
 mod failures;
 #[path = "targeted_controls_fixtures.rs"]
-mod fixtures;
+pub(super) mod fixtures;
 use fixtures::*;
 #[path = "targeted_controls_inspection_tests.rs"]
 mod inspection;

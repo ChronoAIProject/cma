@@ -12,6 +12,7 @@ mod conversation;
 mod error;
 mod parse;
 mod projection;
+pub(crate) mod queued_cancellation;
 mod routes;
 mod stream;
 #[cfg(test)]
@@ -44,6 +45,10 @@ pub fn router(state: ResponsesV2State) -> Router {
             get(controls::observe).post(controls::submit),
         )
         .route(
+            "/api/v2/agents/{agent_id}/responses/{response_id}/queued-cancellation",
+            get(queued_cancellation::observe).post(queued_cancellation::submit),
+        )
+        .route(
             "/api/v2/responses/{response_id}/events",
             get(routes::replay),
         )
@@ -70,6 +75,8 @@ pub(super) fn document() -> utoipa::openapi::OpenApi {
             controls::observe,
             controls::submit,
             controls::status,
+            queued_cancellation::observe,
+            queued_cancellation::submit,
             conversation::retrieve,
             conversation::items
         ),
