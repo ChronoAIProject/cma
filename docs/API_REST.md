@@ -410,8 +410,26 @@ Scoped inventory/history values refresh every 30 seconds, expire no later than
 55 seconds from the read start (or the earlier server authority deadline), and
 clear on foreground, viewer/client/scope change or refusal. A 15-second timeout
 also clears an unverified result. This Agent inventory increment does not yet
-provide organization Sandbox trees, aggregate Shared-with-me scope,
+provide aggregate Shared-with-me scope,
 scoped artifact UI or shared lifecycle management.
+
+The sidebar offers Personal and named Organization navigation. Organization
+Sandboxes use the SDK's authorized paginated inventory, with fresh previous/next
+reads. Expanding a Sandbox loads authorized Workspace summaries; expanding a
+Workspace loads its safe Agent/Worktree projection. Narrow Agent grants remain
+discoverable through **All authorized Agents**, without requesting their hidden
+parents. Changing sidebar scope preserves the active personal Agent controller
+and its unsent draft. Organization selection survives sidebar collapse.
+
+Canonical `/sandboxes/{id}` links classify current accessible metadata before
+mounting the personal Sandbox page or a safe shared view. `/workspaces/{id}`
+provides authorized Workspace names, counts and Agent/Worktree summaries. Shared
+hierarchy views read no profiles, provider connections, runtime observations,
+paths or secret contents. Each buffered detail checks original policy and
+authority expiry after IO, validates parent and Agent/Worktree assignment, and
+clears on refusal or scope/client change. Child access refusal invalidates its
+parent's displayed branch. Personal Sandbox controls remain mounted through a
+classification refresh; refusal discards remembered personal classification.
 
 Owners can open **Sharing** from personal Agent Details or a Sandbox page when
 current effective access includes `manage_sharing`. Agent sharing starts with
