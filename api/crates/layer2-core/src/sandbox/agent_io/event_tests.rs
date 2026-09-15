@@ -109,11 +109,15 @@ fn interface_capabilities_do_not_advertise_unimplemented_delivery_features() {
         RuntimeCapability::Steer,
     ]));
     assert!(capabilities.text_input && capabilities.steer && capabilities.durable_event_replay);
+    assert!(capabilities.busy_message_queue);
+    assert!(
+        !AgentInterfaceCapabilities::from_runtime(&RuntimeCapabilities::default())
+            .busy_message_queue
+    );
     assert!(
         !capabilities.attachment_input
             && !capabilities.interrupt
             && !capabilities.durable_text_deltas
-            && !capabilities.busy_message_queue
     );
     let absent = AgentInterfaceCapabilities::from_runtime(&RuntimeCapabilities::default());
     assert!(!absent.text_input && !absent.steer && !absent.approval_control);

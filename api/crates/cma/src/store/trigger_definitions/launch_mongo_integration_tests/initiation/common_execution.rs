@@ -4,6 +4,7 @@ use layer2_core::sandbox::store::AgentLogStore;
 use layer2_core::sandbox::*;
 use std::sync::atomic::{AtomicUsize, Ordering};
 mod admission;
+mod association;
 mod fixtures;
 mod guards;
 mod reuse;

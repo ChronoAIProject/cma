@@ -54,7 +54,7 @@ pub use launch::{
 };
 pub use launch_event::{LaunchEvent, LaunchEventKind};
 pub use launch_initiation::LaunchInitiation;
-pub use launch_input_protocol::LaunchInputProtocol;
+pub use launch_input_protocol::{LaunchFirstMessageCommand, LaunchInputProtocol};
 pub use launch_service::{
     CreateOrResumeLaunch, LaunchCreateResult, LaunchPolicy, LaunchPolicySource, LaunchService,
     LaunchServiceError, StartLaunch,

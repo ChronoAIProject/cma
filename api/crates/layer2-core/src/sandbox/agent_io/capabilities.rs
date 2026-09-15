@@ -5,7 +5,8 @@ use crate::{RuntimeCapabilities, RuntimeCapability};
 use super::AGENT_IO_SCHEMA_VERSION;
 
 /// A projection of demonstrated core operations, further constrained by each
-/// public interface. Queued busy input and durable deltas are not yet offered.
+/// public interface. Busy messages use the durable command queue; live deltas
+/// remain distinct from replayable committed message events.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AgentInterfaceCapabilities {
@@ -34,7 +35,7 @@ impl AgentInterfaceCapabilities {
             interrupt: conversation && runtime.supports(RuntimeCapability::Interrupt),
             durable_event_replay: true,
             durable_text_deltas: false,
-            busy_message_queue: false,
+            busy_message_queue: conversation,
         }
     }
 }

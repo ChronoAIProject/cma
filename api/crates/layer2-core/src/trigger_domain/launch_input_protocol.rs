@@ -4,6 +4,14 @@ use crate::profiles::content_digest;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
+/// Immutable public association; it carries no execution authority or input content.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LaunchFirstMessageCommand {
+    pub agent_id: crate::AgentId,
+    pub command_id: crate::ids::AgentCommandId,
+    pub response_id: crate::ids::AgentResponseId,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct LaunchInputProtocol {
