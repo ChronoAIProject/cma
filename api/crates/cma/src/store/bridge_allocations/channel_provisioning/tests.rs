@@ -25,6 +25,8 @@ mod channel_reply;
 mod command_reset_tests;
 #[path = "tests/command_revival_tests.rs"]
 mod command_revival;
+#[path = "tests/reuse_cleanup_tests.rs"]
+mod reuse_cleanup;
 #[path = "tests/reuse_command_fixture.rs"]
 mod reuse_command_fixture;
 #[path = "tests/reuse_command_reset_tests.rs"]

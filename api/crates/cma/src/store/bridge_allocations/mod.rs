@@ -6,6 +6,11 @@ pub(crate) mod channel_mint_reconciliation;
 mod channel_provisioning;
 mod channel_renewal;
 pub(crate) mod channel_retirement;
+#[allow(
+    dead_code,
+    reason = "cleanup request seal awaits effect and restore integration"
+)]
+mod channel_reuse_cleanup;
 mod channel_reuse_revival;
 mod channel_startup;
 mod records;
@@ -60,6 +65,10 @@ impl MongoBridgeAllocationStore {
                 "channel_mint_orphans",
                 "channel_mint_orphan_audits",
                 "channel_retirement_audits",
+                "channel_reuse_cleanup_requests",
+                "channel_reuse_cleanup_audits",
+                "channel_reuse_cleanup_admissions",
+                "channel_reuse_cleanup_admission_audits",
             ],
         )
         .await?;

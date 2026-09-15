@@ -35,7 +35,9 @@ pub(super) struct Queued {
 }
 impl ReuseCommandFixture {
     pub async fn new(shared_workspace: bool, trigger_parent: bool) -> Self {
-        let mut f = ReuseFixture::new(shared_workspace).await;
+        Self::from_reuse(ReuseFixture::new(shared_workspace).await, trigger_parent).await
+    }
+    pub(super) async fn from_reuse(mut f: ReuseFixture, trigger_parent: bool) -> Self {
         f.original.svc = BridgeService::new(
             f.original.bridges.clone(),
             Arc::new(Authority),

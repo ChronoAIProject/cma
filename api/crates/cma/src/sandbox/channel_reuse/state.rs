@@ -129,9 +129,23 @@ impl ChannelReuseSnapshot {
         if self.sandbox != proof.resources().lineage.sandbox {
             return Err(AllocationError::Conflict);
         }
+        self.require_ownership()
+    }
+
+    /// Immutable child ownership only. Cleanup combines this with separate
+    /// current management authority; it does not renew execution permission.
+    pub(crate) fn require_ownership(&self) -> Result<(), AllocationError> {
+        self.allocation.validate()?;
+        self.state.validate(&self.allocation)?;
+        let AllocationPlacement::ReuseParent {
+            profiles, parent, ..
+        } = &self.allocation.placement
+        else {
+            return Err(AllocationError::IdentityMismatch);
+        };
         let target = self.allocation.placement.target();
         if let Some(workspace) = &self.workspace {
-            if proof.parent().workspace_created_at.is_none() {
+            if parent.workspace_created_at.is_none() {
                 self.workspace_creation
                     .as_ref()
                     .ok_or(AllocationError::Corrupt)?
@@ -146,7 +160,7 @@ impl ChannelReuseSnapshot {
             if workspace.id != target.workspace_id
                 || workspace.sandbox_id != self.sandbox.id
                 || workspace.owner != self.sandbox.owner
-                || workspace.profile != proof.profiles().workspace
+                || workspace.profile != profiles.workspace
                 || workspace.removed_at.is_some()
             {
                 return Err(AllocationError::IdentityMismatch);
@@ -162,12 +176,13 @@ impl ChannelReuseSnapshot {
             creation
                 .validate_against(agent, &self.sandbox)
                 .map_err(|_| AllocationError::Corrupt)?;
-            if creation.created_by.as_ref() != Some(&proof.profiles().approved_by)
+            if creation.owner != self.allocation.owner
+                || creation.created_by.as_ref() != Some(&profiles.approved_by)
                 || agent.id != target.agent_id
                 || worktree.id != target.worktree_id
                 || agent.worktree_id != worktree.id
                 || agent.workspace_id != workspace.id
-                || agent.profile != proof.profiles().agent
+                || agent.profile != profiles.agent
                 || agent.creation_key != format!("channel-allocation:{}", self.allocation.id)
                 || agent.creation_fingerprint
                     != channel_fingerprint(&self.allocation)
