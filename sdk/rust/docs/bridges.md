@@ -353,3 +353,46 @@ async fn remove_explicitly_reviewed_owned_workspace(
     ).await
 }
 ```
+
+## Original-sender control consent
+
+```rust
+use cma_sdk::{Client, IdempotencyKey, bridges::BridgeSourceControlRequest};
+# async fn example(client: &Client, grant_id: &str, request: &BridgeSourceControlRequest, original_key: &IdempotencyKey) -> Result<(), cma_sdk::Error> {
+// Request and key belong to one explicit manager consent, retained before submission.
+let receipt = client.bridges().set_source_controls(grant_id, request, original_key).await?;
+assert_eq!(&receipt.request, request);
+let current = client.bridges().read_source_controls(grant_id).await?;
+if let Some(policy) = current.policy { println!("{}: {}", policy.revision, policy.enabled); }
+# Ok(())
+# }
+```
+
+Consent is recorded separately for each invoke grant. A missing policy is required
+null, whereas a revoked policy keeps its identity and revision. Only an explicit
+request records or revokes consent; reads never do so. Current Bridge management
+and exact target management/interaction authority remain required.
+
+The request contains exactly four fields: `expected_bridge_revision`,
+`expected_grant_revision`, `expected_policy_revision`, and `action`. Bridge revisions
+are positive signed 64-bit values (safe integers in TypeScript); grant revisions are 1
+or 2. Absent policy uses revision 0. Allow accepts policy revisions 0 through 254;
+revoke accepts0 through 255. Policy result revisions are 1 through 256, with 256
+reserved for revocation. Actions are `allow_sender_cancel_and_steer` and
+`revoke_sender_controls`. Scope is always `source_sender`; approval mode is always
+`dashboard_only`. There is no approval action in this consent API.
+
+Keys contain 1 through 200 visible ASCII characters without spaces. Retain the
+exact request and original key after cancellation, response loss, 409 or 503.
+Recovery rechecks current authority and returns the original receipt before
+fresh revision checks, including after policy or invoke-grant revocation.
+Recovering an older enabled receipt does not re-enable the current policy.
+Read the policy separately when current state is needed. New enablement of a
+revoked invoke grant is refused; explicit policy revocation remains available.
+Neither SDK retries mutations automatically.
+
+An enabled policy records consent only. It does not establish current connector,
+source-sender, exact-turn, retained-runtime, custody or admission authority, and
+does not enable cancel/steer execution, source-reference tools, channel approvals,
+reply producers or automatic notices. No resource, invoke grant or conversation
+is rewritten by recording this policy.

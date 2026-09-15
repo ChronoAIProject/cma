@@ -61,6 +61,12 @@ impl BridgeComposition {
             stores.sandbox_model.clone(),
             invoke_store.clone(),
         );
+        let source_controls = Arc::new(
+            layer2_core::bridge::invoke::BridgeSourceControlService::new(
+                invokes.clone(),
+                invoke_store.clone(),
+            ),
+        );
         let replies = Arc::new(
             crate::store::MongoBridgeReplyToolStore::new(
                 invoke_store.clone(),
@@ -97,6 +103,9 @@ impl BridgeComposition {
                 invokes.clone(),
             ))))
             .merge(layer1_public::rest::bridge_outbox_router(Some(outbox)))
+            .merge(layer1_public::rest::bridge_source_control_router(Some(
+                source_controls,
+            )))
             .merge(layer1_public::rest::bridge_cleanup_router(Some(cleanup)));
         let inbox = Arc::new(
             MongoCallbackInbox::open(

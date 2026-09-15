@@ -146,3 +146,7 @@ The request pins three revisions and the completed child receipt, with only
 completion distinct. Both methods use the separate `workspace-cleanup` route;
 child `remove_child` retains its original Workspace-preserving scope. See
 [Bridge management](bridges.md#separate-owned-workspace-cleanup).
+
+## Source-control consent
+
+`bridges().read_source_controls(grant_id)` and `bridges().set_source_controls(grant_id, &request, &key)` observe and record separate original-sender consent. Types: `BridgeSourceControlAction`, `BridgeSourceControlRequest`, `BridgeSourceControlPolicy`, `BridgeSourceControlState`, `BridgeSourceControlReceipt`, `BridgeSourceControlScope`, and `BridgeSourceControlApprovalMode`. Read absence is required null. PUT returns exactly 200. Consent never demonstrates runtime control support. See [Bridges](bridges.md) for revision bounds and exact-request recovery.

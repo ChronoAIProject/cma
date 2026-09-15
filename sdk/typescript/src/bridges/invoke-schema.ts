@@ -38,14 +38,14 @@ function digest(value: unknown): string {
   if (!/^[0-9a-f]{64}$/.test(result)) throw new ProtocolError('invalid bridge invoke digest');
   return result;
 }
-function timestamp(value: unknown): string {
+export function timestamp(value: unknown): string {
   const result = text(value);
   if (result.length === 0 || result.length > 128 || /\p{Cc}/u.test(result))
     throw new ProtocolError('invalid bridge invoke timestamp');
   return result;
 }
-const owner = closed({ kind: enumeration('person', 'organization'), subject: boundedId });
-const actor = tagged(
+export const owner = closed({ kind: enumeration('person', 'organization'), subject: boundedId });
+export const actor = tagged(
   {
     human: closed({ kind: enumeration('human'), subject: boundedId }),
     api: closed({
@@ -80,8 +80,8 @@ export function sameTarget(a: BridgeAgentTarget, b: BridgeAgentTarget): boolean 
   );
 }
 const consent = enumeration('use_retained_agent_context');
-const pin = closed({ bridge_id: boundedId, config_revision: configRevision });
-const target = closed({
+export const pin = closed({ bridge_id: boundedId, config_revision: configRevision });
+export const target = closed({
   ids: agentTarget,
   sandbox_created_at: timestamp,
   workspace_created_at: timestamp,

@@ -7,6 +7,7 @@ mod config;
 mod invoke;
 mod mutations;
 mod outbox;
+mod source_controls;
 mod types;
 mod validation;
 mod workspace_cleanup;
@@ -16,6 +17,7 @@ pub use cleanup::*;
 pub use config::*;
 pub use invoke::*;
 pub use outbox::*;
+pub use source_controls::*;
 pub use types::*;
 pub use workspace_cleanup::*;
 

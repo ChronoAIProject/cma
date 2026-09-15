@@ -42,7 +42,11 @@ mod bridges_tests;
 pub use bridges::bridge_router;
 mod bridge_invokes;
 pub use bridge_invokes::bridge_invoke_router;
+mod bridge_source_controls;
+pub use bridge_source_controls::bridge_source_control_router;
 mod bridge_cleanup;
+#[cfg(test)]
+mod bridge_source_controls_tests;
 pub use bridge_cleanup::bridge_cleanup_router;
 mod bridge_outbox;
 pub use bridge_outbox::bridge_outbox_router;

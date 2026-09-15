@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "openapi_operations": 175,
+  "openapi_operations": 177,
   "operations": {
     "GET /api/v1/organizations": {
       "classification": "openapi",
@@ -2517,6 +2517,35 @@
         "bridge_not_found",
         "invalid_bridge_workspace_cleanup",
         "invalid_json",
+        "missing_idempotency_key",
+        "not_authenticated"
+      ]
+    },
+    "GET /api/v1/bridge-invoke-grants/{id}/source-controls": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/bridge_source_controls/mod.rs# Separate per-invoke-grant consent is observed and explicitly admitted with exact revisions; consent does not execute channel controls.",
+      "required_problems": [
+        "bridge_invoke_not_found",
+        "bridge_not_found",
+        "bridge_source_control_unavailable",
+        "invalid_bridge_source_control_request",
+        "not_authenticated"
+      ]
+    },
+    "PUT /api/v1/bridge-invoke-grants/{id}/source-controls": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/bridge_source_controls/mod.rs# Separate per-invoke-grant consent is observed and explicitly admitted with exact revisions; consent does not execute channel controls.",
+      "required_problems": [
+        "bridge_invoke_not_found",
+        "bridge_invoke_revoked",
+        "bridge_not_found",
+        "bridge_source_control_revision_conflict",
+        "bridge_source_control_unavailable",
+        "idempotency_key_reused",
+        "invalid_bridge_source_control_request",
+        "invalid_idempotency_key",
+        "invalid_json",
+        "json_content_type_required",
         "missing_idempotency_key",
         "not_authenticated"
       ]

@@ -11,6 +11,10 @@ export const resourceDispatch: Record<string, Dispatch> = {
     body,
     command,
   }) => client.bridges.requestWorkspaceCleanup(param('id'), param('allocation'), body, command),
+  'GET /api/v1/bridge-invoke-grants/{id}/source-controls': ({ client, param }) =>
+    client.bridges.readSourceControls(param('id')),
+  'PUT /api/v1/bridge-invoke-grants/{id}/source-controls': ({ client, param, body, command }) =>
+    client.bridges.setSourceControls(param('id'), body, command),
   'GET /api/v1/bridges/{id}/allocations': ({ client, param, options }) =>
     client.bridges.listAllocations(param('id'), options),
   'GET /api/v1/bridges/{id}/allocations/{allocation}/child-cleanup': ({ client, param }) =>

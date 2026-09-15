@@ -1,5 +1,6 @@
 //! OpenAPI generation for the currently composed REST boundary.
 
+use utoipa::openapi::security::SecurityRequirement;
 use utoipa::{openapi, OpenApi};
 
 mod identity;
@@ -43,6 +44,8 @@ use super::trigger_openapi_shapes::*;
         super::bridge_invokes::detail,
         super::bridge_invokes::revoke,
         super::bridge_invokes::readiness,
+        super::bridge_source_controls::detail,
+        super::bridge_source_controls::submit,
         super::bridge_cleanup::list,
         super::bridge_cleanup::detail,
         super::bridge_cleanup::submit,
@@ -481,14 +484,8 @@ pub fn document() -> utoipa::openapi::OpenApi {
                 Vec::new()
             } else {
                 vec![
-                    openapi::security::SecurityRequirement::new(
-                        "bearerAuth",
-                        std::iter::empty::<String>(),
-                    ),
-                    openapi::security::SecurityRequirement::new(
-                        "sessionCookie",
-                        std::iter::empty::<String>(),
-                    ),
+                    SecurityRequirement::new("bearerAuth", std::iter::empty::<String>()),
+                    SecurityRequirement::new("sessionCookie", std::iter::empty::<String>()),
                 ]
             });
         }
