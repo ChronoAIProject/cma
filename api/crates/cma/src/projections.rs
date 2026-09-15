@@ -117,6 +117,10 @@ impl AgentProjectionServices {
             context,
         )
         .with_updates(updates);
+        let state = match &self.commands {
+            Some(commands) => state.with_commands(commands.clone()),
+            None => state,
+        };
         layer1_public::agui::router(state.clone())
             .merge(layer1_public::responses::router(state))
             .merge(layer1_public::mcp::router())

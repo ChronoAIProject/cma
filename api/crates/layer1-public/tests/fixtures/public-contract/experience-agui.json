@@ -668,20 +668,26 @@
         }
       },
       "response": {
-        "status": 503,
+        "status": 504,
         "headers": {
-          "content-type": "application/problem+json"
+          "content-type": "application/problem+json",
+          "x-cma-command-id": "cmd_contract_agui_run_runtime_unavailable",
+          "x-cma-response-id": "resp_contract_agui_run_runtime_unavailable"
         },
         "body": {
-          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/instance-service-unavailable",
-          "title": "instance service unavailable",
-          "status": 503,
-          "detail": "An instance dependency could not complete this request.",
-          "code": "instance_service_unavailable"
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent-command-observation-timeout",
+          "title": "agent command observation timeout",
+          "status": 504,
+          "detail": "The admitted command has no observed turn binding yet. Its outcome remains unknown; retry the same input with the retained Idempotency-Key or read its command status.",
+          "code": "agent_command_observation_timeout"
         },
         "bodyKind": "json"
       },
-      "captures": {}
+      "captures": {},
+      "headerCaptures": {
+        "agui_run_runtime_unavailable_command": "x-cma-command-id",
+        "agui_run_runtime_unavailable_response": "x-cma-response-id"
+      }
     },
     {
       "id": "agui-context-missing",

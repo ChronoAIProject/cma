@@ -31,6 +31,15 @@ pub struct CommandStatusView {
     pub failure: Option<CommandFailureCode>,
 }
 
+/// Authorized projection boundaries from the exact admitted command. The
+/// operation cursor distinguishes a control's dispatch from earlier activity
+/// in the same turn, without exposing runtime or credential identities.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommandProjectionView {
+    pub status: CommandStatusView,
+    pub operation_sequence: Option<u64>,
+}
+
 impl CommandStatusView {
     pub(super) fn from_record(record: &AdmittedAgentCommand) -> Self {
         let receipt = &record.receipt;
@@ -85,7 +94,32 @@ impl AgentCommandService {
         if &record.receipt.envelope.command_id != id {
             return Err(CommandLedgerError::Corrupt.into());
         }
-        self.authorized_status(context, credential, record).await
+        self.authorized_record(context, credential, record)
+            .await
+            .map(|record| CommandStatusView::from_record(&record))
+    }
+
+    pub async fn command_projection(
+        &self,
+        context: &CallerContext,
+        credential: Option<&str>,
+        id: &AgentCommandId,
+    ) -> Result<CommandProjectionView, CommandAdmissionError> {
+        let record = bounded(self.store.get_command(id))
+            .await??
+            .ok_or(CommandLedgerError::NotFound)?;
+        if &record.receipt.envelope.command_id != id {
+            return Err(CommandLedgerError::Corrupt.into());
+        }
+        let record = self.authorized_record(context, credential, record).await?;
+        Ok(CommandProjectionView {
+            status: CommandStatusView::from_record(&record),
+            operation_sequence: record
+                .work
+                .dispatch
+                .as_ref()
+                .map(|value| value.operation_sequence),
+        })
     }
 
     pub async fn response_status(
@@ -100,15 +134,17 @@ impl AgentCommandService {
         if record.receipt.response_id.as_ref() != Some(id) {
             return Err(CommandLedgerError::Corrupt.into());
         }
-        self.authorized_status(context, credential, record).await
+        self.authorized_record(context, credential, record)
+            .await
+            .map(|record| CommandStatusView::from_record(&record))
     }
 
-    async fn authorized_status(
+    async fn authorized_record(
         &self,
         context: &CallerContext,
         credential: Option<&str>,
         original: AdmittedAgentCommand,
-    ) -> Result<CommandStatusView, CommandAdmissionError> {
+    ) -> Result<AdmittedAgentCommand, CommandAdmissionError> {
         original.validate()?;
         let target = ResourceTarget::Agent {
             agent_id: original.receipt.envelope.agent_id.clone(),
@@ -148,6 +184,6 @@ impl AgentCommandService {
         {
             return Err(CommandLedgerError::Corrupt.into());
         }
-        Ok(CommandStatusView::from_record(&current))
+        Ok(current)
     }
 }
