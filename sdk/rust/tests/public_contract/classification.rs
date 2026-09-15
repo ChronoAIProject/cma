@@ -13,6 +13,24 @@ pub enum Classification {
 // Exact backend-invalid cases not claimed as typed HTTP replay. Each is checked
 // against its source shape or the SDK's real preflight, then its shared error is decoded.
 pub const LOCAL_CASES: &[(&str, Classification)] = &[
+    ("response-controls-v2-missing-key", Classification::Local),
+    (
+        "response-controls-v2-unknown-body",
+        Classification::TypedShape,
+    ),
+    (
+        "response-controls-v2-invalid-observation",
+        Classification::Local,
+    ),
+    ("response-controls-v2-invalid-json", Classification::RawJson),
+    (
+        "response-controls-v2-observe-query",
+        Classification::QueryShape,
+    ),
+    (
+        "response-controls-v2-status-query",
+        Classification::QueryShape,
+    ),
     (
         "bridge-setup-capabilities-invalid-query",
         Classification::QueryShape,
@@ -915,9 +933,10 @@ pub fn assert_unrepresentable(case: &Case, class: Classification) {
                 "GET /api/v1/conversations/{id}/items" => &["after", "limit"],
                 "GET /api/v1/triggers/{id}/embed" => &["placement_id"],
                 "GET /api/v1/agui/launches/{id}/events" => &["starting_after", "limit", "follow"],
-                "GET /api/v1/responses/{response_id}" | "GET /api/v2/responses/{response_id}" => {
-                    &[]
-                }
+                "GET /api/v1/responses/{response_id}"
+                | "GET /api/v2/responses/{response_id}"
+                | "GET /api/v2/agents/{agent_id}/responses/{response_id}/controls"
+                | "GET /api/v2/commands/{command_id}" => &[],
                 _ => panic!("unclassified query shape {}", case.id),
             };
             assert!(

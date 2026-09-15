@@ -101,6 +101,46 @@ pub struct Capabilities {
     pub companion: String,
     /// Human-readable documentation.
     pub documentation: String,
+    /// Optional response control extension on deployments that support it.
+    pub controls: Option<ControlCapabilities>,
+    /// Optional safe durable command status path.
+    pub command_status: Option<String>,
+}
+/// Discovery of explicitly targeted CMA response controls.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ControlCapabilities {
+    /// Response and Agent scoped endpoint template.
+    pub path: String,
+    /// Observation HTTP method.
+    pub observe: ControlObserveMethod,
+    /// Submission HTTP method.
+    pub submit: ControlSubmitMethod,
+    /// Supported command kinds; runtime/caller permission remains separate.
+    pub commands: Vec<ControlKind>,
+    /// Header carrying the retained idempotency key.
+    pub idempotency_header: String,
+    /// Whether every new intent must supply a key.
+    pub idempotency_required: bool,
+    /// Immutable response-turn binding semantics.
+    pub target: ControlTargetKind,
+    /// What command completion establishes.
+    pub completion: ControlCompletionKind,
+}
+string_enum! { /// Control observation method.
+    pub enum ControlObserveMethod { Get => "GET" }
+}
+string_enum! { /// Control submission method.
+    pub enum ControlSubmitMethod { Post => "POST" }
+}
+string_enum! { /// Control command kind.
+    pub enum ControlKind { Cancel => "cancel", Steer => "steer", ResolveApproval => "resolve_approval" }
+}
+string_enum! { /// Exact control target semantics.
+    pub enum ControlTargetKind { BoundResponseTurn => "bound_response_turn" }
+}
+string_enum! { /// Meaning of completed control status.
+    pub enum ControlCompletionKind { CommandDelivery => "command_delivery" }
 }
 /// CMA replay extension discovery.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]

@@ -33,9 +33,12 @@ provisioning remain separate capabilities under development.
 | `GET /api/v2/responses/{response_id}/events` | CMA extension: replay and follow deterministic durable Responses events |
 | `GET /api/v2/conversations/{conversation_id}` | Read the existing Agent as a conversation, with empty metadata |
 | `GET /api/v2/conversations/{conversation_id}/items` | Read standard user/assistant message items under current history authority |
+| `GET /api/v2/agents/{agent_id}/responses/{response_id}/controls` | CMA extension: observe the bound response turn, Agent revision and runtime control support |
+| `POST /api/v2/agents/{agent_id}/responses/{response_id}/controls` | CMA extension: durably request cancellation, steering or approval resolution for that exact turn |
+| `GET /api/v2/commands/{command_id}` | CMA extension: poll a safe durable command receipt and delivery state |
 
 Creating conversations, stateless Agent auto-creation, response deletion and
-response cancellation are outside v2. Select an existing Agent using CMA's
+the standard OpenAI cancellation endpoint are outside v2. Select an existing Agent using CMA's
 resource APIs. A conversation ID can be a string or `{ "id": "agt_..." }`.
 The model pinned in the Agent Profile remains authoritative.
 
@@ -105,6 +108,60 @@ key/resource conflicts 409; full queues 429; unavailable authority/storage 503.
 authentication/dependency failures and limits retain the shared REST problem
 envelope; both CMA SDKs accept both error shapes. After headers, a connection error instructs
 the client to retrieve/reconnect; only durable execution failures emit `response.failed`.
+
+### CMA response controls
+
+Observe `/api/v2/agents/{agent_id}/responses/{response_id}/controls` before forming
+a new control intent. The response contains the safe source command view,
+`agent_revision`, optional `target` (`response_id` and `turn_sequence`),
+`target_active`, and `runtime_support` booleans for `cancel`, `steer` and
+`resolve_approval`. A queued response has `target: null`; these controls require
+a turn already bound by durable dispatch. Runtime support describes an observation,
+not the caller's permission or a guarantee that an approval remains pending.
+
+POST to the same path with exactly one retained `Idempotency-Key` and strict JSON:
+
+```json
+{
+  "turn_sequence": 42,
+  "expected_agent_revision": 17,
+  "command": { "type": "cancel" }
+}
+```
+
+Use the observed Agent aggregate revision, not the nested Agent Profile revision.
+Other commands are `{ "type": "steer", "text": "Check this first" }` and
+`{ "type": "resolve_approval", "approval_id": "approval_...", "decision": "allow" }`;
+approval decisions are `allow`, `deny` or `abort`. Only the current pending approval
+on the selected turn can be resolved. Unknown/duplicate body fields, caller-supplied
+authority fields and unsupported command shapes are refused. Cancel/steer require
+current `operate_agent`, approvals require `resolve_approval`, and all mutations
+require the caller's current credential custody. History access permits observation
+and command polling without granting control authority.
+
+A `202` body has object `cma.response.control`, the safe `control` command view,
+the immutable `target`, and the originally submitted `expected_agent_revision`.
+The control receipt's own `response_id` is null. Poll its `command_id` through
+`GET /api/v2/commands/{command_id}`. Queued, waiting, delivery-uncertain, failed
+and completed command states remain distinct. **Completed control means delivered;
+it does not establish that the target response was cancelled.** Observe the target
+response's own durable outcome for cancellation confirmation. Neither disconnect
+nor aborting a local stream reader is a cancellation request.
+
+After an uncertain admission, repeat the original key and immutable JSON body,
+including the old revision and turn. Exact recovery precedes active-target/runtime
+support checks and returns the original receipt even after a newer turn starts,
+subject to fresh authorization. Changing target, revision or command content with
+that key returns `409 agent_command_key_conflict`. A new stale intent returns
+`409 response_control_conflict`; an observed unsupported runtime operation returns
+`422 capability_unsupported`. Capability loss during a later race remains a conflict
+or existing durable execution failure. Preserve the old intent until its admission
+is recovered; do not silently issue a fresh key against a newer turn.
+
+These are authenticated human/API controls. Verified platform-sender controls,
+queued-response cancellation, SDK convenience methods and the web v2 transport
+are separate followups. Existing v1 controls and standard Responses events retain
+their established contracts.
 
 ```python
 from openai import OpenAI

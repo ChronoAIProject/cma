@@ -302,7 +302,9 @@ pub fn wire(case: &Case) -> Expected {
         && (case.operation.ends_with("/events") || case.operation.ends_with("/run"))
         || case.operation == "POST /api/v1/responses"
         || case.operation.contains("/api/v2")
-            && (case.operation.starts_with("POST ") || case.operation.ends_with("/events"));
+            && (case.operation == "POST /api/v2/responses"
+                || case.operation == "POST /api/v2/agents/{agent_id}/responses"
+                || case.operation.ends_with("/events"));
     let mut request_headers = headers(
         false,
         if stream {
@@ -313,7 +315,12 @@ pub fn wire(case: &Case) -> Expected {
             "application/json"
         },
     );
-    request_headers.extend(case.request.headers.clone());
+    request_headers.extend(
+        case.request
+            .headers
+            .iter()
+            .map(|(name, value)| (name.to_ascii_lowercase(), value.clone())),
+    );
     let response = if case.response.body_kind == "sse" {
         case.response
             .body

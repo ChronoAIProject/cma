@@ -16,6 +16,9 @@ mod status_fences;
 #[path = "command_execution_tests.rs"]
 mod execution;
 
+#[path = "targeted_control_tests.rs"]
+mod targeted_controls;
+
 fn context(subject: &str) -> CallerContext {
     CallerContext {
         caller: caller(subject, true),

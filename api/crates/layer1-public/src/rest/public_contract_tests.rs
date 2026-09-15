@@ -24,6 +24,7 @@ mod invoke_cases;
 mod outbox_cases;
 mod provenance_cases;
 mod replay;
+mod response_control_cases;
 mod responses_v2_cases;
 mod sandbox_command_cases;
 mod sandbox_inventory_cases;
@@ -123,6 +124,9 @@ fn paths() -> Vec<PathBuf> {
 }
 
 async fn scenario(name: &str) -> Scenario {
+    if let Some(scenario) = response_control_cases::scenario(name).await {
+        return scenario;
+    }
     if let Some(scenario) = outbox_cases::scenario(name).await {
         return scenario;
     }

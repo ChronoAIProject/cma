@@ -349,7 +349,8 @@ reserving or dispatching again. A pending/expired older operation with no common
 receipt remains fenced with its named idempotency error. Changing its key is not
 a recovery operation. Admission uncertainty is never stored as a final failed
 receipt that would hide accepted work. This migration does not change v1
-Responses/AG-UI parsing or claim response-targeted control endpoints.
+Responses/AG-UI parsing. Response-targeted controls use the separate v2 contract
+documented in [Responses](API_Responses.md#cma-response-controls).
 
 The personal-owner Agent detail includes its Sandbox, Workspace, Worktree, profile, status
 and first-message information, not an aggregate revision field. Transcript returns `{ agent_id,
@@ -774,6 +775,9 @@ above applies even when an operation annotates only its principal responses.
 | `GET /api/v2/responses/{response_id}/events` | - | starting_after | 200 SSE |
 | `GET /api/v2/conversations/{conversation_id}` | - | - | 200 Conversation |
 | `GET /api/v2/conversations/{conversation_id}/items` | - | after, before, limit, order | 200 JSON items |
+| `GET /api/v2/agents/{agent_id}/responses/{response_id}/controls` | - | - | 200 V2ResponseControls |
+| `POST /api/v2/agents/{agent_id}/responses/{response_id}/controls` | V2ResponseControlRequest / required Idempotency-Key | - | 202 V2ResponseControl |
+| `GET /api/v2/commands/{command_id}` | - | - | 200 V2CommandStatus |
 | `POST /api/v1/responses` | CreateResponseRequest | - | 200 SSE |
 | `GET /api/v1/responses/{response_id}` | - | - | 200 ResponseObject |
 | `DELETE /api/v1/responses/{response_id}` | - | - | 422 ProblemDocument |

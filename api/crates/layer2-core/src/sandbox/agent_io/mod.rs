@@ -26,6 +26,7 @@ mod response_read;
 mod revival_authority;
 mod service;
 mod status;
+mod targeted_control;
 mod work;
 mod worker;
 mod worker_store;
@@ -68,6 +69,11 @@ pub use reservation_policy::validate_command_reservation_policy;
 pub use response_read::AgentResponseReading;
 pub use revival_authority::CommandRevivalAuthorization;
 pub use status::{CommandReceiptView, CommandStatusView};
+pub use targeted_control::{
+    AdmittedTargetedControl, ResponseControlObservation, ResponseControlRuntimeSupport,
+    TargetedControlBinding, TargetedControlError, TargetedControlReservation,
+    TargetedControlStatusView, TargetedControlSubmission, TargetedResponse,
+};
 pub use work::{
     CommandClaim, CommandClaimRequest, CommandDispatch, CommandFailure, CommandFailureCode,
     CommandLease, CommandObservation, CommandWorkState,

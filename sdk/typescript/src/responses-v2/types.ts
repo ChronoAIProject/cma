@@ -1,3 +1,4 @@
+import { ProtocolError } from '../errors.js';
 import {
   array,
   boolean,
@@ -5,6 +6,7 @@ import {
   integer,
   nullable,
   object,
+  optional,
   tagged,
   text,
   variant,
@@ -110,6 +112,22 @@ export const v2Capabilities = object({
   output: object({ standard_items: array(text), text_deltas: text, tools: text }),
   companion: text,
   documentation: text,
+  controls: optional(
+    object({
+      path: text,
+      observe: enumeration('GET'),
+      submit: enumeration('POST'),
+      commands: array(enumeration('cancel', 'steer', 'resolve_approval')),
+      idempotency_header: enumeration('Idempotency-Key'),
+      idempotency_required: (value) => {
+        if (value !== true) throw new ProtocolError('response controls require idempotency');
+        return true as const;
+      },
+      target: enumeration('bound_response_turn'),
+      completion: enumeration('command_delivery'),
+    }),
+  ),
+  command_status: optional(text),
 });
 export type V2Capabilities = Output<typeof v2Capabilities>;
 export interface V2ResponseInput {
