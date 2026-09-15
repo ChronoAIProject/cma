@@ -68,6 +68,11 @@ impl BridgeStore for MemoryBridgeStore {
         if let Some(receipt) = state.receipts.get(&write.receipt().id) {
             return match_bridge_replay(receipt, write.receipt());
         }
+        // This standalone test adapter has no common grant/resource transaction.
+        // It cannot promise an atomic fixed-target enable fence.
+        if write.enable_grant().is_some() {
+            return Err(BridgeError::Unavailable);
+        }
         let current = state.records.get(&write.record().id);
         if current.map_or(0, |r| r.revision) != write.expected_revision()
             || current.is_some_and(|r| r.owner != write.record().owner)

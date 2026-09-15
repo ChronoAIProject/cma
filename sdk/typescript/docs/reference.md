@@ -2,6 +2,12 @@
 
 <!-- nav: 11 Reference -->
 
+`bridges` exposes `list`, `read`, `choices`, `configuration`, `create`, `update`,
+`control`, `validate`, `importKey` and `revokeKey` for bridge setup. Its explicit
+consent methods are `listInvokeGrants`, `readInvokeGrant`, `invokeReadiness`,
+`issueInvokeGrant` and `revokeInvokeGrant`. See [Bridge setup](bridges.md) for
+exact target consent, current authority, revision and cancellation semantics.
+
 `createClient(config)` returns a `Cma` with the following public resources:
 
 | Resource                                                | Methods                                                                                                                                                                                                                                           |

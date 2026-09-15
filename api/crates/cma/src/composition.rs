@@ -36,12 +36,14 @@ use crate::{
 
 pub(crate) struct ControlPlaneComposition {
     pub router: Router,
-    /// Durable definitions and readonly provider verification. Public management
-    /// routes follow once selected-key custody is implemented.
     #[allow(dead_code)]
     pub bridge_definitions: layer2_core::bridge::BridgeService,
-    #[allow(dead_code)] // Public bridge setup routes compose this custodian next.
+    #[allow(dead_code)]
     pub bridge_credentials: Option<Arc<crate::bridge::ManagedBridgeCredentials>>,
+    #[allow(dead_code)] // Trusted channel admission consumes these retained services next.
+    pub bridge_invokes: layer2_core::bridge::invoke::BridgeInvokeService,
+    #[allow(dead_code)]
+    pub bridge_allocations: Arc<crate::store::MongoBridgeAllocationStore>,
     pub launch_scheduler: super::trigger::LaunchScheduler,
     pub provenance_backfill: crate::sandbox::AgentProvenanceBackfill,
     pub command_scheduler: super::commands::CommandScheduler,
@@ -353,7 +355,16 @@ impl ControlPlaneComposition {
             stores.sandbox_model.clone(),
             resource_access.clone(),
         );
+        let bridge = crate::bridge::composition::BridgeComposition::build(
+            config,
+            &stores,
+            bridge_definitions.clone(),
+            bridge_credentials.clone(),
+            resource_access.clone(),
+        )
+        .await?;
         let resource_routes = profiles_router(profiles)
+            .merge(bridge.management)
             .merge(layer1_public::rest::agent_artifacts_router(
                 layer2_core::sandbox::agent_artifacts::AgentArtifactService::new(
                     stores.sandbox_model.clone(),
@@ -403,6 +414,7 @@ impl ControlPlaneComposition {
             crate::sandbox::AgentProvenanceBackfill::new(stores.sandbox_model.clone());
         let router = Router::new()
             .merge(public)
+            .merge(bridge.callbacks)
             .merge(crate::health::router(stores))
             .layer(axum::middleware::from_fn_with_state(
                 limits,
@@ -414,6 +426,8 @@ impl ControlPlaneComposition {
             router,
             bridge_definitions,
             bridge_credentials,
+            bridge_invokes: bridge.invokes,
+            bridge_allocations: bridge.allocations,
             provenance_backfill,
             launch_scheduler,
             command_scheduler,

@@ -22,12 +22,14 @@ import { Responses } from './responses.js';
 import { UnsupportedInterfaces } from './unsupported.js';
 import { ProfileAuthoring } from './profile-authoring/index.js';
 import { ResourceAccess } from './resource-access.js';
+import { Bridges } from './bridges.js';
 
 /** A configured client for the public CMA resource and discovery APIs. */
 export class Cma {
   readonly #config: ResolvedConfig;
   readonly agents: Agents;
   readonly resourceAccess: ResourceAccess;
+  readonly bridges: Bridges;
   readonly sandboxes: Sandboxes;
   readonly workspaces: Workspaces;
   readonly worktrees: Worktrees;
@@ -54,6 +56,7 @@ export class Cma {
     this.#config = resolveConfig(config);
     this.agents = new Agents(this.#config);
     this.resourceAccess = new ResourceAccess(this.#config);
+    this.bridges = new Bridges(this.#config);
     this.sandboxes = new Sandboxes(this.#config);
     this.workspaces = new Workspaces(this.#config);
     this.worktrees = new Worktrees(this.#config);

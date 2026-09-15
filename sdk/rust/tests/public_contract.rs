@@ -1,3 +1,5 @@
+#[path = "public_contract/bridges.rs"]
+mod bridges;
 #[path = "public_contract/context.rs"]
 mod context;
 #[path = "public_contract/experience.rs"]
@@ -18,7 +20,12 @@ use context::{Case, Context};
 
 async fn dispatch(c: &Context<'_>) -> Result<()> {
     let op = c.case.operation.as_str();
-    if op.contains("/api/v2") {
+    if op.contains("/bridges")
+        || op.contains("/bridge-connectors")
+        || op.contains("/bridge-invoke-grants")
+    {
+        bridges::dispatch(c).await
+    } else if op.contains("/api/v2") {
         responses_v2::dispatch(c).await
     } else if op.contains("/admin/")
         || op.contains("/profile-authoring/")

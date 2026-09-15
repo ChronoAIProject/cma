@@ -3,6 +3,41 @@ import type { AgentProvenanceInventoryOptions } from '../../src/agents.js';
 import type { AccessibleSandboxListOptions } from '../../src/sandboxes.js';
 
 export const resourceDispatch: Record<string, Dispatch> = {
+  'GET /api/v1/bridges/{id}/invoke-grants': ({ client, param, options }) =>
+    client.bridges.listInvokeGrants(param('id'), options),
+  'GET /api/v1/bridges/{id}/invoke-readiness': ({ client, param }) =>
+    client.bridges.invokeReadiness(param('id')),
+  'GET /api/v1/bridge-invoke-grants/{id}': ({ client, param }) =>
+    client.bridges.readInvokeGrant(param('id')),
+  'POST /api/v1/bridges/{id}/invoke-grants': ({ client, param, body, command }) =>
+    client.bridges.issueInvokeGrant(param('id'), body, command),
+  'POST /api/v1/bridge-invoke-grants/{id}/revoke': ({ client, param, body, command }) =>
+    client.bridges.revokeInvokeGrant(param('id'), body, command),
+  'GET /api/v1/bridge-connectors': ({ client, options }) => client.bridges.choices(options),
+  'GET /api/v1/bridges': ({ client, options }) => client.bridges.list(options),
+  'GET /api/v1/bridges/{id}': ({ client, param }) => client.bridges.read(param('id')),
+  'POST /api/v1/bridges': ({ client, body, command }) => client.bridges.create(body, command),
+  'GET /api/v1/bridges/{id}/configuration': ({ client, param }) =>
+    client.bridges.configuration(param('id')),
+  'PUT /api/v1/bridges/{id}/configuration': ({ client, param, body, command }) =>
+    client.bridges.update(param('id'), body, command),
+  'POST /api/v1/bridges/{id}/commands': ({ client, param, body, command }) =>
+    client.bridges.control(param('id'), body, command),
+  'POST /api/v1/bridges/{id}/validate': ({ client, param, body }) =>
+    client.bridges.validate(param('id'), (body as { expected_revision: number }).expected_revision),
+  'PUT /api/v1/bridges/{id}/credential': ({ client, param, body }) => {
+    const request = body as { expected_revision: number; key: string };
+    return client.bridges.importKey(param('id'), request.expected_revision, request.key);
+  },
+  'POST /api/v1/bridges/{id}/credential/revoke': ({ client, param, body, command }) => {
+    const request = body as { expected_revision: number; expected_custody_revision: number };
+    return client.bridges.revokeKey(
+      param('id'),
+      request.expected_revision,
+      request.expected_custody_revision,
+      command,
+    );
+  },
   'GET /api/v1/agents/{id}/channel-usage': ({ client, param }) =>
     client.agents.channelUsage(param('id')),
   'GET /api/v1/agents/{id}/channel-usage/history': ({ client, param, options }) =>

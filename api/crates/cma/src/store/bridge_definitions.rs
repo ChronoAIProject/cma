@@ -23,10 +23,11 @@ use super::schema::initialize_collections;
 
 #[derive(Clone)]
 pub struct MongoBridgeStore {
-    client: Client,
-    definitions: Collection<Document>,
+    pub(super) client: Client,
+    pub(super) definitions: Collection<Document>,
     receipts: Collection<Document>,
-    credentials: Arc<super::MongoBridgeCredentialStore>,
+    pub(super) credentials: Arc<super::MongoBridgeCredentialStore>,
+    pub(super) invoke_resources: Arc<std::sync::OnceLock<Arc<super::MongoSandboxStore>>>,
 }
 
 impl MongoBridgeStore {
@@ -50,6 +51,7 @@ impl MongoBridgeStore {
             credentials: Arc::new(
                 super::MongoBridgeCredentialStore::open(client, name, deployment, key).await?,
             ),
+            invoke_resources: Arc::new(std::sync::OnceLock::new()),
         };
         store
             .definitions
@@ -105,6 +107,15 @@ impl MongoBridgeStore {
             self.credentials
                 .require_binding(write.record(), pin, session)
                 .await?;
+        }
+        if let Some(proof) = write.enable_grant() {
+            super::bridge_invokes::fence_enable(
+                self,
+                proof,
+                current.as_ref().ok_or(BridgeError::Conflict)?,
+                session,
+            )
+            .await?;
         }
         let document = encode_bridge(write.record())?;
         if current.is_some() {

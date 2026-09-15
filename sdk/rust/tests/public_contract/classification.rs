@@ -13,6 +13,52 @@ pub enum Classification {
 // Exact backend-invalid cases not claimed as typed HTTP replay. Each is checked
 // against its source shape or the SDK's real preflight, then its shared error is decoded.
 pub const LOCAL_CASES: &[(&str, Classification)] = &[
+    ("bridge-invoke-issue-missing-key", Classification::Local),
+    ("bridge-invoke-revoke-missing-key", Classification::Local),
+    ("bridge-invoke-list-invalid-limit", Classification::Local),
+    ("bridge-invoke-list-invalid-cursor", Classification::Local),
+    ("bridge-invoke-detail-invalid-id", Classification::Local),
+    (
+        "bridge-invoke-issue-unknown-field",
+        Classification::TypedShape,
+    ),
+    (
+        "bridge-invoke-revoke-unknown-field",
+        Classification::TypedShape,
+    ),
+    (
+        "bridge-invoke-issue-missing-consent",
+        Classification::TypedShape,
+    ),
+    ("bridge-setup-list-zero-limit", Classification::Local),
+    (
+        "bridge-setup-list-unknown-query",
+        Classification::QueryShape,
+    ),
+    ("bridge-setup-create-missing-key", Classification::Local),
+    ("bridge-setup-update-missing-key", Classification::Local),
+    ("bridge-setup-control-missing-key", Classification::Local),
+    ("bridge-setup-revoke-missing-key", Classification::Local),
+    (
+        "bridge-setup-create-injected-issuer",
+        Classification::TypedShape,
+    ),
+    (
+        "bridge-setup-create-injected-base_url",
+        Classification::TypedShape,
+    ),
+    (
+        "bridge-setup-create-injected-custody",
+        Classification::TypedShape,
+    ),
+    (
+        "bridge-setup-create-injected-callback_url",
+        Classification::TypedShape,
+    ),
+    (
+        "bridge-setup-create-incompatible-context",
+        Classification::Local,
+    ),
     (
         "channel-inventory-invalid-active",
         Classification::TypedShape,
@@ -830,6 +876,7 @@ pub fn assert_unrepresentable(case: &Case, class: Classification) {
                 return;
             }
             let allowed: &[&str] = match case.operation.as_str() {
+                "GET /api/v1/bridges" => &["organization", "cursor", "limit"],
                 "GET /api/v1/agents/provenance" => &[
                     "organization",
                     "sandbox",

@@ -11,6 +11,7 @@ use serde_json::Value;
 mod agent_cases;
 mod artifact_cases;
 mod authoring_cases;
+mod bridge_cases;
 mod channel_usage_cases;
 mod creation_inventory_cases;
 mod credential_cases;
@@ -19,6 +20,7 @@ mod experience_cases;
 mod fault_cases;
 mod inventory;
 mod inventory_cases;
+mod invoke_cases;
 mod provenance_cases;
 mod replay;
 mod responses_v2_cases;
@@ -120,6 +122,12 @@ fn paths() -> Vec<PathBuf> {
 }
 
 async fn scenario(name: &str) -> Scenario {
+    if let Some(scenario) = invoke_cases::scenario(name).await {
+        return scenario;
+    }
+    if let Some(scenario) = bridge_cases::scenario(name).await {
+        return scenario;
+    }
     if let Some(scenario) = channel_usage_cases::scenario(name).await {
         return scenario;
     }

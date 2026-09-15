@@ -12,6 +12,8 @@ use zeroize::Zeroizing;
 use super::types::*;
 use crate::auth::persistence::SecretValue;
 
+mod setup;
+
 const MAX_BYTES: usize = 1_048_576;
 const MAX_ROWS: usize = 1_000;
 const DEADLINE: Duration = Duration::from_secs(5);
