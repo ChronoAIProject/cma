@@ -64,6 +64,13 @@ impl AgentCommandStore for MongoSandboxStore {
         targeted_control::run(self, request, false).await
     }
 
+    async fn inspect_targeted_control(
+        &self,
+        request: layer2_core::sandbox::agent_io::TargetedControlReservation,
+    ) -> Result<layer2_core::sandbox::agent_io::TargetedControlInspection, CommandLedgerError> {
+        targeted_control::inspect(self, request).await
+    }
+
     async fn get_admitted_command(
         &self,
         scope: &str,

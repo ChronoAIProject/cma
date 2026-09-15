@@ -158,10 +158,14 @@ cannot establish cancellation: read the selected source response status for its
 actual `Cancelled`, `Completed` or `Failed` outcome. Finishing normally before
 cancellation takes effect is a valid race.
 
-The server distinguishes `response_control_conflict` for a stale new intent,
-`agent_command_key_conflict` for changed intent with an old key and
-`capability_unsupported` for an unsupported runtime operation. Recover an
-uncertain old admission before deciding whether a new intent is needed. Optional
+Inspect the ordinary API error's `code`: `response_control_not_admitted` proves
+that the original scope/key has no receipt and its submitted revision is permanently
+stale in the same Agent incarnation. Discard that pending intent, observe again,
+and require a new explicit action before submitting another control.
+`response_control_conflict` remains uncertain even on the first client call;
+retain the original key and body for recovery. `agent_command_key_conflict` means
+the key was reused for changed intent; `capability_unsupported` means the observed
+runtime cannot perform the command. Optional
 discovery fields `controls` and `command_status` identify this extension while
 older discovery remains readable. Standard Responses cancellation, cancellation
 before turn dispatch and verified platform-sender controls are separate contracts.

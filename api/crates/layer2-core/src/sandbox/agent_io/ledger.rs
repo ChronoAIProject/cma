@@ -133,6 +133,18 @@ pub trait AgentCommandStore: Send + Sync {
         Err(CommandLedgerError::Unavailable)
     }
 
+    /// Recover an existing receipt, or prove an absent original intent is stale.
+    /// Older stores retain lookup semantics and cannot manufacture refusal proof.
+    async fn inspect_targeted_control(
+        &self,
+        request: super::TargetedControlReservation,
+    ) -> Result<super::TargetedControlInspection, CommandLedgerError> {
+        Ok(match self.lookup_targeted_control(request).await? {
+            Some(existing) => super::TargetedControlInspection::Existing(Box::new(existing)),
+            None => super::TargetedControlInspection::Missing,
+        })
+    }
+
     /// Read the permanent scope/key index without reserving, changing queue
     /// order or creating a receipt. Unsupported older compositions fail closed.
     async fn get_admitted_command(

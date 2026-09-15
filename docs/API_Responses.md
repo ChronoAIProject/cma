@@ -152,11 +152,22 @@ After an uncertain admission, repeat the original key and immutable JSON body,
 including the old revision and turn. Exact recovery precedes active-target/runtime
 support checks and returns the original receipt even after a newer turn starts,
 subject to fresh authorization. Changing target, revision or command content with
-that key returns `409 agent_command_key_conflict`. A new stale intent returns
-`409 response_control_conflict`; an observed unsupported runtime operation returns
-`422 capability_unsupported`. Capability loss during a later race remains a conflict
-or existing durable execution failure. Preserve the old intent until its admission
-is recovered; do not silently issue a fresh key against a newer turn.
+that key returns `409 agent_command_key_conflict`.
+
+`409 response_control_not_admitted` proves that no receipt exists for the original
+scope/key and that its submitted Agent revision is permanently stale in the same
+Agent incarnation. The server verifies the original bound source and commits fresh
+Agent/parent authority fences before returning this outcome. A concurrent earlier
+admission must either remain recoverable or conflict with those fences. This code
+allows the client to discard that pending intent, observe again and ask for a new
+explicit action. Equal/future revisions, missing or invalid source provenance,
+authority races and unknown commits cannot establish that proof.
+
+`409 response_control_conflict` remains uncertain even on the first client call;
+preserve the original key and body for recovery. An observed unsupported runtime
+operation returns `422 capability_unsupported`. Capability loss during a later
+race remains a conflict or existing durable execution failure. Never silently
+issue a fresh key against a newer turn.
 
 These are authenticated human/API controls. Verified platform-sender controls,
 queued-response cancellation, SDK convenience methods and the web v2 transport

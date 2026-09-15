@@ -81,7 +81,8 @@ impl TargetedControlReservation {
         Ok(AdmittedTargetedControl { record, binding })
     }
 
-    pub fn validate_target(
+    /// Verify the original bound source without requiring a still-active turn.
+    pub fn validate_source(
         &self,
         agent: &Agent,
         response: &AdmittedAgentCommand,
@@ -105,12 +106,24 @@ impl TargetedControlReservation {
         if !matches!(
             response.receipt.envelope.command,
             AgentCommand::Message { .. }
-        ) || response.status.is_terminal()
-            || response
-                .work
-                .dispatch
-                .as_ref()
-                .is_none_or(|dispatch| dispatch.turn_sequence != self.target.turn_sequence)
+        ) || response
+            .work
+            .dispatch
+            .as_ref()
+            .is_none_or(|dispatch| dispatch.turn_sequence != self.target.turn_sequence)
+        {
+            return Err(CommandLedgerError::NotAdmissible);
+        }
+        Ok(())
+    }
+
+    pub fn validate_target(
+        &self,
+        agent: &Agent,
+        response: &AdmittedAgentCommand,
+    ) -> Result<(), CommandLedgerError> {
+        self.validate_source(agent, response)?;
+        if response.status.is_terminal()
             || agent.conversation.active_turn != Some(self.target.turn_sequence)
         {
             return Err(CommandLedgerError::NotAdmissible);
