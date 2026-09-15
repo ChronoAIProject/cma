@@ -262,6 +262,7 @@ use super::trigger_openapi_shapes::*;
         LaunchConsentSurfaceValue,
         LaunchConfirmationView,
         LaunchView,
+        LaunchFirstMessageCommandView,
         LaunchPageView,
         LaunchEventPageView,
         ServiceConnectionStateValue,

@@ -143,13 +143,37 @@ fn unavailable(error: impl std::fmt::Display) -> SandboxStoreError {
 pub(in crate::store) fn require_launch_binding(
     launch: &layer2_core::trigger_domain::Launch,
     actual: Option<&Document>,
-) -> Result<(), SandboxStoreError> {
+) -> Result<Option<layer2_core::trigger_domain::LaunchFirstMessageCommand>, SandboxStoreError> {
     let binding = actual.map(read).transpose()?;
     match binding {
-        Some(binding) => binding
-            .require_launch(launch)
-            .map_err(|error| SandboxStoreError::Corrupt(error.to_string())),
-        None if launch.input_binding_sha256.is_none() => Ok(()),
+        Some(binding) => {
+            binding
+                .require_launch(launch)
+                .map_err(|error| SandboxStoreError::Corrupt(error.to_string()))?;
+            let receipt = binding.receipt();
+            receipt
+                .validate_integrity()
+                .map_err(|error| SandboxStoreError::Corrupt(error.to_string()))?;
+            if receipt.envelope.owner
+                != (layer2_core::resource_access::ResourceOwner::Person {
+                    subject: launch.owner.clone(),
+                })
+            {
+                return Err(SandboxStoreError::Corrupt(
+                    "Trigger command owner differs".into(),
+                ));
+            }
+            Ok(Some(
+                layer2_core::trigger_domain::LaunchFirstMessageCommand {
+                    agent_id: receipt.envelope.agent_id.clone(),
+                    command_id: receipt.envelope.command_id.clone(),
+                    response_id: receipt.response_id.clone().ok_or_else(|| {
+                        SandboxStoreError::Corrupt("Trigger command has no response".into())
+                    })?,
+                },
+            ))
+        }
+        None if launch.input_binding_sha256.is_none() => Ok(None),
         None => Err(SandboxStoreError::Corrupt(
             "Launch command binding is missing".into(),
         )),
