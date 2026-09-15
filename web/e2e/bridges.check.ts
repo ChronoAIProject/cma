@@ -43,7 +43,7 @@ test('LOCAL bridge setup preserves edits, shows exact connection failures and li
           candidate: null,
         },
       });
-    if (url.pathname.endsWith('/invoke-grants'))
+    if (url.pathname.endsWith('/invoke-grants') || url.pathname.endsWith('/deliveries'))
       return route.fulfill({ json: { items: [], next_cursor: null } });
     if (url.pathname === '/api/v1/bridges')
       return route.fulfill({ json: { items: [{ ...detail.bridge, can_manage: manager }] } });
@@ -77,7 +77,9 @@ test('LOCAL bridge setup preserves edits, shows exact connection failures and li
   await expect(page.getByRole('heading', { name: detail.bridge.display_name })).toBeVisible();
   await expect(page.getByText(detail.callback_url, { exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Validate connection', exact: true }).click();
-  await expect(page.getByRole('alert')).toContainText('scoped credentials that CMA can renew');
+  await expect(page.getByRole('alert')).toContainText(
+    'permission to use your NyxID connection for 30 days',
+  );
   await expect(page.getByRole('button', { name: 'Enable bridge', exact: true })).toBeDisabled();
   const keyInput = page.getByLabel('Import selected Agent key', { exact: true });
   await keyInput.fill('NEVER_RENDER_LOCAL_KEY');

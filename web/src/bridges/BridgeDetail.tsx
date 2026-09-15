@@ -5,11 +5,13 @@ import { ResourceLink } from '../resources/ResourceLink';
 import { Button } from '../ui/Button';
 import { BridgeManager } from './BridgeManager';
 import { BridgeDeliveries } from './BridgeDeliveries';
+import { BridgeAllocations } from './BridgeAllocations';
 
 export function BridgeDetail({
   client,
   id,
   onNavigate,
+  viewerId,
 }: BridgePageProps & { readonly id: string }) {
   const read = useMemo(
     () => async (signal: AbortSignal) => ({ value: await client.bridges.read(id, { signal }) }),
@@ -48,6 +50,18 @@ export function BridgeDetail({
           id={id}
           allowed={bridge?.can_manage === true}
           onChanged={current.reload}
+        />
+        <BridgeAllocations
+          client={client}
+          viewerId={viewerId}
+          id={id}
+          ownerScope={
+            bridge === undefined ? undefined : `${bridge.owner.kind}:${bridge.owner.subject}`
+          }
+          revision={bridge?.revision}
+          allowed={bridge?.can_manage === true}
+          onNavigate={onNavigate}
+          onAccessChanged={current.reload}
         />
         {bridge === undefined ? null : (
           <BridgeDeliveries
