@@ -55,6 +55,17 @@ impl AuthState {
             }
             _ => return Err(CommandAuthorizationError::Revoked),
         };
+        self.retained_actor_state(subject, &envelope.authorization)
+            .await
+    }
+
+    /// The exact admitted human/API sign-in is independent of the kind of
+    /// resource command. This helper never invents an Agent or owner caller.
+    pub(super) async fn retained_actor_state(
+        &self,
+        subject: &layer2_core::SubjectId,
+        authorization: &AgentAuthorizationRevision,
+    ) -> Result<SubjectAuthState, CommandAuthorizationError> {
         let mut state = self
             .store
             .subject(subject)
@@ -62,7 +73,7 @@ impl AuthState {
             .map_err(|_| CommandAuthorizationError::Unavailable)?
             .ok_or(CommandAuthorizationError::Revoked)?;
         if state.subject != *subject
-            || self.command_authority_revision(&state)? != envelope.authorization
+            || &self.command_authority_revision(&state)? != authorization
             || state.tokens.as_ref().is_some_and(|tokens| {
                 !crate::auth::bearer::permits_personal_authority(tokens.access_token.expose())
             })
@@ -73,9 +84,7 @@ impl AuthState {
             .await
             .map_err(|_| CommandAuthorizationError::Unavailable)?;
         // A refresh can lose its CAS to a different sign-in.
-        if state.subject != *subject
-            || self.command_authority_revision(&state)? != envelope.authorization
-        {
+        if state.subject != *subject || &self.command_authority_revision(&state)? != authorization {
             return Err(CommandAuthorizationError::Revoked);
         }
         Ok(state)

@@ -64,6 +64,7 @@ mod resource_access;
 mod sandbox_admission;
 #[cfg(test)]
 mod sandbox_admission_mongo_integration_tests;
+mod sandbox_controls;
 mod sandbox_credentials;
 mod sandbox_events;
 mod sandbox_maintenance;

@@ -393,3 +393,55 @@ evidence and root incarnation binding. Six real disposable Mongo cases cover
 replica/reopen recovery, CAS races, audit-insertion rollback, unsafe interaction,
 corrupt ownership projections and actual lost commit acknowledgment. These are
 store contracts, not evidence of recipient history, interaction or stream revocation.
+
+## Explicit Sandbox control ledger
+
+`layer2-core::sandbox::control` adds durable `pause`, `revive`, and `retire`
+intents. The service, memory/Mongo stores, worker, and production authentication
+adapter are implemented. The public receipt routes, SDK methods, scheduler
+composition, and shared UI controls are not yet connected. Existing personal
+lifecycle endpoints retain their contracts.
+
+Admission requires an idempotency key and the expected Sandbox revision. The
+service captures the actual authenticated human/API actor, exact sign-in
+incarnation, explicit resource owner, Sandbox creation timestamp, and current
+resource authorization audit. The additive `sandbox_controls` collection keeps
+these records out of retained Sandbox/Agent serialization. One queued command
+per Sandbox is allowed, and commands expire after five minutes. The key namespace
+includes actor, stable credential-authority ID, Sandbox ID, and command kind;
+credential-policy revisions do not create a new retry namespace. A replay checks
+current authority and returns the original receipt and deadline, including after
+its transition or an independent Sandbox revision change.
+
+Pause and revive require `ManageSandbox`. Retirement uses the owner/admin-only
+`ManageSharing` boundary, with the existing `DeleteOwnSandbox` capability also
+required for a personal owner. A whole-Sandbox `org_roles` recipient can pause or
+revive but cannot retire somebody else's Sandbox. Narrow Agent shares do not
+authorize parent lifecycle controls. Global Sandbox control does not imply the
+owner/admin retirement privilege.
+
+Before applying an intent, the worker verifies the admitting actor's retained
+sign-in and obtains new resource/membership authority. Revival checks renewable
+connections for the resource owner and then revalidates the actual requesting
+actor again. The second check cannot extend the first observation's lifetime or
+change the owner/profile whose connections were checked. A new sign-in cannot
+inherit an old command, even when its subject and token text match; token refresh
+within the original incarnation can continue it. Proofs carry no raw credential
+and are bounded by both membership lifetime and the original queue deadline.
+
+The store rechecks its current resource snapshot and the exact queued record,
+then commits the model-planned lifecycle transition, Sandbox event, execution
+audit, and terminal receipt in one transaction. It performs no runtime IO.
+`Applied` means the transition was committed or already satisfied/scheduled;
+existing lifecycle recovery completes any scheduled runtime work. Competing
+workers cannot apply the same queued record twice. Mongo uses real ancestor
+write guards to serialize sharing changes with the transaction. An ambiguous
+commit returns unavailable; reading or replaying the same command recovers its
+original outcome without a second transition.
+
+Known revocation, stale targets, queue expiry, ineligible lifecycle state, and
+missing connection/setup requirements have typed rejection states. Transient
+provider or store outages leave the command queued for a bounded retry. Receipt
+reads require the original actor plus current target visibility and the same
+resource incarnation. Internal records and their authorization references must
+not be serialized directly into public responses.
