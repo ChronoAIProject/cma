@@ -30,6 +30,8 @@ pub fn agent_provenance_inventory_router(service: Arc<AgentProvenanceInventorySe
 #[serde(deny_unknown_fields)]
 pub(crate) struct Params {
     organization: Option<String>,
+    #[serde(default)]
+    shared: bool,
     sandbox: Option<String>,
     workspace: Option<String>,
     status: Option<AgentStatus>,
@@ -60,7 +62,7 @@ pub(crate) struct AgentProvenanceInventoryPageView {
 }
 
 #[utoipa::path(get, path = "/api/v1/agents/provenance", tag = "agents",
-    params(("organization" = Option<String>, Query), ("sandbox" = Option<String>, Query),
+    params(("shared" = Option<bool>, Query, description = "Explicit incoming shares across current organizations; mutually exclusive with organization"), ("organization" = Option<String>, Query), ("sandbox" = Option<String>, Query),
         ("workspace" = Option<String>, Query), ("status" = Option<String>, Query),
         ("creation_origin" = Option<AgentCreationCategoryView>, Query),
         ("cursor" = Option<String>, Query), ("limit" = Option<u16>, Query)),
@@ -80,6 +82,7 @@ pub(crate) async fn list(
     };
     let query = AgentProvenanceInventoryQuery {
         organization: params.organization.map(SubjectId::new),
+        shared: params.shared,
         agents: AgentListQuery {
             sandbox_id: params.sandbox.map(SandboxId),
             workspace_id: params.workspace.map(WorkspaceId),

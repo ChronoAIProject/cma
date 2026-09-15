@@ -175,6 +175,16 @@ shared Agents. Rows have only Agent ID, optional title, status, creation/update
 times and immutable category. Retained deleted and archived Agents are included
 unless filtered by status. Parent filters require independent parent visibility.
 
+Set `shared` to `true` for **Shared with me**: the deduplicated union of explicit
+Agent and whole-Sandbox grants to the caller's current organizations, excluding
+the caller's personally owned resources. Organization ownership alone does not
+add a row to this scope. `shared=true` and `organization` are mutually exclusive.
+Each page obtains fresh membership evidence; organization choices are only discovery
+hints. An actual nonmembership result removes a stale choice, while an authority
+outage refuses the page so an incomplete aggregate cannot appear complete.
+Discovery is bounded to 128 organizations and the whole request to 15 seconds.
+Personal inventory remains independent of organization discovery.
+
 The default limit is 50 (maximum 200). Category filtering scans at most 201
 candidates, so successful pages may be partial or empty while still having
 `next`. **Follow every continuation until `next` is absent**, including after

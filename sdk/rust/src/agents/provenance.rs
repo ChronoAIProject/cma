@@ -2,9 +2,12 @@
 use crate::resource_access::ResourceActor;
 use serde::Deserialize;
 
-/// Personal or organization creation inventory, with optional category filtering.
+/// Personal, organization or shared creation inventory, with optional category filtering.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct AgentProvenanceInventoryOptions {
+    /// Explicit incoming shares across current organizations; excludes personal
+    /// ownership. Mutually exclusive with `scope.organization`.
+    pub shared: bool,
     /// Organization, status, parent and page filters.
     pub scope: super::AccessibleAgentListOptions,
     /// Original category. Follow `next` even when a filtered page is empty.

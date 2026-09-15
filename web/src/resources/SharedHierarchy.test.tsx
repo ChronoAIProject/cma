@@ -205,7 +205,7 @@ it('continues an empty organization page and expands only independently authoriz
   render(
     <ScopedNavigation
       client={test.sdk}
-      organization="org_research"
+      scope="organization:org_research"
       onScopeChange={vi.fn()}
       onNavigate={test.navigate}
       personal={<p>Personal tree</p>}
@@ -242,9 +242,9 @@ it('cancels an organization page when returning to personal and discards the lat
     onNavigate: test.navigate,
     personal: <p>Personal tree</p>,
   };
-  const view = render(<ScopedNavigation {...props} organization="org_research" />);
+  const view = render(<ScopedNavigation {...props} scope="organization:org_research" />);
   await waitFor(() => expect(finish).toBeDefined());
-  view.rerender(<ScopedNavigation {...props} organization="" />);
+  view.rerender(<ScopedNavigation {...props} scope="" />);
   await act(async () => finish?.(Response.json({ items: [sandbox] })));
   expect(screen.getByText('Personal tree')).toBeInTheDocument();
   expect(screen.queryByText(sandbox.name)).not.toBeInTheDocument();
@@ -305,4 +305,59 @@ it('never reuses personal Sandbox classification for a different resource', asyn
   expect(screen.queryByText('Personal controls')).not.toBeInTheDocument();
   await screen.findByRole('heading', { name: sandbox.name });
   expect(screen.queryByText('Personal controls')).not.toBeInTheDocument();
+});
+
+it('pages shared navigation without parent reads and clears it on revocation', async () => {
+  const calls: URL[] = [];
+  let revoked = false;
+  const sdk = createClient({
+    baseUrl: 'https://fixture.invalid',
+    fetch: async (input) => {
+      const url = new URL(String(input));
+      calls.push(url);
+      if (url.pathname.endsWith('/organizations')) return Response.json({ items: [] });
+      expect(url.pathname).toBe('/api/v1/agents/provenance');
+      expect(url.searchParams.get('shared')).toBe('true');
+      if (revoked)
+        return Response.json(
+          { code: 'resource_not_found', detail: 'Access removed' },
+          { status: 404 },
+        );
+      if (!url.searchParams.has('cursor')) return Response.json({ items: [], next: 'agt_scanned' });
+      return Response.json({
+        items: [
+          {
+            agent_id: 'agt_shared',
+            title: 'Narrow shared Agent',
+            status: 'ready',
+            created_at: at,
+            updated_at: at,
+            creation_origin: 'manual',
+          },
+        ],
+      });
+    },
+  });
+  render(
+    <ScopedNavigation
+      client={sdk}
+      scope="shared"
+      onScopeChange={vi.fn()}
+      onNavigate={vi.fn()}
+      personal={<p>Personal tree</p>}
+    />,
+  );
+  await screen.findByText('No shared Agents on this page.');
+  const user = userEvent.setup();
+  await user.click(screen.getByRole('button', { name: 'Next shared Agents' }));
+  await screen.findByRole('link', { name: 'Narrow shared Agent' });
+  expect(screen.getByRole('link', { name: 'All shared Agents' })).toHaveAttribute(
+    'href',
+    '/shared/agents',
+  );
+  expect(calls.at(-1)?.searchParams.get('cursor')).toBe('agt_scanned');
+  revoked = true;
+  await user.click(screen.getByRole('button', { name: 'Refresh shared Agents' }));
+  expect(screen.queryByText('Narrow shared Agent')).not.toBeInTheDocument();
+  await screen.findByText('Access removed');
 });

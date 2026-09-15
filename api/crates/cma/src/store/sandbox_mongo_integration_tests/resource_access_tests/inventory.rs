@@ -328,3 +328,5 @@ async fn revoked_and_corrupt_grant_indexes_cannot_supply_inventory_rows() {
         .is_empty());
     client.database(&name).drop().await.unwrap();
 }
+
+mod shared_inventory_tests;

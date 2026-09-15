@@ -52,6 +52,8 @@ export interface AccessibleAgentListOptions extends AgentListOptions {
 }
 
 export interface AgentProvenanceInventoryOptions extends AccessibleAgentListOptions {
+  /** Explicit incoming shares across current organizations; mutually exclusive with organization. */
+  readonly shared?: boolean;
   /** Immutable category. Continue with `next` even after an empty filtered page. */
   readonly creationOrigin?: AgentCreationCategory;
 }
@@ -60,13 +62,14 @@ export interface AgentProvenanceInventoryOptions extends AccessibleAgentListOpti
 export class Agents {
   constructor(private readonly config: ResolvedConfig) {}
 
-  /** Safe creation inventory, including retained archived Agents. Omit organization for personal scope. */
+  /** Safe creation inventory. Omit organization and shared for personal scope. */
   provenanceInventory(options: AgentProvenanceInventoryOptions = {}) {
     if (options.status !== undefined) input(agentStatus, options.status);
     if (options.creationOrigin !== undefined) input(agentCreationCategory, options.creationOrigin);
     return read(
       this.config,
       query('/api/v1/agents/provenance', {
+        shared: options.shared === undefined ? undefined : String(options.shared),
         organization: options.organization,
         sandbox: options.sandbox,
         workspace: options.workspace,
