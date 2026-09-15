@@ -21,6 +21,30 @@ pub(in crate::store) async fn bind(
     let now = layer2_core::now_rfc3339();
     let (mut command, lane) = worker_apply::load_claim(store, claim, &now, session).await?;
     let revision = command.revision;
+    if let Some(fence) = &mutation.channel_execution_fence {
+        let invokes = store
+            .channel_invokes
+            .get()
+            .and_then(std::sync::Weak::upgrade)
+            .ok_or(CommandLedgerError::NotAdmissible)?;
+        invokes
+            .fence_channel_execution(fence, &command, session)
+            .await
+            .map_err(|_| CommandLedgerError::Conflict)?;
+        let changed = store.agent_commands.update_one(
+            doc! {"_id": command.receipt.envelope.command_id.as_str(), "revision": command.revision as i64},
+            doc! {"$set": {"channel_dispatch_authority": {
+                "grant_id": fence.proof().grant().id.as_str(),
+                "grant_revision": fence.proof().grant().revision as i64,
+                "bridge_revision": fence.proof().bridge().revision as i64,
+                "claim_fence": claim.fence as i64,
+                "at": &mutation.appended_at,
+            }}},
+        ).session(&mut *session).await?;
+        if changed.matched_count != 1 {
+            return Err(CommandLedgerError::Conflict.into());
+        }
+    }
     let dispatch =
         bind_command_dispatch(&mut command, &lane, current, latest_turn, mutation, &now)?;
     if let Some(fence) = &mutation.execution_fence {

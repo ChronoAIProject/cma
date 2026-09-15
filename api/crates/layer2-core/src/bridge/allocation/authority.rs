@@ -28,8 +28,22 @@ impl AllocationAdmission {
         if &pin != source.source_pin().work_pin() || &bridge.owner != source.owner() {
             return Err(AllocationError::IdentityMismatch);
         }
+        Self::from_accepted(bridge, source)
+    }
+
+    /// An already authenticated inbox retains its original configuration.
+    /// Later generations may drain that work or explicitly suspend it.
+    pub fn from_accepted(
+        bridge: BridgeRecord,
+        source: &NormalizedPartitionSource,
+    ) -> Result<Self, AllocationError> {
+        let pin = source.source_pin().work_pin();
+        require_accepted_generation(&bridge, pin)?;
+        if &bridge.owner != source.owner() || bridge.id != pin.bridge_id {
+            return Err(AllocationError::IdentityMismatch);
+        }
         let config = &bridge
-            .current()
+            .pinned(pin)
             .map_err(|_| AllocationError::Corrupt)?
             .config;
         let PartitionAdmissionDecision::Admitted { key, .. } = source
@@ -81,6 +95,13 @@ pub struct AllocationProvisioningProof {
 }
 
 impl AllocationProvisioningProof {
+    pub(super) fn sandbox_policy(&self) -> (u16, &[crate::ServiceId]) {
+        (
+            self.plan.owner_live_sandbox_limit,
+            &self.plan.baseline_services,
+        )
+    }
+
     pub fn new(
         bridge: BridgeRecord,
         identity: &AllocationIdentity,

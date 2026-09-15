@@ -332,6 +332,25 @@ use `{ decision: "allow" | "deny" | "abort" }`. Stop accepts `{}` or
 Interrupt, approval, stop and deletion return empty 202 bodies where indicated.
 Do not parse those bodies as JSON or infer completion from acceptance alone.
 
+Production input, steer, interrupt and approval routes admit work through the
+common Agent command ledger using the actual authenticated human/API actor and
+current resource permissions. Organization admins may interact where effective
+access permits it; view grants and member/viewer roles remain read-only. Input's
+new durable acceptance returns `{ "queued": true }`, including receipt recovery
+after execution finishes. Controls bind the active turn observed atomically at
+admission and cannot drift to a later turn; an idle Agent refuses controls.
+
+These v1 routes preserve their original operation-scoped `Idempotency-Key` and
+exact request-byte fingerprint. An existing completed v1 receipt replays its
+original status, headers and body. New common commands use a distinct derived
+operation key. If a process loses its outer v1 response after common admission,
+the retry looks up that exact receipt under fresh current authority without
+reserving or dispatching again. A pending/expired older operation with no common
+receipt remains fenced with its named idempotency error. Changing its key is not
+a recovery operation. Admission uncertainty is never stored as a final failed
+receipt that would hide accepted work. This migration does not change v1
+Responses/AG-UI parsing or claim response-targeted control endpoints.
+
 The personal-owner Agent detail includes its Sandbox, Workspace, Worktree, profile, status
 and first-message information, not an aggregate revision field. Transcript returns `{ agent_id,
 through_seq, turns }`; usage has its own `through_seq` and cumulative input,
@@ -489,6 +508,16 @@ authority expiry after IO, validates parent and Agent/Worktree assignment, and
 clears on refusal or scope/client change. Child access refusal invalidates its
 parent's displayed branch. Personal Sandbox controls remain mounted through a
 classification refresh; refusal discards remembered personal classification.
+
+Effective access includes a safe `owner` summary: a personal owner reports only
+`is_current_person`, while an organization reports `organization_id` for matching
+an authorized organization choice. Personal IDs and parent identities remain
+private. Inventory, tree and shared detail views display this ownership with the
+current resource access role derived from the returned capabilities. An organization
+admin holding a view-only share is shown as **View only**. Organization names come
+only from current authorized choices; unavailable names never fall back to raw IDs.
+Visible-row policy reads are limited to four concurrent requests and expire with
+the earliest returned authority deadline. These labels do not authorize actions.
 
 Owners can open **Sharing** from personal Agent Details or a Sandbox page when
 current effective access includes `manage_sharing`. Agent sharing starts with
@@ -934,6 +963,9 @@ SDKs expose this scope through their accessible Sandbox list method.
 | `GET /api/v1/bridges/{id}/invoke-grants` | Page current and revoked invocation grants for this bridge. |
 | `POST /api/v1/bridges/{id}/invoke-grants` | Explicitly authorize the selected retained Agent context for this saved bridge configuration. |
 | `GET /api/v1/bridges/{id}/invoke-readiness` | Observe current retained-Agent consent without granting execution or enable authority. |
+| `GET /api/v1/bridges/{id}/deliveries` | Current owner/admin delivery history; exclusive cursor, limit 1–100. |
+| `GET /api/v1/bridges/{id}/deliveries/{item}` | Safe original reply status and ordered attempts. |
+| `POST /api/v1/bridges/{id}/delivery-recovery` | Explicit retry, abandon or local reconciliation with durable idempotency and exact revisions. |
 | `GET /api/v1/bridges` | Bridge setup and management with current owner or organization authority. |
 | `GET /api/v1/bridges/{id}` | Bridge setup and management with current owner or organization authority. |
 | `GET /api/v1/bridges/{id}/configuration` | Bridge setup and management with current owner or organization authority. |
@@ -1003,13 +1035,17 @@ Bridge management uses `/api/v1/bridges`; `/api/v1/bridge-connectors?organizatio
 
 Creation starts disabled. The caller selects an owner, existing bot/key/routes, partition and placement, sender/chat/group policy, reply policy, and bounded limits. CMA derives the issuer, provider endpoint, callback URL, and internal custody locator; these fields are rejected in client configuration. Read `/bridges/{id}/configuration` as a manager to obtain the callback URL and selected configuration. Configure that exact callback on a dedicated matching NyxID key manually while preserving unrelated routes, then PUT the exact selected key to `/bridges/{id}/credential` with `expected_revision`. The key is write-only and its response contains only custody revision/presence/revocation. Identical selected-key import is idempotent; different material under the retained selected custody identity conflicts. A replacement key selection creates distinct custody.
 
+Background metadata and provisioning require explicit `retain_control_plane_authority: true` on key import. This additive boolean defaults to false. Consent authorizes only this Bridge, its exact owner and selected connector for 30 days, using the actual human's existing encrypted OAuth sign-in and refresh custody. The grant continues after browser logout; current account activity and exact organization admin access are checked for each operation. A new sign-in, removed provider authority, grant expiry or local key revocation stops this authority. Disable and reconnect the Bridge explicitly to attach or renew a grant; an unchanged retry preserves its original expiry. Historical key-only custody never borrows the importing actor's current login automatically.
+
+NyxID human-only metadata endpoints receive that human OAuth credential with the exact organization scope. The selected bot key is used only for its key-fenced possession check and permitted channel operations. Human OAuth tokens and the selected bridge key stay in CMA's control plane; organization Sandbox provisioning must issue a distinct organization-owned key for its pinned services. Missing grant or unsupported provisioning remains `409 bridge_renewable_authority_required`; consent alone does not prove that new-Sandbox provisioning is available.
+
 POST `/bridges/{id}/validate` with `expected_revision` performs current verification. Its success proves the current setup check only. POST `/bridges/{id}/commands` with an Idempotency-Key and expected revision applies `enable`, `disable`, `retire`, or independent emergency controls. Disable/retire require `accepted_work` (`drain_original` or `suspend_original`); retained Agents and historical resources are preserved. Configuration PUT also requires an idempotency key and expected revision; fixed-target rebinding requires an explicit previous-work policy. Retained generations keep their original routing. Retrying an unacknowledged management command uses the same key and body.
 
 Current organization members can list/read safe bridge summaries; configuration, selected identities, credential custody and provider choices require manager authority. None of these responses include key material or local custody references. Revocation uses `/bridges/{id}/credential/revoke` with both expected bridge and custody revisions plus an idempotency key.
 
-New partition configuration defaults to a sender in each actual chat, with explicit alternatives for shared chat/thread context, one fixed shared Agent, or a sender across chats. Existing-Agent placement requires the `fixed_shared_agent` selection. Sender/chat allowlists, deliberate open admission, and group addressing policy are separate. Unsupported platform addressing/thread evidence is refused. New Sandbox placement remains blocked by `bridge_renewable_authority_required` until distinct scoped issuance and renewal are verified.
+New partition configuration defaults to a sender in each actual chat, with explicit alternatives for shared chat/thread context, one fixed shared Agent, or a sender across chats. Existing-Agent placement requires the `fixed_shared_agent` selection. Sender/chat allowlists, deliberate open admission, and group addressing policy are separate. Unsupported platform addressing/thread evidence is refused. New Sandbox placement requires current retained human control-plane authority and verified distinct scoped key issuance; absent or unsupported authority returns `bridge_renewable_authority_required`. The staged background driver creates the pinned Sandbox, Workspace and Agent, confirms its runtime/tool connection, and publishes the original conversation. Automatic runtime credential renewal remains separate milestone work.
 
-The message path is Telegram/Lark → NyxID → CMA, with asynchronous CMA → NyxID channel-relay reply → the original bot/chat/thread. The callback HTTP body is an acknowledgment, not the Agent's answer. The current setup API does not establish completed execution/outbox integration or live platform acceptance.
+The message path is Telegram/Lark → NyxID → CMA, with asynchronous CMA reply tool → durable outbox → NyxID channel-relay reply → the original bot/chat/thread. The callback HTTP body acknowledges durable acceptance. An eligible Agent can send multiple tool replies while its turn continues. Successful setup validation proves the current configuration check; live platform acceptance and production rollout remain pending.
 
 ### Retained Agent invocation permission
 
@@ -1042,3 +1078,47 @@ The separately authenticated callback endpoint is registered at
 `POST /api/v1/bridge-callbacks/{bridge_id}`. Its signed protocol, private response
 statuses, durable-before-ack behavior, capability refusals and retained
 `worker_unavailable` hold are documented in [Bridge callbacks](BRIDGE_CALLBACKS.md).
+
+Channel-created Agents send explicit mid-turn replies through the independently
+CMA-authenticated MCP endpoint `POST /api/v1/channel-tools`, documented in
+[Channel reply tools](CHANNEL_REPLY_TOOLS.md). Final answers are not forwarded
+automatically. Manual and Trigger sessions, including existing Agents later
+bound to a bridge, do not receive the reply tool.
+
+### Reply history and explicit recovery
+
+Current Bridge owners and organization admins can inspect deliveries through the
+three delivery management routes above. Organization members/viewers have no
+delivery-management access. `GET` returns private, noncacheable projections with
+original configuration generation, invocation receipt, sequence/chunks, state,
+bounded failure, retry time and ordered attempt history. Text, chat/thread
+identity, original inbound IDs and credential/custody references are omitted.
+The list uses ascending `bro_` identity order, an exclusive `cursor`, default
+limit 50 and maximum 100, and nullable `next_cursor`.
+
+Recovery requires `Idempotency-Key` and the closed body
+`{item_id, expected_revision, expected_bridge_revision, action}`. The action is
+`{kind: "retry", accept_duplicate_risk: true|false}`, `{kind: "abandon"}` or
+`{kind: "reconcile"}`. The server checks current actual owner/admin authority,
+exact Bridge/item revisions and immutable original source; retry also verifies
+the original retained matching key custody. It preserves the original tool
+invocation receipt and all earlier attempts. An Unknown retry requires explicit
+duplicate-risk acceptance (`400 bridge_delivery_duplicate_risk_required`) and
+sets `duplicate_risk`; queued still does not mean delivered. Retry cannot revive
+a sent/abandoned item or exceed sixteen retained attempts. Suspend and original
+audience expiry prevent retry; history and abandon remain usable when suspended.
+
+Reconcile recovers an expired local Claimed lease to Pending or an expired
+Sending lease to Unknown. Pinned NyxID exposes no trustworthy generic send
+reconciliation: `upstream_reconciliation_supported` is false, existing Unknown
+stays Unknown, and the request never accepts user-provided sent/message IDs.
+It makes no platform request. Abandon preserves prior ambiguous attempt history
+and is refused while a nonexpired Sending attempt is active.
+
+All recovery commands return HTTP 200 with a durable command receipt and original
+post-command result. A repeated identical key/body recovers that result before
+checking current item revision or provider availability, under fresh current
+manager authority. Changed input is `409 idempotency_key_reused`; stale state is
+`409 bridge_delivery_revision_conflict`. Storage/authority uncertainty returns a
+503 with Retry-After; explicitly repeat the exact key/body after response loss.
+These local receipts never imply end-to-end exactly-once platform delivery.

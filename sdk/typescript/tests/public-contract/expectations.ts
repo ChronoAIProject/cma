@@ -3,6 +3,9 @@ import type { ContractCase } from './context.js';
 import { browserOperations } from './navigation.js';
 
 export const localCodes = new Map([
+  ['bridge-outbox-list-invalid-limit', 'invalid_bridge_delivery_request'],
+  ['bridge-outbox-recover-unknown-field', 'invalid_json'],
+  ['bridge-outbox-recover-nested-field', 'invalid_json'],
   ['bridge-invoke-issue-unknown-field', 'invalid_json'],
   ['bridge-invoke-revoke-unknown-field', 'invalid_json'],
   ['bridge-invoke-issue-missing-consent', 'invalid_json'],

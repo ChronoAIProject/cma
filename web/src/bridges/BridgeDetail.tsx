@@ -4,6 +4,7 @@ import { useAuthorizedRead } from '../resources/useAuthorizedRead';
 import { ResourceLink } from '../resources/ResourceLink';
 import { Button } from '../ui/Button';
 import { BridgeManager } from './BridgeManager';
+import { BridgeDeliveries } from './BridgeDeliveries';
 
 export function BridgeDetail({
   client,
@@ -51,6 +52,16 @@ export function BridgeDetail({
           allowed={bridge?.can_manage === true}
           onChanged={current.reload}
         />
+        {bridge === undefined ? null : (
+          <BridgeDeliveries
+            key={id}
+            client={client}
+            id={id}
+            revision={bridge.revision}
+            allowed={bridge.can_manage}
+            onAccessChanged={current.reload}
+          />
+        )}
       </div>
     </section>
   );

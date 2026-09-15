@@ -76,6 +76,83 @@ fn record(result: CommandReservationResult) -> AdmittedAgentCommand {
 
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn scope_key_lookup_recovers_after_restart_without_admitting_or_mutating_work() {
+    let (client, name) = database("command_lookup").await;
+    let (store, agent, parent) = fixture(&name, &client).await;
+    let reservation = request(&agent, &parent, "legacy-operation-key");
+    let scope = reservation.scope();
+    let key = reservation.key_sha256.clone();
+    assert_eq!(
+        store.get_admitted_command(&scope, &key).await.unwrap(),
+        None
+    );
+    assert_eq!(
+        store.agent_commands.count_documents(doc! {}).await.unwrap(),
+        0
+    );
+    let original = record(store.reserve_command(reservation).await.unwrap());
+    let command = store
+        .agent_commands
+        .find_one(doc! {})
+        .await
+        .unwrap()
+        .unwrap();
+    let order = store
+        .agent_command_orders
+        .find_one(doc! {})
+        .await
+        .unwrap()
+        .unwrap();
+    drop(store);
+    let reopened = MongoSandboxStore::open(&client, &name).await.unwrap();
+    assert_eq!(
+        reopened.get_admitted_command(&scope, &key).await.unwrap(),
+        Some(original)
+    );
+    assert_eq!(
+        reopened
+            .get_admitted_command(&scope, &command_key_digest("different-key").unwrap())
+            .await
+            .unwrap(),
+        None
+    );
+    assert_eq!(
+        reopened
+            .get_admitted_command(&command_key_digest("different-scope").unwrap(), &key)
+            .await
+            .unwrap(),
+        None
+    );
+    assert_eq!(
+        reopened.agent_commands.find_one(doc! {}).await.unwrap(),
+        Some(command)
+    );
+    assert_eq!(
+        reopened
+            .agent_command_orders
+            .find_one(doc! {})
+            .await
+            .unwrap(),
+        Some(order)
+    );
+    assert_eq!(
+        reopened
+            .agent_commands
+            .count_documents(doc! {})
+            .await
+            .unwrap(),
+        1
+    );
+    assert_eq!(reopened.get_agent(&agent.id).await.unwrap(), Some(agent));
+    assert_eq!(
+        reopened.get_sandbox(&parent.id).await.unwrap(),
+        Some(parent)
+    );
+    client.database(&name).drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
 async fn concurrent_replicas_reserve_one_receipt_and_retry_after_reopening_returns_it() {
     let (client, name) = database("command_retry").await;
     let (one, agent, parent) = fixture(&name, &client).await;

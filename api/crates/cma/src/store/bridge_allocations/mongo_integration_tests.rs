@@ -9,6 +9,12 @@ use layer2_core::profiles::{
     WorkspaceProfileSnapshot,
 };
 
+#[path = "sandbox_admission/mongo_tests.rs"]
+mod sandbox_admission;
+
+#[path = "channel_provisioning/tests.rs"]
+mod channel_provisioning;
+
 async fn setup() -> (
     Client,
     String,
@@ -79,8 +85,8 @@ async fn proposal(
         envelope: InboxEnvelope {
             platform: "telegram".into(),
             route_id: "route-1".into(),
-            chat_id: "chat".into(),
-            conversation_type: "private".into(),
+            chat_id: "-100123".into(),
+            conversation_type: "group".into(),
             sender_id: sender.into(),
             sender_display_name: None,
             content_type: "text".into(),
@@ -155,6 +161,8 @@ async fn proposal(
         agent,
         &digest,
         AllocationCapabilityObservation {
+            owner_live_sandbox_limit: 3,
+            baseline_services: Vec::new(),
             owner: owner(),
             profiles_digest: digest.clone(),
             capacity_bounds: ProfileCapacityBounds {
@@ -440,6 +448,8 @@ async fn renew_retained(
         profiles.agent.clone(),
         &profiles.trust_digest,
         AllocationCapabilityObservation {
+            owner_live_sandbox_limit: 3,
+            baseline_services: Vec::new(),
             owner: owner(),
             profiles_digest: profiles.trust_digest.clone(),
             capacity_bounds: ProfileCapacityBounds {

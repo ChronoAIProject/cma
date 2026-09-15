@@ -15,7 +15,13 @@ use super::sandbox_mongo::{
     start_transaction, CommitOutcome, MongoSandboxStore, DOCUMENT_SCHEMA_VERSION,
 };
 use super::{bridge_definitions::decode_bridge, MongoBridgeStore};
+mod channel;
+pub(crate) use channel::MongoChannelCommandStore;
+mod channel_grants;
+mod channel_replay;
+pub(crate) mod channel_source;
 mod enable;
+pub(in crate::store) mod outbox;
 pub(super) use enable::fence_enable;
 
 pub(crate) struct MongoBridgeInvokeStore {
@@ -103,6 +109,10 @@ impl MongoBridgeInvokeStore {
         let resources =
             read_execution_snapshot(&self.resources, &grant.target.resource(), session).await?;
         proof.require_snapshot(&bridge, &grant, &resources)?;
+        if let Some(basis) = &grant.channel {
+            basis.require_bridge(&bridge, &grant.pin, &grant.config)?;
+            self.fence_channel_grant(basis, session).await?;
+        }
         self.bridges
             .credentials
             .require_retained_binding(&bridge, &grant.config, proof.custody_pin(), session)
@@ -171,6 +181,30 @@ impl MongoBridgeInvokeStore {
         if bridge != *write.management().record() {
             return Err(BridgeInvokeError::Conflict.into());
         }
+        if let Some(control_plane) = write.channel_control_plane() {
+            let basis = write
+                .record()
+                .channel
+                .as_ref()
+                .ok_or(BridgeInvokeError::Corrupt)?;
+            self.bridges
+                .credentials
+                .require_channel_invoke_binding(
+                    &bridge,
+                    &basis.allocation.config.connector,
+                    control_plane,
+                    session,
+                )
+                .await
+                .map_err(|error| match error {
+                    super::bridge_credentials::control_plane::ControlPlaneFenceError::Core(_) => {
+                        MutationError::Invoke(BridgeInvokeError::Unavailable)
+                    }
+                    super::bridge_credentials::control_plane::ControlPlaneFenceError::Driver(
+                        error,
+                    ) => MutationError::Mongo(error),
+                })?;
+        }
         if let Some(document) = self
             .receipts
             .find_one(doc! {"_id":&write.receipt().id})
@@ -209,12 +243,22 @@ impl MongoBridgeInvokeStore {
                 .require(&write.record().owner, &resources)?;
             self.bridges
                 .credentials
-                .require_binding(
+                .require_retained_binding(
                     &bridge,
+                    &write.record().config,
                     write.custody_pin().ok_or(BridgeInvokeError::Corrupt)?,
                     session,
                 )
                 .await?;
+            if let Some(basis) = &write.record().channel {
+                basis.require_bridge(&bridge, &write.record().pin, &write.record().config)?;
+                write
+                    .channel_authority()
+                    .ok_or(BridgeInvokeError::Corrupt)?
+                    .require_record(&basis.allocation)
+                    .map_err(|_| BridgeInvokeError::Unavailable)?;
+                self.fence_channel_grant(basis, session).await?;
+            }
             fence_lineage(&self.resources, &resources, session).await?;
         }
         self.fence_bridge(&bridge, session).await?;
@@ -260,6 +304,20 @@ impl MongoBridgeInvokeStore {
 
 #[async_trait::async_trait]
 impl BridgeInvokeStore for MongoBridgeInvokeStore {
+    async fn validate_channel_replay(
+        &self,
+        grant: &BridgeInvokeGrant,
+        management: &layer2_core::bridge::BridgeManagementLease,
+        control_plane: &dyn ChannelInvokeAuthority,
+    ) -> Result<(), BridgeInvokeError> {
+        self.channel_replay(grant, management, control_plane).await
+    }
+    async fn channel_target(
+        &self,
+        allocation_id: &str,
+    ) -> Result<ChannelInvokeSnapshot, BridgeInvokeError> {
+        self.read_channel_target(allocation_id).await
+    }
     async fn grant(
         &self,
         id: &BridgeInvokeGrantId,
@@ -331,7 +389,7 @@ impl BridgeInvokeStore for MongoBridgeInvokeStore {
                         MutationError::Mongo(error)
                             if is_transient(&error) || is_duplicate_key(&error) =>
                         {
-                            continue
+                            continue;
                         }
                         other => return Err(other.into_invoke()),
                     }
@@ -424,4 +482,4 @@ impl From<ReadError> for MutationError {
 }
 
 #[cfg(test)]
-mod tests;
+pub(in crate::store) mod tests;

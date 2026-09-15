@@ -13,6 +13,8 @@ pub struct BridgeInvokeWrite {
     pub(super) resources: Option<ResourceAccessSnapshot>,
     pub(super) custody: Option<BridgeCustodyPin>,
     pub(super) deadline: tokio::time::Instant,
+    pub(super) channel_authority: Option<crate::bridge::allocation::AllocationAuthority>,
+    pub(super) channel_control_plane: Option<std::sync::Arc<dyn super::ChannelInvokeAuthority>>,
 }
 
 impl BridgeInvokeWrite {
@@ -33,6 +35,12 @@ impl BridgeInvokeWrite {
     }
     pub fn custody_pin(&self) -> Option<&BridgeCustodyPin> {
         self.custody.as_ref()
+    }
+    pub fn channel_authority(&self) -> Option<&crate::bridge::allocation::AllocationAuthority> {
+        self.channel_authority.as_ref()
+    }
+    pub fn channel_control_plane(&self) -> Option<&dyn super::ChannelInvokeAuthority> {
+        self.channel_control_plane.as_deref()
     }
 
     pub fn require_current(&self) -> Result<(), BridgeInvokeError> {
@@ -56,11 +64,40 @@ impl BridgeInvokeWrite {
                 self.record.require_active()?;
                 self.record.target.require(&self.record.owner, resources)?;
                 if self.record.issued_by != *self.management.actor()
-                    || self.record.config != self.management.record().current()?.config
-                    || self.record.pin.config_revision != self.management.record().config_revision
                     || custody.reference() != &self.record.config.connector.custody
                 {
                     return Err(BridgeInvokeError::Corrupt);
+                }
+                match (&self.record.channel, &self.channel_authority) {
+                    (None, None)
+                        if self.record.config == self.management.record().current()?.config
+                            && self.record.pin.config_revision
+                                == self.management.record().config_revision
+                            && self.channel_control_plane.is_none() => {}
+                    (Some(basis), Some(authority)) => {
+                        let control_plane = self
+                            .channel_control_plane()
+                            .ok_or(BridgeInvokeError::Corrupt)?;
+                        control_plane.require_current()?;
+                        if &control_plane.actor_context().actor != self.management.actor()
+                            || self.deadline > control_plane.deadline()
+                        {
+                            return Err(BridgeInvokeError::Corrupt);
+                        }
+                        authority
+                            .require_record(&basis.allocation)
+                            .map_err(|_| BridgeInvokeError::Unavailable)?;
+                        if authority.bridge() != self.management.record() {
+                            return Err(BridgeInvokeError::Conflict);
+                        }
+                        basis.require_resources(resources)?;
+                        basis.require_bridge(
+                            self.management.record(),
+                            &self.record.pin,
+                            &self.record.config,
+                        )?;
+                    }
+                    _ => return Err(BridgeInvokeError::Corrupt),
                 }
             }
             Some(previous) => {
@@ -75,6 +112,8 @@ impl BridgeInvokeWrite {
                         if actor == self.management.actor())
                     || self.resources.is_some()
                     || self.custody.is_some()
+                    || self.channel_authority.is_some()
+                    || self.channel_control_plane.is_some()
                 {
                     return Err(BridgeInvokeError::Corrupt);
                 }
@@ -86,6 +125,25 @@ impl BridgeInvokeWrite {
 
 #[async_trait::async_trait]
 pub trait BridgeInvokeStore: Send + Sync {
+    /// Replay is still a background use of the renewable human grant. Fence
+    /// its current exact binding, including replacement at the same key revision.
+    async fn validate_channel_replay(
+        &self,
+        _grant: &BridgeInvokeGrant,
+        _management: &BridgeManagementLease,
+        _control_plane: &dyn super::ChannelInvokeAuthority,
+    ) -> Result<(), BridgeInvokeError> {
+        Err(BridgeInvokeError::Unavailable)
+    }
+
+    /// Trusted exact ready allocation/provenance read; unsupported stores cannot
+    /// issue channel-created grants from caller-supplied attribution.
+    async fn channel_target(
+        &self,
+        _allocation_id: &str,
+    ) -> Result<super::ChannelInvokeSnapshot, BridgeInvokeError> {
+        Err(BridgeInvokeError::Unavailable)
+    }
     async fn grant(
         &self,
         id: &BridgeInvokeGrantId,

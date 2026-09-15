@@ -36,8 +36,13 @@ async fn respond(
     state.requests.lock().unwrap().push((
         request.method().to_string(),
         request.uri().to_string(),
-        auth,
+        auth.clone(),
     ));
+    if !path.starts_with("/api/v1/channel-relay/")
+        && (auth.starts_with("Bearer nyx_") || auth.starts_with("Bearer nyxid_"))
+    {
+        return StatusCode::FORBIDDEN.into_response();
+    }
     let (status, body) = state
         .replies
         .get(&path)

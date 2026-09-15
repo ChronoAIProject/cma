@@ -7,6 +7,16 @@ using current human/API dashboard credentials. CMA rechecks ownership and
 organization membership on each request. Callback signatures, channel sender
 identity and platform reply credentials do not confer dashboard access.
 
+`importKey(id, revision, key, { retainControlPlaneAuthority: true })` explicitly
+authorizes only this Bridge and exact owner to use the current human OAuth
+sign-in for 30 days. The option defaults to false. This permission continues
+after browser logout; every operation checks current account and organization
+admin access. Revoking the imported key ends it. A new sign-in or expiration
+requires explicitly reconnecting the disabled Bridge. The grant references
+existing encrypted refresh custody and never places a personal token in an
+organization Sandbox. New-Sandbox provisioning still requires a supported,
+distinct key with the exact selected service scope.
+
 Use `choices({ organization })` to select existing connector bots, keys and
 routes. `list`, `read` and `configuration` inspect current definitions and their
 safe setup projections. `create` creates a disabled draft; `update`, `control`,
@@ -92,3 +102,25 @@ Malformed input is rejected before HTTP. Success decoders validate grant IDs,
 digest structure, revision relationships, actual manager attribution, target
 correlation, page ordering and continuation. Unexpected grant fields are
 rejected. The TypeScript numeric boundary is JavaScript's safe integer range.
+
+`listDeliveries(bridgeId, options?)` and `readDelivery(bridgeId, itemId, options?)`
+provide current owner/admin reply history. The list has default limit 50, maximum
+100 and a nullable exclusive `next_cursor`. `BridgeDelivery` exposes original
+configuration/receipt, chunk order, status, safe failure codes and up to sixteen
+retained attempts. It excludes text, chat/thread, inbound IDs and secret references.
+
+`recoverDelivery(bridgeId, request, {idempotencyKey, signal?})` accepts
+`BridgeDeliveryRecoveryRequest`: original `item_id`, current `expected_revision`,
+current `expected_bridge_revision`, and a `BridgeDeliveryRecoveryAction`. Retry
+is `{kind: 'retry', accept_duplicate_risk: boolean}`; Unknown requires `true`
+and can duplicate an earlier send. Abandon is `{kind: 'abandon'}`. Reconcile is
+`{kind: 'reconcile'}` and only refreshes expired local worker leases; with
+`upstream_reconciliation_supported: false`, Unknown remains unconfirmed.
+
+A `BridgeDeliveryRecoveryReceipt` describes the original post-command result.
+Queued is not delivered. Keep the exact request/key across cancellation, timeout
+or a lost response; the server returns the same committed result after fresh
+manager authorization even if the item has since progressed. Changed key input
+conflicts. No method automatically resends, reroutes a reply or submits a new
+recovery command in the background. SDK decoders enforce identity, source,
+revision, attempt ordering and exact command-result correlation.

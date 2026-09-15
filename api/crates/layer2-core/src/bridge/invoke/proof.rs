@@ -117,6 +117,12 @@ pub(super) fn require_bridge(
     if bridge.emergency.execution_stopped {
         return Err(BridgeInvokeError::Suspended);
     }
+    if let Some(channel) = &grant.channel {
+        if matches!(effect, BridgeInvokeEffect::BindExistingTarget { .. }) {
+            return Err(BridgeInvokeError::TargetMismatch);
+        }
+        channel.require_bridge(bridge, &grant.pin, &grant.config)?;
+    }
     if matches!(effect, BridgeInvokeEffect::BindExistingTarget { .. }) {
         if bridge.admission_pin()? != grant.pin {
             return Err(BridgeInvokeError::Suspended);
@@ -124,19 +130,31 @@ pub(super) fn require_bridge(
     } else {
         // Accepted messages keep their original grant/configuration. Each newer
         // generation may explicitly suspend older work; no implicit rebinding.
-        if matches!(
+        require_accepted_pin(bridge, &grant.pin)?;
+    }
+    Ok(())
+}
+
+pub(super) fn require_accepted_pin(
+    bridge: &BridgeRecord,
+    pin: &BridgeWorkPin,
+) -> Result<(), BridgeInvokeError> {
+    bridge.pinned(pin)?;
+    if bridge.emergency.execution_stopped
+        || matches!(
             bridge.state,
             BridgeState::Disabled {
                 accepted_work: AcceptedWorkPolicy::SuspendOriginal
             } | BridgeState::Retired {
                 accepted_work: AcceptedWorkPolicy::SuspendOriginal
             }
-        ) || bridge.generations.iter().any(|generation| {
-            generation.config_revision > grant.pin.config_revision
+        )
+        || bridge.generations.iter().any(|generation| {
+            generation.config_revision > pin.config_revision
                 && generation.previous_work == Some(AcceptedWorkPolicy::SuspendOriginal)
-        }) {
-            return Err(BridgeInvokeError::Suspended);
-        }
+        })
+    {
+        return Err(BridgeInvokeError::Suspended);
     }
     Ok(())
 }

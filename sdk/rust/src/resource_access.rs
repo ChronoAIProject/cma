@@ -155,7 +155,24 @@ pub struct ActiveShareList {
 }
 /// Current policy only; every later operation checks its own authority and capabilities.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ResourceOwnership {
+    /// Personal attribution without revealing another person's identity.
+    Person {
+        /// Whether the authenticated caller is the retained personal owner.
+        is_current_person: bool,
+    },
+    /// Organization attribution, named through authorized organization choices.
+    Organization {
+        /// Identity for matching a current organization choice.
+        organization_id: String,
+    },
+}
+/// Current policy only; every later operation checks its own authority and capabilities.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EffectiveAccess {
+    /// Safe ownership summary; absent on older servers.
+    pub owner: Option<ResourceOwnership>,
     /// The `capabilities` field.
     pub capabilities: Vec<String>,
     /// The `revalidate_at` field.

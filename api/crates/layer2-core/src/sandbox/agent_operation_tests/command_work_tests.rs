@@ -430,18 +430,22 @@ async fn channel_attribution_cannot_impersonate_a_personal_caller() {
         chat_id: "chat".into(),
         sender_id: "sender".into(),
     };
-    store.reserve_command(reservation).await.unwrap();
-    let claimed = store
+    let retained = reservation.record(1, 0, None).unwrap();
+    assert_eq!(
+        store.reserve_command(reservation).await,
+        Err(CommandLedgerError::Invalid)
+    );
+    assert!(store
         .claim_next_command(request(&agent, "a", &crate::now_rfc3339()))
         .await
         .unwrap()
-        .unwrap();
+        .is_none());
     let (sender, inputs) = recording_sender(Ok(()));
     let service =
         AgentOperationService::new(store, TestRuntimeRegistry::new(full_capabilities(), sender));
     assert_eq!(
         service
-            .execute_claimed_command(&owner(), &claimed)
+            .execute_claimed_command(&owner(), &retained)
             .await
             .unwrap_err(),
         AgentOperationError::Forbidden

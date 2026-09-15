@@ -72,22 +72,22 @@ it('retains the open history page across a buffered focus recheck while clearing
   });
   render(<ChannelUsage client={client} id="agt_1" />);
   fireEvent.click(await screen.findByRole('button', { name: 'Channel history' }));
-  await screen.findByText(/Person first-page-manager/);
+  expect(await screen.findByText('first-page-manager')).not.toBeVisible();
   fireEvent.click(screen.getByRole('button', { name: 'Next channel events' }));
-  await screen.findByText(/Person second-page-manager/);
+  expect(await screen.findByText('second-page-manager')).not.toBeVisible();
   const beforeFocus = pages.length;
 
   holdSummary = true;
   act(() => window.dispatchEvent(new Event('focus')));
   await waitFor(() => expect(finishSummary).toBeDefined());
   expect(screen.getByRole('dialog', { name: 'Channel history' })).toBeInTheDocument();
-  expect(screen.queryByText(/Person (first|second)-page-manager/)).not.toBeInTheDocument();
+  expect(screen.queryByText(/^(first|second)-page-manager$/)).not.toBeInTheDocument();
   expect(pages).toHaveLength(beforeFocus);
 
   holdSummary = false;
   await act(async () => finishSummary?.(summary()));
-  await screen.findByText(/Person second-page-manager/);
-  expect(screen.queryByText(/Person first-page-manager/)).not.toBeInTheDocument();
+  expect(await screen.findByText('second-page-manager')).not.toBeVisible();
+  expect(screen.queryByText('first-page-manager')).not.toBeInTheDocument();
   expect(pages.at(-1)).toBe('1');
   expect(screen.getByRole('button', { name: 'Previous channel events' })).toBeEnabled();
 });

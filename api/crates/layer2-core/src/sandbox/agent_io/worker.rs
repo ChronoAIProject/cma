@@ -34,6 +34,9 @@ pub enum CommandReadiness {
 /// the envelope owner. Preparation may request revival but may never send input.
 #[async_trait::async_trait]
 pub trait AgentCommandExecution: Send + Sync {
+    /// Older compositions retain the durable hold. A Channel-aware adapter may
+    /// release it only under its own fresh source and invoke transaction.
+    async fn release_held(&self, _command: &AdmittedAgentCommand) {}
     /// Fresh authority and target checks, with no lifecycle or runtime effects.
     async fn check_queued(&self, command: &AdmittedAgentCommand) -> CommandReadiness;
     async fn prepare_queued(&self, command: &AdmittedAgentCommand);
@@ -89,7 +92,7 @@ impl AgentCommandWorker {
     }
 
     pub async fn run_one(&self, id: &AgentCommandId) -> Result<(), CommandLedgerError> {
-        let Some(candidate) = bounded(self.store.get_command(id)).await? else {
+        let Some(mut candidate) = bounded(self.store.get_command(id)).await? else {
             return Ok(());
         };
         candidate.validate()?;
@@ -101,6 +104,15 @@ impl AgentCommandWorker {
         }
         if candidate.work.dispatch.is_some() {
             return bounded(self.store.reconcile_command(id)).await.map(|_| ());
+        }
+        if candidate.status == AgentResponseStatus::WaitingAction
+            && matches!(candidate.receipt.envelope.actor, AgentActor::Channel { .. })
+        {
+            let _ = tokio::time::timeout(IO_BOUND, self.execution.release_held(&candidate)).await;
+            candidate = bounded(self.store.get_command(id))
+                .await?
+                .ok_or(CommandLedgerError::NotFound)?;
+            candidate.validate()?;
         }
         if !candidate.awaiting_claim(&now_rfc3339()) {
             return Ok(());
@@ -122,7 +134,7 @@ impl AgentCommandWorker {
                     code,
                     now_rfc3339(),
                 ))
-                .await
+                .await;
             }
         }
         let now = SystemTime::now();

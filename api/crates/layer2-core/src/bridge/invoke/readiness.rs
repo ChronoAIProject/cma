@@ -101,7 +101,7 @@ impl BridgeInvokeService {
                 match super::service::require_resource_owner(grant, &resources) {
                     Ok(()) => {}
                     Err(BridgeInvokeError::TargetMismatch | BridgeInvokeError::NotFound) => {
-                        continue
+                        continue;
                     }
                     Err(error) => return Err(error),
                 }

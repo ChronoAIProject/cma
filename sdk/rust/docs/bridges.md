@@ -57,6 +57,14 @@ implementation redacts the key, and the Client and Bridges handle retain no key
 value. Import and validation do not take an idempotency header. Their expected
 revision still pins the configuration observed by the manager.
 
+Background operation requires deliberate consent. The example uses
+`import_key_with_control_plane_authority`, which grants only this Bridge and
+owner access to the current human OAuth sign-in for 30 days. It continues after
+browser logout and checks current account and organization admin access on each
+operation. Revoking the imported key ends the grant; a new sign-in or expiration
+requires reconnecting a disabled Bridge. `import_key` retains only the selected
+key and preserves the historical request shape without granting background access.
+
 ```rust,no_run
 use cma_sdk::Client;
 use cma_sdk::bridges::ImportBridgeKeyRequest;
@@ -67,7 +75,7 @@ use cma_sdk::bridges::ImportBridgeKeyRequest;
 #     selected_key: &str,
 # ) -> Result<(), Box<dyn std::error::Error>> {
 let detail = client.bridges().configuration(bridge_id).await?;
-let status = client.bridges().import_key(bridge_id, &ImportBridgeKeyRequest {
+let status = client.bridges().import_key_with_control_plane_authority(bridge_id, &ImportBridgeKeyRequest {
     expected_revision: detail.bridge.revision,
     key: selected_key,
 }).await?;
@@ -160,3 +168,27 @@ launches no detached tasks or automatic retries. After an uncertain issue or
 revoke result, explicitly retry the unchanged body with the original key to
 recover the retained receipt under current management authority. This is not
 an end-to-end exactly-once execution or delivery guarantee.
+
+`list_deliveries(bridge_id, &PageOptions)` and
+`read_delivery(bridge_id, item_id)` expose current owner/admin delivery history.
+The list defaults to 50, permits at most 100, and returns a nullable exclusive
+`BridgeDeliveryPage::next_cursor`. `BridgeDelivery` preserves original
+configuration/invocation, chunk order, safe status/failure and up to sixteen
+ordered `BridgeDeliveryAttempt` records, omitting text, source chat/thread,
+original inbound IDs and secret references.
+
+`recover_delivery(bridge_id, &BridgeDeliveryRecoveryRequest, &IdempotencyKey)`
+requires original `item_id`, current `expected_revision`, current
+`expected_bridge_revision`, and an explicit `BridgeDeliveryRecoveryAction`.
+`Retry { accept_duplicate_risk: true }` is required for Unknown and can duplicate
+a previous send. `Abandon {}` stops further attempts while preserving history.
+`Reconcile {}` refreshes expired local worker leases; when
+`upstream_reconciliation_supported` is false, it cannot confirm an earlier
+Unknown send and performs no platform request.
+
+Keep the exact request and key across cancelled futures, timeouts or response
+loss. `BridgeDeliveryRecoveryReceipt` recovers the original committed result
+under fresh manager authorization even if delivery since progressed. Changed
+input conflicts. Queued is not delivered; no SDK method automatically resends
+or retargets original reply context. Decoders validate source/identity, bounded
+attempt history and exact action/revision correlation.

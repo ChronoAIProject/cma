@@ -238,7 +238,26 @@ pub(super) async fn open_agent(
     )?;
     validate_fence(authority_fence)?;
     let launch = adapter.runtime.launch(request)?;
-    let settings = adapter.runtime.open_settings(request)?;
+    let mut settings = adapter.runtime.open_settings(request)?;
+    // Provider rendering has no authority to add channel tools. Only the
+    // configured control-plane source can prove an eligible creation record.
+    if settings.channel_tool.is_some() {
+        return Err(AdapterError::Rejected(
+            "runtime supplied channel tool authority".into(),
+        ));
+    }
+    if let Some(source) = &adapter.channel_tools {
+        settings.channel_tool = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            source.resolve(handle, request, authority_fence),
+        )
+        .await
+        .map_err(|_| AdapterError::Unavailable("channel tool authority timed out".into()))??;
+    }
+    if let Some(binding) = &settings.channel_tool {
+        binding.require_request(handle, request, authority_fence)?;
+    }
+    let tool_binding = settings.channel_tool.clone();
     if settings.own_credential != request.options.own_credential {
         return Err(AdapterError::Rejected(
             "agent runtime changed the requested credential ownership mode".into(),
@@ -278,6 +297,17 @@ pub(super) async fn open_agent(
         return Err(AdapterError::Rejected(
             "runtime returned a receipt for another agent open operation".into(),
         ));
+    }
+    if let (Some(source), Some(binding)) = (&adapter.channel_tools, tool_binding) {
+        let conversation = channel.conversation_id.as_deref().ok_or_else(|| {
+            AdapterError::Rejected("channel tool session has no conversation identity".into())
+        })?;
+        tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            source.confirm_open(&binding, conversation),
+        )
+        .await
+        .map_err(|_| AdapterError::Unavailable("channel tool open receipt timed out".into()))??;
     }
     Ok(channel)
 }

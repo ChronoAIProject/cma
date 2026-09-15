@@ -102,7 +102,7 @@ const grantShape = closed({
   owner,
   pin,
   target,
-  consent,
+  consent: enumeration('use_retained_agent_context', 'use_channel_created_agent'),
   issued_at: timestamp,
   issued_by: actor,
   state,

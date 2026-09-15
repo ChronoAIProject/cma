@@ -3,8 +3,11 @@
 mod agent_scheduler;
 mod agent_skills;
 mod agent_worker;
+pub(crate) mod channel_children;
 mod checkpoint_maintenance;
 pub(crate) use checkpoint_maintenance::ExportDependencies;
+pub(crate) mod channel_provisioning;
+pub(crate) mod channel_startup;
 mod checkpoint_purger;
 mod composition;
 mod credential;
@@ -37,7 +40,7 @@ pub(crate) use credential::{
 };
 pub(crate) use live_agents::LiveAgentRegistry;
 pub(crate) use policy::LiveSandboxPolicy;
-pub(crate) use runtime_mapping::runtime_capabilities;
+pub(crate) use runtime_mapping::{runtime_capabilities, runtime_options};
 pub(crate) use title_worker::ProviderTitleEndpoint;
 pub(crate) use unavailable_credentials::UnavailableSandboxCredentials;
 

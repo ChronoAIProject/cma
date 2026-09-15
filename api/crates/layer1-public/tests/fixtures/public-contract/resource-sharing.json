@@ -16,6 +16,10 @@
           "content-type": "application/json"
         },
         "body": {
+          "owner": {
+            "kind": "person",
+            "is_current_person": true
+          },
           "capabilities": [
             "view_details",
             "view_history",
@@ -1107,6 +1111,10 @@
           "content-type": "application/json"
         },
         "body": {
+          "owner": {
+            "kind": "person",
+            "is_current_person": false
+          },
           "capabilities": [
             "view_details",
             "view_history",

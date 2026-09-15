@@ -5,7 +5,9 @@ use mongodb::{Collection, IndexModel};
 
 use super::super::sandbox_mongo::{read_record, record_bson, signed, DOCUMENT_SCHEMA_VERSION};
 
-pub(super) fn document(record: &AdmittedAgentCommand) -> Result<Document, CommandLedgerError> {
+pub(in crate::store) fn document(
+    record: &AdmittedAgentCommand,
+) -> Result<Document, CommandLedgerError> {
     record.validate()?;
     let envelope = &record.receipt.envelope;
     Ok(doc! {

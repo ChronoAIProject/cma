@@ -237,6 +237,10 @@ async fn recipient_effective_access_is_narrow_and_revalidated_without_inventory_
         json_response(&router, request("GET", ACCESS, "recipient", None, None)).await;
     assert_eq!(status, StatusCode::OK, "{access}");
     assert_eq!(
+        access["owner"],
+        json!({"kind":"person", "is_current_person":false})
+    );
+    assert_eq!(
         access["capabilities"],
         json!(["view_details", "view_history", "view_artifacts"])
     );
@@ -299,12 +303,58 @@ async fn recipient_effective_access_is_narrow_and_revalidated_without_inventory_
             .0,
         StatusCode::NOT_FOUND
     );
+    let (status, own_access) =
+        json_response(&router, request("GET", ACCESS, "owner-a", None, None)).await;
+    assert_eq!(status, StatusCode::OK);
     assert_eq!(
-        json_response(&router, request("GET", ACCESS, "owner-a", None, None))
-            .await
-            .0,
-        StatusCode::OK
+        own_access["owner"],
+        json!({"kind":"person", "is_current_person":true})
     );
+    assert!(!own_access.to_string().contains("owner-a"));
+}
+
+#[tokio::test]
+async fn effective_organization_owner_is_explicit_without_exposing_parent_metadata() {
+    use layer2_core::sandbox::store::SandboxStore;
+    let (router, store, _) = app().await;
+    let root = store
+        .get_sandbox(&layer2_core::SandboxId("sbx_route".into()))
+        .await
+        .unwrap()
+        .unwrap();
+    store.set_resource_policy_for_test(ResourcePolicyRecord {
+        sandbox_id: root.id,
+        sandbox_created_at: root.created_at.clone(),
+        owner: ResourceOwner::Organization {
+            subject: root.owner.clone(),
+        },
+        organization_evidence: Some(OrganizationOwnershipEvidence {
+            issuer: "https://identity.test".into(),
+            organization: root.owner,
+            admitted_by: context("manager").actor,
+            verified_at: root.created_at,
+        }),
+        revision: 1,
+    });
+    let (status, access) =
+        json_response(&router, request("GET", ACCESS, "recipient", None, None)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        access["owner"],
+        json!({"kind":"organization", "organization_id":"owner-a"})
+    );
+    assert!(access["capabilities"]
+        .as_array()
+        .unwrap()
+        .contains(&json!("manage_sharing")));
+    for private in [
+        "sbx_route",
+        "wks_route",
+        "conversation-agt_share",
+        "request-credential",
+    ] {
+        assert!(!access.to_string().contains(private));
+    }
 }
 
 #[tokio::test]

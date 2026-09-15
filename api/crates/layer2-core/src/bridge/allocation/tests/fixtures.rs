@@ -131,6 +131,8 @@ pub(super) fn fixture() -> (AllocationAdmission, AllocationAuthority) {
         approved_by: actor,
     };
     let plan = AllocationProfilePlan {
+        owner_live_sandbox_limit: 3,
+        baseline_services: Vec::new(),
         profiles,
         bridge: bridge.clone(),
         pin: bridge.admission_pin().unwrap(),
@@ -222,6 +224,8 @@ pub(super) fn renewed(
     )
     .unwrap();
     let plan = AllocationProfilePlan {
+        owner_live_sandbox_limit: 3,
+        baseline_services: Vec::new(),
         profiles: profiles.as_ref().clone(),
         bridge: bridge.clone(),
         pin: record.pin.clone(),

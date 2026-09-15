@@ -5,6 +5,13 @@ import { createClient } from '@chronoai/cma-sdk';
 import { AgentInventory } from './AgentInventory';
 import { chooseOption } from '../test/select';
 
+const access = {
+  owner: { kind: 'person', is_current_person: true },
+  capabilities: ['view_details', 'manage_sharing'],
+  revalidate_at: null,
+  policy_revision: 0,
+};
+
 const row = {
   agent_id: 'agt_1',
   title: 'Retained investigation',
@@ -19,6 +26,7 @@ it('continues through an empty filtered page, preserves the filter, and opens a 
   const queries: URLSearchParams[] = [];
   const fetch = vi.fn(async (input: RequestInfo | URL) => {
     const url = new URL(String(input));
+    if (url.pathname.startsWith('/api/v1/resource-access/agent/')) return Response.json(access);
     if (url.pathname.endsWith('/organizations')) return Response.json({ items: [] });
     queries.push(url.searchParams);
     if (url.searchParams.get('creation_origin') === 'manual' && !url.searchParams.has('cursor'))
@@ -51,6 +59,7 @@ it('clears old scope rows immediately and ignores an aborted late page', async (
   let finish: ((response: Response) => void) | undefined;
   const fetch = vi.fn(async (input: RequestInfo | URL) => {
     const url = new URL(String(input));
+    if (url.pathname.startsWith('/api/v1/resource-access/agent/')) return Response.json(access);
     if (url.pathname.endsWith('/organizations'))
       return Response.json({ items: [{ id: 'org', role: 'viewer', display_name: 'Research' }] });
     if (url.searchParams.has('organization'))
@@ -80,6 +89,7 @@ it('keeps personal inventory usable during an organization outage and clears ref
     baseUrl: 'https://fixture.invalid',
     fetch: async (input) => {
       const url = new URL(String(input));
+      if (url.pathname.startsWith('/api/v1/resource-access/agent/')) return Response.json(access);
       if (url.pathname.endsWith('/organizations'))
         return Response.json(
           { code: 'organization_authority_unavailable', detail: 'Try again later' },
@@ -105,6 +115,8 @@ it('clears the displayed page when export is refused, before the follow-up read 
   const client = createClient({
     baseUrl: 'https://fixture.invalid',
     fetch: async (input) => {
+      if (new URL(String(input)).pathname.startsWith('/api/v1/resource-access/agent/'))
+        return Response.json(access);
       if (new URL(String(input)).pathname.endsWith('/organizations'))
         return Response.json({ items: [] });
       reads += 1;
@@ -139,6 +151,7 @@ it('uses the shared aggregate for filters and fresh exports and keeps organizati
     baseUrl: 'https://fixture.invalid',
     fetch: async (input) => {
       const url = new URL(String(input));
+      if (url.pathname.startsWith('/api/v1/resource-access/agent/')) return Response.json(access);
       if (url.pathname.endsWith('/organizations'))
         return Response.json({
           items: [{ id: 'shared', display_name: 'Named organization', role: 'viewer' }],

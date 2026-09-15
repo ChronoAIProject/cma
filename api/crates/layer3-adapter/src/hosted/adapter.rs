@@ -49,6 +49,7 @@ pub struct HostedAdapter {
     runtime: Arc<dyn HostedAgentRuntime>,
     deployment: HostedDeployment,
     home_volumes: Option<Arc<dyn crate::HomeVolumeStore>>,
+    channel_tools: Option<Arc<dyn super::HostedChannelToolSource>>,
     states: Mutex<BTreeMap<RuntimeHandle, RuntimeState>>,
 }
 
@@ -63,6 +64,7 @@ impl HostedAdapter {
             runtime,
             deployment,
             home_volumes: None,
+            channel_tools: None,
             states: Mutex::new(BTreeMap::new()),
         }
     }
@@ -73,6 +75,11 @@ impl HostedAdapter {
 
     pub fn with_home_volumes(mut self, store: Arc<dyn crate::HomeVolumeStore>) -> Self {
         self.home_volumes = Some(store);
+        self
+    }
+
+    pub fn with_channel_tools(mut self, source: Arc<dyn super::HostedChannelToolSource>) -> Self {
+        self.channel_tools = Some(source);
         self
     }
 

@@ -13,6 +13,16 @@ pub enum Classification {
 // Exact backend-invalid cases not claimed as typed HTTP replay. Each is checked
 // against its source shape or the SDK's real preflight, then its shared error is decoded.
 pub const LOCAL_CASES: &[(&str, Classification)] = &[
+    ("bridge-outbox-list-invalid-limit", Classification::Local),
+    ("bridge-outbox-recover-missing-key", Classification::Local),
+    (
+        "bridge-outbox-recover-unknown-field",
+        Classification::TypedShape,
+    ),
+    (
+        "bridge-outbox-recover-nested-field",
+        Classification::TypedShape,
+    ),
     ("bridge-invoke-issue-missing-key", Classification::Local),
     ("bridge-invoke-revoke-missing-key", Classification::Local),
     ("bridge-invoke-list-invalid-limit", Classification::Local),

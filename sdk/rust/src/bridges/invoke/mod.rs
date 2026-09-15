@@ -102,6 +102,11 @@ impl Bridges<'_> {
         bridge_validation::id(bridge_id)?;
         bridge_validation::revision(body.expected_bridge_revision)?;
         key(idempotency)?;
+        if body.shared_context != BridgeSharedContextConsent::UseRetainedAgentContext {
+            return Err(Error::validation(
+                "channel-created authority is issued only by allocation workers",
+            ));
+        }
         if !validation::target(&body.target) {
             return Err(Error::validation("invalid exact bridge invoke target"));
         }

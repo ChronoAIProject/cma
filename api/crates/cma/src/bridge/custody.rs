@@ -10,7 +10,6 @@ use layer2_core::SubjectId;
 
 use crate::auth::persistence::SecretValue;
 
-#[derive(Debug)]
 pub(crate) struct BridgeCredentialLease {
     pub owner: ResourceOwner,
     /// Verified subject of this exact retained credential. An organization
@@ -23,6 +22,8 @@ pub(crate) struct BridgeCredentialLease {
     pub key_state_version: i64,
     pub value: SecretValue,
     pub deadline: tokio::time::Instant,
+    pub routes: Vec<layer2_core::bridge::BridgeRouteObservation>,
+    pub(super) control_plane: crate::bridge::BridgeControlPlaneLease,
 }
 
 #[async_trait::async_trait]
@@ -99,6 +100,7 @@ impl BridgeCustodyMetadata {
 pub(crate) struct StoredBridgeCredential {
     pub metadata: BridgeCustodyMetadata,
     pub value: SecretValue,
+    pub control_plane: Option<super::control_plane::BridgeControlPlaneGrant>,
 }
 
 #[async_trait::async_trait]

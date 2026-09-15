@@ -34,6 +34,7 @@ impl AgentOperationService {
         let service = Self {
             command_claim: Some(claim.clone()),
             execution_authority: Some(authority.clone()),
+            channel_authority: None,
             connections: self.connections.clone(),
             store: self.store.clone(),
             runtimes: self.runtimes.clone(),
@@ -84,6 +85,7 @@ impl AgentOperationService {
         let service = Self {
             command_claim: Some(claim.clone()),
             execution_authority: None,
+            channel_authority: None,
             connections: self.connections.clone(),
             store: self.store.clone(),
             runtimes: self.runtimes.clone(),

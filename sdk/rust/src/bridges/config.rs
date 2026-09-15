@@ -14,7 +14,9 @@ string_enum! { /// Explicit model-context partition policy.
 string_enum! { /// Treatment of work accepted under an earlier binding.
     pub enum BridgeAcceptedWork { DrainOriginal => "drain_original", SuspendOriginal => "suspend_original" }
 }
-string_enum! { /// Allowed final output delivery.
+string_enum! { /// Explicit Agent reply policy. Legacy `final_response` wire spelling
+    /// allows tool-only delivery during a turn by channel-created Agents; final
+    /// answers are not automatically sent. Approval controls remain unavailable.
     pub enum BridgeReplyPolicy { FinalResponse => "final_response", FinalResponseAndApprovals => "final_response_and_approvals", Disabled => "disabled" }
 }
 string_enum! { /// Required verified addressing evidence for group messages.

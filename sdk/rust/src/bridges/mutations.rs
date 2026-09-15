@@ -134,6 +134,31 @@ impl Bridges<'_> {
         id: &str,
         body: &ImportBridgeKeyRequest<'_>,
     ) -> Result<BridgeCredentialStatus> {
+        self.import_key_authority(id, body, None).await
+    }
+    /// Explicitly retain this exact human OAuth sign-in for the selected Bridge
+    /// and owner for 30 days. Browser logout does not end this grant; revoking
+    /// the imported key does. Each operation rechecks account and org admin access.
+    pub async fn import_key_with_control_plane_authority(
+        &self,
+        id: &str,
+        body: &ImportBridgeKeyRequest<'_>,
+    ) -> Result<BridgeCredentialStatus> {
+        self.import_key_authority(id, body, Some(true)).await
+    }
+    async fn import_key_authority(
+        &self,
+        id: &str,
+        body: &ImportBridgeKeyRequest<'_>,
+        retain_control_plane_authority: Option<bool>,
+    ) -> Result<BridgeCredentialStatus> {
+        #[derive(Serialize)]
+        struct Import<'a, 'b> {
+            #[serde(flatten)]
+            body: &'a ImportBridgeKeyRequest<'b>,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            retain_control_plane_authority: Option<bool>,
+        }
         validation::id(id)?;
         validation::revision(body.expected_revision)?;
         if body.key.is_empty() || body.key.len() > 4096 {
@@ -146,7 +171,10 @@ impl Bridges<'_> {
             .operation(
                 Method::PUT,
                 &["bridges", id, "credential"],
-                Some(body),
+                Some(&Import {
+                    body,
+                    retain_control_plane_authority,
+                }),
                 StatusCode::OK,
             )
             .await?;

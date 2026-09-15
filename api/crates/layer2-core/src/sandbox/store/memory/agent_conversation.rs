@@ -11,6 +11,10 @@ impl AgentConversationStore for InMemorySandboxStore {
         &self,
         mutation: AgentConversationMutation,
     ) -> Result<Vec<AgentLogEntry>, SandboxStoreError> {
+        // This store has no durable Bridge/grant/custody transaction participant.
+        if mutation.channel_execution_fence.is_some() {
+            return Err(SandboxStoreError::Conflict);
+        }
         if mutation.agent_logs.len() > MAX_AGENT_LOG_BATCH_SIZE {
             return Err(SandboxStoreError::AgentLogCapacityExceeded);
         }

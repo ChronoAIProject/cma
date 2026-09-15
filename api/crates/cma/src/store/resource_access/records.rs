@@ -6,7 +6,7 @@ use mongodb::bson::{doc, Document};
 
 use super::super::sandbox_mongo::{read_record, record_bson, signed, DOCUMENT_SCHEMA_VERSION};
 
-pub(super) fn policy_document(
+pub(in crate::store) fn policy_document(
     record: &ResourcePolicyRecord,
 ) -> Result<Document, ResourceAccessStoreError> {
     record.validate()?;

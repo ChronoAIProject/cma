@@ -1,3 +1,5 @@
+import { useAccessSummaries } from './useAccessSummaries';
+import { ResourceAccessSummary, ResourceAccessDetails } from './ResourceAccessSummary';
 import { useMemo, useState } from 'react';
 import { ApiError } from '@chronoai/cma-sdk';
 import type { ResourceViewsClient } from './client';
@@ -81,6 +83,14 @@ export function WorkspaceContents({
     [client, id, sandboxId, onAccessChanged],
   );
   const current = useAuthorizedRead(read);
+  const accessSummaries = useAccessSummaries(
+    client,
+    'agent',
+    current.state.status === 'ready'
+      ? current.state.value.detail.agents.map((agent) => agent.id)
+      : [],
+    id,
+  );
   const channelFacts = useChannelFacts(
     client,
     current.state.status === 'ready'
@@ -100,6 +110,7 @@ export function WorkspaceContents({
   return (
     <div>
       {sandboxId === undefined ? <h2>{workspace.name}</h2> : null}
+      <ResourceAccessDetails client={client} access={current.state.value.access} />
       <p>
         {statusLabel(workspace.status)} · {resourceCount(workspace.worktree_count, 'Worktree')} ·{' '}
         {resourceCount(workspace.agent_count, 'Agent')}
@@ -115,6 +126,7 @@ export function WorkspaceContents({
             <ResourceLink route={{ kind: 'agent', agentId: agent.id }} onNavigate={onNavigate}>
               {agent.title?.trim() || 'Untitled agent'}
             </ResourceLink>
+            <ResourceAccessSummary value={accessSummaries.get(agent.id)} />
             <span>{statusLabel(agent.status)}</span>
             <span>{channelLabel(channelFacts.get(agent.id))}</span>
           </li>

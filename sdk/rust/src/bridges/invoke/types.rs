@@ -4,7 +4,10 @@ use crate::resource_access::{ResourceActor, ResourceOwner};
 use serde::{Deserialize, Serialize};
 
 string_enum! { /// Required explicit consent for a retained Agent's existing conversation context.
-    pub enum BridgeSharedContextConsent { UseRetainedAgentContext => "use_retained_agent_context" }
+    pub enum BridgeSharedContextConsent {
+        UseRetainedAgentContext => "use_retained_agent_context",
+        UseChannelCreatedAgent => "use_channel_created_agent"
+    }
 }
 string_enum! { /// Current presence of usable explicit consent, independent of live execution permission.
     pub enum BridgeInvokeConsentStatus { NotApplicable => "not_applicable", ConsentRequired => "consent_required", ConsentPresent => "consent_present" }
