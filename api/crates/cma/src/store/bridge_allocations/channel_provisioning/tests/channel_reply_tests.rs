@@ -6,6 +6,8 @@ use layer2_core::bridge::invoke::RevokeBridgeInvokeGrant;
 use layer2_core::sandbox::agent_io::*;
 use serde_json::json;
 
+#[path = "channel_control_reference_tests.rs"]
+mod control_reference;
 #[path = "channel_reply_delivery_tests.rs"]
 mod delivery;
 #[path = "channel_reply_generation_test.rs"]
