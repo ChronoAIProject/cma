@@ -33,6 +33,7 @@ mod provider;
 pub(crate) mod provisioning;
 pub(crate) mod setup;
 mod types;
+pub(crate) mod workspace_cleanup_work;
 
 pub(crate) use control_plane::BridgeControlPlaneLease;
 use custody::BridgeCredentialResolver;

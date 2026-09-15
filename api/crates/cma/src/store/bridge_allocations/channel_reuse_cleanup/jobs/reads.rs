@@ -110,7 +110,7 @@ impl MongoBridgeAllocationStore {
                 }
                 CommitOutcome::Retry(_) => continue,
                 CommitOutcome::Unknown(_) | CommitOutcome::Failed(_) => {
-                    return Err(CleanupError::Unavailable)
+                    return Err(CleanupError::Unavailable);
                 }
             }
         }
@@ -202,7 +202,7 @@ impl MongoBridgeAllocationStore {
         Ok(result)
     }
 
-    pub(super) async fn require_cleanup_job(
+    pub(in crate::store::bridge_allocations::channel_reuse_cleanup) async fn require_cleanup_job(
         &self,
         database: &Database,
         allocation: &AllocationRecord,

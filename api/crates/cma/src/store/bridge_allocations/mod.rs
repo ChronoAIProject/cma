@@ -40,6 +40,7 @@ use crate::store::{
 
 pub(in crate::store) use channel_reuse_cleanup::{
     read_removal as read_cleanup_tombstone, require_complete as require_completed_cleanup_child,
+    verified_workspace_restore_paths,
 };
 pub(super) use records::{decode_head, decode_record};
 
@@ -76,6 +77,10 @@ impl MongoBridgeAllocationStore {
                 "channel_reuse_cleanup_removal_audits",
                 "channel_child_cleanup_jobs_v1",
                 "channel_child_cleanup_job_admissions_v1",
+                "owned_workspace_cleanup_jobs_v1",
+                "owned_workspace_cleanup_consents_v1",
+                "owned_workspace_cleanup_tombstones_v1",
+                "owned_workspace_cleanup_audits_v1",
             ],
         )
         .await?;
@@ -116,10 +121,22 @@ impl MongoBridgeAllocationStore {
         store.initialize_cleanup_jobs().await.map_err(|_| {
             layer2_core::StoreError::Unavailable("create explicit cleanup job indexes".into())
         })?;
+        store.initialize_workspace_cleanup().await.map_err(|_| {
+            layer2_core::StoreError::Unavailable("create owned Workspace cleanup indexes".into())
+        })?;
         Ok(store)
     }
 
     async fn fence(
+        &self,
+        authority: &AllocationAuthority,
+        session: &mut ClientSession,
+    ) -> Result<(), MutationError> {
+        self.fence_authority(authority, session).await?;
+        self.fence_reuse_cleanup(authority, session).await
+    }
+
+    async fn fence_authority(
         &self,
         authority: &AllocationAuthority,
         session: &mut ClientSession,
@@ -193,7 +210,7 @@ impl MongoBridgeAllocationStore {
                         MutationError::Mongo(error)
                             if is_transient(&error) || is_duplicate_key(&error) =>
                         {
-                            continue
+                            continue;
                         }
                         MutationError::Mongo(_) => return Err(AllocationError::Unavailable),
                     }
@@ -205,7 +222,7 @@ impl MongoBridgeAllocationStore {
                 // The deterministic identity makes a later retry reconcile the
                 // same record. An ambiguous commit never permits a new tree.
                 CommitOutcome::Unknown(_) | CommitOutcome::Failed(_) => {
-                    return Err(AllocationError::Unavailable)
+                    return Err(AllocationError::Unavailable);
                 }
             }
         }

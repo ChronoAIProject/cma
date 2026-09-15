@@ -223,6 +223,20 @@ async fn apply_admission(
         return Ok(replay);
     }
 
+    let open = store
+        .workspaces
+        .update_one(
+            doc! {"_id":admission.workspace_id.as_str(),
+            "channel_reuse_cleanup_execution":{"$exists":false},
+            "owned_workspace_cleanup_admission_v1":{"$exists":false}},
+            doc! {"$inc":{"owned_workspace_admission_fence":1_i64}},
+        )
+        .session(&mut *session)
+        .await
+        .map_err(ApplyError::Driver)?;
+    if open.matched_count != 1 {
+        return Err(ApplyError::Domain(SandboxStoreError::WorkspaceNotReady));
+    }
     let workspace = store
         .workspaces
         .find_one(doc! { "_id": admission.workspace_id.as_str() })

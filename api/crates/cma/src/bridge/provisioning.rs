@@ -39,6 +39,7 @@ mod reuse;
 pub(crate) mod reuse_cleanup;
 pub(crate) mod reuse_revival;
 pub(crate) mod revival;
+pub(crate) mod workspace_cleanup;
 
 pub(crate) struct BridgeProvisioningDependencies {
     pub resources: Arc<crate::store::MongoSandboxStore>,

@@ -33,6 +33,20 @@ pub(super) async fn reuse_profile_agent(
     {
         return Ok(None);
     }
+    let open = store
+        .workspaces
+        .update_one(
+            doc! {"_id":workspace.id.as_str(),"revision":workspace.revision as i64,
+            "channel_reuse_cleanup_execution":{"$exists":false},
+            "owned_workspace_cleanup_admission_v1":{"$exists":false}},
+            doc! {"$inc":{"owned_workspace_admission_fence":1_i64}},
+        )
+        .session(&mut *session)
+        .await
+        .map_err(ApplyError::Driver)?;
+    if open.matched_count != 1 {
+        return Err(ApplyError::Domain(SandboxStoreError::WorkspaceNotReady));
+    }
     let mut query = doc! {
         "owner": admission.owner.as_str(),
         "workspace_id": workspace.id.as_str(),

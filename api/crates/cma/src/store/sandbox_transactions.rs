@@ -19,7 +19,6 @@ use mongodb::options::ReadConcern;
 
 mod channel_reuse;
 mod command_revival;
-
 enum ApplyError {
     Domain(SandboxStoreError),
     Driver(mongodb::error::Error),
@@ -278,12 +277,13 @@ async fn apply_transaction(
                 .workspaces
                 .update_one(
                     doc! {
-                        "_id": workspace.id.as_str(),
-                        "document_schema_version": DOCUMENT_SCHEMA_VERSION,
-                        "channel_reuse_cleanup_execution": { "$exists": false },
-                        "revision": signed(*expected_revision, "expected workspace revision")
-                            .map_err(|_| ApplyError::Domain(SandboxStoreError::Conflict))?,
-                    },
+                            "_id": workspace.id.as_str(),
+                            "document_schema_version": DOCUMENT_SCHEMA_VERSION,
+                            "channel_reuse_cleanup_execution": { "$exists": false },
+                    "owned_workspace_cleanup_admission_v1": { "$exists": false },
+                            "revision": signed(*expected_revision, "expected workspace revision")
+                                .map_err(|_| ApplyError::Domain(SandboxStoreError::Conflict))?,
+                        },
                     doc! { "$set": workspace_replacement_fields(workspace)
                     .map_err(ApplyError::Domain)? },
                 )
