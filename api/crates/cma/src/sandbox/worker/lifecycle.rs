@@ -16,6 +16,7 @@ mod queue;
 mod restore;
 mod service_access;
 mod support;
+mod tombstones;
 
 impl SandboxWorker {
     pub(super) async fn run_lifecycle(

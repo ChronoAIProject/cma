@@ -9,7 +9,7 @@ use layer2_core::{
 };
 
 impl ChannelReuseCleanupSeal {
-    pub(super) fn validate(&self) -> Result<(), AllocationError> {
+    pub(crate) fn validate(&self) -> Result<(), AllocationError> {
         let hash = |value: &str| {
             value.len() == 64
                 && value

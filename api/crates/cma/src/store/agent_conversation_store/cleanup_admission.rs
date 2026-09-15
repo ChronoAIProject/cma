@@ -10,6 +10,9 @@ pub(super) fn require(
     current: &Agent,
     mutation: &AgentConversationMutation,
 ) -> Result<(), SandboxStoreError> {
+    if row.contains_key(crate::sandbox::channel_reuse_cleanup::CLEANUP_EXECUTION_FIELD) {
+        return Err(SandboxStoreError::Conflict);
+    }
     if !row.contains_key(crate::sandbox::channel_reuse_cleanup::CLEANUP_ADMISSION_FIELD)
         || mutation.command_claim.is_some()
     {

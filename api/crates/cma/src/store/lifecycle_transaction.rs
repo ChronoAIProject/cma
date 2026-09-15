@@ -346,6 +346,7 @@ async fn advance_sandbox(
             doc! {
                 "_id": current.id.as_str(),
                 "document_schema_version": DOCUMENT_SCHEMA_VERSION,
+                "channel_reuse_cleanup_execution": { "$exists": false },
                 "revision": signed(current.revision, "sandbox lifecycle revision")
                     .map_err(|_| ApplyError::Domain(SandboxStoreError::Conflict))?,
             },
