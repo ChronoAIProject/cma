@@ -12,6 +12,8 @@ use sha2::{Digest, Sha256};
 
 use super::*;
 use crate::store::AuthEncryptionKey;
+#[path = "inbox_controls.rs"]
+mod controls;
 #[path = "inbox_receipts.rs"]
 mod receipts;
 #[path = "inbox_redelivery.rs"]
@@ -204,7 +206,10 @@ async fn uncertain_commit_with_expired_proof_stays_unknown_and_fresh_retry_recov
         .unwrap();
     let write = write_with_key_lease(&store, &id, &body, &token, Duration::from_secs(1)).await;
     let expected = write.record().receipt();
-    let outcome = inbox.accept(write).await;
+    let outcome = inbox
+        .accept(write)
+        .await
+        .map(|value| value.into_message().unwrap());
     admin
         .database("admin")
         .run_command(doc! {"configureFailPoint": "failCommand", "mode": "off"})
@@ -227,7 +232,14 @@ async fn uncertain_commit_with_expired_proof_stays_unknown_and_fresh_retry_recov
         "unknown response must not discard the durable result"
     );
     let fresh = write_with_key_lease(&store, &id, &body, &token, Duration::from_secs(60)).await;
-    assert_eq!(inbox.accept(fresh).await.unwrap(), expected);
+    assert_eq!(
+        inbox
+            .accept(fresh)
+            .await
+            .map(|value| value.into_message().unwrap())
+            .unwrap(),
+        expected
+    );
     assert_eq!(rows.count_documents(doc! {}).await.unwrap(), 1);
     client.database(&database).drop().await.unwrap();
 }
@@ -240,24 +252,50 @@ async fn uncertain_commit_reconciliation_preserves_observed_conflict_and_exact_o
     let original = inbox
         .accept(write(&store, &id, &body, &token).await)
         .await
+        .map(|value| value.into_message().unwrap())
         .unwrap();
     let duplicate = write(&store, &id, &body, &token).await;
-    assert_eq!(inbox.reconcile_commit(&duplicate).await.unwrap(), original);
+    assert_eq!(
+        inbox
+            .reconcile_commit(&duplicate)
+            .await
+            .map(|value| value.into_message().unwrap())
+            .unwrap(),
+        original
+    );
     let (changed, changed_token, _) = callback("reconcile", "substituted message");
     let conflict = write(&store, &id, &changed, &changed_token).await;
     assert_eq!(
-        inbox.reconcile_commit(&conflict).await,
+        inbox
+            .reconcile_commit(&conflict)
+            .await
+            .map(|value| value.into_message().unwrap()),
         Err(CallbackError::ReplayConflict)
     );
     let (missing, missing_token, _) = callback("unobserved", "unobserved message");
     let missing = write(&store, &id, &missing, &missing_token).await;
     assert_eq!(
-        inbox.reconcile_commit(&missing).await,
+        inbox
+            .reconcile_commit(&missing)
+            .await
+            .map(|value| value.into_message().unwrap()),
         Err(CallbackError::Unavailable)
     );
     client.database(&database).drop().await.unwrap();
 }
 async fn setup() -> (
+    Client,
+    String,
+    Arc<MongoBridgeStore>,
+    MongoCallbackInbox,
+    BridgeId,
+) {
+    setup_with_config(config()).await
+}
+
+async fn setup_with_config(
+    config: BridgeConfig,
+) -> (
     Client,
     String,
     Arc<MongoBridgeStore>,
@@ -277,7 +315,7 @@ async fn setup() -> (
                 "create",
                 BridgeChange::Create {
                     owner: owner(),
-                    config: Box::new(config()),
+                    config: Box::new(config),
                 },
             ),
         )
@@ -308,6 +346,7 @@ async fn local_custody_revocation_rejects_previously_verified_new_work_and_dupli
     inbox
         .accept(write(&store, &id, &body, &token).await)
         .await
+        .map(|value| value.into_message().unwrap())
         .unwrap();
     let duplicate = write(&store, &id, &body, &token).await;
     let (fresh_body, fresh_token, _) = callback("fresh", "second");
@@ -330,11 +369,17 @@ async fn local_custody_revocation_rejects_previously_verified_new_work_and_dupli
         .await
         .unwrap();
     assert_eq!(
-        inbox.accept(fresh).await,
+        inbox
+            .accept(fresh)
+            .await
+            .map(|value| value.into_message().unwrap()),
         Err(CallbackError::BindingUnavailable)
     );
     assert_eq!(
-        inbox.accept(duplicate).await,
+        inbox
+            .accept(duplicate)
+            .await
+            .map(|value| value.into_message().unwrap()),
         Err(CallbackError::BindingUnavailable)
     );
     assert_eq!(
@@ -357,8 +402,8 @@ async fn signed_duplicate_race_restart_and_encrypted_reply_expiry_preserve_one_a
     let a = write(&store, &id, &body, &token).await;
     let b = write(&store, &id, &body, &token).await;
     let (a, b) = tokio::join!(inbox.accept(a), inbox.accept(b));
-    let receipt = a.unwrap();
-    assert_eq!(b.unwrap(), receipt);
+    let receipt = a.unwrap().into_message().unwrap();
+    assert_eq!(b.unwrap().into_message().unwrap(), receipt);
     assert_eq!(
         receipt.execution_hold,
         Some(InboxExecutionHold::WorkerUnavailable)
@@ -371,6 +416,7 @@ async fn signed_duplicate_race_restart_and_encrypted_reply_expiry_preserve_one_a
         reopened
             .accept(write(&store, &id, &body, &token).await)
             .await
+            .map(|value| value.into_message().unwrap())
             .unwrap(),
         receipt
     );
@@ -449,12 +495,14 @@ async fn authenticated_body_conflict_and_disabled_binding_cannot_add_work() {
     inbox
         .accept(write(&store, &id, &body, &token).await)
         .await
+        .map(|value| value.into_message().unwrap())
         .unwrap();
     let (changed, changed_token, _) = callback("message-1", "changed");
     assert_eq!(
         inbox
             .accept(write(&store, &id, &changed, &changed_token).await)
-            .await,
+            .await
+            .map(|value| value.into_message().unwrap()),
         Err(CallbackError::ReplayConflict)
     );
     let (fresh, fresh_token, _) = callback("message-2", "fresh");
@@ -475,7 +523,10 @@ async fn authenticated_body_conflict_and_disabled_binding_cannot_add_work() {
         .await
         .unwrap();
     assert_eq!(
-        inbox.accept(admitted).await,
+        inbox
+            .accept(admitted)
+            .await
+            .map(|value| value.into_message().unwrap()),
         Err(CallbackError::BindingUnavailable)
     );
     assert_eq!(
@@ -498,7 +549,10 @@ async fn database_failure_rolls_back_inbox_reply_and_rate_before_acknowledgement
     client.database(&database).run_command(doc!{"collMod":"bridge_callback_inbox","validator":{"never_present":{"$exists":true}},"validationLevel":"strict"}).await.unwrap();
     let (body, token, _) = callback("message-1", "first");
     assert_eq!(
-        inbox.accept(write(&store, &id, &body, &token).await).await,
+        inbox
+            .accept(write(&store, &id, &body, &token).await)
+            .await
+            .map(|value| value.into_message().unwrap()),
         Err(CallbackError::Unavailable)
     );
     for name in [
@@ -529,11 +583,15 @@ async fn configured_queue_capacity_and_original_receipts_are_enforced_transactio
         inbox
             .accept(write(&store, &id, &body, &token).await)
             .await
+            .map(|value| value.into_message().unwrap())
             .unwrap();
     }
     let (body, token, _) = callback("message-extra", "full");
     assert_eq!(
-        inbox.accept(write(&store, &id, &body, &token).await).await,
+        inbox
+            .accept(write(&store, &id, &body, &token).await)
+            .await
+            .map(|value| value.into_message().unwrap()),
         Err(CallbackError::Capacity)
     );
     assert_eq!(

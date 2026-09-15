@@ -90,6 +90,9 @@ impl SignedCallback {
             &facts,
             extractor.contract(),
         ));
+        if self.record.admission == InboxAdmission::Accepted {
+            self.classify_reserved_control();
+        }
         if tokio::time::Instant::now() >= self.deadline {
             return Err(CallbackError::Authentication);
         }

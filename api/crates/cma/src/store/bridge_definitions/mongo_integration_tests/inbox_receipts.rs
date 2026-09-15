@@ -35,6 +35,7 @@ async fn expired_payload_keeps_original_receipt_without_restoring_admission_afte
     let accepted = inbox
         .accept(write(&store, &id, &body, &token).await)
         .await
+        .map(|value| value.into_message().unwrap())
         .unwrap();
     let db = client.database(&database);
     let receipts = db.collection::<Document>("bridge_callback_receipts");
@@ -102,6 +103,7 @@ async fn expired_payload_keeps_original_receipt_without_restoring_admission_afte
         reopened
             .accept(write(&store, &id, &body, &token).await)
             .await
+            .map(|value| value.into_message().unwrap())
             .unwrap(),
         accepted
     );
@@ -109,7 +111,8 @@ async fn expired_payload_keeps_original_receipt_without_restoring_admission_afte
     assert_eq!(
         reopened
             .accept(write(&store, &id, &changed, &changed_token).await)
-            .await,
+            .await
+            .map(|value| value.into_message().unwrap()),
         Err(CallbackError::ReplayConflict)
     );
     assert!(reopened
@@ -145,6 +148,7 @@ async fn startup_backfill_requires_exact_live_source_and_skips_missing_or_corrup
             inbox
                 .accept(write(&store, &id, &body, &token).await)
                 .await
+                .map(|value| value.into_message().unwrap())
                 .unwrap(),
         );
     }
@@ -194,6 +198,7 @@ async fn disposition_cursor_passes_corrupt_batch_without_fabricating_terminal_re
     let accepted = inbox
         .accept(write(&store, &id, &body, &token).await)
         .await
+        .map(|value| value.into_message().unwrap())
         .unwrap();
     let db = client.database(&database);
     let receipts = db.collection::<Document>("bridge_callback_receipts");

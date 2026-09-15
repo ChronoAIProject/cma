@@ -14,6 +14,7 @@ use super::*;
 use crate::bridge::ingress::capabilities::tests::fixtures::Fixture;
 
 mod boundaries;
+mod controls;
 mod fixture;
 mod reply_addressing;
 

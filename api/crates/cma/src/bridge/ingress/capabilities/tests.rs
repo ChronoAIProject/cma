@@ -5,6 +5,7 @@ use layer2_core::bridge::ingress::*;
 use layer2_core::bridge::*;
 use serde_json::json;
 
+mod controls;
 pub(in crate::bridge::ingress) mod fixtures;
 mod normalization;
 mod persistence;
