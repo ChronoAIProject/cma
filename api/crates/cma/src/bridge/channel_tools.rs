@@ -39,6 +39,12 @@ pub(crate) trait ChannelToolBackend: Send + Sync {
         &self,
         session: &ChannelReplySessionAuthorization,
     ) -> Result<Option<String>, OutboxError>;
+    async fn control_context(
+        &self,
+        _session: &ChannelReplySessionAuthorization,
+    ) -> Result<Option<String>, OutboxError> {
+        Err(OutboxError::ToolUnavailable)
+    }
     async fn reply(
         &self,
         session: &ChannelReplySessionAuthorization,

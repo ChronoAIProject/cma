@@ -29,6 +29,7 @@ pub(super) struct ReplyFixture {
     pub bridges: Arc<MongoBridgeStore>,
     pub svc: BridgeService,
     pub replies: Arc<crate::store::MongoBridgeReplyToolStore>,
+    pub tools: Arc<crate::store::MongoChannelToolStore>,
 }
 
 impl ReplyFixture {
@@ -169,7 +170,7 @@ impl ReplyFixture {
         );
         let router = crate::bridge::channel_tools::router(
             Arc::new(crate::bridge::channel_tools::StoredChannelTools {
-                capabilities: f.tools,
+                capabilities: f.tools.clone(),
                 replies: replies.clone(),
             }),
             "https://cma.example",
@@ -202,6 +203,7 @@ impl ReplyFixture {
             bridges: f.bridges,
             svc: f.svc,
             replies,
+            tools: f.tools,
         }
     }
 

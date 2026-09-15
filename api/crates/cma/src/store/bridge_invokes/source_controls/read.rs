@@ -59,9 +59,23 @@ impl Collections {
         access: &SourceControlAccess,
         session: &mut ClientSession,
     ) -> Result<(Option<SourceControlPolicy>, Vec<SourceControlPolicy>), MutationError> {
+        access.require_current()?;
+        let result = self
+            .history_for_grant(access.grant(), access.management().deadline(), session)
+            .await?;
+        access.require_current()?;
+        Ok(result)
+    }
+    pub(super) async fn history_for_grant(
+        &self,
+        grant: &BridgeInvokeGrant,
+        deadline: tokio::time::Instant,
+        session: &mut ClientSession,
+    ) -> Result<(Option<SourceControlPolicy>, Vec<SourceControlPolicy>), MutationError> {
+        grant.validate()?;
         let current = self
             .policies
-            .find_one(doc! {"_id":access.grant().id.as_str()})
+            .find_one(doc! {"_id":grant.id.as_str()})
             .session(&mut *session)
             .await?
             .as_ref()
@@ -69,16 +83,18 @@ impl Collections {
             .transpose()?;
         let mut cursor = self
             .audits
-            .find(doc! {"grant_id":access.grant().id.as_str()})
+            .find(doc! {"grant_id":grant.id.as_str()})
             .sort(doc! {"revision":1_i32})
             .limit((MAX_SOURCE_CONTROL_REVISIONS + 1) as i64)
             .session(&mut *session)
             .await?;
         let mut history: Vec<SourceControlPolicy> = Vec::new();
         while cursor.advance(&mut *session).await? {
-            access.require_current()?;
+            if tokio::time::Instant::now() >= deadline {
+                return Err(BridgeInvokeError::Unavailable.into());
+            }
             let policy = records::read_audit(&cursor.deserialize_current()?)?;
-            access.require_policy(&policy)?;
+            policy.view.require_grant(grant)?;
             if policy.view.revision != history.len() as u64 + 1 {
                 return Err(BridgeInvokeError::Corrupt.into());
             }
@@ -99,7 +115,7 @@ impl Collections {
         }
         let receipts = self
             .receipts
-            .count_documents(doc! {"grant_id":access.grant().id.as_str()})
+            .count_documents(doc! {"grant_id":grant.id.as_str()})
             .limit(MAX_SOURCE_CONTROL_REVISIONS + 1)
             .session(&mut *session)
             .await?;
@@ -110,7 +126,7 @@ impl Collections {
             return Err(BridgeInvokeError::Corrupt.into());
         }
         if let Some(current) = &current {
-            access.require_policy(current)?;
+            current.view.require_grant(grant)?;
         }
         Ok((current, history))
     }

@@ -43,4 +43,10 @@ impl ChannelToolBackend for StoredChannelTools {
             .enqueue(ChannelReplyToolIntent::prepare(scope, request)?)
             .await
     }
+    async fn control_context(
+        &self,
+        session: &ChannelReplySessionAuthorization,
+    ) -> Result<Option<String>, OutboxError> {
+        self.replies.control_context(session).await
+    }
 }

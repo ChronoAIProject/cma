@@ -1,5 +1,6 @@
 //! Explicit Channel reply calls, historical source correlation and conservative
 //! delivery state. CMA supplies the durable store and pinned NyxID-only sender.
+mod control_reference;
 mod delivery;
 mod machine;
 pub mod management;
@@ -9,6 +10,7 @@ mod source;
 mod text;
 mod tool;
 
+pub use control_reference::*;
 pub use delivery::*;
 pub use machine::*;
 pub use management::BridgeOutboxService;
