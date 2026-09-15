@@ -6,7 +6,7 @@ use crate::store::sandbox_mongo::{
 };
 use crate::store::{bridge_allocations::read_cleanup_tombstone, sandboxes::read_sandbox};
 use layer2_core::sandbox::{
-    store::{RetiredAgentRuntimePaths, SandboxStoreError},
+    store::{RetiredAgentRuntimePaths, RetiredRuntimeCleanupPlan, SandboxStoreError},
     Sandbox,
 };
 use mongodb::bson::{doc, Document};
@@ -15,7 +15,7 @@ mod ownership;
 pub(super) async fn paths(
     store: &MongoSandboxStore,
     sandbox: &Sandbox,
-) -> Result<Vec<RetiredAgentRuntimePaths>, SandboxStoreError> {
+) -> Result<RetiredRuntimeCleanupPlan, SandboxStoreError> {
     let mut session = store.client.start_session().await.map_err(unavailable)?;
     start_transaction(&mut session).await.map_err(unavailable)?;
     let result = read_paths(store, sandbox, &mut session).await;
@@ -36,7 +36,7 @@ async fn read_paths(
     store: &MongoSandboxStore,
     sandbox: &Sandbox,
     session: &mut mongodb::ClientSession,
-) -> Result<Vec<RetiredAgentRuntimePaths>, SandboxStoreError> {
+) -> Result<RetiredRuntimeCleanupPlan, SandboxStoreError> {
     let parent = store
         .sandboxes
         .find_one(doc! {"_id":sandbox.id.as_str()})
@@ -106,6 +106,7 @@ async fn read_paths(
         ownership::require(store, &tombstone, session).await?;
         result.push(RetiredAgentRuntimePaths {
             agent_id: tombstone.seal.target.agent_id.clone(),
+            workspace_id: tombstone.seal.target.workspace_id.clone(),
             workspace_name: tombstone.workspace_name().into(),
             worktree_name: tombstone.worktree_name().into(),
             authority_fence: tombstone.authority_fence,
@@ -137,6 +138,22 @@ async fn read_paths(
             return Err(SandboxStoreError::Conflict);
         }
     }
+    let workspaces = crate::store::bridge_allocations::verified_workspace_restore_paths(
+        &database, sandbox, &owner, session,
+    )
+    .await
+    .map_err(|_| SandboxStoreError::Conflict)?;
+    // Workspace and child proofs write parent fences; match its fresh exact row.
+    let parent = store
+        .sandboxes
+        .find_one(doc! {"_id":sandbox.id.as_str()})
+        .session(&mut *session)
+        .await
+        .map_err(unavailable)?
+        .ok_or(SandboxStoreError::NotFound)?;
+    if read_sandbox(&parent)? != *sandbox || parent.contains_key(CLEANUP_EXECUTION_FIELD) {
+        return Err(SandboxStoreError::Conflict);
+    }
     let changed = store
         .sandboxes
         .update_one(parent, doc! {"$inc":{"cleanup_restore_fence":1_i64}})
@@ -146,7 +163,10 @@ async fn read_paths(
     if changed.matched_count != 1 {
         return Err(SandboxStoreError::Conflict);
     }
-    Ok(result)
+    Ok(RetiredRuntimeCleanupPlan {
+        agents: result,
+        workspaces,
+    })
 }
 fn unavailable(error: mongodb::error::Error) -> SandboxStoreError {
     SandboxStoreError::Unavailable(error.to_string())

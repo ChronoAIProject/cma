@@ -15,7 +15,9 @@ mod effects;
 mod inventory;
 mod jobs;
 mod removal;
+pub(crate) mod workspace;
 pub(in crate::store) use removal::{read_removal, require_complete};
+pub(in crate::store) use workspace::verified_workspace_restore_paths;
 
 const REQUESTS: &str = "channel_reuse_cleanup_requests";
 const AUDITS: &str = "channel_reuse_cleanup_audits";
@@ -57,7 +59,7 @@ impl MongoBridgeAllocationStore {
                         MutationError::Mongo(error)
                             if is_transient(&error) || is_duplicate_key(&error) =>
                         {
-                            continue
+                            continue;
                         }
                         MutationError::Mongo(_) => return Err(AllocationError::Unavailable),
                     }
@@ -69,7 +71,7 @@ impl MongoBridgeAllocationStore {
                 // Retry the identical explicit request to recover the durable
                 // receipt. Ambiguity grants no cleanup effect or new identity.
                 CommitOutcome::Unknown(_) | CommitOutcome::Failed(_) => {
-                    return Err(AllocationError::Unavailable)
+                    return Err(AllocationError::Unavailable);
                 }
             }
         }

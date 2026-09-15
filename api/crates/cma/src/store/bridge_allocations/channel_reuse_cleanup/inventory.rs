@@ -62,7 +62,7 @@ pub(super) async fn read_owned(
     Ok((snapshot, holds))
 }
 
-async fn retained_inventory(
+pub(super) async fn retained_inventory(
     database: &Database,
     seal: &ChannelReuseCleanupSeal,
     session: &mut ClientSession,
@@ -79,13 +79,14 @@ async fn retained_inventory(
             {"record.workspace_id":target.workspace_id.as_str()},
             {"worktree_id":target.worktree_id.as_str()},
             {"record.worktree_id":target.worktree_id.as_str()},
-            {"record.creation_key":format!("channel-allocation:{}",seal.allocation_id)}]},
+            {"record.creation_key":format!("channel-allocation:{}",seal.allocation_id)},
+            {"creation_key":format!("channel-allocation:{}",seal.allocation_id)}]},
         ),
         (
             "worktrees",
             doc! {"$or":[{"workspace_id":target.workspace_id.as_str()},
             {"record.workspace_id":target.workspace_id.as_str()},
-            {"record.agent_id":target.agent_id.as_str()}, {"record.path":&seal.worktree_path}]},
+            {"record.agent_id":target.agent_id.as_str()}, {"record.path":&seal.worktree_path}, {"path":&seal.worktree_path}]},
         ),
     ];
     for (name, filter) in filters {

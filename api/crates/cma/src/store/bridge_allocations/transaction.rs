@@ -15,7 +15,14 @@ impl MongoBridgeAllocationStore {
         session: &mut ClientSession,
     ) -> Result<AllocationRecord, MutationError> {
         write.require_time()?;
-        self.fence(write.authority(), &mut *session).await?;
+        let reservation = matches!(write, Write::Reserve(_));
+        if reservation {
+            // Current authority precedes inventory; cleanup exclusion follows
+            // actual capacity checks, before any transactional write commits.
+            self.fence_authority(write.authority(), session).await?;
+        } else {
+            self.fence(write.authority(), session).await?;
+        }
         let result = match write {
             Write::Reserve(write) => self.reserve_transaction(write, &mut *session).await?,
             Write::Mutate(write) => {
@@ -38,8 +45,20 @@ impl MongoBridgeAllocationStore {
                 }
             }
         };
+        if reservation {
+            self.fence_reuse_cleanup(write.authority(), session).await?;
+        }
         write.require_time()?;
         Ok(result)
+    }
+
+    #[cfg(test)]
+    pub(in crate::store) async fn reserve_in_session(
+        &self,
+        write: &AllocationReservation,
+        session: &mut ClientSession,
+    ) -> Result<AllocationRecord, MutationError> {
+        self.transaction(&Write::Reserve(write), session).await
     }
 
     async fn reserve_transaction(

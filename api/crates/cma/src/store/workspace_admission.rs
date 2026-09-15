@@ -218,6 +218,13 @@ async fn apply_admission(
         ));
     }
 
+    if store.workspaces.find_one(doc! {
+        "owned_workspace_cleanup_admission_v1":{"$exists":true},
+        "$and":[{"$or":[{"sandbox_id":candidate.sandbox_id.as_str()},{"record.sandbox_id":candidate.sandbox_id.as_str()}]},
+            {"$or":[{"name":&candidate.name},{"record.name":&candidate.name},{"path":&candidate.path},{"record.path":&candidate.path}]}]
+    }).session(&mut *session).await.map_err(ApplyError::Driver)?.is_some() {
+        return Err(ApplyError::Domain(SandboxStoreError::WorkspaceNameConflict));
+    }
     if admission.kind != WorkspaceAdmissionKind::Manual {
         let origin_filter = match &candidate.origin {
             WorkspaceOrigin::SandboxProfile { index } => doc! {
