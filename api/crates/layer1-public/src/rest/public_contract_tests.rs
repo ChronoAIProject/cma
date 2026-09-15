@@ -20,6 +20,7 @@ mod inventory_cases;
 mod provenance_cases;
 mod replay;
 mod responses_v2_cases;
+mod sandbox_command_cases;
 mod sandbox_inventory_cases;
 mod share_cases;
 mod shared_agent_cases;
@@ -117,6 +118,9 @@ fn paths() -> Vec<PathBuf> {
 }
 
 async fn scenario(name: &str) -> Scenario {
+    if let Some(scenario) = sandbox_command_cases::scenario(name).await {
+        return scenario;
+    }
     if let Some(scenario) = creation_inventory_cases::scenario(name).await {
         return scenario;
     }

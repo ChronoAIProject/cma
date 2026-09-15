@@ -398,9 +398,10 @@ store contracts, not evidence of recipient history, interaction or stream revoca
 
 `layer2-core::sandbox::control` adds durable `pause`, `revive`, and `retire`
 intents. The service, memory/Mongo stores, worker, and production authentication
-adapter are implemented. The public receipt routes, SDK methods, scheduler
-composition, and shared UI controls are not yet connected. Existing personal
-lifecycle endpoints retain their contracts.
+adapter are implemented and composed with the public receipt routes, both SDKs,
+a bounded scheduler, and shared UI controls. Public DTOs explicitly exclude
+internal authorization references and audits. Existing personal lifecycle
+endpoints retain their contracts.
 
 Admission requires an idempotency key and the expected Sandbox revision. The
 service captures the actual authenticated human/API actor, exact sign-in

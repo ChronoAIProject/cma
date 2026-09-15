@@ -31,6 +31,15 @@ pub async fn dispatch(c: &Context<'_>) -> Result<()> {
         };
     }
     match op {
+        "POST /api/v1/sandboxes/{id}/commands" => c.check(
+            client
+                .sandboxes()
+                .submit_command(c.param("id"), &c.body()?, &c.key()?)
+                .await,
+        ),
+        "GET /api/v1/sandbox-commands/{id}" => {
+            c.check(client.sandboxes().read_command(c.param("id")).await)
+        }
         "GET /api/v1/organizations" => c.check(client.resource_access().organizations().await),
         "GET /api/v1/resource-access/{kind}/{id}" => c.check(
             client

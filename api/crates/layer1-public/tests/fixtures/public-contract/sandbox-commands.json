@@ -1,0 +1,974 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "sandbox-command-shared-admission",
+      "operation": "POST /api/v1/sandboxes/{id}/commands",
+      "scenario": "sandbox_command_admin",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/sandboxes/sbx_route/commands",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "command-one"
+        },
+        "body": {
+          "command": "pause",
+          "expected_revision": 1
+        }
+      },
+      "response": {
+        "status": 202,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json",
+          "location": "/api/v1/sandbox-commands/$command_id"
+        },
+        "body": {
+          "command_id": "scmd_contract",
+          "sandbox_id": "sbx_route",
+          "command": "pause",
+          "expected_revision": 1,
+          "admitted_at": "2026-09-15T00:00:00Z",
+          "queue_deadline": "2026-09-15T00:05:00Z",
+          "revision": 1,
+          "state": {
+            "status": "queued"
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "admitted_at": "/admitted_at",
+        "command_id": "/command_id",
+        "queue_deadline": "/queue_deadline"
+      }
+    },
+    {
+      "id": "sandbox-command-shared-retry",
+      "operation": "POST /api/v1/sandboxes/{id}/commands",
+      "scenario": "sandbox_command_admin",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/sandboxes/sbx_route/commands",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "command-one"
+        },
+        "body": {
+          "command": "pause",
+          "expected_revision": 1
+        }
+      },
+      "response": {
+        "status": 202,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json",
+          "location": "/api/v1/sandbox-commands/$command_id"
+        },
+        "body": {
+          "command_id": "scmd_contract",
+          "sandbox_id": "sbx_route",
+          "command": "pause",
+          "expected_revision": 1,
+          "admitted_at": "2026-09-15T00:00:00Z",
+          "queue_deadline": "2026-09-15T00:05:00Z",
+          "revision": 1,
+          "state": {
+            "status": "queued"
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "admitted_at": "/admitted_at",
+        "command_id": "/command_id",
+        "queue_deadline": "/queue_deadline"
+      }
+    },
+    {
+      "id": "sandbox-command-shared-recover",
+      "operation": "GET /api/v1/sandbox-commands/{id}",
+      "scenario": "sandbox_command_admin",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/sandbox-commands/$command_id",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json"
+        },
+        "body": {
+          "command_id": "scmd_contract",
+          "sandbox_id": "sbx_route",
+          "command": "pause",
+          "expected_revision": 1,
+          "admitted_at": "2026-09-15T00:00:00Z",
+          "queue_deadline": "2026-09-15T00:05:00Z",
+          "revision": 1,
+          "state": {
+            "status": "queued"
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "admitted_at": "/admitted_at",
+        "command_id": "/command_id",
+        "queue_deadline": "/queue_deadline"
+      }
+    },
+    {
+      "id": "sandbox-command-changed-precondition",
+      "operation": "POST /api/v1/sandboxes/{id}/commands",
+      "scenario": "sandbox_command_admin",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/sandboxes/sbx_route/commands",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "command-one"
+        },
+        "body": {
+          "command": "pause",
+          "expected_revision": 2
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/idempotency_key_reused",
+          "title": "idempotency_key_reused",
+          "status": 409,
+          "detail": "This idempotency key names a different Sandbox command request.",
+          "code": "idempotency_key_reused"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-command-busy",
+      "operation": "POST /api/v1/sandboxes/{id}/commands",
+      "scenario": "sandbox_command_admin",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/sandboxes/sbx_route/commands",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "another-command"
+        },
+        "body": {
+          "command": "pause",
+          "expected_revision": 1
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "retry-after": "1"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/sandbox_command_busy",
+          "title": "sandbox_command_busy",
+          "status": 409,
+          "detail": "Another lifecycle command is queued for this Sandbox.",
+          "code": "sandbox_command_busy"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-command-recipient-cannot-retire",
+      "operation": "POST /api/v1/sandboxes/{id}/commands",
+      "scenario": "sandbox_command_admin",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/sandboxes/sbx_route/commands",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "retire"
+        },
+        "body": {
+          "command": "retire",
+          "expected_revision": 1
+        }
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource_forbidden",
+          "title": "resource_forbidden",
+          "status": 403,
+          "detail": "Current authority does not permit this operation.",
+          "code": "resource_forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-command-owner-admission",
+      "operation": "POST /api/v1/sandboxes/{id}/commands",
+      "scenario": "sandbox_command_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/sandboxes/sbx_route/commands",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "command-one"
+        },
+        "body": {
+          "command": "pause",
+          "expected_revision": 1
+        }
+      },
+      "response": {
+        "status": 202,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json",
+          "location": "/api/v1/sandbox-commands/$command_id"
+        },
+        "body": {
+          "command_id": "scmd_contract",
+          "sandbox_id": "sbx_route",
+          "command": "pause",
+          "expected_revision": 1,
+          "admitted_at": "2026-09-15T00:00:00Z",
+          "queue_deadline": "2026-09-15T00:05:00Z",
+          "revision": 1,
+          "state": {
+            "status": "queued"
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "admitted_at": "/admitted_at",
+        "command_id": "/command_id",
+        "queue_deadline": "/queue_deadline"
+      }
+    },
+    {
+      "id": "sandbox-command-viewer",
+      "operation": "POST /api/v1/sandboxes/{id}/commands",
+      "scenario": "sandbox_command_viewer",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/sandboxes/sbx_route/commands",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "command-one"
+        },
+        "body": {
+          "command": "pause",
+          "expected_revision": 1
+        }
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource_forbidden",
+          "title": "resource_forbidden",
+          "status": 403,
+          "detail": "Current authority does not permit this operation.",
+          "code": "resource_forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-command-member",
+      "operation": "POST /api/v1/sandboxes/{id}/commands",
+      "scenario": "sandbox_command_member",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/sandboxes/sbx_route/commands",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "command-one"
+        },
+        "body": {
+          "command": "pause",
+          "expected_revision": 1
+        }
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource_forbidden",
+          "title": "resource_forbidden",
+          "status": 403,
+          "detail": "Current authority does not permit this operation.",
+          "code": "resource_forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-command-missing",
+      "operation": "POST /api/v1/sandboxes/{id}/commands",
+      "scenario": "sandbox_command_missing",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/sandboxes/sbx_route/commands",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "command-one"
+        },
+        "body": {
+          "command": "pause",
+          "expected_revision": 1
+        }
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource_not_found",
+          "title": "resource_not_found",
+          "status": 404,
+          "detail": "Resource not found.",
+          "code": "resource_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-command-outage",
+      "operation": "POST /api/v1/sandboxes/{id}/commands",
+      "scenario": "sandbox_command_outage",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/sandboxes/sbx_route/commands",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "command-one"
+        },
+        "body": {
+          "command": "pause",
+          "expected_revision": 1
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/organization_authority_unavailable",
+          "title": "organization_authority_unavailable",
+          "status": 503,
+          "detail": "Current organization authorization is unavailable. Retry after the identity provider recovers.",
+          "code": "organization_authority_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-command-revoked",
+      "operation": "POST /api/v1/sandboxes/{id}/commands",
+      "scenario": "sandbox_command_revoked",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/sandboxes/sbx_route/commands",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "command-one"
+        },
+        "body": {
+          "command": "pause",
+          "expected_revision": 1
+        }
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource_not_found",
+          "title": "resource_not_found",
+          "status": 404,
+          "detail": "Resource not found.",
+          "code": "resource_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-command-no-credential",
+      "operation": "POST /api/v1/sandboxes/{id}/commands",
+      "scenario": "sandbox_command_no_credential",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/sandboxes/sbx_route/commands",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "command-one"
+        },
+        "body": {
+          "command": "pause",
+          "expected_revision": 1
+        }
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/command_authority_required",
+          "title": "command_authority_required",
+          "status": 403,
+          "detail": "Current credential custody does not authorize durable command execution.",
+          "code": "command_authority_required"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-command-no-custody",
+      "operation": "POST /api/v1/sandboxes/{id}/commands",
+      "scenario": "sandbox_command_no_custody",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/sandboxes/sbx_route/commands",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "command-one"
+        },
+        "body": {
+          "command": "pause",
+          "expected_revision": 1
+        }
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/command_authority_required",
+          "title": "command_authority_required",
+          "status": 403,
+          "detail": "Current credential custody does not authorize durable command execution.",
+          "code": "command_authority_required"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-command-custody-outage",
+      "operation": "POST /api/v1/sandboxes/{id}/commands",
+      "scenario": "sandbox_command_custody_outage",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/sandboxes/sbx_route/commands",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "command-one"
+        },
+        "body": {
+          "command": "pause",
+          "expected_revision": 1
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "retry-after": "1"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/sandbox_command_unavailable",
+          "title": "sandbox_command_unavailable",
+          "status": 503,
+          "detail": "Sandbox commands are temporarily unavailable. Retry the same key to recover an unacknowledged receipt.",
+          "code": "sandbox_command_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-command-invalid-context",
+      "operation": "POST /api/v1/sandboxes/{id}/commands",
+      "scenario": "sandbox_command_invalid_context",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/sandboxes/sbx_route/commands",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "command-one"
+        },
+        "body": {
+          "command": "pause",
+          "expected_revision": 1
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-command-anonymous",
+      "operation": "POST /api/v1/sandboxes/{id}/commands",
+      "scenario": "sandbox_command_anonymous",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/sandboxes/sbx_route/commands",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "command-one"
+        },
+        "body": {
+          "command": "pause",
+          "expected_revision": 1
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-command-read-queued",
+      "operation": "GET /api/v1/sandbox-commands/{id}",
+      "scenario": "sandbox_command_queued",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/sandbox-commands/$command_id",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json"
+        },
+        "body": {
+          "command_id": "scmd_contract",
+          "sandbox_id": "sbx_route",
+          "command": "pause",
+          "expected_revision": 1,
+          "admitted_at": "2026-09-15T00:00:00Z",
+          "queue_deadline": "2026-09-15T00:05:00Z",
+          "revision": 1,
+          "state": {
+            "status": "queued"
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "admitted_at": "/admitted_at",
+        "command_id": "/command_id",
+        "queue_deadline": "/queue_deadline"
+      }
+    },
+    {
+      "id": "sandbox-command-read-applied",
+      "operation": "GET /api/v1/sandbox-commands/{id}",
+      "scenario": "sandbox_command_applied",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/sandbox-commands/$command_id",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json"
+        },
+        "body": {
+          "command_id": "scmd_contract",
+          "sandbox_id": "sbx_route",
+          "command": "pause",
+          "expected_revision": 1,
+          "admitted_at": "2026-09-15T00:00:00Z",
+          "queue_deadline": "2026-09-15T00:05:00Z",
+          "revision": 2,
+          "state": {
+            "status": "applied",
+            "at": "2026-09-15T00:00:00Z",
+            "sandbox_revision": 2,
+            "disposition": "scheduled"
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "admitted_at": "/admitted_at",
+        "command_id": "/command_id",
+        "finished_at": "/state/at",
+        "queue_deadline": "/queue_deadline"
+      }
+    },
+    {
+      "id": "sandbox-command-read-rejected",
+      "operation": "GET /api/v1/sandbox-commands/{id}",
+      "scenario": "sandbox_command_rejected",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/sandbox-commands/$command_id",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json"
+        },
+        "body": {
+          "command_id": "scmd_contract",
+          "sandbox_id": "sbx_route",
+          "command": "pause",
+          "expected_revision": 1,
+          "admitted_at": "2026-09-15T00:00:00Z",
+          "queue_deadline": "2026-09-15T00:05:00Z",
+          "revision": 2,
+          "state": {
+            "status": "rejected",
+            "at": "2026-09-15T00:00:00Z",
+            "reason": "connections_required"
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "admitted_at": "/admitted_at",
+        "command_id": "/command_id",
+        "finished_at": "/state/at",
+        "queue_deadline": "/queue_deadline"
+      }
+    },
+    {
+      "id": "sandbox-command-missing-key",
+      "operation": "POST /api/v1/sandboxes/{id}/commands",
+      "scenario": "sandbox_command_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/sandboxes/sbx_route/commands",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "command": "pause",
+          "expected_revision": 1
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/missing-idempotency-key",
+          "title": "missing idempotency key",
+          "status": 400,
+          "detail": "This operation requires an Idempotency-Key header.",
+          "code": "missing_idempotency_key"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-command-invalid-revision",
+      "operation": "POST /api/v1/sandboxes/{id}/commands",
+      "scenario": "sandbox_command_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/sandboxes/sbx_route/commands",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "invalid"
+        },
+        "body": {
+          "command": "pause",
+          "expected_revision": 0
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid_sandbox_command",
+          "title": "invalid_sandbox_command",
+          "status": 400,
+          "detail": "A Sandbox command and a positive expected revision are required.",
+          "code": "invalid_sandbox_command"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-command-spoofed-owner",
+      "operation": "POST /api/v1/sandboxes/{id}/commands",
+      "scenario": "sandbox_command_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/sandboxes/sbx_route/commands",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "spoofed"
+        },
+        "body": {
+          "command": "pause",
+          "expected_revision": 1,
+          "owner": "someone-else"
+        }
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid_json",
+          "title": "invalid_json",
+          "status": 422,
+          "detail": "Failed to deserialize the JSON body into the target type: owner: unknown field `owner`, expected `command` or `expected_revision` at line 1 column 48",
+          "code": "invalid_json"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-command-missing-receipt",
+      "operation": "GET /api/v1/sandbox-commands/{id}",
+      "scenario": "sandbox_command_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/sandbox-commands/scmd_missing",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/sandbox_command_not_found",
+          "title": "sandbox_command_not_found",
+          "status": 404,
+          "detail": "Sandbox command not found.",
+          "code": "sandbox_command_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-command-stale-revision",
+      "operation": "POST /api/v1/sandboxes/{id}/commands",
+      "scenario": "sandbox_command_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/sandboxes/sbx_route/commands",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "stale-revision"
+        },
+        "body": {
+          "command": "pause",
+          "expected_revision": 2
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/sandbox_command_conflict",
+          "title": "sandbox_command_conflict",
+          "status": 409,
+          "detail": "Sandbox state or access changed. Read current state before submitting a new command.",
+          "code": "sandbox_command_conflict"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-command-invalid-key",
+      "operation": "POST /api/v1/sandboxes/{id}/commands",
+      "scenario": "sandbox_command_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/sandboxes/sbx_route/commands",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "invalid key"
+        },
+        "body": {
+          "command": "pause",
+          "expected_revision": 1
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-idempotency-key",
+          "title": "invalid idempotency key",
+          "status": 400,
+          "detail": "Idempotency-Key must contain between 1 and 255 visible ASCII bytes.",
+          "code": "invalid_idempotency_key"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-command-read-no-credential",
+      "operation": "GET /api/v1/sandbox-commands/{id}",
+      "scenario": "sandbox_command_no_credential",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/sandbox-commands/scmd_missing",
+        "headers": {}
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/command_authority_required",
+          "title": "command_authority_required",
+          "status": 403,
+          "detail": "Current credential custody does not authorize durable command execution.",
+          "code": "command_authority_required"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-command-read-anonymous",
+      "operation": "GET /api/v1/sandbox-commands/{id}",
+      "scenario": "sandbox_command_anonymous",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/sandbox-commands/scmd_missing",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-command-read-invalid-context",
+      "operation": "GET /api/v1/sandbox-commands/{id}",
+      "scenario": "sandbox_command_invalid_context",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/sandbox-commands/scmd_missing",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    }
+  ]
+}

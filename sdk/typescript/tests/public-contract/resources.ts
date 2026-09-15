@@ -27,6 +27,10 @@ export const resourceDispatch: Record<string, Dispatch> = {
   'GET /api/v1/sandboxes': ({ client, options }) => client.sandboxes.listAccessible(options),
   'POST /api/v1/sandboxes': ({ client, body, command }) => client.sandboxes.create(body, command),
   'GET /api/v1/sandboxes/{id}': ({ client, param }) => client.sandboxes.readAccessible(param('id')),
+  'POST /api/v1/sandboxes/{id}/commands': ({ client, param, body, command }) =>
+    client.sandboxes.submitCommand(param('id'), body, command),
+  'GET /api/v1/sandbox-commands/{id}': ({ client, param }) =>
+    client.sandboxes.readCommand(param('id')),
   'DELETE /api/v1/sandboxes/{id}': ({ client, param, command }) =>
     client.sandboxes.delete(param('id'), command),
   'POST /api/v1/sandboxes/{id}/pause': ({ client, param, command }) =>

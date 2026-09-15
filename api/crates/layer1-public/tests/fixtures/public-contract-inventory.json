@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "openapi_operations": 135,
+  "openapi_operations": 137,
   "operations": {
     "GET /api/v1/organizations": {
       "classification": "openapi",
@@ -2045,6 +2045,34 @@
         "resource_access_unavailable",
         "resource_forbidden",
         "resource_not_found"
+      ]
+    },
+    "GET /api/v1/sandbox-commands/{id}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/sandbox_commands.rs# Public lifecycle receipts and typed errors, with current actor authorization.",
+      "required_problems": [
+        "command_authority_required",
+        "not_authenticated",
+        "sandbox_command_not_found"
+      ]
+    },
+    "POST /api/v1/sandboxes/{id}/commands": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/sandbox_commands.rs# Public lifecycle receipts and typed errors, with current actor authorization.",
+      "required_problems": [
+        "command_authority_required",
+        "idempotency_key_reused",
+        "invalid_idempotency_key",
+        "invalid_json",
+        "invalid_sandbox_command",
+        "missing_idempotency_key",
+        "not_authenticated",
+        "organization_authority_unavailable",
+        "resource_forbidden",
+        "resource_not_found",
+        "sandbox_command_busy",
+        "sandbox_command_conflict",
+        "sandbox_command_unavailable"
       ]
     }
   }

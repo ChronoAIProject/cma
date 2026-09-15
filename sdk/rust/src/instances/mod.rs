@@ -7,7 +7,9 @@ use crate::{
     resources::{identity, positive},
 };
 
+mod commands;
 mod events;
+pub use commands::*;
 mod lifecycle;
 mod shared;
 mod types;

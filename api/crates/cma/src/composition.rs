@@ -39,6 +39,7 @@ pub(crate) struct ControlPlaneComposition {
     pub launch_scheduler: super::trigger::LaunchScheduler,
     pub provenance_backfill: crate::sandbox::AgentProvenanceBackfill,
     pub command_scheduler: super::commands::CommandScheduler,
+    pub sandbox_control_scheduler: super::commands::SandboxControlScheduler,
     pub sandbox_lifecycle: SandboxLifecycleComposition,
 }
 
@@ -276,7 +277,7 @@ impl ControlPlaneComposition {
         );
         let trigger = TriggerComposition::new(TriggerCompositionDependencies {
             agent_reads: projections.reads(),
-            credentials: connection_prerequisite,
+            credentials: connection_prerequisite.clone(),
             stores: Arc::clone(&stores),
             directory: users,
             settings: Arc::clone(&settings),
@@ -310,6 +311,19 @@ impl ControlPlaneComposition {
         )
         .map_err(|error| format!("Agent command worker is not usable: {error}"))?;
         let command_scheduler = crate::commands::CommandScheduler::new(command_worker);
+        let sandbox_control_scheduler = crate::commands::SandboxControlScheduler::new(
+            layer2_core::sandbox::control::SandboxControlWorker::new(
+                stores.sandbox_model.clone(),
+                resource_access.clone(),
+                auth.clone(),
+                connection_prerequisite,
+            ),
+        );
+        let sandbox_control_service = layer2_core::sandbox::control::SandboxControlService::new(
+            stores.sandbox_model.clone(),
+            resource_access.clone(),
+            auth.clone(),
+        );
         let command_service = layer2_core::sandbox::agent_io::AgentCommandService::new(
             stores.sandbox_model.clone(),
             resource_access.clone(),
@@ -326,6 +340,9 @@ impl ControlPlaneComposition {
             resource_access.clone(),
         );
         let resource_routes = profiles_router(profiles)
+            .merge(layer1_public::rest::sandbox_commands_router(
+                sandbox_control_service,
+            ))
             .merge(layer1_public::rest::agent_provenance_inventory_router(
                 layer2_core::sandbox::AgentProvenanceInventoryService::new(
                     stores.sandbox_model.clone(),
@@ -372,6 +389,7 @@ impl ControlPlaneComposition {
             provenance_backfill,
             launch_scheduler,
             command_scheduler,
+            sandbox_control_scheduler,
             sandbox_lifecycle,
         })
     }

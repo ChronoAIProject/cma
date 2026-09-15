@@ -126,3 +126,37 @@ metadata/counts. Personal owners retain the full personal summary. Omit the
 organization for personal inventory. Existing `sandboxes.list()` retains its
 personal type and refuses shared summaries. A changed policy or unavailable
 membership yields a typed error without partial rows or a stale `next` cursor.
+
+## Shared lifecycle commands
+
+`submitCommand(id, { command, expected_revision }, { idempotencyKey })` admits an
+explicit `pause`, `revive`, or `retire` intent and returns a safe receipt with HTTP 202. `readCommand(commandId)` recovers that receipt with HTTP 200. Shared detail
+`revision` is optional for older-server compatibility; require it before submitting.
+
+```ts
+import { createClient } from '@chronoai/cma-sdk';
+
+export async function requestPause(id: string, key: string) {
+  const cma = createClient();
+  const detail = await cma.sandboxes.readAccessible(id);
+  if (detail.revision === undefined) throw new Error('Current Sandbox revision unavailable');
+  const request = { command: 'pause', expected_revision: detail.revision } as const;
+  const receipt = await cma.sandboxes.submitCommand(id, request, { idempotencyKey: key });
+  return cma.sandboxes.readCommand(receipt.command_id);
+}
+```
+
+Retain the request and key before submitting. If the response is uncertain, retry
+that exact body and key, including its original revision. Do not call the example
+again to derive a replacement revision. `state.status` is `queued`, `applied`, or
+`rejected`. Applied records a committed transition (or one already scheduled or
+satisfied); read current Sandbox status for runtime progress. Rejection supplies
+a typed reason. Receipts expose no credential references or owner configuration.
+The SDK rejects inconsistent receipt identities, revisions and terminal states.
+
+Pause/revive require current `manage_sandbox`; retire requires owner/admin
+`manage_sharing` plus the personal owner's deletion capability when applicable.
+Shared recipients cannot retire the owner’s Sandbox. The server rechecks authority
+before scheduling; receipt reads require the requesting actor and current Sandbox
+visibility. The five-minute queue deadline never renews. HTTP 409 busy and HTTP
+503 unavailable responses require reading/retrying; they do not establish success.

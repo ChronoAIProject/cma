@@ -171,3 +171,36 @@ async fn shared_sandbox_inventory_preserves_safe_summaries_and_personal_method_t
     }
     server.assert_drained();
 }
+
+#[tokio::test]
+async fn shared_sandbox_detail_revision_is_optional_but_positive_when_present() {
+    let server = Server::new().await;
+    let base = json!({"access":"shared","id":"sandbox-1","name":"Project","status":"active","created_at":NOW,"updated_at":NOW,"last_activity_at":NOW,"workspace_count":0,"worktree_count":0,"agent_count":0,"workspaces":[]});
+    for revision in [None, Some(7)] {
+        let mut body = base.clone();
+        if let Some(revision) = revision {
+            body["revision"] = json!(revision);
+        }
+        server.expect("GET", "/sandboxes/sandbox-1", None, 200, Some(body));
+        let AccessibleSandboxDetail::Shared(detail) = server
+            .client
+            .sandboxes()
+            .read_accessible("sandbox-1")
+            .await
+            .unwrap()
+        else {
+            panic!("shared detail required")
+        };
+        assert_eq!(detail.revision, revision);
+    }
+    for revision in [json!(0), json!(-1), json!(1.5), json!("7"), Value::Null] {
+        let mut body = base.clone();
+        body["revision"] = revision;
+        server.expect("GET", "/sandboxes/sandbox-1", None, 200, Some(body));
+        assert!(matches!(
+            server.client.sandboxes().read_accessible("sandbox-1").await,
+            Err(Error::Protocol { .. })
+        ));
+    }
+    server.assert_drained();
+}

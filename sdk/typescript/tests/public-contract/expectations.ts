@@ -3,6 +3,7 @@ import type { ContractCase } from './context.js';
 import { browserOperations } from './navigation.js';
 
 export const localCodes = new Map([
+  ['sandbox-command-invalid-revision', 'invalid_sandbox_command'],
   ['creation-inventory-invalid-category', 'invalid_instance_query'],
   ['responses-v2-field-stream', 'stream_required'],
   ['responses-v2-field-previous_response_id', 'conversation_previous_response_conflict'],

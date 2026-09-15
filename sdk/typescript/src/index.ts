@@ -33,6 +33,7 @@ export type * from './instances/shared.js';
 export type * from './agents/events.js';
 export type * from './instances/types.js';
 export type * from './instances/events.js';
+export type * from './instances/commands.js';
 export type * from './profiles/types.js';
 export type * from './profiles/marketplace.js';
 export {
