@@ -52,6 +52,11 @@ fn tools() -> Value {
             "text":{"type":"string","minLength":1,"maxLength":1048576}
         },"required":["reply_context","request_key","text"],"additionalProperties":false},
         "annotations":{"readOnlyHint":false,"destructiveHint":false,"idempotentHint":true,"openWorldHint":true}
+    },{
+        "name":"read_channel_control_context",
+        "description":"Read this active channel source's retained control reference when its sender has separate control consent. Cancellation and steering are currently unavailable: operations is empty. This reference grants no authority. This tool does not send a message or control work.",
+        "inputSchema":{"type":"object","properties":{},"additionalProperties":false},
+        "annotations":{"readOnlyHint":true,"destructiveHint":false,"idempotentHint":true,"openWorldHint":false}
     }]})
 }
 
@@ -84,6 +89,24 @@ async fn call(
     let call: Call =
         serde_json::from_value(params).map_err(|_| (-32602, "Invalid tool arguments"))?;
     match call.name.as_str() {
+        "read_channel_control_context"
+            if call
+                .arguments
+                .as_object()
+                .is_some_and(|args| args.is_empty()) =>
+        {
+            Ok(match backend.control_context(session).await {
+                Ok(reference) => control_context(reference),
+                Err(
+                    OutboxError::ToolUnavailable
+                    | OutboxError::SourceMismatch
+                    | OutboxError::AuthorityUnavailable
+                    | OutboxError::Suspended
+                    | OutboxError::Expired,
+                ) => control_context(None),
+                Err(_) => result(json!({"code":"channel_control_context_unavailable"}), true),
+            })
+        }
         "read_channel_context"
             if call
                 .arguments
@@ -135,9 +158,24 @@ async fn call(
                 },
             )
         }
-        "read_channel_context" => Err((-32602, "Context tool accepts no arguments")),
+        "read_channel_context" | "read_channel_control_context" => {
+            Err((-32602, "Context tool accepts no arguments"))
+        }
         _ => Err((-32602, "Unknown tool")),
     }
+}
+
+fn control_context(reference: Option<String>) -> Value {
+    let availability = if reference.is_some() {
+        "execution_unavailable"
+    } else {
+        "unavailable"
+    };
+    result(
+        json!({"source_control_reference":reference,"operations":[],
+        "approval_mode":"dashboard_only","availability":availability}),
+        false,
+    )
 }
 
 fn result(content: Value, is_error: bool) -> Value {

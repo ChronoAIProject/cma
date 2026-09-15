@@ -54,6 +54,41 @@ recovery retains its original reply receipt.
 turn is active. It does not send a message. A context that becomes stale cannot
 authorize a new reply to a later input.
 
+`read_channel_control_context` also accepts no arguments. It returns a retained,
+random `source_control_reference` only for an eligible current channel-created
+source with separately admitted sender-control consent. The reference is a
+nonsecret lookup identity, never a bearer permission. The result currently has
+this shape:
+
+```json
+{
+  "source_control_reference": "ccr_0123456789abcdef0123456789abcdef",
+  "operations": [],
+  "approval_mode": "dashboard_only",
+  "availability": "execution_unavailable"
+}
+```
+
+Cancellation and steering are not executable through this foundation. An empty
+operation list explicitly preserves that limitation. Missing current source or
+consent returns a null reference and `availability: "unavailable"`. The tool
+accepts no source, destination, reference or authority arguments and sends
+nothing. It does not change `read_channel_context` or `reply_to_channel`.
+
+The mapping retains the exact source command, response and turn, original
+sender/chat/thread, Bridge/bot/platform, Agent creation, allocation generation,
+and complete consent receipt and digest. Concurrent reads and process recovery
+reuse the same mapping. Revoking and re-enabling consent creates a new mapping;
+the old one stays immutable and cannot restore the earlier consent. Source,
+runtime, current grant/custody and consent fences apply before returning the
+reference. An allocation reset cannot select its replacement through an old
+reference. References are not advertised for a completed or approval-blocked
+turn. No automatic send accompanies issuance, refusal or approval waiting.
+This foundation requires the retained channel-derived invoke grant and its
+exact allocation basis. A channel-created Agent reached through an
+`ExistingAgent` grant without that basis receives no control reference. Its
+existing reply-tool eligibility is unchanged.
+
 `reply_to_channel` requires these three arguments and rejects additional fields:
 
 | Argument | Meaning |

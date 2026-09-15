@@ -20,6 +20,7 @@ use crate::store::{
 
 use super::MongoBridgeInvokeStore;
 
+mod control_context;
 mod enqueue;
 mod management;
 mod rate;
@@ -43,6 +44,7 @@ pub(crate) struct MongoBridgeReplyToolStore {
     scans: Collection<Document>,
     send_rates: Collection<Document>,
     recoveries: Collection<Document>,
+    control_references: Collection<Document>,
     wake: tokio::sync::Notify,
 }
 
@@ -65,6 +67,7 @@ impl MongoBridgeReplyToolStore {
                 "bridge_outbox_scans",
                 "bridge_outbox_send_rates",
                 "bridge_outbox_recoveries",
+                "bridge_channel_control_references",
             ],
         )
         .await?;
@@ -79,6 +82,7 @@ impl MongoBridgeReplyToolStore {
             scans: majority_collection(&database, "bridge_outbox_scans"),
             send_rates: majority_collection(&database, "bridge_outbox_send_rates"),
             recoveries: majority_collection(&database, "bridge_outbox_recoveries"),
+            control_references: majority_collection(&database, "bridge_channel_control_references"),
             wake: tokio::sync::Notify::new(),
         };
         store
@@ -114,6 +118,24 @@ impl MongoBridgeReplyToolStore {
             .await
             .map_err(|_| {
                 layer2_core::StoreError::Unavailable("create Bridge outbox indexes".into())
+            })?;
+        store
+            .control_references
+            .create_index(
+                IndexModel::builder()
+                    .keys(doc! {"lookup_sha256":1_i32})
+                    .options(
+                        mongodb::options::IndexOptions::builder()
+                            .unique(true)
+                            .build(),
+                    )
+                    .build(),
+            )
+            .await
+            .map_err(|_| {
+                layer2_core::StoreError::Unavailable(
+                    "create Channel control reference index".into(),
+                )
             })?;
         Ok(store)
     }

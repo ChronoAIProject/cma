@@ -22,6 +22,32 @@ pub(super) struct TurnSnapshot {
     require_live_agent: bool,
 }
 impl TurnSnapshot {
+    pub(super) fn source_grant_id(&self) -> Result<&str, OutboxError> {
+        let layer2_core::resource_access::ResourceActor::Channel { grant_id, .. } =
+            &self.command.receipt.envelope.actor
+        else {
+            return Err(OutboxError::SourceMismatch);
+        };
+        Ok(grant_id)
+    }
+    pub(super) fn control_reference_authorization(
+        &self,
+        scope: &ChannelReplyTurnAuthorization,
+        grant: &layer2_core::bridge::invoke::BridgeInvokeGrant,
+        consent: &layer2_core::bridge::invoke::SourceControlPolicy,
+        receipt: &layer2_core::bridge::invoke::SourceControlReceipt,
+    ) -> Result<ChannelControlReferenceAuthorization, OutboxError> {
+        scope.require_snapshot(
+            self.observation(scope.capability_incarnation(), scope.deadline())?,
+        )?;
+        ChannelControlReferenceAuthorization::from_current(ChannelControlReferenceObservation {
+            turn: self.observation(scope.capability_incarnation(), scope.deadline())?,
+            inbox: &self.inbox,
+            grant,
+            consent,
+            consent_receipt: receipt,
+        })
+    }
     pub fn observation<'a>(
         &'a self,
         incarnation: &'a str,
@@ -73,7 +99,7 @@ impl MongoBridgeReplyToolStore {
     ) -> Result<ChannelReplyTurnAuthorization, OutboxError> {
         self.read_current(capability, Some(context)).await
     }
-    async fn read_current(
+    pub(super) async fn read_current(
         &self,
         capability: &ChannelReplySessionAuthorization,
         context: Option<&str>,
@@ -279,12 +305,20 @@ impl MongoBridgeReplyToolStore {
                 runtime_generation: scope.runtime_generation(),
                 deadline: scope.deadline(),
             })?;
-        crate::store::channel_tools::validate_and_fence_session(
+        crate::store::channel_tools::validate_and_fence_session_detailed(
             &self.invokes.resources,
             &capability,
             session,
         )
-        .await?;
+        .await
+        .map_err(|error| match error {
+            crate::store::channel_tools::SessionFenceError::Core(error) => {
+                MutationError::Core(error)
+            }
+            crate::store::channel_tools::SessionFenceError::Driver(error) => {
+                MutationError::Driver(error)
+            }
+        })?;
         scope.selected_key(validation)?;
         self.require_turn_grant(&observed, true, session).await?;
         self.fence_delivery(&observed.bridge, scope.source(), validation, session)
