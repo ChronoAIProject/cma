@@ -13,7 +13,9 @@ import {
   type Parser,
 } from '../schema.js';
 
-function strict<const Fields extends Readonly<Record<string, Parser<unknown>>>>(fields: Fields) {
+export function strict<const Fields extends Readonly<Record<string, Parser<unknown>>>>(
+  fields: Fields,
+) {
   const parse = object(fields);
   return (value: unknown) => {
     const source = record(value);

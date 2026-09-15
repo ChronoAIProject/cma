@@ -1,3 +1,4 @@
+import { v2QueuedCancellationCapability } from './queued-cancellation-types.js';
 import { ProtocolError } from '../errors.js';
 import {
   array,
@@ -128,6 +129,7 @@ export const v2Capabilities = object({
     }),
   ),
   command_status: optional(text),
+  queued_cancellation: optional(v2QueuedCancellationCapability),
 });
 export type V2Capabilities = Output<typeof v2Capabilities>;
 export interface V2ResponseInput {

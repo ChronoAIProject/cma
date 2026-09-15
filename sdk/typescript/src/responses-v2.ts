@@ -6,6 +6,8 @@ import { eventStream } from './streaming.js';
 import { conversationId, v2Request } from './responses-v2/requests.js';
 import { v2ResponseFrames } from './responses-v2/stream.js';
 import * as controls from './responses-v2/controls.js';
+import * as queuedCancellation from './responses-v2/queued-cancellation.js';
+import type { V2QueuedCancellationRequest } from './responses-v2/queued-cancellation-types.js';
 import type { V2ResponseControlRequest } from './responses-v2/controls-types.js';
 import type { CommandOptions } from './resources.js';
 import {
@@ -21,6 +23,7 @@ import {
 } from './responses-v2/types.js';
 export type * from './responses-v2/types.js';
 export type * from './responses-v2/controls-types.js';
+export type * from './responses-v2/queued-cancellation-types.js';
 export { commandIsTerminal } from './responses-v2/controls-types.js';
 
 export interface V2ResponseStreamOptions extends OperationOptions {
@@ -58,6 +61,19 @@ export class ResponsesV2 {
   /** One safe command-status poll. Completed control means delivery; inspect the target outcome separately. */
   readCommand(commandId: string, options: OperationOptions = {}) {
     return controls.readCommand(this.config, commandId, options);
+  }
+  /** Observe eligibility to cancel this exact source before it binds a turn. */
+  observeQueuedCancellation(agentId: string, responseId: string, options: OperationOptions = {}) {
+    return queuedCancellation.observeQueuedCancellation(this.config, agentId, responseId, options);
+  }
+  /** Cancel once. Recover uncertainty with the identical source, revision, route and key. */
+  cancelQueuedResponse(
+    agentId: string,
+    responseId: string,
+    body: V2QueuedCancellationRequest,
+    options: CommandOptions,
+  ) {
+    return queuedCancellation.cancelQueuedResponse(this.config, agentId, responseId, body, options);
   }
   readCapabilities(options: OperationOptions = {}) {
     return read(this.config, '/api/v2', v2Capabilities, options);
