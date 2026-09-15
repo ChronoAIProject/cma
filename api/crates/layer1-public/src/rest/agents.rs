@@ -125,10 +125,17 @@ pub fn agent_router(state: AgentRoutesState) -> Router {
 pub(crate) async fn create(
     State(state): State<AgentRoutesState>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
+    resource: Option<AuthenticatedResourceCaller>,
     Path(workspace_id): Path<String>,
     key: IdempotencyKey,
     body: Result<RequestBody<CreateAgentRequest>, BodyProblem>,
 ) -> Response {
+    let actor = resource.map_or_else(
+        || layer2_core::resource_access::ResourceActor::Human {
+            subject: caller.subject.clone(),
+        },
+        |resource| resource.context.actor,
+    );
     let command_state = state.clone();
     let operation_caller = caller.clone();
     execute_command(
@@ -140,8 +147,9 @@ pub(crate) async fn create(
         move |body| async move {
             let agent = command_state
                 .agents
-                .create(
+                .create_as(
                     &operation_caller,
+                    &actor,
                     &WorkspaceId(workspace_id),
                     CreateAgent {
                         profile: AgentProfileRef::new(

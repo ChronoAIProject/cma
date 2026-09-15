@@ -663,6 +663,7 @@ async fn maintenance_sandbox_write_conflicts_with_a_newly_admitted_agent() {
         .unwrap();
     store
         .admit_agent(AgentAdmission {
+            created_by: None,
             owner: sandbox.owner.clone(),
             workspace_id: workspace.id,
             agent_id: AgentId("agt_newly_admitted".into()),

@@ -157,6 +157,9 @@ pub async fn dispatch(c: &Context<'_>) -> Result<()> {
                 .await,
         ),
         "GET /api/v1/agents/{id}" => c.check(client.agents().read_accessible(c.param("id")).await),
+        "GET /api/v1/agents/{id}/provenance" => {
+            c.check(client.agents().provenance(c.param("id")).await)
+        }
         "GET /api/v1/agents/{id}/source" => {
             c.check(client.agents().source_accessible(c.param("id")).await)
         }

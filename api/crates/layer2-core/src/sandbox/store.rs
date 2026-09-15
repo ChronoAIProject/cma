@@ -27,6 +27,8 @@ pub use reconciliation::{
     SandboxRuntimeLossAgentMutation, SandboxRuntimeLossApplication, SandboxRuntimeLossMutation,
     SandboxRuntimeLossOutcome, SandboxRuntimeLossRequest,
 };
+mod provenance;
+pub use provenance::{AgentProvenanceSnapshot, AgentProvenanceStore};
 mod agent_admission;
 pub use agent_admission::{
     AgentAdmission, AgentAdmissionResult, AgentAdmissionStore, AgentCreation,
@@ -392,6 +394,7 @@ pub struct InMemorySandboxStore {
 
 #[derive(Clone, Default)]
 struct State {
+    agent_creation_provenance: HashMap<AgentId, super::AgentCreationProvenance>,
     resource_policies: HashMap<SandboxId, crate::resource_access::ResourcePolicyRecord>,
     resource_shares: HashMap<String, crate::resource_access::ShareMutationReceipt>,
     resource_share_commands: HashMap<String, crate::resource_access::ShareMutationReceipt>,

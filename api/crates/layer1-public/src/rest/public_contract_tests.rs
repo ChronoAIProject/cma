@@ -16,6 +16,7 @@ mod experience_cases;
 mod fault_cases;
 mod inventory;
 mod inventory_cases;
+mod provenance_cases;
 mod replay;
 mod responses_v2_cases;
 mod sandbox_inventory_cases;
@@ -115,6 +116,9 @@ fn paths() -> Vec<PathBuf> {
 }
 
 async fn scenario(name: &str) -> Scenario {
+    if let Some(scenario) = provenance_cases::scenario(name).await {
+        return scenario;
+    }
     if let Some(scenario) = responses_v2_cases::scenario(name).await {
         return scenario;
     }

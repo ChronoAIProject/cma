@@ -183,13 +183,39 @@ impl AgentService {
         workspace_id: &WorkspaceId,
         request: CreateAgent,
     ) -> Result<Agent, AgentServiceError> {
+        self.create_as(
+            caller,
+            &crate::resource_access::ResourceActor::Human {
+                subject: caller.subject.clone(),
+            },
+            workspace_id,
+            request,
+        )
+        .await
+    }
+
+    /// Attribution is supplied by authentication, independently of ownership.
+    pub async fn create_as(
+        &self,
+        caller: &Caller,
+        actor: &crate::resource_access::ResourceActor,
+        workspace_id: &WorkspaceId,
+        request: CreateAgent,
+    ) -> Result<Agent, AgentServiceError> {
         require(caller)?;
+        if !matches!(actor,
+            crate::resource_access::ResourceActor::Human { subject }
+            | crate::resource_access::ResourceActor::Api { subject, delegation_id: None }
+            if subject == &caller.subject)
+        {
+            return Err(AgentServiceError::Forbidden);
+        }
         if !matches!(&request.origin, AgentOrigin::Manual) {
             return Err(AgentServiceError::InvalidRequest(
                 "trigger origin requires launch admission".into(),
             ));
         }
-        self.create_with_profile(caller, workspace_id, request, false, false)
+        self.create_with_profile(caller, workspace_id, request, false, false, actor.clone())
             .await
     }
 
@@ -213,12 +239,16 @@ impl AgentService {
         reuse_existing: bool,
     ) -> Result<Agent, AgentServiceError> {
         require_launch(caller, authority)?;
-        if !matches!(&request.origin, AgentOrigin::Trigger { .. }) {
+        let AgentOrigin::Trigger { launch_id, .. } = &request.origin else {
             return Err(AgentServiceError::InvalidRequest(
                 "launch admission requires trigger origin".into(),
             ));
-        }
-        self.create_with_profile(caller, workspace_id, request, true, reuse_existing)
+        };
+        let actor = crate::resource_access::ResourceActor::Trigger {
+            subject: caller.subject.clone(),
+            launch_id: crate::LaunchId(launch_id.clone()),
+        };
+        self.create_with_profile(caller, workspace_id, request, true, reuse_existing, actor)
             .await
     }
 
@@ -229,6 +259,7 @@ impl AgentService {
         request: CreateAgent,
         frozen_profile: bool,
         reuse_existing: bool,
+        actor: crate::resource_access::ResourceActor,
     ) -> Result<Agent, AgentServiceError> {
         self.runtime_capabilities
             .require([RuntimeCapability::Conversation])
@@ -263,6 +294,7 @@ impl AgentService {
             .transpose()
             .map_err(|error| AgentServiceError::InvalidRequest(error.to_string()))?;
         let admission = AgentAdmission {
+            created_by: Some(actor),
             owner: caller.subject.clone(),
             workspace_id: workspace.id,
             agent_id,

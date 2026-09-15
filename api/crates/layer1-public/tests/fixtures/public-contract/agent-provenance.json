@@ -1,0 +1,384 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "agent-provenance-owner",
+      "operation": "GET /api/v1/agents/{id}/provenance",
+      "scenario": "provenance_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/provenance",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "agent_id": "agt_shared_read",
+          "created_at": "2026-09-05T00:00:00Z",
+          "creation_origin": "manual",
+          "details": {
+            "created_by": null,
+            "trigger": null,
+            "channel_bridge": null,
+            "workspace_profile_index": null
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-provenance-shared",
+      "operation": "GET /api/v1/agents/{id}/provenance",
+      "scenario": "provenance_shared",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/provenance",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "agent_id": "agt_shared_read",
+          "created_at": "2026-09-05T00:00:00Z",
+          "creation_origin": "manual"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-provenance-trigger",
+      "operation": "GET /api/v1/agents/{id}/provenance",
+      "scenario": "provenance_trigger",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/provenance",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "agent_id": "agt_shared_read",
+          "created_at": "2026-09-05T00:00:00Z",
+          "creation_origin": "trigger",
+          "details": {
+            "created_by": null,
+            "trigger": {
+              "trigger_id": "trg-original",
+              "launch_id": "lch-original",
+              "launching_actor": null
+            },
+            "channel_bridge": null,
+            "workspace_profile_index": null
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-provenance-profile",
+      "operation": "GET /api/v1/agents/{id}/provenance",
+      "scenario": "provenance_profile",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/provenance",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "agent_id": "agt_shared_read",
+          "created_at": "2026-09-05T00:00:00Z",
+          "creation_origin": "legacy_unknown",
+          "details": {
+            "created_by": null,
+            "trigger": null,
+            "channel_bridge": null,
+            "workspace_profile_index": 17
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-provenance-unknown",
+      "operation": "GET /api/v1/agents/{id}/provenance",
+      "scenario": "provenance_unknown",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/provenance",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "agent_id": "agt_shared_read",
+          "created_at": "2026-09-05T00:00:00Z",
+          "creation_origin": "legacy_unknown",
+          "details": {
+            "created_by": null,
+            "trigger": null,
+            "channel_bridge": null,
+            "workspace_profile_index": null
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-provenance-revoked",
+      "operation": "GET /api/v1/agents/{id}/provenance",
+      "scenario": "provenance_revoked",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/provenance",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource_not_found",
+          "title": "resource_not_found",
+          "status": 404,
+          "detail": "Resource not found.",
+          "code": "resource_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-provenance-no_credential",
+      "operation": "GET /api/v1/agents/{id}/provenance",
+      "scenario": "provenance_no_credential",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/provenance",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/organization_authority_unavailable",
+          "title": "organization_authority_unavailable",
+          "status": 503,
+          "detail": "Current organization authorization is unavailable. Retry after the identity provider recovers.",
+          "code": "organization_authority_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-provenance-anonymous",
+      "operation": "GET /api/v1/agents/{id}/provenance",
+      "scenario": "provenance_anonymous",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/provenance",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-provenance-created",
+      "operation": "GET /api/v1/agents/{id}/provenance",
+      "scenario": "provenance_created",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/$created_agent_id/provenance",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "agent_id": "agt_provenance_created",
+          "created_at": "2026-09-05T00:00:00Z",
+          "creation_origin": "manual",
+          "details": {
+            "created_by": {
+              "kind": "api",
+              "subject": "owner-a",
+              "delegation_id": null
+            },
+            "trigger": null,
+            "channel_bridge": null,
+            "workspace_profile_index": null
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "created_agent_at": "/created_at",
+        "created_agent_id": "/agent_id"
+      }
+    },
+    {
+      "id": "agent-provenance-outage",
+      "operation": "GET /api/v1/agents/{id}/provenance",
+      "scenario": "provenance_outage",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/provenance",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/organization_authority_unavailable",
+          "title": "organization_authority_unavailable",
+          "status": 503,
+          "detail": "Current organization authorization is unavailable. Retry after the identity provider recovers.",
+          "code": "organization_authority_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-provenance-forbidden",
+      "operation": "GET /api/v1/agents/{id}/provenance",
+      "scenario": "provenance_forbidden",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/provenance",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource_not_found",
+          "title": "resource_not_found",
+          "status": 404,
+          "detail": "Resource not found.",
+          "code": "resource_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-provenance-invalid_context",
+      "operation": "GET /api/v1/agents/{id}/provenance",
+      "scenario": "provenance_invalid_context",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/provenance",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-provenance-changed",
+      "operation": "GET /api/v1/agents/{id}/provenance",
+      "scenario": "provenance_changed",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/provenance",
+        "headers": {}
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource_access_changed",
+          "title": "resource_access_changed",
+          "status": 409,
+          "detail": "Resource access changed. Read current access and retry with the current revision.",
+          "code": "resource_access_changed"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-provenance-unavailable",
+      "operation": "GET /api/v1/agents/{id}/provenance",
+      "scenario": "provenance_unavailable",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/provenance",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource_access_unavailable",
+          "title": "resource_access_unavailable",
+          "status": 503,
+          "detail": "Resource access is temporarily unavailable. Retry the same command key to recover an unacknowledged result.",
+          "code": "resource_access_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    }
+  ]
+}

@@ -49,6 +49,8 @@ export const resourceDispatch: Record<string, Dispatch> = {
   'GET /api/v1/worktrees/{id}': ({ client, param }) => client.worktrees.readAccessible(param('id')),
   'GET /api/v1/agents': ({ client, options }) => client.agents.listAccessible(options),
   'GET /api/v1/agents/{id}': ({ client, param }) => client.agents.readAccessible(param('id')),
+  'GET /api/v1/agents/{id}/provenance': ({ client, param }) =>
+    client.agents.provenance(param('id')),
   'GET /api/v1/agents/{id}/source': ({ client, param }) =>
     client.agents.sourceAccessible(param('id')),
   'POST /api/v1/workspaces/{id}/agents': ({ client, param, body, command }) =>

@@ -278,6 +278,20 @@ async fn apply_admission(
         super::warm_sandboxes::adopt_agent(store, &sandbox, &workspace, admission, session)
             .await
             .map_err(ApplyError::Domain)?;
+    let provenance = super::agent_provenance::record_creation(
+        store,
+        admission,
+        &creation.agent,
+        &sandbox,
+        session,
+    )
+    .await
+    .map_err(|error| match error {
+        super::resource_access::ReadError::Driver(error) => classify_agent_insert(error),
+        super::resource_access::ReadError::Domain(error) => {
+            ApplyError::Domain(SandboxStoreError::Corrupt(error.to_string()))
+        }
+    })?;
     let log_summary =
         scan_complete_log_with_session(store, &creation.agent.id, 0, session, |_| Ok(())).await?;
     ensure_append_capacity(
@@ -360,6 +374,7 @@ async fn apply_admission(
     )
     .await?;
     Ok(AdmissionReceipt::Created(Box::new(CreatedReceipt {
+        provenance,
         creation,
         workspace: next_workspace,
         sandbox: next_sandbox,

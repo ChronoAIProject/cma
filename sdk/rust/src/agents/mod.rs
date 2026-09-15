@@ -8,9 +8,11 @@ use crate::{
 use reqwest::{Method, StatusCode};
 
 mod events;
+mod provenance;
 mod shared;
 mod types;
 pub use events::*;
+pub use provenance::*;
 pub use shared::*;
 pub use types::*;
 
@@ -83,6 +85,12 @@ impl Agents<'_> {
     pub async fn read_accessible(&self, id: &str) -> Result<AccessibleAgent> {
         let value: AccessibleAgent = self.client.get(&["agents", id], &[]).await?;
         identity(value.id(), id)?;
+        Ok(value)
+    }
+    /// Read immutable creation facts; details require current resource management.
+    pub async fn provenance(&self, id: &str) -> Result<AgentProvenance> {
+        let value: AgentProvenance = self.client.get(&["agents", id, "provenance"], &[]).await?;
+        identity(&value.agent_id, id)?;
         Ok(value)
     }
     /// Read creation provenance and current published Trigger shortcuts.

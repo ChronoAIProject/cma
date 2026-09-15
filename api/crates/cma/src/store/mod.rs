@@ -12,6 +12,7 @@ mod agent_conversation_store;
 mod agent_log;
 mod agent_log_integrity;
 mod agent_profiles;
+mod agent_provenance;
 mod agent_reads;
 mod agent_title_claims;
 mod agent_title_state;

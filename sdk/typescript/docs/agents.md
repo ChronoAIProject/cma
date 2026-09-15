@@ -5,8 +5,8 @@
 One Agent belongs to one Worktree in a Workspace and Sandbox. Its REST,
 AG-UI and Responses interfaces project the same conversation, not separate chats.
 REST detail, transcript, events and usage also support current organization or
-share authority. Provenance, live interfaces and commands still
-use their existing personal access boundaries.
+share authority. Creation provenance provides a separately authorized read
+with private attribution available to current resource managers.
 
 ```ts
 import { createClient } from '@chronoai/cma-sdk';
@@ -142,3 +142,25 @@ A shared response has `access: 'shared'`, `agent_id` and `origin.type` only:
 IDs and shortcuts and rechecks access after IO. The existing `agents.source(id)`
 method keeps its personal return type and rejects shared responses; choose the
 accessible method when inspecting shared Agents.
+
+`agents.provenance(id)` reads immutable creation facts from
+`GET /api/v1/agents/{id}/provenance`. It returns `agent_id`, `created_at` and
+`creation_origin`: `manual`, `trigger`, `channel_bridge` or `legacy_unknown`.
+The channel category is reserved for bridge allocation; this increment implements
+manual and Trigger admission plus conservative interpretation of retained records.
+
+`details` is present only for the personal owner or a current manager of the
+owning organization. It contains the captured `created_by`, original Trigger
+references and optional automatic Workspace profile index. A missing creator is
+unknown; the server never substitutes the resource owner. Trigger workers
+record a Trigger actor and exact launch ID, with an unknown human/API launcher
+unless that actor was captured explicitly. Shared recipients and
+operators with read authority receive only the category and Agent timestamp.
+Every response rechecks policy and the original authority lifetime before release.
+
+Later Trigger reuse, profile changes, runtime revival and sharing preserve the
+original creation facts. Automatic Workspace profile Agents retain their profile
+index and currently report `legacy_unknown` when no supported creation category
+was captured. This read does not persist a historical backfill. Active channel
+bindings, channel-use history, inventory filters and UI badges are separate work.
+The existing source method continues to provide its published Trigger shortcuts.

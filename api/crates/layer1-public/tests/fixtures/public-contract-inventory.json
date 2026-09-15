@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "openapi_operations": 133,
+  "openapi_operations": 134,
   "operations": {
     "GET /api/v1/organizations": {
       "classification": "openapi",
@@ -2021,6 +2021,17 @@
         "invalid_items_limit",
         "invalid_items_order",
         "invalid_items_cursor"
+      ]
+    },
+    "GET /api/v1/agents/{id}/provenance": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/agent_provenance.rs# Immutable creation categories and authorized attribution, fenced after IO.",
+      "required_problems": [
+        "not_authenticated",
+        "organization_authority_unavailable",
+        "resource_access_changed",
+        "resource_access_unavailable",
+        "resource_not_found"
       ]
     }
   }
