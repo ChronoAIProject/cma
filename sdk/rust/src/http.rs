@@ -51,6 +51,22 @@ impl<'a> Request<'a> {
         Ok(request)
     }
 
+    pub(crate) fn with_command_key(mut self, key: Option<&str>) -> Result<Self> {
+        if let Some(key) = key {
+            if key.is_empty() || key.len() > 256 || key.chars().any(char::is_control) {
+                return Err(Error::validation(
+                    "idempotency key must contain 1 through 256 bytes without control characters",
+                ));
+            }
+            self.headers.insert(
+                "idempotency-key",
+                header::HeaderValue::from_str(key)
+                    .map_err(|_| Error::validation("idempotency key is not a valid HTTP header"))?,
+            );
+        }
+        Ok(self)
+    }
+
     pub(crate) fn operation<B: Serialize>(
         method: Method,
         segments: &'a [&'a str],

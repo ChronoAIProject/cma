@@ -299,6 +299,9 @@ over requires a new explicit intent and new key.
 `agui.run` posts once to `/api/v1/agui/run`, and `agui.replay` reads
 `/api/v1/agui/events`. In both, `threadId` is an existing Agent id, not a new Chat
 identity. A run request supplies user messages or resolved approval interrupts.
+`AgentRunOptions.idempotencyKey` is optional; retain it with the same input for
+explicit recovery. Ordinary Working input queues a Message. `runId` remains
+correlation only, and the request/key are captured before credentials resolve.
 
 ```ts
 import { createClient, type AgentConversationEvent } from '@chronoai/cma-sdk';
@@ -392,7 +395,9 @@ use `signal` to bound the complete operation. Never resubmit a disconnected POST
 automatically. Recover with durable `read(responseId)` or the Agent history.
 
 The subset requires `conversation`, exactly one nonempty user text message, and
-`stream: true`. Optional `previous_response_id` enforces a linear prior response;
+`stream: true`. `ResponseStreamOptions.idempotencyKey` optionally retains one
+invocation for explicit recovery; existing calls stay valid. An absent/null
+`previous_response_id` requires the first turn; otherwise it enforces a linear prior response;
 `model` is accepted but cannot override the pinned Agent Profile. `store: false`,
 background execution, tools and instruction overrides are unsupported. The
 explicit `delete` and `cancel` helpers preserve the server's

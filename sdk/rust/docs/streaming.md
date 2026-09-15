@@ -56,6 +56,29 @@ credential and the last fully acknowledged cursor; the new request checks
 current membership again. Stream closure never submits another Agent input.
 Personal-owner replay remains available during organization-provider outages.
 
+## Retained keys for legacy POSTs
+
+Use `agui().run_with_key(&request, key)` and
+`responses().create_with_key(&request, key)` to retain an explicit invocation
+key. Existing `run` and `create` calls remain valid unkeyed calls. The request
+body and key are captured before credential/network work. Store them before
+sending; the SDK never retries or changes a key after an uncertain reply.
+
+A key accepts 1–256 bytes without control characters and must be representable
+as an HTTP header. Separate unkeyed attempts remain separate commands. AG-UI
+`runId` is correlation only, and ordinary input on a Working Agent queues a new
+Message. Legacy Responses still requires the exact predecessor; absent/null
+means the first turn, including on a retained keyed request.
+
+The upgraded server reserves a common receipt before readiness and sends
+`x-cma-command-id` / `x-cma-response-id` when known, including prebinding HTTP
+errors. A binding observation timeout is uncertain work, never a synthetic
+failed turn. Repeat the exact keyed POST explicitly to recover the same turn,
+or use the public command status/history reads. Legacy wire IDs and sequence
+rules are unchanged; receipt IDs do not replace them. Old servers ignored
+these keys, so do not replay a potentially executed pre-upgrade request on the
+assumption that a new key record can prove its history.
+
 ## Responses v2
 
 `responses_v2()` uses durable command admission, opaque response IDs and

@@ -1,6 +1,6 @@
 use super::context::Context;
 use cma_sdk::{
-    Result,
+    Error, Result,
     agui::{AgentEvent, ReplayOptions},
     auth::{AuthSession, Identity},
     responses::ItemOptions,
@@ -15,7 +15,12 @@ pub async fn dispatch(c: &Context<'_>) -> Result<()> {
         }
         "GET /api/v1/agui/events" | "POST /api/v1/agui/run" => {
             let mut stream = if c.case.request.method == "POST" {
-                client.agui().run(&c.body()?).await?
+                let body = c.body()?;
+                if let Some(key) = c.case.request.headers.get("idempotency-key") {
+                    client.agui().run_with_key(&body, key).await?
+                } else {
+                    client.agui().run(&body).await?
+                }
             } else {
                 client
                     .agui()
@@ -69,7 +74,12 @@ pub async fn dispatch(c: &Context<'_>) -> Result<()> {
             c.check(client.responses().cancel(c.param("response_id")).await)
         }
         "POST /api/v1/responses" => {
-            let mut stream = client.responses().create(&c.body()?).await?;
+            let body = c.body()?;
+            let mut stream = if let Some(key) = c.case.request.headers.get("idempotency-key") {
+                client.responses().create_with_key(&body, key).await?
+            } else {
+                client.responses().create(&body).await?
+            };
             for frame in c
                 .case
                 .response
@@ -80,6 +90,12 @@ pub async fn dispatch(c: &Context<'_>) -> Result<()> {
                 let actual = stream.next().await.expect("expected Responses frame")?;
                 let expected = serde_json::from_value(frame["data"].clone()).unwrap();
                 assert_eq!(actual, expected, "{} Responses frame", c.case.id);
+            }
+            if c.case.response.stream_prefix {
+                assert!(matches!(
+                    stream.next().await,
+                    Some(Err(Error::Transport { .. }))
+                ));
             }
             assert!(stream.next().await.is_none());
             Ok(())

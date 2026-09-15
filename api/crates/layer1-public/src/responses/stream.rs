@@ -6,17 +6,21 @@ use axum::response::{
 };
 use futures_util::{stream, Stream};
 use layer2_core::{
-    sandbox::{Agent, AgentLogKind},
+    sandbox::{Agent, AgentEventStreamAuthorization, AgentLogKind},
     Caller,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 
-use super::{retrieve, ResponseError, ResponseObject, ResponseStatus};
+use super::{retrieve, ResponseObject, ResponseStatus};
 use crate::AgentConversationState;
 
 #[path = "stream_live.rs"]
 mod live;
+
+#[path = "stream_authorized.rs"]
+mod authorized;
+pub(super) use authorized::open as open_authorized;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ResponsesConnectionEvent {
@@ -27,12 +31,24 @@ pub struct ResponsesConnectionEvent {
     pub data: Map<String, Value>,
 }
 
+#[cfg(test)]
 pub(super) fn open(
     state: AgentConversationState,
     caller: Caller,
     agent: Agent,
     turn: u64,
     watching: Option<layer2_core::sandbox::AgentLiveSubscription>,
+) -> Response {
+    open_inner(state, caller, agent, turn, watching, None)
+}
+
+fn open_inner(
+    state: AgentConversationState,
+    caller: Caller,
+    agent: Agent,
+    turn: u64,
+    watching: Option<layer2_core::sandbox::AgentLiveSubscription>,
+    authorization: Option<AgentEventStreamAuthorization>,
 ) -> Response {
     let open = Open {
         state,
@@ -47,34 +63,32 @@ pub(super) fn open(
         next_output_index: 0,
         ended: false,
         live: live::LiveState::new(watching),
+        authorization,
     };
     sse_response(stream::unfold(open, |mut open| async move {
         loop {
             if let Some(value) = open.pending.pop_front() {
+                if let Some(authorization) = &open.authorization {
+                    if open
+                        .state
+                        .reads
+                        .validate_event_stream(authorization)
+                        .await
+                        .is_err()
+                    {
+                        return None;
+                    }
+                }
                 return Some((Ok::<_, Infallible>(sse_event(value)), open));
             }
             if open.ended {
                 return None;
             }
-            let read = open
-                .state
-                .reads
-                .log_snapshot(&open.caller, &open.agent.id)
-                .await;
-            let (agent, history) = match read {
+            let (agent, history) = match open.read().await {
                 Ok(snapshot) => snapshot,
-                Err(_) => {
-                    let mut response = retrieve::empty(&open.agent, open.turn);
-                    open.announce(&response);
-                    response.status = ResponseStatus::Failed;
-                    response.error = Some(ResponseError {
-                        code: "response_unavailable".into(),
-                        message: "The durable response could not be read.".into(),
-                    });
-                    open.push("response.failed", json!({"response": response}));
-                    open.ended = true;
-                    continue;
-                }
+                // Observation loss ends this connection. It cannot manufacture
+                // a durable turn outcome or release buffered private frames.
+                Err(_) => return None,
             };
             let Some(response) = retrieve::project(&agent, &history, open.turn) else {
                 tokio::time::sleep(Duration::from_millis(100)).await;
@@ -134,20 +148,6 @@ pub(super) fn open(
     }))
 }
 
-pub(super) fn provisioning_timeout(agent: Agent) -> Response {
-    let mut response = retrieve::empty(&agent, 0);
-    response.status = ResponseStatus::Failed;
-    response.error = Some(ResponseError {
-        code: "provisioning_timeout".into(),
-        message: "The Agent did not become reachable before the readiness deadline.".into(),
-    });
-    sse_response(stream::iter([Ok::<_, Infallible>(sse_event(envelope(
-        "response.failed",
-        0,
-        json!({"response": response}),
-    )))]))
-}
-
 struct Open {
     state: AgentConversationState,
     caller: Caller,
@@ -161,6 +161,7 @@ struct Open {
     next_output_index: usize,
     ended: bool,
     live: live::LiveState,
+    authorization: Option<AgentEventStreamAuthorization>,
 }
 
 impl Open {

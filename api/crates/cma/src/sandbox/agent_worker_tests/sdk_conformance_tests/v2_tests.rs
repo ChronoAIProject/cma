@@ -150,6 +150,7 @@ pub(super) fn compose(
     let services = services.with_resource_access(access.clone());
     let commands =
         AgentCommandService::new(harness.store.clone(), access.clone(), authority.clone());
+    let services = services.with_commands(commands.clone());
     let worker = AgentCommandWorker::new(
         harness.store.clone(),
         Arc::new(crate::commands::ResourceCommandExecution {

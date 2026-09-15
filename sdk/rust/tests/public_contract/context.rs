@@ -13,6 +13,8 @@ pub struct Case {
     pub response: Response,
     #[serde(default)]
     pub captures: BTreeMap<String, String>,
+    #[serde(default, rename = "headerCaptures")]
+    pub header_captures: BTreeMap<String, String>,
 }
 #[derive(Clone, Debug, Deserialize)]
 pub struct Request {
@@ -47,6 +49,8 @@ pub struct Response {
     pub headers: BTreeMap<String, String>,
     #[serde(rename = "bodyKind")]
     pub body_kind: String,
+    #[serde(default, rename = "streamPrefix")]
+    pub stream_prefix: bool,
     pub body: Value,
 }
 
@@ -77,6 +81,22 @@ pub fn load() -> Vec<Case> {
         assert_eq!(corpus.version, 1);
         let mut scenes: BTreeMap<String, BTreeMap<String, Value>> = BTreeMap::new();
         for case in &corpus.cases {
+            for (name, header) in &case.header_captures {
+                let value = Value::String(
+                    case.response
+                        .headers
+                        .get(header)
+                        .expect("receipt header capture")
+                        .clone(),
+                );
+                if let Some(prior) = scenes
+                    .entry(case.scenario.clone())
+                    .or_default()
+                    .insert(name.clone(), value.clone())
+                {
+                    assert_eq!(prior, value, "conflicting header capture {name}");
+                }
+            }
             for (name, pointer) in &case.captures {
                 let value = case.response.body.pointer(pointer).unwrap().clone();
                 if let Some(prior) = scenes

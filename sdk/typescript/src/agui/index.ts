@@ -12,10 +12,12 @@ import { read, segment } from '../resources.js';
 import { streamLaunchEvents, type LaunchStreamOptions } from '../launch/stream.js';
 import { agentSandboxSnapshot, aguiCapabilities } from './companions.js';
 import { connection } from './transport.js';
+import { commandStreamInput } from '../command-stream-input.js';
 import type {
   AgentConversationEvent,
   AgentReplayOptions,
   AgentRunRequest,
+  AgentRunOptions,
   AgentStreamOptions,
 } from './types.js';
 
@@ -23,6 +25,7 @@ export type {
   AgentConversationEvent,
   AgentReplayOptions,
   AgentRunRequest,
+  AgentRunOptions,
   AgentStreamOptions,
 } from './types.js';
 export type { AgentSandboxSnapshot, AguiCapabilities } from './companions.js';
@@ -54,17 +57,19 @@ export class AgentConversations {
   }
 
   /** A run is submitted exactly once. A disconnect never resubmits its input. */
-  async run(request: AgentRunRequest, options: AgentStreamOptions): Promise<void> {
-    validateThread(request?.threadId);
+  async run(request: AgentRunRequest, options: AgentRunOptions): Promise<void> {
+    const captured = commandStreamInput(request, options.idempotencyKey);
+    validateThread(captured.body?.threadId);
     const stream = connection(
       this.config,
       '/api/v1/agui/run',
-      request.threadId,
+      captured.body.threadId,
       {
         ...options,
         timeoutMs: options.timeoutMs ?? 605_000,
       },
-      request,
+      captured.body,
+      captured.headers,
     );
     let ended = false;
     for await (const events of completeProjections(stream, true)) {

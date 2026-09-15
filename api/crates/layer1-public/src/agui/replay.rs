@@ -67,6 +67,7 @@ pub(super) async fn replay(
             id,
             query.starting_after.unwrap_or(0),
             query.follow.unwrap_or(true),
+            None,
             watching,
         )
         .await;
@@ -81,6 +82,17 @@ pub(super) async fn replay(
         watching,
     )
     .await
+}
+
+pub(super) async fn open_run(
+    state: AgentConversationState,
+    resource: AuthenticatedResourceCaller,
+    id: AgentId,
+    after: u64,
+    run: u64,
+    watching: Option<AgentLiveSubscription>,
+) -> Response {
+    authorized::open(state, resource, id, after, true, Some(run), watching).await
 }
 
 pub(super) async fn open(
@@ -257,6 +269,13 @@ impl Following {
             || self.run != agent.conversation.active_turn
             || agent.status != AgentStatus::WaitingApproval
         {
+            return;
+        }
+        self.interrupt_current(agent.conversation.active_turn, history);
+    }
+
+    fn interrupt_current(&mut self, active_turn: Option<u64>, history: &[AgentLogEntry]) {
+        if self.ended || self.run.is_none() || self.run != active_turn {
             return;
         }
         let mut approvals = PendingAgentApprovals::default();

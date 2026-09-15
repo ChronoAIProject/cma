@@ -414,5 +414,6 @@ fn stream_response(body: serde_json::Value) -> ResponseFixture {
         headers: BTreeMap::new(),
         body,
         body_kind: BodyKind::Sse,
+        stream_prefix: false,
     }
 }
