@@ -9,6 +9,7 @@ mod mutations;
 mod outbox;
 mod types;
 mod validation;
+mod workspace_cleanup;
 pub use capabilities::*;
 pub use choices::*;
 pub use cleanup::*;
@@ -16,6 +17,7 @@ pub use config::*;
 pub use invoke::*;
 pub use outbox::*;
 pub use types::*;
+pub use workspace_cleanup::*;
 
 use crate::{Client, Error, PageOptions, Result, resources::identity};
 

@@ -3,6 +3,12 @@ import type { ContractCase } from './context.js';
 import { browserOperations } from './navigation.js';
 
 export const localCodes = new Map([
+  ['bridge-workspace-cleanup-invalid-allocation', 'invalid_bridge_workspace_cleanup'],
+  ['bridge-workspace-cleanup-invalid-revision', 'invalid_bridge_workspace_cleanup'],
+  ['bridge-workspace-cleanup-invalid-workspace-revision', 'invalid_bridge_workspace_cleanup'],
+  ['bridge-workspace-cleanup-invalid-child-receipt', 'invalid_bridge_workspace_cleanup'],
+  ['bridge-workspace-cleanup-closed-body', 'invalid_json'],
+  ['bridge-workspace-cleanup-unknown-action', 'invalid_json'],
   ['bridge-cleanup-invalid-limit', 'invalid_bridge_child_cleanup'],
   ['bridge-cleanup-invalid-allocation', 'invalid_bridge_child_cleanup'],
   ['bridge-cleanup-invalid-revision', 'invalid_bridge_child_cleanup'],

@@ -46,6 +46,8 @@ use super::trigger_openapi_shapes::*;
         super::bridge_cleanup::list,
         super::bridge_cleanup::detail,
         super::bridge_cleanup::submit,
+        super::bridge_cleanup::workspace::detail,
+        super::bridge_cleanup::workspace::submit,
         super::bridge_outbox::list,
         super::bridge_outbox::detail,
         super::bridge_outbox::recover,

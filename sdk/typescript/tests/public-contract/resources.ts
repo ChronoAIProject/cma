@@ -3,6 +3,14 @@ import type { AgentProvenanceInventoryOptions } from '../../src/agents.js';
 import type { AccessibleSandboxListOptions } from '../../src/sandboxes.js';
 
 export const resourceDispatch: Record<string, Dispatch> = {
+  'GET /api/v1/bridges/{id}/allocations/{allocation}/workspace-cleanup': ({ client, param }) =>
+    client.bridges.readWorkspaceCleanup(param('id'), param('allocation')),
+  'POST /api/v1/bridges/{id}/allocations/{allocation}/workspace-cleanup': ({
+    client,
+    param,
+    body,
+    command,
+  }) => client.bridges.requestWorkspaceCleanup(param('id'), param('allocation'), body, command),
   'GET /api/v1/bridges/{id}/allocations': ({ client, param, options }) =>
     client.bridges.listAllocations(param('id'), options),
   'GET /api/v1/bridges/{id}/allocations/{allocation}/child-cleanup': ({ client, param }) =>

@@ -981,6 +981,8 @@ SDKs expose this scope through their accessible Sandbox list method.
 | `GET /api/v1/bridges/{id}/allocations` | Current Bridge and whole-parent management inventory; opaque cursor, limit 1–100. |
 | `GET /api/v1/bridges/{id}/allocations/{allocation}/child-cleanup` | Retained child cleanup acceptance, proved progress and observed holds. |
 | `POST /api/v1/bridges/{id}/allocations/{allocation}/child-cleanup` | Explicit remove_child acceptance with current revisions and retained Idempotency-Key; 202 does not mean physical removal. |
+| `GET /api/v1/bridges/{id}/allocations/{allocation}/workspace-cleanup` | Exact allocation-owned Workspace status, reviewed consent inputs, current eligibility and retained completion. |
+| `POST /api/v1/bridges/{id}/allocations/{allocation}/workspace-cleanup` | Separately consented remove_owned_workspace with three revisions, exact completed child receipt and original Idempotency-Key; 202 confirms acceptance. |
 | `GET /api/v1/bridges/{id}/deliveries` | Current owner/admin delivery history; exclusive cursor, limit 1–100. |
 | `GET /api/v1/bridges/{id}/deliveries/{item}` | Safe original reply status and ordered attempts. |
 | `POST /api/v1/bridges/{id}/delivery-recovery` | Explicit retry, abandon or local reconciliation with durable idempotency and exact revisions. |
@@ -1155,3 +1157,14 @@ GET and allocation listing require current Bridge management and whole-parent
 management. New acceptance additionally requires the actual original configuring
 actor and fresh retained authority; another administrator cannot impersonate that
 actor. Accepted work drains independently of new allocation and execution flags.
+
+
+### Separate allocation-owned Workspace cleanup
+
+The [owned Workspace cleanup contract](BRIDGE_WORKSPACE_CLEANUP.md) adds separate
+GET/POST operations after explicit child completion. The five-field consent pins
+Bridge, allocation and Workspace revisions plus the original child cleanup receipt.
+The original `remove_child` effect still retains its Workspace. New Workspace
+consent requires demonstrated runtime capability and exact original ownership;
+no inferred consent, cascading child removal or parent deletion is permitted.
+Only a separately proved `complete` status releases that Workspace reservation.

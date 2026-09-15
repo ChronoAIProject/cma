@@ -52,6 +52,10 @@ pub(super) fn allocation(
         config_revision: 1,
     };
     let operation_id = format!("{id}:provision:v1");
+    let owned = matches!(
+        config.placement,
+        BridgePlacementPolicy::WorkspacePerPartition { .. }
+    );
     let record = AllocationRecord {
         id,
         identity,
@@ -82,7 +86,7 @@ pub(super) fn allocation(
             profiles: Box::new(profiles),
             parent: AllocationParentIdentity {
                 sandbox_created_at: sandbox.created_at.clone(),
-                workspace_created_at: Some(workspace.created_at.clone()),
+                workspace_created_at: (!owned).then(|| workspace.created_at.clone()),
                 limits: sandbox.limits,
                 service_scope: sandbox.credential.effective_reaches(),
             },

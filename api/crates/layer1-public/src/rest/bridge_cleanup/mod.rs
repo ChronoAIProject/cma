@@ -16,6 +16,8 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 mod problem;
 mod shapes;
+pub(crate) mod workspace;
+mod workspace_shapes;
 use shapes::*;
 
 pub fn bridge_cleanup_router(service: Option<Arc<BridgeCleanupService>>) -> Router {
@@ -24,6 +26,10 @@ pub fn bridge_cleanup_router(service: Option<Arc<BridgeCleanupService>>) -> Rout
         .route(
             "/api/v1/bridges/{id}/allocations/{allocation}/child-cleanup",
             get(detail).post(submit),
+        )
+        .route(
+            "/api/v1/bridges/{id}/allocations/{allocation}/workspace-cleanup",
+            get(workspace::detail).post(workspace::submit),
         )
         .layer(axum::middleware::from_fn(private_headers))
         .layer(axum::extract::DefaultBodyLimit::max(8192))
