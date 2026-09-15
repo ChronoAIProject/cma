@@ -244,6 +244,24 @@ impl From<domain::LaunchConfirmation> for LaunchConfirmationView {
     }
 }
 
+/// Read-only association to the one admitted first-message response.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
+pub struct LaunchFirstMessageCommandView {
+    pub agent_id: String,
+    pub command_id: String,
+    pub response_id: String,
+}
+
+impl From<domain::LaunchFirstMessageCommand> for LaunchFirstMessageCommandView {
+    fn from(value: domain::LaunchFirstMessageCommand) -> Self {
+        Self {
+            agent_id: value.agent_id.to_string(),
+            command_id: value.command_id.to_string(),
+            response_id: value.response_id.to_string(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
 pub struct LaunchView {
     pub id: String,
@@ -261,6 +279,9 @@ pub struct LaunchView {
     pub review: ReviewRequirementsView,
     pub trust: LaunchTrustManifestView,
     pub first_message: FirstMessageStateValue,
+    /// Omitted for legacy or unattached prompts; use authorized common reads for status.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub first_message_command: Option<LaunchFirstMessageCommandView>,
     pub confirmations: Vec<LaunchConfirmationView>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub blocked_reason: Option<LaunchBlockedReasonView>,
@@ -292,6 +313,7 @@ impl From<domain::Launch> for LaunchView {
             review: value.review.into(),
             trust: value.trust.into(),
             first_message: value.first_message.into(),
+            first_message_command: value.first_message_command.map(Into::into),
             confirmations: value.confirmations.into_iter().map(Into::into).collect(),
             blocked_reason: value.blocked_reason.map(Into::into),
             failure: value.failure.map(Into::into),

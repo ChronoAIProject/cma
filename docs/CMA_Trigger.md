@@ -380,6 +380,23 @@ from that cursor and retain the last successful view during an outage.
 The companion also supports `follow=false`, a bounded `limit`, and
 `Last-Event-ID` precedence; the TypeScript SDK uses the query cursor.
 
+Owner Launch reads and lists may include `first_message_command` with exactly
+`agent_id`, `command_id`, and `response_id`. It is the immutable association for a
+new common first prompt, derived from the accepted permanent receipt. It is
+omitted for legacy Launches, prompts not yet attached, and reuse that attached no
+new prompt. Omission does not authorize sending a first message again. Previously
+cached Launch admission responses keep their original shape; use the owner read
+to refresh the association.
+
+Use `GET /api/v2/responses/{response_id}` and its events extension for the common
+response's current status and retained outcomes. These reads independently enforce
+current Agent history authority; the Launch association grants no execution or
+read capability. It contains no prompt, initiating credentials, grants, internal
+binding digest, or runtime identity. Ambiguous delivery retains this same response;
+reconnect and recovery observation do not submit another prompt. This projection
+does not enable the default-off Trigger command selector or establish old-worker
+rollout/rollback compatibility.
+
 Ready supplies the visitor's Agent id. Navigate to `/agents/{id}` and focus
 the composer. First-message delivery is separately recorded; ready is not
 evidence that a possibly ambiguous dispatch can be sent again.

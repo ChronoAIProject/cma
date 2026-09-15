@@ -118,6 +118,12 @@ export const launchTrustDisclosure = object({
   environment_variables: array(environmentVariable),
 });
 export type LaunchTrustDisclosure = Output<typeof launchTrustDisclosure>;
+export const launchFirstMessageCommand = object({
+  agent_id: text,
+  command_id: text,
+  response_id: text,
+});
+export type LaunchFirstMessageCommand = Output<typeof launchFirstMessageCommand>;
 export const launch = object({
   id: text,
   trigger_id: text,
@@ -143,6 +149,7 @@ export const launch = object({
     disclosures: array(launchTrustDisclosure),
   }),
   first_message: firstMessageDelivery,
+  first_message_command: optional(launchFirstMessageCommand),
   confirmations: array(
     object({
       surface: enumeration('landing', 'review'),
