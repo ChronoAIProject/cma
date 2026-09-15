@@ -86,6 +86,11 @@ async fn serve() -> Result<(), String> {
     let worker_signal = shutdown.subscribe();
     shutdown.push(composition.launch_scheduler.spawn(worker_signal));
     shutdown.push(composition.command_scheduler.spawn(shutdown.subscribe()));
+    shutdown.push(
+        composition
+            .sandbox_control_scheduler
+            .spawn(shutdown.subscribe()),
+    );
     composition.sandbox_lifecycle.spawn(&mut shutdown);
     shutdown.push(composition.provenance_backfill.spawn(shutdown.subscribe()));
     let http_signal = shutdown.subscribe();

@@ -18,6 +18,7 @@
         "body": {
           "access": "shared",
           "id": "sbx_route",
+          "revision": 1,
           "name": "research",
           "status": "active",
           "created_at": "2026-09-05T00:00:00Z",

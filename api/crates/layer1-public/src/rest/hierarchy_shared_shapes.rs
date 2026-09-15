@@ -49,6 +49,7 @@ pub(crate) struct AccessibleWorktreeListView {
 pub(crate) struct SharedSandboxView {
     access: SharedAccess,
     id: String,
+    revision: u64,
     name: String,
     #[schema(value_type = String)]
     status: SandboxStatus,
@@ -123,6 +124,7 @@ impl From<SandboxHierarchyReading> for AccessibleSandboxDetailView {
             SandboxHierarchyReading::Shared(value) => Self::Shared(SharedSandboxView {
                 access: SharedAccess::Shared,
                 id: value.id.to_string(),
+                revision: value.revision,
                 name: value.name,
                 status: value.status,
                 created_at: value.created_at,

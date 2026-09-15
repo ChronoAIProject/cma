@@ -52,6 +52,7 @@ impl From<SandboxHierarchyView> for SharedSandboxSummary {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SharedSandboxHierarchy {
     pub id: SandboxId,
+    pub revision: u64,
     pub name: String,
     pub status: SandboxStatus,
     pub created_at: String,
@@ -111,6 +112,7 @@ impl From<SandboxHierarchyView> for SharedSandboxHierarchy {
         let sandbox = value.sandbox;
         Self {
             id: sandbox.id,
+            revision: sandbox.revision,
             name: sandbox.name,
             status: sandbox.status,
             created_at: sandbox.created_at,

@@ -83,7 +83,11 @@ mod launch_events;
 mod launch_quota;
 mod launches;
 mod public_names;
+mod sandbox_commands;
+#[cfg(test)]
+mod sandbox_commands_tests;
 mod sandbox_service_access;
+pub use sandbox_commands::sandbox_commands_router;
 mod sandboxes;
 mod service_connections;
 mod trigger_entry;

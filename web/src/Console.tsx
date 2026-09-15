@@ -1,5 +1,5 @@
 import { Presence } from './ui/Presence';
-import { lazy, Suspense, useCallback, useEffect, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from 'react';
 import { LandingCharacter } from './landing/LandingCharacter';
 import {
   useCmaClient,
@@ -72,6 +72,7 @@ export function Console({
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [revision, setRevision] = useState(0);
   const client = useCmaClient();
+  const sandboxCommandScope = useMemo(() => ({ client, viewerId: user.id }), [client, user.id]);
   const agentAccess = useAgentAccess(
     client.resourceViews,
     route.kind === 'agent' ? route.agentId : undefined,
@@ -185,6 +186,7 @@ export function Console({
         key={route.sandboxId}
         client={client.resourceViews}
         id={route.sandboxId}
+        commandScope={sandboxCommandScope}
         onNavigate={onNavigate}
         personal={
           <SandboxPage
