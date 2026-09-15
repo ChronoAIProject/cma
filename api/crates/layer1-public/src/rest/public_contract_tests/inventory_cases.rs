@@ -140,6 +140,15 @@ impl ResourceAccessStore for FailingInventory {
         Err(self.error.clone())
     }
 
+    async fn shared_sandboxes(
+        &self,
+        _recipient: &layer2_core::SubjectId,
+        _organizations: &[layer2_core::SubjectId],
+        _query: &layer2_core::sandbox::OwnerSandboxQuery,
+    ) -> Result<Vec<ResourceAccessSnapshot>, ResourceAccessStoreError> {
+        Err(self.error.clone())
+    }
+
     async fn organization_agents(
         &self,
         _: &SubjectId,

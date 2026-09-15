@@ -53,7 +53,7 @@ const agent = {
   updated_at: at,
 };
 
-function fixture() {
+function fixture(shared = false) {
   const state = { revoked: false, organizations: true, policy: 1, emptyFirstPage: false };
   const paths: string[] = [];
   const fetch = vi.fn(async (input: RequestInfo | URL): Promise<Response> => {
@@ -68,6 +68,10 @@ function fixture() {
             { code: 'organization_authority_unavailable', detail: 'Unavailable' },
             { status: 503 },
           );
+    if (url.pathname.endsWith('/agents/provenance')) {
+      expect(url.searchParams.get('shared')).toBe('true');
+      return Response.json({ items: [] });
+    }
     if (url.pathname.endsWith('/agents/agt_1'))
       return Response.json({ ...WIRE_AGENT, id: 'agt_1' });
     if (state.revoked)
@@ -82,7 +86,8 @@ function fixture() {
         policy_revision: state.policy,
       });
     if (url.pathname === '/api/v1/sandboxes') {
-      expect(url.searchParams.get('organization')).toBe('org_research');
+      expect(url.searchParams.get('organization')).toBe(shared ? null : 'org_research');
+      expect(url.searchParams.get('shared')).toBe(shared ? 'true' : null);
       return Response.json(
         state.emptyFirstPage && !url.searchParams.has('cursor')
           ? { items: [], next: 'sbx_previous' }
@@ -199,83 +204,105 @@ it('refuses hierarchy buffered across a policy change and mismatched child assig
   ).rejects.toThrow('hierarchy identity changed');
 });
 
-it('continues an empty organization page and expands only independently authorized children', async () => {
-  const test = fixture();
-  test.state.emptyFirstPage = true;
-  render(
-    <ScopedNavigation
-      client={test.sdk}
-      scope="organization:org_research"
-      onScopeChange={vi.fn()}
-      onNavigate={test.navigate}
-      personal={<p>Personal tree</p>}
-    />,
-  );
-  await screen.findByText(/No authorized Sandboxes on this page/);
-  const user = userEvent.setup();
-  await user.click(screen.getByRole('button', { name: 'Next Sandboxes' }));
-  await user.click(await screen.findByRole('button', { name: sandbox.name }));
-  expect(test.paths.some((path) => path.includes('/workspaces/'))).toBe(false);
-  await user.click(await screen.findByRole('button', { name: workspace.name }));
-  await screen.findByRole('link', { name: agent.title });
-  expect(screen.getByRole('link', { name: 'All authorized Agents' })).toHaveAttribute(
-    'href',
-    '/organizations/org_research/agents',
-  );
-  expect(screen.getByRole('button', { name: 'Previous Sandboxes' })).toBeEnabled();
-});
+it.each([false, true])(
+  'continues an empty scoped page and expands independently authorized children (shared=%s)',
+  async (shared) => {
+    const test = fixture(shared);
+    test.state.emptyFirstPage = true;
+    render(
+      <ScopedNavigation
+        client={test.sdk}
+        scope={shared ? 'shared' : 'organization:org_research'}
+        onScopeChange={vi.fn()}
+        onNavigate={test.navigate}
+        personal={<p>Personal tree</p>}
+      />,
+    );
+    await screen.findByText(
+      shared ? /No shared Sandboxes on this page/ : /No authorized Sandboxes on this page/,
+    );
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', { name: 'Next Sandboxes' }));
+    await user.click(await screen.findByRole('button', { name: sandbox.name }));
+    expect(test.paths.some((path) => path.includes('/workspaces/'))).toBe(false);
+    await user.click(await screen.findByRole('button', { name: workspace.name }));
+    await screen.findByRole('link', { name: agent.title });
+    expect(
+      screen.getByRole('link', { name: shared ? 'All shared Agents' : 'All authorized Agents' }),
+    ).toHaveAttribute('href', shared ? '/shared/agents' : '/organizations/org_research/agents');
+    if (shared) expect(screen.getByRole('button', { name: 'Next shared Agents' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Previous Sandboxes' })).toBeEnabled();
+  },
+);
 
-it('cancels an organization page when returning to personal and discards the late response', async () => {
-  const test = fixture();
-  const original = test.fetch.getMockImplementation()!;
-  let finish: ((response: Response) => void) | undefined;
-  test.fetch.mockImplementation(async (input) =>
-    new URL(String(input)).pathname === '/api/v1/sandboxes'
-      ? new Promise((resolve) => {
-          finish = resolve;
-        })
-      : original(input),
-  );
-  const props = {
-    client: test.sdk,
-    onScopeChange: vi.fn(),
-    onNavigate: test.navigate,
-    personal: <p>Personal tree</p>,
-  };
-  const view = render(<ScopedNavigation {...props} scope="organization:org_research" />);
-  await waitFor(() => expect(finish).toBeDefined());
-  view.rerender(<ScopedNavigation {...props} scope="" />);
-  await act(async () => finish?.(Response.json({ items: [sandbox] })));
-  expect(screen.getByText('Personal tree')).toBeInTheDocument();
-  expect(screen.queryByText(sandbox.name)).not.toBeInTheDocument();
-});
+it.each([false, true])(
+  'cancels a scoped page when returning to personal and discards late responses (shared=%s)',
+  async (shared) => {
+    const test = fixture(shared);
+    const original = test.fetch.getMockImplementation()!;
+    let finish: ((response: Response) => void) | undefined;
+    test.fetch.mockImplementation(async (input) =>
+      new URL(String(input)).pathname === '/api/v1/sandboxes'
+        ? new Promise((resolve) => {
+            finish = resolve;
+          })
+        : original(input),
+    );
+    const props = {
+      client: test.sdk,
+      onScopeChange: vi.fn(),
+      onNavigate: test.navigate,
+      personal: <p>Personal tree</p>,
+    };
+    const view = render(
+      <ScopedNavigation {...props} scope={shared ? 'shared' : 'organization:org_research'} />,
+    );
+    await waitFor(() => expect(finish).toBeDefined());
+    view.rerender(<ScopedNavigation {...props} scope="" />);
+    await act(async () => finish?.(Response.json({ items: [sandbox] })));
+    expect(screen.getByText('Personal tree')).toBeInTheDocument();
+    expect(screen.queryByText(sandbox.name)).not.toBeInTheDocument();
+  },
+);
 
-it('preserves the same personal composer through organization scope selection and loss', async () => {
-  const test = fixture();
-  const web = agentClient({ resourceViews: test.sdk });
-  render(
-    <CmaClientProvider client={web}>
-      <Console
-        user={{ id: 'owner', handle: 'Owner', visitor: false, capabilities: ['use_own_sandboxes'] }}
-        route={{ kind: 'agent', agentId: 'agt_1' }}
-        onNavigate={vi.fn()}
-        onSignOut={vi.fn()}
-      />
-    </CmaClientProvider>,
-  );
-  const user = userEvent.setup();
-  const composer = await screen.findByRole('textbox', { name: 'Message' });
-  await user.type(composer, 'Keep my personal draft');
-  await chooseOption(user, 'Navigation scope', 'Research');
-  await screen.findByRole('button', { name: sandbox.name });
-  test.state.revoked = true;
-  await user.click(screen.getByRole('button', { name: 'Refresh organization' }));
-  await screen.findByText('Access removed');
-  expect(screen.getByRole('textbox', { name: 'Message' })).toBe(composer);
-  expect(composer).toHaveValue('Keep my personal draft');
-  await chooseOption(user, 'Navigation scope', 'Personal');
-  expect(screen.getByRole('textbox', { name: 'Message' })).toBe(composer);
-});
+it.each([false, true])(
+  'preserves the same personal composer through scope selection and loss (shared=%s)',
+  async (shared) => {
+    const test = fixture(shared);
+    const web = agentClient({ resourceViews: test.sdk });
+    render(
+      <CmaClientProvider client={web}>
+        <Console
+          user={{
+            id: 'owner',
+            handle: 'Owner',
+            visitor: false,
+            capabilities: ['use_own_sandboxes'],
+          }}
+          route={{ kind: 'agent', agentId: 'agt_1' }}
+          onNavigate={vi.fn()}
+          onSignOut={vi.fn()}
+        />
+      </CmaClientProvider>,
+    );
+    const user = userEvent.setup();
+    const composer = await screen.findByRole('textbox', { name: 'Message' });
+    await user.type(composer, 'Keep my personal draft');
+    await chooseOption(user, 'Navigation scope', shared ? 'Shared with me' : 'Research');
+    await screen.findByRole('button', { name: sandbox.name });
+    test.state.revoked = true;
+    await user.click(
+      screen.getByRole('button', {
+        name: shared ? 'Refresh shared Sandboxes' : 'Refresh organization',
+      }),
+    );
+    await screen.findByText('Access removed');
+    expect(screen.getByRole('textbox', { name: 'Message' })).toBe(composer);
+    expect(composer).toHaveValue('Keep my personal draft');
+    await chooseOption(user, 'Navigation scope', 'Personal');
+    expect(screen.getByRole('textbox', { name: 'Message' })).toBe(composer);
+  },
+);
 
 it('never reuses personal Sandbox classification for a different resource', async () => {
   const test = fixture();
@@ -316,6 +343,10 @@ it('pages shared navigation without parent reads and clears it on revocation', a
       const url = new URL(String(input));
       calls.push(url);
       if (url.pathname.endsWith('/organizations')) return Response.json({ items: [] });
+      if (url.pathname === '/api/v1/sandboxes') {
+        expect(url.searchParams.get('shared')).toBe('true');
+        return Response.json({ items: [] });
+      }
       expect(url.pathname).toBe('/api/v1/agents/provenance');
       expect(url.searchParams.get('shared')).toBe('true');
       if (revoked)

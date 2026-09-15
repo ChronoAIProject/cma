@@ -98,7 +98,7 @@ policy after the read. Snapshot archive downloads remain personal-only. Default
 Sandbox inventory excludes explicit organization ownership before pagination;
 use `list_accessible` with an organization for explicit discovery.
 
-## Organization inventory
+## Organization and Shared with me inventory
 
 ```rust,no_run
 use cma_sdk::{Client, instances::AccessibleSandboxListOptions};
@@ -117,10 +117,19 @@ for sandbox in page.items {
 Organization-owned resources and whole-Sandbox grants enter this explicit scope
 under current canonical membership. Narrow Agent grants never reveal a parent
 or its counts. `AccessibleSandboxSummary::Personal` retains the full personal
-summary; `Shared` contains safe metadata/counts. Omit the organization to select
-personal inventory. The old `list` method keeps its personal type. Every page
+summary; `Shared` contains safe metadata/counts. Leave both scope selectors at
+their defaults for personal inventory. The old `list` method keeps its personal type. Every page
 revalidates current policy and the hidden lookahead after count IO; changed or
 expired authority yields a typed error without partial rows or stale cursors.
+
+Set `shared: true` in `AccessibleSandboxListOptions` to discover incoming
+whole-Sandbox grants across all current organizations. The server deduplicates
+Sandboxes and excludes your own personal resources before pagination. Explicit
+organization ownership alone does not enter this scope. Individually shared
+Agents remain discoverable through the shared provenance inventory without
+exposing parents. Combining `shared: true` with `organization: Some(...)` fails
+local validation. Unavailable organization authority refuses incomplete discovery;
+every page revalidates all original membership evidence and grants.
 
 ## Shared lifecycle commands
 

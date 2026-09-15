@@ -269,7 +269,7 @@ SDK `readAccessible` / `read_accessible` and subordinate `listAccessible` /
 methods retain their full types. Seventy actual-handler fixtures replay through
 both SDKs, alongside read-only retained-state and disposable Mongo regressions.
 
-## Organization Sandbox inventory
+## Organization and Shared Sandbox inventory
 
 `GET /api/v1/sandboxes?organization=<canonical ID>` uses fresh evidence from the
 actual request credential and the same role/capability intersection as Agent
@@ -291,10 +291,26 @@ between the final authorization check and the HTTP projection.
 
 Personal owners retain the existing full summary JSON, while others receive
 safe `SharedSandboxSummary` metadata/counts with an explicit shared marker. Both
-SDKs expose `listAccessible` / `list_accessible` with an optional organization
-selector. Legacy personal `list` types remain intact and refuse reduced shared
+SDKs expose `listAccessible` / `list_accessible` with organization and shared
+selectors. Legacy personal `list` types remain intact and refuse reduced shared
 responses. This adds discovery only; organization ownership admission and
 organization credential custody remain separate requirements.
+
+`GET /api/v1/sandboxes?shared=true` aggregates explicit incoming whole-Sandbox
+grants across current organizations. It excludes the caller's own personal roots
+before pagination and deduplicates overlapping organization grants. Organization
+ownership alone and narrow Agent grants cannot create a shared root. Its Mongo
+candidate branch scans indexed active Sandbox shares, then validates complete
+snapshots in the same read transaction. It never derives parents from Agent rows.
+
+Shared Agent and Sandbox inventories use the same bounded membership discovery:
+at most 128 choices and eight verified lookups at a time. Only confirmed removal
+prunes stale discovery choices; provider failures reject the entire result. The
+complete Sandbox request, including discovery, counts and final fences, is bounded
+to 15 seconds. Original evidence deadlines, candidate policies and the hidden
+lookahead remain authoritative through final projection. A changed status also
+invalidates a status-filtered response. Combining `shared=true` with an explicit
+organization is invalid. Omitting both selectors preserves personal discovery.
 
 ## Agent Replay And Live Follow
 

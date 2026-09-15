@@ -169,6 +169,15 @@ impl ResourceAccessStore for GatedPolicy {
         unreachable!()
     }
 
+    async fn shared_sandboxes(
+        &self,
+        _recipient: &layer2_core::SubjectId,
+        _organizations: &[layer2_core::SubjectId],
+        _query: &layer2_core::sandbox::OwnerSandboxQuery,
+    ) -> Result<Vec<ResourceAccessSnapshot>, ResourceAccessStoreError> {
+        unreachable!()
+    }
+
     async fn organization_agents(
         &self,
         _: &layer2_core::SubjectId,

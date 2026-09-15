@@ -3,6 +3,8 @@ import type { ContractCase } from './context.js';
 import { browserOperations } from './navigation.js';
 
 export const localCodes = new Map([
+  ['shared-sandbox-inventory-mixed-scope', 'invalid_query'],
+  ['shared-sandbox-inventory-invalid-shared', 'invalid_query'],
   ['sandbox-command-invalid-revision', 'invalid_sandbox_command'],
   ['creation-inventory-invalid-category', 'invalid_instance_query'],
   ['responses-v2-field-stream', 'stream_required'],

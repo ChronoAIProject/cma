@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ProtocolError } from '../src/index.js';
+import { ProtocolError, ValidationError } from '../src/index.js';
 import { now, transport } from './resource-fixtures.js';
 
 const workspaceSummary = {
@@ -137,4 +137,34 @@ it('accepts an optional shared detail revision while refusing invalid preconditi
       ProtocolError,
     );
   }
+});
+
+it('pages aggregate shared Sandboxes and refuses ambiguous or untyped scope before transport', async () => {
+  const test = transport();
+  const { workspaces, ...summary } = sandbox;
+  expect(workspaces).toHaveLength(1);
+  test.answer({ items: [summary], next: summary.id });
+  expect(
+    await test.client.sandboxes.listAccessible({
+      shared: true,
+      cursor: 'sandbox-0',
+      limit: 1,
+      status: 'active',
+    }),
+  ).toEqual({ items: [summary], next: summary.id });
+  expect(test.calls.at(-1)?.url).toContain(
+    '/sandboxes?cursor=sandbox-0&limit=1&status=active&shared=true',
+  );
+  const before = test.calls.length;
+  expect(() => test.client.sandboxes.listAccessible({ shared: true, organization: 'org' })).toThrow(
+    ValidationError,
+  );
+  for (const shared of ['true', 1, null])
+    expect(() => test.client.sandboxes.listAccessible({ shared: shared as never })).toThrow(
+      ValidationError,
+    );
+  expect(test.calls).toHaveLength(before);
+  test.answer({ items: [] });
+  await test.client.sandboxes.listAccessible({ shared: false });
+  expect(new URL(test.calls.at(-1)!.url).search).toBe('');
 });

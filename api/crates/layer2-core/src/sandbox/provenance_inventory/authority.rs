@@ -1,5 +1,5 @@
 use super::*;
-use crate::resource_access::{AccessDecision, MembershipError, ResourceOwner};
+use crate::resource_access::{AccessDecision, ResourceOwner};
 use std::time::SystemTime;
 
 pub(super) struct InventoryAuthority {
@@ -7,7 +7,7 @@ pub(super) struct InventoryAuthority {
     // None selects explicit incoming shares. Ownership itself has no shared kind.
     pub scope: Option<ResourceOwner>,
     pub context: Option<CallerContext>,
-    organizations: Vec<(SubjectId, CallerContext)>,
+    memberships: Option<crate::resource_access::InventoryMemberships>,
 }
 
 impl InventoryAuthority {
@@ -18,7 +18,7 @@ impl InventoryAuthority {
                 subject: caller.subject.clone(),
             }),
             context: None,
-            organizations: Vec::new(),
+            memberships: None,
         }
     }
 
@@ -31,53 +31,13 @@ impl InventoryAuthority {
         if !query.shared && query.organization.is_none() {
             return Ok(Self::personal(&context.caller));
         }
-        let ids = if let Some(id) = &query.organization {
-            vec![id.clone()]
-        } else {
-            let choices = access.organization_choices(context, credential).await?;
-            // Bound discovery fanout and memory independently of Agent page size.
-            if choices.len() > 128 {
-                return Err(MembershipError::Unavailable.into());
-            }
-            choices.into_iter().map(|choice| choice.id).collect()
-        };
-        if ids.iter().any(|id| {
-            id.as_str().is_empty() || id.as_str().len() > 128 || id.as_str().trim() != id.as_str()
-        }) {
-            return Err(MembershipError::InvalidEvidence.into());
-        }
-        let organizations: Vec<_> = stream::iter(ids.into_iter().map(|id| async move {
-            match access.inventory_context(context, credential, &id).await {
-                Ok(current) => Ok(Some((id, current))),
-                // Choices can lag removal. Only an actual provider refusal can
-                // remove a choice; an outage must not look like an empty inventory.
-                Err(ResourceAccessError::Membership(MembershipError::NotMember))
-                    if query.shared =>
-                {
-                    Ok(None)
-                }
-                Err(error) => Err(error),
-            }
-        }))
-        .buffered(8)
-        .try_collect::<Vec<_>>()
-        .await?
-        .into_iter()
-        .flatten()
-        .collect();
-        let mut current = context.clone();
-        current.memberships.clear();
-        current.caller.authorization =
-            crate::Authorization::new(context.caller.authorization.iter().filter(|capability| {
-                organizations
-                    .iter()
-                    .all(|(_, evidence)| evidence.caller.authorization.allows(*capability))
-            }));
-        for (_, evidence) in &organizations {
-            current
-                .memberships
-                .extend(evidence.memberships.iter().cloned());
-        }
+        let memberships = crate::resource_access::InventoryMemberships::load(
+            access,
+            context,
+            credential,
+            query.organization.as_ref(),
+        )
+        .await?;
         let value = Self {
             caller: context.caller.clone(),
             scope: query
@@ -86,26 +46,25 @@ impl InventoryAuthority {
                 .map(|id| ResourceOwner::Organization {
                     subject: id.clone(),
                 }),
-            context: Some(current),
-            organizations,
+            context: Some(memberships.context.clone()),
+            memberships: Some(memberships),
         };
         value.require_membership(access)?;
         Ok(value)
     }
 
     pub fn organization_ids(&self) -> Vec<SubjectId> {
-        self.organizations
-            .iter()
-            .map(|(id, _)| id.clone())
-            .collect()
+        self.memberships
+            .as_ref()
+            .map_or_else(Vec::new, |value| value.ids())
     }
 
     pub fn require_membership(
         &self,
         access: &ResourceAccessService,
     ) -> Result<(), ResourceAccessError> {
-        for (id, context) in &self.organizations {
-            access.require_inventory_membership(context, id)?;
+        if let Some(memberships) = &self.memberships {
+            memberships.require(access)?;
         }
         Ok(())
     }

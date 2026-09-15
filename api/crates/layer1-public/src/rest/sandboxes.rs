@@ -34,6 +34,8 @@ const DEFAULT_EVENT_LIMIT: u16 = 200;
 #[serde(deny_unknown_fields)]
 pub(crate) struct SandboxPageParams {
     organization: Option<String>,
+    #[serde(default)]
+    shared: bool,
     status: Option<SandboxStatus>,
     cursor: Option<String>,
     limit: Option<u16>,
@@ -161,6 +163,7 @@ pub(super) async fn create(
     tag = "sandboxes",
     params(
         ("organization" = Option<String>, Query),
+        ("shared" = Option<bool>, Query, description = "Incoming whole-Sandbox grants across current organizations; mutually exclusive with organization"),
         ("status" = Option<String>, Query),
         ("cursor" = Option<String>, Query),
         ("limit" = Option<u16>, Query)
@@ -179,6 +182,28 @@ pub(super) async fn list(
     }
     let page = PageRequest::new(params.limit.unwrap_or(DEFAULT_PAGE_LIMIT), params.cursor)
         .map_err(|_| HierarchyProblem::InvalidPage)?;
+    if params.shared && params.organization.is_some() {
+        return Err(HierarchyProblem::InvalidQuery);
+    }
+    if params.shared {
+        let resource = resource.ok_or(HierarchyProblem::Forbidden)?;
+        let stored = state
+            .hierarchy
+            .shared_list_authorized(
+                &resource.context,
+                resource.credential.as_ref().map(DelegatedCredential::value),
+                &OwnerSandboxQuery {
+                    status: params.status,
+                    page,
+                },
+            )
+            .await
+            .map_err(HierarchyProblem::sandbox_read)?;
+        return Ok(Json(AccessibleSandboxPageView {
+            items: stored.items.into_iter().map(Into::into).collect(),
+            next: stored.next,
+        }));
+    }
     if let Some(organization) = params.organization {
         if organization.trim().is_empty()
             || organization.len() > 128

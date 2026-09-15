@@ -1,5 +1,6 @@
 import type { Dispatch } from './context.js';
 import type { AgentProvenanceInventoryOptions } from '../../src/agents.js';
+import type { AccessibleSandboxListOptions } from '../../src/sandboxes.js';
 
 export const resourceDispatch: Record<string, Dispatch> = {
   'GET /api/v1/organizations': ({ client }) => client.resourceAccess.organizations(),
@@ -24,7 +25,17 @@ export const resourceDispatch: Record<string, Dispatch> = {
   'GET /api/v1/conformance': ({ client }) => client.readConformance(),
   'GET /openapi.json': ({ client }) => client.readOpenApi(),
   'GET /api/v1/defaults': ({ client }) => client.readDefaults(),
-  'GET /api/v1/sandboxes': ({ client, options }) => client.sandboxes.listAccessible(options),
+  'GET /api/v1/sandboxes': ({ client, options, query }) =>
+    client.sandboxes.listAccessible({
+      ...(options as AccessibleSandboxListOptions),
+      shared: query.has('shared')
+        ? query.get('shared') === 'true'
+          ? true
+          : query.get('shared') === 'false'
+            ? false
+            : (query.get('shared') as never)
+        : undefined,
+    }),
   'POST /api/v1/sandboxes': ({ client, body, command }) => client.sandboxes.create(body, command),
   'GET /api/v1/sandboxes/{id}': ({ client, param }) => client.sandboxes.readAccessible(param('id')),
   'POST /api/v1/sandboxes/{id}/commands': ({ client, param, body, command }) =>

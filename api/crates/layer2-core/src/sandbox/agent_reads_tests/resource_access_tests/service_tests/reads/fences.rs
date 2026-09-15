@@ -16,6 +16,17 @@ impl ResourceAccessStore for PolicyStore {
         self.inner.organization_sandboxes(organization, query).await
     }
 
+    async fn shared_sandboxes(
+        &self,
+        recipient: &crate::SubjectId,
+        organizations: &[crate::SubjectId],
+        query: &crate::sandbox::OwnerSandboxQuery,
+    ) -> Result<Vec<ResourceAccessSnapshot>, ResourceAccessStoreError> {
+        self.inner
+            .shared_sandboxes(recipient, organizations, query)
+            .await
+    }
+
     async fn organization_agents(
         &self,
         organization: &SubjectId,
