@@ -22,6 +22,14 @@ pub async fn dispatch(c: &Context<'_>) -> Result<()> {
                 )
                 .await,
         ),
+        "GET /api/v1/bridge-invoke-grants/{id}/source-controls" => {
+            c.check(bridges.read_source_controls(c.param("id")).await)
+        }
+        "PUT /api/v1/bridge-invoke-grants/{id}/source-controls" => c.check(
+            bridges
+                .set_source_controls(c.param("id"), &c.body()?, &c.key()?)
+                .await,
+        ),
         "GET /api/v1/bridges/{id}/allocations" => {
             c.check(bridges.list_allocations(c.param("id"), &c.page()?).await)
         }

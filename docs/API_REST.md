@@ -995,6 +995,8 @@ SDKs expose this scope through their accessible Sandbox list method.
 | `POST /api/v1/bridges/{id}/validate` | Bridge setup and management with current owner or organization authority. |
 | `PUT /api/v1/bridges/{id}/configuration` | Bridge setup and management with current owner or organization authority. |
 | `PUT /api/v1/bridges/{id}/credential` | Bridge setup and management with current owner or organization authority. |
+| `GET /api/v1/bridge-invoke-grants/{id}/source-controls` | Observe separate original-sender consent; required nullable policy. |
+| `PUT /api/v1/bridge-invoke-grants/{id}/source-controls` | Explicitly allow or revoke original-sender consent using exact revisions and one retained idempotency key. |
 <!-- openapi-operations:end -->
 
 ## Contract Verification
@@ -1168,3 +1170,7 @@ The original `remove_child` effect still retains its Workspace. New Workspace
 consent requires demonstrated runtime capability and exact original ownership;
 no inferred consent, cascading child removal or parent deletion is permitted.
 Only a separately proved `complete` status releases that Workspace reservation.
+
+## Source-control consent
+
+GET and PUT `/api/v1/bridge-invoke-grants/{id}/source-controls` manage separate original-sender consent. GET returns a required `policy` field: null means no consent was ever recorded. PUT returns exactly 200 with an immutable `{id, request, result}` receipt. See [Bridge source-control consent](BRIDGE_SOURCE_CONTROLS.md) for bounds, exact-request recovery and the distinction between recorded consent and demonstrated runtime support.

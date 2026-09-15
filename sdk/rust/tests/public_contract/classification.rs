@@ -41,6 +41,80 @@ pub const LOCAL_CASES: &[(&str, Classification)] = &[
         "bridge-workspace-cleanup-unknown-action",
         Classification::TypedShape,
     ),
+    ("source-consent-invalid-id-get", Classification::Local),
+    ("source-consent-invalid-id-put", Classification::Local),
+    (
+        "source-consent-invalid-expected_bridge_revision-0",
+        Classification::Local,
+    ),
+    (
+        "source-consent-invalid-expected_bridge_revision-9223372036854775808",
+        Classification::Local,
+    ),
+    (
+        "source-consent-invalid-expected_grant_revision-0",
+        Classification::Local,
+    ),
+    (
+        "source-consent-invalid-expected_grant_revision-3",
+        Classification::Local,
+    ),
+    (
+        "source-consent-invalid-expected_policy_revision-256",
+        Classification::Local,
+    ),
+    (
+        "source-consent-invalid-expected_policy_revision-255",
+        Classification::Local,
+    ),
+    (
+        "source-consent-missing-field-expected_bridge_revision",
+        Classification::TypedShape,
+    ),
+    (
+        "source-consent-missing-field-expected_grant_revision",
+        Classification::TypedShape,
+    ),
+    (
+        "source-consent-missing-field-expected_policy_revision",
+        Classification::TypedShape,
+    ),
+    (
+        "source-consent-missing-field-action",
+        Classification::TypedShape,
+    ),
+    ("source-consent-injected-actor", Classification::TypedShape),
+    ("source-consent-injected-owner", Classification::TypedShape),
+    ("source-consent-injected-scope", Classification::TypedShape),
+    (
+        "source-consent-injected-approval_mode",
+        Classification::TypedShape,
+    ),
+    ("source-consent-injected-target", Classification::TypedShape),
+    (
+        "source-consent-injected-enabled",
+        Classification::TypedShape,
+    ),
+    (
+        "source-consent-unknown-action-approve",
+        Classification::TypedShape,
+    ),
+    (
+        "source-consent-unknown-action-cancel",
+        Classification::TypedShape,
+    ),
+    (
+        "source-consent-unknown-action-steer",
+        Classification::TypedShape,
+    ),
+    ("source-consent-long-key", Classification::Local),
+    ("source-consent-missing-key", Classification::Local),
+    ("source-consent-invalid-key", Classification::Local),
+    (
+        "source-consent-missing-media-type",
+        Classification::MediaType,
+    ),
+    ("source-consent-malformed-json", Classification::RawJson),
     ("bridge-cleanup-invalid-limit", Classification::Local),
     ("bridge-cleanup-invalid-allocation", Classification::Local),
     ("bridge-cleanup-invalid-revision", Classification::Local),

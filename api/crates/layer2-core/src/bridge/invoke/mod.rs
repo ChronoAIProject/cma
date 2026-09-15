@@ -13,6 +13,7 @@ mod proof;
 mod readiness;
 pub use readiness::{BridgeInvokeConsentStatus, BridgeInvokeReadiness};
 mod service;
+mod source_controls;
 mod store;
 mod target;
 
@@ -20,6 +21,7 @@ pub use model::*;
 pub use mutation::*;
 pub use proof::*;
 pub use service::*;
+pub use source_controls::*;
 pub use store::*;
 pub use target::BridgeInvokeTarget;
 

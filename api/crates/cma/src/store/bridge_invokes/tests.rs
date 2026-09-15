@@ -10,6 +10,7 @@ mod enable;
 mod fixed_allocation;
 mod generations;
 mod issue_fence;
+mod source_controls;
 
 #[tokio::test]
 #[ignore = "requires the disposable MongoDB replica contract runner"]
