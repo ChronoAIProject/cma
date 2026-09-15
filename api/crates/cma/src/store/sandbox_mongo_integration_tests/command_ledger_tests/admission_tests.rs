@@ -205,6 +205,7 @@ async fn membership_expiry_during_transaction_io_aborts_every_write_and_retains_
         "data": { "failCommands": ["insert"], "appName": &app_name, "blockConnection": true, "blockTimeMS": 1000_i32 },
     }).await.unwrap();
     let mut expiring = request(&agent, &parent, "expiring");
+    expiring.admission_audit = Some(super::audit_tests::personal_audit(&agent, &parent));
     expiring.authority_deadline = Some(tokio::time::Instant::now() + Duration::from_millis(500));
     let result = store.reserve_command(expiring).await;
     admin
@@ -213,6 +214,14 @@ async fn membership_expiry_during_transaction_io_aborts_every_write_and_retains_
         .await
         .expect("disable fixture failpoint before assertions");
     assert_eq!(result, Err(CommandLedgerError::Conflict));
+    assert_eq!(
+        store
+            .command_authorization_audits
+            .count_documents(doc! {})
+            .await
+            .unwrap(),
+        0
+    );
     assert_eq!(
         store
             .agents

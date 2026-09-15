@@ -149,6 +149,14 @@ impl CommandExecutionAuthorization {
 }
 
 impl CommandExecutionFence {
+    pub fn authorization_audit(
+        &self,
+    ) -> Result<crate::resource_access::ResourceAuthorizationAudit, ResourceAccessError> {
+        self.require_current()?;
+        self.authorized
+            .authorization_audit(&self.envelope.actor, &self.target(), self.capability)
+    }
+
     pub fn target(&self) -> ResourceTarget {
         target(&self.envelope)
     }

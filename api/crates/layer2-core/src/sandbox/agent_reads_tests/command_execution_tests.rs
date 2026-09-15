@@ -6,6 +6,9 @@ use layer3_adapter::{ConversationInput, ConversationInputSender};
 #[path = "command_revival_tests.rs"]
 mod revival;
 
+#[path = "command_audit_tests.rs"]
+mod audit;
+
 async fn grant(store: &InMemorySandboxStore, mode: ShareMode) -> ResourceShare {
     let snapshot = store
         .resource_access_snapshot(&ResourceTarget::Sandbox {
@@ -100,6 +103,7 @@ async fn claim(store: &InMemorySandboxStore, agent: &Agent, actor: &str) -> Admi
             parent: SandboxMutationGuard::capture(&snapshot.lineage.sandbox),
             policy: snapshot.fence(),
             authority_deadline: None,
+            admission_audit: None,
         })
         .await
         .unwrap();

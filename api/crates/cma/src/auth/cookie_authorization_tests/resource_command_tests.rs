@@ -9,6 +9,9 @@ use layer2_core::{Caller, SandboxId};
 use super::resource_fixture::*;
 use super::*;
 
+#[path = "resource_admission_tests.rs"]
+mod admission;
+
 struct ResourceFixture {
     identity: Fixture,
     store: Arc<InMemorySandboxStore>,
@@ -41,6 +44,7 @@ impl ResourceFixture {
                 ),
                 policy: snapshot.fence(),
                 authority_deadline: None,
+                admission_audit: None,
             })
             .await
             .unwrap();

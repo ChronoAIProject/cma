@@ -50,6 +50,7 @@ mod agent_lifecycle;
 #[cfg(test)]
 mod agent_lifecycle_tests;
 mod agent_reads;
+mod command_audit;
 mod command_revival;
 mod events;
 use events::bounded_events;
@@ -405,7 +406,7 @@ impl SandboxTransactionStore for InMemorySandboxStore {
                 event,
             } => {
                 if let Some(proof) = &command_revival {
-                    command_revival::validate(&candidate, proof, &sandbox, &event_at, &event)?;
+                    command_revival::validate(&mut candidate, proof, &sandbox, &event_at, &event)?;
                 }
                 let id = sandbox.id.clone();
                 if candidate.sandboxes.get(&id).is_some_and(|current| {
