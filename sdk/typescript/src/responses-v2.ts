@@ -5,6 +5,9 @@ import { identity, input, query, read, segment } from './resources.js';
 import { eventStream } from './streaming.js';
 import { conversationId, v2Request } from './responses-v2/requests.js';
 import { v2ResponseFrames } from './responses-v2/stream.js';
+import * as controls from './responses-v2/controls.js';
+import type { V2ResponseControlRequest } from './responses-v2/controls-types.js';
+import type { CommandOptions } from './resources.js';
 import {
   v2Capabilities,
   v2Conversation,
@@ -17,6 +20,8 @@ import {
   type V2ResponseReceipt,
 } from './responses-v2/types.js';
 export type * from './responses-v2/types.js';
+export type * from './responses-v2/controls-types.js';
+export { commandIsTerminal } from './responses-v2/controls-types.js';
 
 export interface V2ResponseStreamOptions extends OperationOptions {
   /** Persist this key before sending. Retry explicitly with the same body/key after a lost reply. */
@@ -37,6 +42,23 @@ export interface V2ConversationItemsOptions extends OperationOptions {
 /** Versioned streaming Responses subset using durable Agent command admission. */
 export class ResponsesV2 {
   constructor(private readonly config: ResolvedConfig) {}
+  /** Observe an exact bound turn. Runtime support is an observation, not caller permission. */
+  observeControls(agentId: string, responseId: string, options: OperationOptions = {}) {
+    return controls.observeControls(this.config, agentId, responseId, options);
+  }
+  /** Submit once. Recover uncertainty with the identical body/key; never retarget on retry. */
+  submitControl(
+    agentId: string,
+    responseId: string,
+    body: V2ResponseControlRequest,
+    options: CommandOptions,
+  ) {
+    return controls.submitControl(this.config, agentId, responseId, body, options);
+  }
+  /** One safe command-status poll. Completed control means delivery; inspect the target outcome separately. */
+  readCommand(commandId: string, options: OperationOptions = {}) {
+    return controls.readCommand(this.config, commandId, options);
+  }
   readCapabilities(options: OperationOptions = {}) {
     return read(this.config, '/api/v2', v2Capabilities, options);
   }

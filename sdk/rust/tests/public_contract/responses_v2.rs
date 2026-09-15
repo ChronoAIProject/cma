@@ -4,6 +4,27 @@ use cma_sdk::{Result, responses_v2::ItemOptions};
 pub async fn dispatch(c: &Context<'_>) -> Result<()> {
     let api = c.client.responses_v2();
     match c.case.operation.as_str() {
+        "GET /api/v2/agents/{agent_id}/responses/{response_id}/controls" => c.check(
+            api.observe_controls(c.param("agent_id"), c.param("response_id"))
+                .await,
+        ),
+        "POST /api/v2/agents/{agent_id}/responses/{response_id}/controls" => {
+            let key = c
+                .case
+                .request
+                .headers
+                .iter()
+                .find(|(name, _)| name.eq_ignore_ascii_case("idempotency-key"))
+                .map(|(_, value)| value.as_str())
+                .unwrap_or_default();
+            c.check(
+                api.submit_control(c.param("agent_id"), c.param("response_id"), &c.body()?, key)
+                    .await,
+            )
+        }
+        "GET /api/v2/commands/{command_id}" => {
+            c.check(api.read_command(c.param("command_id")).await)
+        }
         "GET /api/v2" => c.check(api.read_capabilities().await),
         "GET /api/v2/conversations/{conversation_id}" => {
             c.check(api.read_conversation(c.param("conversation_id")).await)

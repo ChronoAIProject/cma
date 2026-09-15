@@ -3,6 +3,8 @@ import type { ContractCase } from './context.js';
 import { browserOperations } from './navigation.js';
 
 export const localCodes = new Map([
+  ['response-controls-v2-unknown-body', 'invalid_control_request'],
+  ['response-controls-v2-invalid-observation', 'invalid_control_observation'],
   ['bridge-outbox-list-invalid-limit', 'invalid_bridge_delivery_request'],
   ['bridge-outbox-recover-unknown-field', 'invalid_json'],
   ['bridge-outbox-recover-nested-field', 'invalid_json'],
@@ -83,6 +85,8 @@ export const localCodes = new Map([
 ]);
 
 const protectedQueries = new Map([
+  ['response-controls-v2-observe-query', ['unexpected']],
+  ['response-controls-v2-status-query', ['unexpected']],
   ['bridge-setup-list-unknown-query', ['unexpected']],
   ['bridge-setup-capabilities-invalid-query', ['unexpected']],
   ['creation-inventory-invalid-creator', ['created_by']],

@@ -19,6 +19,7 @@ mod lane_records;
 mod reconcile;
 mod records;
 pub(in crate::store) mod reserve;
+mod targeted_control;
 mod worker;
 mod worker_apply;
 
@@ -46,6 +47,23 @@ impl From<mongodb::error::Error> for ApplyError {
 
 #[async_trait::async_trait]
 impl AgentCommandStore for MongoSandboxStore {
+    async fn reserve_targeted_control(
+        &self,
+        request: layer2_core::sandbox::agent_io::TargetedControlReservation,
+    ) -> Result<layer2_core::sandbox::agent_io::AdmittedTargetedControl, CommandLedgerError> {
+        targeted_control::run(self, request, true)
+            .await?
+            .ok_or(CommandLedgerError::Corrupt)
+    }
+
+    async fn lookup_targeted_control(
+        &self,
+        request: layer2_core::sandbox::agent_io::TargetedControlReservation,
+    ) -> Result<Option<layer2_core::sandbox::agent_io::AdmittedTargetedControl>, CommandLedgerError>
+    {
+        targeted_control::run(self, request, false).await
+    }
+
     async fn get_admitted_command(
         &self,
         scope: &str,

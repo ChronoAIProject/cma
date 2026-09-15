@@ -421,6 +421,7 @@ struct State {
     sandbox_controls: HashMap<crate::ids::SandboxCommandId, super::control::SandboxControlRecord>,
     sandbox_control_keys: HashMap<(String, String), crate::ids::SandboxCommandId>,
     agent_commands: HashMap<crate::ids::AgentCommandId, super::agent_io::AdmittedAgentCommand>,
+    targeted_controls: HashMap<crate::ids::AgentCommandId, super::agent_io::TargetedControlBinding>,
     command_authorization_audits:
         std::collections::BTreeMap<String, super::agent_io::CommandAuthorizationAudit>,
     agent_command_keys: HashMap<(String, String), crate::ids::AgentCommandId>,

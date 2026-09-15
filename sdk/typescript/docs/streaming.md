@@ -124,3 +124,74 @@ companion. Nested v2 HTTP errors become `ApiError` with their exact code,
 `extensions.type`, `extensions.param`, request ID and retry delay. Deployment
 middleware may still return the shared REST problem envelope, which is also
 supported. See the [API contract](../../../docs/API_Responses.md).
+
+## Response-targeted controls
+
+`responsesV2.observeControls(agentId, responseId)` returns the exact response's
+source command, bound turn, Agent aggregate revision and runtime support. A queued
+response has no target yet. Runtime support describes an observation; the server
+checks current control permission and the pending approval again at admission.
+
+`submitControl` requires a retained `idempotencyKey` and a strict body containing
+`turn_sequence`, `expected_agent_revision` and one command. Persist the complete
+intent before sending. After a lost reply, retry the same Agent, response, body
+and key, including the old revision; the SDK never observes a newer turn or
+creates a replacement key automatically. Header keys contain at most 256 UTF-8
+bytes, no control characters, and must survive Fetch header encoding and whitespace
+normalization unchanged. Numbers must be positive JavaScript safe integers; an
+observation outside that range is rejected rather than rounded.
+
+```ts
+import { createClient, commandIsTerminal, type V2ResponseControlRequest } from '@chronoai/cma-sdk';
+
+const cma = createClient();
+export async function requestCancellation(
+  agentId: string,
+  responseId: string,
+  retainedKey: string,
+  persist: (intent: {
+    agentId: string;
+    responseId: string;
+    key: string;
+    body: V2ResponseControlRequest;
+  }) => Promise<void>,
+) {
+  const observed = await cma.responsesV2.observeControls(agentId, responseId);
+  if (observed.target === null || !observed.target_active)
+    throw new Error('Observe an active bound response first');
+  const body: V2ResponseControlRequest = {
+    turn_sequence: observed.target.turn_sequence,
+    expected_agent_revision: observed.agent_revision,
+    command: { type: 'cancel' },
+  };
+  await persist({ agentId, responseId, key: retainedKey, body });
+  const accepted = await cma.responsesV2.submitControl(agentId, responseId, body, {
+    idempotencyKey: retainedKey,
+  });
+  const status = await cma.responsesV2.readCommand(accepted.control.receipt.command_id);
+  return { accepted, status, commandTerminal: commandIsTerminal(status) };
+}
+```
+
+Other commands are `{ type: 'steer', text }` and
+`{ type: 'resolve_approval', approval_id, decision: 'allow' | 'deny' | 'abort' }`.
+Steer text retains whitespace and accepts at most 256 KiB of UTF-8. Obtain the
+approval identity from the separately authorized AG-UI companion for this turn.
+
+`readCommand` makes one bounded GET without submitting input. Poll explicitly
+with your application's deadline, backoff and `signal`; preserve `ApiError.code`
+and `retryAfterMs` when observation is unavailable. Aborting a local request
+cancels observation only. `queued`, `waiting_action`, delivery `recovery_required`
+and `runtime_lost` remain distinct from terminal status. A completed control
+means delivered: call `observeControls` again and inspect its source
+`response.status` to confirm actual `cancelled`, `completed` or `failed` outcome.
+The target may finish normally before a cancel takes effect.
+
+`response_control_conflict` means a new intent's revision/turn/approval is stale;
+`agent_command_key_conflict` means the retained key was reused for changed intent;
+`capability_unsupported` means the observed runtime cannot perform the command.
+Recover an uncertain old admission before deciding whether to form a new intent.
+The optional discovery `controls` and `command_status` fields describe this CMA
+extension; older discovery documents remain readable. Standard Responses
+cancellation, queued-response cancellation and verified platform-sender controls
+are separate contracts.

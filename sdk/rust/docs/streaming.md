@@ -101,3 +101,67 @@ and closes on lost authority. Nested v2 HTTP errors retain their code,
 `extensions["type"]`, `extensions["param"]`, request ID and retry delay; the
 shared REST middleware envelope remains supported as well. See the
 [API contract](../../../docs/API_Responses.md).
+
+## Response-targeted controls
+
+`responses_v2().observe_controls(agent_id, response_id)` returns the original
+response command, optional bound turn, current Agent aggregate revision and
+runtime support. A queued response has no bound target. Runtime support does not
+grant control authority; CMA rechecks the caller and active approval at admission.
+
+`submit_control` requires a retained string key and a strict `ControlRequest`.
+Persist the Agent ID, response ID, key and serialized request before sending.
+Recover uncertain admission with those identical values, including the old turn
+and revision. The client sends once and never creates another key or retargets
+a newer turn. Keys allow at most 256 bytes, no control characters, and no leading
+or trailing whitespace that a client might normalize. Revisions and turns must
+fit a positive signed 64-bit integer.
+
+```rust,no_run
+use cma_sdk::{Client, responses_v2::{ControlCommand, ControlRequest}};
+# async fn run(client: Client, persist: impl FnOnce(&[u8]) -> std::io::Result<()>) -> Result<(), Box<dyn std::error::Error>> {
+let agent = std::env::var("CMA_AGENT_ID")?;
+let response = std::env::var("CMA_RESPONSE_ID")?;
+let key = std::env::var("CMA_DURABLE_CONTROL_KEY")?;
+let api = client.responses_v2();
+let observed = api.observe_controls(&agent, &response).await?;
+let target = observed.target.ok_or("response has no bound turn")?;
+if !observed.target_active { return Err("response is no longer active".into()); }
+let body = ControlRequest {
+    turn_sequence: target.turn_sequence,
+    expected_agent_revision: observed.agent_revision,
+    command: ControlCommand::Cancel {},
+};
+// Persist all four values in the application's durable intent store first.
+let saved_intent = serde_json::to_vec(&(&agent, &response, &key, &body))?;
+persist(&saved_intent)?;
+let accepted = api.submit_control(&agent, &response, &body, &key).await?;
+let status = api.read_command(&accepted.control.receipt.command_id).await?;
+if status.status.is_terminal() {
+    // Completed control means delivery; this separate source status is the outcome.
+    let source = api.observe_controls(&agent, &response).await?;
+    println!("target outcome: {}", source.response.status.as_str());
+}
+# Ok(())
+# }
+```
+
+`ControlCommand::Steer { text }` retains text bytes up to 256 KiB.
+`ResolveApproval { approval_id, decision }` uses `ApprovalDecision::{Allow, Deny,
+Abort}` and the current pending approval identity from the authorized companion.
+
+`read_command` performs one GET under the client's configured request timeout.
+Use application-owned bounded polling/backoff; dropping its future stops only
+observation. Preserve delivery `RecoveryRequired` and `RuntimeLost`, command
+`WaitingAction`, and typed `Error::Api` code/retry delay. A completed control
+cannot establish cancellation: read the selected source response status for its
+actual `Cancelled`, `Completed` or `Failed` outcome. Finishing normally before
+cancellation takes effect is a valid race.
+
+The server distinguishes `response_control_conflict` for a stale new intent,
+`agent_command_key_conflict` for changed intent with an old key and
+`capability_unsupported` for an unsupported runtime operation. Recover an
+uncertain old admission before deciding whether a new intent is needed. Optional
+discovery fields `controls` and `command_status` identify this extension while
+older discovery remains readable. Standard Responses cancellation, cancellation
+before turn dispatch and verified platform-sender controls are separate contracts.

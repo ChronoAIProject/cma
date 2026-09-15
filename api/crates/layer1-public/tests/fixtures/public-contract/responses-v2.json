@@ -46,7 +46,22 @@
             "tools": "agui_companion"
           },
           "companion": "/api/v1/agui/events?thread_id={agent_id}",
-          "documentation": "https://github.com/ChronoAIProject/cma/blob/main/docs/API_Responses.md"
+          "documentation": "https://github.com/ChronoAIProject/cma/blob/main/docs/API_Responses.md",
+          "controls": {
+            "path": "/api/v2/agents/{agent_id}/responses/{response_id}/controls",
+            "observe": "GET",
+            "submit": "POST",
+            "commands": [
+              "cancel",
+              "steer",
+              "resolve_approval"
+            ],
+            "idempotency_header": "Idempotency-Key",
+            "idempotency_required": true,
+            "target": "bound_response_turn",
+            "completion": "command_delivery"
+          },
+          "command_status": "/api/v2/commands/{command_id}"
         },
         "bodyKind": "json"
       },
