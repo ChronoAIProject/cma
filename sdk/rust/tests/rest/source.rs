@@ -48,3 +48,52 @@ async fn shared_source_categories_are_explicit_and_identity_checked() {
     }
     server.assert_drained();
 }
+
+#[tokio::test]
+async fn provenance_rejects_mismatched_identity_and_unknown_source_or_actor() {
+    let server = Server::new().await;
+    let path = "/agents/agent-1/provenance";
+    for kind in ["manual", "trigger", "channel_bridge", "legacy_unknown"] {
+        server.expect("GET", path, None, 200, Some(json!({"agent_id":"agent-1","created_at":"2026-09-05T00:00:00Z","creation_origin":kind})));
+        assert!(
+            server
+                .client
+                .agents()
+                .provenance("agent-1")
+                .await
+                .unwrap()
+                .details
+                .is_none()
+        );
+    }
+    let actor = json!({"kind":"api","subject":"actual-creator","delegation_id":null});
+    let detailed = json!({"agent_id":"agent-1","created_at":"2026-09-05T00:00:00Z","creation_origin":"trigger","details":{"created_by":actor,"trigger":{"trigger_id":"original-trigger","launch_id":"original-launch","launching_actor":actor},"channel_bridge":null,"workspace_profile_index":null}});
+    server.expect("GET", path, None, 200, Some(detailed.clone()));
+    assert!(
+        server
+            .client
+            .agents()
+            .provenance("agent-1")
+            .await
+            .unwrap()
+            .details
+            .unwrap()
+            .trigger
+            .is_some()
+    );
+    for (pointer, replacement) in [
+        ("/agent_id", json!("another-agent")),
+        ("/creation_origin", json!("future")),
+        ("/details/created_by", json!({"kind":"future"})),
+        ("/details/trigger", json!({"trigger_id":"missing-launch"})),
+    ] {
+        let mut malformed = detailed.clone();
+        *malformed.pointer_mut(pointer).unwrap() = replacement;
+        server.expect("GET", path, None, 200, Some(malformed));
+        assert!(matches!(
+            server.client.agents().provenance("agent-1").await,
+            Err(Error::Protocol { .. })
+        ));
+    }
+    server.assert_drained();
+}

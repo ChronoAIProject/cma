@@ -377,6 +377,7 @@ fn ready_workspace(parent: &Sandbox, id: &str, name: &str) -> Workspace {
 
 fn agent_admission(workspace: &Workspace, key: &str, id: &str) -> AgentAdmission {
     AgentAdmission {
+        created_by: None,
         owner: workspace.owner.clone(),
         workspace_id: workspace.id.clone(),
         agent_id: AgentId(format!("agt_{id}")),

@@ -1,0 +1,55 @@
+//! Immutable creation facts, separately authorized from current source shortcuts.
+use crate::resource_access::ResourceActor;
+use serde::Deserialize;
+
+string_enum! { /// Original creation category; later use never relabels it.
+    pub enum AgentCreationCategory {
+        Manual => "manual", Trigger => "trigger", ChannelBridge => "channel_bridge", LegacyUnknown => "legacy_unknown"
+    }
+}
+/// Immutable creation information under current resource access.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct AgentProvenance {
+    /// CMA Agent identity.
+    pub agent_id: String,
+    /// Original creation timestamp.
+    pub created_at: String,
+    /// Category supported by creation evidence.
+    pub creation_origin: AgentCreationCategory,
+    /// Only resource managers receive attribution and private source references.
+    pub details: Option<AgentProvenanceDetails>,
+}
+/// Source attribution for an authorized resource manager.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct AgentProvenanceDetails {
+    /// Creating actor when captured; never inferred from current ownership.
+    pub created_by: Option<ResourceActor>,
+    /// Original Trigger launch, when applicable.
+    pub trigger: Option<AgentCreationTrigger>,
+    /// Original channel allocation, when applicable.
+    pub channel_bridge: Option<AgentCreationBridge>,
+    /// Original automatic Workspace profile slot, when applicable.
+    pub workspace_profile_index: Option<u16>,
+}
+/// Original Trigger creation evidence; unrelated to later reuse.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct AgentCreationTrigger {
+    /// Original Trigger identity.
+    pub trigger_id: String,
+    /// Original launch identity.
+    pub launch_id: String,
+    /// Captured launching principal, when known.
+    pub launching_actor: Option<ResourceActor>,
+}
+/// Original channel creation references.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct AgentCreationBridge {
+    /// Creating bridge identity.
+    pub bridge_id: String,
+    /// Creating partition identity.
+    pub partition_id: String,
+    /// Original binding generation.
+    pub generation: u64,
+    /// External source reference available only to resource managers.
+    pub source_reference: String,
+}

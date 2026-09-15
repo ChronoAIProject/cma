@@ -326,6 +326,24 @@ safe Agent-only fields as shared detail; personal owners retain their full list
 summary. The SDK methods are TypeScript `agents.listAccessible` and Rust
 `agents().list_accessible` with `AccessibleAgentListOptions`.
 
+`GET /api/v1/agents/{id}/provenance` returns immutable creation facts:
+`agent_id`, `created_at`, and `creation_origin` (`manual`, `trigger`,
+`channel_bridge`, or `legacy_unknown`). The owner and a current manager of the
+owning organization also receive `details`: optional creating actor, original
+Trigger/launch references, channel references, and Workspace profile index.
+Shared recipients and independent operators receive only the category and
+timestamp. Policy and the original membership deadline are checked after IO.
+
+New manual creation records the authenticated actor separately from ownership.
+Trigger workers record their exact Trigger actor and launch ID; the original
+human/API launcher remains unknown unless captured explicitly. Legacy inference
+requires the matching initial creation log and canonical creation key and never
+invents a creator from the owner. Workspace profile origins are retained with
+unknown creation category when no supported category can be proved. Retries,
+profile changes, sharing and runtime recovery preserve creation facts. This read
+does not persist backfill. Channel allocation/history, inventory filters and UI
+integration remain unfinished; the channel category is reserved for that work.
+
 `GET /api/v1/agents/{id}/source` returns current-authority creation provenance.
 Personal owners retain the existing source document:
 `manual`, `workspace_profile`, or `trigger`. Trigger-created Agents also include
@@ -489,6 +507,7 @@ above applies even when an operation annotates only its principal responses.
 | `GET /api/v1/agents/{id}` | - | - | 200 AccessibleAgentView |
 | `DELETE /api/v1/agents/{id}` | -; key | - | 202 empty |
 | `GET /api/v1/agents/{id}/events` | - | after, limit | 200 AgentEventPageView |
+| `GET /api/v1/agents/{id}/provenance` | - | - | 200 AgentProvenanceView |
 | `GET /api/v1/agents/{id}/source` | - | - | 200 AccessibleAgentSourceView |
 | `POST /api/v1/agents/{id}/stop` | StopAgentRequest; key | - | 202 empty |
 | `GET /api/v1/agents/{id}/terminal` | - | - | 404 ProblemDocument; 501 ProblemDocument |

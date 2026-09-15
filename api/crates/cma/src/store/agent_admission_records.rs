@@ -19,6 +19,7 @@ use super::worktrees::read_worktree;
 
 pub(super) struct CreatedReceipt {
     pub(super) creation: AgentCreation,
+    pub(super) provenance: layer2_core::sandbox::AgentCreationProvenance,
     pub(super) workspace: Workspace,
     pub(super) sandbox: Sandbox,
     pub(super) revival_event: Option<SandboxEvent>,
@@ -288,6 +289,16 @@ pub(super) async fn reconcile_created(
     .as_ref()
     .map(read_agent)
     .transpose()?;
+    let provenance = find_at_snapshot(
+        &store.agent_creation_provenance,
+        doc! { "_id": receipt.creation.agent.id.as_str() },
+        &mut session,
+    )
+    .await?
+    .as_ref()
+    .map(super::agent_provenance::read)
+    .transpose()?;
+    let provenance_matches = exact_artifact_matches(provenance.as_ref(), &receipt.provenance)?;
     let mut initial_log = None;
     scan_complete_log_with_snapshot_session(
         store,
@@ -354,6 +365,7 @@ pub(super) async fn reconcile_created(
         && sandbox.as_ref() == Some(&receipt.sandbox)
         && worktree.as_ref() == Some(&receipt.creation.worktree)
         && agent.as_ref() == Some(&receipt.creation.agent)
+        && provenance_matches
         && initial_log_matches
         && worktree_event_matches
         && agent_event_matches

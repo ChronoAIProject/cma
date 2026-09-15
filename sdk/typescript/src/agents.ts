@@ -30,6 +30,7 @@ import {
   type CreateAgentRequest,
   type StopAgentRequest,
 } from './agents/types.js';
+import { agentProvenance } from './agents/provenance.js';
 import { agentEvent } from './agents/events.js';
 import { accessibleAgent, accessibleAgentSource, accessibleAgentSummary } from './agents/shared.js';
 import { requireRefusal } from './unsupported.js';
@@ -166,6 +167,11 @@ export class Agents {
   }
   resources(id: string, options: OperationOptions = {}) {
     return this.readProjection(id, 'resources', agentResources, options);
+  }
+
+  /** Immutable creation facts; source details require current resource management. */
+  provenance(id: string, options: OperationOptions = {}) {
+    return this.readProjection(id, 'provenance', agentProvenance, options);
   }
 
   async source(id: string, options: OperationOptions = {}) {

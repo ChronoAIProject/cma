@@ -232,6 +232,23 @@ async fn trigger_replay_is_exact_and_records_profile_use_once() {
         )
         .await
         .unwrap();
+    use crate::sandbox::store::AgentProvenanceStore;
+    let provenance = store
+        .agent_provenance_snapshot(&first.id)
+        .await
+        .unwrap()
+        .creation
+        .unwrap();
+    assert!(
+        matches!(provenance.created_by, Some(crate::resource_access::ResourceActor::Trigger { subject, launch_id }) if subject == owner.subject && matches!(&origin, AgentOrigin::Trigger { launch_id: original, .. } if launch_id.as_str() == original))
+    );
+    assert!(matches!(
+        provenance.creation_origin,
+        crate::sandbox::AgentCreationOrigin::Trigger {
+            launching_actor: None,
+            ..
+        }
+    ));
     assert_eq!(replay.id, first.id);
     assert_eq!(uses(&profiles, &reference.id).await, 1);
     assert_eq!(
