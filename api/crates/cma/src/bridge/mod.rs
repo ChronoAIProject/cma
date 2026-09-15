@@ -17,6 +17,8 @@ pub(crate) mod channel_renewal_work;
 pub(crate) mod channel_scheduler;
 pub(crate) mod channel_tools;
 pub(crate) mod channel_work;
+pub(crate) mod cleanup;
+pub(crate) mod cleanup_work;
 pub(crate) mod composition;
 pub(crate) mod control_plane;
 pub(crate) mod custody;

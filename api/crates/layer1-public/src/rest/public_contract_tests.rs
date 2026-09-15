@@ -14,6 +14,7 @@ mod artifact_cases;
 mod authoring_cases;
 mod bridge_cases;
 mod channel_usage_cases;
+mod cleanup_cases;
 mod creation_inventory_cases;
 mod credential_cases;
 mod domains;
@@ -138,6 +139,9 @@ fn paths() -> Vec<PathBuf> {
 }
 
 async fn scenario(name: &str) -> Scenario {
+    if let Some(scenario) = cleanup_cases::scenario(name).await {
+        return scenario;
+    }
     if let Some(scenario) = queued_cancellation_cases::scenario(name).await {
         return scenario;
     }
