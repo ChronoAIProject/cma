@@ -99,6 +99,11 @@
   background: var(--dsw-alias-bg-layer-2);
   overflow-wrap: anywhere;
 }
+.bridges__allocation-target {
+  display: grid;
+  gap: 8px;
+  overflow-wrap: anywhere;
+}
 .bridges__facts {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 2fr);
