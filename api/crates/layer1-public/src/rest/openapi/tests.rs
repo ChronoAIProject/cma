@@ -414,6 +414,7 @@ fn every_trigger_and_launch_wire_schema_is_registered() {
         "LaunchConsentSurfaceValue",
         "LaunchConfirmationView",
         "LaunchView",
+        "LaunchFirstMessageCommandView",
         "LaunchPageView",
         "LaunchEventPageView",
         "ServiceConnectionStateValue",
@@ -434,6 +435,16 @@ fn every_trigger_and_launch_wire_schema_is_registered() {
     ] {
         assert!(schemas.contains_key(name), "missing schema {name}");
     }
+    let schemas = serde_json::to_value(schemas).expect("schemas serialize");
+    let association = &schemas["LaunchFirstMessageCommandView"]["properties"];
+    assert_eq!(association.as_object().unwrap().len(), 3);
+    for field in ["agent_id", "command_id", "response_id"] {
+        assert_eq!(association[field]["type"], "string");
+    }
+    assert!(!schemas["LaunchView"]["required"]
+        .as_array()
+        .unwrap()
+        .contains(&serde_json::json!("first_message_command")));
 }
 
 #[test]

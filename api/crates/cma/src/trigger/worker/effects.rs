@@ -114,6 +114,7 @@ impl LaunchWorker {
             let mut expected = launch.clone();
             if expected.input_binding_sha256.is_none() && durable.input_binding_sha256.is_some() {
                 expected.input_binding_sha256 = durable.input_binding_sha256.clone();
+                expected.first_message_command = durable.first_message_command.clone();
                 expected.revision = expected
                     .revision
                     .checked_add(1)

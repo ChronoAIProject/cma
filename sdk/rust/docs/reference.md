@@ -84,6 +84,14 @@ Trigger and Launch list responses normalize the backend's `next_cursor` into
 at `GET /api/v1/agui/launches/{id}/events`. Stream `cursor()` returns the last
 complete event, without implying the application has persisted it.
 
+`Launch::first_message_command` is an optional immutable association containing
+`agent_id`, `command_id`, and `response_id`. Owner reads/lists include it only for
+an attached common first prompt; legacy Launches and reuse with no new prompt
+omit it. Use `responses_v2().read` and the events extension with current Agent
+history authority to observe that response. The association grants no authority
+and never triggers input submission. Refresh it with `launches().read` rather
+than replaying cached admission, and retain the same response after ambiguity.
+
 `ReplayOptions` controls AG-UI finite history or follow mode. `RunRequest` admits
 one user message or approval answer. `agui().run_with_key(&request, key)` adds an
 optional retained key alongside existing unkeyed `run`; Working ordinary input

@@ -42,7 +42,7 @@ pub(super) async fn insert(
 
 pub(super) async fn verify_in_session(
     store: &MongoTriggerDefinitionStore,
-    launch: &Launch,
+    launch: &mut Launch,
     session: &mut ClientSession,
 ) -> Result<(), ReadError> {
     let actual = store
@@ -63,7 +63,7 @@ pub(super) async fn verify_in_session(
 
 pub(super) async fn verify_snapshot(
     store: &MongoTriggerDefinitionStore,
-    launch: &Launch,
+    launch: &mut Launch,
     session: &mut ClientSession,
 ) -> Result<(), LaunchStoreError> {
     let actual = store
@@ -104,7 +104,9 @@ fn bindings(store: &MongoTriggerDefinitionStore) -> mongodb::Collection<Document
         crate::store::trigger_first_messages::COLLECTION,
     )
 }
-fn require_binding(launch: &Launch, actual: Option<&Document>) -> Result<(), LaunchStoreError> {
-    crate::store::trigger_first_messages::require_launch_binding(launch, actual)
-        .map_err(|error| corrupt(error.to_string()))
+fn require_binding(launch: &mut Launch, actual: Option<&Document>) -> Result<(), LaunchStoreError> {
+    launch.first_message_command =
+        crate::store::trigger_first_messages::require_launch_binding(launch, actual)
+            .map_err(|error| corrupt(error.to_string()))?;
+    Ok(())
 }

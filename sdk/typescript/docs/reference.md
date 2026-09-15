@@ -240,6 +240,15 @@ accepts HTTP 201 and 202 and returns a `Launch` for both. Inspect `state` and
 progress. Repeated admission with the same key returns the recorded response;
 it is not a way to refresh or advance an existing Draft.
 
+Owner Launch reads and lists expose optional `first_message_command` with
+`agent_id`, `command_id`, and `response_id` for an attached common first prompt.
+Legacy Launches and reuse with no new prompt omit it. Use the response ID with
+`responsesV2.read` or the events extension under current Agent history
+authority; reading the association never submits input or grants authority.
+Refresh with `launches.read` after an old cached admission response. Retain the
+same response when delivery is ambiguous and never infer resend permission from
+an absent association.
+
 After explicit trust review or satisfied account setup, continue that same Draft
 with `start(id, { trust_confirmed_digest, acknowledgements }, options)`. Show the
 recorded commands and environment values verbatim, and submit the exact digest
