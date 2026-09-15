@@ -151,3 +151,71 @@ until backend validation and live Agent continuity checks pass; SDK support is
 not proof that those rollout gates have passed.
 
 Use `capabilities({ organization })` to read source/fixture capabilities and independent deployment switches under current owner/admin access. An unavailable or unknown catalog does not imply platform support. Telegram-new keeps the exact `telegram-new` identity; its gate is separate from Telegram. Text replies use explicit channel tools in channel-created active conversations. Attachments require a download capability that is currently unavailable, and protocol fixtures do not establish live platform delivery.
+
+## Explicit child cleanup
+
+`listAllocations(bridgeId, options?)` returns a `BridgeCleanupAllocationPage` of
+ordered `BridgeCleanupAllocation` rows. `readChildCleanup(bridgeId, allocationId,
+options?)` reads `BridgeChildCleanupStatus` without requesting removal.
+`requestChildCleanup(bridgeId, allocationId, request, commandOptions)` submits a
+`BridgeChildCleanupRequest` once and requires HTTP 202 with a matching
+`BridgeChildCleanupReceipt`. All three methods accept ordinary cancellation,
+timeout and request-ID controls.
+
+```ts
+import { createClient, type BridgeChildCleanupRequest } from '@chronoai/cma-sdk';
+
+const cma = createClient();
+export async function removeExplicitlyReviewedChild(
+  bridgeId: string,
+  allocationId: string,
+  request: BridgeChildCleanupRequest,
+  originalKey: string,
+  signal: AbortSignal,
+) {
+  // Persist these exact revisions, action and key with the manager's consent.
+  return cma.bridges.requestChildCleanup(bridgeId, allocationId, request, {
+    idempotencyKey: originalKey,
+    signal,
+  });
+}
+
+export async function inspectAllocations(bridgeId: string) {
+  let cursor: string | undefined;
+  do {
+    const page = await cma.bridges.listAllocations(bridgeId, { cursor, limit: 50 });
+    for (const allocation of page.items) {
+      console.log(allocation.id, allocation.generation, allocation.state);
+    }
+    cursor = page.next_cursor ?? undefined;
+  } while (cursor !== undefined);
+}
+```
+
+The request has exactly `expected_bridge_revision`,
+`expected_allocation_revision`, and `action: 'remove_child'`. Revisions must be
+positive safe integers. `BridgeChildCleanupProgress` and
+`BridgeChildCleanupHold` represent current safe progress; `BridgeCleanupPlacement`
+and `BridgeCleanupAllocationState` describe original allocation context.
+
+New acceptance requires a retired `reuse_parent` allocation and current authority
+of the original configuring actor. Cleanup requires explicit manager consent to
+remove that allocation's Agent and Worktree. Its Workspace and history remain retained. The response
+separates the immutable acceptance receipt from current progress and holds.
+HTTP 202 confirms durable acceptance; capacity is released only at `complete`.
+The allocation revision stays at the revision named in the original request.
+An adopted cleanup observation may predate the receipt's acceptance timestamp.
+
+Allocation reads check current Bridge and whole-parent management authority and
+remain readable while the parent is paused. Lists filter inaccessible or missing
+parents without hiding other accessible allocations. The limit defaults to 50
+and permits 1 through 100. `next_cursor` is an opaque, Bridge-scoped continuation:
+pass it unchanged and continue until null, including after an empty or short
+page. Do not derive a cursor from an allocation ID.
+
+Retain the exact request and original key after cancellation, timeout, response
+loss, 409 or 503. A later explicit replay recovers the same receipt with current
+progress after fresh authorization. Do not silently choose new revisions, a new
+key or another target. The SDK performs no automatic retries. Cleanup keys
+permit 1 through 200 visible ASCII characters without spaces; response decoders
+reject inconsistent scope, receipt, target, capacity, retention or hold order.

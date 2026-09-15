@@ -412,3 +412,12 @@ background execution, tools and instruction overrides are unsupported. The
 explicit `delete` and `cancel` helpers preserve the server's
 `responses_field_unsupported` problem as `ApiError`; neither operation is
 advertised as a supported Agent action.
+
+`bridges.listAllocations`, `readChildCleanup` and `requestChildCleanup` expose
+explicit child removal. `BridgeCleanupAllocationPage` has a nullable opaque
+`next_cursor`, including on empty or short filtered pages. The cleanup request
+pins both observed revisions and `remove_child`; HTTP 202 returns an immutable
+`BridgeChildCleanupReceipt` within current `BridgeChildCleanupStatus`. Retain the
+exact request and 200-character-bounded key after uncertain responses. Capacity
+is released only at `complete`, with Workspace and history retained. See
+[Bridge setup](bridges.md#explicit-child-cleanup) for consent and replay examples.

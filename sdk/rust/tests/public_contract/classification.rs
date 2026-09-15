@@ -13,6 +13,12 @@ pub enum Classification {
 // Exact backend-invalid cases not claimed as typed HTTP replay. Each is checked
 // against its source shape or the SDK's real preflight, then its shared error is decoded.
 pub const LOCAL_CASES: &[(&str, Classification)] = &[
+    ("bridge-cleanup-invalid-limit", Classification::Local),
+    ("bridge-cleanup-invalid-allocation", Classification::Local),
+    ("bridge-cleanup-invalid-revision", Classification::Local),
+    ("bridge-cleanup-missing-key", Classification::Local),
+    ("bridge-cleanup-closed-body", Classification::TypedShape),
+    ("bridge-cleanup-unknown-action", Classification::TypedShape),
     ("queued-cancellation-v2-missing-key", Classification::Local),
     (
         "queued-cancellation-v2-invalid-revision",

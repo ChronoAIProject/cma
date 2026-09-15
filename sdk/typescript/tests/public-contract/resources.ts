@@ -3,6 +3,16 @@ import type { AgentProvenanceInventoryOptions } from '../../src/agents.js';
 import type { AccessibleSandboxListOptions } from '../../src/sandboxes.js';
 
 export const resourceDispatch: Record<string, Dispatch> = {
+  'GET /api/v1/bridges/{id}/allocations': ({ client, param, options }) =>
+    client.bridges.listAllocations(param('id'), options),
+  'GET /api/v1/bridges/{id}/allocations/{allocation}/child-cleanup': ({ client, param }) =>
+    client.bridges.readChildCleanup(param('id'), param('allocation')),
+  'POST /api/v1/bridges/{id}/allocations/{allocation}/child-cleanup': ({
+    client,
+    param,
+    body,
+    command,
+  }) => client.bridges.requestChildCleanup(param('id'), param('allocation'), body, command),
   'GET /api/v1/bridges/{id}/deliveries': ({ client, param, options }) =>
     client.bridges.listDeliveries(param('id'), options),
   'GET /api/v1/bridges/{id}/deliveries/{item}': ({ client, param }) =>

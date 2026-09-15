@@ -4,6 +4,7 @@
 pub mod allocation;
 mod authority;
 mod capabilities;
+pub mod cleanup;
 mod config;
 pub mod ingress;
 pub mod invoke;

@@ -97,6 +97,9 @@ pub(super) async fn fence(
         return Err(AllocationError::Conflict.into());
     }
     fence_head(store, allocation, session).await?;
+    let row = store
+        .fence_cleanup_execution_job(permit, &row, session)
+        .await?;
     permit.require_current()?;
     Ok(row)
 }

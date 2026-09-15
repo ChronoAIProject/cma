@@ -13,6 +13,7 @@ mod authority;
 mod drain;
 mod effects;
 mod inventory;
+mod jobs;
 mod removal;
 pub(in crate::store) use removal::{read_removal, require_complete};
 

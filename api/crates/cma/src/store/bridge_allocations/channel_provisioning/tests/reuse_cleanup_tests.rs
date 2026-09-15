@@ -4,6 +4,10 @@ use layer2_core::sandbox::{agent_io::*, store::*, *};
 use mongodb::bson::Document;
 use std::time::SystemTime;
 
+#[path = "reuse_cleanup_dispatch_tests.rs"]
+mod dispatch;
+#[path = "reuse_cleanup_dispatch_fixture.rs"]
+pub(super) mod dispatch_fixture;
 #[path = "reuse_cleanup_drain_tests.rs"]
 mod drain;
 #[path = "reuse_cleanup_effects.rs"]
@@ -203,3 +207,6 @@ async fn shared_child_cleanup_replay_refuses_missing_or_corrupted_permanent_audi
     assert!(f.request_cleanup().await.unwrap() == state);
     f.close().await;
 }
+
+#[path = "reuse_cleanup_job_proofs.rs"]
+mod job_proofs;

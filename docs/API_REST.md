@@ -978,6 +978,9 @@ SDKs expose this scope through their accessible Sandbox list method.
 | `GET /api/v1/bridges/{id}/invoke-grants` | Page current and revoked invocation grants for this bridge. |
 | `POST /api/v1/bridges/{id}/invoke-grants` | Explicitly authorize the selected retained Agent context for this saved bridge configuration. |
 | `GET /api/v1/bridges/{id}/invoke-readiness` | Observe current retained-Agent consent without granting execution or enable authority. |
+| `GET /api/v1/bridges/{id}/allocations` | Current Bridge and whole-parent management inventory; opaque cursor, limit 1–100. |
+| `GET /api/v1/bridges/{id}/allocations/{allocation}/child-cleanup` | Retained child cleanup acceptance, proved progress and observed holds. |
+| `POST /api/v1/bridges/{id}/allocations/{allocation}/child-cleanup` | Explicit remove_child acceptance with current revisions and retained Idempotency-Key; 202 does not mean physical removal. |
 | `GET /api/v1/bridges/{id}/deliveries` | Current owner/admin delivery history; exclusive cursor, limit 1–100. |
 | `GET /api/v1/bridges/{id}/deliveries/{item}` | Safe original reply status and ordered attempts. |
 | `POST /api/v1/bridges/{id}/delivery-recovery` | Explicit retry, abandon or local reconciliation with durable idempotency and exact revisions. |
@@ -1139,3 +1142,16 @@ manager authority. Changed input is `409 idempotency_key_reused`; stale state is
 `409 bridge_delivery_revision_conflict`. Storage/authority uncertainty returns a
 503 with Retry-After; explicitly repeat the exact key/body after response loss.
 These local receipts never imply end-to-end exactly-once platform delivery.
+
+### Explicit retained child cleanup
+
+The [child cleanup contract](BRIDGE_CHILD_CLEANUP.md) describes allocation listing,
+explicit acceptance and retained progress. Only retired allocations that created
+a child in a reused parent can admit `remove_child`. The command retains the
+Workspace, siblings and conversation history; it removes the selected child
+process, Agent home and Worktree and releases only the proved Agent reservation.
+Recover an uncertain POST using the original key, body, Bridge and allocation.
+GET and allocation listing require current Bridge management and whole-parent
+management. New acceptance additionally requires the actual original configuring
+actor and fresh retained authority; another administrator cannot impersonate that
+actor. Accepted work drains independently of new allocation and execution flags.

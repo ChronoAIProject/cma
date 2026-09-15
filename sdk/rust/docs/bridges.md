@@ -219,3 +219,72 @@ until backend validation and live Agent continuity checks pass; SDK support is
 not proof that those rollout gates have passed.
 
 Use `capabilities(Some("organization-id")).await` to read source/fixture capabilities and independent deployment switches under current owner/admin access. An unavailable or unknown catalog does not imply platform support. Telegram-new keeps the exact `telegram-new` identity; its gate is separate from Telegram. Text replies use explicit channel tools in channel-created active conversations. Attachments require a download capability that is currently unavailable, and protocol fixtures do not establish live platform delivery.
+
+
+## Explicit child cleanup
+
+`list_allocations(bridge_id, &PageOptions)` returns a
+`BridgeCleanupAllocationPage` containing ordered `BridgeCleanupAllocation` rows.
+`read_child_cleanup(bridge_id, allocation_id)` reads `BridgeChildCleanupStatus`
+without requesting removal. `request_child_cleanup` submits the exact
+`BridgeChildCleanupRequest` once and requires HTTP 202 with a matching
+`BridgeChildCleanupReceipt`.
+
+```rust,no_run
+use cma_sdk::{Client, IdempotencyKey, PageOptions};
+use cma_sdk::bridges::{BridgeChildCleanupAction, BridgeChildCleanupRequest};
+
+# async fn reviewed_cleanup(
+#     client: &Client, bridge_id: &str, allocation_id: &str,
+#     bridge_revision: u64, allocation_revision: u64, original_key: &IdempotencyKey,
+# ) -> Result<(), Box<dyn std::error::Error>> {
+let request = BridgeChildCleanupRequest {
+    expected_bridge_revision: bridge_revision,
+    expected_allocation_revision: allocation_revision,
+    action: BridgeChildCleanupAction::RemoveChild,
+};
+// Persist this exact request and key with the manager's explicit consent.
+let accepted = client.bridges().request_child_cleanup(
+    bridge_id, allocation_id, &request, original_key,
+).await?;
+assert!(accepted.receipt.is_some());
+let mut page = PageOptions { cursor: None, limit: Some(50) };
+loop {
+    let result = client.bridges().list_allocations(bridge_id, &page).await?;
+    for allocation in result.items {
+        println!("{}: {:?}", allocation.id, allocation.state);
+    }
+    page.cursor = result.next_cursor;
+    if page.cursor.is_none() { break; }
+}
+# Ok(())
+# }
+```
+
+Request revisions are positive integers bounded by the server's signed 64-bit
+range. `BridgeChildCleanupProgress` and `BridgeChildCleanupHold` represent safe
+current progress; `BridgeCleanupPlacement` and `BridgeCleanupAllocationState`
+describe original allocation context. Dropping a command future stops observing
+the response; accepted server work can continue.
+
+New acceptance requires a retired `reuse_parent` allocation and current authority
+of the original configuring actor. Cleanup requires explicit manager consent to
+remove that allocation's Agent and Worktree. Its Workspace and history remain retained. The response
+separates the immutable acceptance receipt from current progress and holds.
+HTTP 202 confirms durable acceptance; capacity is released only at `complete`.
+The allocation revision stays at the revision named in the original request.
+An adopted cleanup observation may predate the receipt's acceptance timestamp.
+
+Allocation reads check current Bridge and whole-parent management authority and
+remain readable while the parent is paused. Lists filter inaccessible or missing
+parents without hiding other accessible allocations. The limit defaults to 50
+and permits 1 through 100. `next_cursor` is an opaque, Bridge-scoped continuation:
+pass it unchanged and continue until null, including after an empty or short
+page. Do not derive a cursor from an allocation ID.
+
+Retain the exact request and original key after cancellation, timeout, response
+loss, 409 or 503. A later explicit replay recovers the same receipt with current
+progress after fresh authorization. Do not silently choose new revisions, a new
+key or another target. The SDK performs no automatic retries. Cleanup keys
+permit 1 through 200 visible ASCII characters without spaces; response decoders
+reject inconsistent scope, receipt, target, capacity, retention or hold order.

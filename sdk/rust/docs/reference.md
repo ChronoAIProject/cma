@@ -123,3 +123,13 @@ semantics. It does not execute the script and is not a Layer1 API operation.
 Chronological transcript `messages` are required typed entries with sequence,
 user/assistant role, content, and append timestamp; preserve this order rather
 than concatenating the owner/Agent summary fields.
+
+
+`bridges().list_allocations`, `read_child_cleanup` and `request_child_cleanup`
+expose explicit child removal. `BridgeCleanupAllocationPage::next_cursor` stays
+opaque and may be present on empty or short filtered pages. The cleanup request
+pins both observed revisions and `RemoveChild`; HTTP 202 returns an immutable
+`BridgeChildCleanupReceipt` within current `BridgeChildCleanupStatus`. Retain the
+exact request and 200-byte-bounded key after uncertain responses. Capacity is
+released only at `Complete`, with Workspace and history retained. See
+[Bridge setup](bridges.md#explicit-child-cleanup) for consent and replay examples.

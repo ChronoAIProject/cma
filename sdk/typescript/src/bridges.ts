@@ -3,7 +3,19 @@ export type {
   BridgeCapabilityCatalog,
   BridgeConnectorCapabilities,
 } from './bridges/capabilities-schema.js';
-import { BridgeOutbox } from './bridges/outbox.js';
+import { BridgeCleanup } from './bridges/cleanup.js';
+export type {
+  BridgeChildCleanupAction,
+  BridgeChildCleanupRequest,
+  BridgeChildCleanupReceipt,
+  BridgeChildCleanupProgress,
+  BridgeChildCleanupHold,
+  BridgeChildCleanupStatus,
+  BridgeCleanupPlacement,
+  BridgeCleanupAllocationState,
+  BridgeCleanupAllocation,
+  BridgeCleanupAllocationPage,
+} from './bridges/cleanup-schema.js';
 import { ProtocolError, ValidationError } from './errors.js';
 import type { OperationOptions } from './http.js';
 import {
@@ -66,7 +78,7 @@ function receipt(id: string, expected: number, kind: string) {
   };
 }
 /** Current bridge management. Channel callback and reply credentials are not dashboard authentication. */
-export class Bridges extends BridgeOutbox {
+export class Bridges extends BridgeCleanup {
   list(options: BridgeListOptions = {}) {
     if (options.limit !== undefined && input(positiveInteger, options.limit) > 100)
       throw new ValidationError('bridge limit must be at most 100');
