@@ -5,6 +5,7 @@ import {
   integer,
   object,
   optional,
+  positiveInteger,
   record,
   text,
   type Parser,
@@ -71,6 +72,7 @@ export const sharedSandboxSummary = object({
 export const sharedSandboxDetail = object({
   access: shared,
   id: text,
+  revision: optional(positiveInteger),
   name: text,
   status: sandboxStatus,
   created_at: text,

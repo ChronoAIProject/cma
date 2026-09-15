@@ -123,3 +123,18 @@ it('parses shared Sandbox inventory without accepting it as personal configurati
     ).rejects.toBeInstanceOf(ProtocolError);
   }
 });
+
+it('accepts an optional shared detail revision while refusing invalid preconditions', async () => {
+  const test = transport();
+  for (const revision of [undefined, 7]) {
+    const detail = { ...sandbox, ...(revision === undefined ? {} : { revision }) };
+    test.answer(detail);
+    expect(await test.client.sandboxes.readAccessible(sandbox.id)).toEqual(detail);
+  }
+  for (const revision of [0, -1, 1.5, '7']) {
+    test.answer({ ...sandbox, revision });
+    await expect(test.client.sandboxes.readAccessible(sandbox.id)).rejects.toBeInstanceOf(
+      ProtocolError,
+    );
+  }
+});

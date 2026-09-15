@@ -1029,3 +1029,18 @@ record mocked-public-boundary rendering, routing, accessibility and request
 contracts. Their screenshots are valuable local evidence but are not real
 NyxID, provider, checkpoint or production journey passes. Backend, SDK, secret,
 image, manifest and structure gates all remain mandatory before delivery.
+
+### Explicit Sandbox command scheduling
+
+The API process starts the durable Sandbox command scheduler under its existing
+shutdown coordinator. It polls once per second, discovers at most 50 queued
+records per page, and runs at most eight commands concurrently. A blocked page
+retains its cursor progression so later commands are discoverable. Local duplicate
+work is suppressed; competing processes are fenced by the exact queued record and
+atomic Sandbox revision/authority checks. Shutdown allows 25 seconds for active
+work to drain; remaining tasks are cancelled and durable records remain recoverable.
+The original five-minute deadline is never renewed. Transient provider/store
+failures retry through discovery; terminal rejection does not schedule runtime IO.
+Applied receipts describe durable transitions, whose runtime work is completed
+by the existing lifecycle recovery loop. Public reads and same-key retries recover
+lost acknowledgments without adding another transition.

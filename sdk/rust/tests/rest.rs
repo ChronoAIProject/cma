@@ -916,3 +916,6 @@ async fn organization_inventory_parses_shared_summaries_and_rejects_unknown_role
             .is_err()
     );
 }
+
+#[path = "rest/sandbox_commands.rs"]
+mod sandbox_commands;

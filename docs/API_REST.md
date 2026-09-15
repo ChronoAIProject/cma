@@ -274,6 +274,53 @@ and home. Workspace removal and Sandbox retirement are durable operations,
 not a direct recursive filesystem API. The [CMA Model](CMA_Model.md#lifecycle-states)
 contains the actual transition whitelist.
 
+## Durable Sandbox commands
+
+`POST /api/v1/sandboxes/{id}/commands` accepts an explicit `pause`, `revive`, or
+`retire` command and the positive `expected_revision` from a current authorized
+Sandbox detail. Supply `Idempotency-Key`. A shared detail now includes `revision`;
+older servers may omit it, in which case clients cannot submit this command.
+
+```json
+{"command":"pause","expected_revision":7}
+```
+
+Every successful submission or replay returns HTTP 202, `Location` pointing to
+`GET /api/v1/sandbox-commands/{id}`, and `Cache-Control: private, no-store`.
+The receipt contains `command_id`, `sandbox_id`, `command`, `expected_revision`,
+`admitted_at`, the original five-minute `queue_deadline`, `revision`, and `state`.
+It exposes no owner configuration, credential custody reference or internal audit.
+A queued receipt has revision 1 and `state: {"status":"queued"}`. Terminal receipts
+have revision 2. Applied state includes `at`, `sandbox_revision`, and `disposition`
+(`scheduled`, `already_scheduled`, or `already_satisfied`). Applied means the
+durable transition was committed; refresh Sandbox status for runtime progress.
+Rejected state includes `at` and one of `authority_revoked`, `queue_expired`,
+`target_changed`, `not_eligible`, `connections_required`, or
+`credential_setup_required`; the command scheduled no effect.
+
+Pause/revive require current `manage_sandbox`; retirement requires owner/admin
+`manage_sharing` and personal owners also need their existing deletion capability.
+A share recipient cannot retire the owner's Sandbox. The scheduler rechecks the
+actual admitting actor and current resource authority before committing a
+transition. Revival checks the resource owner's required connections.
+
+An uncertain response must be recovered with the **same key and request body**,
+including its original expected revision. One queued intent per Sandbox is allowed.
+HTTP 409 `sandbox_command_busy` and HTTP 503 `sandbox_command_unavailable` include
+`Retry-After: 1`; neither indicates completed runtime work. A different request
+under an existing key returns `idempotency_key_reused`. A stale new intent returns
+`sandbox_command_conflict`. Receipt reads require the original requesting actor,
+current target visibility and the same resource incarnation, and return HTTP 200.
+
+The shared Sandbox page offers these controls from current effective access and
+rechecks it on each submission. Retirement requires an inline confirmation.
+Unconfirmed intents retain their key/body through refresh and shared navigation
+within the same mounted viewer console; sign-out or a different viewer starts a
+new scope. This recovery state is not persisted across a full browser reload. Queued receipts are polled, and terminal results refresh
+actual Sandbox status. Access loss cancels receipt reads and removes the shared
+view. Personal Sandbox controls and personal conversation drafts retain their
+existing behavior.
+
 ## Agent Input And Reads
 
 REST input and steer accept `{ text }`. Input returns `202` with `{ queued }`;
@@ -419,9 +466,7 @@ survive a foreground classification refresh; an actual refusal removes them.
 Scoped inventory/history values refresh every 30 seconds, expire no later than
 55 seconds from the read start (or the earlier server authority deadline), and
 clear on foreground, viewer/client/scope change or refusal. A 15-second timeout
-also clears an unverified result. This Agent inventory increment does not yet
-provide aggregate Shared-with-me scope,
-scoped artifact UI or shared lifecycle management.
+also clears an unverified result. Scoped artifact UI remains unfinished.
 
 The sidebar offers Personal and named Organization navigation. Organization
 Sandboxes use the SDK's authorized paginated inventory, with fresh previous/next
@@ -745,6 +790,8 @@ above applies even when an operation annotates only its principal responses.
 | `DELETE /api/v1/sandboxes/{id}` | -; key | - | 202 SandboxView |
 | `GET /api/v1/sandboxes/{id}/events` | - | after, limit | 200 array<SandboxEventView> |
 | `POST /api/v1/sandboxes/{id}/pause` | -; key | - | 202 SandboxView |
+| `POST /api/v1/sandboxes/{id}/commands` | SandboxCommandRequest; key | - | 202 SandboxCommandReceiptView |
+| `GET /api/v1/sandbox-commands/{id}` | - | - | 200 SandboxCommandReceiptView |
 | `POST /api/v1/sandboxes/{id}/revive` | -; key | - | 202 SandboxView |
 | `POST /api/v1/sandboxes/{id}/service-access` | GrantSandboxServiceAccessRequest; key | - | 200 SandboxView; new grants require fully Paused, existing grants replay without change |
 

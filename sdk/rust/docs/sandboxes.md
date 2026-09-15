@@ -121,3 +121,39 @@ summary; `Shared` contains safe metadata/counts. Omit the organization to select
 personal inventory. The old `list` method keeps its personal type. Every page
 revalidates current policy and the hidden lookahead after count IO; changed or
 expired authority yields a typed error without partial rows or stale cursors.
+
+## Shared lifecycle commands
+
+`sandboxes().submit_command(id, &request, &key)` admits an explicit lifecycle
+intent with HTTP 202. `read_command(command_id)` recovers its safe receipt with
+HTTP 200. Shared detail `revision` remains optional for older servers; require a
+current positive revision before submission.
+
+```rust,no_run
+use cma_sdk::{Client, IdempotencyKey};
+use cma_sdk::instances::{SandboxCommandKind, SandboxCommandRequest};
+# async fn request_pause(client: &Client, id: &str, revision: u64, key: &IdempotencyKey) -> cma_sdk::Result<()> {
+let request = SandboxCommandRequest {
+    command: SandboxCommandKind::Pause,
+    expected_revision: revision,
+};
+let receipt = client.sandboxes().submit_command(id, &request, key).await?;
+let current = client.sandboxes().read_command(&receipt.command_id).await?;
+# let _ = current;
+# Ok(())
+# }
+```
+
+Retain the exact request and key through an uncertain response. Replay uses the
+original revision even after the Sandbox changes. Receipt states are `Queued`,
+`Applied`, and `Rejected`. Applied records a durable transition or an already
+scheduled/satisfied intent; current Sandbox status reports runtime completion.
+Rejected state carries a typed reason. The SDK validates request/receipt identity,
+state revision and resulting Sandbox revision before reporting success.
+
+Pause/revive require current Sandbox management. Retirement requires owner/admin
+sharing management plus the personal owner's deletion capability when applicable;
+share recipients cannot retire the owner's Sandbox. Execution rechecks the original
+actor and current resource authority. Receipt reads require that actor's current
+Sandbox visibility. Queue deadlines never renew. Public receipts include no owner
+configuration, credential reference or internal audit.

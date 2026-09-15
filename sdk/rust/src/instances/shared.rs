@@ -39,6 +39,9 @@ pub struct SharedSandboxDetail {
     pub access: SharedHierarchyAccess,
     /// CMA Sandbox identity.
     pub id: String,
+    /// Current Sandbox revision. Older servers may omit this field.
+    #[serde(default, deserialize_with = "optional_revision")]
+    pub revision: Option<u64>,
     /// Display name.
     pub name: String,
     /// Durable lifecycle status.
@@ -164,7 +167,7 @@ macro_rules! accessible {
 accessible!(
     AccessibleSandboxDetail,
     SandboxDetail,
-    SharedSandboxDetail,
+    Box<SharedSandboxDetail>,
     summary.sandbox.id,
     id
 );
@@ -191,3 +194,13 @@ accessible!(
     sandbox.id,
     id
 );
+
+fn optional_revision<'de, D: Deserializer<'de>>(
+    deserializer: D,
+) -> std::result::Result<Option<u64>, D::Error> {
+    let revision = u64::deserialize(deserializer)?;
+    if revision == 0 || revision > i64::MAX as u64 {
+        return Err(serde::de::Error::custom("invalid shared Sandbox revision"));
+    }
+    Ok(Some(revision))
+}

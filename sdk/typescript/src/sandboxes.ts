@@ -27,6 +27,11 @@ import {
 } from './instances/types.js';
 import { sandboxEvent } from './instances/events.js';
 import { accessibleSandboxDetail, accessibleSandboxSummary } from './instances/shared.js';
+import {
+  sandboxCommandReceipt,
+  sandboxCommandRequest,
+  type SandboxCommandRequest,
+} from './instances/commands.js';
 
 export interface SandboxListOptions extends PageOptions {
   readonly status?: SandboxStatus;
@@ -39,6 +44,41 @@ export interface AccessibleSandboxListOptions extends SandboxListOptions {
 /** Owner-scoped Sandbox provisioning, hierarchy reads, and lifecycle commands. */
 export class Sandboxes {
   constructor(private readonly config: ResolvedConfig) {}
+
+  /** Admit a durable personal/shared lifecycle intent with a current revision. */
+  submitCommand(id: string, body: SandboxCommandRequest, options: CommandOptions) {
+    input(sandboxCommandRequest, body);
+    return read(
+      this.config,
+      `/api/v1/sandboxes/${segment(id)}/commands`,
+      (value) => {
+        const result = sandboxCommandReceipt(value);
+        if (
+          result.sandbox_id !== id ||
+          result.command !== body.command ||
+          result.expected_revision !== body.expected_revision
+        )
+          throw new ProtocolError('Sandbox command receipt did not match the request');
+        return result;
+      },
+      { ...command(options), method: 'POST', body, expectedStatus: 202 },
+    );
+  }
+
+  /** Recover a receipt while the requesting actor retains target visibility. */
+  readCommand(commandId: string, options: OperationOptions = {}) {
+    return read(
+      this.config,
+      `/api/v1/sandbox-commands/${segment(commandId)}`,
+      (value) => {
+        const result = sandboxCommandReceipt(value);
+        if (result.command_id !== commandId)
+          throw new ProtocolError('Sandbox command identity did not match the request');
+        return result;
+      },
+      options,
+    );
+  }
 
   /** Personal inventory by default, or an explicit current organization scope. */
   listAccessible(options: AccessibleSandboxListOptions = {}) {

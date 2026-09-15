@@ -7,6 +7,8 @@ import { WorkspaceBranch } from './WorkspaceContents';
 import { Button } from '../ui/Button';
 import { statusLabel } from '../vocabulary/status';
 import { resourceCount } from '../vocabulary/count';
+import { useSandboxControl } from './useSandboxControl';
+import { SandboxControls } from './SandboxControls';
 import './SharedHierarchy.css';
 
 export function SandboxAccessPage({
@@ -14,8 +16,10 @@ export function SandboxAccessPage({
   id,
   personal,
   onNavigate,
+  commandScope,
 }: {
   readonly client?: ResourceViewsClient;
+  readonly commandScope?: object;
   readonly id: string;
   readonly personal: ReactNode;
   readonly onNavigate: (route: AppRoute) => void;
@@ -37,6 +41,21 @@ export function SandboxAccessPage({
     [client, id],
   );
   const current = useAuthorizedRead(read);
+  const shared =
+    current.state.status === 'ready' && current.state.value.detail.access === 'shared'
+      ? current.state.value
+      : undefined;
+  const localCommandScope = useMemo(() => ({ client }), [client]);
+  const control = useSandboxControl(
+    client,
+    id,
+    shared && {
+      revision: shared.detail.revision,
+      access: shared.access,
+    },
+    current.reload,
+    commandScope ?? localCommandScope,
+  );
   if (knownPersonal !== undefined && current.state.status === 'error') setKnownPersonal(undefined);
   if (
     client === undefined ||
@@ -70,6 +89,12 @@ export function SandboxAccessPage({
           {resourceCount(sandbox.agent_count, 'Agent')}
         </p>
         <Button onClick={current.reload}>Refresh Sandbox access</Button>
+        <SandboxControls
+          control={control}
+          access={current.state.value.access}
+          status={sandbox.status}
+          revision={sandbox.revision}
+        />
       </header>
       <div className="shared-hierarchy__body">
         {sandbox.workspaces.length === 0 ? (
