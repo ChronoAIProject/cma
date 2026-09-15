@@ -17,7 +17,7 @@ import type {
   SandboxProfileSettings,
   WorkspaceDetail,
 } from './types';
-import type { AgentResources, AgentSource } from '@chronoai/cma-sdk';
+import type { AccessibleAgentSource, AgentProvenance, AgentResources } from '@chronoai/cma-sdk';
 
 export interface ReadOptions {
   readonly signal?: AbortSignal;
@@ -49,7 +49,8 @@ export interface CmaWebClient {
   readAgentTranscript(id: string, options?: ReadOptions): Promise<AgentTranscript>;
   readAgentUsage(id: string, options?: ReadOptions): Promise<AgentUsage>;
   readAgentResources(id: string, options?: ReadOptions): Promise<AgentResources>;
-  readAgentSource(id: string, options?: ReadOptions): Promise<AgentSource>;
+  readAgentSource(id: string, options?: ReadOptions): Promise<AccessibleAgentSource>;
+  readAgentProvenance(id: string, options?: ReadOptions): Promise<AgentProvenance>;
   readSandboxProfileCapacity(
     reference: ProfileReference,
     options?: ReadOptions,
@@ -103,6 +104,7 @@ export const unavailableClient: CmaWebClient = {
   readAgentUsage: unavailable,
   readAgentResources: unavailable,
   readAgentSource: unavailable,
+  readAgentProvenance: unavailable,
   readSandboxProfileCapacity: unavailable,
   readSandboxProfileSettings: unavailable,
   readSandboxEvents: unavailable,

@@ -1,12 +1,8 @@
 import { Presence } from '../ui/Presence';
 import { useId, useState } from 'react';
 import type { KeyboardEvent, ReactNode } from 'react';
-import type { AgentStatus, SandboxStatus, SandboxSummary, WorkspaceDetail } from '../api/types';
-import {
-  sandboxChildrenAvailable,
-  sandboxLifecycleAction,
-  sandboxLifecycleLabel,
-} from '../sandbox/lifecycle';
+import type { AgentStatus, SandboxStatus } from '../api/types';
+import { sandboxChildrenAvailable, sandboxLifecycleLabel } from '../sandbox/lifecycle';
 import type { AppRoute } from '../routing/routes';
 import { StateDot, type StateDotState } from '../ui/StateDot';
 import {
@@ -17,13 +13,18 @@ import {
   IconDataOutline16,
   IconFolderOpenOutline16,
   IconPauseOutline16,
-  IconPlayOutline16,
-  IconPlusOutline16,
-  IconStopFill16,
-  IconTrashOutline16,
 } from '../ui/icons';
 import type { NavigationSandbox } from './navigation';
-import { TreeRow, type TreeRowAction } from './TreeRow';
+import { TreeRow } from './TreeRow';
+import { agentActions, sandboxActions, workspaceActions } from './treeActions';
+import {
+  CreationBadge,
+  CreationSummary,
+  filterTreeCreation,
+  TreeCreationFilter,
+  useTreeCreation,
+  type CreationFilter,
+} from './treeCreation';
 import './Tree.css';
 import { statusLabel } from '../vocabulary/status';
 
@@ -154,105 +155,6 @@ function keyboardNavigation(event: KeyboardEvent<HTMLDivElement>) {
   }
 }
 
-function sandboxActions(
-  sandbox: SandboxSummary,
-  permissions: TreePermissions,
-  stale: boolean,
-  busy: boolean,
-): TreeRowAction[] {
-  const actions: TreeRowAction[] = [];
-  if (permissions.createWorkspace)
-    actions.push({
-      id: 'new_workspace',
-      label: 'New workspace',
-      icon: <IconPlusOutline16 />,
-      disabled: busy || !sandboxChildrenAvailable(sandbox),
-      reason: !sandboxChildrenAvailable(sandbox)
-        ? 'Available when the Sandbox is active.'
-        : undefined,
-    });
-  if (permissions.pauseSandbox) {
-    const action = sandboxLifecycleAction(sandbox, stale);
-    actions.push({
-      id: action.kind,
-      label: action.label,
-      icon: action.kind === 'revive_sandbox' ? <IconPlayOutline16 /> : <IconPauseOutline16 />,
-      disabled: busy || !action.allowed,
-      reason: busy ? 'A Sandbox action is in progress.' : action.reason,
-    });
-  }
-  if (permissions.deleteSandbox)
-    actions.push({
-      id: 'delete_sandbox',
-      label: 'Delete',
-      icon: <IconTrashOutline16 />,
-      danger: true,
-      disabled:
-        busy ||
-        stale ||
-        sandbox.status === 'retiring' ||
-        sandbox.lifecycle?.checkpoint !== undefined ||
-        sandbox.lifecycle?.operation !== undefined,
-      reason:
-        sandbox.status === 'retiring'
-          ? 'Deletion is already in progress.'
-          : sandbox.lifecycle?.checkpoint !== undefined ||
-              sandbox.lifecycle?.operation !== undefined
-            ? 'Wait for the current Sandbox operation to finish.'
-            : undefined,
-    });
-  return actions;
-}
-
-function workspaceActions(
-  workspace: WorkspaceDetail,
-  permissions: TreePermissions,
-  busy: boolean,
-): TreeRowAction[] {
-  const actions: TreeRowAction[] = [];
-  if (permissions.createAgent)
-    actions.push({
-      id: 'new_agent',
-      label: 'New agent',
-      icon: <IconPlusOutline16 />,
-      disabled: busy || workspace.status !== 'ready',
-      reason: workspace.status !== 'ready' ? 'The Workspace is not ready.' : undefined,
-    });
-  if (permissions.removeWorkspace)
-    actions.push({
-      id: 'remove_workspace',
-      label: 'Remove',
-      icon: <IconTrashOutline16 />,
-      danger: true,
-      disabled: busy || workspace.status === 'removing',
-      reason: workspace.status === 'removing' ? 'Deletion is already in progress.' : undefined,
-    });
-  return actions;
-}
-
-function agentActions(status: AgentStatus, permissions: TreePermissions): TreeRowAction[] {
-  const actions: TreeRowAction[] = [];
-  if (permissions.stopAgent)
-    actions.push({
-      id: 'stop_agent',
-      label: 'Stop',
-      icon: <IconStopFill16 />,
-      disabled: !['starting', 'ready', 'working', 'waiting_approval', 'paused'].includes(status),
-    });
-  if (permissions.deleteAgent)
-    actions.push({
-      id: 'delete_agent',
-      label: 'Delete',
-      icon: <IconTrashOutline16 />,
-      danger: true,
-      disabled: !['stopped', 'failed'].includes(status),
-      reason: !['stopped', 'failed'].includes(status)
-        ? 'Stop this Agent before deleting it and its Worktree.'
-        : undefined,
-    });
-  return actions;
-}
-
 export function Tree({
   viewerId,
   items,
@@ -263,7 +165,12 @@ export function Tree({
   onNavigate,
   onAction,
 }: TreeProps) {
-  const visibleItems = items.filter(({ sandbox }) => sandbox.status !== 'retired');
+  const facts = useTreeCreation(viewerId, items, refreshError === undefined);
+  const [selection, setSelection] = useState({ viewerId, value: 'all' as CreationFilter });
+  const filter = selection.viewerId === viewerId ? selection.value : 'all';
+  const visibleItems = filterTreeCreation(items, facts, filter).filter(
+    ({ sandbox }) => sandbox.status !== 'retired',
+  );
   const groupId = useId();
   const groups = [
     {
@@ -290,6 +197,12 @@ export function Tree({
 
   return (
     <div className="resource-tree">
+      <TreeCreationFilter
+        items={items}
+        facts={facts}
+        value={filter}
+        onChange={(value) => setSelection({ viewerId, value })}
+      />
       <Presence>
         {refreshError === undefined ? null : (
           <p className="resource-tree__notice" role="alert">
@@ -326,6 +239,8 @@ export function Tree({
                   onKeyDown={keyboardNavigation}
                 >
                   {group.items.map(({ sandbox, workspaces }) => {
+                    const originalWorkspaces =
+                      items.find((item) => item.sandbox.id === sandbox.id)?.workspaces ?? [];
                     const sandboxNode = `sandbox:${sandbox.id}`;
                     const childrenAvailable = sandboxChildrenAvailable(sandbox);
                     const sandboxExpanded = childrenAvailable && !collapsed.has(sandboxNode);
@@ -356,6 +271,16 @@ export function Tree({
                                 />
                                 {sandboxLifecycleLabel(sandbox)}
                               </span>
+                              <CreationSummary
+                                facts={facts}
+                                ids={originalWorkspaces
+                                  .filter((workspace) => workspace.status !== 'removed')
+                                  .flatMap((workspace) =>
+                                    workspace.agents
+                                      .filter((agent) => agent.status !== 'deleted')
+                                      .map((agent) => agent.id),
+                                  )}
+                              />
                               {paused ? (
                                 <span
                                   className="tree-row__paused"
@@ -411,9 +336,21 @@ export function Tree({
                                         )
                                       }
                                       meta={
-                                        workspace.status === 'removing'
-                                          ? 'Deleting'
-                                          : statusLabel(workspace.status)
+                                        <>
+                                          {workspace.status === 'removing'
+                                            ? 'Deleting'
+                                            : statusLabel(workspace.status)}
+                                          <CreationSummary
+                                            facts={facts}
+                                            ids={(
+                                              originalWorkspaces.find(
+                                                (value) => value.id === workspace.id,
+                                              )?.agents ?? []
+                                            )
+                                              .filter((agent) => agent.status !== 'deleted')
+                                              .map((agent) => agent.id)}
+                                          />
+                                        </>
                                       }
                                       expanded={workspaceReady ? workspaceExpanded : undefined}
                                       actions={workspaceActions(
@@ -456,9 +393,12 @@ export function Tree({
                                                 dimmed={paused}
                                                 meta={stateMeta(
                                                   effectiveStatus,
-                                                  <time dateTime={agent.updatedAt}>
-                                                    {activityLabel(agent.updatedAt)}
-                                                  </time>,
+                                                  <>
+                                                    <CreationBadge id={agent.id} facts={facts} />
+                                                    <time dateTime={agent.updatedAt}>
+                                                      {activityLabel(agent.updatedAt)}
+                                                    </time>
+                                                  </>,
                                                 )}
                                                 actions={agentActions(agent.status, permissions)}
                                                 onNavigate={onNavigate}
@@ -490,7 +430,11 @@ export function Tree({
           </section>
         );
       })}
-      {visibleItems.length === 0 ? <p className="resource-tree__empty">No Sandboxes</p> : null}
+      {visibleItems.length === 0 ? (
+        <p className="resource-tree__empty">
+          {filter === 'all' ? 'No Sandboxes' : 'No matching Agents in this tree'}
+        </p>
+      ) : null}
     </div>
   );
 }
