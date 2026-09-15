@@ -236,6 +236,7 @@ impl WorkspaceStore for MongoSandboxStore {
                 doc! {
                     "_id": workspace.id.as_str(),
                     "document_schema_version": DOCUMENT_SCHEMA_VERSION,
+                    "channel_reuse_cleanup_execution": { "$exists": false },
                     "revision": signed(expected_revision, "expected workspace revision")
                         .map_err(|_| SandboxStoreError::Conflict)?,
                 },

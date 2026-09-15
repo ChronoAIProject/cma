@@ -1,10 +1,4 @@
 //! Cross-collection transactions required by the sandbox store contract.
-
-use layer2_core::sandbox::store::{SandboxStoreError, SandboxTransaction, SandboxTransactionStore};
-use layer2_core::sandbox::{SandboxEvent, SandboxEventKind, WorkspaceStatus};
-use mongodb::bson::{doc, Timestamp};
-use mongodb::options::ReadConcern;
-
 use super::agents::{agent_document, read_agent};
 use super::sandbox_events::{
     append_in_transaction, event_document, reconcile_event_with_snapshot_session,
@@ -18,6 +12,10 @@ use super::sandbox_mongo::{
 use super::sandboxes::{read_sandbox, sandbox_origin_fields, sandbox_replacement_fields};
 use super::workspaces::{read_workspace, workspace_replacement_fields};
 use super::worktrees::{read_worktree, worktree_document};
+use layer2_core::sandbox::store::{SandboxStoreError, SandboxTransaction, SandboxTransactionStore};
+use layer2_core::sandbox::{SandboxEvent, SandboxEventKind, WorkspaceStatus};
+use mongodb::bson::{doc, Timestamp};
+use mongodb::options::ReadConcern;
 
 mod channel_reuse;
 mod command_revival;
@@ -220,6 +218,7 @@ async fn apply_transaction(
                     doc! {
                         "_id": sandbox.id.as_str(),
                         "document_schema_version": DOCUMENT_SCHEMA_VERSION,
+                        "channel_reuse_cleanup_execution": { "$exists": false },
                         "revision": signed(*expected_revision, "expected sandbox revision")
                             .map_err(|_| ApplyError::Domain(SandboxStoreError::Conflict))?,
                         "last_seq": signed(previous, "sandbox event sequence")
@@ -281,6 +280,7 @@ async fn apply_transaction(
                     doc! {
                         "_id": workspace.id.as_str(),
                         "document_schema_version": DOCUMENT_SCHEMA_VERSION,
+                        "channel_reuse_cleanup_execution": { "$exists": false },
                         "revision": signed(*expected_revision, "expected workspace revision")
                             .map_err(|_| ApplyError::Domain(SandboxStoreError::Conflict))?,
                     },

@@ -327,6 +327,7 @@ async fn advance_agent(
                 "last_seq": signed(current.conversation.last_seq, "agent log sequence")
                     .map_err(SandboxStoreError::Corrupt)
                     .map_err(ApplyError::Domain)?,
+                "channel_reuse_cleanup_execution": { "$exists": false },
                 "work_lease_holder": &mutation.holder,
                 "work_lease_fence": signed(mutation.fence, "agent work lease fence")
                     .map_err(|_| ApplyError::Domain(SandboxStoreError::Conflict))?,

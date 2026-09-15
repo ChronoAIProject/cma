@@ -9,6 +9,7 @@ use mongodb::bson::doc;
 
 use super::agents::read_agent;
 use super::sandbox_mongo::MongoSandboxStore;
+mod cleanup;
 
 pub(super) enum LifecycleLoadError {
     Domain(SandboxStoreError),
@@ -17,6 +18,13 @@ pub(super) enum LifecycleLoadError {
 
 #[async_trait::async_trait]
 impl SandboxLifecycleExecutionStore for MongoSandboxStore {
+    async fn retired_agent_runtime_paths(
+        &self,
+        sandbox: &layer2_core::sandbox::Sandbox,
+    ) -> Result<Vec<layer2_core::sandbox::store::RetiredAgentRuntimePaths>, SandboxStoreError> {
+        cleanup::paths(self, sandbox).await
+    }
+
     async fn sandbox_agents(
         &self,
         sandbox_id: &SandboxId,

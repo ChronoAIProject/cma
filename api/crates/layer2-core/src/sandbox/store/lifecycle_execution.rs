@@ -24,6 +24,16 @@ use super::{
 pub const MAX_SANDBOX_LIFECYCLE_AGENTS: usize = 256;
 pub const MAX_SANDBOX_LIFECYCLE_EVENTS: usize = MAX_SANDBOX_LIFECYCLE_AGENTS + 1;
 
+/// Permanent exclusions verified by the store against the current restore
+/// parent. Old checkpoint/import bytes must not reopen these child paths.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RetiredAgentRuntimePaths {
+    pub agent_id: AgentId,
+    pub workspace_name: String,
+    pub worktree_name: String,
+    pub authority_fence: u64,
+}
+
 /// Exact persisted authority a lifecycle side effect was observed under.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SandboxMutationGuard {
@@ -133,6 +143,15 @@ pub struct SandboxLifecycleMutation {
 
 #[async_trait]
 pub trait SandboxLifecycleExecutionStore: Send + Sync {
+    /// Stores admitting exact child removal override this method and retain
+    /// tombstones independently of Agent/checkpoint history retention.
+    async fn retired_agent_runtime_paths(
+        &self,
+        _sandbox: &Sandbox,
+    ) -> Result<Vec<RetiredAgentRuntimePaths>, SandboxStoreError> {
+        Ok(Vec::new())
+    }
+
     async fn sandbox_agents(
         &self,
         sandbox_id: &SandboxId,
