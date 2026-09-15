@@ -85,6 +85,14 @@ pub(crate) struct ResponseBody {
 }
 
 pub(crate) async fn receive(client: &ClientInner, request: Request<'_>) -> Result<ResponseBody> {
+    receive_bounded(client, request, MAX_RESPONSE_BYTES).await
+}
+
+pub(crate) async fn receive_bounded(
+    client: &ClientInner,
+    request: Request<'_>,
+    max_bytes: usize,
+) -> Result<ResponseBody> {
     let statuses = request.statuses.clone();
     let mut response = outgoing(client, request)?
         .send()
@@ -104,9 +112,9 @@ pub(crate) async fn receive(client: &ClientInner, request: Request<'_>) -> Resul
         .and_then(parse_retry_after);
     if response
         .content_length()
-        .is_some_and(|length| length > MAX_RESPONSE_BYTES as u64)
+        .is_some_and(|length| length > max_bytes as u64)
     {
-        return too_large();
+        return too_large(max_bytes);
     }
     let mut body = Vec::new();
     while let Some(chunk) = response
@@ -114,8 +122,8 @@ pub(crate) async fn receive(client: &ClientInner, request: Request<'_>) -> Resul
         .await
         .map_err(|_| Error::transport("could not read response body"))?
     {
-        if chunk.len() > MAX_RESPONSE_BYTES.saturating_sub(body.len()) {
-            return too_large();
+        if chunk.len() > max_bytes.saturating_sub(body.len()) {
+            return too_large(max_bytes);
         }
         body.extend_from_slice(&chunk);
     }
@@ -189,9 +197,9 @@ pub(crate) fn outgoing(
     Ok(outgoing)
 }
 
-fn too_large<T>() -> Result<T> {
+fn too_large<T>(max_bytes: usize) -> Result<T> {
     Err(Error::protocol(format!(
-        "response exceeds the {MAX_RESPONSE_BYTES}-byte boundary"
+        "response exceeds the {max_bytes}-byte boundary"
     )))
 }
 

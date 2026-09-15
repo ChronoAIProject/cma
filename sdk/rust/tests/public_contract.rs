@@ -1,3 +1,5 @@
+#[path = "public_contract/agent_events_v2.rs"]
+mod agent_events_v2;
 #[path = "public_contract/bridges.rs"]
 mod bridges;
 #[path = "public_contract/context.rs"]
@@ -25,6 +27,11 @@ async fn dispatch(c: &Context<'_>) -> Result<()> {
         || op.contains("/bridge-invoke-grants")
     {
         bridges::dispatch(c).await
+    } else if op == "GET /api/v2/ui/transport"
+        || op == "GET /api/v2/agents/{agent_id}/events"
+        || op == "GET /api/v2/agents/{agent_id}/events/snapshot"
+    {
+        agent_events_v2::dispatch(c).await
     } else if op.contains("/api/v2") {
         responses_v2::dispatch(c).await
     } else if op.contains("/admin/")
@@ -58,7 +65,7 @@ async fn dispatch(c: &Context<'_>) -> Result<()> {
 }
 
 fn check_error(case: &Case, error: Error) {
-    let v2 = case.operation.contains("/api/v2");
+    let v2 = case.response.body.get("error").is_some();
     let expected = if v2 {
         &case.response.body["error"]
     } else {

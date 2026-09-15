@@ -13,6 +13,18 @@ pub enum Classification {
 // Exact backend-invalid cases not claimed as typed HTTP replay. Each is checked
 // against its source shape or the SDK's real preflight, then its shared error is decoded.
 pub const LOCAL_CASES: &[(&str, Classification)] = &[
+    ("agent-events-v2-snapshot-invalid", Classification::Local),
+    ("agent-events-v2-events-invalid", Classification::Local),
+    ("agent-events-v2-snapshot-query", Classification::QueryShape),
+    ("agent-events-v2-events-query", Classification::QueryShape),
+    (
+        "agent-events-v2-snapshot-duplicate",
+        Classification::QueryShape,
+    ),
+    (
+        "agent-events-v2-events-duplicate",
+        Classification::QueryShape,
+    ),
     ("response-controls-v2-missing-key", Classification::Local),
     (
         "response-controls-v2-unknown-body",
@@ -903,11 +915,22 @@ pub fn assert_unrepresentable(case: &Case, class: Classification) {
         }
         Classification::QueryShape => {
             let url = reqwest::Url::parse(&format!("http://fixture{}", case.request.path)).unwrap();
+            if case.id.starts_with("agent-events-v2-") && case.id.ends_with("-duplicate") {
+                let key = if case.id.contains("snapshot") {
+                    "page_cursor"
+                } else {
+                    "after_cursor"
+                };
+                assert_eq!(url.query_pairs().filter(|(name, _)| name == key).count(), 2);
+                return;
+            }
             if case.id == "authoring-skills-duplicate-query" {
                 assert_eq!(url.query_pairs().filter(|(key, _)| key == "q").count(), 2);
                 return;
             }
             let allowed: &[&str] = match case.operation.as_str() {
+                "GET /api/v2/agents/{agent_id}/events/snapshot" => &["limit", "page_cursor"],
+                "GET /api/v2/agents/{agent_id}/events" => &["after_cursor", "follow"],
                 "GET /api/v1/bridge-connectors/capabilities" => &["organization"],
                 "GET /api/v1/bridges" => &["organization", "cursor", "limit"],
                 "GET /api/v1/agents/provenance" => &[

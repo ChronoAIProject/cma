@@ -116,6 +116,7 @@ async fn handle(
         "idempotency-key",
         "content-type",
         "if-none-match",
+        "last-event-id",
     ] {
         assert_eq!(
             request

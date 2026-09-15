@@ -3,6 +3,8 @@ import type { ContractCase } from './context.js';
 import { browserOperations } from './navigation.js';
 
 export const localCodes = new Map([
+  ['agent-events-v2-snapshot-invalid', 'invalid_agent_cursor'],
+  ['agent-events-v2-events-invalid', 'invalid_agent_cursor'],
   ['response-controls-v2-unknown-body', 'invalid_control_request'],
   ['response-controls-v2-invalid-observation', 'invalid_control_observation'],
   ['bridge-outbox-list-invalid-limit', 'invalid_bridge_delivery_request'],
@@ -85,6 +87,10 @@ export const localCodes = new Map([
 ]);
 
 const protectedQueries = new Map([
+  ['agent-events-v2-snapshot-query', ['unknown']],
+  ['agent-events-v2-events-query', ['unknown']],
+  ['agent-events-v2-snapshot-duplicate', ['page_cursor']],
+  ['agent-events-v2-events-duplicate', ['after_cursor']],
   ['response-controls-v2-observe-query', ['unexpected']],
   ['response-controls-v2-status-query', ['unexpected']],
   ['bridge-setup-list-unknown-query', ['unexpected']],
@@ -195,6 +201,10 @@ export function expectation(
   }
   if (protectedQueries.has(fixture.id)) {
     const url = new URL(fixture.request.path, 'https://contract.example');
+    if (fixture.id.startsWith('agent-events-v2-') && fixture.id.endsWith('-duplicate')) {
+      const key = protectedQueries.get(fixture.id)![0]!;
+      assert.equal(url.searchParams.getAll(key).length, 2);
+    }
     for (const key of protectedQueries.get(fixture.id)!) assert(url.searchParams.has(key));
     assert(fixture.response.status >= 400);
     return 'serializer-protection';
@@ -287,13 +297,16 @@ export function expectedProjection(fixture: ContractCase): unknown {
 /** Both public error envelopes retain their exact machine code and extensions. */
 export function problemBody(fixture: ContractCase): Record<string, unknown> {
   const body = fixture.response.body as Record<string, unknown>;
-  return fixture.operation.includes('/api/v2') && fixture.response.status >= 400
+  return fixture.operation.includes('/api/v2') &&
+    fixture.response.status >= 400 &&
+    body.error !== undefined
     ? (body.error as Record<string, unknown>)
     : body;
 }
 export function problemExtensions(fixture: ContractCase): Record<string, unknown> {
   const body = problemBody(fixture);
-  if (fixture.operation.includes('/api/v2')) return { type: body.type, param: body.param };
+  if ((fixture.response.body as Record<string, unknown>).error !== undefined)
+    return { type: body.type, param: body.param };
   return Object.fromEntries(
     Object.entries(body).filter(
       ([key]) => !['type', 'title', 'status', 'detail', 'instance', 'code'].includes(key),
