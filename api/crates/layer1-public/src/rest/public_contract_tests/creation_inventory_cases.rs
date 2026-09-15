@@ -170,4 +170,13 @@ impl AgentProvenanceInventoryStore for FailingInventory {
     ) -> Result<Vec<AgentProvenanceSnapshot>, SandboxStoreError> {
         Err(self.0.clone())
     }
+    async fn scan_shared_agent_provenance_inventory(
+        &self,
+        _: &SubjectId,
+        _: &[SubjectId],
+        _: &AgentListQuery,
+        _: &PageRequest,
+    ) -> Result<Vec<AgentProvenanceSnapshot>, SandboxStoreError> {
+        Err(self.0.clone())
+    }
 }

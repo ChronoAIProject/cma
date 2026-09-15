@@ -88,7 +88,9 @@ test('LOCAL organization inventory, retained creation export and shared Agent co
   });
   await page.goto('/organizations/org/agents');
   await expect(page.getByRole('link', { name: 'Project review' })).toBeVisible();
-  await expect(page.getByText('Research · Organization viewer')).toBeVisible();
+  await expect(
+    page.locator('.agent-inventory').getByText('Research · Organization viewer'),
+  ).toBeVisible();
   for (const theme of ['light', 'dark']) {
     await page.evaluate((value) => {
       document.body.toggleAttribute('data-ds-dark-theme', value === 'dark');

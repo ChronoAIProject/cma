@@ -8,6 +8,7 @@ const ROUTES: readonly AppRoute[] = [
   { kind: 'workspace', workspaceId: 'wks_123' },
   { kind: 'agent', agentId: 'agt_123' },
   { kind: 'inventory' },
+  { kind: 'inventory', shared: true },
   { kind: 'inventory', organization: 'org_123' },
   { kind: 'profiles' },
   { kind: 'profile', profileKind: 'agent', profileId: 'agp_123' },

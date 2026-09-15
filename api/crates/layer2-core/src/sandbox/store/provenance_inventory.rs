@@ -17,4 +17,14 @@ pub trait AgentProvenanceInventoryStore: Send + Sync {
         query: &AgentListQuery,
         page: &PageRequest,
     ) -> Result<Vec<AgentProvenanceSnapshot>, SandboxStoreError>;
+
+    /// Explicit incoming shares only, across freshly verified organizations.
+    /// Excludes the recipient's personally owned Agents before bounding the page.
+    async fn scan_shared_agent_provenance_inventory(
+        &self,
+        recipient: &crate::SubjectId,
+        organizations: &[crate::SubjectId],
+        query: &AgentListQuery,
+        page: &PageRequest,
+    ) -> Result<Vec<AgentProvenanceSnapshot>, SandboxStoreError>;
 }
