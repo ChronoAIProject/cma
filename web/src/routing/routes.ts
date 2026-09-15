@@ -5,6 +5,7 @@ export type ProfileKind = 'agent' | 'workspace' | 'sandbox';
 export type AppRoute =
   | { readonly kind: 'home' }
   | { readonly kind: 'sandbox'; readonly sandboxId: string }
+  | { readonly kind: 'workspace'; readonly workspaceId: string }
   | { readonly kind: 'agent'; readonly agentId: string }
   | { readonly kind: 'inventory'; readonly organization?: string }
   | { readonly kind: 'profiles' }
@@ -75,6 +76,7 @@ export function parseRoute(pathname: string): AppRoute {
   if (path.length === 2) {
     const [resource = '', id = ''] = path;
     if (resource === 'sandboxes') return { kind: 'sandbox', sandboxId: id };
+    if (resource === 'workspaces') return { kind: 'workspace', workspaceId: id };
     if (resource === 'agents') return { kind: 'agent', agentId: id };
     if (resource === 'launches') return { kind: 'launch', launchId: id };
     if (resource === 't') return { kind: 'public_trigger', publicId: id };
@@ -117,6 +119,8 @@ export function routePath(route: AppRoute): string {
       return '/';
     case 'sandbox':
       return `/sandboxes/${segment(route.sandboxId)}`;
+    case 'workspace':
+      return `/workspaces/${segment(route.workspaceId)}`;
     case 'agent':
       return `/agents/${segment(route.agentId)}`;
     case 'inventory':

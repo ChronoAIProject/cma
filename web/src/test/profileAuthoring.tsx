@@ -88,6 +88,7 @@ export function profileAuthoringTransport() {
     const path = request.url.pathname;
     const owner = request.headers.get('authorization')?.replace('Bearer ', '') ?? 'anonymous';
     if (path === '/api/v1/sandboxes') return Response.json({ items: [] });
+    if (path === '/api/v1/organizations') return Response.json({ items: [] });
     if (path === '/api/v1/profile-authoring/bounds') return Response.json(AUTHORING_BOUNDS);
     if (path === '/api/v1/profile-authoring/services')
       return Response.json([{ id: 'github', name: 'GitHub' }]);

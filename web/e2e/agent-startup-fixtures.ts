@@ -138,6 +138,8 @@ export class LocalStartup {
         );
       }
       switch (url.pathname) {
+        case '/api/v1/organizations':
+          return reply({ items: [] });
         case '/api/v1/resource-access/agent/agt_contract':
         case '/api/v1/resource-access/sandbox/sbx_route':
           return reply({
