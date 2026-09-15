@@ -28,6 +28,7 @@ import type { ProfileUse } from './profiles/marketplace/client';
 import { useAgentAccess } from './resources/agentAccess';
 import { SharedAgent } from './resources/SharedAgent';
 import { AgentInventory } from './resources/AgentInventory';
+import { SharingButton } from './resources/SharingButton';
 
 const ProfileViews = lazy(() =>
   import('./profiles/ProfileViews').then((module) => ({ default: module.ProfileViews })),
@@ -299,6 +300,23 @@ export function Console({
             onNavigate={onNavigate}
             onStop={agent.stop}
             onDelete={agent.delete}
+            sharing={
+              detailsOpen && ready !== undefined && client.resourceViews !== undefined ? (
+                <SharingButton
+                  client={client.resourceViews}
+                  target={{
+                    kind: 'agent',
+                    id: ready.detail.id,
+                    name: ready.detail.title?.trim() || 'Untitled agent',
+                  }}
+                  sandbox={{
+                    kind: 'sandbox',
+                    id: ready.detail.sandbox.id,
+                    name: ready.detail.sandbox.name,
+                  }}
+                />
+              ) : undefined
+            }
           />
         ) : undefined
       }
