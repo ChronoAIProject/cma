@@ -21,6 +21,7 @@ pub(in crate::sandbox) mod execution_dispatch;
 mod input;
 mod lane;
 mod ledger;
+mod queued_cancellation;
 mod replay_binding;
 mod reservation_policy;
 mod response_read;
@@ -65,6 +66,12 @@ pub use lane::{command_ready_for_claim, CommandLane};
 pub use ledger::{
     command_key_digest, validate_command_reservation, AdmittedAgentCommand, AgentCommandStore,
     CommandLedgerError, CommandReservation, CommandReservationResult, MAX_COMMAND_QUEUE_CAPACITY,
+};
+pub use queued_cancellation::{
+    queued_cancellation_eligible, AdmittedQueuedCancellation, QueuedCancellationBinding,
+    QueuedCancellationError, QueuedCancellationObservation, QueuedCancellationOutcome,
+    QueuedCancellationReservation, QueuedCancellationStatusView, QueuedCancellationSubmission,
+    QueuedCancellationTarget,
 };
 pub use reservation_policy::validate_command_reservation_policy;
 pub use response_read::AgentResponseReading;

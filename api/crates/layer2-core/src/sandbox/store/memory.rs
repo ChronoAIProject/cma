@@ -57,6 +57,9 @@ mod command_revival;
 mod events;
 mod provenance;
 mod provenance_inventory;
+mod queued_cancellations;
+#[cfg(test)]
+mod queued_cancellations_tests;
 use events::{append_sandbox_event, bounded_events};
 #[cfg(test)]
 mod launch_command_tests;

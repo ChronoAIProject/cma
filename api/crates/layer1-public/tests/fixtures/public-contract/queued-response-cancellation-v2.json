@@ -1,0 +1,738 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "queued-cancellation-v2-owner-observe",
+      "operation": "GET /api/v2/agents/{agent_id}/responses/{response_id}/queued-cancellation",
+      "scenario": "queued_cancellation_v2_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v2/agents/agt_fixture/responses/resp_control_source/queued-cancellation",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "object": "cma.response.queued_cancellation.observation",
+          "response": {
+            "object": "cma.agent.command",
+            "receipt": {
+              "command_id": "cmd_control_source",
+              "agent_id": "agt_fixture",
+              "response_id": "resp_control_source",
+              "admitted_at": "2026-09-05T00:00:00Z",
+              "agent_order": 1,
+              "event_cursor": 2
+            },
+            "status": "queued",
+            "queue_deadline": "2030-09-05T00:00:00Z",
+            "turn_sequence": null,
+            "observed_cursor": null,
+            "delivery": null,
+            "failure": null
+          },
+          "command_revision": 1,
+          "cancellable": true
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "queued-cancellation-v2-owner-cancel",
+      "operation": "POST /api/v2/agents/{agent_id}/responses/{response_id}/queued-cancellation",
+      "scenario": "queued_cancellation_v2_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v2/agents/agt_fixture/responses/resp_control_source/queued-cancellation",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "queued-cancel-original"
+        },
+        "body": {
+          "source_command_id": "cmd_control_source",
+          "expected_command_revision": 1
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "object": "cma.response.queued_cancellation",
+          "cancellation": {
+            "object": "cma.agent.command",
+            "receipt": {
+              "command_id": "cmd_queued_cancellation",
+              "agent_id": "agt_fixture",
+              "response_id": null,
+              "admitted_at": "2026-09-15T00:00:00Z",
+              "agent_order": 2,
+              "event_cursor": 2
+            },
+            "status": "completed",
+            "queue_deadline": "2026-09-15T00:05:00Z",
+            "turn_sequence": null,
+            "observed_cursor": null,
+            "delivery": null,
+            "failure": null
+          },
+          "response": {
+            "object": "cma.agent.command",
+            "receipt": {
+              "command_id": "cmd_control_source",
+              "agent_id": "agt_fixture",
+              "response_id": "resp_control_source",
+              "admitted_at": "2026-09-05T00:00:00Z",
+              "agent_order": 1,
+              "event_cursor": 2
+            },
+            "status": "cancelled",
+            "queue_deadline": "2030-09-05T00:00:00Z",
+            "turn_sequence": null,
+            "observed_cursor": null,
+            "delivery": null,
+            "failure": null
+          },
+          "target": {
+            "response_id": "resp_control_source",
+            "source_command_id": "cmd_control_source",
+            "expected_command_revision": 1
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "queued_cancel_at": "/cancellation/receipt/admitted_at",
+        "queued_cancel_deadline": "/cancellation/queue_deadline",
+        "queued_cancel_id": "/cancellation/receipt/command_id"
+      }
+    },
+    {
+      "id": "queued-cancellation-v2-owner-replay",
+      "operation": "POST /api/v2/agents/{agent_id}/responses/{response_id}/queued-cancellation",
+      "scenario": "queued_cancellation_v2_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v2/agents/agt_fixture/responses/resp_control_source/queued-cancellation",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "queued-cancel-original"
+        },
+        "body": {
+          "source_command_id": "cmd_control_source",
+          "expected_command_revision": 1
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "object": "cma.response.queued_cancellation",
+          "cancellation": {
+            "object": "cma.agent.command",
+            "receipt": {
+              "command_id": "cmd_queued_cancellation",
+              "agent_id": "agt_fixture",
+              "response_id": null,
+              "admitted_at": "2026-09-15T00:00:00Z",
+              "agent_order": 2,
+              "event_cursor": 2
+            },
+            "status": "completed",
+            "queue_deadline": "2026-09-15T00:05:00Z",
+            "turn_sequence": null,
+            "observed_cursor": null,
+            "delivery": null,
+            "failure": null
+          },
+          "response": {
+            "object": "cma.agent.command",
+            "receipt": {
+              "command_id": "cmd_control_source",
+              "agent_id": "agt_fixture",
+              "response_id": "resp_control_source",
+              "admitted_at": "2026-09-05T00:00:00Z",
+              "agent_order": 1,
+              "event_cursor": 2
+            },
+            "status": "cancelled",
+            "queue_deadline": "2030-09-05T00:00:00Z",
+            "turn_sequence": null,
+            "observed_cursor": null,
+            "delivery": null,
+            "failure": null
+          },
+          "target": {
+            "response_id": "resp_control_source",
+            "source_command_id": "cmd_control_source",
+            "expected_command_revision": 1
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "queued-cancellation-v2-owner-after-cancel",
+      "operation": "GET /api/v2/agents/{agent_id}/responses/{response_id}/queued-cancellation",
+      "scenario": "queued_cancellation_v2_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v2/agents/agt_fixture/responses/resp_control_source/queued-cancellation",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "object": "cma.response.queued_cancellation.observation",
+          "response": {
+            "object": "cma.agent.command",
+            "receipt": {
+              "command_id": "cmd_control_source",
+              "agent_id": "agt_fixture",
+              "response_id": "resp_control_source",
+              "admitted_at": "2026-09-05T00:00:00Z",
+              "agent_order": 1,
+              "event_cursor": 2
+            },
+            "status": "cancelled",
+            "queue_deadline": "2030-09-05T00:00:00Z",
+            "turn_sequence": null,
+            "observed_cursor": null,
+            "delivery": null,
+            "failure": null
+          },
+          "command_revision": 2,
+          "cancellable": false
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "queued-cancellation-v2-status",
+      "operation": "GET /api/v2/commands/{command_id}",
+      "scenario": "queued_cancellation_v2_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v2/commands/$queued_cancel_id",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "object": "cma.agent.command",
+          "receipt": {
+            "command_id": "cmd_queued_cancellation",
+            "agent_id": "agt_fixture",
+            "response_id": null,
+            "admitted_at": "2026-09-15T00:00:00Z",
+            "agent_order": 2,
+            "event_cursor": 2
+          },
+          "status": "completed",
+          "queue_deadline": "2026-09-15T00:05:00Z",
+          "turn_sequence": null,
+          "observed_cursor": null,
+          "delivery": null,
+          "failure": null
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "queued-cancellation-v2-changed-command",
+      "operation": "POST /api/v2/agents/{agent_id}/responses/{response_id}/queued-cancellation",
+      "scenario": "queued_cancellation_v2_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v2/agents/agt_fixture/responses/resp_control_source/queued-cancellation",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "queued-cancel-original"
+        },
+        "body": {
+          "source_command_id": "cmd_other",
+          "expected_command_revision": 1
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "error": {
+            "type": "invalid_request_error",
+            "code": "agent_command_key_conflict",
+            "message": "This idempotency key already identifies different input.",
+            "param": "Idempotency-Key"
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "queued-cancellation-v2-changed-revision",
+      "operation": "POST /api/v2/agents/{agent_id}/responses/{response_id}/queued-cancellation",
+      "scenario": "queued_cancellation_v2_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v2/agents/agt_fixture/responses/resp_control_source/queued-cancellation",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "queued-cancel-original"
+        },
+        "body": {
+          "source_command_id": "cmd_control_source",
+          "expected_command_revision": 2
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "error": {
+            "type": "invalid_request_error",
+            "code": "agent_command_key_conflict",
+            "message": "This idempotency key already identifies different input.",
+            "param": "Idempotency-Key"
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "queued-cancellation-v2-stale-not-admitted",
+      "operation": "POST /api/v2/agents/{agent_id}/responses/{response_id}/queued-cancellation",
+      "scenario": "queued_cancellation_v2_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v2/agents/agt_fixture/responses/resp_control_source/queued-cancellation",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "different-key"
+        },
+        "body": {
+          "source_command_id": "cmd_control_source",
+          "expected_command_revision": 1
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "error": {
+            "type": "invalid_request_error",
+            "code": "queued_response_cancellation_not_admitted",
+            "message": "The original cancellation was not admitted and its source command revision is permanently stale. Observe again before creating a new intent.",
+            "param": null
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "queued-cancellation-v2-bound-observe",
+      "operation": "GET /api/v2/agents/{agent_id}/responses/{response_id}/queued-cancellation",
+      "scenario": "queued_cancellation_v2_bound",
+      "request": {
+        "method": "GET",
+        "path": "/api/v2/agents/agt_fixture/responses/resp_control_source/queued-cancellation",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "object": "cma.response.queued_cancellation.observation",
+          "response": {
+            "object": "cma.agent.command",
+            "receipt": {
+              "command_id": "cmd_control_source",
+              "agent_id": "agt_fixture",
+              "response_id": "resp_control_source",
+              "admitted_at": "2026-09-05T00:00:00Z",
+              "agent_order": 1,
+              "event_cursor": 2
+            },
+            "status": "in_progress",
+            "queue_deadline": "2030-09-05T00:00:00Z",
+            "turn_sequence": 4,
+            "observed_cursor": null,
+            "delivery": "dispatch_fenced",
+            "failure": null
+          },
+          "command_revision": 4,
+          "cancellable": false
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "queued_bound_revision": "/command_revision"
+      }
+    },
+    {
+      "id": "queued-cancellation-v2-bound-conflict",
+      "operation": "POST /api/v2/agents/{agent_id}/responses/{response_id}/queued-cancellation",
+      "scenario": "queued_cancellation_v2_bound",
+      "request": {
+        "method": "POST",
+        "path": "/api/v2/agents/agt_fixture/responses/resp_control_source/queued-cancellation",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "queued-cancel-original"
+        },
+        "body": {
+          "source_command_id": "cmd_control_source",
+          "expected_command_revision": "$queued_bound_revision"
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "error": {
+            "type": "invalid_request_error",
+            "code": "queued_response_cancellation_conflict",
+            "message": "The source command or current authority changed. Recover an uncertain cancellation with the original key and body.",
+            "param": null
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "queued-cancellation-v2-anonymous-observe",
+      "operation": "GET /api/v2/agents/{agent_id}/responses/{response_id}/queued-cancellation",
+      "scenario": "queued_cancellation_v2_anonymous",
+      "request": {
+        "method": "GET",
+        "path": "/api/v2/agents/agt_fixture/responses/resp_control_source/queued-cancellation",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "error": {
+            "type": "invalid_request_error",
+            "code": "authentication_required",
+            "message": "A current authenticated request credential is required.",
+            "param": null
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "queued-cancellation-v2-anonymous-submit",
+      "operation": "POST /api/v2/agents/{agent_id}/responses/{response_id}/queued-cancellation",
+      "scenario": "queued_cancellation_v2_anonymous",
+      "request": {
+        "method": "POST",
+        "path": "/api/v2/agents/agt_fixture/responses/resp_control_source/queued-cancellation",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "queued-cancel-original"
+        },
+        "body": {
+          "source_command_id": "cmd_control_source",
+          "expected_command_revision": 1
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "error": {
+            "type": "invalid_request_error",
+            "code": "authentication_required",
+            "message": "A current authenticated request credential is required.",
+            "param": null
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "queued-cancellation-v2-foreign-observe",
+      "operation": "GET /api/v2/agents/{agent_id}/responses/{response_id}/queued-cancellation",
+      "scenario": "queued_cancellation_v2_foreign",
+      "request": {
+        "method": "GET",
+        "path": "/api/v2/agents/agt_fixture/responses/resp_control_source/queued-cancellation",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "error": {
+            "type": "invalid_request_error",
+            "code": "response_not_found",
+            "message": "The requested response or conversation is unavailable.",
+            "param": null
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "queued-cancellation-v2-foreign-submit",
+      "operation": "POST /api/v2/agents/{agent_id}/responses/{response_id}/queued-cancellation",
+      "scenario": "queued_cancellation_v2_foreign",
+      "request": {
+        "method": "POST",
+        "path": "/api/v2/agents/agt_fixture/responses/resp_control_source/queued-cancellation",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "queued-cancel-original"
+        },
+        "body": {
+          "source_command_id": "cmd_control_source",
+          "expected_command_revision": 1
+        }
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "error": {
+            "type": "invalid_request_error",
+            "code": "response_not_found",
+            "message": "The requested response or conversation is unavailable.",
+            "param": null
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "queued-cancellation-v2-query-observe",
+      "operation": "GET /api/v2/agents/{agent_id}/responses/{response_id}/queued-cancellation",
+      "scenario": "queued_cancellation_v2_invalid",
+      "request": {
+        "method": "GET",
+        "path": "/api/v2/agents/agt_fixture/responses/resp_control_source/queued-cancellation?unexpected=true",
+        "headers": {}
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "error": {
+            "type": "invalid_request_error",
+            "code": "invalid_queued_cancellation_request",
+            "message": "Supply only the original source_command_id and positive expected_command_revision.",
+            "param": "body"
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "queued-cancellation-v2-query-submit",
+      "operation": "POST /api/v2/agents/{agent_id}/responses/{response_id}/queued-cancellation",
+      "scenario": "queued_cancellation_v2_invalid",
+      "request": {
+        "method": "POST",
+        "path": "/api/v2/agents/agt_fixture/responses/resp_control_source/queued-cancellation?unexpected=true",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "queued-cancel-original"
+        },
+        "body": {
+          "source_command_id": "cmd_control_source",
+          "expected_command_revision": 1
+        }
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "error": {
+            "type": "invalid_request_error",
+            "code": "invalid_queued_cancellation_request",
+            "message": "Supply only the original source_command_id and positive expected_command_revision.",
+            "param": "body"
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "queued-cancellation-v2-missing-key",
+      "operation": "POST /api/v2/agents/{agent_id}/responses/{response_id}/queued-cancellation",
+      "scenario": "queued_cancellation_v2_invalid",
+      "request": {
+        "method": "POST",
+        "path": "/api/v2/agents/agt_fixture/responses/resp_control_source/queued-cancellation",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "source_command_id": "cmd_control_source",
+          "expected_command_revision": 1
+        }
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "error": {
+            "type": "invalid_request_error",
+            "code": "invalid_idempotency_key",
+            "message": "Supply exactly one retained idempotency key.",
+            "param": "Idempotency-Key"
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "queued-cancellation-v2-invalid-revision",
+      "operation": "POST /api/v2/agents/{agent_id}/responses/{response_id}/queued-cancellation",
+      "scenario": "queued_cancellation_v2_invalid",
+      "request": {
+        "method": "POST",
+        "path": "/api/v2/agents/agt_fixture/responses/resp_control_source/queued-cancellation",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "queued-cancel-original"
+        },
+        "body": {
+          "source_command_id": "cmd_control_source",
+          "expected_command_revision": 0
+        }
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "error": {
+            "type": "invalid_request_error",
+            "code": "invalid_queued_cancellation_request",
+            "message": "Supply only the original source_command_id and positive expected_command_revision.",
+            "param": "body"
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "queued-cancellation-v2-unknown-field",
+      "operation": "POST /api/v2/agents/{agent_id}/responses/{response_id}/queued-cancellation",
+      "scenario": "queued_cancellation_v2_invalid",
+      "request": {
+        "method": "POST",
+        "path": "/api/v2/agents/agt_fixture/responses/resp_control_source/queued-cancellation",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "queued-cancel-original"
+        },
+        "body": {
+          "source_command_id": "cmd_control_source",
+          "expected_command_revision": 1,
+          "turn_sequence": 4
+        }
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "error": {
+            "type": "invalid_request_error",
+            "code": "invalid_queued_cancellation_request",
+            "message": "Supply only the original source_command_id and positive expected_command_revision.",
+            "param": "body"
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "queued-cancellation-v2-invalid-json",
+      "operation": "POST /api/v2/agents/{agent_id}/responses/{response_id}/queued-cancellation",
+      "scenario": "queued_cancellation_v2_invalid",
+      "request": {
+        "method": "POST",
+        "path": "/api/v2/agents/agt_fixture/responses/resp_control_source/queued-cancellation",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "queued-cancel-original"
+        },
+        "rawBody": "{"
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "error": {
+            "type": "invalid_request_error",
+            "code": "invalid_json",
+            "message": "A JSON queued cancellation request is required.",
+            "param": "body"
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    }
+  ]
+}

@@ -61,7 +61,16 @@
             "target": "bound_response_turn",
             "completion": "command_delivery"
           },
-          "command_status": "/api/v2/commands/{command_id}"
+          "command_status": "/api/v2/commands/{command_id}",
+          "queued_cancellation": {
+            "path": "/api/v2/agents/{agent_id}/responses/{response_id}/queued-cancellation",
+            "observe": "GET",
+            "submit": "POST",
+            "idempotency_header": "Idempotency-Key",
+            "idempotency_required": true,
+            "target": "unbound_response_command",
+            "completion": "source_cancelled"
+          }
         },
         "bodyKind": "json"
       },

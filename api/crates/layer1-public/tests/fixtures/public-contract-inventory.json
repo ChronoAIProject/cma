@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "openapi_operations": 168,
+  "openapi_operations": 170,
   "operations": {
     "GET /api/v1/organizations": {
       "classification": "openapi",
@@ -2419,6 +2419,29 @@
       "source": "api/crates/layer1-public/src/agent_v2/eligibility.rs# Current process flag and complete composition select new tabs only; authenticated no-store discovery is not command authority.",
       "required_problems": [
         "not_authenticated"
+      ]
+    },
+    "GET /api/v2/agents/{agent_id}/responses/{response_id}/queued-cancellation": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/responses/v2/queued_cancellation.rs# Exact unbound source cancellation uses current human/API authority and committed effect receipts.",
+      "required_problems": [
+        "authentication_required",
+        "invalid_queued_cancellation_request",
+        "response_not_found"
+      ]
+    },
+    "POST /api/v2/agents/{agent_id}/responses/{response_id}/queued-cancellation": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/responses/v2/queued_cancellation.rs# Exact unbound source cancellation uses current human/API authority and committed effect receipts.",
+      "required_problems": [
+        "agent_command_key_conflict",
+        "authentication_required",
+        "invalid_idempotency_key",
+        "invalid_json",
+        "invalid_queued_cancellation_request",
+        "queued_response_cancellation_conflict",
+        "queued_response_cancellation_not_admitted",
+        "response_not_found"
       ]
     }
   }

@@ -781,6 +781,8 @@ above applies even when an operation annotates only its principal responses.
 | `GET /api/v2/conversations/{conversation_id}/items` | - | after, before, limit, order | 200 JSON items |
 | `GET /api/v2/agents/{agent_id}/responses/{response_id}/controls` | - | - | 200 V2ResponseControls |
 | `POST /api/v2/agents/{agent_id}/responses/{response_id}/controls` | V2ResponseControlRequest / required Idempotency-Key | - | 202 V2ResponseControl |
+| `GET /api/v2/agents/{agent_id}/responses/{response_id}/queued-cancellation` | - | - | 200 V2QueuedCancellationObservation |
+| `POST /api/v2/agents/{agent_id}/responses/{response_id}/queued-cancellation` | V2QueuedCancellationRequest / required Idempotency-Key | - | 200 V2QueuedCancellation |
 | `GET /api/v2/commands/{command_id}` | - | - | 200 V2CommandStatus |
 | `POST /api/v1/responses` | CreateResponseRequest | - | 200 SSE |
 | `GET /api/v1/responses/{response_id}` | - | - | 200 ResponseObject |
