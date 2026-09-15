@@ -27,6 +27,7 @@ export function useAgentAccess(
               setPersonal({ client, agentId });
               return { value: { detail } };
             }
+            setPersonal(undefined);
             const access = await client.resourceAccess.effective('agent', agentId, { signal });
             if (!access.capabilities.includes('view_details'))
               throw new Error('Agent access is unavailable.');
@@ -35,6 +36,9 @@ export function useAgentAccess(
     [client, agentId],
   );
   const result = useAuthorizedRead(read);
+  // A refusal (including timeout) permanently discards the old classification.
+  // A later refresh must not resurrect the personal controller before its read.
+  if (personal !== undefined && result.state.status === 'error') setPersonal(undefined);
   // Keep the personal controller during classification refreshes. Its own
   // reads and stream retain server authorization; refusal removes the controls.
   const personalReady =
