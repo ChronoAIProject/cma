@@ -95,6 +95,7 @@ pub async fn dispatch(c: &Context<'_>) -> Result<()> {
                 .sandboxes()
                 .list_accessible(&AccessibleSandboxListOptions {
                     organization: c.q("organization"),
+                    shared: c.number::<bool>("shared")?.unwrap_or(false),
                     filters: SandboxListOptions {
                         status: c.tag("status")?,
                         page: c.page()?,

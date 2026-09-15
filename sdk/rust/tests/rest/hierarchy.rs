@@ -116,6 +116,7 @@ async fn shared_sandbox_inventory_preserves_safe_summaries_and_personal_method_t
     let summary = json!({"access":"shared","id":"sandbox-1","name":"Project","status":"active","created_at":NOW,"updated_at":NOW,"last_activity_at":NOW,"workspace_count":1,"worktree_count":2,"agent_count":2});
     let options = AccessibleSandboxListOptions {
         organization: Some("org".into()),
+        shared: false,
         filters: SandboxListOptions {
             status: Some(SandboxStatus::Active),
             page: PageOptions {
@@ -202,5 +203,54 @@ async fn shared_sandbox_detail_revision_is_optional_but_positive_when_present() 
             Err(Error::Protocol { .. })
         ));
     }
+    server.assert_drained();
+}
+
+#[tokio::test]
+async fn aggregate_shared_sandbox_scope_pages_and_refuses_mixed_scope_locally() {
+    let server = Server::new().await;
+    let summary = json!({"access":"shared","id":"sandbox-1","name":"Project","status":"active","created_at":NOW,"updated_at":NOW,"last_activity_at":NOW,"workspace_count":1,"worktree_count":2,"agent_count":2});
+    let mut options = AccessibleSandboxListOptions {
+        shared: true,
+        organization: None,
+        filters: SandboxListOptions {
+            status: Some(SandboxStatus::Active),
+            page: PageOptions {
+                cursor: Some("sandbox-0".into()),
+                limit: Some(1),
+            },
+        },
+    };
+    server.expect(
+        "GET",
+        "/sandboxes?cursor=sandbox-0&limit=1&status=active&shared=true",
+        None,
+        200,
+        Some(json!({"items":[summary],"next":"sandbox-1"})),
+    );
+    let page = server
+        .client
+        .sandboxes()
+        .list_accessible(&options)
+        .await
+        .unwrap();
+    assert!(matches!(page.items[0], AccessibleSandboxSummary::Shared(_)));
+    assert_eq!(page.next.as_deref(), Some("sandbox-1"));
+    options.organization = Some("org".into());
+    assert!(matches!(
+        server.client.sandboxes().list_accessible(&options).await,
+        Err(Error::Validation { .. })
+    ));
+    server.expect("GET", "/sandboxes", None, 200, Some(json!({"items":[]})));
+    assert!(
+        server
+            .client
+            .sandboxes()
+            .list_accessible(&AccessibleSandboxListOptions::default())
+            .await
+            .unwrap()
+            .items
+            .is_empty()
+    );
     server.assert_drained();
 }

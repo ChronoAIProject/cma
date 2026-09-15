@@ -33,6 +33,93 @@ test('LOCAL shared aggregate preserves personal work and supports filtered pages
       creation_origin: 'trigger',
     },
   ] as const;
+  const sandbox = {
+    access: 'shared',
+    id: 'sbx_shared',
+    name: 'Research Sandbox',
+    status: 'active',
+    created_at: localTime,
+    updated_at: localTime,
+    last_activity_at: localTime,
+    workspace_count: 1,
+    worktree_count: 1,
+    agent_count: 1,
+  };
+  const workspace = {
+    access: 'shared',
+    id: 'wks_shared',
+    sandbox_id: sandbox.id,
+    name: 'Review Workspace',
+    status: 'ready',
+    created_at: localTime,
+    worktree_count: 1,
+    agent_count: 1,
+  };
+  const branchReads: string[] = [];
+  await page.route('**/api/v1/sandboxes?*', async (route) => {
+    const url = new URL(route.request().url());
+    if (!url.searchParams.has('shared')) return route.fallback();
+    expect(url.searchParams.get('shared')).toBe('true');
+    expect(url.searchParams.has('organization')).toBe(false);
+    if (revoked)
+      return route.fulfill({
+        status: 404,
+        json: { code: 'resource_not_found', detail: 'Shared access removed' },
+      });
+    return route.fulfill({
+      json: url.searchParams.has('cursor')
+        ? { items: [sandbox] }
+        : { items: [], next: 'sbx_previous' },
+    });
+  });
+  for (const path of [
+    'resource-access/sandbox/sbx_shared',
+    'resource-access/workspace/wks_shared',
+    'sandboxes/sbx_shared',
+    'workspaces/wks_shared',
+  ]) {
+    await page.route(`**/api/v1/${path}`, (route) => {
+      branchReads.push(path);
+      if (revoked)
+        return route.fulfill({
+          status: 404,
+          json: { code: 'resource_not_found', detail: 'Shared access removed' },
+        });
+      if (path.startsWith('resource-access/'))
+        return route.fulfill({
+          json: { capabilities: ['view_details'], revalidate_at: null, policy_revision: 1 },
+        });
+      if (path.startsWith('sandboxes/'))
+        return route.fulfill({ json: { ...sandbox, workspaces: [workspace] } });
+      return route.fulfill({
+        json: {
+          ...workspace,
+          worktrees: [
+            {
+              access: 'shared',
+              id: 'wt_shared',
+              workspace_id: workspace.id,
+              sandbox_id: sandbox.id,
+              name: 'Review branch',
+              status: 'ready',
+              agent_id: 'agt_branch',
+            },
+          ],
+          agents: [
+            {
+              id: 'agt_branch',
+              workspace_id: workspace.id,
+              sandbox_id: sandbox.id,
+              worktree_id: 'wt_shared',
+              title: 'Authorized branch conversation',
+              status: 'ready',
+              updated_at: localTime,
+            },
+          ],
+        },
+      });
+    });
+  }
   await page.route('**/api/v1/organizations', (route) =>
     route.fulfill({
       json: {
@@ -70,10 +157,70 @@ test('LOCAL shared aggregate preserves personal work and supports filtered pages
   await page.getByRole('menuitemradio', { name: 'Shared with me', exact: true }).click();
   const navigation = page.locator('.scoped-navigation');
   await expect(navigation.getByRole('link', { name: rows[0].title })).toBeVisible();
+  await expect(navigation.getByText(/No shared Sandboxes on this page/)).toBeVisible();
+  expect(branchReads).toEqual([]);
+  await navigation.getByRole('button', { name: 'Next Sandboxes', exact: true }).click();
+  await navigation.getByRole('button', { name: sandbox.name, exact: true }).click();
+  expect(branchReads.some((path) => path.includes('wks_shared'))).toBe(false);
+  await navigation.getByRole('button', { name: workspace.name, exact: true }).click();
+  await expect(
+    navigation.getByRole('link', { name: 'Authorized branch conversation' }),
+  ).toHaveAttribute('href', '/agents/agt_branch');
+  await expect(navigation.getByRole('link', { name: rows[0].title })).toBeVisible();
+  await expect(navigation.getByRole('button', { name: 'Next shared Agents' })).toBeDisabled();
+  for (const theme of ['light', 'dark']) {
+    await page.evaluate((value) => {
+      document.body.toggleAttribute('data-ds-dark-theme', value === 'dark');
+      document.documentElement.style.colorScheme = value;
+    }, theme);
+    for (const width of [1440, 390, 320]) {
+      await page.setViewportSize({ width, height: 1000 });
+      await expect
+        .poll(() =>
+          page
+            .locator('.frame__center')
+            .evaluate((element) => element.getBoundingClientRect().right <= innerWidth + 1),
+        )
+        .toBe(true);
+      if (width < 1024) {
+        const show = page.getByRole('button', { name: 'Show navigation', exact: true });
+        if (await show.isVisible()) {
+          await show.click();
+          await navigation.getByRole('button', { name: 'Next Sandboxes', exact: true }).click();
+          await navigation.getByRole('button', { name: sandbox.name, exact: true }).click();
+          await navigation.getByRole('button', { name: workspace.name, exact: true }).click();
+        }
+      }
+      await expect(
+        navigation.getByRole('link', { name: 'Authorized branch conversation' }),
+      ).toBeVisible();
+      await expect
+        .poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1))
+        .toBe(true);
+      await expect
+        .poll(() =>
+          navigation.evaluate((element) =>
+            [...element.querySelectorAll('button, a')].every(
+              (item) => item.getBoundingClientRect().right <= innerWidth + 1,
+            ),
+          ),
+        )
+        .toBe(true);
+      await page.screenshot({
+        path: info.outputPath(`shared-tree-${theme}-${width}.png`),
+        fullPage: true,
+        animations: 'disabled',
+      });
+    }
+  }
+  await page.setViewportSize({ width: 1440, height: 1000 });
   revoked = true;
   await navigation.getByRole('button', { name: 'Refresh shared Agents' }).click();
   await expect(navigation.getByRole('alert')).toContainText('Shared access removed');
   await expect(navigation.getByText(rows[0].title)).toHaveCount(0);
+  await navigation.getByRole('button', { name: 'Refresh shared Sandboxes' }).click();
+  for (const name of [sandbox.name, workspace.name, 'Authorized branch conversation'])
+    await expect(navigation.getByText(name, { exact: true })).toHaveCount(0);
   expect(await composer.evaluate((element, previous) => element === previous, composerNode)).toBe(
     true,
   );

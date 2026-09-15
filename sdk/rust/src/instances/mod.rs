@@ -32,6 +32,8 @@ pub struct SandboxListOptions {
 pub struct AccessibleSandboxListOptions {
     /// Canonical organization ID; omission selects personal resources.
     pub organization: Option<String>,
+    /// Explicit incoming whole-Sandbox grants, mutually exclusive with organization.
+    pub shared: bool,
     /// Pagination and status filters.
     pub filters: SandboxListOptions,
 }
@@ -47,12 +49,20 @@ impl Sandboxes<'_> {
         &self,
         options: &AccessibleSandboxListOptions,
     ) -> Result<ResourcePage<AccessibleSandboxSummary>> {
+        if options.shared && options.organization.is_some() {
+            return Err(crate::Error::validation(
+                "choose organization or shared inventory",
+            ));
+        }
         let mut query = options.filters.page.query();
         if let Some(status) = options.filters.status {
             query.push(("status", status.as_str().into()));
         }
         if let Some(organization) = &options.organization {
             query.push(("organization", organization.clone()));
+        }
+        if options.shared {
+            query.push(("shared", "true".into()));
         }
         self.client.get(&["sandboxes"], &query).await
     }

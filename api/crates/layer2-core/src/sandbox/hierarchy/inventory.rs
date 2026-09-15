@@ -12,9 +12,46 @@ impl HierarchyReadService {
         organization: &SubjectId,
         query: &OwnerSandboxQuery,
     ) -> Result<Page<SandboxInventoryReading>, HierarchyReadError> {
+        self.inventory_authorized(context, credential, Some(organization), query)
+            .await
+    }
+
+    /// Explicit incoming whole-Sandbox shares across current organizations.
+    pub async fn shared_list_authorized(
+        &self,
+        context: &CallerContext,
+        credential: Option<&str>,
+        query: &OwnerSandboxQuery,
+    ) -> Result<Page<SandboxInventoryReading>, HierarchyReadError> {
+        self.inventory_authorized(context, credential, None, query)
+            .await
+    }
+
+    async fn inventory_authorized(
+        &self,
+        context: &CallerContext,
+        credential: Option<&str>,
+        organization: Option<&SubjectId>,
+        query: &OwnerSandboxQuery,
+    ) -> Result<Page<SandboxInventoryReading>, HierarchyReadError> {
+        tokio::time::timeout(
+            Duration::from_secs(15),
+            self.inventory_inner(context, credential, organization, query),
+        )
+        .await
+        .map_err(|_| HierarchyReadError::Unavailable("Sandbox inventory timed out".into()))?
+    }
+
+    async fn inventory_inner(
+        &self,
+        context: &CallerContext,
+        credential: Option<&str>,
+        organization: Option<&SubjectId>,
+        query: &OwnerSandboxQuery,
+    ) -> Result<Page<SandboxInventoryReading>, HierarchyReadError> {
         let access = self.access()?;
         let candidates = access
-            .organization_sandbox_candidates(context, credential, organization, query)
+            .sandbox_inventory_candidates(context, credential, organization, query)
             .await
             .map_err(authorized::access_error)?;
         let projected = tokio::time::timeout(Duration::from_secs(15), async {
@@ -35,7 +72,7 @@ impl HierarchyReadService {
         // Fence success, private dependency failures and timeout alike. Do not
         // discard the hidden lookahead until after this check.
         access
-            .finish_sandbox_inventory(&candidates, organization)
+            .finish_sandbox_inventory(&candidates, query)
             .await
             .map_err(authorized::access_error)?;
         let items = projected?;

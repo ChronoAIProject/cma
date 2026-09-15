@@ -55,6 +55,15 @@ impl ResourceAccessStore for UnavailableStore {
         Err(ResourceAccessStoreError::Unavailable)
     }
 
+    async fn shared_sandboxes(
+        &self,
+        _recipient: &layer2_core::SubjectId,
+        _organizations: &[layer2_core::SubjectId],
+        _query: &layer2_core::sandbox::OwnerSandboxQuery,
+    ) -> Result<Vec<ResourceAccessSnapshot>, ResourceAccessStoreError> {
+        Err(ResourceAccessStoreError::Unavailable)
+    }
+
     async fn organization_agents(
         &self,
         _: &SubjectId,

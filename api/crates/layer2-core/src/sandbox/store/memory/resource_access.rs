@@ -46,6 +46,43 @@ impl ResourceAccessStore for InMemorySandboxStore {
             .collect()
     }
 
+    async fn shared_sandboxes(
+        &self,
+        recipient: &crate::SubjectId,
+        organizations: &[crate::SubjectId],
+        query: &crate::sandbox::OwnerSandboxQuery,
+    ) -> Result<Vec<ResourceAccessSnapshot>, ResourceAccessStoreError> {
+        crate::sandbox::store::PageRequest::new(query.page.limit, query.page.cursor.clone())
+            .map_err(|_| ResourceAccessStoreError::Invalid)?;
+        let state = self.lock();
+        let mut candidates: Vec<_> = state.sandboxes.values().filter(|sandbox| {
+            query.status.is_none_or(|status| sandbox.status == status)
+                && query.page.cursor.as_deref().is_none_or(|cursor| sandbox.id.as_str() > cursor)
+                && state.resource_shares.values().any(|receipt| {
+                    receipt.sandbox_id == sandbox.id
+                        && organizations.contains(&receipt.share.target_org_id)
+                        && receipt.share.revoked_at.is_none()
+                        && !matches!(&receipt.share.owner, ResourceOwner::Person { subject } if subject == recipient)
+                        && matches!(&receipt.share.selector, ResourceSelector::Sandbox { sandbox_id } if sandbox_id == &sandbox.id)
+                })
+        }).collect();
+        candidates.sort_by(|left, right| left.id.as_str().cmp(right.id.as_str()));
+        candidates
+            .into_iter()
+            .take(usize::from(query.page.limit) + 1)
+            .map(|sandbox| {
+                let value = snapshot(
+                    &state,
+                    &ResourceTarget::Sandbox {
+                        sandbox_id: sandbox.id.clone(),
+                    },
+                )?;
+                value.shared_sandbox(recipient, organizations)?;
+                Ok(value)
+            })
+            .collect()
+    }
+
     async fn organization_agents(
         &self,
         organization: &crate::SubjectId,

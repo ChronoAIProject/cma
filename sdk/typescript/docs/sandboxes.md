@@ -106,7 +106,7 @@ can refuse a later request. Snapshot archives remain personal-only. The default
 Sandbox collection excludes explicit organization ownership before pagination;
 use `listAccessible({ organization })` for explicit organization discovery.
 
-## Organization inventory
+## Organization and Shared with me inventory
 
 ```ts
 import { createClient } from '@chronoai/cma-sdk';
@@ -123,9 +123,18 @@ Each page obtains new membership evidence. Organization-owned resources and
 whole-Sandbox grants are filtered before pagination; narrow Agent grants cannot
 reveal a parent or its counts. Shared summaries include `access: 'shared'` and safe
 metadata/counts. Personal owners retain the full personal summary. Omit the
-organization for personal inventory. Existing `sandboxes.list()` retains its
+organization and shared selectors for personal inventory. Existing `sandboxes.list()` retains its
 personal type and refuses shared summaries. A changed policy or unavailable
 membership yields a typed error without partial rows or a stale `next` cursor.
+
+Set `shared: true` to discover incoming whole-Sandbox grants across all current
+organizations: `cma.sandboxes.listAccessible({ shared: true, limit: 20 })`.
+The server deduplicates Sandboxes and excludes your own personal resources before
+pagination. Organization ownership alone does not enter this scope. Individually
+shared Agents remain discoverable through `agents.provenanceInventory({ shared: true })`
+without exposing their parents. `shared: true` and `organization` are mutually
+exclusive. Discovery refuses an incomplete result if organization authority is
+unavailable; each page revalidates all original membership evidence and grants.
 
 ## Shared lifecycle commands
 

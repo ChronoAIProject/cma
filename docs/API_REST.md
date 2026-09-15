@@ -783,7 +783,7 @@ above applies even when an operation annotates only its principal responses.
 
 | Operation | Body / Key | Query | Response |
 |---|---|---|---|
-| `GET /api/v1/sandboxes` | - | organization, status, cursor, limit | 200 AccessibleSandboxPageView |
+| `GET /api/v1/sandboxes` | - | organization, shared, status, cursor, limit | 200 AccessibleSandboxPageView |
 | `POST /api/v1/sandboxes` | CreateSandboxRequest; key | - | 201 SandboxView |
 | `GET /api/v1/sandboxes/{id}` | - | - | 200 AccessibleSandboxDetailView |
 | `GET /api/v1/sandboxes/{id}/snapshots/{epoch}/download` | - | - | 200 application/octet-stream attachment; owner-authenticated latest completed snapshot |
@@ -794,6 +794,16 @@ above applies even when an operation annotates only its principal responses.
 | `GET /api/v1/sandbox-commands/{id}` | - | - | 200 SandboxCommandReceiptView |
 | `POST /api/v1/sandboxes/{id}/revive` | -; key | - | 202 SandboxView |
 | `POST /api/v1/sandboxes/{id}/service-access` | GrantSandboxServiceAccessRequest; key | - | 200 SandboxView; new grants require fully Paused, existing grants replay without change |
+
+Sandbox inventory is personal by default. `organization=<canonical ID>` selects
+current organization ownership and whole-Sandbox grants. `shared=true` selects the
+deduplicated union of incoming whole-Sandbox grants across current organizations,
+excluding the caller's own personal resources before pagination. The two selectors
+are mutually exclusive. Narrow Agent grants never reveal parent rows or counts.
+Every aggregate page requires complete current membership discovery and checks
+policy, evidence lifetime and hidden lookahead after count reads. Dependency
+failure refuses the result without partial rows or a stale continuation. Both
+SDKs expose this scope through their accessible Sandbox list method.
 
 ### Workspaces
 

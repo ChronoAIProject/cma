@@ -5,11 +5,33 @@ use futures_util::{stream, StreamExt, TryStreamExt};
 use std::time::{Duration, SystemTime};
 
 pub(crate) struct SandboxInventoryCandidates {
-    pub(crate) current: CallerContext,
+    pub(crate) membership: InventoryMemberships,
     pub(crate) items: Vec<AuthorizedResource>,
 }
 
 impl ResourceAccessSnapshot {
+    /// Explicit incoming parent grants only; narrow Agent grants cannot reveal a Sandbox.
+    pub fn shared_sandbox(
+        &self,
+        recipient: &SubjectId,
+        organizations: &[SubjectId],
+    ) -> Result<&Sandbox, ResourceAccessStoreError> {
+        let sandbox = &self.lineage.sandbox;
+        let scope = self.scope(&ResourceTarget::Sandbox {
+            sandbox_id: sandbox.id.clone(),
+        })?;
+        if matches!(&scope.owner, ResourceOwner::Person { subject } if subject == recipient)
+            || !self.shares.iter().any(|share| {
+                organizations.contains(&share.target_org_id)
+                    && share.revoked_at.is_none()
+                    && share.selector.covers(&scope)
+            })
+        {
+            return Err(ResourceAccessStoreError::Corrupt);
+        }
+        Ok(sandbox)
+    }
+
     /// Whole-parent visibility is required even if a child Agent is shared.
     pub fn organization_sandbox(
         &self,
@@ -36,11 +58,11 @@ impl ResourceAccessSnapshot {
 impl ResourceAccessService {
     /// Internal unpaginated evidence. The hierarchy reader must retain the
     /// lookahead and call finish_sandbox_inventory after all count/projection IO.
-    pub(crate) async fn organization_sandbox_candidates(
+    pub(crate) async fn sandbox_inventory_candidates(
         &self,
         context: &CallerContext,
         credential: Option<&str>,
-        organization: &SubjectId,
+        organization: Option<&SubjectId>,
         query: &OwnerSandboxQuery,
     ) -> Result<SandboxInventoryCandidates, ResourceAccessError> {
         if !context.validate_principal() {
@@ -55,28 +77,36 @@ impl ResourceAccessService {
         }
         PageRequest::new(query.page.limit, query.page.cursor.clone())
             .map_err(|_| ResourceAccessStoreError::Invalid)?;
-        if organization.as_str().trim().is_empty()
-            || organization.as_str().len() > 128
-            || organization.as_str().trim() != organization.as_str()
+        if query
+            .page
+            .cursor
+            .as_ref()
+            .is_some_and(|id| id.is_empty() || id.len() > 256 || id.trim() != id)
         {
             return Err(ResourceAccessStoreError::Invalid.into());
         }
-        let current = self
-            .inventory_context(context, credential, organization)
-            .await?;
-        let snapshots = tokio::time::timeout(
-            Duration::from_secs(15),
-            self.store.organization_sandboxes(organization, query),
-        )
-        .await
-        .map_err(|_| ResourceAccessStoreError::Unavailable)??;
+        let membership =
+            InventoryMemberships::load(self, context, credential, organization).await?;
+        let snapshots = match organization {
+            Some(organization) => self.store.organization_sandboxes(organization, query).await,
+            None => {
+                self.store
+                    .shared_sandboxes(&context.caller.subject, &membership.ids(), query)
+                    .await
+            }
+        };
+        membership.require(self)?;
+        let snapshots = snapshots?;
         if snapshots.len() > usize::from(query.page.limit) + 1 {
             return Err(ResourceAccessStoreError::Corrupt.into());
         }
         let mut previous = query.page.cursor.clone();
         let mut items = Vec::with_capacity(snapshots.len());
         for snapshot in snapshots {
-            let sandbox = snapshot.organization_sandbox(organization)?;
+            let sandbox = match organization {
+                Some(organization) => snapshot.organization_sandbox(organization)?,
+                None => snapshot.shared_sandbox(&context.caller.subject, &membership.ids())?,
+            };
             if query.status.is_some_and(|status| sandbox.status != status)
                 || previous
                     .as_deref()
@@ -89,7 +119,7 @@ impl ResourceAccessService {
                 sandbox_id: sandbox.id.clone(),
             })?;
             let decision = AccessDecision::evaluate(
-                &current,
+                &membership.context,
                 &scope,
                 &snapshot.shares,
                 AccessPurpose::Read,
@@ -98,25 +128,29 @@ impl ResourceAccessService {
             decision.require(ResourceCapability::ViewDetails)?;
             items.push(AuthorizedResource { snapshot, decision });
         }
-        self.require_inventory_membership(&current, organization)?;
-        Ok(SandboxInventoryCandidates { current, items })
+        membership.require(self)?;
+        Ok(SandboxInventoryCandidates { membership, items })
     }
 
     pub(crate) async fn finish_sandbox_inventory(
         &self,
         candidates: &SandboxInventoryCandidates,
-        organization: &SubjectId,
+        query: &OwnerSandboxQuery,
     ) -> Result<(), ResourceAccessError> {
         tokio::time::timeout(Duration::from_secs(15), async {
             let mut checks = Vec::new();
             for value in &candidates.items {
-                checks.push(self.validate_sandbox_candidate(value, organization));
+                checks.push(self.validate_sandbox_candidate(value, query));
             }
             stream::iter(checks)
                 .buffer_unordered(8)
                 .try_collect::<Vec<_>>()
                 .await?;
-            self.require_inventory_membership(&candidates.current, organization)
+            candidates.membership.require(self)?;
+            for item in &candidates.items {
+                item.decision.require(ResourceCapability::ViewDetails)?;
+            }
+            Ok(())
         })
         .await
         .map_err(|_| ResourceAccessStoreError::Unavailable)?
@@ -124,16 +158,23 @@ impl ResourceAccessService {
     async fn validate_sandbox_candidate(
         &self,
         value: &AuthorizedResource,
-        organization: &SubjectId,
+        query: &OwnerSandboxQuery,
     ) -> Result<(), ResourceAccessError> {
-        let sandbox = value.snapshot.organization_sandbox(organization)?;
-        self.validate_read_result(
-            value,
-            &ResourceTarget::Sandbox {
-                sandbox_id: sandbox.id.clone(),
-            },
-            ResourceCapability::ViewDetails,
-        )
-        .await
+        let current = self
+            .current_read_snapshot(
+                value,
+                &ResourceTarget::Sandbox {
+                    sandbox_id: value.snapshot.lineage.sandbox.id.clone(),
+                },
+                ResourceCapability::ViewDetails,
+            )
+            .await?;
+        if query
+            .status
+            .is_some_and(|status| current.lineage.sandbox.status != status)
+        {
+            return Err(ResourceAccessStoreError::Conflict.into());
+        }
+        Ok(())
     }
 }

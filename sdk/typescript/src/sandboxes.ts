@@ -1,7 +1,7 @@
 import type { ResolvedConfig } from './config.js';
 import type { OperationOptions } from './http.js';
-import { ProtocolError } from './errors.js';
-import { array } from './schema.js';
+import { ProtocolError, ValidationError } from './errors.js';
+import { array, boolean } from './schema.js';
 import {
   command,
   identity,
@@ -39,6 +39,7 @@ export interface SandboxListOptions extends PageOptions {
 
 export interface AccessibleSandboxListOptions extends SandboxListOptions {
   readonly organization?: string;
+  readonly shared?: boolean;
 }
 
 /** Owner-scoped Sandbox provisioning, hierarchy reads, and lifecycle commands. */
@@ -80,8 +81,11 @@ export class Sandboxes {
     );
   }
 
-  /** Personal inventory by default, or an explicit current organization scope. */
+  /** Personal inventory by default, or current organization / incoming shared scope. */
   listAccessible(options: AccessibleSandboxListOptions = {}) {
+    if (options.shared !== undefined) input(boolean, options.shared);
+    if (options.shared === true && options.organization !== undefined)
+      throw new ValidationError('Choose an organization or Shared with me, not both.');
     if (options.status !== undefined) input(sandboxStatus, options.status);
     return read(
       this.config,
@@ -90,6 +94,7 @@ export class Sandboxes {
         limit: options.limit,
         status: options.status,
         organization: options.organization,
+        shared: options.shared === true ? 'true' : undefined,
       }),
       page(accessibleSandboxSummary),
       options,

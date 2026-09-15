@@ -13,6 +13,14 @@ pub enum Classification {
 // Exact backend-invalid cases not claimed as typed HTTP replay. Each is checked
 // against its source shape or the SDK's real preflight, then its shared error is decoded.
 pub const LOCAL_CASES: &[(&str, Classification)] = &[
+    (
+        "shared-sandbox-inventory-mixed-scope",
+        Classification::Local,
+    ),
+    (
+        "shared-sandbox-inventory-invalid-shared",
+        Classification::TypedShape,
+    ),
     ("sandbox-command-missing-key", Classification::Local),
     ("sandbox-command-invalid-key", Classification::Local),
     ("sandbox-command-invalid-revision", Classification::Local),

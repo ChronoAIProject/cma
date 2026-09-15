@@ -840,16 +840,23 @@ Scoped results refresh every 30 seconds and expire at the earlier server deadlin
 or 55 seconds from request start, even while another refresh is pending. A read
 that exceeds 15 seconds loses its display authority. Foreground, scope/client
 changes and denied access clear old shared values and cancel streams/exports.
-Aggregate Shared-with-me scope, scoped
-artifact controls and shared lifecycle controls remain subsequent work.
+Scoped artifact controls and channel-use presentation remain subsequent work.
 
-The sidebar's existing Picker chooses Personal or a named Organization without
+The sidebar's existing Picker chooses Personal, a named Organization or Shared
+with me without
 changing the current conversation. Keep selection through sidebar collapse and
 preserve the personal composer/draft during organization browsing and access
-loss. Organization Sandboxes page independently; expanding a named Sandbox or
+loss. Organization and shared Sandboxes page independently; expanding a named Sandbox or
 Workspace reads that authorized branch. The Agent inventory link includes narrow
 Agent grants whose parents are not visible. Do not fetch hidden parent metadata
 to fill out the tree.
+
+Shared with me uses the aggregate Sandbox endpoint for parent branches and the
+shared Agent inventory for flat Agent discovery. These lists page and refresh
+independently. Empty Sandbox results explain where individually shared Agents
+appear. A parent branch is never inferred from a shared Agent. Switching scopes
+cancels pending branch reads and clears descendant labels; refreshing shared
+access preserves the active personal composer, its DOM and its draft.
 
 Shared Sandbox and Workspace details use safe names, status, child counts and
 canonical Agent links. They expose no profile, connection, path, runtime or file
