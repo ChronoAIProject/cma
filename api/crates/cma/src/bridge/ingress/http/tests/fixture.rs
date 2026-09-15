@@ -73,6 +73,18 @@ impl BridgeConnectionValidator for Provider {
 
 #[async_trait::async_trait]
 impl CallbackInboxStore for Provider {
+    async fn recover_receipt(
+        &self,
+        write: &InboxWrite,
+    ) -> Result<Option<InboxReceipt>, CallbackError> {
+        self.rows
+            .lock()
+            .await
+            .get(&write.record().id)
+            .map(|row| write.match_replay(row))
+            .transpose()
+    }
+
     async fn accept(&self, write: InboxWrite) -> Result<InboxReceipt, CallbackError> {
         self.inbox_calls.fetch_add(1, Ordering::SeqCst);
         self.entered.notify_one();
@@ -128,7 +140,13 @@ impl HttpFixture {
         request(&self.protocol)
     }
     pub fn router(&self) -> Router {
-        let ingress = CallbackIngress::new(
+        self.router_with_reply_addressing(None)
+    }
+    pub fn router_with_reply_addressing(
+        &self,
+        replies: Option<Arc<dyn crate::bridge::ingress::reply_addressing::ReplyAddressingStore>>,
+    ) -> Router {
+        let mut ingress = CallbackIngress::new(
             self.provider.clone(),
             self.provider.clone(),
             self.provider.clone(),
@@ -144,6 +162,9 @@ impl HttpFixture {
             "https://cma.example/api/v1/bridge-callbacks".into(),
         )
         .unwrap();
+        if let Some(replies) = replies {
+            ingress = ingress.with_reply_addressing(replies);
+        }
         router(Some(Arc::new(ingress)))
     }
 }

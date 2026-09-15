@@ -3,7 +3,10 @@ use mongodb::bson::{doc, Bson, Document};
 
 use super::super::sandbox_mongo::{record_bson, require_version, signed, DOCUMENT_SCHEMA_VERSION};
 
-pub(super) fn read(document: &Document, agent_id: &str) -> Result<CommandLane, CommandLedgerError> {
+pub(in crate::store) fn read(
+    document: &Document,
+    agent_id: &str,
+) -> Result<CommandLane, CommandLedgerError> {
     require_version(document).map_err(|_| CommandLedgerError::Corrupt)?;
     if document.get_str("_id").ok() != Some(agent_id) {
         return Err(CommandLedgerError::Corrupt);

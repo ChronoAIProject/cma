@@ -8,6 +8,8 @@ mod discovery_tests;
 mod fixture;
 #[path = "renewal/guard_tests.rs"]
 mod guard_tests;
+#[path = "lifecycle_tests.rs"]
+pub(crate) mod lifecycle_tests;
 use crate::sandbox::{channel_renewal::model::RenewalPhase, SandboxCredentialCustody};
 use fixture::RenewalFixture;
 use layer2_core::sandbox::{store::SandboxWorkerStore, SandboxStatus, SandboxWorkStep};

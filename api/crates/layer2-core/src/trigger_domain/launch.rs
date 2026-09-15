@@ -208,6 +208,9 @@ pub struct LaunchSeed {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Launch {
+    /// Stored beside the legacy aggregate; never accepted from public JSON.
+    #[serde(skip)]
+    pub initiation: Option<super::LaunchInitiation>,
     pub id: LaunchId,
     pub trigger_id: TriggerId,
     pub revision_digest: String,

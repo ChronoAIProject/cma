@@ -1,4 +1,6 @@
+mod launch;
 mod support;
+use launch::CreationAttribution;
 use support::{
     control_error, creation_key, profile_error, require, require_launch, runtime_error,
     store_error, validate_title,
@@ -215,41 +217,15 @@ impl AgentService {
                 "trigger origin requires launch admission".into(),
             ));
         }
-        self.create_with_profile(caller, workspace_id, request, false, false, actor.clone())
-            .await
-    }
-
-    pub async fn create_for_launch(
-        &self,
-        caller: &Caller,
-        authority: Capability,
-        workspace_id: &WorkspaceId,
-        request: CreateAgent,
-    ) -> Result<Agent, AgentServiceError> {
-        self.create_or_reuse_for_launch(caller, authority, workspace_id, request, false)
-            .await
-    }
-
-    pub async fn create_or_reuse_for_launch(
-        &self,
-        caller: &Caller,
-        authority: Capability,
-        workspace_id: &WorkspaceId,
-        request: CreateAgent,
-        reuse_existing: bool,
-    ) -> Result<Agent, AgentServiceError> {
-        require_launch(caller, authority)?;
-        let AgentOrigin::Trigger { launch_id, .. } = &request.origin else {
-            return Err(AgentServiceError::InvalidRequest(
-                "launch admission requires trigger origin".into(),
-            ));
-        };
-        let actor = crate::resource_access::ResourceActor::Trigger {
-            subject: caller.subject.clone(),
-            launch_id: crate::LaunchId(launch_id.clone()),
-        };
-        self.create_with_profile(caller, workspace_id, request, true, reuse_existing, actor)
-            .await
+        self.create_with_profile(
+            caller,
+            workspace_id,
+            request,
+            false,
+            false,
+            CreationAttribution::ordinary(actor.clone()),
+        )
+        .await
     }
 
     async fn create_with_profile(
@@ -259,7 +235,7 @@ impl AgentService {
         request: CreateAgent,
         frozen_profile: bool,
         reuse_existing: bool,
-        actor: crate::resource_access::ResourceActor,
+        attribution: CreationAttribution,
     ) -> Result<Agent, AgentServiceError> {
         self.runtime_capabilities
             .require([RuntimeCapability::Conversation])
@@ -294,7 +270,7 @@ impl AgentService {
             .transpose()
             .map_err(|error| AgentServiceError::InvalidRequest(error.to_string()))?;
         let admission = AgentAdmission {
-            created_by: Some(actor),
+            created_by: Some(attribution.actor),
             owner: caller.subject.clone(),
             workspace_id: workspace.id,
             agent_id,
@@ -307,7 +283,11 @@ impl AgentService {
             creation_key,
             event_at: now,
         };
-        let result = if reuse_existing {
+        let result = if let Some(initiation) = attribution.initiation {
+            self.store
+                .admit_agent_with_trigger_initiator(admission, initiation, reuse_existing)
+                .await
+        } else if reuse_existing {
             self.store.admit_agent_reusing_profile(admission).await
         } else {
             self.store.admit_agent(admission).await

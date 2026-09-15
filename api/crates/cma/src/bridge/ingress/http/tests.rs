@@ -15,6 +15,7 @@ use crate::bridge::ingress::capabilities::tests::fixtures::Fixture;
 
 mod boundaries;
 mod fixture;
+mod reply_addressing;
 
 use fixture::*;
 

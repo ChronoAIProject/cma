@@ -88,6 +88,26 @@ without replacing a newer reservation or changing the original recovery status.
 Waiting for a bot slot consumes no delivery attempt. Only a refusal before any
 provider request bytes are written can enter a safe automatic retry state.
 
+## Paused sessions and command order
+
+An admitted channel message keeps its place in the shared Agent queue while
+execution is held. Later normal UI or channel messages cannot overtake it.
+Steer and interrupt controls can still address the captured active turn.
+
+A released message at the head of a paused channel-created session's queue can
+schedule revival under two independent checks: the current Channel execution
+grant and the original human's lifecycle grant. CMA fences both grants, the
+exact unchanged command, its queue position, and the original resource in one
+transaction. The original command receipt remains unchanged; scheduling does
+not send a prompt. After the lifecycle worker restores the original Agent and
+conversation, the common command worker dispatches that queued message.
+
+The lifecycle worker checks the original human grant before runtime restoration
+and every advancing phase. It replaces the scoped runtime key through retained
+mint, delivery, and revocation receipts. An uncertain mint remains held; it
+never causes an automatic second mint request. Normal reply-tool eligibility
+still depends on the Agent's immutable channel-created origin.
+
 ## Compatibility and implementation status
 
 The stored reply policy retains the legacy spelling `final_response` for
@@ -105,5 +125,9 @@ recovery, grant revocation, and the absence of automatic final-answer sends.
 
 These tests establish the CMA integration using controlled provider fixtures.
 Live Telegram delivery and production upgrade acceptance remain pending.
-Runtime credential renewal and other milestone 17 lifecycle work also remain
-in progress. The current milestone work has not been rolled out to production.
+Channel image rotation, uncertain-mint orphan cleanup, lifecycle teardown, and
+other milestone 17 work remain in progress. Credential cleanup also needs a
+fresh original-owner absence check when NyxID conceals lost access with a 404;
+that response alone does not prove a previously known key was revoked. The
+current milestone work has not
+been rolled out to production.

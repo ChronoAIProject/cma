@@ -14,6 +14,8 @@ use super::*;
 use crate::store::AuthEncryptionKey;
 #[path = "inbox_receipts.rs"]
 mod receipts;
+#[path = "inbox_reply_addressing.rs"]
+mod reply_addressing;
 #[path = "inbox_work.rs"]
 mod work;
 
@@ -83,6 +85,25 @@ async fn write_with_key_lease(
     token: &str,
     key_lease: Duration,
 ) -> InboxWrite {
+    write_with_extractor(
+        store,
+        id,
+        body,
+        token,
+        key_lease,
+        &crate::bridge::ingress::NyxidCapabilities,
+    )
+    .await
+}
+
+async fn write_with_extractor(
+    store: &MongoBridgeStore,
+    id: &BridgeId,
+    body: &[u8],
+    token: &str,
+    key_lease: Duration,
+    extractor: &dyn CallbackCapabilityExtractor,
+) -> InboxWrite {
     let bridge = store.bridge(id).await.unwrap().unwrap();
     let proof = Authority
         .validate_connection(&bridge.owner, &bridge.current().unwrap().config)
@@ -119,7 +140,7 @@ async fn write_with_key_lease(
             body,
         )
         .unwrap()
-        .classify_capabilities(body, &crate::bridge::ingress::NyxidCapabilities)
+        .classify_capabilities(body, extractor)
         .unwrap()
         .bind(binding)
         .unwrap()

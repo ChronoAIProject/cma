@@ -1,6 +1,7 @@
 use super::super::channel::MongoChannelCommandStore;
 use super::*;
 use layer2_core::sandbox::agent_io::*;
+use layer2_core::sandbox::store::AgentStore;
 
 mod execution_tests;
 mod feature_gates;
@@ -150,11 +151,30 @@ async fn signed_channel_replay_restart_and_ui_share_one_order_with_actual_actor_
             .unwrap(),
         log_before
     );
-    generic::assert_ordinary_claims(
-        &c.f,
-        [ui_before.receipt.command_id, ui_after.receipt.command_id],
-    )
-    .await;
+    generic::assert_ordinary_claim(&c.f, ui_before.receipt.command_id).await;
+    assert!(generic::ordinary_claim(&c.f).await.is_none());
+    // Refusing the original held Channel head releases its position. A later
+    // UI command must never overtake it while authority is still pending.
+    c.f.service
+        .revoke(&caller(), None, c.f.revoke(&c.grant, "fifo-held-revoke"))
+        .await
+        .unwrap();
+    let (execution, sends) = execution_tests::execution(&c, false);
+    execution.release_held(&record).await;
+    let refused =
+        c.f.resources
+            .get_command(&record.receipt.envelope.command_id)
+            .await
+            .unwrap()
+            .unwrap();
+    assert_eq!(refused.receipt, record.receipt);
+    assert_eq!(refused.status, AgentResponseStatus::Failed);
+    assert_eq!(
+        refused.work.failure.unwrap().code,
+        CommandFailureCode::AuthorityRevoked
+    );
+    assert_eq!(sends.load(std::sync::atomic::Ordering::SeqCst), 0);
+    generic::assert_ordinary_claim(&c.f, ui_after.receipt.command_id).await;
     c.close().await;
 }
 
@@ -203,5 +223,79 @@ async fn command_failure_rolls_back_inbox_correlation_and_does_not_consume_agent
         .await
         .unwrap();
     assert_eq!(admitted.receipt.agent_order, first.receipt.agent_order + 1);
+    c.close().await;
+}
+
+#[tokio::test]
+#[ignore = "requires the disposable MongoDB replica contract runner"]
+async fn held_channel_head_preserves_active_turn_controls_without_releasing_later_ui_messages() {
+    let c = ChannelFixture::new().await;
+    let held = c
+        .commands
+        .reserve_channel_command(c.request().await)
+        .await
+        .unwrap();
+    let mut agent =
+        c.f.resources
+            .get_agent(&c.f.target.agent_id)
+            .await
+            .unwrap()
+            .unwrap();
+    let revision = agent.revision;
+    agent.status = layer2_core::sandbox::AgentStatus::Working;
+    agent.conversation.active_turn = Some(42);
+    agent.capabilities = layer2_core::RuntimeCapabilities::new([
+        layer2_core::RuntimeCapability::Conversation,
+        layer2_core::RuntimeCapability::Interrupt,
+    ]);
+    agent.revision += 1;
+    c.f.resources.save_agent(revision, agent).await.unwrap();
+    let later = ui_command(&c.f, "after-held-active-channel").await;
+    let control = generic::command_service(&c.f)
+        .admit(
+            &caller(),
+            "fixture-login",
+            CommandSubmissionSource::UserInterface,
+            CommandSubmission {
+                agent_id: c.f.target.agent_id.clone(),
+                command: AgentCommand::Interrupt,
+                idempotency_key: "interrupt-before-held-message".into(),
+                expected_agent_revision: None,
+                requested_model: None,
+            },
+        )
+        .await
+        .unwrap();
+    let selected = generic::ordinary_claim(&c.f).await.unwrap();
+    assert_eq!(
+        selected.receipt.envelope.command_id,
+        control.receipt.command_id
+    );
+    assert_eq!(selected.target_turn, Some(42));
+    c.f.resources
+        .reject_command(
+            &selected.work.lease.as_ref().unwrap().claim,
+            CommandFailureCode::AuthorityRevoked,
+            layer2_core::now_rfc3339(),
+        )
+        .await
+        .unwrap();
+    assert!(generic::ordinary_claim(&c.f).await.is_none());
+    assert_eq!(
+        c.f.resources
+            .get_command(&held.receipt.envelope.command_id)
+            .await
+            .unwrap(),
+        Some(held)
+    );
+    assert_eq!(
+        c.f.resources
+            .get_command(&later.receipt.command_id)
+            .await
+            .unwrap()
+            .unwrap()
+            .status,
+        AgentResponseStatus::Queued
+    );
     c.close().await;
 }

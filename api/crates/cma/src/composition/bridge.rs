@@ -145,3 +145,60 @@ pub(super) fn provisioning(
         capacity_bounds,
     })))
 }
+
+pub(super) fn sandbox_credentials(
+    issuer: Option<Arc<KeyIssuer>>,
+    auth: Arc<crate::auth::AuthState>,
+    stores: &MongoStores,
+    bridge: &crate::bridge::composition::BridgeComposition,
+    definitions: &layer2_core::bridge::BridgeService,
+    credentials: Option<Arc<crate::bridge::ManagedBridgeCredentials>>,
+    adapter: Arc<dyn layer3_adapter::SandboxAdapter>,
+) -> Arc<dyn crate::sandbox::SandboxCredentialController> {
+    use crate::sandbox::{
+        ManagedSandboxCredentials, SandboxCredentialController, UnavailableSandboxCredentials,
+    };
+    let ordinary: Arc<dyn SandboxCredentialController> = match issuer {
+        Some(issuer) => {
+            ManagedSandboxCredentials::new(issuer, auth, stores.sandbox_credentials.clone())
+        }
+        None => Arc::new(UnavailableSandboxCredentials),
+    };
+    crate::sandbox::channel_credentials::ChannelGuardedCredentials::with_lifecycle(
+        ordinary,
+        bridge.allocations.clone(),
+        channel_lifecycle_credentials(stores, bridge, definitions, credentials, adapter),
+    )
+}
+
+fn channel_lifecycle_credentials(
+    stores: &MongoStores,
+    bridge: &crate::bridge::composition::BridgeComposition,
+    definitions: &layer2_core::bridge::BridgeService,
+    credentials: Option<Arc<crate::bridge::ManagedBridgeCredentials>>,
+    adapter: Arc<dyn layer3_adapter::SandboxAdapter>,
+) -> Option<Arc<dyn crate::sandbox::channel_lifecycle_credentials::ChannelLifecycleCredentials>> {
+    use crate::bridge::provisioning::{
+        revival::ManagedChannelRevivalAuthority, BridgeProvisioningAuthority,
+    };
+    let credentials = credentials?;
+    let dependencies = credentials.provisioning.clone()?;
+    Some(Arc::new(
+        crate::sandbox::channel_lifecycle_credentials::ChannelLifecycleCredentialDriver {
+            resources: stores.sandbox_model.clone(),
+            authority: Arc::new(ManagedChannelRevivalAuthority {
+                definitions: definitions.clone(),
+                allocations: bridge.allocations.clone(),
+                authority: Arc::new(BridgeProvisioningAuthority::new(
+                    credentials.clone(),
+                    dependencies.clone(),
+                )),
+            }),
+            allocations: bridge.allocations.clone(),
+            credentials,
+            issuer: dependencies.issuer.clone(),
+            custody: stores.sandbox_credentials.clone(),
+            adapter,
+        },
+    ))
+}

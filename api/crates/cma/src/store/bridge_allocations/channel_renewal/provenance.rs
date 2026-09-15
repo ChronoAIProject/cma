@@ -24,6 +24,7 @@ impl SandboxCredentialProvenance for MongoBridgeAllocationStore {
             || document.contains_key("channel_creation")
             || document.contains_key("channel_provisioning")
             || document.contains_key("channel_renewal")
+            || document.contains_key("channel_lifecycle_credential")
         {
             return Err(held());
         }

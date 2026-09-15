@@ -13,7 +13,7 @@ pub(crate) fn configured(
     resources: Arc<dyn ResourceShareStore>,
     inbox: Arc<dyn CallbackInboxStore>,
     flags: crate::config::BridgeFeatureFlags,
-) -> Result<Option<Arc<CallbackIngress>>, CallbackError> {
+) -> Result<Option<CallbackIngress>, CallbackError> {
     if !flags.enabled(crate::config::bridge_flags::BridgeFlag::Ingress) {
         return Ok(None);
     }
@@ -31,14 +31,14 @@ pub(crate) fn configured(
         }),
         flags,
     );
-    Ok(Some(Arc::new(CallbackIngress::new(
+    Ok(Some(CallbackIngress::new(
         bridges,
         connections,
         inbox,
         deployment.keys,
         deployment.policy,
         deployment.callback_root,
-    )?)))
+    )?))
 }
 
 struct Deployment {

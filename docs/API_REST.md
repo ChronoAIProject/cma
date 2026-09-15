@@ -403,8 +403,12 @@ Shared recipients and independent operators receive only the category and
 timestamp. Policy and the original membership deadline are checked after IO.
 
 New manual creation records the authenticated actor separately from ownership.
-Trigger workers record their exact Trigger actor and launch ID; the original
-human/API launcher remains unknown unless captured explicitly. Legacy inference
+New authenticated Trigger launches capture the original verified initiating actor
+in an immutable Launch sidecar. Trigger workers retain their exact Trigger actor
+and launch ID as the creating identity, while Agent provenance separately records
+that initiating actor. Launch replay and Agent creation recheck the original
+sidecar; request JSON cannot select either actor. Older launches without this
+evidence retain an unknown initiator. Legacy inference
 requires the matching initial creation log and canonical creation key and never
 invents a creator from the owner. Workspace profile origins are retained with
 unknown creation category when no supported category can be proved. Retries,
@@ -417,8 +421,8 @@ service shutdown. New facts are captured transactionally; existing provenance is
 never rewritten. Missing or inconsistent ancestry refuses capture, and missing
 creation evidence produces `legacy_unknown` without inventing a creator. Mongo
 uses metadata lineage guards while preserving serialized resource records,
-revisions, conversations, runtime attachments and history. Channel allocation
-remains unfinished; the channel category is reserved for that allocation path.
+revisions, conversations, runtime attachments and history. Staged channel
+allocation records the actual channel-created Agent category and original source.
 Explicit channel binding and accepted-command history is available through the
 separate channel-usage routes below.
 The web provides authorized organization hierarchy navigation and owner share management.

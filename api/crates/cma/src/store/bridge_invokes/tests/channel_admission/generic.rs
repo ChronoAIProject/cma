@@ -64,35 +64,30 @@ pub(super) async fn assert_waiting_view(f: &Fixture, command: &AdmittedAgentComm
     assert_eq!(view.failure, None);
 }
 
-pub(super) async fn assert_ordinary_claims(
-    f: &Fixture,
-    ids: [layer2_core::ids::AgentCommandId; 2],
-) {
-    // Unchanged old worker queries skip the unbound wait. Neither adjacent UI
-    // command is blocked and no Channel preparation or approval is performed.
-    for id in ids {
-        let now = std::time::SystemTime::now();
-        let next = f
-            .resources
-            .claim_next_command(CommandClaimRequest {
-                agent_id: f.target.agent_id.clone(),
-                holder: "ordinary-worker".into(),
-                now: layer2_core::rfc3339_at(now),
-                expires_at: layer2_core::rfc3339_at(now + std::time::Duration::from_secs(30)),
-            })
-            .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(next.receipt.envelope.command_id, id);
-        f.resources
-            .reject_command(
-                &next.work.lease.as_ref().unwrap().claim,
-                CommandFailureCode::AuthorityUnavailable,
-                layer2_core::now_rfc3339(),
-            )
-            .await
-            .unwrap();
-    }
+pub(super) async fn ordinary_claim(f: &Fixture) -> Option<AdmittedAgentCommand> {
+    let now = std::time::SystemTime::now();
+    f.resources
+        .claim_next_command(CommandClaimRequest {
+            agent_id: f.target.agent_id.clone(),
+            holder: "ordinary-worker".into(),
+            now: layer2_core::rfc3339_at(now),
+            expires_at: layer2_core::rfc3339_at(now + std::time::Duration::from_secs(30)),
+        })
+        .await
+        .unwrap()
+}
+
+pub(super) async fn assert_ordinary_claim(f: &Fixture, id: layer2_core::ids::AgentCommandId) {
+    let next = ordinary_claim(f).await.unwrap();
+    assert_eq!(next.receipt.envelope.command_id, id);
+    f.resources
+        .reject_command(
+            &next.work.lease.as_ref().unwrap().claim,
+            CommandFailureCode::AuthorityUnavailable,
+            layer2_core::now_rfc3339(),
+        )
+        .await
+        .unwrap();
 }
 
 pub(super) struct NoExecution;

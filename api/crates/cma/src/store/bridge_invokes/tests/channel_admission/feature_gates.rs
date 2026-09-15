@@ -86,6 +86,8 @@ async fn disabled_execution_blocks_fresh_admission_recovers_receipts_and_drains_
 
     gate.enabled.store(true, Ordering::SeqCst);
     let held = admit(&c, &service).await.unwrap();
+    let later_ui = ui_command(&c.f, "ui-after-disabled-channel").await;
+    assert_eq!(later_ui.receipt.agent_order, held.receipt.agent_order + 1);
     assert_eq!(
         held.receipt.agent_order, 1,
         "disabled admission must not consume shared FIFO order"
@@ -126,6 +128,10 @@ async fn disabled_execution_blocks_fresh_admission_recovers_receipts_and_drains_
             .unwrap(),
         Some(held.clone())
     );
+    assert!(
+        generic::ordinary_claim(&c.f).await.is_none(),
+        "a feature-held Channel head must retain its order ahead of later UI work"
+    );
 
     gate.enabled.store(true, Ordering::SeqCst);
     let authority = service
@@ -159,6 +165,15 @@ async fn disabled_execution_blocks_fresh_admission_recovers_receipts_and_drains_
             .unwrap();
     assert_eq!(current.receipt, held.receipt);
     assert_eq!(current.status, AgentResponseStatus::InProgress);
+    assert_eq!(
+        c.f.resources
+            .get_command(&later_ui.receipt.command_id)
+            .await
+            .unwrap()
+            .unwrap()
+            .status,
+        AgentResponseStatus::Queued
+    );
     assert_eq!(
         receipts.find_one(doc! {"_id":&c.inbox.id}).await.unwrap(),
         Some(permanent)

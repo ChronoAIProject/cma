@@ -106,7 +106,8 @@ impl BridgeComposition {
             inbox.clone(),
             config.bridge_flags,
         )
-        .map_err(|error| format!("bridge callback verifier is not usable: {error}"))?;
+        .map_err(|error| format!("bridge callback verifier is not usable: {error}"))?
+        .map(|ingress| Arc::new(ingress.with_reply_addressing(replies.clone())));
         Ok(Self {
             management,
             callbacks: super::ingress::http::router(ingress),

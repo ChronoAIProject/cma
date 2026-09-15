@@ -153,6 +153,7 @@ pub(super) fn compose(
     let worker = AgentCommandWorker::new(
         harness.store.clone(),
         Arc::new(crate::commands::ResourceCommandExecution {
+            channel_revival: None,
             channel: None,
             invokes: None,
             authority,

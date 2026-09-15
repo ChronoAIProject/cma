@@ -1,6 +1,6 @@
 use layer2_core::sandbox::agent_io::{
-    command_ready_for_claim, AdmittedAgentCommand, CommandClaim, CommandClaimRequest, CommandLane,
-    CommandLedgerError,
+    command_ready_for_claim, AdmittedAgentCommand, AgentCommand, CommandClaim, CommandClaimRequest,
+    CommandLane, CommandLedgerError,
 };
 use mongodb::bson::doc;
 use mongodb::ClientSession;
@@ -112,12 +112,23 @@ async fn claim_next(
         .map_err(|_| CommandLedgerError::Corrupt)?;
     let mut candidates = store
         .agent_commands
-        .find(doc! { "agent_id": request.agent_id.as_str(), "status": "queued" })
+        .find(doc! { "agent_id": request.agent_id.as_str(),
+        "status": { "$in": ["queued", "waiting_action"] } })
         .sort(doc! { "agent_order": 1 })
         .session(&mut *session)
         .await?;
+    let mut message_held = false;
     while let Some(document) = candidates.next(&mut *session).await {
         let mut command = records::read(&document?)?;
+        message_held |= command.holds_message_order();
+        if message_held
+            && matches!(
+                command.receipt.envelope.command,
+                AgentCommand::Message { .. }
+            )
+        {
+            continue;
+        }
         if !command_ready_for_claim(&command, agent.as_ref(), &request.now) {
             continue;
         }

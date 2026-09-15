@@ -58,16 +58,50 @@ impl SandboxWorker {
         at: String,
         events: Vec<SandboxEventKind>,
     ) -> Result<(), SandboxStoreError> {
+        let mutation = SandboxLifecycleMutation {
+            guard: SandboxMutationGuard::capture(current),
+            sandbox: next,
+            agents,
+            agent_scope,
+            appended_at: at,
+            events,
+        };
+        // Pure retry publication has no runtime/credential effect and remains
+        // possible after human authority disappears. Every advancing revival
+        // phase fences the same human grant inside its Agent/Sandbox commit.
+        let retry = mutation.sandbox.lifecycle == current.lifecycle
+            && mutation.sandbox.runtime == current.runtime
+            && mutation.sandbox.credential == current.credential
+            && mutation.sandbox.status == current.status
+            && mutation.agents.is_empty()
+            && mutation
+                .events
+                .iter()
+                .all(|event| matches!(event, SandboxEventKind::WorkStepFailed { .. }));
+        if matches!(
+            current.lifecycle.operation,
+            Some(layer2_core::sandbox::SandboxLifecycleOperation::Revive { .. })
+        ) && !retry
+        {
+            match self
+                .dependencies
+                .credentials
+                .commit_channel_phase(current, &mutation)
+                .await
+            {
+                Ok(true) => return Ok(()),
+                Ok(false) => {}
+                Err(_) => {
+                    return Err(SandboxStoreError::Unavailable(
+                        "Channel revival publication requires current original human authority"
+                            .into(),
+                    ))
+                }
+            }
+        }
         self.dependencies
             .store
-            .commit_sandbox_lifecycle(SandboxLifecycleMutation {
-                guard: SandboxMutationGuard::capture(current),
-                sandbox: next,
-                agents,
-                agent_scope,
-                appended_at: at,
-                events,
-            })
+            .commit_sandbox_lifecycle(mutation)
             .await
     }
 

@@ -17,6 +17,7 @@ mod configured;
 pub(crate) mod http;
 pub(crate) use configured::configured;
 mod keys;
+pub(crate) mod reply_addressing;
 pub(crate) use keys::PinnedCallbackKeys;
 
 pub(crate) struct CallbackIngress {
@@ -27,6 +28,7 @@ pub(crate) struct CallbackIngress {
     verifier: CallbackVerifier,
     callback_root: String,
     workers: Semaphore,
+    reply_addressing: Option<Arc<dyn reply_addressing::ReplyAddressingStore>>,
 }
 
 impl CallbackIngress {
@@ -58,7 +60,16 @@ impl CallbackIngress {
             verifier: CallbackVerifier::new(policy)?,
             callback_root,
             workers: Semaphore::new(16),
+            reply_addressing: None,
         })
+    }
+
+    pub(crate) fn with_reply_addressing(
+        mut self,
+        store: Arc<dyn reply_addressing::ReplyAddressingStore>,
+    ) -> Self {
+        self.reply_addressing = Some(store);
+        self
     }
 
     /// The transport must also limit the streaming body to 1 MiB before buffering.
@@ -132,8 +143,30 @@ impl CallbackIngress {
         let signed = match verify(&keyset) {
             Err(CallbackError::KeysUnavailable) => verify(self.keys.get(true).await?.as_ref())?,
             result => result?,
-        }
-        .classify_capabilities(body, &capabilities::NyxidCapabilities)?;
+        };
+        let reply = if matches!(&config.admission,
+            layer2_core::bridge::BridgeAdmissionPolicy::Scoped { policy }
+                if matches!(policy.groups, layer2_core::bridge::partition::GroupAdmission::ReplyToBot
+                    | layer2_core::bridge::partition::GroupAdmission::MentionOrReplyToBot))
+        {
+            if let Some(store) = &self.reply_addressing {
+                let payload = signed.authenticated_payload(body)?;
+                match reply_addressing::ReplyLookup::authenticated(&payload)? {
+                    Some(lookup) => store.confirmed_reply(&lookup).await,
+                    None => Ok(None),
+                }
+            } else {
+                Ok(None)
+            }
+        } else {
+            Ok(None)
+        };
+        let (reply, lookup_error) = match reply {
+            Ok(reply) => (reply, None),
+            Err(error) => (None, Some(error)),
+        };
+        let signed =
+            signed.classify_capabilities(body, &reply_addressing::ReplyCapabilities(reply))?;
         // Only cryptographically authenticated and bounded callbacks may cause
         // selected-key custody or owner/provider inventory IO. The signed
         // snapshot alone still cannot authorize durable acceptance.
@@ -143,6 +176,9 @@ impl CallbackIngress {
             .await
             .map_err(|_| CallbackError::BindingUnavailable)?;
         let write = signed.bind(CallbackBinding::new(bridge, proof)?)?;
+        if let Some(error) = lookup_error {
+            return self.inbox.recover_receipt(&write).await?.ok_or(error);
+        }
         self.inbox.accept(write).await
     }
 }

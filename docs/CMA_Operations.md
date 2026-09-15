@@ -186,6 +186,16 @@ while historical unaudited effects remain explicitly unaudited. There is no audi
 TTL or cleanup migration in this change. Release upgrade/rollback evidence still
 requires the disposable continuity campaign.
 
+New authenticated Trigger launches also retain an immutable initiating-actor
+sidecar, distinct from the Trigger identity that performs resource creation.
+This evidence is fenced with the exact Launch effect when Agent provenance is
+created. Older launches remain valid with an unknown initiating actor. Rollback
+acceptance for these new writes is still open: an older whole-document Launch
+writer can discard the sidecar, and an older provenance validator can reject a
+distinct initiating actor. Before rollout, a compatible rollback writer/reader
+and the previous-version disposable continuity campaign must preserve this
+evidence; deleting or relabeling it is not a recovery procedure.
+
 Ordinary CMA provider authentication refuses NyxID relay access, callback and
 reply tokens, including relay key/scope claims. NyxID userinfo can project the
 bot owner's subject and RBAC from a relay access token; that projection does not
