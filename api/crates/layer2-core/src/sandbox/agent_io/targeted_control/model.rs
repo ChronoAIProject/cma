@@ -152,6 +152,15 @@ pub struct AdmittedTargetedControl {
     pub binding: TargetedControlBinding,
 }
 
+/// Scoped inspection under fresh authority. A refusal is returned only after
+/// the store commits a fence proving this exact stale intent cannot be admitted.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TargetedControlInspection {
+    Existing(Box<AdmittedTargetedControl>),
+    Missing,
+    NotAdmitted,
+}
+
 /// Safe acceptance and delivery view. A Completed control means delivered;
 /// the target response's own durable outcome establishes cancellation.
 #[derive(Debug, Clone, PartialEq, Eq)]

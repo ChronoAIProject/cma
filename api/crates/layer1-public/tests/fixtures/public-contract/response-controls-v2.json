@@ -1011,6 +1011,42 @@
         "bodyKind": "json"
       },
       "captures": {}
+    },
+    {
+      "id": "response-controls-v2-stale-not-admitted",
+      "operation": "POST /api/v2/agents/{agent_id}/responses/{response_id}/controls",
+      "scenario": "response_controls_v2_stale",
+      "request": {
+        "method": "POST",
+        "path": "/api/v2/agents/agt_fixture/responses/resp_control_source/controls",
+        "headers": {
+          "Idempotency-Key": "stale-original",
+          "content-type": "application/json"
+        },
+        "body": {
+          "turn_sequence": 4,
+          "expected_agent_revision": 3,
+          "command": {
+            "type": "cancel"
+          }
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "error": {
+            "type": "invalid_request_error",
+            "code": "response_control_not_admitted",
+            "message": "The original control was not admitted and its Agent revision is permanently stale. Observe again before creating a new intent.",
+            "param": null
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
     }
   ]
 }

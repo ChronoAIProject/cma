@@ -2369,6 +2369,7 @@
         "response_not_found",
         "agent_command_key_conflict",
         "response_control_conflict",
+        "response_control_not_admitted",
         "capability_unsupported",
         "invalid_control_request",
         "invalid_control_observation",

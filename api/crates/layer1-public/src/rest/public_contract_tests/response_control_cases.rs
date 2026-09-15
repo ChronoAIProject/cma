@@ -6,12 +6,20 @@ use crate::responses::v2::controls::fixtures::{context, fixture};
 
 pub(super) async fn scenario(name: &str) -> Option<Scenario> {
     let mode = name.strip_prefix("response_controls_v2_")?;
-    assert!(["owner", "foreign", "anonymous", "unsupported", "queued"].contains(&mode));
+    assert!([
+        "owner",
+        "foreign",
+        "anonymous",
+        "unsupported",
+        "queued",
+        "stale"
+    ]
+    .contains(&mode));
     let f = fixture(mode != "queued").await;
     if mode == "owner" {
         crate::responses::v2::controls::fixtures::pending_approval(&f, "approval-contract").await;
     }
-    if mode == "unsupported" {
+    if mode == "unsupported" || mode == "stale" {
         let mut agent = f
             .store
             .get_agent(&AgentId("agt_fixture".into()))
@@ -19,7 +27,9 @@ pub(super) async fn scenario(name: &str) -> Option<Scenario> {
             .unwrap()
             .unwrap();
         let previous = agent.revision;
-        agent.capabilities = RuntimeCapabilities::new([RuntimeCapability::Conversation]);
+        if mode == "unsupported" {
+            agent.capabilities = RuntimeCapabilities::new([RuntimeCapability::Conversation]);
+        }
         agent.revision += 1;
         f.store.save_agent(previous, agent).await.unwrap();
     }

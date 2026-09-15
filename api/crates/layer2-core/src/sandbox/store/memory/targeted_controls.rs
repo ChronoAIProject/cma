@@ -1,15 +1,42 @@
 use crate::sandbox::agent_io::{
     validate_command_reservation_policy, AdmittedAgentCommand, AdmittedTargetedControl,
-    AgentCommand, CommandLedgerError, CommandReservationResult, TargetedControlReservation,
+    AgentCommand, CommandLedgerError, CommandReservationResult, TargetedControlInspection,
+    TargetedControlReservation,
 };
 use crate::sandbox::store::{InMemorySandboxStore, State};
 use crate::sandbox::{Agent, PendingAgentApprovals};
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Mode {
+    Lookup,
+    Reserve,
+    Inspect,
+}
 
 pub(super) fn apply(
     store: &InMemorySandboxStore,
     request: TargetedControlReservation,
     create: bool,
 ) -> Result<Option<AdmittedTargetedControl>, CommandLedgerError> {
+    let mode = if create { Mode::Reserve } else { Mode::Lookup };
+    Ok(match execute(store, request, mode)? {
+        TargetedControlInspection::Existing(existing) => Some(*existing),
+        TargetedControlInspection::Missing | TargetedControlInspection::NotAdmitted => None,
+    })
+}
+
+pub(super) fn inspect(
+    store: &InMemorySandboxStore,
+    request: TargetedControlReservation,
+) -> Result<TargetedControlInspection, CommandLedgerError> {
+    execute(store, request, Mode::Inspect)
+}
+
+fn execute(
+    store: &InMemorySandboxStore,
+    request: TargetedControlReservation,
+    mode: Mode,
+) -> Result<TargetedControlInspection, CommandLedgerError> {
     request.validate()?;
     let mut state = store.lock();
     request.command.require_current_authority()?;
@@ -48,10 +75,17 @@ pub(super) fn apply(
             .binding
             .validate_response(&existing.record, response)?;
         request.command.require_current_authority()?;
-        return Ok(Some(existing));
+        return Ok(TargetedControlInspection::Existing(Box::new(existing)));
     }
-    if !create {
-        return Ok(None);
+    if mode != Mode::Reserve {
+        if mode == Mode::Inspect && request.command.expected_agent_revision < agent.revision {
+            request.validate_source(agent, &response(&state, &request)?)?;
+            request.command.require_current_authority()?;
+            // The same lock fences admission and resource mutations. No old
+            // revision can reserve after this atomic absence observation.
+            return Ok(TargetedControlInspection::NotAdmitted);
+        }
+        return Ok(TargetedControlInspection::Missing);
     }
     let response = response(&state, &request)?;
     request.validate_target(agent, &response)?;
@@ -79,7 +113,7 @@ pub(super) fn apply(
     }
     request.command.require_current_authority()?;
     *state = candidate;
-    Ok(Some(result))
+    Ok(TargetedControlInspection::Existing(Box::new(result)))
 }
 
 fn response(

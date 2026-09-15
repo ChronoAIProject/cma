@@ -12,6 +12,12 @@ pub(super) fn control(value: TargetedControlError) -> Response {
             "capability_unsupported",
             "The observed Agent runtime does not support this control operation.",
         ),
+        TargetedControlError::NotAdmitted => error::error(
+            StatusCode::CONFLICT,
+            "response_control_not_admitted",
+            "The original control was not admitted and its Agent revision is permanently stale. Observe again before creating a new intent.",
+            None,
+        ),
         TargetedControlError::Admission(value) => admission(value),
     }
 }

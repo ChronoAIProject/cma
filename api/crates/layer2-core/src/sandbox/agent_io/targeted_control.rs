@@ -8,8 +8,8 @@ mod reservation;
 mod service;
 
 pub use model::{
-    AdmittedTargetedControl, TargetedControlBinding, TargetedControlStatusView,
-    TargetedControlSubmission, TargetedResponse,
+    AdmittedTargetedControl, TargetedControlBinding, TargetedControlInspection,
+    TargetedControlStatusView, TargetedControlSubmission, TargetedResponse,
 };
 pub use observation::{ResponseControlObservation, ResponseControlRuntimeSupport};
 pub use public_admission::TargetedControlError;
