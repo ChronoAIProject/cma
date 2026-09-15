@@ -21,6 +21,7 @@ import { Resources } from './Resources';
 import { BrandLoading } from '../landing/LandingCharacter';
 import { LifecycleProgress } from '../sandbox/LifecycleProgress';
 import { AgentSourceLabel, useAgentSource } from './source';
+import { useAgentProvenance } from './provenance';
 
 interface AgentSurfaceProps {
   readonly viewerId?: string;
@@ -81,6 +82,7 @@ export function AgentSurface({
   const documentTitle =
     state.status === 'ready' ? `${state.detail.title ?? 'Untitled agent'} · CMA` : undefined;
   const source = useAgentSource(agentId, state.status === 'ready');
+  const provenance = useAgentProvenance(agentId, state.status === 'ready');
   const sandboxOwner = controller.progressObservation?.sandbox.owner;
   const readOnly =
     viewerId !== undefined && sandboxOwner !== undefined && viewerId !== sandboxOwner;
@@ -180,7 +182,7 @@ export function AgentSurface({
             onClick={() => onDetailsOpenChange(!detailsOpen)}
           />
         </div>
-        <AgentSourceLabel source={source} />
+        <AgentSourceLabel source={source} provenance={provenance} />
         {verified?.services.some((service) => service.service === subscriptionService) ? (
           <Button
             onClick={() =>
@@ -240,7 +242,9 @@ export function AgentSurface({
         <Composer
           key={`composer:${agentId}`}
           quickMessages={
-            source.status === 'ready' ? source.value.trigger?.quick_messages : undefined
+            source.status === 'ready' && source.value.access !== 'shared'
+              ? source.value.trigger?.quick_messages
+              : undefined
           }
           status={status}
           pausedNotice={pausedNotice}

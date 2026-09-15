@@ -10,6 +10,7 @@ import { IconCloseOutline16, IconStopFill16, IconTrashOutline16 } from '../ui/ic
 import type { AgentCommand } from './controller';
 import './Details.css';
 import { ReferenceLink } from '../profiles/ReferenceLink';
+import { creationLabel, useAgentProvenance } from './provenance';
 
 interface AgentDetailsProps {
   readonly detail?: AgentDetail;
@@ -82,6 +83,7 @@ export function AgentDetails({
   onStop,
   onDelete,
 }: AgentDetailsProps) {
+  const provenance = useAgentProvenance(detail?.id ?? '', open && detail !== undefined);
   const [confirmStop, setConfirmStop] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const heading = useRef<HTMLHeadingElement>(null);
@@ -119,6 +121,22 @@ export function AgentDetails({
         )}
       </header>
       <div className="agent-details__scroll">
+        <Band title="Creation">
+          <dl>
+            <Fact term="Origin">{creationLabel(provenance)}</Fact>
+            {provenance.status === 'ready' ? (
+              <Fact term="Created">
+                <time dateTime={provenance.value.created_at}>
+                  {new Date(provenance.value.created_at).toLocaleString()}
+                </time>
+              </Fact>
+            ) : null}
+            {provenance.status === 'ready' &&
+            provenance.value.details?.workspace_profile_index != null ? (
+              <Fact term="Provisioning">Workspace Profile</Fact>
+            ) : null}
+          </dl>
+        </Band>
         <Band title="Sandbox">
           <dl>
             <Fact term="Name">

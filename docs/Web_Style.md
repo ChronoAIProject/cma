@@ -434,6 +434,15 @@ shows title, state and last activity. Rows retain 32px minimum height and 8px
 radius, with consistent status/icon slots. Expansion state is scoped to the
 signed-in viewer and survives route changes.
 
+Agent metadata also shows its authorized immutable creation category in the
+existing secondary text style: Manual, Trigger, Channel, or Unknown origin.
+Parent summaries count each child's category and remain complete when the tree
+is filtered; an unavailable child fact suppresses the summary. An existing
+native select labeled Agent creation filters the current tree by category.
+Loading and refused facts never become the Unknown origin category. The filter
+reports incomplete reads and does not imply that archived or other inventories
+were searched. No private actor or external source references appear in rows.
+
 Expansion and navigation are separate keyboard-operable commands, with named
 `aria-expanded` state. A collapsed group retains its count. Paused or reviving
 Sandboxes hide their descendants and expansion controls until fully Active with
@@ -720,9 +729,11 @@ the draft. Track composition lifecycle as well as native composition flags and
 the IME key code used by Safari. Ordinary Enter sends after composition ends;
 Shift+Enter inserts a newline. Composition completion alone never sends.
 
-Trigger-created Agents show their original Trigger name as a native link in the
-conversation header; manually created and Workspace-Profile-created Agents have
-distinct written source labels. Source loading or failure does not block history
+The conversation header labels immutable creation as Created manually, Created
+by Trigger, Created by channel bridge, or Creation origin unknown. A missing or
+refused read says Creation origin unavailable. A resolvable published Trigger
+appears separately as a native link labeled Published Trigger; later Trigger
+reuse cannot relabel an Agent. Source loading or failure does not block history
 or ordinary messages. Do not substitute internal IDs for missing display names.
 
 An unframed, wrapping row directly above the composer contains up to eight
@@ -780,7 +791,12 @@ remains available during saving or failed Sandbox reads for a known active turn.
 
 ### Details and readings
 
-The Details drawer contains Sandbox status, pinned profile, size and services;
+The Details drawer starts with immutable creation origin and timestamp in the
+existing fact layout. Authorized Workspace Profile provisioning is a separate
+fact, including when creation category is unknown. Closing or changing the view
+clears optional provenance until it is authorized again.
+
+The drawer also contains Sandbox status, pinned profile, size and services;
 Workspace path, source and resolved commit; Worktree path and branch; Agent
 Profile model, effort, permission and skills; first-message state; and the
 separately confirmed Stop/Delete controls. No credential, provider token, private
@@ -1772,3 +1788,4 @@ Append-only. Never edit or delete an entry.
 | 2026-09-09 | Add shared showing and dismissal fades for notification messages and dialogs, retaining only an inert exit frame, releasing focus immediately, cancelling stale dismissal on reopen, and honoring reduced motion without changing message semantics or geometry. |
 | 2026-09-09 | Add the Sandbox Profile Availability band with public-only warmup, a one-to-five target and Always keep alive, using existing fields and checkbox rows. Clarify the editable private-copy Marketplace action and its fresh Sandbox provisioning behavior. |
 | 2026-09-14 | Keep active Thinking visible above the composer with the rotating compact CMA character and elapsed time restored from the recorded turn start. Limit its disclosure to live reasoning and pending tools; show each settled tool in its own chronological container, preserving replay identity, unknown outcomes and accessible bounded details. |
+| 2026-09-15 | Display immutable Agent creation categories independently of published Trigger shortcuts, add creation facts to Details, and use existing tree metadata and native-select patterns for per-Agent categories, complete child summaries and current-tree origin filtering. Clear optional facts on changed view/access context and keep private source references out of tree rows. |

@@ -55,7 +55,8 @@ export function createRestWebClient(sdk: Cma): CmaWebClient {
     readWorkspace: async (id, options) => workspaceDetail(await sdk.workspaces.read(id, options)),
     readAgent: async (id, options) => agentDetail(await sdk.agents.read(id, options)),
     readAgentResources: (id, options) => sdk.agents.resources(id, options),
-    readAgentSource: (id, options) => sdk.agents.source(id, options),
+    readAgentSource: (id, options) => sdk.agents.sourceAccessible(id, options),
+    readAgentProvenance: (id, options) => sdk.agents.provenance(id, options),
     readSandboxProfileCapacity: async (reference, options) => {
       const content = await pinnedSandboxProfile(reference, options);
       const cpuMillis = content.cpu_millis;

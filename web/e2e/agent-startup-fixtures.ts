@@ -179,6 +179,23 @@ export class LocalStartup {
           return reply({ items: this.workspace.agents });
         case '/api/v1/agents/agt_contract':
           return reply(this.agent);
+        case '/api/v1/agents/agt_contract/provenance':
+          return reply({
+            agent_id: this.agent.id,
+            created_at: this.agent.created_at,
+            creation_origin: 'legacy_unknown',
+          });
+        case '/api/v1/agents/agt_contract/source':
+          return reply({ agent_id: this.agent.id, origin: { type: 'manual' } });
+        case '/api/v1/agents/agt_contract/resources':
+          return reply(
+            {
+              code: 'unavailable',
+              detail: 'Runtime resources are unavailable in this local fixture.',
+              status: 503,
+            },
+            503,
+          );
         case '/api/v1/agents/agt_contract/transcript':
           return reply({
             agent_id: this.agent.id,

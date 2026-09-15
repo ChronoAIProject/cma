@@ -350,10 +350,21 @@ never rewritten. Missing or inconsistent ancestry refuses capture, and missing
 creation evidence produces `legacy_unknown` without inventing a creator. Mongo
 uses metadata lineage guards while preserving serialized resource records,
 revisions, conversations, runtime attachments and history. Channel allocation/
-history, inventory filters and UI integration remain unfinished; the channel
-category is reserved for that work.
+history, REST inventory filters, org/shared inventory UI and exports remain
+unfinished; the channel category is reserved for that work.
 
-`GET /api/v1/agents/{id}/source` returns current-authority creation provenance.
+The web Agent header and details panel use this immutable category for creation
+labels. A later published Trigger shortcut is displayed separately and cannot
+relabel a manual or Workspace Profile Agent. Missing or refused provenance stays
+unavailable; it is never inferred from a shortcut. The Sandbox tree shows a
+category per Agent, derives parent summaries from all loaded child facts, and
+offers a creation-origin filter over Agents in that tree. It reads at most four
+optional provenance projections concurrently and retains only categories for
+tree rows. Facts refresh once per minute and on foreground, and are discarded
+on changed viewer/client context, disabled views, or read refusal. These tree
+filters do not add REST inventory filters or discover archived resources.
+
+`GET /api/v1/agents/{id}/source` returns authorized provisioning origin and shortcuts.
 Personal owners retain the existing source document:
 `manual`, `workspace_profile`, or `trigger`. Trigger-created Agents also include
 the published Trigger title, public id, revision and quick messages when the
