@@ -15,6 +15,7 @@ use super::live_agents::LiveAgentRegistry;
 #[cfg(test)]
 use layer2_core::sandbox::SandboxPolicy;
 
+mod execute;
 mod home;
 mod lifecycle;
 mod provisioning;
@@ -232,67 +233,5 @@ impl SandboxWorker {
         now: SystemTime,
     ) -> Result<(), SandboxStoreError> {
         Box::pin(self.execute(sandbox, now)).await
-    }
-
-    async fn execute(&self, sandbox: Sandbox, now: SystemTime) -> Result<(), SandboxStoreError> {
-        if sandbox.lifecycle.checkpoint_capture.is_some() {
-            return self
-                .retry_failure(
-                    sandbox,
-                    support::WorkerFailure::retryable("checkpoint writer resumption is pending"),
-                    now,
-                )
-                .await;
-        }
-        if matches!(
-            sandbox.work.step,
-            SandboxWorkStep::RunInstall
-                | SandboxWorkStep::DeliverInitialCredential
-                | SandboxWorkStep::DeliverRotatedCredential
-                | SandboxWorkStep::CreateProfileWorkspace(_)
-        ) {
-            if let Err(error) = super::runtime_attachment::adopt_bound_runtime(
-                self.dependencies.adapter.as_ref(),
-                &sandbox,
-                &self.config.deployment_id,
-            )
-            .await
-            {
-                return self
-                    .handle_failure(sandbox, support::adapter_failure(error), now)
-                    .await;
-            }
-        }
-        match sandbox.work.step {
-            SandboxWorkStep::ProvisionRuntime => self.provision(sandbox, now).await,
-            SandboxWorkStep::RunInstall => self.install(sandbox, now).await,
-            SandboxWorkStep::MintInitialCredential | SandboxWorkStep::MintRotatedCredential => {
-                self.mint(sandbox, now).await
-            }
-            SandboxWorkStep::DeliverInitialCredential
-            | SandboxWorkStep::DeliverRotatedCredential => self.deliver(sandbox, now).await,
-            SandboxWorkStep::CreateProfileWorkspace(index) => {
-                self.create_workspace(sandbox, index, now).await
-            }
-            SandboxWorkStep::Activate => self.activate(sandbox, now).await,
-            SandboxWorkStep::WaitForCredentialRotation => self.begin_rotation(sandbox, now).await,
-            SandboxWorkStep::RevokeRotatedCredential => self.revoke_rotated(sandbox, now).await,
-            SandboxWorkStep::FinishCredentialRotation => self.finish_rotation(sandbox, now).await,
-            SandboxWorkStep::RunLifecycleOperation => {
-                Box::pin(self.run_lifecycle(sandbox, now)).await
-            }
-            SandboxWorkStep::StopAgents => self.stop_agents(sandbox, now).await,
-            SandboxWorkStep::RevokeRetirementCredentials => {
-                self.revoke_for_retirement(sandbox, now).await
-            }
-            SandboxWorkStep::TeardownRuntime => self.teardown(sandbox, now).await,
-            SandboxWorkStep::MarkRetired => self.mark_retired(sandbox, now).await,
-            SandboxWorkStep::RetryRetiredRevocations => {
-                self.retry_retired_revoke(sandbox, now).await
-            }
-            SandboxWorkStep::WaitForPurge => self.ready_to_purge(sandbox, now).await,
-            SandboxWorkStep::Purge => self.purge(sandbox, now).await,
-            SandboxWorkStep::None => self.fail_corrupt_claim(sandbox, now).await,
-        }
     }
 }

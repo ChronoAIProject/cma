@@ -69,14 +69,17 @@ impl ChannelAdmissionPolicy {
 
 pub(in crate::bridge) fn validate_placement(config: &BridgeConfig) -> Result<(), PartitionError> {
     match (&config.placement, config.partition) {
-        (BridgePlacementPolicy::ExistingAgent { .. }, BridgePartitionPolicy::FixedSharedAgent)
-        | (BridgePlacementPolicy::NewSandbox { .. }, BridgePartitionPolicy::Conversation)
-        | (BridgePlacementPolicy::NewSandbox { .. }, BridgePartitionPolicy::ConversationSender)
-        | (BridgePlacementPolicy::NewSandbox { .. }, BridgePartitionPolicy::Thread)
-        | (BridgePlacementPolicy::NewSandbox { .. }, BridgePartitionPolicy::ThreadSender)
-        | (BridgePlacementPolicy::NewSandbox { .. }, BridgePartitionPolicy::SenderAcrossChats) => {
+        (BridgePlacementPolicy::ExistingAgent { .. }, BridgePartitionPolicy::FixedSharedAgent) => {
             Ok(())
         }
+        (
+            placement,
+            BridgePartitionPolicy::Conversation
+            | BridgePartitionPolicy::ConversationSender
+            | BridgePartitionPolicy::Thread
+            | BridgePartitionPolicy::ThreadSender
+            | BridgePartitionPolicy::SenderAcrossChats,
+        ) if placement.creates_partition_agent() => Ok(()),
         _ => Err(PartitionError::InvalidPolicy("shared_context_placement")),
     }
 }

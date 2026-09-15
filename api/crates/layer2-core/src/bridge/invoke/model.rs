@@ -108,11 +108,11 @@ impl BridgeInvokeGrant {
                 BridgeSharedContextConsent::UseRetainedAgentContext,
                 None,
             ) if target == &self.target.ids => {}
-            (
-                super::super::BridgePlacementPolicy::NewSandbox { .. },
-                BridgeSharedContextConsent::UseChannelCreatedAgent,
-                Some(basis),
-            ) => basis.validate(self)?,
+            (placement, BridgeSharedContextConsent::UseChannelCreatedAgent, Some(basis))
+                if placement.creates_partition_agent() =>
+            {
+                basis.validate(self)?
+            }
             _ => return Err(BridgeInvokeError::Corrupt),
         }
         for (audit, capability) in self.resource_audit.iter().zip([

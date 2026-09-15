@@ -65,6 +65,38 @@ impl BridgeConfiguration {
             return Err("invalid bridge name or selected binding");
         }
         match &self.placement {
+            BridgePlacement::WorkspacePerPartition {
+                sandbox_id,
+                workspace_profile,
+                agent_profile,
+                capacity,
+                ..
+            } => {
+                if !valid_id(sandbox_id)
+                    || [workspace_profile, agent_profile]
+                        .iter()
+                        .any(|p| p.revision == 0 || !valid_id(&p.id))
+                    || !capacity.valid()
+                {
+                    return Err("invalid shared parent, profiles or reserved capacity");
+                }
+            }
+            BridgePlacement::WorktreeAgentPerPartition {
+                sandbox_id,
+                workspace_id,
+                agent_profile,
+                capacity,
+                ..
+            } => {
+                if !valid_id(sandbox_id)
+                    || !valid_id(workspace_id)
+                    || agent_profile.revision == 0
+                    || !valid_id(&agent_profile.id)
+                    || !capacity.valid()
+                {
+                    return Err("invalid shared parent, profiles or reserved capacity");
+                }
+            }
             BridgePlacement::ExistingAgent { target } => {
                 if [
                     &target.sandbox_id,
@@ -212,5 +244,12 @@ impl BridgeValidation {
             ));
         }
         Ok(())
+    }
+}
+
+impl BridgeSharedCapacity {
+    fn valid(&self) -> bool {
+        (1..=15).contains(&self.keep_other_workspaces)
+            && (1..=15).contains(&self.keep_other_agents_per_workspace)
     }
 }

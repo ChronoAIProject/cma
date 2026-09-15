@@ -19,6 +19,8 @@ export const resourceDispatch: Record<string, Dispatch> = {
     client.bridges.issueInvokeGrant(param('id'), body, command),
   'POST /api/v1/bridge-invoke-grants/{id}/revoke': ({ client, param, body, command }) =>
     client.bridges.revokeInvokeGrant(param('id'), body, command),
+  'GET /api/v1/bridge-connectors/capabilities': ({ client, options }) =>
+    client.bridges.capabilities(options),
   'GET /api/v1/bridge-connectors': ({ client, options }) => client.bridges.choices(options),
   'GET /api/v1/bridges': ({ client, options }) => client.bridges.list(options),
   'GET /api/v1/bridges/{id}': ({ client, param }) => client.bridges.read(param('id')),

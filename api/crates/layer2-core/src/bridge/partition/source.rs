@@ -192,6 +192,7 @@ impl NormalizedPartitionSource {
 fn platform(value: &str) -> Result<BridgePlatform, PartitionError> {
     match value {
         "telegram" => Ok(BridgePlatform::Telegram),
+        "telegram-new" => Ok(BridgePlatform::TelegramNew),
         "discord" => Ok(BridgePlatform::Discord),
         "lark" => Ok(BridgePlatform::Lark),
         "feishu" => Ok(BridgePlatform::Feishu),

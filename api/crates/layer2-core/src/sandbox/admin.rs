@@ -239,6 +239,7 @@ impl OperatorError {
             SandboxStoreError::InvalidPage => Self::InvalidRequest(error.to_string()),
             SandboxStoreError::Conflict
             | SandboxStoreError::CheckpointInProgress
+            | SandboxStoreError::LifecycleBusy { .. }
             | SandboxStoreError::Duplicate
             | SandboxStoreError::SequenceConflict
             | SandboxStoreError::LimitReached { .. }

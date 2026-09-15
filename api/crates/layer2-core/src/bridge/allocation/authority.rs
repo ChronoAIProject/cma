@@ -84,6 +84,7 @@ impl AllocationAdmission {
 pub enum AllocationAuthority {
     Existing(Box<BridgeInvokeProof>),
     Provisioning(Box<AllocationProvisioningProof>),
+    Reuse(Box<super::AllocationReuseProof>),
 }
 
 #[derive(Clone)]
@@ -129,6 +130,12 @@ impl AllocationProvisioningProof {
             .pinned(&self.plan.pin)
             .map_err(|_| AllocationError::Corrupt)?
             .config;
+        if !matches!(
+            config.placement,
+            crate::bridge::BridgePlacementPolicy::NewSandbox { .. }
+        ) {
+            return Err(AllocationError::InvalidProfiles);
+        }
         self.plan.profiles.validate(config)?;
         require_accepted_generation(&self.bridge, &self.plan.pin)?;
         self.connection
@@ -141,6 +148,11 @@ impl AllocationAuthority {
     pub fn config(&self) -> Result<&crate::bridge::BridgeConfig, AllocationError> {
         match self {
             Self::Existing(proof) => Ok(&proof.grant().config),
+            Self::Reuse(proof) => Ok(&proof
+                .bridge
+                .pinned(&proof.pin)
+                .map_err(|_| AllocationError::IdentityMismatch)?
+                .config),
             Self::Provisioning(proof) => Ok(&proof
                 .bridge
                 .pinned(&proof.plan.pin)
@@ -151,12 +163,14 @@ impl AllocationAuthority {
     pub fn bridge(&self) -> &BridgeRecord {
         match self {
             Self::Existing(proof) => proof.bridge(),
+            Self::Reuse(proof) => &proof.bridge,
             Self::Provisioning(proof) => &proof.bridge,
         }
     }
     pub fn custody_pin(&self) -> &BridgeCustodyPin {
         match self {
             Self::Existing(proof) => proof.custody_pin(),
+            Self::Reuse(proof) => proof.connection.custody_pin(),
             Self::Provisioning(proof) => proof.connection.custody_pin(),
         }
     }
@@ -166,6 +180,7 @@ impl AllocationAuthority {
                 .require_current()
                 .map_err(|_| AllocationError::AuthorityUnavailable),
             Self::Provisioning(proof) => proof.require_current(),
+            Self::Reuse(proof) => proof.require_current(),
         }
     }
     pub fn require_snapshot(&self, bridge: &BridgeRecord) -> Result<(), AllocationError> {
@@ -189,6 +204,9 @@ impl AllocationAuthority {
             return Err(AllocationError::IdentityMismatch);
         }
         match (self, &record.placement) {
+            (Self::Reuse(proof), AllocationPlacement::ReuseParent { .. }) => {
+                proof.require_record(record)
+            }
             (Self::Existing(proof), AllocationPlacement::ExistingAgent { target, grant_id })
                 if proof.grant().pin == record.pin
                     && &proof.grant().target.ids == target
@@ -213,6 +231,7 @@ impl AllocationAuthority {
     pub(super) fn placement(&self, id: &str) -> Result<AllocationPlacement, AllocationError> {
         self.require_current()?;
         match self {
+            Self::Reuse(proof) => proof.placement(id),
             Self::Existing(proof) => Ok(AllocationPlacement::ExistingAgent {
                 target: proof.grant().target.ids.clone(),
                 grant_id: proof.grant().id.as_str().to_owned(),

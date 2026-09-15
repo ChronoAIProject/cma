@@ -166,6 +166,7 @@ impl ControlPlaneComposition {
             adapter.clone(),
             authoring_bounds,
             key_issuer.clone(),
+            auth.clone(),
         )?;
         let (bridge_definitions, bridge_credentials) = crate::bridge::service(
             &config.auth_mode,

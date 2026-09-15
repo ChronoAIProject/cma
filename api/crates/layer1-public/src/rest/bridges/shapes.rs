@@ -77,6 +77,8 @@ pub(crate) struct BridgeBindingShape {
 #[serde(rename_all = "snake_case")]
 pub(crate) enum BridgePlatformValue {
     Telegram,
+    #[serde(rename = "telegram-new")]
+    TelegramNew,
     Discord,
     Lark,
     Feishu,
@@ -114,6 +116,33 @@ pub(crate) enum BridgePlacementShape {
         workspace_profile: BridgeProfileShape,
         agent_profile: BridgeProfileShape,
     },
+    WorkspacePerPartition {
+        sandbox_id: String,
+        workspace_profile: BridgeProfileShape,
+        agent_profile: BridgeProfileShape,
+        shared_trust: BridgeSharedTrustShape,
+        capacity: BridgeSharedCapacityShape,
+    },
+    WorktreeAgentPerPartition {
+        sandbox_id: String,
+        workspace_id: String,
+        agent_profile: BridgeProfileShape,
+        shared_trust: BridgeSharedTrustShape,
+        capacity: BridgeSharedCapacityShape,
+    },
+}
+/// All participants execute within the same filesystem/process/credential boundary.
+#[derive(ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum BridgeSharedTrustShape {
+    AllParticipantsShareFilesystemProcessesAndCredentials,
+}
+#[derive(ToSchema)]
+pub(crate) struct BridgeSharedCapacityShape {
+    #[schema(minimum = 1, maximum = 15)]
+    keep_other_workspaces: u8,
+    #[schema(minimum = 1, maximum = 15)]
+    keep_other_agents_per_workspace: u8,
 }
 #[derive(ToSchema)]
 #[serde(tag = "kind", rename_all = "snake_case")]

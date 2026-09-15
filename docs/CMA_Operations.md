@@ -429,6 +429,7 @@ are referenced in `infra/api/secret.yaml`, never stored in ConfigMaps.
 | `CHRONO_BRIDGE_EXECUTION_ENABLED` | New Channel command admission and held-command release; false by default; already Released commands drain in shared FIFO order |
 | `CHRONO_BRIDGE_OUTBOUND_ENABLED` | Fresh explicit reply-tool admission and provider send attempts; false by default; recover retained receipts/outcomes and never auto-retry Unknown |
 | `CHRONO_BRIDGE_TELEGRAM_ENABLED` | Telegram fresh-effect gate, independent of other platforms and stages; false by default |
+| `CHRONO_BRIDGE_TELEGRAM_NEW_ENABLED` | Telegram-new fresh-effect gate, independent of Telegram and other stages; false by default |
 | `CHRONO_BRIDGE_DISCORD_ENABLED` | Discord fresh-effect gate; false by default |
 | `CHRONO_BRIDGE_LARK_ENABLED` | Lark fresh-effect gate, independent of Feishu; false by default |
 | `CHRONO_BRIDGE_FEISHU_ENABLED` | Feishu fresh-effect gate, independent of Lark; false by default |

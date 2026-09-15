@@ -1,5 +1,6 @@
 //! Current bridge setup and management. Callback and reply credentials are not
 //! dashboard authentication, and setup receipts never grant deferred execution.
+mod capabilities;
 mod choices;
 mod config;
 mod invoke;
@@ -7,6 +8,7 @@ mod mutations;
 mod outbox;
 mod types;
 mod validation;
+pub use capabilities::*;
 pub use choices::*;
 pub use config::*;
 pub use invoke::*;

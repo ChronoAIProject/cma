@@ -2,6 +2,7 @@
 //! lifecycle grant. Scheduling preserves the command and performs no runtime IO.
 use super::channel::MutationError;
 use super::MongoBridgeInvokeStore;
+use crate::bridge::provisioning::reuse_revival::ChannelReuseRevivalAuthority;
 use crate::bridge::provisioning::revival::ChannelRevivalAuthority;
 use crate::store::{
     agent_commands::{read_command, read_command_lane},
@@ -28,11 +29,46 @@ use mongodb::{
     ClientSession,
 };
 
+mod permit;
+use permit::RevivalPermit;
+
 impl MongoBridgeInvokeStore {
     pub(crate) async fn schedule_channel_command_revival(
         &self,
         allocations: &MongoBridgeAllocationStore,
         permit: &ChannelRevivalAuthority,
+        channel: &ChannelExecutionFence,
+        command: &AdmittedAgentCommand,
+    ) -> Result<(), Error> {
+        self.schedule_proven_channel_revival(
+            allocations,
+            RevivalPermit::Created(permit),
+            channel,
+            command,
+        )
+        .await
+    }
+
+    pub(crate) async fn schedule_reused_channel_command_revival(
+        &self,
+        allocations: &MongoBridgeAllocationStore,
+        permit: &ChannelReuseRevivalAuthority,
+        channel: &ChannelExecutionFence,
+        command: &AdmittedAgentCommand,
+    ) -> Result<(), Error> {
+        self.schedule_proven_channel_revival(
+            allocations,
+            RevivalPermit::Reused(permit),
+            channel,
+            command,
+        )
+        .await
+    }
+
+    async fn schedule_proven_channel_revival(
+        &self,
+        allocations: &MongoBridgeAllocationStore,
+        permit: RevivalPermit<'_>,
         channel: &ChannelExecutionFence,
         command: &AdmittedAgentCommand,
     ) -> Result<(), Error> {
@@ -43,7 +79,7 @@ impl MongoBridgeInvokeStore {
             if attempt > 0 {
                 tokio::time::sleep(std::time::Duration::from_millis(5 << attempt.min(4))).await;
             }
-            require(permit, channel, command)?;
+            require(&permit, channel, command)?;
             let mut session = self
                 .bridges
                 .client
@@ -54,7 +90,7 @@ impl MongoBridgeInvokeStore {
                 .await
                 .map_err(|_| Error::Unavailable)?;
             let result = self
-                .revive_channel_transaction(allocations, permit, channel, command, &mut session)
+                .revive_channel_transaction(allocations, &permit, channel, command, &mut session)
                 .await;
             if let Err(error) = result {
                 let _ = session.abort_transaction().await;
@@ -64,7 +100,7 @@ impl MongoBridgeInvokeStore {
                     MutationError::Core(error) => return Err(error),
                 }
             }
-            if let Err(error) = require(permit, channel, command) {
+            if let Err(error) = require(&permit, channel, command) {
                 let _ = session.abort_transaction().await;
                 return Err(error);
             }
@@ -84,7 +120,7 @@ impl MongoBridgeInvokeStore {
     async fn revive_channel_transaction(
         &self,
         allocations: &MongoBridgeAllocationStore,
-        permit: &ChannelRevivalAuthority,
+        permit: &RevivalPermit<'_>,
         channel: &ChannelExecutionFence,
         command: &AdmittedAgentCommand,
         session: &mut ClientSession,
@@ -92,8 +128,8 @@ impl MongoBridgeInvokeStore {
         require(permit, channel, command)?;
         self.fence_channel_execution(channel, command, session)
             .await?;
-        allocations
-            .fence_channel_revival(permit, session)
+        permit
+            .fence(allocations, session)
             .await
             .map_err(|error| match error {
                 bridge_allocations::MutationError::Core(_) => {
@@ -132,7 +168,7 @@ impl MongoBridgeInvokeStore {
             .map_err(|_| Error::SourceMismatch)?;
         let row = doc! {"_id":format!("{}:{}",next.id,next.revision),"document_schema_version":DOCUMENT_SCHEMA_VERSION,
         "sandbox_id":next.id.as_str(),"sandbox_created_at":&next.created_at,"sandbox_revision":next.revision as i64,
-        "allocation_id":&permit.allocation().id,"command_id":command.receipt.envelope.command_id.as_str(),
+        "allocation_id":&permit.allocation().id,"parent_kind":permit.kind(),"command_id":command.receipt.envelope.command_id.as_str(),
         "command_revision":command.revision as i64,"agent_order":command.receipt.agent_order as i64,
         "command_digest":layer2_core::profiles::content_digest(command).map_err(|_| Error::SourceMismatch)?,
         "channel_actor":record_bson(&command.receipt.envelope.actor).map_err(|_| Error::SourceMismatch)?,
@@ -215,7 +251,7 @@ impl MongoBridgeInvokeStore {
 }
 
 fn require(
-    permit: &ChannelRevivalAuthority,
+    permit: &RevivalPermit<'_>,
     channel: &ChannelExecutionFence,
     command: &AdmittedAgentCommand,
 ) -> Result<(), Error> {

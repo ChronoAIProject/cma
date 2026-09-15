@@ -95,6 +95,27 @@ pub(in crate::store::bridge_allocations) async fn apply(
     };
     let (snapshot, document, policy) =
         load::snapshot(&resources, allocation, &current, settings, session).await?;
+    if let Some(change) = change {
+        if change.state.phase
+            == crate::sandbox::channel_provisioning::state::ChannelProvisioningPhase::MintStarted
+        {
+            change
+                .state
+                .mint_intent
+                .as_ref()
+                .ok_or(AllocationError::Corrupt)?
+                .require_binding(
+                    lease,
+                    &settings.deployment_id,
+                    change
+                        .state
+                        .mint_credential_id
+                        .as_deref()
+                        .ok_or(AllocationError::Corrupt)?,
+                )
+                .map_err(|_| AllocationError::IdentityMismatch)?;
+        }
+    }
     let snapshot = save::apply(store, &resources, snapshot, &document, change, session).await?;
     let changed = resources
         .policies

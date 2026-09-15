@@ -20,7 +20,7 @@ pub(in crate::store) enum FencedUsageActor<'a> {
 }
 
 impl FencedUsageActor<'_> {
-    fn identity(
+    pub(super) fn identity(
         &self,
         snapshot: &AgentChannelUsageSnapshot,
     ) -> Result<(layer2_core::resource_access::ResourceActor, BridgeId), UsageError> {

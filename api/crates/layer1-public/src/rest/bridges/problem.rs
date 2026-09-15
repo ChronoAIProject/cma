@@ -25,6 +25,7 @@ impl IntoResponse for BridgeProblem {
             AdmissionStopped => (StatusCode::CONFLICT,"bridge_admission_stopped","This bridge is not accepting new work."),
             HistoryLimit => (StatusCode::CONFLICT,"bridge_history_limit","This bridge has reached its supported configuration history limit."),
             ConnectionRequired(reason) => match reason {
+                BridgeSetupBlock::IncompatibleTarget => (StatusCode::CONFLICT,"bridge_incompatible_target","The selected shared parent must have compatible owner, profiles, runtime, service scope and reserved capacity."),
                 BridgeSetupBlock::BindingMismatch => (StatusCode::CONFLICT,"bridge_binding_mismatch","The selected owner, bot, key and routes do not form a currently verified binding."),
                 BridgeSetupBlock::CallbackConflict => (StatusCode::CONFLICT,"bridge_callback_conflict","The selected key callback or other active routes conflict with this bridge. Configure a dedicated matching key without changing unrelated routes."),
                 BridgeSetupBlock::CustodyUnavailable => (StatusCode::CONFLICT,"bridge_custody_required","Import the exact active selected Agent key into CMA bridge custody."),

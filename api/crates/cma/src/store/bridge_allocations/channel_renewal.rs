@@ -27,6 +27,7 @@ enum Change<'a> {
         previous: &'a ChannelRenewalSnapshot,
         holder: &'a str,
         now: SystemTime,
+        mint_intent: Option<&'a crate::auth::keys::bridge::mint_intent::BridgeSandboxMintIntent>,
     },
     Mint {
         previous: &'a ChannelRenewalSnapshot,
@@ -71,6 +72,27 @@ impl Change<'_> {
 }
 
 impl MongoBridgeAllocationStore {
+    pub(crate) async fn fence_channel_mint_renewal(
+        &self,
+        authority: &AllocationAuthority,
+        human: &BridgeControlPlaneLease,
+        snapshot: &ChannelRenewalSnapshot,
+        session: &mut mongodb::ClientSession,
+    ) -> Result<(), MutationError> {
+        require_current(authority, human, &snapshot.allocation)?;
+        let change = Change::Revalidate(snapshot);
+        change.require_claim()?;
+        transaction::apply(
+            self,
+            authority,
+            human,
+            &snapshot.allocation,
+            &change,
+            session,
+        )
+        .await?;
+        Ok(())
+    }
     pub(crate) async fn current_channel_renewal(
         &self,
         authority: &AllocationAuthority,
@@ -87,9 +109,10 @@ impl MongoBridgeAllocationStore {
         authority: &AllocationAuthority,
         lease: &BridgeControlPlaneLease,
         previous: &ChannelRenewalSnapshot,
-        holder: &str,
-        now: SystemTime,
+        claim: (&str, SystemTime),
+        mint_intent: Option<&crate::auth::keys::bridge::mint_intent::BridgeSandboxMintIntent>,
     ) -> Result<RenewalAdmission, AllocationError> {
+        let (holder, now) = claim;
         self.renewal_transaction(
             authority,
             lease,
@@ -98,6 +121,7 @@ impl MongoBridgeAllocationStore {
                 previous,
                 holder,
                 now,
+                mint_intent,
             },
         )
         .await

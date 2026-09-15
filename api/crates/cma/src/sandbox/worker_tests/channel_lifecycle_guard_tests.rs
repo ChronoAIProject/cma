@@ -145,3 +145,31 @@ async fn channel_image_rotation_is_held_before_checkpoint_or_runtime_effects() {
         .await
         .is_ok());
 }
+
+#[tokio::test]
+async fn channel_retirement_without_dedicated_authority_holds_before_stopping_any_agent() {
+    let harness = Harness::new(Vec::new(), 0, Duration::from_secs(3600)).await;
+    let created = harness.create().await;
+    let now = start_time(&created);
+    let active = harness.drive_active(&created.id, now).await;
+    harness
+        .service
+        .delete(&caller("owner", [Capability::DeleteOwnSandbox]), &active.id)
+        .await
+        .unwrap();
+    let before = harness.stored(&active.id).await;
+    let actions = harness.actions.snapshot();
+    let requests = harness.backend.requests().await.len();
+    assert!(guarded_worker(&harness)
+        .run_one(&active.id, now)
+        .await
+        .unwrap());
+    let held = harness.stored(&active.id).await;
+    assert_eq!(held.status, before.status);
+    assert_eq!(held.runtime, before.runtime);
+    assert_eq!(held.credential, before.credential);
+    assert_eq!(held.work.step, SandboxWorkStep::StopAgents);
+    assert!(held.work.lease.is_none());
+    assert_eq!(harness.actions.snapshot(), actions);
+    assert_eq!(harness.backend.requests().await.len(), requests);
+}

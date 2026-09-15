@@ -1,4 +1,5 @@
 pub(super) mod fixture;
+mod reuse;
 use axum::{
     body::{to_bytes, Body},
     http::{header, Method, Request, StatusCode},
@@ -273,6 +274,8 @@ async fn missing_auth_and_unconfigured_provider_have_explicit_nonsecret_outcomes
 fn openapi_bridge_configuration_excludes_custody_and_marks_import_secret_write_only() {
     let doc = serde_json::to_value(super::openapi::document()).unwrap();
     let schemas = &doc["components"]["schemas"];
+    assert!(doc["paths"]["/api/v1/bridge-connectors/capabilities"]["get"].is_object());
+    assert!(schemas["BridgeCapabilityCatalogShape"]["properties"]["source_revision"].is_object());
     let props = schemas["BridgeBindingShape"]["properties"]
         .as_object()
         .unwrap();
@@ -293,4 +296,76 @@ fn openapi_bridge_configuration_excludes_custody_and_marks_import_secret_write_o
     assert!(serde_json::from_value::<super::bridges::shapes::ImportBridgeKeyRequest>(
         json!({"expected_revision":1,"key":"fixture-selected-secret","retain_control_plane_authority":"true"}),
     ).is_err());
+}
+
+#[tokio::test]
+async fn capabilities_require_current_owner_admin_and_old_validators_default_unavailable() {
+    let (router, _, ports) = fixture();
+    let response = router
+        .clone()
+        .oneshot(request(
+            Method::GET,
+            "/api/v1/bridge-connectors/capabilities",
+            "owner",
+            None,
+            None,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response.headers()[header::CACHE_CONTROL],
+        "private, no-store"
+    );
+    assert_eq!(
+        response.headers()[header::X_CONTENT_TYPE_OPTIONS],
+        "nosniff"
+    );
+    let wire: serde_json::Value =
+        serde_json::from_slice(&to_bytes(response.into_body(), 32768).await.unwrap()).unwrap();
+    assert_eq!(
+        wire,
+        json!({"version":1,"source_revision":null,"connection_validation_available":false,"connectors":[]})
+    );
+    assert_eq!(ports.calls.load(Ordering::SeqCst), 0);
+    ports.role.store(1, Ordering::SeqCst);
+    let denied = send(
+        &router,
+        Method::GET,
+        "/api/v1/bridge-connectors/capabilities?organization=org",
+        "owner",
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(denied.0, StatusCode::FORBIDDEN);
+    ports.role.store(2, Ordering::SeqCst);
+    assert_eq!(
+        send(
+            &router,
+            Method::GET,
+            "/api/v1/bridge-connectors/capabilities?organization=org",
+            "owner",
+            None,
+            None
+        )
+        .await
+        .0,
+        StatusCode::OK
+    );
+    ports.role.store(0, Ordering::SeqCst);
+    assert_eq!(
+        send(
+            &router,
+            Method::GET,
+            "/api/v1/bridge-connectors/capabilities?organization=org",
+            "owner",
+            None,
+            None
+        )
+        .await
+        .0,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(ports.calls.load(Ordering::SeqCst), 0);
 }

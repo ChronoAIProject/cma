@@ -26,7 +26,7 @@ fn signed_platform_text_uses_actual_chat_type_and_retains_distinct_default_parti
         let mut chat = fixture.clone();
         let mut private = fixture.clone();
         match platform {
-            BridgePlatform::Telegram => {
+            BridgePlatform::Telegram | BridgePlatform::TelegramNew => {
                 sender.body["sender"]["platform_id"] = json!("67890");
                 sender.raw_mut()["message"]["from"]["id"] = json!(67890);
                 chat.body["conversation"]["platform_id"] = json!("-100456");
@@ -68,7 +68,7 @@ fn signed_stable_threads_require_actual_supported_fields_and_ignore_generic_cont
         let mut fixture = Fixture::new(platform.clone());
         fixture.config_mut().partition = BridgePartitionPolicy::ThreadSender;
         match platform {
-            BridgePlatform::Telegram => {
+            BridgePlatform::Telegram | BridgePlatform::TelegramNew => {
                 fixture.raw_mut()["message"]["message_thread_id"] = json!(42);
                 fixture.raw_mut()["message"]["is_topic_message"] = json!(true);
             }
@@ -117,4 +117,51 @@ fn signed_raw_identity_and_text_substitution_never_establish_human_admission() {
     let mut fixture = Fixture::new(BridgePlatform::Telegram);
     fixture.body["sender"]["platform_id"] = json!("012345");
     assert!(matches!(fixture.write(), Err(CallbackError::Payload)));
+}
+
+#[test]
+fn telegram_new_delegates_only_wire_shapes_and_keeps_platform_and_partition_identity_distinct() {
+    let legacy = Fixture::new(BridgePlatform::Telegram);
+    let mut managed = Fixture::new(BridgePlatform::TelegramNew);
+    assert_eq!(managed.body["platform"], "telegram-new");
+    assert_eq!(
+        managed.body["raw_platform_data"],
+        legacy.body["raw_platform_data"]
+    );
+    assert_ne!(legacy.key(), managed.key());
+    let record = serde_json::to_value(managed.write().unwrap().record()).unwrap();
+    assert_eq!(record["capabilities"]["platform"], "telegram-new");
+    assert_eq!(record["envelope"]["platform"], "telegram-new");
+    managed.config_mut().connector.platform = BridgePlatform::Telegram;
+    assert!(managed.write().is_err());
+    let mut alias = Fixture::new(BridgePlatform::TelegramNew);
+    alias.body["platform"] = json!("telegram");
+    assert!(alias.write().is_err());
+}
+
+#[test]
+fn telegram_new_unverified_threads_edits_actions_and_loops_remain_inert() {
+    let original = Fixture::new(BridgePlatform::TelegramNew);
+    let mut fixture = original.clone();
+    fixture.config_mut().partition = BridgePartitionPolicy::Thread;
+    fixture.raw_mut()["message"]["message_thread_id"] = json!(42);
+    deny(&fixture, PartitionRefusal::ThreadEvidenceUnavailable);
+    fixture.raw_mut()["message"]["is_topic_message"] = json!(true);
+    fixture.raw_mut()["message"]["chat"]["type"] = json!("private");
+    deny(&fixture, PartitionRefusal::ThreadEvidenceUnavailable);
+    let mut fixture = original.clone();
+    let message = fixture
+        .raw_mut()
+        .as_object_mut()
+        .unwrap()
+        .remove("message")
+        .unwrap();
+    fixture.raw_mut()["edited_message"] = message;
+    deny(&fixture, PartitionRefusal::MessageEdit);
+    let mut fixture = original.clone();
+    fixture.body["raw_platform_data"] = json!({"callback_query":{"data":"untrusted-command"}});
+    deny(&fixture, PartitionRefusal::InteractiveActionUnsupported);
+    let mut fixture = original;
+    fixture.raw_mut()["message"]["via_bot"] = json!({"id":123});
+    deny(&fixture, PartitionRefusal::CallbackLoop);
 }

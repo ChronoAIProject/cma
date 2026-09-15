@@ -3,6 +3,7 @@
 
 pub mod allocation;
 mod authority;
+mod capabilities;
 mod config;
 pub mod ingress;
 pub mod invoke;
@@ -16,6 +17,7 @@ pub mod setup;
 mod store;
 mod validation;
 
+pub use capabilities::*;
 pub use config::*;
 pub use management::BridgeManagementLease;
 pub use memory::MemoryBridgeStore;

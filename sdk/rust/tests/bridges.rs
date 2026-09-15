@@ -368,3 +368,143 @@ async fn invalid_fresh_inputs_and_revision_overflow_fail_before_http() {
     }
     assert_eq!(server.request_count(), 0);
 }
+
+#[tokio::test]
+async fn shared_placements_preserve_explicit_parent_and_reject_missing_trust_or_invalid_capacity() {
+    for shared_workspace in [false, true] {
+        let server = WireServer::new().await;
+        let mut value = config();
+        value["partition"] = "conversation_sender".into();
+        value["placement"] = json!({"kind":"workspace_per_partition","sandbox_id":"parent-sandbox",
+            "workspace_profile":{"id":"workspace-profile","revision":2},"agent_profile":{"id":"agent-profile","revision":3},
+            "shared_trust":"all_participants_share_filesystem_processes_and_credentials",
+            "capacity":{"keep_other_workspaces":1,"keep_other_agents_per_workspace":2}});
+        if shared_workspace {
+            value["placement"]["kind"] = "worktree_agent_per_partition".into();
+            value["placement"]["workspace_id"] = "parent-workspace".into();
+            value["placement"]
+                .as_object_mut()
+                .unwrap()
+                .remove("workspace_profile");
+        }
+        let configured: BridgeConfiguration = serde_json::from_value(value.clone()).unwrap();
+        assert_eq!(serde_json::to_value(&configured).unwrap(), value);
+        let mut invalid = value.clone();
+        invalid["placement"]
+            .as_object_mut()
+            .unwrap()
+            .remove("shared_trust");
+        assert!(serde_json::from_value::<BridgeConfiguration>(invalid).is_err());
+        for slots in [0, 16] {
+            let mut invalid = value.clone();
+            invalid["placement"]["capacity"]["keep_other_agents_per_workspace"] = slots.into();
+            let request = CreateBridgeRequest {
+                owner: cma_sdk::resource_access::ResourceOwner::Person {
+                    subject: "owner".into(),
+                },
+                config: serde_json::from_value(invalid).unwrap(),
+            };
+            assert!(matches!(
+                server.client.bridges().create(&request, &key()).await,
+                Err(Error::Validation { .. })
+            ));
+        }
+    }
+}
+
+#[tokio::test]
+async fn capabilities_preserve_owner_scope_and_reject_unknown_contracts() {
+    let server = WireServer::new().await;
+    let empty = json!({"version":1,"source_revision":null,"connection_validation_available":false,"connectors":[]});
+    expect(
+        &server,
+        "GET",
+        "/api/v1/bridge-connectors/capabilities?organization=org-one",
+        None,
+        empty.clone(),
+        false,
+    );
+    let catalog = server
+        .client
+        .bridges()
+        .capabilities(Some("org-one"))
+        .await
+        .unwrap();
+    assert!(!catalog.connection_validation_available);
+    assert!(catalog.connectors.is_empty());
+    let mut unknown = empty;
+    unknown["version"] = json!(2);
+    expect(
+        &server,
+        "GET",
+        "/api/v1/bridge-connectors/capabilities",
+        None,
+        unknown,
+        false,
+    );
+    assert!(matches!(
+        server.client.bridges().capabilities(None).await,
+        Err(Error::Protocol { .. })
+    ));
+    server.assert_drained();
+}
+
+#[tokio::test]
+async fn complete_capability_projection_keeps_support_and_deployment_switches_distinct() {
+    let server = WireServer::new().await;
+    let connector = json!({"platform":"telegram","evidence":"contract_tested","live_verified":false,
+        "inbound_text":true,"stable_sender_chat":true,"stable_thread":"telegram_forum_topic",
+        "reply_to_bot":true,"bot_mentions":false,"inbound_edits":false,"inbound_deletes":false,
+        "verified_actions":false,"attachment_input":"download_required","attachment_output":false,
+        "output_text":true,"output_edit":false,"output_progress":true,"output_limit_utf16":4000,"output_format":"escaped_markdown",
+        "stages":{"management":true,"ingress":false,"allocation":false,"execution":false,"outbound":false}});
+    let mut catalog = json!({"version":1,"source_revision":"85607255ee0beadca460a350e0aa6d177edd2fd2",
+        "connection_validation_available":true,"connectors":[connector]});
+    expect(
+        &server,
+        "GET",
+        "/api/v1/bridge-connectors/capabilities",
+        None,
+        catalog.clone(),
+        false,
+    );
+    let parsed = server.client.bridges().capabilities(None).await.unwrap();
+    assert_eq!(
+        parsed.connectors[0].stable_thread,
+        Some(BridgeStableThread::TelegramForumTopic)
+    );
+    assert!(parsed.connectors[0].output_text);
+    assert!(!parsed.connectors[0].stages.outbound);
+    catalog["connectors"][0]["output_text"] = json!(false);
+    catalog["connectors"][0]["output_progress"] = json!(false);
+    catalog["connectors"][0]["output_format"] = json!("unavailable");
+    expect(
+        &server,
+        "GET",
+        "/api/v1/bridge-connectors/capabilities",
+        None,
+        catalog,
+        false,
+    );
+    assert!(matches!(
+        server.client.bridges().capabilities(None).await,
+        Err(Error::Protocol { .. })
+    ));
+    server.assert_drained();
+}
+
+#[tokio::test]
+async fn telegram_new_choices_keep_the_distinct_public_platform_identity() {
+    let server = WireServer::new().await;
+    expect(
+        &server,
+        "GET",
+        "/api/v1/bridge-connectors",
+        None,
+        json!({"bots":[{"id":"bot","platform":"telegram-new","active":true}],"keys":[],"routes":[]}),
+        false,
+    );
+    let choices = server.client.bridges().choices(None).await.unwrap();
+    assert_eq!(choices.bots[0].platform, BridgePlatform::TelegramNew);
+    server.assert_drained();
+}

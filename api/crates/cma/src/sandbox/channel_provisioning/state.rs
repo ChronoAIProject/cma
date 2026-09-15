@@ -62,6 +62,8 @@ pub(crate) struct ChannelProvisioningState {
     pub settings: ChannelProvisioningSettings,
     /// The exact external key name is persisted before its single mint POST.
     pub mint_credential_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mint_intent: Option<crate::auth::keys::bridge::mint_intent::BridgeSandboxMintIntent>,
 }
 
 impl ChannelProvisioningState {
@@ -74,6 +76,7 @@ impl ChannelProvisioningState {
             last_receipt_digest: None,
             settings,
             mint_credential_id: None,
+            mint_intent: None,
         }
     }
     pub fn next(
@@ -113,6 +116,7 @@ impl ChannelProvisioningState {
             ),
             settings: self.settings.clone(),
             mint_credential_id: self.mint_credential_id.clone(),
+            mint_intent: self.mint_intent.clone(),
         })
     }
 }
@@ -134,6 +138,12 @@ impl ChannelProvisioningSnapshot {
             .validate()
             .map_err(|_| AllocationError::Corrupt)?;
         self.state.settings.validate()?;
+        if let Some(intent) = &self.state.mint_intent {
+            intent.validate().map_err(|_| AllocationError::Corrupt)?;
+            if self.state.mint_credential_id.is_none() {
+                return Err(AllocationError::Corrupt);
+            }
+        }
         if self.state.schema_version != 1
             || self.state.allocation_id != self.allocation.id
             || self.state.revision == 0

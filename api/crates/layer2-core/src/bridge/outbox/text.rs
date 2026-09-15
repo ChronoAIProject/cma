@@ -8,7 +8,7 @@ pub(super) fn chunks(platform: &BridgePlatform, text: &str) -> Result<Vec<String
         return Err(OutboxError::Bounds);
     }
     let limit = match platform {
-        BridgePlatform::Telegram => 4000,
+        BridgePlatform::Telegram | BridgePlatform::TelegramNew => 4000,
         _ => 1900,
     };
     let mut result = Vec::new();
@@ -23,8 +23,10 @@ pub(super) fn chunks(platform: &BridgePlatform, text: &str) -> Result<Vec<String
             '>' => "›".into(),
             '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}' => String::new(),
             c if c.is_control() && !matches!(c, '\n' | '\t') => String::new(),
-            c if matches!(platform, BridgePlatform::Telegram | BridgePlatform::Discord)
-                && "\\_*`[]~|".contains(c) =>
+            c if matches!(
+                platform,
+                BridgePlatform::Telegram | BridgePlatform::TelegramNew | BridgePlatform::Discord
+            ) && "\\_*`[]~|".contains(c) =>
             {
                 format!("\\{c}")
             }

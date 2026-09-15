@@ -8,6 +8,7 @@ use layer2_core::AgentId;
 use super::*;
 
 mod grant;
+mod retained;
 
 pub(super) struct TurnSnapshot {
     resources: AgentProvenanceSnapshot,
@@ -17,6 +18,8 @@ pub(super) struct TurnSnapshot {
     sidecar: ChannelCommandSidecar,
     inbox: StoredInbox,
     allocation: AllocationRecord,
+    source_allocation: AllocationRecord,
+    require_live_agent: bool,
 }
 impl TurnSnapshot {
     pub fn observation<'a>(
@@ -27,7 +30,7 @@ impl TurnSnapshot {
         let source = OutboxSource::capture(
             &self.bridge,
             &self.inbox,
-            &self.allocation,
+            &self.source_allocation,
             &self.command.receipt,
             &self.sidecar,
         )?;
@@ -171,6 +174,17 @@ impl MongoBridgeReplyToolStore {
         command_id: &str,
         session: &mut ClientSession,
     ) -> Result<TurnSnapshot, MutationError> {
+        self.reply_source_snapshot(agent_id, command_id, true, session)
+            .await
+    }
+
+    async fn reply_source_snapshot(
+        &self,
+        agent_id: &AgentId,
+        command_id: &str,
+        require_live_agent: bool,
+        session: &mut ClientSession,
+    ) -> Result<TurnSnapshot, MutationError> {
         let resources = crate::store::agent_provenance::read_snapshot(
             &self.invokes.resources,
             agent_id,
@@ -219,16 +233,18 @@ impl MongoBridgeReplyToolStore {
             .ok_or(OutboxError::SourceMismatch)?;
         let bridge = crate::store::bridge_definitions::decode_bridge(&bridge_document)
             .map_err(|_| OutboxError::SourceMismatch)?;
-        let observed = TurnSnapshot {
+        let mut observed = TurnSnapshot {
             resources,
             provenance,
             bridge,
             command,
             sidecar,
             inbox,
+            source_allocation: allocation.clone(),
+            require_live_agent,
             allocation,
         };
-        self.require_turn_grant(&observed, false, session).await?;
+        observed.source_allocation = self.require_turn_grant(&observed, false, session).await?;
         Ok(observed)
     }
 

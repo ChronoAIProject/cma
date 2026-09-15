@@ -78,7 +78,7 @@ impl BridgeProvisioningDependencies {
     }
 }
 
-fn visible(
+pub(super) fn visible(
     owner: &ResourceOwner,
     publisher: &SubjectId,
     visibility: ProfileVisibility,
@@ -89,7 +89,7 @@ fn visible(
             || publisher == super::super::types::owner_subject(owner))
 }
 
-fn store_error(error: ProfileStoreError) -> BridgeError {
+pub(super) fn store_error(error: ProfileStoreError) -> BridgeError {
     match error {
         ProfileStoreError::Unavailable(_) => BridgeError::AuthorityUnavailable,
         _ => profile_unavailable(),

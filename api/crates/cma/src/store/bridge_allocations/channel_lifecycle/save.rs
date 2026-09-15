@@ -30,7 +30,7 @@ pub(super) async fn apply(
     let original = snapshot.sandbox.clone();
     let mut phase_completed = false;
     match change {
-        LifecycleCredentialChange::MintIntent => {
+        LifecycleCredentialChange::MintIntent(intent) => {
             if snapshot.current_attempt().is_some() {
                 return Err(AllocationError::Conflict.into());
             }
@@ -53,6 +53,13 @@ pub(super) async fn apply(
             {
                 return Err(AllocationError::AuthorityUnavailable.into());
             }
+            intent
+                .require_binding(
+                    permit.human(),
+                    &snapshot.provisioning.settings.deployment_id,
+                    &snapshot.name_for(generation)?,
+                )
+                .map_err(|_| AllocationError::IdentityMismatch)?;
             snapshot.credential = Some(ChannelLifecycleCredentialState {
                 schema_version: 1,
                 allocation_id: snapshot.allocation.id.clone(),
@@ -93,6 +100,7 @@ pub(super) async fn apply(
                 previous_credential_id: snapshot.name_for(previous.generation)?,
                 previous,
                 replacement: None,
+                mint_intent: Some((*intent).clone()),
             });
         }
         LifecycleCredentialChange::Mint { custody, material } => {
@@ -117,6 +125,11 @@ pub(super) async fn apply(
                 )
             {
                 return Err(AllocationError::IdentityMismatch.into());
+            }
+            if let Some(intent) = &state.mint_intent {
+                intent
+                    .require_material(&material.authority)
+                    .map_err(|_| AllocationError::IdentityMismatch)?;
             }
             custody
                 .insert_for_channel(database.name(), material, session)
@@ -176,7 +189,7 @@ pub(super) async fn apply(
         }
         _ => return Err(AllocationError::InvalidTransition.into()),
     }
-    if !matches!(change, LifecycleCredentialChange::MintIntent) {
+    if !matches!(change, LifecycleCredentialChange::MintIntent(_)) {
         let state = snapshot
             .credential
             .as_mut()
@@ -192,7 +205,7 @@ pub(super) async fn apply(
             .checked_add(1)
             .ok_or(AllocationError::Corrupt)?;
         snapshot.sandbox.updated_at = stamp.clone();
-        if !matches!(change, LifecycleCredentialChange::MintIntent) {
+        if !matches!(change, LifecycleCredentialChange::MintIntent(_)) {
             snapshot.sandbox.work.lease = None;
             snapshot.sandbox.work.ready_at = stamp.clone();
             snapshot.sandbox.work.attempts = 0;

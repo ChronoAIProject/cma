@@ -1,3 +1,8 @@
+import { capabilities } from './bridges/capabilities-schema.js';
+export type {
+  BridgeCapabilityCatalog,
+  BridgeConnectorCapabilities,
+} from './bridges/capabilities-schema.js';
 import { BridgeOutbox } from './bridges/outbox.js';
 import { ProtocolError, ValidationError } from './errors.js';
 import type { OperationOptions } from './http.js';
@@ -105,6 +110,15 @@ export class Bridges extends BridgeOutbox {
       this.config,
       query('/api/v1/bridge-connectors', { organization: options.organization }),
       schema.choices,
+      options,
+    );
+  }
+  /** Source/fixture capabilities and current deployment switches, without provider requests. */
+  capabilities(options: BridgeOwnerOptions = {}) {
+    return read(
+      this.config,
+      query('/api/v1/bridge-connectors/capabilities', { organization: options.organization }),
+      capabilities,
       options,
     );
   }

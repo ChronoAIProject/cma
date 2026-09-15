@@ -128,6 +128,11 @@ pub enum SandboxStoreError {
     Conflict,
     #[error("sandbox checkpoint is in progress; input was not admitted")]
     CheckpointInProgress,
+    #[error("sandbox lifecycle is busy: {status:?} ({reason:?})")]
+    LifecycleBusy {
+        status: SandboxStatus,
+        reason: super::SandboxLifecycleBlocker,
+    },
     #[error("event sequence would not be gap-free")]
     SequenceConflict,
     #[error("agent log capacity exceeded")]

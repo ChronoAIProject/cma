@@ -4,6 +4,7 @@ mod contract;
 #[cfg(test)]
 mod http_tests;
 mod material;
+pub(crate) mod mint_intent;
 mod renewal;
 #[cfg(test)]
 pub(crate) mod test_fixture;
@@ -21,6 +22,7 @@ pub(crate) struct BridgeSandboxKeyPlan {
     owner: ResourceOwner,
     actor: SubjectId,
     grant: crate::bridge::control_plane::BridgeControlPlaneGrant,
+    deployment_id: String,
     credential_id: String,
     scope: ScopePlan,
     expires_at: std::time::SystemTime,
@@ -70,6 +72,7 @@ impl KeyIssuer {
             owner: lease.owner().clone(),
             actor: lease.actor_subject().clone(),
             grant: lease.grant().clone(),
+            deployment_id: self.deployment.clone(),
             credential_id: credential_id.into(),
             scope,
             // Custody stores canonical whole-second RFC3339 timestamps. Ask
@@ -95,7 +98,8 @@ impl KeyIssuer {
         plan: BridgeSandboxKeyPlan,
     ) -> Result<MintedKey, KeyIssuerError> {
         require_lease(lease)?;
-        if plan.owner != *lease.owner()
+        if plan.deployment_id != self.deployment
+            || plan.owner != *lease.owner()
             || plan.actor != *lease.actor_subject()
             || plan.bridge_id != *lease.bridge_id()
             || plan.connector != *lease.connector()

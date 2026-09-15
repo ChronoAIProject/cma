@@ -25,6 +25,10 @@ pub(super) struct ReplyFixture {
     pub registry: Arc<crate::sandbox::LiveAgentRegistry>,
     pub inbox: StoredInbox,
     pub allocation: AllocationRecord,
+    pub allocations: Arc<MongoBridgeAllocationStore>,
+    pub bridges: Arc<MongoBridgeStore>,
+    pub svc: BridgeService,
+    pub replies: Arc<crate::store::MongoBridgeReplyToolStore>,
 }
 
 impl ReplyFixture {
@@ -56,6 +60,11 @@ impl ReplyFixture {
             )
             .await
             .unwrap(),
+        );
+        let allocations = Arc::new(
+            MongoBridgeAllocationStore::open(f.bridges.clone(), Some(store.clone()), &f.database)
+                .await
+                .unwrap(),
         );
         let invokes = BridgeInvokeService::new(
             f.svc.clone(),
@@ -161,7 +170,7 @@ impl ReplyFixture {
         let router = crate::bridge::channel_tools::router(
             Arc::new(crate::bridge::channel_tools::StoredChannelTools {
                 capabilities: f.tools,
-                replies,
+                replies: replies.clone(),
             }),
             "https://cma.example",
         );
@@ -189,12 +198,15 @@ impl ReplyFixture {
             registry,
             inbox,
             allocation: f.record,
+            allocations,
+            bridges: f.bridges,
+            svc: f.svc,
+            replies,
         }
     }
 
-    pub async fn call(&self, name: &str, arguments: Value) -> Value {
-        let response = self
-            .router
+    pub async fn raw_call(&self, name: &str, arguments: Value) -> axum::response::Response {
+        self.router
             .clone()
             .oneshot(
                 Request::builder()
@@ -213,7 +225,11 @@ impl ReplyFixture {
                     .unwrap(),
             )
             .await
-            .unwrap();
+            .unwrap()
+    }
+
+    pub async fn call(&self, name: &str, arguments: Value) -> Value {
+        let response = self.raw_call(name, arguments).await;
         assert_eq!(response.status(), axum::http::StatusCode::OK);
         let bytes = axum::body::to_bytes(response.into_body(), 32_768)
             .await
@@ -249,6 +265,42 @@ impl ReplyFixture {
             .try_collect()
             .await
             .unwrap()
+    }
+    pub async fn emit_assistant_text(&self, message_id: &str, text: &str) {
+        use layer3_adapter::{
+            ContentBlock, ContentChunk, ConversationUpdate, MessageId, SessionUpdate,
+        };
+        self.backend
+            .send_agent_update(
+                &self.runtime,
+                &AgentSlot(self.command.receipt.envelope.agent_id.as_str().into()),
+                ConversationUpdate::Said(SessionUpdate::AgentMessageChunk(
+                    ContentChunk::new(ContentBlock::from(text))
+                        .message_id(MessageId::new(message_id)),
+                )),
+            )
+            .await
+            .unwrap();
+    }
+    pub async fn await_assistant_text(&self, text: &str) {
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                let logs = self
+                    .resources
+                    .agent_log(&self.command.receipt.envelope.agent_id, 0, 100)
+                    .await
+                    .unwrap();
+                if logs.iter().any(|entry| {
+                    matches!(&entry.kind,
+                    layer2_core::sandbox::AgentLogKind::AgentMessage { content } if content == text)
+                }) {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("actual runtime assistant output must reach the durable CMA log");
     }
     pub async fn finish(&self) {
         use layer3_adapter::{PromptResponse, TurnStopReason};

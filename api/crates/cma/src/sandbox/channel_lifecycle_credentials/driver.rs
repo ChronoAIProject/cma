@@ -38,7 +38,10 @@ impl ChannelLifecycleCredentialDriver {
         }
         match snapshot.current_attempt().map(|state| state.phase) {
             None => self.mint(permit, &snapshot).await,
-            Some(CredentialPhase::MintStarted) => Err(AllocationError::Unavailable),
+            Some(CredentialPhase::MintStarted) => {
+                crate::sandbox::channel_mint_reconciliation::reconcile(&self.allocations, self.credentials.as_ref(), &self.issuer,
+                    crate::sandbox::channel_mint_reconciliation::authority::ChannelMintAttempt::Revival { permit: &permit, snapshot: &snapshot }).await
+            },
             Some(CredentialPhase::Deliver) => self.deliver(&permit, &snapshot).await,
             Some(CredentialPhase::Revoke) => self.revoke(&permit, &snapshot).await,
             Some(CredentialPhase::Complete) => Err(AllocationError::InvalidTransition),
@@ -65,9 +68,10 @@ impl ChannelLifecycleCredentialDriver {
             .await
             .map_err(|_| AllocationError::AuthorityUnavailable)?;
         self.revalidate(&permit).await?;
+        let intent = plan.mint_intent().map_err(|_| AllocationError::Corrupt)?;
         let started = self
             .allocations
-            .change_channel_lifecycle(&permit, Change::MintIntent)
+            .change_channel_lifecycle(&permit, Change::MintIntent(&intent))
             .await?;
         let permit = permit.after_credential_intent(&started.sandbox)?;
         self.revalidate(&permit).await?;

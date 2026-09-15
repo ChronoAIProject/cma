@@ -95,7 +95,8 @@ impl MongoBridgeAllocationStore {
         "_id":{"$type":"string"},"$or":[
             {"$and":[{"channel_renewal":{"$exists":false}},due.clone()]},
             {"$and":[{"channel_renewal.phase":"complete"},due]},
-            {"channel_renewal.phase":{"$in":["deliver","revoke"]},"channel_renewal.claim.expires_at_ms":{"$lte":super::now_ms(now)?}}
+            {"channel_renewal.phase":{"$in":["deliver","revoke"]},"channel_renewal.claim.expires_at_ms":{"$lte":super::now_ms(now)?}},
+            {"channel_renewal.phase":"mint_started","channel_renewal.mint_intent":{"$exists":true},"channel_mint_reconciliation.renewal.phase":{"$ne":"revoked"},"channel_renewal.claim.expires_at_ms":{"$lte":super::now_ms(now)?}}
         ]};
         if let Some(after) = after {
             filter.insert("_id", doc! {"$type":"string","$gt":after});
@@ -197,7 +198,13 @@ impl MongoBridgeAllocationStore {
         };
         snapshot.validate()?;
         if snapshot.renewal.as_ref().is_some_and(|state| {
-            state.phase == RenewalPhase::MintStarted
+            (state.phase == RenewalPhase::MintStarted
+                && (state.mint_intent.is_none()
+                    || document
+                        .get_document("channel_mint_reconciliation")
+                        .ok()
+                        .and_then(|value| value.get_document("renewal").ok())
+                        .is_some_and(|value| value.get_str("phase").ok() == Some("revoked"))))
                 || state.claim.expires_at_ms > super::now_ms(SystemTime::now()).unwrap_or(i64::MIN)
         }) || !snapshot.due(super::now_ms(now)?)?
         {

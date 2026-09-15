@@ -36,6 +36,7 @@ pub(crate) struct ChannelAllocationWork {
     pub driver: ChannelProvisioningDriver,
     pub children: ChannelChildDriver,
     pub startup: ChannelStartupDriver,
+    pub reuse: crate::sandbox::channel_reuse::ChannelReuseDriver,
 }
 
 #[async_trait::async_trait]
@@ -71,6 +72,13 @@ impl ChannelWorkPort for ChannelAllocationWork {
             .resolve(&self.definitions, &record)
             .await
             .map_err(|_| Error::Suspended)?;
+        if matches!(record.placement, AllocationPlacement::ReuseParent { .. }) {
+            self.reuse
+                .run_one(record, &authority, &lease)
+                .await
+                .map_err(|_| Error::Unavailable)?;
+            return Ok(());
+        }
         match self
             .driver
             .run_one(record, &authority, &lease)
@@ -184,7 +192,9 @@ impl ChannelInboxWork {
                     .config
                     .clone();
                 let authority = match &config.placement {
-                    BridgePlacementPolicy::NewSandbox { .. } => {
+                    BridgePlacementPolicy::NewSandbox { .. }
+                    | BridgePlacementPolicy::WorkspacePerPartition { .. }
+                    | BridgePlacementPolicy::WorktreeAgentPerPartition { .. } => {
                         self.authority
                             .prepare_accepted(&self.definitions, admission.identity(), &inbox.pin)
                             .await
@@ -240,7 +250,7 @@ impl ChannelInboxWork {
             AllocationPlacement::ExistingAgent { grant_id, .. } => {
                 BridgeInvokeGrantId(grant_id.clone())
             }
-            AllocationPlacement::NewSandbox { .. } => {
+            AllocationPlacement::NewSandbox { .. } | AllocationPlacement::ReuseParent { .. } => {
                 let (authority, lease) = self
                     .authority
                     .resolve(&self.definitions, &record)

@@ -19,16 +19,19 @@ mod channel;
 pub(crate) use channel::MongoChannelCommandStore;
 mod channel_grants;
 mod channel_replay;
+mod channel_retained;
 mod channel_revival;
 pub(crate) mod channel_source;
 mod enable;
+mod fence;
 pub(in crate::store) mod outbox;
 mod usage;
 pub(super) use enable::fence_enable;
+pub(in crate::store) use usage::apply_management_usage;
 
 pub(crate) struct MongoBridgeInvokeStore {
     bridges: Arc<MongoBridgeStore>,
-    resources: Arc<MongoSandboxStore>,
+    pub(super) resources: Arc<MongoSandboxStore>,
     grants: Collection<Document>,
     receipts: Collection<Document>,
     audits: Collection<Document>,
@@ -90,51 +93,6 @@ impl MongoBridgeInvokeStore {
         self.fence_transaction(proof, session)
             .await
             .map_err(MutationError::into_invoke)
-    }
-
-    async fn fence_transaction(
-        &self,
-        proof: &BridgeInvokeProof,
-        session: &mut ClientSession,
-    ) -> Result<(), MutationError> {
-        proof.require_current()?;
-        let bridge = self.read_bridge(&proof.bridge().id, session).await?;
-        let grant = self
-            .grants
-            .find_one(doc! {"_id":proof.grant().id.as_str()})
-            .session(&mut *session)
-            .await?
-            .as_ref()
-            .map(read_grant)
-            .transpose()?
-            .ok_or(BridgeInvokeError::NotFound)?;
-        grant.require_active()?;
-        let resources =
-            read_execution_snapshot(&self.resources, &grant.target.resource(), session).await?;
-        proof.require_snapshot(&bridge, &grant, &resources)?;
-        if let Some(basis) = &grant.channel {
-            basis.require_bridge(&bridge, &grant.pin, &grant.config)?;
-            self.fence_channel_grant(basis, session).await?;
-        }
-        self.bridges
-            .credentials
-            .require_retained_binding(&bridge, &grant.config, proof.custody_pin(), session)
-            .await?;
-        self.fence_bridge(&bridge, session).await?;
-        let changed = self
-            .grants
-            .update_one(
-                doc! {"_id":grant.id.as_str(),"revision":grant.revision as i64},
-                doc! {"$inc":{"effect_fence":1_i64}},
-            )
-            .session(&mut *session)
-            .await?;
-        if changed.matched_count != 1 {
-            return Err(BridgeInvokeError::Conflict.into());
-        }
-        fence_lineage(&self.resources, &resources, session).await?;
-        proof.require_current()?;
-        Ok(())
     }
 
     async fn read_bridge(

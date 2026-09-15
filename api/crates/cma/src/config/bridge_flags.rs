@@ -16,10 +16,11 @@ pub(crate) enum BridgeFlag {
     Lark,
     Feishu,
     V2UiTransport,
+    TelegramNew,
 }
 
 impl BridgeFlag {
-    pub(crate) const ALL: [Self; 10] = [
+    pub(crate) const ALL: [Self; 11] = [
         Self::Management,
         Self::Ingress,
         Self::Allocation,
@@ -30,6 +31,7 @@ impl BridgeFlag {
         Self::Lark,
         Self::Feishu,
         Self::V2UiTransport,
+        Self::TelegramNew,
     ];
 
     pub(crate) const fn key(self) -> &'static str {
@@ -40,6 +42,7 @@ impl BridgeFlag {
             Self::Execution => "CHRONO_BRIDGE_EXECUTION_ENABLED",
             Self::Outbound => "CHRONO_BRIDGE_OUTBOUND_ENABLED",
             Self::Telegram => "CHRONO_BRIDGE_TELEGRAM_ENABLED",
+            Self::TelegramNew => "CHRONO_BRIDGE_TELEGRAM_NEW_ENABLED",
             Self::Discord => "CHRONO_BRIDGE_DISCORD_ENABLED",
             Self::Lark => "CHRONO_BRIDGE_LARK_ENABLED",
             Self::Feishu => "CHRONO_BRIDGE_FEISHU_ENABLED",
@@ -53,6 +56,7 @@ impl BridgeFlag {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum BridgePlatformFlag {
     Telegram,
+    TelegramNew,
     Discord,
     Lark,
     Feishu,
@@ -62,6 +66,7 @@ impl BridgePlatformFlag {
     const fn flag(self) -> BridgeFlag {
         match self {
             Self::Telegram => BridgeFlag::Telegram,
+            Self::TelegramNew => BridgeFlag::TelegramNew,
             Self::Discord => BridgeFlag::Discord,
             Self::Lark => BridgeFlag::Lark,
             Self::Feishu => BridgeFlag::Feishu,
@@ -131,7 +136,7 @@ pub(crate) enum AcceptedWorkDecision {
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct BridgeFeatureFlags {
-    enabled: [bool; 10],
+    enabled: [bool; 11],
 }
 
 impl BridgeFeatureFlags {

@@ -192,3 +192,30 @@ under fresh manager authorization even if delivery since progressed. Changed
 input conflicts. Queued is not delivered; no SDK method automatically resends
 or retargets original reply context. Decoders validate source/identity, bounded
 attempt history and exact action/revision correlation.
+
+## Shared parent placements
+
+`BridgePlacement` also represents `workspace_per_partition` and
+`worktree_agent_per_partition`. The first selects `sandbox_id` and exact
+`workspace_profile` / `agent_profile` pins. The second selects both `sandbox_id`
+and `workspace_id` and an exact `agent_profile` pin. Every shared placement
+requires `BridgeSharedTrust` with
+`all_participants_share_filesystem_processes_and_credentials` and
+`BridgeSharedCapacity` with `keep_other_workspaces` and
+`keep_other_agents_per_workspace` from 1 through 15. Missing acknowledgment and
+invalid reserved capacity are rejected before request transport.
+
+All participants share the parent's filesystem, processes and credentials.
+Separate Agent homes and Git worktrees do not provide security isolation. The
+server checks current Bridge management, whole-parent management authority,
+exact owner/ancestry, immutable profiles and existing service/model scope. An
+incompatible parent returns `bridge_incompatible_target` (409). Existing
+partitions retain their original placement and profiles after configuration
+updates. Reset retains the old generation and creates distinct children; it
+never moves sibling work.
+
+These types describe the public contract. The dashboard choices remain disabled
+until backend validation and live Agent continuity checks pass; SDK support is
+not proof that those rollout gates have passed.
+
+Use `capabilities(Some("organization-id")).await` to read source/fixture capabilities and independent deployment switches under current owner/admin access. An unavailable or unknown catalog does not imply platform support. Telegram-new keeps the exact `telegram-new` identity; its gate is separate from Telegram. Text replies use explicit channel tools in channel-created active conversations. Attachments require a download capability that is currently unavailable, and protocol fixtures do not establish live platform delivery.

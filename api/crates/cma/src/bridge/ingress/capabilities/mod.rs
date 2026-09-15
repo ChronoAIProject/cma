@@ -33,7 +33,9 @@ impl CallbackCapabilityExtractor for NyxidCapabilities {
             return Ok(facts);
         };
         match facts.platform {
-            BridgePlatform::Telegram => telegram::observe(raw, payload.record(), &mut facts)?,
+            BridgePlatform::Telegram | BridgePlatform::TelegramNew => {
+                telegram::observe(raw, payload.record(), &mut facts)?
+            }
             BridgePlatform::Lark | BridgePlatform::Feishu => {
                 lark::observe(raw, payload.record(), &mut facts)?
             }
@@ -66,6 +68,24 @@ fn text_matches(record: &layer2_core::bridge::ingress::StoredInbox, text: Option
         && record.envelope.attachments.is_empty()
         && text.is_some()
         && record.envelope.text.as_deref() == text
+}
+
+/// Refuse whole messages with media; never silently discard their attachments.
+/// This runs only after the platform established an original message identity.
+fn message_event(
+    record: &layer2_core::bridge::ingress::StoredInbox,
+    text: Option<&str>,
+    raw_media: bool,
+) -> ChannelEventKind {
+    if raw_media || !record.envelope.attachments.is_empty() {
+        ChannelEventKind::AttachmentMessage
+    } else if record.envelope.content_type != "text" {
+        ChannelEventKind::UnsupportedContent
+    } else if text_matches(record, text) {
+        ChannelEventKind::UserMessage
+    } else {
+        ChannelEventKind::Unknown
+    }
 }
 
 #[cfg(test)]
