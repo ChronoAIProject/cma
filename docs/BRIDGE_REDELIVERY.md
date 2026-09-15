@@ -2,6 +2,14 @@
 
 This follow-up is separate from the connector capability catalog and Telegram-new adapter. It is not live verification or mixed-writer rollout evidence.
 
+The [disabled text-control foundation](CHANNEL_CONTROLS.md) adds a shared
+Message/Control disposition collection for new callbacks. Both choices conflict
+on the same verified callback/provider identity inside the admission transaction.
+Existing Message receipts and provider aliases are still recovered first with
+their original validators, preserving any accepted legacy reserved-prefix text.
+The strict Message schemas described here remain unchanged, and no historical
+provider identity or disposition is inferred or backfilled.
+
 NyxID may assign a new callback message UUID when a platform delivers the same original webhook again. Ordinary callback replay remains exact: the original NyxID message ID and signed body must match the permanent receipt. A changed body under an already accepted callback ID remains a conflict.
 
 For verified original human text, CMA also derives a provider identity from the owner, Bridge, configured issuer, selected bot, exact platform, actual chat, and provider message ID. It compares sender, conversation kind, verified thread evidence, raw-corroborated parent, content type, and exact text. Generic callback fields, display names, reply tokens, callback UUIDs, correlation IDs, and transport timestamps do not establish provider equivalence. Edits, attachments, actions, bot/loop events, and uncorroborated parents cannot produce the descriptor.

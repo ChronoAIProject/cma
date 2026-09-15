@@ -1,5 +1,10 @@
 # Bridge connector capabilities
 
+The [reserved text-control foundation](CHANNEL_CONTROLS.md) only persists safe
+refusals while source controls are disabled. It does not change any catalog
+capability, including `verified_actions` or `live_verified`, and cannot enable
+chat approvals or automatic channel sends.
+
 `GET /api/v1/bridge-connectors/capabilities` returns version 1 of the safe capability catalog. An optional `organization` query selects organization scope. The current owner or organization admin can read it, including when management or execution rollout switches are off. It uses no provider requests and exposes no bot/key inventory, custody identifiers, callback tokens, private URLs or credentials. Responses are private and must not be cached.
 
 TypeScript callers use `client.bridges.capabilities({ organization })`. Rust callers use `client.bridges().capabilities(Some("organization-id")).await`. Existing validator implementations default to an empty version 1 catalog with `connection_validation_available: false`; SDKs reject an unknown catalog version. A missing platform or unknown capability provides no support guarantee.

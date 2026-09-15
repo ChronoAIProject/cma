@@ -191,6 +191,7 @@ impl StoredInbox {
 /// bridge state fence, queue/rate limits and encrypted expiring reply context.
 /// There is no Serialize/Deserialize or Debug implementation for this proof.
 pub struct InboxWrite {
+    pub(super) control_refusal: Option<super::ChannelControlRefusal>,
     pub(super) platform_redelivery: Option<super::VerifiedPlatformRedelivery>,
     pub(super) binding: CallbackBinding,
     pub(super) record: StoredInbox,
@@ -203,6 +204,7 @@ pub struct InboxWrite {
 /// This cannot be persisted or used as owner authority. Only a matching fresh
 /// live binding can turn it into an InboxWrite, retaining its original deadline.
 pub struct SignedCallback {
+    pub(super) control_refusal: Option<super::ChannelControlRefusal>,
     pub(super) bridge: BridgeRecord,
     pub(super) record: StoredInbox,
     pub(super) reply_token: Option<Zeroizing<String>>,
@@ -221,6 +223,7 @@ impl SignedCallback {
             self.record.envelope.protected_thread_context_present = false;
         }
         let write = InboxWrite {
+            control_refusal: self.control_refusal,
             platform_redelivery: None,
             binding,
             record: self.record,
@@ -234,6 +237,10 @@ impl SignedCallback {
 }
 
 impl InboxWrite {
+    pub fn control_refusal(&self) -> Option<super::ChannelControlRefusal> {
+        self.control_refusal
+    }
+
     pub fn with_platform_redelivery(
         mut self,
         proof: Option<super::VerifiedPlatformRedelivery>,
@@ -291,11 +298,11 @@ pub trait CallbackInboxStore: Send + Sync {
     async fn recover_receipt(
         &self,
         _write: &InboxWrite,
-    ) -> Result<Option<InboxReceipt>, CallbackError> {
+    ) -> Result<Option<super::CallbackAcceptance>, CallbackError> {
         Ok(None)
     }
 
     /// Success means durable majority acceptance. A DB timeout or unknown commit
     /// without a majority-visible matching receipt must return Unavailable.
-    async fn accept(&self, write: InboxWrite) -> Result<InboxReceipt, CallbackError>;
+    async fn accept(&self, write: InboxWrite) -> Result<super::CallbackAcceptance, CallbackError>;
 }

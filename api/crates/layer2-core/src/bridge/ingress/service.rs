@@ -257,6 +257,7 @@ impl CallbackVerifier {
             .saturating_sub(now);
         let deadline = started + Duration::from_secs(remaining.clamp(0, 5) as u64);
         let signed = SignedCallback {
+            control_refusal: None,
             bridge,
             record,
             reply_token: if retain_reply { reply_token } else { None },
