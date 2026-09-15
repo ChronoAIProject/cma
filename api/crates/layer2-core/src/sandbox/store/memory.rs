@@ -54,6 +54,7 @@ mod command_audit;
 mod command_revival;
 mod events;
 mod provenance;
+mod provenance_inventory;
 use events::bounded_events;
 #[cfg(test)]
 mod launch_command_tests;

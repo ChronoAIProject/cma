@@ -17,7 +17,7 @@ use super::super::{
 };
 use super::{snapshot, ReadError};
 
-pub(super) async fn read(
+pub(in crate::store) async fn read(
     store: &MongoSandboxStore,
     organization: &SubjectId,
     query: &AgentListQuery,
