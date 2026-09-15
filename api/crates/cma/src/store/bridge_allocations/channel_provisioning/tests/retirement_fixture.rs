@@ -135,6 +135,13 @@ impl RetirementFixture {
         Self::from_renewal(f)
     }
     pub fn from_renewal(f: RenewalFixture) -> Self {
+        Self::with_agents(f, Arc::new(LiveAgentRegistry::default()), None)
+    }
+    pub fn with_agents(
+        f: RenewalFixture,
+        registry: Arc<LiveAgentRegistry>,
+        agents: Option<Arc<dyn LiveAgentStopper>>,
+    ) -> Self {
         let stops = Arc::new(StopRecorder {
             calls: AtomicUsize::new(0),
             resources: f.original.resources.clone(),
@@ -163,14 +170,13 @@ impl RetirementFixture {
             None,
             Some(driver),
         );
-        let registry = Arc::new(LiveAgentRegistry::default());
         let worker = SandboxWorker::new(
             SandboxWorkerDependencies {
                 store: f.original.resources.clone(),
                 adapter: adapter.clone(),
                 credentials,
                 workspaces: Arc::new(NoEffects),
-                agents: stops.clone(),
+                agents: agents.unwrap_or_else(|| stops.clone()),
                 checkpoints: Arc::new(NoEffects),
                 registry: registry.clone(),
                 updates: DurableAgentUpdateRecorder::new(f.original.resources.clone()),
