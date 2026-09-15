@@ -184,6 +184,7 @@ impl Harness {
         let result = self
             .store
             .admit_agent(AgentAdmission {
+                created_by: None,
                 owner: self.workspace.owner.clone(),
                 workspace_id: self.workspace.id.clone(),
                 agent_id: AgentId::generate(),

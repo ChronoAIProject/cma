@@ -320,7 +320,12 @@ impl ControlPlaneComposition {
                 projections.reads(),
             ),
         );
+        let provenance = layer2_core::sandbox::AgentProvenanceService::new(
+            stores.sandbox_model.clone(),
+            resource_access.clone(),
+        );
         let resource_routes = profiles_router(profiles)
+            .merge(layer1_public::rest::agent_provenance_router(provenance))
             .merge(layer1_public::rest::resource_access_router(resource_access))
             .merge(profile_authoring_router(profile_authoring))
             .merge(hierarchy_router(hierarchy))

@@ -13,6 +13,8 @@ use crate::sandbox::{
 
 #[derive(Debug, Clone)]
 pub struct AgentAdmission {
+    /// Server-attributed creating actor; absent for legacy/internal profile work.
+    pub created_by: Option<crate::resource_access::ResourceActor>,
     pub owner: SubjectId,
     pub workspace_id: WorkspaceId,
     pub agent_id: AgentId,

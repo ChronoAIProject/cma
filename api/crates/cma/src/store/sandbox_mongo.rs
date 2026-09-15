@@ -87,6 +87,7 @@ pub struct MongoSandboxStore {
     pub(super) agents: Collection<Document>,
     pub(super) agent_reuse_bindings: Collection<Document>,
     pub(super) agent_log: Collection<Document>,
+    pub(super) agent_creation_provenance: Collection<Document>,
     pub(super) agent_commands: Collection<Document>,
     pub(super) command_authorization_audits: Collection<Document>,
     pub(super) agent_command_orders: Collection<Document>,
@@ -131,6 +132,7 @@ impl MongoSandboxStore {
             agents: majority_collection(&database, AGENTS),
             agent_reuse_bindings: majority_collection(&database, AGENT_REUSE_BINDINGS),
             agent_log: majority_collection(&database, AGENT_LOG),
+            agent_creation_provenance: majority_collection(&database, "agent_creation_provenance"),
             agent_commands: majority_collection(&database, AGENT_COMMANDS),
             command_authorization_audits: majority_collection(
                 &database,
