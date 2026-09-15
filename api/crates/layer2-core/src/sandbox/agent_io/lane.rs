@@ -72,6 +72,20 @@ impl CommandLane {
     }
 }
 
+impl AdmittedAgentCommand {
+    /// An admitted Channel message retains its normal-message position while
+    /// awaiting execution authority. Controls may still address an active turn.
+    pub fn holds_message_order(&self) -> bool {
+        self.status == AgentResponseStatus::WaitingAction
+            && self.work.dispatch.is_none()
+            && matches!(
+                self.receipt.envelope.actor,
+                super::AgentActor::Channel { .. }
+            )
+            && matches!(self.receipt.envelope.command, AgentCommand::Message { .. })
+    }
+}
+
 /// Normal messages keep FIFO order while controls can address the active turn.
 /// Expired or terminal-resource work is claimable only so it can be refused.
 pub fn command_ready_for_claim(

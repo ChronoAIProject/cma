@@ -68,7 +68,7 @@ impl ReplyFixture {
         );
         let inbound = f.authority.bridge().admission_pin().unwrap();
         let grant = invokes
-            .issue_channel(Arc::new(f.lease), &f.record.id, &inbound, f.authority)
+            .issue_channel(f.lease.clone(), &f.record.id, &inbound, f.authority)
             .await
             .unwrap();
         let callback = crate::store::bridge_definitions::mongo_integration_tests::inbox::callback;

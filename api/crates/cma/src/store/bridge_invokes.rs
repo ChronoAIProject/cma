@@ -19,6 +19,7 @@ mod channel;
 pub(crate) use channel::MongoChannelCommandStore;
 mod channel_grants;
 mod channel_replay;
+mod channel_revival;
 pub(crate) mod channel_source;
 mod enable;
 pub(in crate::store) mod outbox;
@@ -53,6 +54,7 @@ impl MongoBridgeInvokeStore {
                 "bridge_invoke_grants",
                 "bridge_invoke_receipts",
                 "bridge_invoke_audits",
+                "channel_command_revival_audits",
             ],
         )
         .await?;

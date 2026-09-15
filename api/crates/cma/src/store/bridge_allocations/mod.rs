@@ -1,6 +1,7 @@
 //! Transactional partition heads and immutable allocation generations. No
 //! provider creation or Agent command submission occurs in this store.
 mod channel_children;
+pub(crate) mod channel_lifecycle;
 mod channel_provisioning;
 mod channel_renewal;
 mod channel_startup;
@@ -52,6 +53,7 @@ impl MongoBridgeAllocationStore {
                 "bridge_allocation_heads",
                 "bridge_allocations",
                 "channel_credential_renewal_audits",
+                "channel_lifecycle_credential_audits",
             ],
         )
         .await?;
@@ -257,7 +259,7 @@ impl Write<'_> {
 }
 
 #[derive(Debug, thiserror::Error)]
-enum MutationError {
+pub(crate) enum MutationError {
     #[error(transparent)]
     Core(#[from] AllocationError),
     #[error(transparent)]

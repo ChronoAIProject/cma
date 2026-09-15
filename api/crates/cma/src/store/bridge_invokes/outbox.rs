@@ -24,6 +24,7 @@ mod enqueue;
 mod management;
 mod rate;
 mod records;
+mod reply_addressing;
 mod scanning;
 mod snapshot;
 #[cfg(test)]
@@ -82,6 +83,15 @@ impl MongoBridgeReplyToolStore {
         store
             .items
             .create_indexes([
+                // Existing permanent Sent rows already contain these exact
+                // derived source/receipt fields; no payload backfill is needed.
+                IndexModel::builder()
+                    .keys(doc! {"state":1,"record.source.pin.bridge_id":1,
+                        "record.source.config.connector.issuer":1,"record.source.config.connector.bot_id":1,
+                        "record.source.config.connector.platform":1,"record.source.chat_id":1,
+                        "record.state.receipt.platform_message_id":1})
+                    .options(mongodb::options::IndexOptions::builder().name("bridge_sent_reply_addressing_v1".to_owned()).build())
+                    .build(),
                 IndexModel::builder()
                     .keys(doc! {"record.source.pin.bridge_id":1,"_id":1})
                     .build(),

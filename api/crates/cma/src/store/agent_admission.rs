@@ -23,6 +23,7 @@ use super::sandboxes::{read_sandbox, sandbox_replacement_fields};
 use super::workspaces::{read_workspace, workspace_replacement_fields};
 use super::worktrees::worktree_document;
 
+mod attribution;
 #[path = "agent_admission_reuse.rs"]
 mod reuse;
 
@@ -61,28 +62,12 @@ impl From<TransactionLogError> for ApplyError {
     }
 }
 
-#[async_trait::async_trait]
-impl AgentAdmissionStore for MongoSandboxStore {
-    async fn admit_agent_reusing_profile(
-        &self,
-        admission: AgentAdmission,
-    ) -> Result<AgentAdmissionResult, SandboxStoreError> {
-        self.admit_agent_with_reuse(admission, true).await
-    }
-
-    async fn admit_agent(
-        &self,
-        admission: AgentAdmission,
-    ) -> Result<AgentAdmissionResult, SandboxStoreError> {
-        self.admit_agent_with_reuse(admission, false).await
-    }
-}
-
 impl MongoSandboxStore {
     async fn admit_agent_with_reuse(
         &self,
         admission: AgentAdmission,
         reuse_existing: bool,
+        initiation: Option<layer2_core::trigger_domain::LaunchInitiation>,
     ) -> Result<AgentAdmissionResult, SandboxStoreError> {
         let mut last_transient = None;
         for attempt in 0..TRANSACTION_ATTEMPTS {
@@ -104,8 +89,14 @@ impl MongoSandboxStore {
                 }
                 return Err(SandboxStoreError::Unavailable(error.to_string()));
             }
-            let receipt = match apply_admission(self, &admission, reuse_existing, &mut session)
-                .await
+            let receipt = match apply_admission(
+                self,
+                &admission,
+                reuse_existing,
+                initiation.as_ref(),
+                &mut session,
+            )
+            .await
             {
                 Ok(AdmissionReceipt::Existing(creation)) => {
                     match commit_transaction(&mut session).await {
@@ -202,8 +193,12 @@ async fn apply_admission(
     store: &MongoSandboxStore,
     admission: &AgentAdmission,
     reuse_existing: bool,
+    initiation: Option<&layer2_core::trigger_domain::LaunchInitiation>,
     session: &mut mongodb::ClientSession,
 ) -> Result<AdmissionReceipt, ApplyError> {
+    if let Some(initiation) = initiation {
+        attribution::fence_initiation(store, admission, initiation, session).await?;
+    }
     if let Some(replay) = replay_in_transaction(store, admission, session).await? {
         return Ok(replay);
     }
@@ -283,6 +278,7 @@ async fn apply_admission(
         admission,
         &creation.agent,
         &sandbox,
+        initiation,
         session,
     )
     .await

@@ -126,6 +126,12 @@ impl NormalizedPartitionSource {
         {
             return Err(PartitionError::InvalidSource("normalized_identity"));
         }
+        if let Some(evidence) = &observation.reply_receipt {
+            evidence.validate()?;
+            if observation.replied_to_bot != VerifiedFlag::Yes {
+                return Err(PartitionError::InvalidSource("reply_addressing_evidence"));
+            }
+        }
         if let ThreadEvidence::Verified(reference) = &observation.thread {
             reference.require_platform(&observation.platform)?;
         }

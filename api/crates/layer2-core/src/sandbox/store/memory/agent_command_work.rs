@@ -1,10 +1,14 @@
 use async_trait::async_trait;
 
 use crate::sandbox::agent_io::{
-    command_ready_for_claim, AdmittedAgentCommand, AgentCommandWorkerStore, CommandClaim,
-    CommandClaimRequest, CommandFailureCode, CommandLedgerError,
+    command_ready_for_claim, AdmittedAgentCommand, AgentCommand, AgentCommandWorkerStore,
+    CommandClaim, CommandClaimRequest, CommandFailureCode, CommandLedgerError,
 };
 use crate::sandbox::store::InMemorySandboxStore;
+
+#[cfg(test)]
+#[path = "agent_command_order_tests.rs"]
+mod order_tests;
 
 pub(super) fn bind_dispatch(
     state: &mut super::State,
@@ -196,8 +200,18 @@ impl AgentCommandWorkerStore for InMemorySandboxStore {
             .collect();
         waiting.sort_by_key(|command| command.receipt.agent_order);
         let mut selected = None;
+        let mut message_held = false;
         for command in waiting {
             command.validate()?;
+            message_held |= command.holds_message_order();
+            if message_held
+                && matches!(
+                    command.receipt.envelope.command,
+                    AgentCommand::Message { .. }
+                )
+            {
+                continue;
+            }
             if command_ready_for_claim(command, agent, &request.now) {
                 selected = Some(command.clone());
                 break;

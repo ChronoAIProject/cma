@@ -23,6 +23,7 @@ struct StateData {
     metadata: Mutex<Value>,
     status: Mutex<StatusCode>,
     deletes: AtomicUsize,
+    delete_response: Mutex<StatusCode>,
 }
 struct Fixture {
     lease: BridgeControlPlaneLease,
@@ -75,6 +76,7 @@ impl Fixture {
             "allow_all_services":false,"allow_all_nodes":false,"credential_source":source,"purpose":"general","scheduled_write_enabled":false})),
             status: Mutex::new(StatusCode::OK),
             deletes: AtomicUsize::new(0),
+            delete_response: Mutex::new(StatusCode::NO_CONTENT),
         });
         let router = Router::new()
             .route("/api/v1/api-keys/key-prior", get(metadata).delete(delete))
@@ -126,7 +128,12 @@ async fn metadata(
     if status != StatusCode::OK {
         return Err(status);
     }
-    Ok(Json(state.metadata.lock().unwrap().clone()))
+    let metadata = state.metadata.lock().unwrap().clone();
+    // Pinned NyxID GET filters inactive keys after checking the actor.
+    if metadata["is_active"] == false {
+        return Err(StatusCode::NOT_FOUND);
+    }
+    Ok(Json(metadata))
 }
 async fn delete(
     State(state): State<Arc<StateData>>,
@@ -134,8 +141,10 @@ async fn delete(
 ) -> Result<StatusCode, StatusCode> {
     authorized(&headers)?;
     state.deletes.fetch_add(1, Ordering::SeqCst);
-    *state.status.lock().unwrap() = StatusCode::NOT_FOUND;
-    Ok(StatusCode::NO_CONTENT)
+    let mut metadata = state.metadata.lock().unwrap();
+    metadata["is_active"] = json!(false);
+    metadata["state_version"] = json!(metadata["state_version"].as_i64().unwrap() + 1);
+    Ok(*state.delete_response.lock().unwrap())
 }
 
 #[tokio::test]
@@ -200,4 +209,35 @@ async fn authentication_and_permission_failures_are_not_reconciled_as_key_absenc
         assert!(f.revoke().await.is_err());
     }
     assert_eq!(f.state.deletes.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn uncertain_scoped_delete_reconciles_actual_provider_soft_delete_without_repeating_delete() {
+    for owner in [
+        ResourceOwner::Person {
+            subject: SubjectId::new("fixture-person"),
+        },
+        ResourceOwner::Organization {
+            subject: SubjectId::new("fixture-org"),
+        },
+    ] {
+        let f = Fixture::new(owner).await;
+        // NyxID commits the soft deletion, but the response is unavailable.
+        *f.state.delete_response.lock().unwrap() = StatusCode::SERVICE_UNAVAILABLE;
+        assert!(matches!(
+            f.revoke().await,
+            Err(KeyIssuerError::Refused(503))
+        ));
+        assert_eq!(f.state.metadata.lock().unwrap()["is_active"], false);
+        assert_eq!(f.state.metadata.lock().unwrap()["state_version"], 5);
+        // An unavailable human credential still cannot establish completion.
+        *f.state.status.lock().unwrap() = StatusCode::UNAUTHORIZED;
+        assert!(matches!(
+            f.revoke().await,
+            Err(KeyIssuerError::Refused(401))
+        ));
+        *f.state.status.lock().unwrap() = StatusCode::OK;
+        f.revoke().await.unwrap();
+        assert_eq!(f.state.deletes.load(Ordering::SeqCst), 1);
+    }
 }

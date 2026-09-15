@@ -269,6 +269,16 @@ impl InboxWrite {
 
 #[async_trait::async_trait]
 pub trait CallbackInboxStore: Send + Sync {
+    /// Read-only recovery after optional enrichment fails. Implementations must
+    /// revalidate current binding/custody and exact original callback identity;
+    /// absence never authorizes fresh acceptance or a permanent refusal.
+    async fn recover_receipt(
+        &self,
+        _write: &InboxWrite,
+    ) -> Result<Option<InboxReceipt>, CallbackError> {
+        Ok(None)
+    }
+
     /// Success means durable majority acceptance. A DB timeout or unknown commit
     /// without a majority-visible matching receipt must return Unavailable.
     async fn accept(&self, write: InboxWrite) -> Result<InboxReceipt, CallbackError>;

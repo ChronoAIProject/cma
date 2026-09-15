@@ -144,6 +144,9 @@ pub struct PlatformCapabilityObservation {
     pub loop_evidence: LoopEvidence,
     pub mentioned_bot: VerifiedFlag,
     pub replied_to_bot: VerifiedFlag,
+    /// Exact permanent CMA Sent item used to prove selected-bot reply addressing.
+    /// Historical evidence only; never authorizes another send or execution.
+    pub reply_receipt: Option<ConfirmedReplyReceipt>,
     pub thread: ThreadEvidence,
 }
 
@@ -163,7 +166,33 @@ impl PlatformCapabilityObservation {
             loop_evidence: LoopEvidence::Unknown,
             mentioned_bot: VerifiedFlag::Unknown,
             replied_to_bot: VerifiedFlag::Unknown,
+            reply_receipt: None,
             thread: ThreadEvidence::Unknown,
         })
+    }
+}
+
+/// Exact immutable evidence checked against a permanent Sent outbox record in
+/// the callback acceptance transaction. This is not permission to send again.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ConfirmedReplyReceipt {
+    pub item_id: String,
+    pub revision: u64,
+    pub record_sha256: String,
+}
+impl ConfirmedReplyReceipt {
+    pub fn validate(&self) -> Result<(), PartitionError> {
+        if !self
+            .item_id
+            .strip_prefix("bro_")
+            .is_some_and(crate::bridge::partition::digest)
+            || self.revision == 0
+            || self.revision > i64::MAX as u64
+            || !crate::bridge::partition::digest(&self.record_sha256)
+        {
+            return Err(PartitionError::InvalidSource("reply_addressing_evidence"));
+        }
+        Ok(())
     }
 }

@@ -5,6 +5,7 @@ mod connections;
 mod content;
 mod launch;
 mod launch_event;
+mod launch_initiation;
 mod launch_lifecycle;
 mod launch_message_evidence;
 mod launch_message_progress;
@@ -51,6 +52,7 @@ pub use launch::{
     LaunchStepStatus,
 };
 pub use launch_event::{LaunchEvent, LaunchEventKind};
+pub use launch_initiation::LaunchInitiation;
 pub use launch_service::{
     CreateOrResumeLaunch, LaunchCreateResult, LaunchPolicy, LaunchPolicySource, LaunchService,
     LaunchServiceError, StartLaunch,

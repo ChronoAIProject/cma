@@ -31,6 +31,8 @@ pub struct StoredPartitionObservation {
     loop_evidence: LoopEvidence,
     mentioned_bot: VerifiedFlag,
     replied_to_bot: VerifiedFlag,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    reply_receipt: Option<ConfirmedReplyReceipt>,
     thread: StoredThreadEvidence,
 }
 
@@ -47,6 +49,10 @@ enum StoredThreadEvidence {
 }
 
 impl StoredPartitionObservation {
+    pub fn confirmed_reply_receipt(&self) -> Option<&ConfirmedReplyReceipt> {
+        self.reply_receipt.as_ref()
+    }
+
     pub fn contract(&self) -> CapabilityContract {
         self.contract
     }
@@ -71,6 +77,7 @@ impl StoredPartitionObservation {
             loop_evidence: facts.loop_evidence,
             mentioned_bot: facts.mentioned_bot,
             replied_to_bot: facts.replied_to_bot,
+            reply_receipt: facts.reply_receipt.clone(),
             thread: match &facts.thread {
                 ThreadEvidence::Unknown => StoredThreadEvidence::Unknown,
                 ThreadEvidence::Unsupported => StoredThreadEvidence::Unsupported,
@@ -99,6 +106,7 @@ impl StoredPartitionObservation {
             loop_evidence: self.loop_evidence,
             mentioned_bot: self.mentioned_bot,
             replied_to_bot: self.replied_to_bot,
+            reply_receipt: self.reply_receipt.clone(),
             thread: match &self.thread {
                 StoredThreadEvidence::Unknown => ThreadEvidence::Unknown,
                 StoredThreadEvidence::Unsupported => ThreadEvidence::Unsupported,

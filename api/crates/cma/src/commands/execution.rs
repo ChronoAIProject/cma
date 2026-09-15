@@ -11,6 +11,7 @@ use layer2_core::sandbox::{
 };
 
 pub(crate) struct ResourceCommandExecution {
+    pub channel_revival: Option<Arc<super::ChannelCommandRevival>>,
     pub channel: Option<Arc<ChannelAgentCommandService>>,
     pub invokes: Option<Arc<layer2_core::bridge::invoke::BridgeInvokeService>>,
     pub authority: Arc<dyn AgentCommandAuthorizer>,
@@ -132,8 +133,12 @@ impl AgentCommandExecution for ResourceCommandExecution {
     }
 
     async fn prepare_queued(&self, command: &AdmittedAgentCommand) {
-        // Invoke authority permits message execution, not lifecycle revival.
         if is_channel(command) {
+            if let Some(revival) = &self.channel_revival {
+                if let Ok(authority) = self.channel_checked(command).await {
+                    revival.prepare(command, &authority).await;
+                }
+            }
             return;
         }
         if !matches!(

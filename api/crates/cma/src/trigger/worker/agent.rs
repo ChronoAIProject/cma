@@ -92,10 +92,12 @@ impl LaunchWorker {
                 launch_id: launch.id.to_string(),
             },
         };
+        let initiation = launch.initiation.clone().map(Box::new);
         let outcome = self
             .apply_effect(
                 launch,
                 LaunchResourceEffect::CreateAgent {
+                    initiation,
                     caller,
                     authority,
                     workspace_id,

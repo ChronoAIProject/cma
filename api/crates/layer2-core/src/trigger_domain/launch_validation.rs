@@ -23,6 +23,9 @@ const STEP_KEYS: [LaunchStepKey; 7] = [
 
 impl Launch {
     pub fn validate(&self) -> Result<(), TriggerError> {
+        if let Some(initiation) = &self.initiation {
+            initiation.require_launch(self)?;
+        }
         let created = seconds_from_rfc3339(&self.created_at);
         let updated = seconds_from_rfc3339(&self.updated_at);
         if !valid_digest(&self.revision_digest)

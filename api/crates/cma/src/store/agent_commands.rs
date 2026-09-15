@@ -22,6 +22,7 @@ pub(in crate::store) mod reserve;
 mod worker;
 mod worker_apply;
 
+pub(super) use lane_records::read as read_command_lane;
 pub(super) use records::document as command_document;
 pub(super) use records::ensure_indexes;
 pub(super) use records::read as read_command;

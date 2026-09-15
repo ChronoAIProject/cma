@@ -180,6 +180,9 @@ impl OutboxSource {
     pub fn allocation_id(&self) -> &str {
         &self.allocation_id
     }
+    pub fn chat_id(&self) -> &str {
+        &self.chat_id
+    }
     pub fn message_id(&self) -> &str {
         &self.message_id
     }

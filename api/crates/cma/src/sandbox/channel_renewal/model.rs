@@ -50,6 +50,9 @@ pub(crate) struct ChannelRenewalSnapshot {
     pub creation: ChannelSandboxSidecar,
     pub provisioning: ChannelProvisioningState,
     pub renewal: Option<ChannelRenewalState>,
+    pub lifecycle_credential: Option<
+        crate::sandbox::channel_lifecycle_credentials::model::ChannelLifecycleCredentialState,
+    >,
 }
 
 impl ChannelRenewalSnapshot {
@@ -60,6 +63,16 @@ impl ChannelRenewalSnapshot {
         self.creation
             .require_creation(&self.allocation, &self.sandbox)?;
         self.provisioning.settings.validate()?;
+        if let Some(state) = &self.lifecycle_credential {
+            state.validate()?;
+            if state.phase
+                != crate::sandbox::channel_lifecycle_credentials::model::CredentialPhase::Complete
+                || state.allocation_id != self.allocation.id
+                || self.sandbox.runtime.as_ref() != Some(&state.runtime)
+            {
+                return Err(AllocationError::IdentityMismatch);
+            }
+        }
         if !matches!(
             self.allocation.state,
             AllocationState::Ready | AllocationState::Retired
@@ -80,6 +93,11 @@ impl ChannelRenewalSnapshot {
         }
         let Some(state) = &self.renewal else {
             if self.sandbox.credential.key_generation != 1
+                && self.lifecycle_credential.as_ref().is_none_or(|state| {
+                    state
+                        .require_completed_key(&self.allocation, &self.sandbox)
+                        .is_err()
+                })
                 || self.sandbox.credential.pending.is_some()
                 || !self.sandbox.credential.revoke_debt.is_empty()
                 || self.sandbox.work.lease.is_some()

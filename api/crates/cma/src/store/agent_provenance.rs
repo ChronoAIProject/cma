@@ -35,6 +35,7 @@ pub(super) async fn record_creation(
     admission: &AgentAdmission,
     agent: &Agent,
     parent: &Sandbox,
+    initiation: Option<&layer2_core::trigger_domain::LaunchInitiation>,
     session: &mut ClientSession,
 ) -> Result<AgentCreationProvenance, ReadError> {
     let policy = store
@@ -51,9 +52,18 @@ pub(super) async fn record_creation(
             subject: parent.owner.clone(),
         },
     };
-    let record =
-        AgentCreationProvenance::for_admission(agent, parent, owner, admission.created_by.as_ref())
-            .map_err(|_| ResourceAccessStoreError::Corrupt)?;
+    let record = match initiation {
+        Some(initiation) => AgentCreationProvenance::for_trigger_admission(
+            admission, initiation, agent, parent, owner,
+        ),
+        None => AgentCreationProvenance::for_admission(
+            agent,
+            parent,
+            owner,
+            admission.created_by.as_ref(),
+        ),
+    }
+    .map_err(|_| ResourceAccessStoreError::Corrupt)?;
     store
         .agent_creation_provenance
         .insert_one(document(&record).map_err(|_| ResourceAccessStoreError::Corrupt)?)

@@ -248,8 +248,10 @@ fn exact_bytes_signature_algorithm_key_and_claim_mutations_fail_closed() {
         ("message_id", json!("foreign-message")),
         ("token_type", json!("access")),
         ("exp", json!(now() - 61)),
-        ("iat", json!(now() + 61)),
-        ("nbf", json!(now() + 61)),
+        // Signing and earlier cases can cross a wall-clock second. Exercise
+        // the exact 60/61-second boundary separately with a fixed clock below.
+        ("iat", json!(now() + 120)),
+        ("nbf", json!(now() + 120)),
         ("jti", json!("foreign-correlation")),
     ] {
         let mut c = claims(&body);
@@ -283,6 +285,38 @@ fn exact_bytes_signature_algorithm_key_and_claim_mutations_fail_closed() {
         None
     )
     .is_err());
+}
+
+#[test]
+fn signed_claim_clock_skew_boundaries_use_the_original_observation() {
+    let observed_at = 1_800_000_000;
+    for (field, value, accepted) in [
+        ("iat", observed_at + 60, true),
+        ("iat", observed_at + 61, false),
+        ("nbf", observed_at + 60, true),
+        ("nbf", observed_at + 61, false),
+        ("exp", observed_at - 59, true),
+        ("exp", observed_at - 60, false),
+    ] {
+        let mut raw = json!({"iss":policy().issuer,"aud":"channel-relay/callback",
+            "iat":observed_at-120,"exp":observed_at+180,"jti":"fixed-clock",
+            "token_type":"relay_callback"});
+        raw[field] = json!(value);
+        let claims: super::jwt::StandardClaims = serde_json::from_value(raw).unwrap();
+        assert_eq!(
+            claims
+                .require(
+                    &policy(),
+                    "channel-relay/callback",
+                    "relay_callback",
+                    300,
+                    observed_at
+                )
+                .is_ok(),
+            accepted,
+            "{field}={value}"
+        );
+    }
 }
 
 #[test]

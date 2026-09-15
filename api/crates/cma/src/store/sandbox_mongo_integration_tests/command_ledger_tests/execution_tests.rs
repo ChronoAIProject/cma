@@ -170,6 +170,7 @@ async fn composed(
         Arc::new(PlatformDefaults::default()),
     );
     let execution = Arc::new(crate::commands::ResourceCommandExecution {
+        channel_revival: None,
         channel: None,
         invokes: None,
         authority: authority.clone(),
