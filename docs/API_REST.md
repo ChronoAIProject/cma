@@ -410,8 +410,28 @@ Scoped inventory/history values refresh every 30 seconds, expire no later than
 55 seconds from the read start (or the earlier server authority deadline), and
 clear on foreground, viewer/client/scope change or refusal. A 15-second timeout
 also clears an unverified result. This Agent inventory increment does not yet
-provide organization Sandbox trees, aggregate Shared-with-me scope, share editing,
+provide organization Sandbox trees, aggregate Shared-with-me scope,
 scoped artifact UI or shared lifecycle management.
+
+Owners can open **Sharing** from personal Agent Details or a Sandbox page when
+current effective access includes `manage_sharing`. Agent sharing starts with
+the narrow Agent scope; selecting **Whole Sandbox** is explicit and requires
+acknowledging current and future children before creating a grant. Named current
+organization choices, view/org-role exposure previews, direct grant mode changes
+and revocation use the public SDK. The panel explains inherited access and never
+automatically broadens a refused interactive Agent grant. Current stores require
+a compatible whole-Sandbox grant while independent isolation remains unproved.
+Recipients cannot reshare; ownership, origin and conversations are unchanged.
+
+Grant lists are checked against their resource identity, initial policy and
+authority deadline after buffering. Each change rechecks effective permission,
+uses an idempotency key and validates the receipt's requested effect. Edits and
+revocation send the displayed revision; a conflict reloads current grants and
+requires another explicit action. Unconfirmed attempts retain their logical
+command key within the current resource view. Scope/client changes and access
+loss cancel pending reads/preflights; late replies cannot send a new command.
+Organization-choice failure leaves independently authorized revocation available.
+Backend share routes enforce the final owner, membership and isolation checks.
 
 `GET /api/v1/agents/{id}/source` returns authorized provisioning origin and shortcuts.
 Personal owners retain the existing source document:

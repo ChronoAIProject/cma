@@ -26,6 +26,7 @@ import { SandboxAdvanced } from './SandboxAdvanced';
 import { LifecycleProgress } from './LifecycleProgress';
 import './SandboxPage.css';
 import { ConnectionWizard } from '../connections/ConnectionWizard';
+import { SharingButton } from '../resources/SharingButton';
 
 type State =
   | { status: 'loading' }
@@ -151,6 +152,12 @@ export function SandboxPage({
           <p role="status">{sandboxLifecycleLabel(sandbox)}</p>
         </div>
         <div className="sandbox-page__actions">
+          {client.resourceViews === undefined ? null : (
+            <SharingButton
+              client={client.resourceViews}
+              target={{ kind: 'sandbox', id: sandboxId, name: sandbox.name }}
+            />
+          )}
           {permissions.createWorkspace ? (
             <Button
               icon={<IconPlusOutline16 />}
