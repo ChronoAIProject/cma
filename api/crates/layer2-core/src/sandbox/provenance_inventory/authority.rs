@@ -74,11 +74,12 @@ pub(super) fn authorize_candidates(
     authority: &InventoryAuthority,
     query: &AgentListQuery,
     scan: &PageRequest,
-    snapshots: &[AgentProvenanceSnapshot],
+    snapshots: &[AgentChannelUsageSnapshot],
 ) -> Result<Vec<AuthorizedResource>, ResourceAccessError> {
     let mut previous = scan.cursor.as_deref();
     let mut result = Vec::with_capacity(snapshots.len());
     for snapshot in snapshots {
+        let snapshot = &snapshot.provenance;
         let agent = snapshot
             .resource
             .lineage

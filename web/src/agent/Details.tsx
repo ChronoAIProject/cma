@@ -14,6 +14,8 @@ import { creationLabel, useAgentProvenance } from './provenance';
 
 interface AgentDetailsProps {
   readonly sharing?: React.ReactNode;
+  readonly artifacts?: React.ReactNode;
+  readonly channelUsage?: React.ReactNode;
   readonly detail?: AgentDetail;
   readonly workspace?: WorkspaceDetail;
   readonly pending?: AgentCommand;
@@ -74,6 +76,8 @@ function Fact({ term, children }: { readonly term: string; readonly children: Re
 
 export function AgentDetails({
   sharing,
+  artifacts,
+  channelUsage,
   detail,
   workspace,
   pending,
@@ -124,6 +128,8 @@ export function AgentDetails({
       </header>
       <div className="agent-details__scroll">
         {sharing === undefined ? null : <Band title="Organization access">{sharing}</Band>}
+        {artifacts === undefined ? null : <Band title="Published files">{artifacts}</Band>}
+        {channelUsage === undefined ? null : <Band title="Channel activity">{channelUsage}</Band>}
         <Band title="Creation">
           <dl>
             <Fact term="Origin">{creationLabel(provenance)}</Fact>

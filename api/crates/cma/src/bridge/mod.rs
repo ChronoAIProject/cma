@@ -1,0 +1,177 @@
+//! Existing NyxID bridge verification. Read-only metadata is kept separate from
+//! encrypted selected-key custody and distinct Sandbox provisioning authority.
+
+use std::{sync::Arc, time::Duration};
+
+use layer2_core::bridge::{
+    BridgeConfig, BridgeConnectionObservation, BridgeConnectionValidator, BridgeError,
+    BridgePlacementPolicy, BridgeService, BridgeSetupBlock, BridgeValidation,
+};
+use layer2_core::resource_access::{
+    OrganizationAuthority, ResourceOwner, ResourceShareStore, ResourceTarget,
+};
+
+use crate::auth::AuthMode;
+use crate::store::MongoBridgeStore;
+
+pub(crate) mod custody;
+#[allow(dead_code)] // #861 awaits a composed route with live selected-key custody.
+pub(crate) mod ingress;
+mod managed_credentials;
+mod provider;
+mod types;
+
+use custody::BridgeCredentialResolver;
+pub(crate) use managed_credentials::ManagedBridgeCredentials;
+use provider::NyxBridgeProvider;
+
+pub(crate) fn service(
+    mode: &AuthMode,
+    store: Arc<MongoBridgeStore>,
+    organizations: Arc<dyn OrganizationAuthority>,
+    resources: Arc<dyn ResourceShareStore>,
+    credential_store: Arc<dyn custody::BridgeCredentialStore>,
+) -> Result<(BridgeService, Option<Arc<ManagedBridgeCredentials>>), BridgeError> {
+    if let AuthMode::Provider { base_url, .. } = mode {
+        let provider = Arc::new(NyxBridgeProvider::new(base_url)?);
+        let credentials = Arc::new(ManagedBridgeCredentials {
+            store: credential_store,
+            provider: provider.clone(),
+            bridges: store.clone(),
+        });
+        let connections = Arc::new(NyxBridgeValidator {
+            provider,
+            custody: credentials.clone(),
+            resources,
+        });
+        Ok((
+            BridgeService::new(store, organizations, connections),
+            Some(credentials),
+        ))
+    } else {
+        Ok((
+            BridgeService::new(store, organizations, Arc::new(UnavailableConnections)),
+            None,
+        ))
+    }
+}
+
+struct UnavailableConnections;
+#[async_trait::async_trait]
+impl BridgeConnectionValidator for UnavailableConnections {
+    async fn validate_connection(
+        &self,
+        _: &ResourceOwner,
+        _: &BridgeConfig,
+    ) -> Result<BridgeValidation, BridgeError> {
+        Err(BridgeError::ConnectionRequired(
+            BridgeSetupBlock::CustodyUnavailable,
+        ))
+    }
+}
+
+struct NyxBridgeValidator {
+    provider: Arc<NyxBridgeProvider>,
+    custody: Arc<dyn BridgeCredentialResolver>,
+    resources: Arc<dyn ResourceShareStore>,
+}
+
+#[async_trait::async_trait]
+impl BridgeConnectionValidator for NyxBridgeValidator {
+    async fn validate_connection(
+        &self,
+        owner: &ResourceOwner,
+        config: &BridgeConfig,
+    ) -> Result<BridgeValidation, BridgeError> {
+        config.validate()?;
+        let started = tokio::time::Instant::now();
+        let lease = self.custody.resolve(owner, config).await?;
+        if &lease.owner != owner
+            || lease.credential_subject != *types::owner_subject(owner)
+            || lease.issuer != config.connector.issuer
+            || lease.key_id != config.connector.key_id
+            || lease.custody != config.connector.custody
+            || lease.custody_revision == 0
+            || lease.key_state_version <= 0
+            || lease.deadline <= tokio::time::Instant::now()
+            || lease.value.expose().is_empty()
+            || lease.value.expose().len() > 4096
+        {
+            return Err(BridgeError::ConnectionRequired(
+                BridgeSetupBlock::CustodyUnavailable,
+            ));
+        }
+        let verified = self
+            .provider
+            .inspect(
+                owner,
+                &lease.credential_subject,
+                &lease.value,
+                &config.connector,
+            )
+            .await?;
+        if verified.key_state_version != lease.key_state_version {
+            return Err(types::binding_mismatch());
+        }
+        let target = match &config.placement {
+            BridgePlacementPolicy::ExistingAgent { target } => ResourceTarget::Agent {
+                agent_id: target.agent_id.clone(),
+            },
+            BridgePlacementPolicy::NewSandbox { .. } => {
+                // A matching key and callback prove no ability to mint a separate
+                // profile-scoped Sandbox key or renew it after relay expiry.
+                return Err(BridgeError::ConnectionRequired(
+                    BridgeSetupBlock::RenewableAuthorityUnavailable,
+                ));
+            }
+        };
+        let snapshot = self
+            .resources
+            .resource_access_snapshot(&target)
+            .await
+            .map_err(target_error)?;
+        self.custody.revalidate(&lease).await?;
+        let current = self
+            .resources
+            .resource_access_snapshot(&target)
+            .await
+            .map_err(target_error)?;
+        if current.fence() != snapshot.fence() || current.lineage != snapshot.lineage {
+            return Err(BridgeError::ConnectionRequired(
+                BridgeSetupBlock::TargetMismatch,
+            ));
+        }
+        BridgeValidation::from_observation(
+            owner,
+            config,
+            BridgeConnectionObservation {
+                connector: config.connector.clone(),
+                bot_owner: owner.clone(),
+                key_owner: owner.clone(),
+                routes: verified.routes,
+                custody_owner: lease.owner,
+                custody_revision: lease.custody_revision,
+                key_state_version: lease.key_state_version,
+                key_active: true,
+                custody_available: true,
+                callback_conflict: false,
+                renewable_sandbox_authority: false,
+                exact_profiles_available: false,
+                existing_target: Some(current),
+                deadline: verified
+                    .deadline
+                    .min(lease.deadline)
+                    .min(started + Duration::from_secs(60)),
+            },
+        )
+    }
+}
+
+fn target_error(error: layer2_core::resource_access::ResourceAccessStoreError) -> BridgeError {
+    match error {
+        layer2_core::resource_access::ResourceAccessStoreError::Unavailable => {
+            BridgeError::AuthorityUnavailable
+        }
+        _ => BridgeError::ConnectionRequired(BridgeSetupBlock::TargetMismatch),
+    }
+}

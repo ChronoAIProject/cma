@@ -19,6 +19,7 @@
           "capabilities": [
             "view_details",
             "view_history",
+            "view_artifacts",
             "view_files",
             "interact",
             "resolve_approval",
@@ -1108,7 +1109,8 @@
         "body": {
           "capabilities": [
             "view_details",
-            "view_history"
+            "view_history",
+            "view_artifacts"
           ],
           "revalidate_at": "2026-09-15T00:01:00Z",
           "policy_revision": 1

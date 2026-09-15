@@ -6,6 +6,7 @@ import { ResourceLink } from './ResourceLink';
 import { Button } from '../ui/Button';
 import { creationLabels } from '../agent/provenance';
 import { statusLabel } from '../vocabulary/status';
+import { channelLabel } from './channelLabels';
 
 /** Narrow grants are listed as Agents, without fetching unauthorized parents. */
 export function SharedAgentNavigation({
@@ -68,7 +69,8 @@ export function SharedAgentNavigation({
                     {row.title?.trim() || 'Untitled agent'}
                   </ResourceLink>
                   <p>
-                    {statusLabel(row.status)} · {creationLabels[row.creation_origin]}
+                    {statusLabel(row.status)} · {creationLabels[row.creation_origin]} ·{' '}
+                    {channelLabel(row.channel_usage)}
                   </p>
                 </li>
               ))}

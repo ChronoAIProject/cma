@@ -27,6 +27,10 @@ pub use reconciliation::{
     SandboxRuntimeLossAgentMutation, SandboxRuntimeLossApplication, SandboxRuntimeLossMutation,
     SandboxRuntimeLossOutcome, SandboxRuntimeLossRequest,
 };
+mod channel_usage;
+pub use channel_usage::{
+    channel_usage_cursor, channel_usage_page, AgentChannelUsageSnapshot, AgentChannelUsageStore,
+};
 mod provenance;
 mod provenance_inventory;
 pub use provenance::{
@@ -399,6 +403,12 @@ pub struct InMemorySandboxStore {
 
 #[derive(Clone, Default)]
 struct State {
+    agent_artifacts: HashMap<String, super::agent_artifacts::StoredAgentArtifact>,
+    agent_channel_usage: HashMap<AgentId, super::channel_usage::StoredAgentChannelUsage>,
+    channel_usage_events:
+        std::collections::BTreeMap<(AgentId, u64), super::channel_usage::ChannelUsageEvent>,
+    channel_usage_operations: HashMap<String, (AgentId, u64)>,
+    channel_usage_bindings: HashMap<String, (AgentId, u64)>,
     agent_creation_provenance: HashMap<AgentId, super::AgentCreationProvenance>,
     resource_policies: HashMap<SandboxId, crate::resource_access::ResourcePolicyRecord>,
     resource_shares: HashMap<String, crate::resource_access::ShareMutationReceipt>,

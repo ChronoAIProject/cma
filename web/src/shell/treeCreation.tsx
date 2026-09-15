@@ -4,7 +4,7 @@ import { useCmaClient } from '../api/context';
 import { creationLabels } from '../agent/provenance';
 import type { NavigationSandbox } from './navigation';
 
-type CreationFacts = ReadonlyMap<string, AgentCreationCategory | 'unavailable'>;
+export type CreationFacts = ReadonlyMap<string, AgentCreationCategory | 'unavailable'>;
 export type CreationFilter = 'all' | AgentCreationCategory;
 const emptyFacts: CreationFacts = new Map();
 const shortLabels: Readonly<Record<AgentCreationCategory, string>> = {

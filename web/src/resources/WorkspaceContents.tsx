@@ -9,6 +9,8 @@ import { statusLabel } from '../vocabulary/status';
 import { resourceCount } from '../vocabulary/count';
 import { IconChevronDownOutline14, IconChevronRightOutline14 } from '../ui/icons';
 import { Button } from '../ui/Button';
+import { useChannelFacts } from './useChannelFacts';
+import { channelLabel } from './channelLabels';
 
 export function WorkspaceBranch({
   client,
@@ -79,6 +81,13 @@ export function WorkspaceContents({
     [client, id, sandboxId, onAccessChanged],
   );
   const current = useAuthorizedRead(read);
+  const channelFacts = useChannelFacts(
+    client,
+    current.state.status === 'ready'
+      ? current.state.value.detail.agents.map((agent) => agent.id)
+      : [],
+    current.state.status === 'ready',
+  );
   if (current.state.status === 'loading') return <p role="status">Loading authorized Workspace</p>;
   if (current.state.status === 'error')
     return (
@@ -107,6 +116,7 @@ export function WorkspaceContents({
               {agent.title?.trim() || 'Untitled agent'}
             </ResourceLink>
             <span>{statusLabel(agent.status)}</span>
+            <span>{channelLabel(channelFacts.get(agent.id))}</span>
           </li>
         ))}
       </ul>

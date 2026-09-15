@@ -127,7 +127,7 @@ async fn organization_inventory_filters_before_cursor_paging_and_deduplicates_ov
     assert_eq!(
         ids(&creation
             .into_iter()
-            .map(|row| row.resource)
+            .map(|row| row.provenance.resource)
             .collect::<Vec<_>>()),
         ["agt_share", "z-shared"]
     );
@@ -182,7 +182,7 @@ async fn organization_inventory_filters_before_cursor_paging_and_deduplicates_ov
     assert_eq!(
         ids(&creation
             .into_iter()
-            .map(|row| row.resource)
+            .map(|row| row.provenance.resource)
             .collect::<Vec<_>>()),
         ids(&all)
     );

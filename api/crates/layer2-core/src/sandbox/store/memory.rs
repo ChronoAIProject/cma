@@ -36,6 +36,7 @@ macro_rules! save_record {
 mod agent_admission;
 #[cfg(test)]
 mod agent_admission_tests;
+mod agent_artifacts;
 mod agent_command_work;
 mod agent_commands;
 #[cfg(test)]
@@ -50,6 +51,7 @@ mod agent_lifecycle;
 #[cfg(test)]
 mod agent_lifecycle_tests;
 mod agent_reads;
+mod channel_usage;
 mod command_audit;
 mod command_revival;
 mod events;

@@ -11,6 +11,9 @@ import { Composer } from '../agent/Composer';
 import { foldLiveEvent, type ConversationState } from '../agent/conversation';
 import { useAgentProvenance, creationLabel } from '../agent/provenance';
 import { Button } from '../ui/Button';
+import { ArtifactButton } from './ArtifactButton';
+import type { ArtifactPublicationScope } from './artifactRecovery';
+import { ChannelUsage } from './ChannelUsage';
 import { statusLabel } from '../vocabulary/status';
 import type { ApprovalDecision } from '../agent/controller';
 import '../agent/Agent.css';
@@ -20,9 +23,10 @@ interface Props {
   readonly web: CmaWebClient;
   readonly detail: SharedAgentDetail;
   readonly onAccessChanged: () => void;
+  readonly publicationScope?: ArtifactPublicationScope;
 }
 
-export function SharedAgent({ client, web, detail, onAccessChanged }: Props) {
+export function SharedAgent({ client, web, detail, onAccessChanged, publicationScope }: Props) {
   const agentId = detail.id;
   const read = useMemo(
     () => async (signal: AbortSignal) => {
@@ -144,9 +148,13 @@ export function SharedAgent({ client, web, detail, onAccessChanged }: Props) {
           <span>{statusLabel(detail.status)}</span>
         </div>
         <p>{creationLabel(provenance)}</p>
+        {ready === undefined ? null : <ChannelUsage client={client} id={agentId} />}
         <Button size="sm" onClick={onAccessChanged}>
           Refresh access
         </Button>
+        {can('view_artifacts') ? (
+          <ArtifactButton client={client} id={agentId} publicationScope={publicationScope} />
+        ) : null}
       </header>
       <div className="agent-surface__conversation">
         {history.state.status === 'loading' ? (

@@ -12,7 +12,9 @@ use super::sandbox_mongo::{
     is_transient, start_transaction, MongoSandboxStore, TRANSACTION_ATTEMPTS,
 };
 
+mod artifacts;
 mod inventory;
+pub(super) use artifacts::ensure_artifact_indexes;
 pub(super) use inventory::{
     read as read_agent_inventory, read_shared as read_shared_agent_inventory,
 };

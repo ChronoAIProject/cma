@@ -96,6 +96,7 @@ pub(crate) async fn effective(
             match capability {
                 ViewDetails => "view_details",
                 ViewHistory => "view_history",
+                ViewArtifacts => "view_artifacts",
                 ViewFiles => "view_files",
                 Interact => "interact",
                 ResolveApproval => "resolve_approval",
