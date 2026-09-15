@@ -24,6 +24,12 @@ mod conversation_fold;
 mod conversation_fold_support;
 mod conversation_recorder;
 mod creation_admission;
+mod provenance;
+mod provenance_service;
+pub use provenance::{AgentCreationCategory, AgentCreationOrigin, AgentCreationProvenance};
+pub use provenance_service::{
+    AgentProvenanceDetails, AgentProvenanceReading, AgentProvenanceService,
+};
 mod credential;
 mod credential_prerequisite;
 mod error;

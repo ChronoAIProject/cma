@@ -53,6 +53,7 @@ mod agent_reads;
 mod command_audit;
 mod command_revival;
 mod events;
+mod provenance;
 use events::bounded_events;
 #[cfg(test)]
 mod launch_command_tests;

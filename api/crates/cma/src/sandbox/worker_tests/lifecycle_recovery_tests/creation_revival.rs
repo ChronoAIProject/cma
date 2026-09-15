@@ -50,6 +50,7 @@ async fn paused_create_scenario() {
     );
     let revive_at = pause_at + Duration::from_secs(1);
     let request = AgentAdmission {
+        created_by: None,
         owner: active.owner.clone(),
         workspace_id: workspace.id.clone(),
         agent_id: layer2_core::AgentId::generate(),

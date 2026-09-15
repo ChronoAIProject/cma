@@ -323,6 +323,7 @@ async fn automatic_profile_admission_refuses_unpinned_children_and_public_origin
             .unwrap()
             .unwrap();
         let mut admission = AgentAdmission {
+            created_by: None,
             owner: workspace.owner.clone(),
             workspace_id: workspace.id.clone(),
             agent_id: AgentId::generate(),

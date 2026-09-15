@@ -13,9 +13,13 @@ use layer2_core::StoreError;
 pub mod admin;
 mod agent_openapi_shapes;
 mod agent_operate;
+mod agent_provenance;
 mod agent_reads;
 mod agent_shared_shapes;
 mod agent_source;
+pub use agent_provenance::agent_provenance_router;
+#[cfg(test)]
+mod agent_provenance_tests;
 mod agents;
 #[cfg(test)]
 pub(crate) mod agents_tests;

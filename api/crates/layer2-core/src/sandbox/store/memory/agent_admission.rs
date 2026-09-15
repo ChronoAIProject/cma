@@ -206,8 +206,13 @@ impl InMemorySandboxStore {
         }
 
         let creation = admission.materialize(&workspace)?;
+        let provenance =
+            super::provenance::creation_record(&state, &admission, &creation.agent, &sandbox)?;
         if state.worktrees.contains_key(&creation.worktree.id)
             || state.agents.contains_key(&creation.agent.id)
+            || state
+                .agent_creation_provenance
+                .contains_key(&creation.agent.id)
             || state.worktrees.values().any(|stored| {
                 stored.workspace_id == workspace.id && stored.name == creation.worktree.name
             })
@@ -216,6 +221,9 @@ impl InMemorySandboxStore {
         }
 
         let mut candidate = state.clone();
+        candidate
+            .agent_creation_provenance
+            .insert(creation.agent.id.clone(), provenance);
         let mut next_workspace = workspace;
         next_workspace.next_worktree_number = next_workspace
             .next_worktree_number
