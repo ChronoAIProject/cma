@@ -740,6 +740,16 @@ that the message was cancelled before starting. Account changes clear this view;
 incomplete history and read-only access hold its actions. The draft and any other
 active response stay visible while status observation and cancellation proceed.
 
+Responses v2 tabs offer **Queue message** beside **Stop response** while a turn
+is running, using the existing circular composer buttons. Keep both controls
+centered on the same row beside the input, with a flexible input column and two
+40px button columns (44px on mobile), separated by the existing 8px gap. Enter
+and Trigger
+quick messages admit ordinary queued input; they do not steer the running turn.
+Keep the draft editable and retain it until admission is confirmed. An uncertain
+earlier input holds another queue submission until explicit recovery. Existing
+AG-UI tabs retain their current composer behavior during protocol migration.
+
 Read accepted action receipts to show queued, delivered or failed delivery in
 the existing status band. Delivery does not finish the displayed response; only
 its recorded outcome does. A turn lacking a safe response binding keeps history
@@ -779,7 +789,8 @@ placement helper, 12px viewport inset and overlay level 1100. A 150ms hover-exit
 delay lets the pointer reach and scroll a long description; Escape dismisses it
 immediately without moving focus. Clicking
 sends the configured text through ordinary message admission, preserving any
-typed draft. The same availability, pending and active-turn guards apply. Reads,
+typed draft. The same availability and pending-request guards apply; active turns
+allow ordinary queue submission only in Responses v2 tabs. Reads,
 reloads and publication never send a message. Quick messages use the latest
 published Trigger revision; original creation provenance and first message stay
 unchanged. Retired Triggers expose provenance but no new quick-message actions.
@@ -1928,6 +1939,8 @@ Append-only. Never edit or delete an entry.
 | 2026-09-15 | Display immutable Agent creation categories independently of published Trigger shortcuts, add creation facts to Details, and use existing tree metadata and native-select patterns for per-Agent categories, complete child summaries and current-tree origin filtering. Clear optional facts on changed view/access context and keep private source references out of tree rows. |
 | 2026-09-16 | Document authenticated per-tab Agent transport selection, explicit retained-request recovery, response action delivery status, account-change clearing and live-gap handling using the existing Agent status band, Button and composer patterns. |
 | 2026-09-16 | Add explicit cancellation and exact recovery for the latest locally accepted queued message using the existing Agent status band and Button. Preserve active-response controls, pending input, account isolation and editable drafts. |
+| 2026-09-16 | Offer ordinary queued input beside Stop response in Responses v2 tabs, with distinct accessible labels, existing composer controls and draft-preserving admission recovery. |
+| 2026-09-16 | Keep Queue message and Stop response aligned beside the input at every supported viewport, using explicit composer grid columns and existing control sizes and gaps. |
 
 ### Approved Agent artifacts
 

@@ -9,7 +9,7 @@ if (!['127.0.0.1', 'localhost'].includes(new URL(baseURL).hostname))
 process.env.PLAYWRIGHT_NO_COPY_PROMPT = '1';
 export default defineConfig({
   testDir: '.',
-  testMatch: ['agent-v2.check.ts', 'agent-v2-queued.check.ts'],
+  testMatch: ['agent-v2.check.ts', 'agent-v2-queued.check.ts', 'agent-v2-composer.check.ts'],
   workers: 1,
   retries: 0,
   forbidOnly: true,
