@@ -278,6 +278,7 @@ export function AgentSurface({
           status={status}
           pausedNotice={pausedNotice}
           running={running}
+          queueWhileRunning={state.v2 !== undefined}
           starting={starting}
           controlsUnavailable={controller.controlsUnavailable}
           requestPending={controller.pendingMessage !== undefined}
