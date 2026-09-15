@@ -15,8 +15,14 @@ All v2 endpoints belong to the control plane. No Responses server runs inside
 an Agent Sandbox. Creation requires a current authenticated credential in CMA's
 durable custody, bound to the requesting sign-in incarnation. Current history
 authorization is sufficient for reads, even when the command's original execution
-credential has been revoked. Shared history is supported; shared/organization
-command admission remains unavailable.
+credential has been revoked. Personal owners and currently authorized human
+administrators can admit commands to shared or organization-owned Agents using
+their own retained credentials. View grants and member/viewer roles permit
+history without interaction. Before deferred execution the worker checks current
+membership, resource policy and the original sign-in custody again. Sandbox
+revival additionally requires independent `manage_sandbox` authority and uses
+the resource owner's connections. Organization resource creation and credential
+provisioning remain separate capabilities under development.
 
 | Method and route | Behavior |
 |---|---|

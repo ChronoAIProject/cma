@@ -135,6 +135,14 @@ pub(super) async fn apply(
     .then_some(agent.conversation.active_turn)
     .flatten();
     let record = request.record(order as u64, agent.conversation.last_seq, target_turn)?;
+    if let Some(evidence) = &request.admission_audit {
+        let audit = layer2_core::sandbox::agent_io::CommandAuthorizationAudit::new(
+            &record,
+            layer2_core::sandbox::agent_io::CommandAuthorizationEffect::Admission,
+            vec![evidence.clone()],
+        )?;
+        super::audit::append(store, &audit, session).await?;
+    }
     store
         .agent_commands
         .insert_one(records::document(&record)?)

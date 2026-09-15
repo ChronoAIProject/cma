@@ -69,6 +69,7 @@ pub(super) async fn scenario(name: &str) -> Option<Scenario> {
                 policy_revision: 0,
             },
             authority_deadline: None,
+            admission_audit: None,
         })
         .await
         .unwrap();

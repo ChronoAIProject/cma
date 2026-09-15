@@ -30,6 +30,8 @@ pub struct CommandReservation {
     /// Nonrenewing live authorization; internal only, never deserialized from a
     /// client or retained as permission for a later execution attempt.
     pub authority_deadline: Option<tokio::time::Instant>,
+    /// Historical evidence only; never a substitute for the live policy fence.
+    pub admission_audit: Option<crate::resource_access::ResourceAuthorizationAudit>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

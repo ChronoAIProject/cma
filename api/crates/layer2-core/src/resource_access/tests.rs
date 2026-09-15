@@ -403,3 +403,69 @@ async fn held_decisions_expire_without_removing_independent_operator_reads() {
     assert!(refreshed.allows(ViewHistory));
     assert!(!refreshed.allows(Interact));
 }
+
+#[test]
+fn audit_observations_separate_operator_and_membership_capabilities() {
+    let mut caller = member("reader", "org", OrganizationRole::Viewer);
+    caller.caller.authorization =
+        Authorization::new([Capability::UseOwnSandboxes, Capability::ControlAnySandbox]);
+    let mut share = share(ShareMode::OrgRoles);
+    share.selector = ResourceSelector::Sandbox {
+        sandbox_id: crate::SandboxId("sandbox".into()),
+    };
+    let access = decision(&caller, &scope(person("owner")), &[share.clone()]);
+    let observations = access.audit_observations();
+    assert_eq!(observations.len(), 2);
+    assert!(matches!(
+        observations[0].basis,
+        ResourceAuthorizationBasis::GlobalOperator
+    ));
+    assert!(observations[0].capabilities.contains(&Interact));
+    assert!(!observations[0].capabilities.contains(&ManageSharing));
+    assert!(!observations[1].capabilities.contains(&Interact));
+    assert!(observations[1].capabilities.contains(&ViewHistory));
+    assert!(
+        matches!(&observations[1].basis, ResourceAuthorizationBasis::Organization {
+        organization, role: OrganizationRole::Viewer, share: Some(observed), ..
+    } if organization.as_str() == "org" && observed.id == share.id && observed.revision == share.revision)
+    );
+}
+
+#[test]
+fn audit_org_owner_and_unsafe_narrow_share_never_invent_capabilities() {
+    let caller = member("admin", "org", OrganizationRole::Admin);
+    let owner = decision(
+        &caller,
+        &scope(ResourceOwner::Organization {
+            subject: SubjectId::new("org"),
+        }),
+        &[],
+    );
+    assert!(owner.audit_observations()[0]
+        .capabilities
+        .contains(&ManageSharing));
+    assert!(matches!(
+        owner.audit_observations()[0].basis,
+        ResourceAuthorizationBasis::Organization { share: None, .. }
+    ));
+    let narrow = decision(
+        &caller,
+        &scope(person("owner")),
+        &[share(ShareMode::OrgRoles)],
+    );
+    assert_eq!(
+        narrow.audit_observations()[0].capabilities,
+        vec![ViewDetails, ViewHistory]
+    );
+    assert!(!narrow.allows(Interact));
+    let own = decision(
+        &context("owner"),
+        &scope(person("owner")),
+        &[share(ShareMode::OrgRoles)],
+    );
+    assert_eq!(own.audit_observations().len(), 1);
+    assert!(matches!(
+        own.audit_observations()[0].basis,
+        ResourceAuthorizationBasis::PersonalOwner
+    ));
+}

@@ -23,6 +23,19 @@ pub(in crate::store) async fn bind(
     let revision = command.revision;
     let dispatch =
         bind_command_dispatch(&mut command, &lane, current, latest_turn, mutation, &now)?;
+    if let Some(fence) = &mutation.execution_fence {
+        let evidence = fence
+            .authorization_audit()
+            .map_err(|_| CommandLedgerError::Conflict)?;
+        let audit = layer2_core::sandbox::agent_io::CommandAuthorizationAudit::new(
+            &command,
+            layer2_core::sandbox::agent_io::CommandAuthorizationEffect::Dispatch {
+                dispatch: dispatch.clone(),
+            },
+            vec![evidence],
+        )?;
+        super::audit::append(store, &audit, session).await?;
+    }
     worker_apply::write(store, &command, revision, &lane, session).await?;
     Ok(Some(dispatch))
 }

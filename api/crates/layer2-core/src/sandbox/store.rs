@@ -396,6 +396,8 @@ struct State {
     resource_shares: HashMap<String, crate::resource_access::ShareMutationReceipt>,
     resource_share_commands: HashMap<String, crate::resource_access::ShareMutationReceipt>,
     agent_commands: HashMap<crate::ids::AgentCommandId, super::agent_io::AdmittedAgentCommand>,
+    command_authorization_audits:
+        std::collections::BTreeMap<String, super::agent_io::CommandAuthorizationAudit>,
     agent_command_keys: HashMap<(String, String), crate::ids::AgentCommandId>,
     agent_command_orders: HashMap<AgentId, super::agent_io::CommandLane>,
     sandboxes: HashMap<SandboxId, Sandbox>,

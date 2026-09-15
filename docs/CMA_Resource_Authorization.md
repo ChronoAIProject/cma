@@ -320,42 +320,59 @@ AG-UI run, Responses creation/streams, companions, files and attachment tickets
 still require their separately documented scopes. Shared event access alone
 cannot authorize any of them.
 
-## Deferred personal commands
+## Deferred human commands
 
-`PersonalCommandAdmissionAuthority` requires the exact invoking credential to
-match CMA's durable encrypted subject custody and verifies current provider
-permissions. A bearer with no matching custody receives a typed refusal. The
-nonsecret command authority ID binds configured issuer, subject and sign-in
-incarnation through a length-delimited hash. An unrelated credential or a later
-sign-in cannot adopt admitted commands, even when token text is reused.
+`AgentCommandAdmissionAuthority` checks the actual request issuer, subject,
+credential identity and Human/API attribution, then binds the exact selected
+credential to CMA's durable encrypted subject custody. Resource policy is checked
+independently by `AgentCommandService` before reservation. A current human admin
+can therefore act on a shared or organization-owned Agent without borrowing its
+owner's login. View grants and member/viewer roles do not grant interaction.
+Personal owner behavior and the existing `personal:` custody hash are preserved.
+The hash binds configured issuer, actual human subject and sign-in incarnation;
+it does not encode resource ownership or resource-policy revision.
 
-`AgentCommandAuthorizer` refreshes within that same incarnation, verifies the
-provider's current subject and capabilities, and fences the result against the
-current token generation. A refresh that loses to a new sign-in cannot use the
-new login. Revocation and verification outage have distinct outcomes. Relay,
-service-account and delegated-actor tokens are refused by this personal path.
+The production `ResourceCommandExecution` adapter obtains fresh resource authority
+from `AuthState` using the exact retained human credential. Refresh stays within
+the original sign-in incarnation. Current provider permissions and organization
+roles are verified before each effect, followed by an exact subject, sign-in,
+token-generation, token-identity and expiry recheck after resource IO. A different
+sign-in cannot inherit admitted commands. Relay, service-account, delegated and
+channel credentials cannot use this human path.
 
-`AgentOperationService::execute_authorized_claim` obtains that actual verified
-caller before attempting runtime dispatch. The claim is checked after provider
-IO, and the conversation transaction still requires the exact live durable
-lane, fence and command input. Losing the lease during verification produces no
-runtime write. A command with an existing dispatch binding is reconciled from
-its log and cannot be executed again.
+Execution proof binds the exact command, actual actor, independent resource owner,
+current policy, ancestry, pinned profile and a nonrenewing lifetime of at most
+60 seconds. The worker rereads its renewed claim after provider IO. Stores validate
+the current resource snapshot and claim atomically with dispatch binding; the
+ordered writer checks authority again before runtime handler invocation. An
+existing binding always selects reconciliation, including after revocation.
 
-The production scheduler invokes a personal execution adapter using these
-authorization ports. Before dispatch it checks current personal resource policy,
-target availability and the frozen control turn, then rereads the exact claim
-to use its renewed expiry. The conversation transaction checks owner kind with
-the same parent write fence as dispatch. Neither an organization owner subject
-nor a substituted actor establishes a personal caller. Unclaimed queued
-revocations are refused through an atomic revision comparison even while the
-Agent is paused or busy. Bound commands bypass execution authorization and only
-reconcile already admitted output, including after credentials are revoked.
+Pending message preparation obtains independent fresh Agent interaction and
+Sandbox management decisions with the same retained credential. It captures the
+resource owner's profile, credential configuration and required connections,
+rechecks exact pending command and policy, and schedules one durable lifecycle
+step outside the dispatch lease. The store reruns the existing revival planner;
+proof cannot authorize arbitrary parent edits. Accepted revival survives caller
+cancellation. Mongo's real command-row write and parent CAS serialize policy,
+claim and refusal changes, and expiry is checked again before commit.
 
-Public admission adapters are not yet connected.
-Existing personal Agent read/operation boundaries retain their personal checks.
-Configured legacy Agent readers now check the explicit persisted owner kind;
-an org owner cannot become a personal owner through its raw subject string.
+New admissions, resource dispatch bindings and command-authorized revival append
+`CommandAuthorizationAudit` records atomically in a separate store. Each records
+actor, owner, credential custody reference and resource decisions independently.
+Per-observation capabilities identify personal ownership, operator access, owning
+organization roles or exact sharing grant revisions. Organization observations
+record configured issuer, canonical organization, role and observation/expiry
+times, without retaining a credential. Revival records two independent resource
+decisions. Historical audit can be deserialized for internal inspection but cannot
+construct a live membership or opaque execution proof. It is excluded from public
+command status and recipient history responses.
+
+Idempotent receipt recovery retains original audit facts. Expired/refused
+transactions do not append evidence; accepted evidence remains readable after
+revocation. Previous serialized receipts and aggregate formats are unchanged.
+Organization allocation, runtime/connector credential provisioning and channel
+service delegation remain separate unfinished foundations. Existing legacy
+personal read/operation boundaries retain their explicit personal owner checks.
 
 ## Verification
 

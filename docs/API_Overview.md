@@ -115,9 +115,12 @@ Recovery reconciles the existing binding without sending another input. The
 worker separately authorizes Sandbox management before requesting revival. That
 transaction fences the exact pending command, current resource policy and expiry;
 accepted lifecycle work survives cancellation of the requesting worker. The
-[Responses v2 contract](API_Responses.md) provides durable personal admission,
-receipts and explicit replay. Production shared and organization mutation
-admission remains under development.
+[Responses v2 contract](API_Responses.md) provides durable human admission to
+personal, shared and organization-owned Agents, receipts and explicit replay.
+The authenticated actor retains their own credential custody independently of
+resource ownership. Current interaction policy is required at admission and
+dispatch; organization resource creation and credential provisioning remain
+under development.
 
 Agent logs, Sandbox events and Launch events have independent monotonic
 sequences. REST exposes JSON event pages. AG-UI exposes SSE with a durable
