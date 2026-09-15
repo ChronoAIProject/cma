@@ -24,6 +24,7 @@ mod enqueue;
 mod management;
 mod rate;
 mod records;
+pub(in crate::store) use records::read_item as read_cleanup_item;
 mod reply_addressing;
 mod scanning;
 mod snapshot;

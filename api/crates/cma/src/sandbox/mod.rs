@@ -10,6 +10,11 @@ pub(crate) mod channel_mint_reconciliation;
 pub(crate) mod channel_renewal;
 pub(crate) mod channel_retirement;
 pub(crate) mod channel_reuse;
+#[allow(
+    dead_code,
+    reason = "cleanup request seal awaits effect and restore integration"
+)]
+pub(crate) mod channel_reuse_cleanup;
 mod checkpoint_maintenance;
 pub(crate) use checkpoint_maintenance::ExportDependencies;
 pub(crate) mod channel_provisioning;
