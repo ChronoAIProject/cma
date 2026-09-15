@@ -128,3 +128,41 @@ it('clears the displayed page when export is refused, before the follow-up read 
   );
   expect(await screen.findByRole('alert')).toHaveTextContent('Access removed');
 });
+
+it('uses the shared aggregate for filters and fresh exports and keeps organization IDs distinct', async () => {
+  const calls: URL[] = [];
+  const client = createClient({
+    baseUrl: 'https://fixture.invalid',
+    fetch: async (input) => {
+      const url = new URL(String(input));
+      if (url.pathname.endsWith('/organizations'))
+        return Response.json({
+          items: [{ id: 'shared', display_name: 'Named organization', role: 'viewer' }],
+        });
+      calls.push(url);
+      if (calls.length === 3)
+        return Response.json(
+          { code: 'resource_not_found', detail: 'Shared access removed' },
+          { status: 404 },
+        );
+      if (calls.length > 3) return Response.json({ items: [] });
+      return Response.json({ items: [row] });
+    },
+  });
+  const navigate = vi.fn();
+  const view = render(<AgentInventory client={client} shared onNavigate={navigate} />);
+  await screen.findByRole('link', { name: row.title });
+  const user = userEvent.setup();
+  await chooseOption(user, 'Creation origin', 'Created manually');
+  await screen.findByRole('link', { name: row.title });
+  await user.click(screen.getByRole('button', { name: 'Export this page' }));
+  await waitFor(() => expect(screen.queryByText(row.title)).not.toBeInTheDocument());
+  expect(calls[2]?.searchParams.get('shared')).toBe('true');
+  expect(calls[2]?.searchParams.get('creation_origin')).toBe('manual');
+  expect(calls.every((url) => !url.searchParams.has('organization'))).toBe(true);
+  await chooseOption(user, 'Resource scope', 'Named organization');
+  expect(navigate).toHaveBeenLastCalledWith({ kind: 'inventory', organization: 'shared' });
+  view.rerender(<AgentInventory client={client} organization="shared" onNavigate={navigate} />);
+  await chooseOption(user, 'Resource scope', 'Shared with me');
+  expect(navigate).toHaveBeenLastCalledWith({ kind: 'inventory', shared: true });
+});

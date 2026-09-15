@@ -7,7 +7,7 @@ export type AppRoute =
   | { readonly kind: 'sandbox'; readonly sandboxId: string }
   | { readonly kind: 'workspace'; readonly workspaceId: string }
   | { readonly kind: 'agent'; readonly agentId: string }
-  | { readonly kind: 'inventory'; readonly organization?: string }
+  | { readonly kind: 'inventory'; readonly organization?: string; readonly shared?: boolean }
   | { readonly kind: 'profiles' }
   | { readonly kind: 'profile'; readonly profileKind: ProfileKind; readonly profileId: string }
   | { readonly kind: 'marketplace' }
@@ -75,6 +75,7 @@ export function parseRoute(pathname: string): AppRoute {
 
   if (path.length === 2) {
     const [resource = '', id = ''] = path;
+    if (resource === 'shared' && id === 'agents') return { kind: 'inventory', shared: true };
     if (resource === 'sandboxes') return { kind: 'sandbox', sandboxId: id };
     if (resource === 'workspaces') return { kind: 'workspace', workspaceId: id };
     if (resource === 'agents') return { kind: 'agent', agentId: id };
@@ -124,6 +125,7 @@ export function routePath(route: AppRoute): string {
     case 'agent':
       return `/agents/${segment(route.agentId)}`;
     case 'inventory':
+      if (route.shared === true) return '/shared/agents';
       return route.organization === undefined
         ? '/agents'
         : `/organizations/${segment(route.organization)}/agents`;

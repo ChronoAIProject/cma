@@ -4,6 +4,7 @@ use super::*;
 async fn provenance_inventory_preserves_empty_continuations_and_typed_scope_filters() {
     let server = Server::new().await;
     let mut options = AgentProvenanceInventoryOptions {
+        shared: false,
         scope: AccessibleAgentListOptions {
             organization: Some("org".into()),
             filters: AgentListOptions {
@@ -138,5 +139,47 @@ async fn provenance_rejects_mismatched_identity_and_unknown_source_or_actor() {
             Err(Error::Protocol { .. })
         ));
     }
+    server.assert_drained();
+}
+
+#[tokio::test]
+async fn provenance_inventory_shared_scope_keeps_filtered_continuation() {
+    let server = Server::new().await;
+    let mut options = AgentProvenanceInventoryOptions {
+        shared: true,
+        creation_origin: Some(AgentCreationCategory::Trigger),
+        ..Default::default()
+    };
+    server.expect(
+        "GET",
+        "/agents/provenance?shared=true&creation_origin=trigger",
+        None,
+        200,
+        Some(json!({"items":[],"next":"agt_scan"})),
+    );
+    let first = server
+        .client
+        .agents()
+        .provenance_inventory(&options)
+        .await
+        .unwrap();
+    options.scope.filters.page.cursor = first.next;
+    server.expect(
+        "GET",
+        "/agents/provenance?cursor=agt_scan&shared=true&creation_origin=trigger",
+        None,
+        200,
+        Some(json!({"items":[]})),
+    );
+    assert!(
+        server
+            .client
+            .agents()
+            .provenance_inventory(&options)
+            .await
+            .unwrap()
+            .next
+            .is_none()
+    );
     server.assert_drained();
 }

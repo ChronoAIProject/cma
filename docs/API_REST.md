@@ -350,11 +350,11 @@ never rewritten. Missing or inconsistent ancestry refuses capture, and missing
 creation evidence produces `legacy_unknown` without inventing a creator. Mongo
 uses metadata lineage guards while preserving serialized resource records,
 revisions, conversations, runtime attachments and history. Channel allocation/
-history, organization Sandbox navigation and share-management UI remain
-unfinished; the channel category is reserved for that work.
+history remains unfinished; the channel category is reserved for that work.
+The web provides authorized organization hierarchy navigation and owner share management.
 
 `GET /api/v1/agents/provenance` lists safe creation summaries in stable Agent-ID
-order. Omit `organization` for personal ownership; explicit organization scope
+order. Omit `organization` and `shared` for personal ownership; explicit organization scope
 requires current membership and selects organization-owned or shared Agents.
 Rows contain only `agent_id`, optional `title`, `status`, `created_at`,
 `updated_at`, and `creation_origin`. Private source/creator details and hierarchy
@@ -363,6 +363,16 @@ all lifecycle states, including deleted Agents, unless `status` is supplied.
 Additional filters are `sandbox`, `workspace`, and `creation_origin`; parent
 filters require independent visibility of that parent. A narrow Agent grant
 cannot reveal the result of a parent filter.
+
+`shared=true` selects **Shared with me**, the union of explicit Agent and whole-Sandbox
+grants to current organizations, excluding personally owned resources before paging.
+Overlapping organizations and grants produce one row per Agent. Organization ownership
+alone does not add a resource to this aggregate; use Organization scope for those
+resources. `shared=true` and `organization` are mutually exclusive. Each request
+rediscovers organizations and obtains fresh evidence for at most 128 choices, with
+at most eight provider lookups concurrently. A confirmed nonmembership removes a
+stale choice; an outage refuses the aggregate rather than returning an incomplete
+successful page. Original membership deadlines remain binding through final checks.
 
 `limit` defaults to 50 and accepts 1–200; `cursor` resumes after a consumed Agent
 ID. Without a category filter the server reads at most `limit + 1` candidates.
@@ -614,7 +624,7 @@ above applies even when an operation annotates only its principal responses.
 | `GET /api/v1/agents/{id}` | - | - | 200 AccessibleAgentView |
 | `DELETE /api/v1/agents/{id}` | -; key | - | 202 empty |
 | `GET /api/v1/agents/{id}/events` | - | after, limit | 200 AgentEventPageView |
-| `GET /api/v1/agents/provenance` | `organization`, `sandbox`, `workspace`, `status`, `creation_origin`, `cursor`, `limit` | - | 200 AgentProvenanceInventoryPageView |
+| `GET /api/v1/agents/provenance` | `shared`, `organization`, `sandbox`, `workspace`, `status`, `creation_origin`, `cursor`, `limit` | - | 200 AgentProvenanceInventoryPageView |
 | `GET /api/v1/agents/{id}/provenance` | - | - | 200 AgentProvenanceView |
 | `GET /api/v1/agents/{id}/source` | - | - | 200 AccessibleAgentSourceView |
 | `POST /api/v1/agents/{id}/stop` | StopAgentRequest; key | - | 202 empty |

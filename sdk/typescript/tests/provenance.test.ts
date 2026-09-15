@@ -3,6 +3,25 @@ import { ProtocolError, ValidationError, type AgentCreationCategory } from '../s
 import { agent, now, transport } from './resource-fixtures.js';
 
 describe('immutable Agent provenance', () => {
+  it('selects aggregate explicit shares and keeps continuation filters', async () => {
+    const test = transport();
+    test.answer({ items: [], next: 'agt_scanned' });
+    const first = await test.client.agents.provenanceInventory({
+      shared: true,
+      creationOrigin: 'trigger',
+    });
+    test.answer({ items: [] });
+    await test.client.agents.provenanceInventory({
+      shared: true,
+      creationOrigin: 'trigger',
+      cursor: first.next,
+    });
+    expect(Object.fromEntries(new URL(test.calls.at(-1)!.url).searchParams)).toEqual({
+      shared: 'true',
+      creation_origin: 'trigger',
+      cursor: 'agt_scanned',
+    });
+  });
   it('pages safe inventory across empty filtered pages and maps all scope filters', async () => {
     const test = transport();
     test.answer({ items: [], next: 'agt_scanned' });

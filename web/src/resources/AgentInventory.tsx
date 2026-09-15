@@ -13,6 +13,7 @@ import { Picker } from '../ui/Picker';
 import type { AppRoute } from '../routing/routes';
 import { routePath } from '../routing/routes';
 import './AgentInventory.css';
+import { scopeValue, scopeRoute } from './scope';
 import { ExportInventoryPage } from './ExportInventoryPage';
 
 type Category = 'all' | AgentCreationCategory;
@@ -21,6 +22,7 @@ type Status = 'all' | AgentStatus;
 interface Props {
   readonly client: ResourceViewsClient;
   readonly organization?: string;
+  readonly shared?: boolean;
   readonly onNavigate: (route: AppRoute) => void;
 }
 
@@ -47,18 +49,19 @@ const statuses: readonly { value: Status; label: string }[] = [
   ).map((value) => ({ value, label: statusLabel(value) })),
 ];
 
-export function AgentInventory({ client, organization, onNavigate }: Props) {
+export function AgentInventory({ client, organization, shared, onNavigate }: Props) {
   return (
     <Inventory
-      key={organization ?? 'personal'}
+      key={scopeValue(organization, shared)}
       client={client}
       organization={organization}
+      shared={shared}
       onNavigate={onNavigate}
     />
   );
 }
 
-function Inventory({ client, organization, onNavigate }: Props) {
+function Inventory({ client, organization, shared, onNavigate }: Props) {
   const [category, setCategory] = useState<Category>('all');
   const [status, setStatus] = useState<Status>('all');
   const [cursors, setCursors] = useState<readonly (string | undefined)[]>([undefined]);
@@ -66,12 +69,13 @@ function Inventory({ client, organization, onNavigate }: Props) {
   const options = useMemo<AgentProvenanceInventoryOptions>(
     () => ({
       organization,
+      shared,
       creationOrigin: category === 'all' ? undefined : category,
       status: status === 'all' ? undefined : status,
       cursor,
       limit: 50,
     }),
-    [organization, category, status, cursor],
+    [organization, shared, category, status, cursor],
   );
   const read = useMemo(
     () => async (signal: AbortSignal) => {
@@ -102,16 +106,21 @@ function Inventory({ client, organization, onNavigate }: Props) {
   const choices = organizations.state.status === 'ready' ? organizations.state.value : [];
   const selected = choices.find((choice) => choice.id === organization);
   const scopeLabel =
-    organization === undefined ? 'Personal' : selected?.display_name?.trim() || 'Organization';
+    shared === true
+      ? 'Shared with me'
+      : organization === undefined
+        ? 'Personal'
+        : selected?.display_name?.trim() || 'Organization';
   const scopes = [
     { value: '', label: 'Personal' },
+    { value: 'shared', label: 'Shared with me' },
     ...choices.map((choice, index) => ({
-      value: choice.id,
+      value: scopeValue(choice.id),
       label: choice.display_name?.trim() || `Organization ${String(index + 1)}`,
     })),
   ];
   if (organization !== undefined && selected === undefined)
-    scopes.push({ value: organization, label: 'Selected organization' });
+    scopes.push({ value: scopeValue(organization), label: 'Selected organization' });
   const page = inventory.state.status === 'ready' ? inventory.state.value : undefined;
   return (
     <section className="agent-inventory" aria-labelledby="inventory-title">
@@ -121,11 +130,9 @@ function Inventory({ client, organization, onNavigate }: Props) {
         <div className="agent-inventory__filters">
           <Picker
             label="Resource scope"
-            value={organization ?? ''}
+            value={scopeValue(organization, shared)}
             options={scopes}
-            onChange={(value) =>
-              onNavigate({ kind: 'inventory', organization: value || undefined })
-            }
+            onChange={(value) => onNavigate(scopeRoute(value))}
           />
           <Picker
             label="Creation origin"

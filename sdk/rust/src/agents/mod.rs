@@ -66,6 +66,9 @@ impl Agents<'_> {
         options: &AgentProvenanceInventoryOptions,
     ) -> Result<ResourcePage<AgentProvenanceInventoryItem>> {
         let mut query = options.scope.filters.query();
+        if options.shared {
+            query.push(("shared", "true".into()));
+        }
         if let Some(id) = &options.scope.organization {
             query.push(("organization", id.clone()));
         }

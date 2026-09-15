@@ -52,6 +52,7 @@ export const resourceDispatch: Record<string, Dispatch> = {
   'GET /api/v1/agents/provenance': ({ client, options, query }) =>
     client.agents.provenanceInventory({
       ...(options as AgentProvenanceInventoryOptions),
+      shared: query.has('shared') ? query.get('shared') === 'true' : undefined,
       creationOrigin:
         (query.get('creation_origin') as AgentProvenanceInventoryOptions['creationOrigin']) ??
         undefined,

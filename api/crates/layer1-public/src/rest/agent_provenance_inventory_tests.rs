@@ -176,6 +176,21 @@ impl AgentProvenanceInventoryStore for GatedInventory {
         self.resume.notified().await;
         Ok(result)
     }
+    async fn scan_shared_agent_provenance_inventory(
+        &self,
+        recipient: &SubjectId,
+        organizations: &[SubjectId],
+        query: &AgentListQuery,
+        page: &PageRequest,
+    ) -> Result<Vec<AgentProvenanceSnapshot>, SandboxStoreError> {
+        let result = self
+            .inner
+            .scan_shared_agent_provenance_inventory(recipient, organizations, query, page)
+            .await?;
+        self.entered.notify_one();
+        self.resume.notified().await;
+        Ok(result)
+    }
 }
 
 #[tokio::test]
@@ -257,7 +272,11 @@ impl OrganizationAuthority for ShortAuthority {
         _: &layer2_core::Caller,
         _: &str,
     ) -> Result<Vec<OrganizationChoice>, MembershipError> {
-        unreachable!()
+        Ok(vec![OrganizationChoice {
+            id: SubjectId::new("org"),
+            role: OrganizationRole::Admin,
+            display_name: None,
+        }])
     }
 }
 
@@ -390,5 +409,368 @@ async fn provenance_inventory_org_ownership_is_explicit_for_every_read_role_and_
             .unwrap()
             .items
             .is_empty());
+    }
+}
+
+#[tokio::test]
+async fn shared_provenance_inventory_unions_current_grants_without_parent_or_personal_leaks() {
+    use layer2_core::{AgentId, SandboxId};
+    let (fixture, access, authority, original) = fixture(Reply::Member).await;
+    let router = super::agent_provenance_inventory_router(AgentProvenanceInventoryService::new(
+        fixture.store,
+        access.clone(),
+    ));
+    for (agent, org, key) in [
+        ("agt_shared_read", "org-two", "overlap"),
+        ("agt_sibling", "org-two", "second"),
+    ] {
+        access
+            .change_share(
+                &context("owner-a"),
+                Some("request-credential"),
+                ShareCommand {
+                    selector: ResourceSelector::Agent {
+                        agent_id: AgentId(agent.into()),
+                    },
+                    change: ShareChange::Create {
+                        target_org_id: SubjectId::new(org),
+                        mode: ShareMode::View,
+                    },
+                    expected_share_revision: None,
+                    idempotency_key: key.into(),
+                },
+            )
+            .await
+            .unwrap();
+    }
+    let (status, first) =
+        agents_tests::json_response(&router, request("?shared=true&limit=1", "recipient", true))
+            .await;
+    assert_eq!(status, StatusCode::OK, "{first}");
+    assert_eq!(first["items"].as_array().unwrap().len(), 1);
+    assert_eq!(first["next"], "agt_shared_read");
+    for hidden in [
+        "sandbox_id",
+        "workspace_id",
+        "worktree_id",
+        "profile",
+        "private",
+        "owner",
+    ] {
+        assert!(!first.to_string().contains(hidden));
+    }
+    let (status, last) = agents_tests::json_response(
+        &router,
+        request(
+            "?shared=true&limit=1&cursor=agt_shared_read",
+            "recipient",
+            true,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(last["items"][0]["agent_id"], "agt_sibling");
+    assert!(last.get("next").is_none());
+    for filter in ["sandbox=sbx_route", "workspace=wks_route"] {
+        assert_eq!(
+            agents_tests::json_response(
+                &router,
+                request(&format!("?shared=true&{filter}"), "recipient", true)
+            )
+            .await
+            .0,
+            StatusCode::NOT_FOUND
+        );
+    }
+    let (_, owner) =
+        agents_tests::json_response(&router, request("?shared=true", "owner-a", true)).await;
+    assert_eq!(owner["items"], serde_json::json!([]));
+    access
+        .change_share(
+            &context("owner-a"),
+            None,
+            ShareCommand {
+                selector: original.selector,
+                change: ShareChange::Revoke {
+                    share_id: original.id,
+                },
+                expected_share_revision: Some(original.revision),
+                idempotency_key: "revoke-original".into(),
+            },
+        )
+        .await
+        .unwrap();
+    let (status, overlap) =
+        agents_tests::json_response(&router, request("?shared=true", "recipient", true)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(overlap["items"].as_array().unwrap().len(), 2);
+    // A whole-Sandbox grant independently permits parent filters; it is explicit.
+    access
+        .change_share(
+            &context("owner-a"),
+            Some("request-credential"),
+            ShareCommand {
+                selector: ResourceSelector::Sandbox {
+                    sandbox_id: SandboxId("sbx_route".into()),
+                },
+                change: ShareChange::Create {
+                    target_org_id: SubjectId::new("org"),
+                    mode: ShareMode::View,
+                },
+                expected_share_revision: None,
+                idempotency_key: "whole".into(),
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        agents_tests::json_response(
+            &router,
+            request("?shared=true&sandbox=sbx_route", "recipient", true)
+        )
+        .await
+        .0,
+        StatusCode::OK
+    );
+    *authority.0.lock().unwrap() = Reply::Missing;
+    let (status, removed) =
+        agents_tests::json_response(&router, request("?shared=true", "recipient", true)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(removed["items"], serde_json::json!([]));
+    *authority.0.lock().unwrap() = Reply::Outage;
+    assert_eq!(
+        agents_tests::json_response(&router, request("?shared=true", "recipient", true))
+            .await
+            .0,
+        StatusCode::SERVICE_UNAVAILABLE
+    );
+    assert_eq!(
+        agents_tests::json_response(&router, request("", "owner-a", true))
+            .await
+            .0,
+        StatusCode::OK
+    );
+}
+
+#[tokio::test]
+async fn shared_provenance_inventory_requires_context_and_unambiguous_scope() {
+    let (fixture, access, _, _) = fixture(Reply::Member).await;
+    let router = super::agent_provenance_inventory_router(AgentProvenanceInventoryService::new(
+        fixture.store,
+        access,
+    ));
+    for query in [
+        "?shared=true&organization=org",
+        "?shared=invalid",
+        "?shared=true&shared=false",
+    ] {
+        assert_eq!(
+            agents_tests::json_response(&router, request(query, "recipient", true))
+                .await
+                .0,
+            StatusCode::BAD_REQUEST,
+            "{query}"
+        );
+    }
+    assert_eq!(
+        agents_tests::json_response(&router, request("?shared=true", "recipient", false))
+            .await
+            .0,
+        StatusCode::FORBIDDEN
+    );
+}
+
+#[tokio::test]
+async fn shared_provenance_inventory_rechecks_filtered_candidates_after_revocation() {
+    use layer2_core::sandbox::{AgentCreationCategory, AgentProvenanceInventoryQuery};
+    let (fixture, access, _, share) = fixture(Reply::Member).await;
+    let entered = Arc::new(tokio::sync::Notify::new());
+    let resume = Arc::new(tokio::sync::Notify::new());
+    let service = AgentProvenanceInventoryService::new(
+        Arc::new(GatedInventory {
+            inner: fixture.store,
+            entered: entered.clone(),
+            resume: resume.clone(),
+            corrupt: false,
+        }),
+        access.clone(),
+    );
+    let pending = tokio::spawn(async move {
+        service
+            .list(
+                &context("recipient"),
+                Some("request-credential"),
+                &AgentProvenanceInventoryQuery {
+                    shared: true,
+                    creation_origin: Some(AgentCreationCategory::ChannelBridge),
+                    ..Default::default()
+                },
+                &PageRequest::default(),
+            )
+            .await
+    });
+    entered.notified().await;
+    access
+        .change_share(
+            &context("owner-a"),
+            None,
+            ShareCommand {
+                selector: share.selector,
+                change: ShareChange::Revoke { share_id: share.id },
+                expected_share_revision: Some(share.revision),
+                idempotency_key: "revoke-aggregate".into(),
+            },
+        )
+        .await
+        .unwrap();
+    resume.notify_one();
+    assert!(matches!(
+        pending.await.unwrap(),
+        Err(ResourceAccessError::Store(
+            ResourceAccessStoreError::Conflict
+        ))
+    ));
+}
+
+#[tokio::test]
+async fn shared_provenance_inventory_keeps_original_deadline_even_for_empty_pages() {
+    use layer2_core::sandbox::AgentProvenanceInventoryQuery;
+    for empty in [false, true] {
+        let (fixture, old_access, _, share) = fixture(Reply::Member).await;
+        if empty {
+            old_access
+                .change_share(
+                    &context("owner-a"),
+                    None,
+                    ShareCommand {
+                        selector: share.selector,
+                        change: ShareChange::Revoke { share_id: share.id },
+                        expected_share_revision: Some(share.revision),
+                        idempotency_key: "empty-aggregate".into(),
+                    },
+                )
+                .await
+                .unwrap();
+        }
+        let entered = Arc::new(tokio::sync::Notify::new());
+        let resume = Arc::new(tokio::sync::Notify::new());
+        let access = Arc::new(ResourceAccessService::new(
+            fixture.store.clone(),
+            Arc::new(ShortAuthority(OrganizationRole::Viewer)),
+        ));
+        let service = AgentProvenanceInventoryService::new(
+            Arc::new(GatedInventory {
+                inner: fixture.store,
+                entered: entered.clone(),
+                resume: resume.clone(),
+                corrupt: false,
+            }),
+            access,
+        );
+        let pending = tokio::spawn(async move {
+            service
+                .list(
+                    &context("recipient"),
+                    Some("request-credential"),
+                    &AgentProvenanceInventoryQuery {
+                        shared: true,
+                        ..Default::default()
+                    },
+                    &PageRequest::default(),
+                )
+                .await
+        });
+        entered.notified().await;
+        tokio::time::pause();
+        tokio::time::advance(std::time::Duration::from_secs(2)).await;
+        resume.notify_one();
+        let error = pending.await.unwrap().unwrap_err();
+        tokio::time::resume();
+        assert!(
+            matches!(
+                error,
+                ResourceAccessError::Access(AccessError::RevalidationRequired)
+            ),
+            "{error}"
+        );
+    }
+}
+
+struct StaleChoices(bool);
+#[async_trait::async_trait]
+impl OrganizationAuthority for StaleChoices {
+    async fn organization_choices(
+        &self,
+        _: &layer2_core::Caller,
+        _: &str,
+    ) -> Result<Vec<OrganizationChoice>, MembershipError> {
+        Ok(vec![
+            OrganizationChoice {
+                id: SubjectId::new("org"),
+                role: OrganizationRole::Admin,
+                display_name: None,
+            },
+            OrganizationChoice {
+                id: SubjectId::new("removed-org"),
+                role: OrganizationRole::Admin,
+                display_name: None,
+            },
+        ])
+    }
+    async fn organization_context(
+        &self,
+        caller: &layer2_core::Caller,
+        credential: &str,
+        org: &SubjectId,
+    ) -> Result<CallerContext, MembershipError> {
+        if org.as_str() == "removed-org" {
+            return Err(if self.0 {
+                MembershipError::NotMember
+            } else {
+                MembershipError::Unavailable
+            });
+        }
+        ShortAuthority(OrganizationRole::Viewer)
+            .organization_context(caller, credential, org)
+            .await
+    }
+}
+
+#[tokio::test]
+async fn shared_provenance_inventory_requires_actual_membership_and_reports_incomplete_discovery() {
+    use layer2_core::sandbox::AgentProvenanceInventoryQuery;
+    let (fixture, _, _, _) = fixture(Reply::Member).await;
+    for removed in [true, false] {
+        let service = AgentProvenanceInventoryService::new(
+            fixture.store.clone(),
+            Arc::new(ResourceAccessService::new(
+                fixture.store.clone(),
+                Arc::new(StaleChoices(removed)),
+            )),
+        );
+        let result = service
+            .list(
+                &context("recipient"),
+                Some("request-credential"),
+                &AgentProvenanceInventoryQuery {
+                    shared: true,
+                    ..Default::default()
+                },
+                &PageRequest::default(),
+            )
+            .await;
+        if removed {
+            assert_eq!(
+                result.unwrap().items[0].agent_id.as_str(),
+                "agt_shared_read"
+            );
+        } else {
+            assert!(matches!(
+                result,
+                Err(ResourceAccessError::Membership(
+                    MembershipError::Unavailable
+                ))
+            ));
+        }
     }
 }
