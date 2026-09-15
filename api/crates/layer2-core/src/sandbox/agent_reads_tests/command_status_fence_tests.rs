@@ -40,7 +40,7 @@ impl AgentCommandStore for BufferedStore {
 
 #[tokio::test]
 async fn revoked_policy_overrides_buffered_status_and_dependency_errors() {
-    for error in [false, true] {
+    for (error, projection) in [(false, false), (true, false), (false, true), (true, true)] {
         let (store, service, authority, _) = setup(Authority::new()).await;
         let receipt = service
             .admit(
@@ -64,13 +64,24 @@ async fn revoked_policy_overrides_buffered_status_and_dependency_errors() {
         let access = Arc::new(ResourceAccessService::new(store.clone(), authority.clone()));
         let reads = AgentCommandService::new(buffered, access, authority);
         let work = tokio::spawn(async move {
-            reads
-                .command_status(
-                    &context("reader"),
-                    Some("selected-credential"),
-                    &receipt.receipt.command_id,
-                )
-                .await
+            if projection {
+                reads
+                    .command_projection(
+                        &context("reader"),
+                        Some("selected-credential"),
+                        &receipt.receipt.command_id,
+                    )
+                    .await
+                    .map(|value| value.status)
+            } else {
+                reads
+                    .command_status(
+                        &context("reader"),
+                        Some("selected-credential"),
+                        &receipt.receipt.command_id,
+                    )
+                    .await
+            }
         });
         entered.notified().await;
         share(&store, Some(grant)).await;
@@ -86,45 +97,58 @@ async fn revoked_policy_overrides_buffered_status_and_dependency_errors() {
 
 #[tokio::test(start_paused = true)]
 async fn held_membership_expiry_cancels_buffered_status_instead_of_renewing_it() {
-    let mut authority = Authority::new();
-    authority.lifetime = Duration::from_secs(1);
-    let (store, service, authority, _) = setup(authority).await;
-    let receipt = service
-        .admit(
-            &context("owner"),
-            "selected-credential",
-            CommandSubmissionSource::Api,
-            submission("one"),
-        )
-        .await
-        .unwrap();
-    share(&store, None).await;
-    let entered = Arc::new(Notify::new());
-    let release = Arc::new(Notify::new());
-    let buffered = Arc::new(BufferedStore {
-        inner: store.clone(),
-        calls: AtomicUsize::new(0),
-        entered: entered.clone(),
-        release,
-        error: false,
-    });
-    let access = Arc::new(ResourceAccessService::new(store, authority.clone()));
-    let reads = AgentCommandService::new(buffered, access, authority);
-    let work = tokio::spawn(async move {
-        reads
-            .command_status(
-                &context("reader"),
-                Some("selected-credential"),
-                &receipt.receipt.command_id,
+    for projection in [false, true] {
+        let mut authority = Authority::new();
+        authority.lifetime = Duration::from_secs(1);
+        let (store, service, authority, _) = setup(authority).await;
+        let receipt = service
+            .admit(
+                &context("owner"),
+                "selected-credential",
+                CommandSubmissionSource::Api,
+                submission("one"),
             )
             .await
-    });
-    entered.notified().await;
-    tokio::time::advance(Duration::from_secs(1)).await;
-    assert!(matches!(
-        work.await.unwrap(),
-        Err(CommandAdmissionError::Access(ResourceAccessError::Access(
-            AccessError::RevalidationRequired
-        )))
-    ));
+            .unwrap();
+        share(&store, None).await;
+        let entered = Arc::new(Notify::new());
+        let release = Arc::new(Notify::new());
+        let buffered = Arc::new(BufferedStore {
+            inner: store.clone(),
+            calls: AtomicUsize::new(0),
+            entered: entered.clone(),
+            release,
+            error: false,
+        });
+        let access = Arc::new(ResourceAccessService::new(store, authority.clone()));
+        let reads = AgentCommandService::new(buffered, access, authority);
+        let work = tokio::spawn(async move {
+            if projection {
+                reads
+                    .command_projection(
+                        &context("reader"),
+                        Some("selected-credential"),
+                        &receipt.receipt.command_id,
+                    )
+                    .await
+                    .map(|value| value.status)
+            } else {
+                reads
+                    .command_status(
+                        &context("reader"),
+                        Some("selected-credential"),
+                        &receipt.receipt.command_id,
+                    )
+                    .await
+            }
+        });
+        entered.notified().await;
+        tokio::time::advance(Duration::from_secs(1)).await;
+        assert!(matches!(
+            work.await.unwrap(),
+            Err(CommandAdmissionError::Access(ResourceAccessError::Access(
+                AccessError::RevalidationRequired
+            )))
+        ));
+    }
 }

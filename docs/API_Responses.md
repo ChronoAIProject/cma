@@ -5,7 +5,8 @@
 The canonical contract for new clients is `/api/v2`. It accepts an existing
 Agent as `conversation` on every turn and admits input to a durable command
 ledger before opening SSE. Existing `/api/v1` clients keep their original
-conversation creation and predecessor rules. The v1 contract below continues
+conversation creation, predecessor and turn-derived response identity rules.
+Legacy response POSTs also enter common durable command admission. The v1 contract below continues
 to apply to those routes; changing a client's base URL requires adopting the
 v2 rules in this section.
 
@@ -390,13 +391,25 @@ failure. An `Idempotency-Key` does not make this endpoint replay-safe.
 The `metadata` on a response POST is separate: it accepts at most 16 string
 pairs, with keys at most 64 characters and values at most 512 characters.
 
-Threads are linear. On the first turn, `previous_response_id` must be absent or
-null. On every later turn it must equal the latest response identifier for that
-conversation. Omitting it after a turn exists, naming a stale response, naming
-another conversation, or naming malformed data returns `409
-previous_response_id_conflict` before the prompt reaches the runtime. Clients
-should retrieve current history and retry from its latest response rather than
-creating a fork.
+Threads are linear. An absent/null `previous_response_id` requires no previous
+turn; it never means append to whichever turn is latest. A later invocation
+must name the latest `resp_<agent-id>_<turn>` identifier for that conversation.
+Malformed or cross-conversation predecessors are refused statically. A command
+that reaches dispatch with a stale predecessor receives the committed
+`409 previous_response_id_conflict` refusal before any runtime send. Ordinary
+input may wait behind active work, so this refusal can arrive after admission.
+A keyed retry recovers its original receipt before rechecking a new dynamic
+predecessor condition. To change the predecessor or input after a definitive
+refusal, make a new explicit invocation with a new key.
+
+One optional `Idempotency-Key` accepts 1–256 bytes without control characters.
+Keep it with the input, metadata and predecessor before sending. The supplied
+key uses the common stable authority/Agent/command-kind namespace directly.
+Equivalent canonical intent recovers the same receipt across interfaces;
+Append and `AfterTurn(None)` are different semantics and conflict under the
+same key. The optional ignored `model` does not change intent. Without a key,
+separate HTTP attempts reserve separate commands and cannot safely deduplicate
+an uncertain earlier attempt. Conversation creation remains unkeyed.
 
 Stateless response creation, non-streaming creation, background execution,
 stream resumption, caller tools, response deletion, and response cancellation
@@ -462,19 +475,36 @@ v1. Reconnect by reading the response resource when its identifier is known and
 list conversation items to recover durable output. If a terminal response is
 not yet available, retry the read under the ordinary REST retry policy.
 
-Posting a response to an Agent in a paused Sandbox also requests revival. CMA
-opens the response only after checkpoint restoration and prompt admission, and
-then streams the same event sequence as an already-live host. A restored host
-uses a new runtime generation while the conversation and response identifiers
-remain tied to durable Agent history.
+CMA first reserves the common durable command, then the worker handles queue
+order, checkpoint waits, revival and execution. An ordinary Message waits behind
+an active turn. `200 text/event-stream` opens only when this exact command has a
+durable turn binding. A keyed retry projects that same legacy response again,
+with connection-local sequence numbers restarting at zero.
 
-Admission is bounded by ten minutes. If provisioning or restoration does not
-make the conversation reachable by that deadline, the stream contains one
-`response.failed` event with code `provisioning_timeout`. Because no durable
-`TurnStarted` sequence exists yet, CMA uses the provisional identifier
-`resp_<agent-id>_0` for this event. That provisional `_0` identifier is
-explicitly CMA behavior, is not a durable retrievable response identifier, and
-must not be attributed to the standard OpenAI API.
+The response headers carry `x-cma-command-id` and `x-cma-response-id`, also on
+prebinding errors when admission is known. These identify the common command
+and response; they never replace legacy `response.id`, output IDs or
+`previous_response_id`. Observe the command through
+`GET /api/v2/commands/{command_id}` or repeat an uncertain keyed POST with the
+same input and key under current authority. The common response can also be
+observed through v2 without changing its legacy turn projection.
+
+Prebinding observation is bounded by ten minutes; the command queue has its
+existing five-minute deadline. `504 agent_command_observation_timeout` reports
+that no binding was observed within the HTTP budget and leaves work intact.
+A committed queue expiry returns `agent_command_queue_timeout`; other committed
+unbound failures use explicit authority, Agent, target, runtime or execution
+problems. A cancelled queued command returns `409 agent_command_cancelled`.
+These errors do not fabricate a `response.failed` event or a `resp_<agent-id>_0`
+resource. After a stream opens, loss of authorized history observation closes
+the connection without inventing a durable runtime failure.
+
+New keyed admission cannot establish whether a request already executed on an
+older server that ignored its key. Do not infer an old receipt from matching
+text or nearby history. During cutover, route mutations to upgraded writers and
+drain old direct-admission tasks; a rollback must keep the common worker and
+ledger available for accepted commands or stop new mutations while they settle.
+Retained reads still reconstruct old turns that have no common receipt.
 
 Response retrieval never reads a response database. It identifies the durable
 turn, bounds it at the next `TurnStarted`, and folds the retained event log into

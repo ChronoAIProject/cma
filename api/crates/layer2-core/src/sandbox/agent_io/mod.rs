@@ -76,7 +76,7 @@ pub use queued_cancellation::{
 pub use reservation_policy::validate_command_reservation_policy;
 pub use response_read::AgentResponseReading;
 pub use revival_authority::CommandRevivalAuthorization;
-pub use status::{CommandReceiptView, CommandStatusView};
+pub use status::{CommandProjectionView, CommandReceiptView, CommandStatusView};
 pub use targeted_control::{
     AdmittedTargetedControl, ResponseControlObservation, ResponseControlRuntimeSupport,
     TargetedControlBinding, TargetedControlError, TargetedControlInspection,

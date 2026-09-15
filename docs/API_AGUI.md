@@ -26,6 +26,7 @@ terminal capabilities, WebSocket transport and snapshot events are absent.
 POST /api/v1/agui/run
 Content-Type: application/json
 Accept: text/event-stream
+Idempotency-Key: retained-run-1
 
 {
   "threadId": "agt_example",
@@ -39,13 +40,36 @@ bytes. It is **not an idempotency key**, is not the durable turn id and does not
 make a repeated POST safe. Output `runId` is the server's durable turn sequence
 as a string. `messages` supplies the last user text, not a replacement history;
 CMA retains prior history itself. Empty input without an approval is refused.
-When the Agent is already working, user input is a steer operation.
+Ordinary input always reserves a Message in the common command queue. Input
+submitted while the Agent is Working waits for a later turn. Use the explicit
+public control operations when steering the current turn is intended.
 
-CMA checks owner access and waits for an input-ready context, including Sandbox
-revival where needed, before opening the stream. A failed admission returns a
-normal typed HTTP problem. Once admission starts, loss of the HTTP connection
-does not cancel it. Do not automatically repeat a run POST after a timeout or
-lost response. Recover by reading the Agent and its durable events.
+CMA checks personal owner access and current credential authority, reserves a
+common durable receipt, and lets the worker own readiness, checkpoint waits,
+revival and dispatch. The stream opens only after that exact command has a
+durable turn binding. It starts at its own turn even when other turns finished
+while it waited. Disconnecting during admission or observation does not cancel
+accepted work.
+
+One optional `Idempotency-Key` accepts 1–256 bytes without control characters.
+Retain the key with the same selected input or approval decision before sending.
+Equivalent canonical intent and the same key share the existing authority,
+Agent and command-kind namespace with the other common interfaces; differing
+intent conflicts. A keyed retry reopens the same turn under current authority.
+Omitting the key creates a separate immutable key for that HTTP invocation;
+separate unkeyed attempts are separate commands, even if `runId` and text match.
+
+Responses include `x-cma-command-id` and, for Message commands,
+`x-cma-response-id`. These common IDs never replace the turn-derived `runId`.
+The same headers accompany a prebinding error when the receipt is known.
+`GET /api/v2/commands/{command_id}` observes the common command. After ten minutes
+without an observed binding, `504 agent_command_observation_timeout` describes
+uncertainty; it does not fail or cancel the accepted command. Committed queue
+expiry instead returns `agent_command_queue_timeout`. Other committed unbound
+refusals use typed authority, resource, target or execution problems, without
+inventing `RUN_STARTED` or a terminal runtime event. Recover an uncertain keyed
+POST with the same input/key, or read retained Agent events. The SDK never
+resubmits automatically.
 
 ## Approval Answers
 
@@ -69,7 +93,10 @@ At most one resume is accepted. Decisions are `allow`, `deny` or `abort`.
 Missing/unknown decisions and a status other than `resolved` are conservative
 denials. Do not submit both a message and an approval expecting two operations:
 when a resume exists it selects the approval path. Approval resolution removes
-the entry from `/pendingApprovals/<escaped-id>`.
+the entry from `/pendingApprovals/<escaped-id>`. Its common receipt binds to the
+original target turn and creates no new Message response. The resumed stream
+starts at that approval command's exact dispatch boundary, preserving events
+that followed it while excluding earlier unrelated approval activity.
 
 Explicit interruption is `POST /api/v1/agents/{id}/interrupt` through REST with
 its required idempotency key. Closing a stream is not interruption.

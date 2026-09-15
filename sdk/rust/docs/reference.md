@@ -85,7 +85,9 @@ at `GET /api/v1/agui/launches/{id}/events`. Stream `cursor()` returns the last
 complete event, without implying the application has persisted it.
 
 `ReplayOptions` controls AG-UI finite history or follow mode. `RunRequest` admits
-one user message or approval answer. `AgentEvent::cursor` is set only at a new
+one user message or approval answer. `agui().run_with_key(&request, key)` adds an
+optional retained key alongside existing unkeyed `run`; Working ordinary input
+queues a Message and `runId` remains correlation only. `AgentEvent::cursor` is set only at a new
 durable record boundary; live frames never acknowledge one. `SandboxCompanion`
 has typed Sandbox, Workspace, Worktree, and first-message lifecycle snapshots.
 
@@ -94,6 +96,11 @@ plain text or exactly one user message with plain text or one `input_text` part.
 Streaming and durable storage are required. Standard tools, background work,
 stateless generation, and conversation deletion are not invented. Response
 event names and connection-local sequences are checked before yielding.
+`responses().create_with_key(&request, key)` retains an explicit command key;
+existing `create` is unkeyed. Missing/null predecessor means the first turn.
+Both keyed legacy helpers accept 1–256 bytes without control characters in a
+valid HTTP header and never retry automatically. See [Streaming](streaming.md)
+for uncertain admission and previous-server recovery rules.
 
 Badge retrieval returns a typed modified SVG or not-modified result, retaining
 the required nonempty ETag. A 304 requires an explicit request validator. Markup

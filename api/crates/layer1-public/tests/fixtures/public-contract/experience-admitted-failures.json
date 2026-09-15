@@ -26,7 +26,9 @@
         "headers": {
           "cache-control": "no-cache, no-store",
           "content-type": "text/event-stream",
-          "x-accel-buffering": "no"
+          "x-accel-buffering": "no",
+          "x-cma-command-id": "cmd_contract_agui_run_stopped_owner",
+          "x-cma-response-id": "resp_contract_agui_run_stopped_owner"
         },
         "body": [
           {
@@ -105,6 +107,10 @@
         "event_time_3": "/3/data/timestamp",
         "event_time_4": "/4/data/timestamp",
         "event_time_5": "/5/data/timestamp"
+      },
+      "headerCaptures": {
+        "agui_run_stopped_owner_command": "x-cma-command-id",
+        "agui_run_stopped_owner_response": "x-cma-response-id"
       }
     },
     {
@@ -132,7 +138,9 @@
         "headers": {
           "cache-control": "no-cache, no-store",
           "content-type": "text/event-stream",
-          "x-accel-buffering": "no"
+          "x-accel-buffering": "no",
+          "x-cma-command-id": "cmd_contract_agui_run_stopped_operator",
+          "x-cma-response-id": "resp_contract_agui_run_stopped_operator"
         },
         "body": [
           {
@@ -211,6 +219,10 @@
         "event_time_3": "/3/data/timestamp",
         "event_time_4": "/4/data/timestamp",
         "event_time_5": "/5/data/timestamp"
+      },
+      "headerCaptures": {
+        "agui_run_stopped_operator_command": "x-cma-command-id",
+        "agui_run_stopped_operator_response": "x-cma-response-id"
       }
     },
     {
@@ -238,7 +250,9 @@
         "headers": {
           "cache-control": "no-cache, no-store",
           "content-type": "text/event-stream",
-          "x-accel-buffering": "no"
+          "x-accel-buffering": "no",
+          "x-cma-command-id": "cmd_contract_agui_run_stopped_runtime_lost",
+          "x-cma-response-id": "resp_contract_agui_run_stopped_runtime_lost"
         },
         "body": [
           {
@@ -317,6 +331,10 @@
         "event_time_3": "/3/data/timestamp",
         "event_time_4": "/4/data/timestamp",
         "event_time_5": "/5/data/timestamp"
+      },
+      "headerCaptures": {
+        "agui_run_stopped_runtime_lost_command": "x-cma-command-id",
+        "agui_run_stopped_runtime_lost_response": "x-cma-response-id"
       }
     },
     {
@@ -344,7 +362,9 @@
         "headers": {
           "cache-control": "no-cache, no-store",
           "content-type": "text/event-stream",
-          "x-accel-buffering": "no"
+          "x-accel-buffering": "no",
+          "x-cma-command-id": "cmd_contract_agui_run_stopped_sandbox_retired",
+          "x-cma-response-id": "resp_contract_agui_run_stopped_sandbox_retired"
         },
         "body": [
           {
@@ -423,6 +443,10 @@
         "event_time_3": "/3/data/timestamp",
         "event_time_4": "/4/data/timestamp",
         "event_time_5": "/5/data/timestamp"
+      },
+      "headerCaptures": {
+        "agui_run_stopped_sandbox_retired_command": "x-cma-command-id",
+        "agui_run_stopped_sandbox_retired_response": "x-cma-response-id"
       }
     },
     {
@@ -450,7 +474,9 @@
         "headers": {
           "cache-control": "no-cache, no-store",
           "content-type": "text/event-stream",
-          "x-accel-buffering": "no"
+          "x-accel-buffering": "no",
+          "x-cma-command-id": "cmd_contract_agui_run_stopped_failed",
+          "x-cma-response-id": "resp_contract_agui_run_stopped_failed"
         },
         "body": [
           {
@@ -529,6 +555,10 @@
         "event_time_3": "/3/data/timestamp",
         "event_time_4": "/4/data/timestamp",
         "event_time_5": "/5/data/timestamp"
+      },
+      "headerCaptures": {
+        "agui_run_stopped_failed_command": "x-cma-command-id",
+        "agui_run_stopped_failed_response": "x-cma-response-id"
       }
     },
     {
@@ -556,7 +586,9 @@
         "headers": {
           "cache-control": "no-cache, no-store",
           "content-type": "text/event-stream",
-          "x-accel-buffering": "no"
+          "x-accel-buffering": "no",
+          "x-cma-command-id": "cmd_contract_agui_run_runtime_turn_failed",
+          "x-cma-response-id": "resp_contract_agui_run_runtime_turn_failed"
         },
         "body": [
           {
@@ -635,6 +667,10 @@
         "event_time_3": "/3/data/timestamp",
         "event_time_4": "/4/data/timestamp",
         "event_time_5": "/5/data/timestamp"
+      },
+      "headerCaptures": {
+        "agui_run_runtime_turn_failed_command": "x-cma-command-id",
+        "agui_run_runtime_turn_failed_response": "x-cma-response-id"
       }
     },
     {
@@ -659,7 +695,9 @@
         "headers": {
           "cache-control": "no-cache, no-store",
           "content-type": "text/event-stream",
-          "x-accel-buffering": "no"
+          "x-accel-buffering": "no",
+          "x-cma-command-id": "cmd_contract_responses_create_runtime_turn_failed",
+          "x-cma-response-id": "resp_contract_responses_create_runtime_turn_failed"
         },
         "body": [
           {
@@ -792,6 +830,10 @@
         "response_created_seconds_0": "/0/data/response/created_at",
         "response_created_seconds_1": "/1/data/response/created_at",
         "response_created_seconds_2": "/2/data/response/created_at"
+      },
+      "headerCaptures": {
+        "responses_create_runtime_turn_failed_command": "x-cma-command-id",
+        "responses_create_runtime_turn_failed_response": "x-cma-response-id"
       }
     },
     {
@@ -815,20 +857,96 @@
         }
       },
       "response": {
-        "status": 503,
+        "status": 200,
         "headers": {
-          "content-type": "application/problem+json"
+          "cache-control": "no-cache, no-store",
+          "content-type": "text/event-stream",
+          "x-accel-buffering": "no",
+          "x-cma-command-id": "cmd_contract_agui_run_input_not_written",
+          "x-cma-response-id": "resp_contract_agui_run_input_not_written"
         },
-        "body": {
-          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/instance-service-unavailable",
-          "title": "instance service unavailable",
-          "status": 503,
-          "detail": "An instance dependency could not complete this request.",
-          "code": "instance_service_unavailable"
-        },
-        "bodyKind": "json"
+        "body": [
+          {
+            "id": "12",
+            "data": {
+              "type": "RUN_STARTED",
+              "threadId": "agt_contract",
+              "runId": "12",
+              "timestamp": "2026-09-07T00:00:00Z"
+            }
+          },
+          {
+            "data": {
+              "type": "TEXT_MESSAGE_START",
+              "threadId": "agt_contract",
+              "runId": "12",
+              "messageId": "msg_13",
+              "role": "user",
+              "timestamp": "2026-09-07T00:00:00Z"
+            }
+          },
+          {
+            "data": {
+              "type": "TEXT_MESSAGE_CONTENT",
+              "threadId": "agt_contract",
+              "runId": "12",
+              "messageId": "msg_13",
+              "delta": "Continue",
+              "timestamp": "2026-09-07T00:00:00Z"
+            }
+          },
+          {
+            "id": "13",
+            "data": {
+              "type": "TEXT_MESSAGE_END",
+              "threadId": "agt_contract",
+              "runId": "12",
+              "messageId": "msg_13",
+              "timestamp": "2026-09-07T00:00:00Z"
+            }
+          },
+          {
+            "id": "14",
+            "data": {
+              "type": "STATE_DELTA",
+              "threadId": "agt_contract",
+              "runId": "12",
+              "delta": [
+                {
+                  "op": "replace",
+                  "path": "/status",
+                  "value": "working"
+                }
+              ],
+              "timestamp": "2026-09-07T00:00:00Z"
+            }
+          },
+          {
+            "id": "16",
+            "data": {
+              "type": "RUN_ERROR",
+              "threadId": "agt_contract",
+              "runId": "12",
+              "code": "input_not_written",
+              "message": "the message did not reach the runtime writer",
+              "timestamp": "2026-09-07T00:00:00Z"
+            }
+          }
+        ],
+        "bodyKind": "sse"
       },
-      "captures": {}
+      "captures": {
+        "agui_run_input_not_written_time_0": "/0/data/timestamp",
+        "agui_run_input_not_written_time_1": "/1/data/timestamp",
+        "agui_run_input_not_written_time_2": "/2/data/timestamp",
+        "agui_run_input_not_written_time_3": "/3/data/timestamp",
+        "agui_run_input_not_written_time_4": "/4/data/timestamp",
+        "agui_run_input_not_written_time_5": "/5/data/timestamp"
+      },
+      "headerCaptures": {
+        "agui_run_input_not_written_command": "x-cma-command-id",
+        "agui_run_input_not_written_response": "x-cma-response-id"
+      }
     },
     {
       "id": "agui-replay-input-not-written",
@@ -996,6 +1114,169 @@
       },
       "captures": {
         "response_created_seconds": "/created_at"
+      }
+    },
+    {
+      "id": "responses-create-input-not-written",
+      "operation": "POST /api/v1/responses",
+      "scenario": "experience_responses_rejected",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/responses",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "conversation": "agt_contract",
+          "input": "Continue",
+          "stream": true,
+          "previous_response_id": "resp_agt_contract_3"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "no-cache, no-store",
+          "content-type": "text/event-stream",
+          "x-accel-buffering": "no",
+          "x-cma-command-id": "cmd_contract_responses_create_input_not_written",
+          "x-cma-response-id": "resp_contract_responses_create_input_not_written"
+        },
+        "body": [
+          {
+            "event": "response.created",
+            "data": {
+              "response": {
+                "id": "resp_agt_contract_12",
+                "object": "response",
+                "created_at": 1788739200,
+                "status": "in_progress",
+                "background": false,
+                "error": null,
+                "incomplete_details": null,
+                "instructions": null,
+                "max_output_tokens": null,
+                "model": "gpt-proof",
+                "output": [],
+                "parallel_tool_calls": false,
+                "previous_response_id": "resp_agt_contract_3",
+                "reasoning": {
+                  "effort": null,
+                  "summary": null
+                },
+                "store": true,
+                "temperature": null,
+                "text": {
+                  "format": {
+                    "type": "text"
+                  },
+                  "verbosity": "medium"
+                },
+                "tool_choice": "none",
+                "tools": [],
+                "top_p": null,
+                "truncation": "disabled",
+                "usage": null,
+                "metadata": {}
+              },
+              "type": "response.created",
+              "sequence_number": 0
+            }
+          },
+          {
+            "event": "response.in_progress",
+            "data": {
+              "response": {
+                "id": "resp_agt_contract_12",
+                "object": "response",
+                "created_at": 1788739200,
+                "status": "in_progress",
+                "background": false,
+                "error": null,
+                "incomplete_details": null,
+                "instructions": null,
+                "max_output_tokens": null,
+                "model": "gpt-proof",
+                "output": [],
+                "parallel_tool_calls": false,
+                "previous_response_id": "resp_agt_contract_3",
+                "reasoning": {
+                  "effort": null,
+                  "summary": null
+                },
+                "store": true,
+                "temperature": null,
+                "text": {
+                  "format": {
+                    "type": "text"
+                  },
+                  "verbosity": "medium"
+                },
+                "tool_choice": "none",
+                "tools": [],
+                "top_p": null,
+                "truncation": "disabled",
+                "usage": null,
+                "metadata": {}
+              },
+              "type": "response.in_progress",
+              "sequence_number": 1
+            }
+          },
+          {
+            "event": "response.failed",
+            "data": {
+              "response": {
+                "id": "resp_agt_contract_12",
+                "object": "response",
+                "created_at": 1788739200,
+                "status": "failed",
+                "background": false,
+                "error": {
+                  "code": "input_not_written",
+                  "message": "the message did not reach the runtime writer"
+                },
+                "incomplete_details": null,
+                "instructions": null,
+                "max_output_tokens": null,
+                "model": "gpt-proof",
+                "output": [],
+                "parallel_tool_calls": false,
+                "previous_response_id": "resp_agt_contract_3",
+                "reasoning": {
+                  "effort": null,
+                  "summary": null
+                },
+                "store": true,
+                "temperature": null,
+                "text": {
+                  "format": {
+                    "type": "text"
+                  },
+                  "verbosity": "medium"
+                },
+                "tool_choice": "none",
+                "tools": [],
+                "top_p": null,
+                "truncation": "disabled",
+                "usage": null,
+                "metadata": {}
+              },
+              "type": "response.failed",
+              "sequence_number": 2
+            }
+          }
+        ],
+        "bodyKind": "sse"
+      },
+      "captures": {
+        "response_created_seconds_0": "/0/data/response/created_at",
+        "response_created_seconds_1": "/1/data/response/created_at",
+        "response_created_seconds_2": "/2/data/response/created_at"
+      },
+      "headerCaptures": {
+        "responses_create_input_not_written_command": "x-cma-command-id",
+        "responses_create_input_not_written_response": "x-cma-response-id"
       }
     }
   ]

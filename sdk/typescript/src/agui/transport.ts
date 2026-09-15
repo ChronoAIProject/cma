@@ -10,6 +10,7 @@ export function connection(
   threadId: string,
   options: AgentStreamOptions,
   body?: unknown,
+  extraHeaders?: Readonly<Record<string, string>>,
 ): AsyncGenerator<AgentConversationEvent> {
   return eventStream(
     config,
@@ -18,5 +19,6 @@ export function connection(
     (response, signal) => frames(response, signal, threadId),
     'AG-UI',
     body,
+    extraHeaders,
   );
 }

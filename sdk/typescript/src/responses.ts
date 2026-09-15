@@ -3,6 +3,7 @@ import { ProtocolError, ValidationError } from './errors.js';
 import { requestVoid, type OperationOptions } from './http.js';
 import { identity, input, query, read, segment } from './resources.js';
 import { eventStream } from './streaming.js';
+import { commandStreamInput } from './command-stream-input.js';
 import { createResponseRequest } from './responses/requests.js';
 import { responseFrames } from './responses/stream.js';
 import type { ResponseEvent } from './responses/events.js';
@@ -19,6 +20,8 @@ import {
 export type * from './responses/types.js';
 export type { ResponseEvent } from './responses/events.js';
 export interface ResponseStreamOptions extends OperationOptions {
+  /** Retain this key and the same input to recover an uncertain admitted response. */
+  readonly idempotencyKey?: string;
   readonly onEvent: (event: ResponseEvent) => void | Promise<void>;
 }
 export interface ConversationItemsOptions extends OperationOptions {
@@ -73,7 +76,8 @@ export class Responses {
     body: CreateResponseRequest,
     options: ResponseStreamOptions,
   ): Promise<ResponseObject> {
-    input(createResponseRequest, body);
+    const captured = commandStreamInput(body, options.idempotencyKey);
+    input(createResponseRequest, captured.body);
     const stream = eventStream(
       this.config,
       '/api/v1/responses',
@@ -81,9 +85,10 @@ export class Responses {
         ...options,
         timeoutMs: options.timeoutMs ?? 605_000,
       },
-      (response, signal) => responseFrames(response, signal, body.conversation),
+      (response, signal) => responseFrames(response, signal, captured.body.conversation),
       'Responses',
-      body,
+      captured.body,
+      captured.headers,
     );
     let outcome: ResponseObject | undefined;
     for await (const event of stream) {

@@ -10,7 +10,7 @@ use crate::rest::agents_tests::{
 };
 
 #[tokio::test]
-async fn admitted_stream_announces_identity_before_an_initial_read_failure() {
+async fn a_stream_read_failure_does_not_fabricate_a_durable_response_failure() {
     let (state, _) = conversation_fixture().await;
     let agent = seeded_agent("agt_unreadable", AgentStatus::Working, 10, Some(3));
     let caller = layer2_core::Caller::new(
@@ -19,47 +19,7 @@ async fn admitted_stream_announces_identity_before_an_initial_read_failure() {
     );
     let stream = super::stream::open(state, caller, agent, 3, None);
     let bytes = to_bytes(stream.into_body(), 65536).await.unwrap();
-    let events: Vec<Value> = std::str::from_utf8(&bytes)
-        .unwrap()
-        .lines()
-        .filter_map(|line| line.strip_prefix("data: "))
-        .map(|line| serde_json::from_str(line).unwrap())
-        .collect();
-    assert_eq!(events.len(), 3);
-    assert_eq!(events[0]["type"], "response.created");
-    assert_eq!(events[1]["type"], "response.in_progress");
-    assert_eq!(events[2]["type"], "response.failed");
-    for (index, event) in events.iter().enumerate() {
-        assert_eq!(event["sequence_number"], index);
-        assert_eq!(event["response"]["id"], "resp_agt_unreadable_3");
-    }
-    assert_eq!(
-        events[2]["response"]["error"]["code"],
-        "response_unavailable"
-    );
-}
-
-#[tokio::test]
-async fn readiness_timeout_retains_the_explicit_nonretrievable_provisional_contract() {
-    let agent = seeded_agent("agt_provisioning", AgentStatus::Starting, 0, None);
-    let stream = super::stream::provisioning_timeout(agent);
-    let bytes = to_bytes(stream.into_body(), 65536).await.unwrap();
-    let events: Vec<Value> = std::str::from_utf8(&bytes)
-        .unwrap()
-        .lines()
-        .filter_map(|line| line.strip_prefix("data: "))
-        .map(|line| serde_json::from_str(line).unwrap())
-        .collect();
-    assert_eq!(events.len(), 1);
-    assert_eq!(events[0]["type"], "response.failed");
-    assert_eq!(events[0]["sequence_number"], 0);
-    assert_eq!(
-        events[0]["response"]["error"]["code"],
-        "provisioning_timeout"
-    );
-    let id = events[0]["response"]["id"].as_str().unwrap();
-    assert_eq!(id, "resp_agt_provisioning_0");
-    assert!(super::retrieve::parse_response_id(id).is_none());
+    assert!(bytes.is_empty());
 }
 
 #[tokio::test]
@@ -324,7 +284,7 @@ async fn stream_retrieve_and_items_project_the_same_durable_turn() {
 }
 
 #[tokio::test]
-async fn predecessor_refusals_and_foreign_response_reads_are_typed() {
+async fn foreign_predecessor_refusals_and_foreign_response_reads_are_typed() {
     let (state, _) = completed().await;
     let router = super::router(state);
     let (status, body) = json_response(
@@ -334,7 +294,7 @@ async fn predecessor_refusals_and_foreign_response_reads_are_typed() {
             "/api/v1/responses",
             "owner-a",
             None,
-            Some(json!({"conversation": "agt_response", "input": "Next", "stream": true})),
+            Some(json!({"conversation": "agt_response", "input": "Next", "stream": true, "previous_response_id":"resp_agt_other_3"})),
         ),
     )
     .await;

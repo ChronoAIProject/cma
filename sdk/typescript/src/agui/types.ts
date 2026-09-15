@@ -24,6 +24,11 @@ export interface AgentStreamOptions extends OperationOptions {
   readonly onEvent: (event: AgentConversationEvent) => void | Promise<void>;
 }
 
+export interface AgentRunOptions extends AgentStreamOptions {
+  /** Retain this key and the same input to recover an uncertain admitted run. */
+  readonly idempotencyKey?: string;
+}
+
 export interface AgentReplayOptions extends AgentStreamOptions {
   readonly after?: number;
   /** False reads one captured durable history and closes without reconnecting. */

@@ -1,4 +1,15 @@
 import type { Dispatch } from './context.js';
+import { TransportError } from '../../src/errors.js';
+
+async function captureLegacyStream(prefix: boolean | undefined, run: () => Promise<unknown>) {
+  try {
+    await run();
+  } catch (error) {
+    if (prefix && error instanceof TransportError) return;
+    throw error;
+  }
+  if (prefix) throw new Error('An open stream prefix must report an incomplete transport');
+}
 
 export const experienceDispatch: Record<string, Dispatch> = {
   'GET /api/v2/agents/{agent_id}/responses/{response_id}/controls': ({ client, param }) =>
@@ -85,13 +96,18 @@ export const experienceDispatch: Record<string, Dispatch> = {
     });
     return events;
   },
-  'POST /api/v1/agui/run': async ({ client, body }) => {
+  'POST /api/v1/agui/run': async ({ client, body, fixture }) => {
     const events: unknown[] = [];
-    await client.agui.run(body, {
-      onEvent: (event) => {
-        events.push(event);
-      },
-    });
+    await captureLegacyStream(fixture.response.streamPrefix, () =>
+      client.agui.run(body, {
+        idempotencyKey: Object.entries(fixture.request.headers).find(
+          ([name]) => name.toLowerCase() === 'idempotency-key',
+        )?.[1],
+        onEvent: (event) => {
+          events.push(event);
+        },
+      }),
+    );
     return events;
   },
   'GET /api/v1/conversations/{id}': ({ client, param }) =>
@@ -105,13 +121,18 @@ export const experienceDispatch: Record<string, Dispatch> = {
     client.responses.delete(param('response_id')),
   'POST /api/v1/responses/{response_id}/cancel': ({ client, param }) =>
     client.responses.cancel(param('response_id')),
-  'POST /api/v1/responses': async ({ client, body }) => {
+  'POST /api/v1/responses': async ({ client, body, fixture }) => {
     const events: unknown[] = [];
-    await client.responses.create(body, {
-      onEvent: (event) => {
-        events.push(event);
-      },
-    });
+    await captureLegacyStream(fixture.response.streamPrefix, () =>
+      client.responses.create(body, {
+        idempotencyKey: Object.entries(fixture.request.headers).find(
+          ([name]) => name.toLowerCase() === 'idempotency-key',
+        )?.[1],
+        onEvent: (event) => {
+          events.push(event);
+        },
+      }),
+    );
     return events;
   },
   'GET /api/v1/agui/launches/{id}/events': async ({ client, param, query }) => {

@@ -76,7 +76,7 @@ mod profiles_workspace;
 mod public_contract_tests;
 mod remediation;
 mod resource_access;
-mod resource_access_problem;
+pub(crate) mod resource_access_problem;
 mod resource_access_shapes;
 #[cfg(test)]
 mod resource_access_tests;

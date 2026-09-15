@@ -62,6 +62,9 @@ pub(super) async fn scenario(name: &str) -> Option<Scenario> {
         | "experience_responses_failing"
         | "experience_response_unavailable"
         | "experience_rejected"
+        | "experience_responses_rejected"
+        | "experience_commands_unavailable"
+        | "experience_command_conflict"
         | "experience_no_capabilities"
         | "experience_no_steer"
         | "experience_approval"
@@ -79,16 +82,16 @@ pub(super) async fn scenario(name: &str) -> Option<Scenario> {
         "experience_forbidden" => (Some("owner-a"), vec![]),
         _ => return None,
     };
-    let state = composition(name).await;
+    let (state, store) = composition(name).await;
     Some(Scenario {
-        router: crate::agui::router(state.clone()).merge(crate::responses::router(state)),
+        router: crate::conversation::command_test_support::router(state, store),
         subject,
         authorization: Authorization::new(capabilities),
         symbols: Default::default(),
     })
 }
 
-async fn composition(name: &str) -> crate::AgentConversationState {
+async fn composition(name: &str) -> (crate::AgentConversationState, Arc<InMemorySandboxStore>) {
     let runtime_stop = name
         .strip_prefix("experience_agui_stop_")
         .and_then(stop_reason);
@@ -97,14 +100,14 @@ async fn composition(name: &str) -> crate::AgentConversationState {
         || name.ends_with("_acknowledged")
         || name.ends_with("_failing")
         || name == "experience_response_unavailable"
-        || name == "experience_rejected"
+        || name.ends_with("_rejected")
         || runtime_stop.is_some()
     {
         let registry = Arc::new(if let Some(reason) = runtime_stop {
             ContractRuntime::stopping(reason)
         } else if name.ends_with("_failing") {
             ContractRuntime::failing()
-        } else if name == "experience_rejected" {
+        } else if name.ends_with("_rejected") {
             ContractRuntime::rejecting()
         } else if name.ends_with("_admission") {
             ContractRuntime::completing()
@@ -250,7 +253,7 @@ async fn composition(name: &str) -> crate::AgentConversationState {
             ),
             WorkspaceService::new(store.clone(), profiles.clone()),
             AgentService::new(
-                store,
+                store.clone(),
                 profiles.clone(),
                 Arc::new(agents::TestRegistry),
                 agents::agent_capabilities(),
@@ -261,7 +264,13 @@ async fn composition(name: &str) -> crate::AgentConversationState {
             }),
         );
     }
-    state
+    state = crate::conversation::command_test_support::compose(state, store.clone());
+    if name == "experience_commands_unavailable" {
+        state.commands = None;
+    } else if name == "experience_command_conflict" {
+        crate::conversation::command_test_support::reservation_conflict(&mut state, store.clone());
+    }
+    (state, store)
 }
 
 pub(super) async fn begin_checkpoint(store: &InMemorySandboxStore, id: &layer2_core::SandboxId) {
@@ -347,18 +356,17 @@ async fn terminal_history(
 }
 
 #[tokio::test]
-async fn closing_an_admitted_agui_stream_preserves_followup_control() {
+async fn closing_an_admitted_agui_stream_preserves_explicit_followup_control() {
     use axum::http::{Method, StatusCode};
     use futures_util::StreamExt;
     use layer2_core::{AgentId, Caller, SubjectId};
     use serde_json::json;
     use tower::ServiceExt;
-
-    let state = composition("experience_agui_acknowledged").await;
-    let response = crate::agui::router(state.clone()).oneshot(
-        crate::rest::agents_tests::request(Method::POST, "/api/v1/agui/run", "owner-a", None,
-            Some(json!({"threadId":"agt_contract", "messages":[{"role":"user", "content":"Continue the proof"}]})))
-    ).await.unwrap();
+    let (state, store) = composition("experience_agui_acknowledged").await;
+    let router = crate::conversation::command_test_support::router(state.clone(), store);
+    let response = router.oneshot(crate::rest::agents_tests::request(Method::POST, "/api/v1/agui/run", "owner-a", None,
+        Some(json!({"threadId":"agt_contract", "messages":[{"role":"user", "content":"Continue the proof"}]}))))
+        .await.unwrap();
     assert_eq!(response.status(), StatusCode::OK);
     let mut stream = response.into_body().into_data_stream();
     assert!(stream.next().await.unwrap().is_ok());
@@ -374,23 +382,8 @@ async fn closing_an_admitted_agui_stream_preserves_followup_control() {
         .await
         .expect("admitted Agent remains readable after stream close");
     state
-        .context
-        .await_input_ready(&caller, &id)
-        .await
-        .expect("admitted Agent remains input-ready after stream close");
-    let response = crate::agui::router(state.clone()).oneshot(
-        crate::rest::agents_tests::request(Method::POST, "/api/v1/agui/run", "owner-a", None,
-            Some(json!({"threadId":"agt_contract", "messages":[{"role":"user", "content":"Steer the admitted turn"}]})))
-    ).await.unwrap();
-    assert_eq!(
-        response.status(),
-        StatusCode::OK,
-        "AG-UI followup admission survives stream close"
-    );
-    drop(response);
-    state
         .operations
         .steer(&caller, &id, "Focus on the boundary".into())
         .await
-        .expect("admitted Agent accepts steering after stream close");
+        .expect("admitted Agent accepts explicit steering after stream close");
 }
