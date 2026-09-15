@@ -17,6 +17,8 @@ use crate::AuthenticatedResourceCaller;
 mod error;
 #[cfg(test)]
 pub(crate) mod fixtures;
+#[cfg(test)]
+mod inspection_tests;
 mod parse;
 pub(super) mod shapes;
 #[cfg(test)]

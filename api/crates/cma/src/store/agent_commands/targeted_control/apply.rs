@@ -1,6 +1,6 @@
 use layer2_core::sandbox::agent_io::{
-    AdmittedTargetedControl, AgentCommand, CommandLedgerError, CommandReservationResult,
-    TargetedControlBinding, TargetedControlReservation,
+    AgentCommand, CommandLedgerError, CommandReservationResult, TargetedControlBinding,
+    TargetedControlInspection, TargetedControlReservation,
 };
 use layer2_core::sandbox::PendingAgentApprovals;
 use mongodb::{
@@ -9,7 +9,7 @@ use mongodb::{
 };
 
 use super::super::{records, reserve, ApplyError};
-use super::fences;
+use super::{fences, Mode};
 use crate::store::agent_log::scan_complete_log_with_session;
 use crate::store::agent_log_integrity::TransactionLogError;
 use crate::store::sandbox_mongo::{record_bson, signed, MongoSandboxStore};
@@ -17,9 +17,9 @@ use crate::store::sandbox_mongo::{record_bson, signed, MongoSandboxStore};
 pub(super) async fn apply(
     store: &MongoSandboxStore,
     request: &TargetedControlReservation,
-    create: bool,
+    mode: Mode,
     session: &mut ClientSession,
-) -> Result<Option<AdmittedTargetedControl>, ApplyError> {
+) -> Result<TargetedControlInspection, ApplyError> {
     let existing = store
         .agent_commands
         .find_one(doc! {
@@ -45,11 +45,12 @@ pub(super) async fn apply(
             .binding
             .validate_response(&existing.record, &response)?;
         fences::resources(store, &agent, &parent, session).await?;
-        return Ok(Some(existing));
+        return Ok(TargetedControlInspection::Existing(Box::new(existing)));
     }
-    if !create {
+    let stale = request.command.expected_agent_revision < agent.revision;
+    if mode == Mode::Lookup || (mode == Mode::Inspect && !stale) {
         fences::resources(store, &agent, &parent, session).await?;
-        return Ok(None);
+        return Ok(TargetedControlInspection::Missing);
     }
     let response = store
         .agent_commands
@@ -60,6 +61,14 @@ pub(super) async fn apply(
         .map(records::read)
         .transpose()?
         .ok_or(CommandLedgerError::NotFound)?;
+    if mode == Mode::Inspect {
+        request.validate_source(&agent, &response)?;
+        // This successful outcome is returned only after commit. Writing the
+        // current resources conflicts with any in-flight older admission;
+        // the monotonically newer Agent revision then rules out later admission.
+        fences::resources(store, &agent, &parent, session).await?;
+        return Ok(TargetedControlInspection::NotAdmitted);
+    }
     request.validate_target(&agent, &response)?;
     if matches!(
         request.command.envelope.command,
@@ -102,7 +111,7 @@ pub(super) async fn apply(
     if changed.matched_count != 1 {
         return Err(CommandLedgerError::Conflict.into());
     }
-    Ok(Some(result))
+    Ok(TargetedControlInspection::Existing(Box::new(result)))
 }
 
 fn binding(document: &Document) -> Result<Option<TargetedControlBinding>, CommandLedgerError> {

@@ -72,8 +72,9 @@ pub use revival_authority::CommandRevivalAuthorization;
 pub use status::{CommandReceiptView, CommandStatusView};
 pub use targeted_control::{
     AdmittedTargetedControl, ResponseControlObservation, ResponseControlRuntimeSupport,
-    TargetedControlBinding, TargetedControlError, TargetedControlReservation,
-    TargetedControlStatusView, TargetedControlSubmission, TargetedResponse,
+    TargetedControlBinding, TargetedControlError, TargetedControlInspection,
+    TargetedControlReservation, TargetedControlStatusView, TargetedControlSubmission,
+    TargetedResponse,
 };
 pub use work::{
     CommandClaim, CommandClaimRequest, CommandDispatch, CommandFailure, CommandFailureCode,
