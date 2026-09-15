@@ -14,6 +14,7 @@ use super::sandbox_mongo::{
 
 mod inventory;
 mod mutation;
+pub(super) use mutation::fence_lineage;
 mod records;
 mod sandbox_inventory;
 mod snapshot;

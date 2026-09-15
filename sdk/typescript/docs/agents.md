@@ -161,6 +161,9 @@ Every response rechecks policy and the original authority lifetime before releas
 Later Trigger reuse, profile changes, runtime revival and sharing preserve the
 original creation facts. Automatic Workspace profile Agents retain their profile
 index and currently report `legacy_unknown` when no supported creation category
-was captured. This read does not persist a historical backfill. Active channel
-bindings, channel-use history, inventory filters and UI badges are separate work.
+was captured. This read does not write historical records. A separate bounded
+background sweep captures conservatively inferred facts without rewriting
+existing provenance or resource records. Missing creation evidence stays unknown;
+inconsistent ancestry is refused. Active channel bindings, channel-use history,
+inventory filters and UI badges are separate work.
 The existing source method continues to provide its published Trigger shortcuts.
