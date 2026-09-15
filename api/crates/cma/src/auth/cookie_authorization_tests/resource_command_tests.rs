@@ -11,6 +11,8 @@ use super::*;
 
 #[path = "resource_admission_tests.rs"]
 mod admission;
+#[path = "sandbox_controls_tests.rs"]
+mod sandbox_controls;
 
 struct ResourceFixture {
     identity: Fixture,

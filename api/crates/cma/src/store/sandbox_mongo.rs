@@ -33,6 +33,7 @@ pub(super) const AGENTS: &str = "agents";
 pub(super) const AGENT_REUSE_BINDINGS: &str = "agent_reuse_bindings";
 pub(super) const AGENT_LOG: &str = "agent_log";
 pub(super) const AGENT_COMMANDS: &str = "agent_commands";
+pub(super) const SANDBOX_CONTROLS: &str = "sandbox_controls";
 pub(super) const COMMAND_AUTHORIZATION_AUDITS: &str = "command_authorization_audits";
 pub(super) const AGENT_COMMAND_ORDERS: &str = "agent_command_orders";
 pub(super) const RESOURCE_POLICIES: &str = "resource_policies";
@@ -57,6 +58,7 @@ const SANDBOX_COLLECTIONS: &[&str] = &[
     AGENT_REUSE_BINDINGS,
     AGENT_LOG,
     AGENT_COMMANDS,
+    SANDBOX_CONTROLS,
     AGENT_COMMAND_ORDERS,
     RESOURCE_POLICIES,
     RESOURCE_SHARES,
@@ -89,6 +91,7 @@ pub struct MongoSandboxStore {
     pub(super) agent_log: Collection<Document>,
     pub(super) agent_creation_provenance: Collection<Document>,
     pub(super) agent_commands: Collection<Document>,
+    pub(super) sandbox_controls: Collection<Document>,
     pub(super) command_authorization_audits: Collection<Document>,
     pub(super) agent_command_orders: Collection<Document>,
     pub(super) resource_policies: Collection<Document>,
@@ -134,6 +137,7 @@ impl MongoSandboxStore {
             agent_log: majority_collection(&database, AGENT_LOG),
             agent_creation_provenance: majority_collection(&database, "agent_creation_provenance"),
             agent_commands: majority_collection(&database, AGENT_COMMANDS),
+            sandbox_controls: majority_collection(&database, SANDBOX_CONTROLS),
             command_authorization_audits: majority_collection(
                 &database,
                 COMMAND_AUTHORIZATION_AUDITS,
@@ -160,6 +164,7 @@ impl MongoSandboxStore {
         super::agents::ensure_indexes(&store.agents).await?;
         super::agent_log::ensure_indexes(&store.agent_log).await?;
         super::agent_commands::ensure_indexes(&store.agent_commands).await?;
+        super::sandbox_controls::ensure_indexes(&store.sandbox_controls).await?;
         super::agent_commands::audit::ensure_indexes(&store.command_authorization_audits).await?;
         super::resource_access::ensure_indexes(&store).await?;
         super::sandbox_events::ensure_indexes(&store.sandbox_events).await?;

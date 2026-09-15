@@ -73,6 +73,7 @@ mod reconciliation;
 #[cfg(test)]
 mod reconciliation_tests;
 mod resource_access;
+mod sandbox_controls;
 mod workspace_lifecycle;
 
 #[async_trait]
