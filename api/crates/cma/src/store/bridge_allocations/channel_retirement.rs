@@ -28,6 +28,9 @@ pub(crate) enum RetirementChange<'a> {
     Revoke(&'a RetirementKey),
     RuntimeIntent,
     RuntimeGone,
+    ProviderFinality(
+        &'a crate::sandbox::channel_retirement::provider_finality::ProviderFinalityReceipt,
+    ),
     RetainStorage,
 }
 impl MongoBridgeAllocationStore {
