@@ -21,6 +21,23 @@ pub(in crate::store) async fn bind(
     let now = layer2_core::now_rfc3339();
     let (mut command, lane) = worker_apply::load_claim(store, claim, &now, session).await?;
     let revision = command.revision;
+    if let Some(fence) = &mutation.channel_control_execution_fence {
+        let invokes = store
+            .channel_invokes
+            .get()
+            .and_then(std::sync::Weak::upgrade)
+            .ok_or(CommandLedgerError::NotAdmissible)?;
+        invokes
+            .fence_channel_control_execution(fence, &command, session)
+            .await
+            .map_err(|error| {
+                use super::super::bridge_invokes::channel_control_execution::MutationError;
+                match error {
+                    MutationError::Driver(driver) => ApplyError::Driver(driver),
+                    MutationError::Core(_) => ApplyError::Domain(CommandLedgerError::Conflict),
+                }
+            })?;
+    }
     if let Some(fence) = &mutation.channel_execution_fence {
         let invokes = store
             .channel_invokes

@@ -1,5 +1,6 @@
 //! Durable Agent command scheduling and current personal execution authority.
 
+mod channel_control_execution;
 mod channel_execution;
 mod channel_revival;
 mod execution;

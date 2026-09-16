@@ -135,6 +135,8 @@ pub struct AgentOperationService {
     pub(super) command_claim: Option<super::agent_io::CommandClaim>,
     pub(super) execution_authority: Option<super::agent_io::CommandExecutionAuthorization>,
     pub(super) trigger_authority: Option<super::agent_io::TriggerExecutionAuthorization>,
+    pub(super) channel_control_authority:
+        Option<super::agent_io::ChannelControlExecutionAuthorization>,
     pub(super) channel_authority: Option<super::agent_io::ChannelExecutionAuthorization>,
     pub(super) connections: Arc<dyn super::SandboxCredentialPrerequisite>,
     pub(super) store: Arc<dyn AgentOperationStore>,
@@ -150,6 +152,7 @@ impl AgentOperationService {
         Arc::new(Self {
             command_claim: None,
             execution_authority: None,
+            channel_control_authority: None,
             channel_authority: None,
             trigger_authority: None,
             store,
@@ -165,6 +168,7 @@ impl AgentOperationService {
         Arc::new(Self {
             command_claim: self.command_claim.clone(),
             execution_authority: self.execution_authority.clone(),
+            channel_control_authority: self.channel_control_authority.clone(),
             channel_authority: self.channel_authority.clone(),
             trigger_authority: self.trigger_authority.clone(),
             connections,
@@ -412,7 +416,7 @@ impl AgentOperationService {
         Ok(())
     }
 
-    fn require_first_message_dispatch_settled(
+    pub(super) fn require_first_message_dispatch_settled(
         &self,
         agent: &Agent,
     ) -> Result<(), AgentOperationError> {
