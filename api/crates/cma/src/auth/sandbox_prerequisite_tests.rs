@@ -269,15 +269,15 @@ struct WrongSubjectStore;
 impl AuthStore for WrongSubjectStore {
     async fn insert_api_bearer(
         &self,
-        _custody: super::persistence::ApiBearerCustody,
+        _custody: crate::auth::persistence::ApiBearerCustody,
     ) -> Result<bool, StoreError> {
         unreachable!("sandbox prerequisites do not retain API credentials")
     }
 
     async fn api_bearer(
         &self,
-        _id: &super::persistence::SecretDigest,
-    ) -> Result<Option<super::persistence::ApiBearerCustody>, StoreError> {
+        _id: &crate::auth::persistence::SecretDigest,
+    ) -> Result<Option<crate::auth::persistence::ApiBearerCustody>, StoreError> {
         unreachable!("sandbox prerequisites do not use API command custody")
     }
     async fn subject(&self, _subject: &SubjectId) -> Result<Option<SubjectAuthState>, StoreError> {
