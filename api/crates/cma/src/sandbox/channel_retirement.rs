@@ -1,6 +1,7 @@
 //! Scoped retirement stops only an entirely owned original Channel tree.
 mod driver;
 pub(crate) mod model;
+pub(crate) mod retention;
 use crate::{
     bridge::provisioning::retirement::ChannelRetirementAuthoritySource,
     sandbox::{channel_provisioning::ChannelControlPlaneVerifier, CredentialError},

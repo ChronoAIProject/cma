@@ -12,6 +12,11 @@ pub(super) async fn purge_sandbox(
     store: &MongoCheckpointObjectStore,
     sandbox_id: &str,
 ) -> AdapterResult<()> {
+    if channel_retained(store, sandbox_id).await? {
+        return Err(super::rejected(
+            "Channel checkpoint retention forbids generic sandbox purge",
+        ));
+    }
     retire_archives(store, sandbox_id, DateTime::now()).await?;
     let documents = scan(store, doc! { "sandbox_id": sandbox_id }).await?;
     for document in documents {
@@ -43,6 +48,25 @@ pub(super) async fn retire_deleted_sandboxes(
         doc! { "$group": { "_id": "$sandbox_id" } },
         doc! { "$lookup": { "from": super::super::sandbox_mongo::SANDBOXES, "localField": "_id", "foreignField": "_id", "as": "sandbox" } },
         doc! { "$match": { "sandbox.status": "retired" } },
+        // Filter retained roots before the page limit so they cannot starve
+        // ordinary retirement cleanup, even when canonical markers were lost.
+        doc! { "$match": {
+            "sandbox.channel_creation": { "$exists": false },
+            "sandbox.channel_provisioning": { "$exists": false },
+            "sandbox.channel_retirement": { "$exists": false },
+            "sandbox.channel_storage_retention": { "$exists": false },
+        } },
+        doc! { "$lookup": { "from": "bridge_allocations", "localField": "_id",
+            "foreignField": "sandbox_admission.sandbox_id", "pipeline": [
+                { "$limit": 1 }, { "$project": { "_id": 1 } },
+            ], "as": "channel_admission" } },
+        doc! { "$match": { "channel_admission": { "$size": 0 } } },
+        doc! { "$lookup": { "from": "bridge_allocations", "localField": "_id",
+            "foreignField": "record.placement.target.sandbox_id", "pipeline": [
+                { "$match": super::super::channel_storage_retention::root_allocation_filter() },
+                { "$limit": 1 }, { "$project": { "_id": 1 } },
+            ], "as": "channel_allocation" } },
+        doc! { "$match": { "channel_allocation": { "$size": 0 } } },
         doc! { "$sort": { "_id": 1 } },
         doc! { "$limit": PAGE_SIZE },
         doc! { "$project": { "_id": 1 } },
@@ -61,6 +85,17 @@ pub(super) async fn retire_deleted_sandboxes(
         else {
             continue;
         };
+        if super::super::channel_storage_retention::required(
+            &store.client.database(&store.sandboxes.namespace().db),
+            id,
+            Some(&document),
+            None,
+        )
+        .await
+        .map_err(|_| unavailable("Channel checkpoint retention authority is unavailable"))?
+        {
+            continue;
+        }
         let sandbox = super::super::sandboxes::read_sandbox(&document)
             .map_err(|_| unavailable("deleted sandbox archive authority is corrupt"))?;
         // Retirement is irreversible. Never infer it from an orphaned archive or
@@ -78,6 +113,25 @@ pub(super) async fn retire_deleted_sandboxes(
         retired += 1;
     }
     Ok(retired)
+}
+
+async fn channel_retained(
+    store: &MongoCheckpointObjectStore,
+    sandbox_id: &str,
+) -> AdapterResult<bool> {
+    let sandbox = store
+        .sandboxes
+        .find_one(doc! { "_id": sandbox_id })
+        .await
+        .map_err(|_| unavailable("Channel checkpoint retention authority is unavailable"))?;
+    super::super::channel_storage_retention::required(
+        &store.client.database(&store.sandboxes.namespace().db),
+        sandbox_id,
+        sandbox.as_ref(),
+        None,
+    )
+    .await
+    .map_err(|_| unavailable("Channel checkpoint retention authority is unavailable"))
 }
 
 async fn retire_archives(

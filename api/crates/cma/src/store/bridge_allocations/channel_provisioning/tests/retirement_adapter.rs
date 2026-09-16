@@ -25,6 +25,12 @@ impl SandboxAdapter for RetirementAdapter {
     fn capabilities(&self) -> AdapterCapabilities {
         self.inner.capabilities()
     }
+    fn home_volumes(&self) -> Option<&dyn HomeVolumeStore> {
+        self.inner.home_volumes()
+    }
+    async fn runtime_status(&self, handle: &RuntimeHandle) -> Result<RuntimeStatus> {
+        self.inner.runtime_status(handle).await
+    }
     async fn adopt_runtime(
         &self,
         request: &RuntimeAdoptionRequest,

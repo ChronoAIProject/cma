@@ -27,6 +27,24 @@ impl SandboxReconciliationStore for MongoSandboxStore {
         &self,
         request: &layer3_adapter::HomeVolumeRequest,
     ) -> Result<bool, SandboxStoreError> {
+        // A retained Channel home stays held even when its canonical home or
+        // root row was lost. Raw marker presence is a hold, not ownership proof.
+        let sandbox = self
+            .sandboxes
+            .find_one(doc! { "_id": &request.sandbox_id })
+            .await
+            .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?;
+        if super::channel_storage_retention::required(
+            &self.client.database(&self.sandboxes.namespace().db),
+            &request.sandbox_id,
+            sandbox.as_ref(),
+            None,
+        )
+        .await
+        .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?
+        {
+            return Ok(true);
+        }
         let Some(reservation) = self
             .warm_sandbox(&layer2_core::SandboxId(request.sandbox_id.clone()))
             .await?
