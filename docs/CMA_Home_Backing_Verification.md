@@ -49,3 +49,21 @@ adapter reads the exact PV named by the owned PVC. It cannot list or modify PVs.
 Apply these source-controlled RBAC resources before enabling fresh Channel
 allocation with provider capture. They neither restart runtimes nor grant cloud
 disk permissions; unavailable Kubernetes or cloud reads keep finality held.
+
+Fresh Channel provisioning writes a dispatch journal before each physical home
+or runtime creation attempt. A home creation receipt comes only from the actual
+successful PVC POST response. Existing claims and reconciled responses cannot
+acquire this proof. The original PVC UID remains pinned while the first runtime
+starts; after storage binding, the adapter checks the exact claim, PV claimRef,
+PV UID and CSI handle before and after the original disk-generation observation.
+Unavailable storage permissions preserve ordinary provisioning but leave final
+retirement held. Multiple or unresolved dispatches also remain held.
+
+Retirement persists the actual runtime deletion proof and the actual
+UID/resourceVersion-preconditioned claim deletion response in separate fenced
+transactions. Retries use those durable acknowledgements while CSI disk deletion
+is pending. The home can reach finality only after the exact backing observer
+reports authoritative absence. The final transaction retains those provider
+receipts and the original home attachment in permanent recovery records, seals
+retained history, and clears the canonical home while publishing `Retired`.
+The platform does not infer successful deletion from a lost response.
