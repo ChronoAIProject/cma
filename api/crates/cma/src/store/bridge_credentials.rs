@@ -1,6 +1,7 @@
 //! Local encrypted custody for exactly selected bridge credentials. Both import
 //! and revocation fence the current Bridge definition in the same transaction.
 
+pub(crate) mod callback;
 pub(crate) mod control_plane;
 
 use layer2_core::bridge::{
@@ -38,8 +39,9 @@ impl MongoBridgeCredentialStore {
         pin: &BridgeCustodyPin,
         session: &mut ClientSession,
     ) -> Result<(), BridgeError> {
-        self.require_retained_binding(bridge, &bridge.current()?.config, pin, session)
+        self.require_callback_binding(bridge, pin, session)
             .await
+            .map_err(callback::CallbackBindingError::into_core)
     }
 
     /// Accepted work may retain an older exact generation under an explicit
@@ -51,34 +53,9 @@ impl MongoBridgeCredentialStore {
         pin: &BridgeCustodyPin,
         session: &mut ClientSession,
     ) -> Result<(), BridgeError> {
-        let unavailable = || BridgeError::ConnectionRequired(BridgeSetupBlock::CustodyUnavailable);
-        if pin.reference() != &config.connector.custody
-            || !bridge
-                .generations
-                .iter()
-                .any(|generation| generation.config == *config)
-        {
-            return Err(unavailable());
-        }
-        let document = self
-            .credentials
-            .find_one(doc! { "_id": pin.reference().as_str() })
-            .session(session)
+        self.require_retained_callback_binding(bridge, config, pin, session)
             .await
-            .map_err(|_| BridgeError::Unavailable)?
-            .ok_or_else(unavailable)?;
-        let material = self.decode(document)?;
-        let metadata = material.metadata;
-        if metadata.bridge_id != bridge.id
-            || metadata.owner != bridge.owner
-            || metadata.connector != config.connector
-            || metadata.revision != pin.revision()
-            || metadata.key_state_version != pin.key_state_version()
-            || metadata.revoked_at.is_some()
-        {
-            return Err(unavailable());
-        }
-        Ok(())
+            .map_err(callback::CallbackBindingError::into_core)
     }
 
     pub(super) async fn open(

@@ -105,6 +105,42 @@ impl CallbackDisposition {
         Ok(value)
     }
 
+    /// Only the dedicated atomic control writer calls this with its actual
+    /// held reservation result. Generic capture deliberately remains v1-only.
+    pub(super) fn capture_control(
+        write: &layer2_core::bridge::channel_control::ChannelControlWrite,
+        control: &layer2_core::bridge::channel_control::AdmittedChannelControl,
+    ) -> Result<Self, CallbackError> {
+        use layer2_core::bridge::channel_control::{ChannelControlCallback, ChannelControlHold};
+        control.validate().map_err(|_| CallbackError::Unavailable)?;
+        let callback =
+            ChannelControlCallback::capture(write).map_err(|_| CallbackError::Payload)?;
+        let intent = &control.sidecar.intent;
+        if intent.callback != callback
+            || intent.request != *write.request()
+            || control.sidecar.execution_hold != ChannelControlHold::WorkerUnavailable
+        {
+            return Err(CallbackError::ReplayConflict);
+        }
+        let source = Source::capture(write.inbox());
+        let value = Self {
+            version: 2,
+            source: source.clone(),
+            original: source,
+            receipt: CallbackAcceptance::ControlAccepted(
+                intent
+                    .expected_acceptance()
+                    .map_err(|_| CallbackError::Unavailable)?,
+            ),
+            provider: Some(ProviderIdentity {
+                key_sha256: callback.provider_key_sha256,
+                semantic_sha256: callback.provider_semantic_sha256,
+            }),
+        };
+        value.validate()?;
+        Ok(value)
+    }
+
     fn validate(&self) -> Result<(), CallbackError> {
         self.source.validate()?;
         self.original.validate()?;
@@ -141,6 +177,42 @@ impl CallbackDisposition {
         };
         if bridge != &self.original.pin.bridge_id || message != &self.original.message_id {
             return Err(CallbackError::Unavailable);
+        }
+        Ok(())
+    }
+
+    pub(super) fn require_control_intent(
+        &self,
+        intent: &layer2_core::bridge::channel_control::ChannelControlIntent,
+    ) -> Result<(), CallbackError> {
+        self.validate()?;
+        let callback = &intent.callback;
+        let expected_source = Source {
+            inbox_id: callback.callback_id.clone(),
+            owner: callback.owner.clone(),
+            pin: callback.pin.clone(),
+            bot_id: callback.bot_id.clone(),
+            key_id: callback.key_id.clone(),
+            message_id: callback.message_id.clone(),
+            correlation_id: callback.correlation_id.clone(),
+            issuer: callback.issuer.clone(),
+            body_sha256: callback.body_sha256.clone(),
+        };
+        let expected_receipt = CallbackAcceptance::ControlAccepted(
+            intent
+                .expected_acceptance()
+                .map_err(|_| CallbackError::Unavailable)?,
+        );
+        if self.version != 2
+            || self.source != expected_source
+            || self.original != expected_source
+            || self.receipt != expected_receipt
+            || self.provider.as_ref().is_none_or(|provider| {
+                provider.key_sha256 != callback.provider_key_sha256
+                    || provider.semantic_sha256 != callback.provider_semantic_sha256
+            })
+        {
+            return Err(CallbackError::ReplayConflict);
         }
         Ok(())
     }

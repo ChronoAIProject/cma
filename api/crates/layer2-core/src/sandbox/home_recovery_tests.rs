@@ -284,6 +284,7 @@ async fn queued_message_and_pause_cancellation_commit_together() {
     let request = AgentConversationMutation {
         command_claim: None,
         execution_fence: None,
+        channel_control_execution_fence: None,
         channel_execution_fence: None,
         trigger_execution_fence: None,
         admission_guard: Some(SandboxMutationGuard::capture(&parent)),

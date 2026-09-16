@@ -6,6 +6,11 @@ use layer2_core::bridge::invoke::RevokeBridgeInvokeGrant;
 use layer2_core::sandbox::agent_io::*;
 use serde_json::json;
 
+#[path = "channel_control_admission_tests.rs"]
+mod control_admission;
+#[path = "channel_control_execution_tests.rs"]
+mod control_execution;
+pub(crate) use control_execution::compatibility;
 #[path = "channel_control_reference_tests.rs"]
 mod control_reference;
 #[path = "channel_reply_delivery_tests.rs"]

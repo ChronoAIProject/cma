@@ -2,7 +2,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::bridge::{
-    allocation::{AllocationIdentity, AllocationState},
+    allocation::{AllocationIdentity, AllocationRecord, AllocationState},
     ingress::StoredInbox,
     invoke::{BridgeInvokeGrant, SourceControlPolicy, SourceControlReceipt},
     partition::{NormalizedPartitionSource, StableThreadKind, ThreadEvidence},
@@ -191,6 +191,24 @@ impl ChannelControlReferenceAuthorization {
 }
 
 impl ChannelControlReferenceBinding {
+    /// Match the original allocation using the retained reference producer's
+    /// digest convention. Callers must reread and fence this live record.
+    pub fn require_allocation(&self, allocation: &AllocationRecord) -> Result<(), OutboxError> {
+        self.validate()?;
+        allocation.validate().map_err(|_| OutboxError::Corrupt)?;
+        if allocation.state != AllocationState::Ready
+            || allocation.owner != *self.source.owner()
+            || allocation.placement.target() != self.source.target()
+            || allocation.identity != self.allocation_identity
+            || allocation.created_at_ms != self.allocation_created_at_ms
+            || allocation.operation_id != self.allocation_operation_id
+            || super::hash(&allocation.placement)? != self.allocation_placement_sha256
+        {
+            return Err(OutboxError::SourceMismatch);
+        }
+        Ok(())
+    }
+
     fn lookup_sha256(&self) -> Result<String, OutboxError> {
         super::hash(&("cma.channel-control-reference.v1", self))
     }

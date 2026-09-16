@@ -12,6 +12,8 @@ use sha2::{Digest, Sha256};
 
 use super::*;
 use crate::store::AuthEncryptionKey;
+#[path = "inbox_control_intents_tests.rs"]
+mod control_intents;
 #[path = "inbox_controls.rs"]
 mod controls;
 #[path = "inbox_event_matrix.rs"]

@@ -141,10 +141,18 @@ fn reference_document(record: &ChannelControlReferenceRecord) -> Result<Document
         "document_schema_version":DOCUMENT_SCHEMA_VERSION,"record":record_bson(record).map_err(|_| OutboxError::Corrupt)?},
     )
 }
-fn read_reference(document: &Document) -> Result<ChannelControlReferenceRecord, OutboxError> {
+pub(in crate::store::bridge_invokes) fn read_reference(
+    document: &Document,
+) -> Result<ChannelControlReferenceRecord, OutboxError> {
     let record: ChannelControlReferenceRecord =
         read_record(document).map_err(|_| OutboxError::Corrupt)?;
-    if *document != reference_document(&record)? {
+    let mut canonical = document.clone();
+    if let Some(value) = canonical.remove("control_admission_fence") {
+        if !matches!(value, mongodb::bson::Bson::Int64(count) if count >= 0) {
+            return Err(OutboxError::Corrupt);
+        }
+    }
+    if canonical != reference_document(&record)? {
         return Err(OutboxError::Corrupt);
     }
     Ok(record)

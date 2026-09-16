@@ -1,5 +1,4 @@
 //! Production control-plane service and router assembly.
-
 use std::sync::Arc;
 mod adapter;
 mod bridge;
@@ -347,6 +346,7 @@ impl ControlPlaneComposition {
         let command_worker = layer2_core::sandbox::agent_io::AgentCommandWorker::new(
             stores.sandbox_model.clone(),
             Arc::new(crate::commands::ResourceCommandExecution {
+                channel_controls: None,
                 channel_revival: crate::commands::ChannelCommandRevival::configured(
                     &bridge,
                     &bridge_definitions,

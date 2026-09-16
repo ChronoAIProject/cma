@@ -56,6 +56,7 @@ impl AgentOperationService {
         let service = Self {
             command_claim: Some(claim),
             execution_authority: None,
+            channel_control_authority: None,
             channel_authority: None,
             trigger_authority: Some(authority),
             connections: self.connections.clone(),

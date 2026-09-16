@@ -304,4 +304,6 @@ enum MutationError {
 }
 
 #[cfg(test)]
+mod channel_control_compatibility_tests;
+#[cfg(test)]
 mod mongo_integration_tests;
