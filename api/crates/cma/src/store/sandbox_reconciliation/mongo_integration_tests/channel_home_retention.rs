@@ -148,6 +148,8 @@ async fn channel_home_reconciler_holds_marker_only_missing_changed_and_released_
     for marker in [
         "channel_creation",
         "channel_provisioning",
+        "channel_home_provenance",
+        "channel_home_prepare_evidence",
         "channel_retirement",
         "channel_storage_retention",
     ] {

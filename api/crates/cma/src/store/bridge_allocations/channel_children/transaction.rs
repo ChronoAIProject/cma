@@ -150,6 +150,8 @@ pub(super) async fn apply(
         state,
         event,
         material: None,
+        home_provenance: snapshot.home_provenance.clone(),
+        home_prepare_evidence: snapshot.home_prepare_evidence.clone(),
     };
     let progressed = super::super::channel_provisioning::transaction::apply(
         store,

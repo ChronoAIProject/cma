@@ -60,6 +60,20 @@ pub(super) async fn snapshot(
         sandbox,
         creation,
         state,
+        home_provenance: document
+            .get("channel_home_provenance")
+            .map(|value| {
+                mongodb::bson::deserialize_from_bson(value.clone())
+                    .map_err(|_| AllocationError::Corrupt)
+            })
+            .transpose()?,
+        home_prepare_evidence: document
+            .get("channel_home_prepare_evidence")
+            .map(|value| {
+                mongodb::bson::deserialize_from_bson(value.clone())
+                    .map_err(|_| AllocationError::Corrupt)
+            })
+            .transpose()?,
     };
     snapshot.validate()?;
     Ok((snapshot, document, policy))

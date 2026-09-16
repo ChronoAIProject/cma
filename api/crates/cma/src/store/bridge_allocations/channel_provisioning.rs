@@ -35,6 +35,8 @@ impl MongoBridgeAllocationStore {
         if current.sandbox != snapshot.sandbox
             || current.state != snapshot.state
             || current.creation != snapshot.creation
+            || current.home_provenance != snapshot.home_provenance
+            || current.home_prepare_evidence != snapshot.home_prepare_evidence
         {
             return Err(AllocationError::Conflict.into());
         }
@@ -117,6 +119,8 @@ impl MongoBridgeAllocationStore {
                 state,
                 event,
                 material: None,
+                home_provenance: previous.home_provenance.clone(),
+                home_prepare_evidence: previous.home_prepare_evidence.clone(),
             }),
         )
         .await
@@ -145,6 +149,55 @@ impl MongoBridgeAllocationStore {
                 state,
                 event: None,
                 material: Some((custody, material)),
+                home_provenance: previous.home_provenance.clone(),
+                home_prepare_evidence: previous.home_prepare_evidence.clone(),
+            }),
+        )
+        .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) async fn commit_channel_home_provisioning(
+        &self,
+        authority: &AllocationAuthority,
+        lease: &BridgeControlPlaneLease,
+        previous: &ChannelProvisioningSnapshot,
+        mut sandbox: Sandbox,
+        phase: crate::sandbox::channel_provisioning::state::ChannelProvisioningPhase,
+        home_provenance: Option<
+            crate::sandbox::channel_provisioning::home_provenance::ChannelHomeProvenance,
+        >,
+        home_prepare_evidence: Option<
+            crate::sandbox::channel_provisioning::home_prepare_evidence::ChannelHomePrepareEvidence,
+        >,
+    ) -> Result<ChannelProvisioningSnapshot, AllocationError> {
+        sandbox.revision = previous
+            .sandbox
+            .revision
+            .checked_add(1)
+            .ok_or(AllocationError::Corrupt)?;
+        sandbox.updated_at = layer2_core::now_rfc3339();
+        let state = previous.state.next(
+            phase,
+            &(
+                &sandbox.lifecycle.home,
+                &home_provenance,
+                &home_prepare_evidence,
+            ),
+        )?;
+        self.channel_stage_transaction(
+            authority,
+            lease,
+            &previous.allocation,
+            &previous.state.settings,
+            Some(StageChange {
+                previous,
+                sandbox,
+                state,
+                event: None,
+                material: None,
+                home_provenance,
+                home_prepare_evidence,
             }),
         )
         .await
@@ -216,6 +269,11 @@ pub(super) struct StageChange<'a> {
     pub(super) previous: &'a ChannelProvisioningSnapshot,
     pub(super) sandbox: Sandbox,
     pub(super) state: ChannelProvisioningState,
+    pub(super) home_provenance:
+        Option<crate::sandbox::channel_provisioning::home_provenance::ChannelHomeProvenance>,
+    pub(super) home_prepare_evidence: Option<
+        crate::sandbox::channel_provisioning::home_prepare_evidence::ChannelHomePrepareEvidence,
+    >,
     pub(super) event: Option<SandboxEventKind>,
     pub(super) material: Option<(
         &'a crate::store::MongoSandboxCredentialStore,

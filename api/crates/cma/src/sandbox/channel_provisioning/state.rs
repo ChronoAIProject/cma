@@ -127,6 +127,8 @@ pub(crate) struct ChannelProvisioningSnapshot {
     pub sandbox: Sandbox,
     pub creation: ChannelSandboxSidecar,
     pub state: ChannelProvisioningState,
+    pub home_provenance: Option<super::home_provenance::ChannelHomeProvenance>,
+    pub home_prepare_evidence: Option<super::home_prepare_evidence::ChannelHomePrepareEvidence>,
 }
 
 impl ChannelProvisioningSnapshot {
@@ -138,6 +140,12 @@ impl ChannelProvisioningSnapshot {
             .validate()
             .map_err(|_| AllocationError::Corrupt)?;
         self.state.settings.validate()?;
+        if let Some(provenance) = &self.home_provenance {
+            provenance.validate(self)?;
+        }
+        if let Some(evidence) = &self.home_prepare_evidence {
+            evidence.validate(self)?;
+        }
         if let Some(intent) = &self.state.mint_intent {
             intent.validate().map_err(|_| AllocationError::Corrupt)?;
             if self.state.mint_credential_id.is_none() {

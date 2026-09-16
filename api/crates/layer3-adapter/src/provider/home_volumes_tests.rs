@@ -7,6 +7,32 @@ use tokio::io::AsyncWriteExt;
 use super::*;
 use crate::provider::tests::read_request;
 
+#[tokio::test]
+async fn home_allocation_scope_tracks_configured_authority_namespace_and_controller() {
+    let scope = |authority: &str, namespace: &str, controller: &str| {
+        let client = kube::Client::try_from(kube::Config::new(authority.parse().unwrap())).unwrap();
+        PersistentHomeVolumes::namespaced(client, namespace, controller, authority)
+            .unwrap()
+            .allocation_scope()
+            .unwrap()
+    };
+    let original = scope("http://127.0.0.1:10001", "cma-test", "deployment");
+    original.validate().unwrap();
+    assert_eq!(
+        original,
+        scope("http://127.0.0.1:10001", "cma-test", "deployment")
+    );
+    for changed in [
+        scope("http://127.0.0.1:10002", "cma-test", "deployment"),
+        scope("http://127.0.0.1:10001", "other-namespace", "deployment"),
+        scope("http://127.0.0.1:10001", "cma-test", "other-controller"),
+    ] {
+        assert_ne!(original, changed);
+    }
+    let encoded = serde_json::to_string(&original).unwrap();
+    assert!(!encoded.contains("127.0.0.1") && !encoded.contains("cma-test"));
+}
+
 pub(super) fn request() -> HomeVolumeRequest {
     HomeVolumeRequest {
         volume_id: "home-fixture".into(),
@@ -129,7 +155,13 @@ pub(super) async fn serve(replies: Vec<(u16, Value)>) -> Fixture {
     let config = kube::Config::new(format!("http://{address}").parse().unwrap());
     let client = kube::Client::try_from(config).unwrap();
     Fixture {
-        store: PersistentHomeVolumes::namespaced(client, "cma-test", "deployment").unwrap(),
+        store: PersistentHomeVolumes::namespaced(
+            client,
+            "cma-test",
+            "deployment",
+            &format!("http://{address}"),
+        )
+        .unwrap(),
         requests,
         task,
     }
