@@ -174,6 +174,26 @@ impl OutboxItem {
         predecessor: Option<String>,
         now_ms: i64,
     ) -> Result<Vec<Self>, OutboxError> {
+        if intent.original_outbox_id().is_some() {
+            return Err(OutboxError::SourceMismatch);
+        }
+        Self::build_tool_output(
+            intent,
+            credential,
+            sequence_start,
+            predecessor,
+            now_ms,
+            RelayOperation::InitialReply,
+        )
+    }
+    pub(super) fn build_tool_output(
+        intent: &ChannelReplyToolIntent,
+        credential: DeliveryCredentialRef,
+        sequence_start: u64,
+        predecessor: Option<String>,
+        now_ms: i64,
+        operation: RelayOperation,
+    ) -> Result<Vec<Self>, OutboxError> {
         intent.scope.require_current()?;
         let source = intent.scope.source();
         source.validate()?;
@@ -186,6 +206,9 @@ impl OutboxItem {
                 .checked_add(chunks.len() as u64)
                 .is_none_or(|n| n > i64::MAX as u64)
         {
+            return Err(OutboxError::Bounds);
+        }
+        if matches!(operation, RelayOperation::Edit { .. }) && chunks.len() != 1 {
             return Err(OutboxError::Bounds);
         }
         if credential.is_reply_token() && chunks.len() > 1 {
@@ -208,7 +231,7 @@ impl OutboxItem {
                 content_sha256: super::hash(&text)?,
                 text,
                 credential: credential.clone(),
-                operation: RelayOperation::InitialReply,
+                operation: operation.clone(),
                 revision: 1,
                 state: DeliveryState::Pending,
                 attempts: Vec::new(),

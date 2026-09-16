@@ -3,6 +3,7 @@ use std::time::Duration;
 
 use futures_util::StreamExt as _;
 use serde::Deserialize;
+use sha2::{Digest, Sha256};
 
 use super::reclaimer::CapturedSandbox;
 use super::{
@@ -45,6 +46,11 @@ pub struct SandboxClient {
 }
 
 impl SandboxClient {
+    pub(crate) fn finality_reclaimer(&self) -> crate::Result<&BatchSandboxReclaimer> {
+        self.reclaimer.as_ref().ok_or_else(|| {
+            crate::AdapterError::Unsupported("fenced provider finality is not configured".into())
+        })
+    }
     pub fn new(base_url: impl Into<String>, api_key: impl Into<String>) -> Self {
         Self {
             base_url: base_url.into().trim_end_matches('/').to_string(),
@@ -77,6 +83,15 @@ impl SandboxClient {
         &self,
         request: &ProviderSandboxRequest,
     ) -> Result<ProviderSandbox, ProviderError> {
+        self.create_receipted(request)
+            .await
+            .map(|(sandbox, _)| sandbox)
+    }
+
+    pub(crate) async fn create_receipted(
+        &self,
+        request: &ProviderSandboxRequest,
+    ) -> Result<(ProviderSandbox, String), ProviderError> {
         request.validate_volumes()?;
         let url = format!("{}/v1/sandboxes", self.base_url);
         let mut wire_request = request.clone();
@@ -89,7 +104,10 @@ impl SandboxClient {
             .send()
             .await
             .map_err(|error| ProviderError::Unreachable(format!("POST {url}: {error}")))?;
-        decode_sandbox(response).await
+        let (status, body) = bounded_body(response).await?;
+        let mut sandbox: ProviderSandbox = decode_body(status, &body)?;
+        super::metadata::decode(&mut sandbox.metadata);
+        Ok((sandbox, format!("{:x}", Sha256::digest(&body))))
     }
 
     pub async fn get(&self, id: &str) -> Result<ProviderSandbox, ProviderError> {
@@ -241,13 +259,20 @@ async fn decode<T: serde::de::DeserializeOwned>(
     response: reqwest::Response,
 ) -> Result<T, ProviderError> {
     let (status, body) = bounded_body(response).await?;
+    decode_body(status, &body)
+}
+
+fn decode_body<T: serde::de::DeserializeOwned>(
+    status: reqwest::StatusCode,
+    body: &[u8],
+) -> Result<T, ProviderError> {
     if !status.is_success() {
         return Err(ProviderError::Rejected {
             status: status.as_u16(),
-            detail: truncate(&String::from_utf8_lossy(&body)),
+            detail: truncate(&String::from_utf8_lossy(body)),
         });
     }
-    serde_json::from_slice(&body).map_err(|error| ProviderError::Malformed(error.to_string()))
+    serde_json::from_slice(body).map_err(|error| ProviderError::Malformed(error.to_string()))
 }
 
 async fn bounded_body(

@@ -37,6 +37,7 @@ pub(crate) mod channel_tools;
 mod shared_child_capacity;
 mod trigger_first_messages;
 pub(crate) use channel_tools::MongoChannelToolStore;
+pub(crate) mod channel_history;
 mod channel_storage_retention;
 mod checkpoint_capture;
 mod checkpoint_objects;

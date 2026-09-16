@@ -2,7 +2,7 @@ use super::*;
 use crate::store::sandbox_mongo::read_record;
 use serde::{Deserialize, Serialize};
 
-pub(in crate::store::bridge_invokes) fn read_admitted(
+pub(in crate::store) fn read_admitted(
     document: &Document,
 ) -> Result<AdmittedChannelControl, Error> {
     if document.contains_key("channel_admission") {
@@ -29,9 +29,7 @@ pub(super) fn intent_document(intent: &ChannelControlIntent) -> Result<Document,
     )
 }
 
-pub(in crate::store::bridge_invokes) fn read_intent(
-    document: &Document,
-) -> Result<ChannelControlIntent, Error> {
+pub(in crate::store) fn read_intent(document: &Document) -> Result<ChannelControlIntent, Error> {
     let intent: ChannelControlIntent = read_record(document).map_err(|_| Error::Corrupt)?;
     let expected = intent_document(&intent)?;
     if ["_id", "intent_sha256"]
@@ -84,4 +82,14 @@ pub(super) fn require_alias(
         return Err(Error::Corrupt);
     }
     Ok(())
+}
+
+/// Validate a retained alias without exposing its private storage model.
+pub(in crate::store) fn history_alias(
+    document: &Document,
+    intent: &ChannelControlIntent,
+) -> Result<ChannelControlCallback, Error> {
+    let alias: Alias = read_record(document).map_err(|_| Error::Corrupt)?;
+    require_alias(document, &alias.callback, intent)?;
+    Ok(alias.callback)
 }

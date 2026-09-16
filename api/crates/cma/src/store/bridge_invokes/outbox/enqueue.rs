@@ -48,6 +48,24 @@ impl MongoBridgeReplyToolStore {
         request: &ChannelReplyToolRequest,
     ) -> Result<Option<ReplyToolReceipt>, OutboxError> {
         let (id, request_sha256) = capability.request_identity(request)?;
+        self.recover_identity(capability, &id, &request_sha256)
+            .await
+    }
+    pub(crate) async fn recover_edit(
+        &self,
+        capability: &ChannelReplySessionAuthorization,
+        request: &ChannelReplyEditRequest,
+    ) -> Result<Option<ReplyToolReceipt>, OutboxError> {
+        let (id, request_sha256) = capability.edit_request_identity(request)?;
+        self.recover_identity(capability, &id, &request_sha256)
+            .await
+    }
+    async fn recover_identity(
+        &self,
+        capability: &ChannelReplySessionAuthorization,
+        id: &str,
+        request_sha256: &str,
+    ) -> Result<Option<ReplyToolReceipt>, OutboxError> {
         for _ in 0..TRANSACTION_ATTEMPTS {
             capability.require_current()?;
             let mut session = self
@@ -83,7 +101,7 @@ impl MongoBridgeReplyToolStore {
                     return Ok(None);
                 };
                 let invocation = Invocation::read(&document)?;
-                invocation.require_request(capability.namespace(), &request_sha256)?;
+                invocation.require_request(capability.namespace(), request_sha256)?;
                 Ok::<_, MutationError>(Some(self.receipt(&invocation, &mut session).await?))
             }
             .await;
@@ -157,13 +175,23 @@ impl MongoBridgeReplyToolStore {
         // All explicit tool calls use deliberately retained matching custody.
         // No single-use reply token can be accidentally consumed twice.
         let credential = scope.selected_key(validation)?;
-        let items = OutboxItem::from_tool_intent(
-            intent,
-            credential,
-            head.as_ref().map_or(1, |head| head.sequence + 1),
-            head.as_ref().map(|head| head.last_item.clone()),
-            now_ms(),
-        )?;
+        let sequence = head.as_ref().map_or(1, |head| head.sequence + 1);
+        let predecessor = head.as_ref().map(|head| head.last_item.clone());
+        let items = if intent.original_outbox_id().is_some() {
+            let original = self.original_edit_target(intent, session).await?;
+            OutboxItem::from_edit_intent(
+                intent,
+                &original,
+                credential,
+                sequence,
+                predecessor,
+                now_ms(),
+            )?
+        } else {
+            OutboxItem::from_tool_intent(intent, credential, sequence, predecessor, now_ms())?
+        };
+        self.require_backlog_capacity(scope.source(), items.len(), session)
+            .await?;
         let last = items.last().ok_or(OutboxError::Corrupt)?;
         let next = ResponseHead {
             response_id: scope.source().response_id().as_str().into(),
@@ -207,6 +235,26 @@ impl MongoBridgeReplyToolStore {
             .insert_one(invocation.document()?)
             .session(&mut *session)
             .await?;
+        crate::store::channel_history::outbox(
+            &self
+                .invokes
+                .bridges
+                .client
+                .database(&self.items.namespace().db),
+            scope.source().allocation_id(),
+            &items,
+            &invocation.document()?,
+            session,
+        )
+        .await
+        .map_err(|error| match error {
+            crate::store::bridge_allocations::MutationError::Mongo(error) => {
+                MutationError::Driver(error)
+            }
+            crate::store::bridge_allocations::MutationError::Core(_) => {
+                MutationError::Core(OutboxError::SourceMismatch)
+            }
+        })?;
         scope.require_current()?;
         Ok(invocation.receipt(&items)?)
     }

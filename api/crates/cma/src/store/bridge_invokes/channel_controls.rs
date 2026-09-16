@@ -22,7 +22,7 @@ mod acceptance;
 mod fence;
 mod observation;
 pub(crate) use acceptance::ChannelControlAcceptance;
-pub(super) mod records;
+pub(in crate::store) mod records;
 use records::{read_admitted, read_intent};
 type Error = ChannelControlError;
 
@@ -167,12 +167,42 @@ impl MongoChannelControlStore {
             .insert_one(records::intent_document(candidate)?)
             .session(&mut *session)
             .await?;
-        self.retain_alias(&candidate.callback, candidate, session)
-            .await?;
         let acceptance = self
             .callbacks
             .retain_accepted_control(proof.write(), &result, session)
             .await?;
+        self.retain_alias(&candidate.callback, candidate, session)
+            .await?;
+        let database = self
+            .invokes
+            .bridges
+            .client
+            .database(&self.intents.namespace().db);
+        use crate::store::channel_history::{control_record, ReferenceKind};
+        let command_row = self
+            .invokes
+            .resources
+            .agent_commands
+            .find_one(doc! {"_id": result.sidecar.command_id.as_str()})
+            .session(&mut *session)
+            .await?
+            .ok_or(Error::Corrupt)?;
+        control_record(
+            &database,
+            &candidate.reference,
+            ReferenceKind::ControlCommand,
+            &command_row,
+            session,
+        )
+        .await?;
+        control_record(
+            &database,
+            &candidate.reference,
+            ReferenceKind::ControlIntent,
+            &records::intent_document(candidate)?,
+            session,
+        )
+        .await?;
         request.require_current()?;
         Ok(ChannelControlAcceptance {
             acceptance,
@@ -259,8 +289,36 @@ impl MongoChannelControlStore {
         } else {
             self.aliases
                 .insert_one(records::alias_document(callback, intent)?)
-                .session(session)
+                .session(&mut *session)
                 .await?;
+        }
+        let database = self
+            .invokes
+            .bridges
+            .client
+            .database(&self.intents.namespace().db);
+        use crate::store::channel_history::{control_record, ReferenceKind};
+        control_record(
+            &database,
+            &intent.reference,
+            ReferenceKind::ControlAlias,
+            &records::alias_document(callback, intent)?,
+            session,
+        )
+        .await?;
+        for row in crate::store::MongoCallbackInbox::control_history_documents(
+            &database, intent, callback, session,
+        )
+        .await?
+        {
+            control_record(
+                &database,
+                &intent.reference,
+                ReferenceKind::ControlDisposition,
+                &row,
+                session,
+            )
+            .await?;
         }
         Ok(())
     }
@@ -327,6 +385,17 @@ impl From<crate::store::bridge_definitions::inbox::MutationError> for MutationEr
                     CallbackError::Payload => Error::Invalid,
                     _ => Error::Unavailable,
                 })
+            }
+        }
+    }
+}
+
+impl From<crate::store::bridge_allocations::MutationError> for MutationError {
+    fn from(error: crate::store::bridge_allocations::MutationError) -> Self {
+        match error {
+            crate::store::bridge_allocations::MutationError::Mongo(error) => Self::Driver(error),
+            crate::store::bridge_allocations::MutationError::Core(_) => {
+                Self::Core(Error::SourceUnavailable)
             }
         }
     }

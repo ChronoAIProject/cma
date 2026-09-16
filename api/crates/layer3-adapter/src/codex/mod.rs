@@ -136,6 +136,24 @@ impl SandboxAdapter for CodexAdapter {
         self.hosted.provision_runtime(request).await
     }
 
+    async fn provision_runtime_receipted(
+        &self,
+        request: &RuntimeProvisionRequest,
+        operation_id: &str,
+    ) -> crate::Result<crate::RuntimeProvisionReceipt> {
+        self.hosted
+            .provision_runtime_receipted(request, operation_id)
+            .await
+    }
+
+    async fn finalize_runtime(
+        &self,
+        original: &crate::RuntimeProvisionReceipt,
+        operation_id: &str,
+    ) -> crate::Result<crate::RuntimeFinalityReceipt> {
+        self.hosted.finalize_runtime(original, operation_id).await
+    }
+
     async fn runtime_inventory(&self) -> crate::Result<Vec<RuntimeObservation>> {
         self.hosted.runtime_inventory().await
     }

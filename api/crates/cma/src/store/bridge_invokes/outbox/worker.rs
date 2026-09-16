@@ -89,6 +89,10 @@ impl MongoBridgeReplyToolStore {
                 },
                 now_ms(),
             );
+            let request = match request {
+                Ok(request) => self.bind_edit_request(request).await,
+                Err(error) => Err(error),
+            };
             let outcome = match request {
                 Ok(request) => port.deliver(request).await,
                 // Construction failed before a transport request existed.
@@ -254,6 +258,7 @@ impl MongoBridgeReplyToolStore {
                     .await?;
                 self.fence_delivery(&bridge, &item.source, validation, &mut session)
                     .await?;
+                self.fence_edit_delivery(&item, &mut session).await?;
                 let attempt = match &item.state {
                     DeliveryState::Claimed { attempt, .. } => attempt.clone(),
                     _ => return Err(OutboxError::Conflict.into()),
@@ -386,6 +391,11 @@ impl MongoBridgeReplyToolStore {
             return Err(OutboxError::Conflict);
         }
         self.read_current_bridge(&current.source).await?;
+        if let Some(original) = self.read_edit_original(&current).await? {
+            if Some(current.require_edit_original(&original)?) != request.edit_original_receipt() {
+                return Err(OutboxError::SourceMismatch);
+            }
+        }
         self.require_rate(&current).await?;
         request.require_current()
     }

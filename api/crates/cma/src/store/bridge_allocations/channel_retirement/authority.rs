@@ -117,6 +117,8 @@ pub(super) async fn read_fenced(
         state: optional(&document, "channel_retirement")?,
         retention: optional(&document, "channel_storage_retention")?,
         retention_audit: None,
+        history: crate::store::channel_history::assess(&database, allocation, &current, session)
+            .await?,
         tree,
     };
     snapshot.validate()?;

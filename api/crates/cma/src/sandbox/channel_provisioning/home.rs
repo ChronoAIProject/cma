@@ -43,10 +43,40 @@ impl ChannelProvisioningDriver {
             } else if original.first_receipt.is_none() {
                 // Even if an old worker has recorded a canonical receipt, only
                 // this exact provider response may bind the separate provenance.
-                let receipt = homes
-                    .prepare(&original.request)
-                    .await
-                    .map_err(|_| AllocationError::Unavailable)?;
+                let dispatch = self
+                    .dependencies
+                    .allocations
+                    .begin_channel_home_dispatch(authority, lease, &snapshot, &original.request)
+                    .await?;
+                let receipt = if let Some(operation_id) = dispatch {
+                    match homes
+                        .prepare_receipted(&original.request, &operation_id)
+                        .await
+                    {
+                        Ok(receipt) => {
+                            self.dependencies
+                                .allocations
+                                .complete_channel_home_dispatch(
+                                    authority,
+                                    lease,
+                                    &snapshot,
+                                    &operation_id,
+                                    &receipt,
+                                )
+                                .await?;
+                            receipt.home().receipt.clone()
+                        }
+                        Err(_) => homes
+                            .prepare(&original.request)
+                            .await
+                            .map_err(|_| AllocationError::Unavailable)?,
+                    }
+                } else {
+                    homes
+                        .prepare(&original.request)
+                        .await
+                        .map_err(|_| AllocationError::Unavailable)?
+                };
                 home.bind(receipt.clone())
                     .map_err(|_| AllocationError::IdentityMismatch)?;
                 provenance = Some(original.bind(receipt)?);
