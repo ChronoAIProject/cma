@@ -131,7 +131,7 @@ async fn first_message_fence_is_durable_before_the_runtime_side_effect() {
     assert_eq!(stored.conversation.active_turn, record.turn_sequence);
     assert!(matches!(
         inputs.lock().unwrap().as_slice(),
-        [ConversationInput::Prompt(content)] if prompt_text(content) == "Start here."
+        [ConversationInput::RecoverablePrompt { content, .. }] if prompt_text(content) == "Start here."
     ));
     assert_eq!(registry.resolutions(), 2);
     let logs = store.agent_log(&agent.id, 0, 20).await.unwrap();

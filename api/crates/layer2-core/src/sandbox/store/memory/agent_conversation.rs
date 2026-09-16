@@ -7,44 +7,82 @@ use crate::seconds_from_rfc3339;
 
 #[async_trait]
 impl AgentConversationStore for InMemorySandboxStore {
+    async fn agent_message_checkpoint(
+        &self,
+        id: &AgentId,
+    ) -> Result<Option<super::AgentMessageCheckpoint>, SandboxStoreError> {
+        let checkpoint = self.lock().agent_message_checkpoints.get(id).cloned();
+        if let Some(checkpoint) = &checkpoint {
+            checkpoint.validate()?;
+        }
+        Ok(checkpoint)
+    }
+
+    async fn commit_agent_message_update(
+        &self,
+        current: Agent,
+        previous: Option<super::AgentMessageCheckpoint>,
+        next: super::AgentMessageCheckpoint,
+        mutation: Option<AgentConversationMutation>,
+    ) -> Result<crate::sandbox::AgentUpdateOutcome, SandboxStoreError> {
+        next.validate()?;
+        let mut state = self.lock();
+        let actual = state.agent_message_checkpoints.get(&current.id);
+        if let Some(recorded) = actual.filter(|value| value.update_id == next.update_id) {
+            return if recorded.update_fingerprint == next.update_fingerprint {
+                Ok(recorded.outcome.clone())
+            } else {
+                Err(SandboxStoreError::Conflict)
+            };
+        }
+        if state.agents.get(&current.id) != Some(&current)
+            || actual != previous.as_ref()
+            || !current.status.is_live()
+        {
+            return Err(SandboxStoreError::Conflict);
+        }
+        let mut candidate = state.clone();
+        match mutation {
+            Some(mutation) => {
+                if mutation.agent.id != current.id || !next.matches(&mutation.agent) {
+                    return Err(SandboxStoreError::Conflict);
+                }
+                let appended = apply_conversation(&mut candidate, mutation)?;
+                if appended != next.outcome.appended {
+                    return Err(SandboxStoreError::Conflict);
+                }
+            }
+            None => {
+                if !next.matches(&current)
+                    || !next.outcome.appended.is_empty()
+                    || next.outcome.turn_closed
+                {
+                    return Err(SandboxStoreError::Conflict);
+                }
+                let actual_last_seq = candidate
+                    .agent_logs
+                    .get(&current.id)
+                    .and_then(|logs| logs.last())
+                    .map_or(0, |entry| entry.seq);
+                if actual_last_seq != current.conversation.last_seq {
+                    return Err(SandboxStoreError::SequenceConflict);
+                }
+            }
+        }
+        candidate
+            .agent_message_checkpoints
+            .insert(current.id.clone(), next.clone());
+        *state = candidate;
+        Ok(next.outcome)
+    }
+
     async fn commit_agent_conversation(
         &self,
         mutation: AgentConversationMutation,
     ) -> Result<Vec<AgentLogEntry>, SandboxStoreError> {
-        // This store has no durable Bridge/grant/custody transaction participant.
-        if mutation.channel_execution_fence.is_some() {
-            return Err(SandboxStoreError::Conflict);
-        }
-        if mutation.agent_logs.len() > MAX_AGENT_LOG_BATCH_SIZE {
-            return Err(SandboxStoreError::AgentLogCapacityExceeded);
-        }
         let mut state = self.lock();
         let mut candidate = state.clone();
-        validate_mutation(&candidate, &mutation)?;
-        super::agent_command_work::bind_dispatch(&mut candidate, &mutation)?;
-        if mutation.admission_guard.is_some() {
-            candidate
-                .sandboxes
-                .get_mut(&mutation.agent.sandbox_id)
-                .ok_or(SandboxStoreError::Conflict)?
-                .cancel_recovery_pause(&mutation.appended_at)
-                .map_err(|error| SandboxStoreError::Corrupt(error.to_string()))?;
-        }
-
-        let id = mutation.agent.id.clone();
-        candidate.agents.insert(id.clone(), mutation.agent);
-        let appended = append_log_batch(
-            &mut candidate,
-            &id,
-            mutation.expected_last_seq,
-            mutation.appended_at,
-            mutation.agent_logs,
-        )?;
-        if let Some(fence) = &mutation.execution_fence {
-            fence
-                .require_current()
-                .map_err(|_| SandboxStoreError::Conflict)?;
-        }
+        let appended = apply_conversation(&mut candidate, mutation)?;
         *state = candidate;
         Ok(appended)
     }
@@ -63,6 +101,61 @@ impl AgentConversationStore for InMemorySandboxStore {
         }
         Ok(pending.into_entries())
     }
+}
+
+fn apply_conversation(
+    candidate: &mut State,
+    mutation: AgentConversationMutation,
+) -> Result<Vec<AgentLogEntry>, SandboxStoreError> {
+    // This store has no durable Bridge/grant/custody transaction participant.
+    if mutation.channel_execution_fence.is_some() {
+        return Err(SandboxStoreError::Conflict);
+    }
+    if mutation.agent_logs.len() > MAX_AGENT_LOG_BATCH_SIZE {
+        return Err(SandboxStoreError::AgentLogCapacityExceeded);
+    }
+    validate_mutation(candidate, &mutation)?;
+    super::agent_command_work::bind_dispatch(candidate, &mutation)?;
+    if mutation.admission_guard.is_some() {
+        candidate
+            .sandboxes
+            .get_mut(&mutation.agent.sandbox_id)
+            .ok_or(SandboxStoreError::Conflict)?
+            .cancel_recovery_pause(&mutation.appended_at)
+            .map_err(|error| SandboxStoreError::Corrupt(error.to_string()))?;
+    }
+
+    let id = mutation.agent.id.clone();
+    let checkpoint = candidate
+        .agent_message_checkpoints
+        .get(&id)
+        .and_then(|checkpoint| {
+            candidate
+                .agents
+                .get(&id)
+                .and_then(|current| checkpoint.advance(current, &mutation.agent))
+        });
+    if let Some(checkpoint) = checkpoint {
+        candidate
+            .agent_message_checkpoints
+            .insert(id.clone(), checkpoint);
+    } else {
+        candidate.agent_message_checkpoints.remove(&id);
+    }
+    candidate.agents.insert(id.clone(), mutation.agent);
+    let appended = append_log_batch(
+        candidate,
+        &id,
+        mutation.expected_last_seq,
+        mutation.appended_at,
+        mutation.agent_logs,
+    )?;
+    if let Some(fence) = &mutation.execution_fence {
+        fence
+            .require_current()
+            .map_err(|_| SandboxStoreError::Conflict)?;
+    }
+    Ok(appended)
 }
 
 fn validate_mutation(

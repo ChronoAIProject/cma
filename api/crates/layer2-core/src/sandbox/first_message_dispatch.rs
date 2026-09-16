@@ -40,6 +40,13 @@ impl AgentOperationService {
             .require_legacy_first_message(&current)
             .await
             .map_err(operation_store_error)?;
+        let prompt_id = layer3_adapter::PromptIdentity::new(
+            &prepared.target.conversation_id,
+            prepared.target.runtime_generation,
+            prepared.record.turn_sequence.ok_or_else(|| {
+                AgentOperationError::Corrupt("first message has no admitted turn".into())
+            })?,
+        );
         let classification = match self.runtimes.resolve(&prepared.target).await {
             Ok(connection) => match connection
                 .capabilities
@@ -47,9 +54,10 @@ impl AgentOperationService {
             {
                 Ok(()) => match connection
                     .input
-                    .send_classified(ConversationInput::Prompt(vec![ContentBlock::from(
-                        prepared.record.text.clone(),
-                    )]))
+                    .send_classified(ConversationInput::RecoverablePrompt {
+                        content: vec![ContentBlock::from(prepared.record.text.clone())],
+                        prompt_id,
+                    })
                     .await
                 {
                     ConversationSendOutcome::PreWriteFailure(_) => FirstMessageSend::PreWrite,
