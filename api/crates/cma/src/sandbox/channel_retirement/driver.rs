@@ -90,6 +90,36 @@ impl ChannelRetirementDriver {
                 self.commit(&permit, Change::RuntimeIntent, now).await
             }
             (SandboxWorkStep::TeardownRuntime, RetirementPhase::RuntimeIntent) => {
+                if let Some(ready) = self.allocations.channel_provider_runtime(&snapshot).await? {
+                    crate::sandbox::runtime_attachment::adopt_bound_runtime(
+                        self.adapter.as_ref(),
+                        &snapshot.sandbox,
+                        &snapshot.provisioning.settings.deployment_id,
+                    )
+                    .await
+                    .map_err(|_| AllocationError::AuthorityUnavailable)?;
+                    self.read(&permit, now).await?;
+                    let operation_id = super::provider_finality::delete_operation_id(&snapshot);
+                    let runtime = self
+                        .adapter
+                        .finalize_runtime(&ready.original, &operation_id)
+                        .await
+                        .map_err(|_| AllocationError::AuthorityUnavailable)?;
+                    let receipt = super::provider_finality::ProviderFinalityReceipt {
+                        schema_version: 1,
+                        home: super::provider_finality::ProviderHomeFinality::NotConfigured {
+                            original_settings_sha256: ready.origin.original_settings_sha256.clone(),
+                        },
+                        origin: ready.origin,
+                        runtime_dispatch_set_sha256: ready.runtime_dispatch_set_sha256,
+                        home_dispatch_set_sha256: ready.home_dispatch_set_sha256,
+                        runtime,
+                    };
+                    receipt.require(&snapshot)?;
+                    return self
+                        .commit(&permit, Change::ProviderFinality(&receipt), now)
+                        .await;
+                }
                 self.teardown(&permit, &snapshot, now).await?;
                 self.commit(&permit, Change::RuntimeGone, now).await
             }
