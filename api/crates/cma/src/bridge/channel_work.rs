@@ -59,6 +59,17 @@ impl ChannelWorkPort for ChannelAllocationWork {
         else {
             return Ok(());
         };
+        if !matches!(
+            record.state,
+            AllocationState::Ready | AllocationState::Retired | AllocationState::FailedTerminal
+        ) {
+            super::operations::health::pending(
+                super::operations::health::PendingStage::Allocation,
+                &record.id,
+                record.created_at_ms,
+                false,
+            );
+        }
         if record
             .lease
             .as_ref()
@@ -88,8 +99,14 @@ impl ChannelWorkPort for ChannelAllocationWork {
             .await
             .map_err(|_| Error::Unavailable)?
         {
-            ChannelProvisioningOutcome::Progressed(record)
-            | ChannelProvisioningOutcome::MintOutcomeUnknown(record) => {
+            ChannelProvisioningOutcome::MintOutcomeUnknown(record) => {
+                super::operations::health::mint_unknown(&record.id);
+                if record.id != id {
+                    return Err(Error::Corrupt);
+                }
+                Ok(())
+            }
+            ChannelProvisioningOutcome::Progressed(record) => {
                 // Consuming the returned identity does not reissue its effects.
                 if record.id != id {
                     return Err(Error::Corrupt);
@@ -164,6 +181,12 @@ impl ChannelInboxWork {
         else {
             return Ok(());
         };
+        super::operations::health::pending(
+            super::operations::health::PendingStage::Inbox,
+            &inbox.id,
+            inbox.accepted_at.saturating_mul(1000),
+            inbox.execution_hold.is_some(),
+        );
         let bridge = self
             .credentials
             .bridges

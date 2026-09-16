@@ -29,7 +29,7 @@ mod feature_policy;
 #[allow(dead_code)] // #861 awaits a composed route with live selected-key custody.
 pub(crate) mod ingress;
 mod managed_credentials;
-mod operations;
+pub(crate) mod operations;
 pub(crate) mod outbox_delivery;
 pub(crate) mod outbox_rate;
 pub(crate) mod outbox_scheduler;
