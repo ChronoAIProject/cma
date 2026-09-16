@@ -16,6 +16,7 @@ pub(crate) use capabilities::tests::{event_cases, fixtures::Fixture as CallbackF
 #[cfg(test)]
 pub(crate) use capabilities::NyxidCapabilities;
 mod configured;
+pub(crate) mod controls;
 pub(crate) mod http;
 pub(crate) use configured::configured;
 mod keys;
@@ -32,6 +33,7 @@ pub(crate) struct CallbackIngress {
     callback_root: String,
     workers: Semaphore,
     reply_addressing: Option<Arc<dyn reply_addressing::ReplyAddressingStore>>,
+    controls: Option<Arc<controls::ChannelControlIngress>>,
 }
 
 impl CallbackIngress {
@@ -64,6 +66,7 @@ impl CallbackIngress {
             callback_root,
             workers: Semaphore::new(16),
             reply_addressing: None,
+            controls: None,
         })
     }
 
@@ -72,6 +75,14 @@ impl CallbackIngress {
         store: Arc<dyn reply_addressing::ReplyAddressingStore>,
     ) -> Self {
         self.reply_addressing = Some(store);
+        self
+    }
+
+    pub(crate) fn with_channel_controls(
+        mut self,
+        controls: Arc<controls::ChannelControlIngress>,
+    ) -> Self {
+        self.controls = Some(controls);
         self
     }
 
@@ -148,7 +159,18 @@ impl CallbackIngress {
             result => result?,
         };
         let redelivery = redelivery::observe(&signed.authenticated_payload(body)?)?;
-        let reply = if matches!(&config.admission,
+        let control_candidate = self.controls.is_some()
+            && signed
+                .authenticated_payload(body)?
+                .record()
+                .envelope
+                .text
+                .as_deref()
+                .is_some_and(|text| {
+                    layer2_core::bridge::channel_control::ChannelControlRequest::parse(text).is_ok()
+                });
+        let reply = if control_candidate
+            || matches!(&config.admission,
             layer2_core::bridge::BridgeAdmissionPolicy::Scoped { policy }
                 if matches!(policy.groups, layer2_core::bridge::partition::GroupAdmission::ReplyToBot
                     | layer2_core::bridge::partition::GroupAdmission::MentionOrReplyToBot))
@@ -185,7 +207,11 @@ impl CallbackIngress {
         if let Some(error) = lookup_error {
             return self.inbox.recover_receipt(&write).await?.ok_or(error);
         }
-        self.inbox.accept(write).await
+        if let Some(controls) = &self.controls {
+            controls.accept(write).await
+        } else {
+            self.inbox.accept(write).await
+        }
     }
 }
 

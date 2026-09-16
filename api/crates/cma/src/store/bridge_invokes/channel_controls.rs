@@ -1,5 +1,5 @@
 //! Atomic signed control intent, shared v2 receipt and held common command.
-//! No production ingress or execution caller is enabled.
+//! Fresh production admission remains unavailable until runtime routing is proved.
 use layer2_core::bridge::channel_control::*;
 use layer2_core::sandbox::agent_io::CommandReservationResult;
 use mongodb::{
@@ -20,6 +20,7 @@ use crate::store::{
 
 mod acceptance;
 mod fence;
+mod observation;
 pub(crate) use acceptance::ChannelControlAcceptance;
 pub(super) mod records;
 use records::{read_admitted, read_intent};

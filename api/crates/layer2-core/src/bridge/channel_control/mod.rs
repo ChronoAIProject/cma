@@ -1,4 +1,5 @@
-//! Signed exact-source control foundation. No ingress or execution is enabled.
+//! Signed exact-source control foundation. Production fresh admission requires
+//! a separately proved runtime eligibility and owner-routing implementation.
 //! Retained intent data never reconstructs a live proof, and an older disabled
 //! callback disposition can never become an executable acceptance.
 

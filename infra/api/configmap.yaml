@@ -10,6 +10,7 @@ data:
   # Independent process-start Bridge gates; enable only after canary verification.
   CHRONO_BRIDGE_MANAGEMENT_ENABLED: "false"
   CHRONO_BRIDGE_INGRESS_ENABLED: "false"
+  CHRONO_BRIDGE_CONTROL_ADMISSION_ENABLED: "false"
   CHRONO_BRIDGE_ALLOCATION_ENABLED: "false"
   CHRONO_BRIDGE_EXECUTION_ENABLED: "false"
   CHRONO_BRIDGE_OUTBOUND_ENABLED: "false"

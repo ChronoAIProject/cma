@@ -111,6 +111,7 @@ pub(crate) use bridge_credentials::MongoBridgeCredentialStore;
 pub use bridge_definitions::MongoBridgeStore;
 pub(crate) use bridge_definitions::MongoCallbackInbox;
 pub(crate) use bridge_invokes::channel_control_execution::MongoChannelControlExecutionStore;
+pub(crate) use bridge_invokes::channel_controls::MongoChannelControlStore;
 pub(crate) use bridge_invokes::outbox::MongoBridgeReplyToolStore;
 pub(crate) use bridge_invokes::{MongoBridgeInvokeStore, MongoChannelCommandStore};
 pub use checkpoint_objects::MongoCheckpointObjectStore;
