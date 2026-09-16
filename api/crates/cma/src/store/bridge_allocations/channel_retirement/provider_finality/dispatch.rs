@@ -29,6 +29,7 @@ pub(crate) async fn begin_origin(
     let journal = DispatchJournal {
         origin: ProviderDispatchOrigin::capture(snapshot)?,
         runtime: Vec::new(),
+        home: Vec::new(),
     };
     majority_collection::<Document>(database, "channel_provider_dispatch_journals")
         .insert_one(
@@ -40,7 +41,7 @@ pub(crate) async fn begin_origin(
     Ok(())
 }
 
-enum Change<'a> {
+pub(super) enum Change<'a> {
     Begin {
         operation_id: &'a str,
         request: &'a layer3_adapter::RuntimeProvisionRequest,
@@ -48,6 +49,17 @@ enum Change<'a> {
     Complete {
         token: &'a RuntimeDispatchToken,
         receipt: &'a RuntimeProvisionReceipt,
+    },
+    HomeBegin {
+        operation_id: &'a str,
+        request: &'a layer3_adapter::HomeVolumeRequest,
+    },
+    HomeComplete {
+        operation_id: &'a str,
+        receipt: &'a layer3_adapter::HomeProvisionReceipt,
+    },
+    HomeBacking {
+        backing: &'a layer3_adapter::HomeBackingIdentity,
     },
 }
 
@@ -100,7 +112,7 @@ impl MongoBridgeAllocationStore {
         Ok(())
     }
 
-    async fn change_runtime_dispatch(
+    pub(super) async fn change_runtime_dispatch(
         &self,
         authority: &AllocationAuthority,
         human: &BridgeControlPlaneLease,
@@ -124,12 +136,9 @@ impl MongoBridgeAllocationStore {
                 if journal.origin != ProviderDispatchOrigin::capture(snapshot)? {
                     return Err(AllocationError::IdentityMismatch.into());
                 }
-                if journal.origin.original_home_policy.is_some() { return Ok(false); }
-                if snapshot.state.phase != crate::sandbox::channel_provisioning::state::ChannelProvisioningPhase::Runtime
-                    || snapshot.sandbox.runtime.is_some() || snapshot.sandbox.lifecycle.home.is_some()
-                { return Err(AllocationError::InvalidTransition.into()); }
                 match &change {
                     Change::Begin { operation_id, request } => {
+                        require_runtime_phase(snapshot)?;
                         let expected = crate::sandbox::channel_retirement::provider_finality::provisioning_request(snapshot);
                         if **request != expected || journal.runtime.len() >= 64 { return Err(AllocationError::IdentityMismatch.into()); }
                         journal.runtime.push(RuntimeDispatch { operation_id: (*operation_id).to_owned(),
@@ -137,12 +146,16 @@ impl MongoBridgeAllocationStore {
                             generation: 1, receipt: None });
                     }
                     Change::Complete { token, receipt } => {
+                        require_runtime_phase(snapshot)?;
                         receipt.validate().map_err(|_| AllocationError::IdentityMismatch)?;
                         let row = journal.runtime.iter_mut().find(|row| row.operation_id == token.operation_id)
                             .ok_or(AllocationError::IdentityMismatch)?;
                         if row.receipt.is_some() || receipt.operation_id() != row.operation_id
                             || receipt.request_sha256() != row.request_sha256 { return Err(AllocationError::IdentityMismatch.into()); }
                         row.receipt = Some((*receipt).clone());
+                    }
+                    Change::HomeBegin { .. } | Change::HomeComplete { .. } | Change::HomeBacking { .. } => {
+                        super::home_dispatch::apply(&mut journal, snapshot, &change)?;
                     }
                 }
                 let changed = majority_collection::<Document>(&database, "channel_provider_dispatch_journals")
@@ -178,4 +191,14 @@ impl MongoBridgeAllocationStore {
         }
         Err(AllocationError::Unavailable)
     }
+}
+
+fn require_runtime_phase(snapshot: &ChannelProvisioningSnapshot) -> Result<(), AllocationError> {
+    if snapshot.state.phase
+        != crate::sandbox::channel_provisioning::state::ChannelProvisioningPhase::Runtime
+        || snapshot.sandbox.runtime.is_some()
+    {
+        return Err(AllocationError::InvalidTransition);
+    }
+    Ok(())
 }

@@ -114,8 +114,31 @@ impl ProviderFinalityReceipt {
             {
                 Ok(())
             }
-            // Configured home integration requires an original backing pin and
-            // complete home dispatch journal; no current observation supplies it.
+            ProviderHomeFinality::Removed { receipt } => {
+                receipt
+                    .validate()
+                    .map_err(|_| AllocationError::IdentityMismatch)?;
+                let home = snapshot
+                    .sandbox
+                    .lifecycle
+                    .home
+                    .as_ref()
+                    .and_then(|home| home.attachment())
+                    .ok_or(AllocationError::IdentityMismatch)?;
+                let original = snapshot
+                    .home_provenance
+                    .as_ref()
+                    .ok_or(AllocationError::IdentityMismatch)?;
+                if self.origin.original_home_policy.as_ref() != Some(&home.request.policy)
+                    || receipt.original().reference.home != home
+                    || receipt.original().reference.provider_scope != original.scope
+                    || original.first_receipt.as_ref() != Some(&home.receipt)
+                    || receipt.delete_operation_id() != home_delete_operation_id(snapshot)
+                {
+                    return Err(AllocationError::IdentityMismatch);
+                }
+                Ok(())
+            }
             _ => Err(AllocationError::AuthorityUnavailable),
         }
     }
@@ -128,6 +151,12 @@ impl ProviderFinalityReceipt {
 pub(crate) fn delete_operation_id(snapshot: &ChannelRetirementSnapshot) -> String {
     format!(
         "{}:provider-runtime-delete:v1",
+        snapshot.allocation.operation_id
+    )
+}
+pub(crate) fn home_delete_operation_id(snapshot: &ChannelRetirementSnapshot) -> String {
+    format!(
+        "{}:provider-home-delete:v1",
         snapshot.allocation.operation_id
     )
 }

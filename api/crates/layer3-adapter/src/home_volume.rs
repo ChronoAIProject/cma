@@ -155,6 +155,10 @@ impl HomeVolumeAttachment {
 /// Control-plane storage effects. Runtime teardown alone never releases a home.
 #[async_trait::async_trait]
 pub trait HomeVolumeStore: Send + Sync {
+    fn backing_observer(&self) -> Option<&dyn crate::HomeBackingObserver> {
+        None
+    }
+
     async fn delete_original_home(
         &self,
         _original: &crate::HomeBackingIdentity,
