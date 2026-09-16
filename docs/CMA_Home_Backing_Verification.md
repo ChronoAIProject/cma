@@ -46,9 +46,11 @@ needed for fresh capture. The existing namespaced cleanup role adds
 pre-dispatch resource version. The `cma-home-backing-observer` ClusterRole grants
 only `persistentvolumes/get`, bound only to `chrono-bot/chrono-bot-ksa`; the
 adapter reads the exact PV named by the owned PVC. It cannot list or modify PVs.
-Apply these source-controlled RBAC resources before enabling fresh Channel
-allocation with provider capture. They neither restart runtimes nor grant cloud
-disk permissions; unavailable Kubernetes or cloud reads keep finality held.
+These source-controlled RBAC resources enable complete cleanup proof capture;
+they are not prerequisites for Channel messaging or ordinary provisioning. They
+neither restart runtimes nor grant cloud disk permissions. Without these reads,
+provisioning can continue while missing evidence keeps final retirement held.
+Granting access later cannot retroactively establish a missing original identity.
 
 Fresh Channel provisioning writes a dispatch journal before each physical home
 or runtime creation attempt. A home creation receipt comes only from the actual
