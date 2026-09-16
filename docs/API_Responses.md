@@ -79,6 +79,14 @@ stream disconnect. The queue holds at most 64 waiting commands, with a five-minu
 admission deadline. Queue expiry or lost execution authority produces a durable
 failed response. A lost reply does not revoke already-admitted work.
 
+A temporary identity-provider failure keeps an unclaimed command queued within
+that original deadline. Waiting and revival checks are paced, and a later attempt
+must verify current authority before dispatch. This does not extend credential
+expiry or the queue deadline. Revocation, lost permissions and other definitive
+authority refusals still prevent execution. Request-time verification outages
+return `503`; clients must preserve the original key and body when admission is
+uncertain.
+
 | Event | V2 behavior |
 |---|---|
 | `response.created` | Exactly once in a full replay; stable ID, creation time and initial queued status |

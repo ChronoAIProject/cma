@@ -17,6 +17,44 @@ entries contain `conversationSha256`, `runtimeGeneration`, and `openings`.
 The separate result file comes from that same completed fixture. Do not invent
 receipts or substitute Agent IDs to make another resource fit this contract.
 
+A fixture completed through a separately recorded nonadmission recovery keeps
+its original journal and failed command unchanged. Set `fixtureRecoveryDirectory`
+to the absolute directory containing that recovery's `directive.json`,
+`journal.json`, `result.json`, `after.json`, `fresh-preflight.json`, and linked
+deployment/reconciliation evidence. Keep `fixtureJournal` pointing to the original
+journal and `fixtureResult` to the published successful result. Recorded pause
+resumption also requires `resumption-lifecycle.json`. The loader verifies raw
+original/directive/evidence hashes, matching resource and command scope, the
+three owned Agents including an untouched zero-turn bootstrap, and the original
+native conversation identities. `recovery.finalEvidenceSha256` must bind the
+exact saved `after.json` and, when present, `resumption-lifecycle.json` bytes.
+
+The loader also accepts a separately reconciled successor after an admitted
+command terminally failed before dispatch. That successor retains the original
+failed journal, the admitted predecessor's journal and directive, its terminal
+command capture, and a fresh observation of the same owned resources. The
+coordinator must establish nondispatch from the actual terminal record and the
+exact deployed source path; missing projected dispatch fields alone do not prove
+it. Neither earlier key is resubmitted. One explicitly authorized fresh key may
+complete the Trigger continuation before the original unsent manual continuation.
+Select this successor's directory through `fixtureRecoveryDirectory` only after
+its separate result passes the shared loader. Preserve the previous selection
+and all failed receipts when changing the configuration.
+
+This successor validates complete recorded pause/revival history, including
+generation advances larger than one and retryable lifecycle failures that later
+settled. Every reopened native conversation must retain its original identity.
+Its final counts remain two completed turns on each tested Agent and zero on the
+bootstrap Agent. This proves completion after the documented recovery; it does
+not turn either failed request or the earlier rollout comparison into a success.
+
+An accepted pause resumption establishes an explicit event-history boundary for
+later checks. Every earlier native opening must retain the original conversation
+identity. Later retirements or generation changes still fail, and subsequent
+rollout comparisons still require the same runtime, native generation, transcript
+and event prefix. The original failed runtime comparison remains failed; recovery
+does not establish same-runtime continuity through that earlier rollout.
+
 The runners recheck the saved token's owner/mode, the public signed-in subject,
 exact resource lineage and manual/Trigger provenance, original transcript,
 native identity and runtime attachment. Any original cleanup intent prevents
@@ -156,6 +194,13 @@ Outputs preserve the original fixture files and record new observations under
 hashes, Node/browser versions, exact application images, runtime contract and
 coordinator rollout times alongside those receipts. SHA arguments are recorded
 assertions, not independent deployment attestation. Failed attempts remain failed.
+
+When deployment uses an image built from a CI merge commit, retain its actual
+build revision for application and turn attribution. Record the merged delivery
+commit separately and prove that both commits have the same source tree. Bind
+the API and web image receipts to that build, source tree, CI run and actual
+deployment. A delivery commit must not replace the original OCI revision merely
+because the two commits contain the same files.
 
 These tools do not prove approval-wait survival, dirty-file or pause/revive
 behavior, provider delivery, cookie/OAuth renewal, continuous availability between

@@ -3,9 +3,9 @@ import { validateOwnedFixture } from './cma-bridge-continuity-owned-config.mjs';
 const check = (condition, code) => { if (!condition) throw new Error(code); };
 export const hash = (value) => createHash('sha256').update(value).digest('hex');
 
-export function scope(config, journal, result, change) {
+export function scope(config, journal, result, change, recovery) {
   check(/^[a-z0-9][a-z0-9-]{0,47}$/.test(change), 'bounded_change_identity_required');
-  validateOwnedFixture(config, journal, result);
+  validateOwnedFixture(config, journal, result, recovery);
   const agentId = journal.resources.agentIds[1];
   return { origin: config.origin, run: config.run, owner: config.expectedSubject, agentId,
     resources: journal.resources, originalMarker: config.markers.manual,

@@ -14,6 +14,7 @@ const ATTEMPT_BOUND: Duration = Duration::from_secs(45);
 const LEASE_LIFETIME: Duration = Duration::from_secs(30);
 const RENEW_INTERVAL: Duration = Duration::from_secs(10);
 const RENEW_BOUND: Duration = Duration::from_secs(5);
+const UNCLAIMED_RECHECK_DELAY: Duration = Duration::from_secs(15);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CommandAttempt {
@@ -126,7 +127,10 @@ impl AgentCommandWorker {
         };
         match readiness {
             CommandReadiness::Ready => {}
-            CommandReadiness::Retry => return Ok(()),
+            CommandReadiness::Retry => {
+                pace_unclaimed(&candidate).await;
+                return Ok(());
+            }
             CommandReadiness::Reject(code) => {
                 return bounded(self.store.reject_unclaimed_command(
                     id,
@@ -163,6 +167,7 @@ impl AgentCommandWorker {
                 return Ok(());
             }
             let _ = tokio::time::timeout(IO_BOUND, self.execution.prepare_queued(&current)).await;
+            pace_unclaimed(&current).await;
             return Ok(());
         };
         command.validate()?;
@@ -265,6 +270,18 @@ impl AgentCommandWorker {
             }
         }
     }
+}
+
+/// The durable queued record and its deadline remain unchanged. The scheduler
+/// retains this task in its per-process in-flight set while waiting, without
+/// an execution lane lease or saved authorization. Cancellation/restart may
+/// shorten pacing; the next sweep must still reread and reauthorize the command.
+async fn pace_unclaimed(command: &AdmittedAgentCommand) {
+    let remaining = crate::seconds_from_rfc3339(&command.queue_deadline)
+        .zip(crate::seconds_from_rfc3339(&now_rfc3339()))
+        .map(|(deadline, now)| Duration::from_secs(deadline.saturating_sub(now)))
+        .unwrap_or_default();
+    tokio::time::sleep(UNCLAIMED_RECHECK_DELAY.min(remaining)).await;
 }
 
 async fn bounded<T>(
