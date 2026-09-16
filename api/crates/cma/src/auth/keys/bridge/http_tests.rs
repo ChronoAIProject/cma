@@ -1,4 +1,5 @@
 use super::*;
+use mint_intent::BridgeSandboxMintIntent;
 use std::sync::atomic::Ordering;
 use test_fixture::{lease, Server, RUNTIME_SECRET};
 
@@ -46,6 +47,17 @@ async fn human_scope_preflight_has_no_key_effect_and_mint_verifies_person_or_exa
             .await
             .unwrap();
         assert_eq!(server.state.mint_count.load(Ordering::SeqCst), 0);
+        let intent = plan.mint_intent().unwrap();
+        let serialized = serde_json::to_value(&intent).unwrap();
+        assert_eq!(
+            serialized["scope_plan_digest"],
+            format!("sha256:{}", "a".repeat(64))
+        );
+        let retained: BridgeSandboxMintIntent = serde_json::from_value(serialized).unwrap();
+        assert_eq!(retained, intent);
+        retained
+            .require_binding(&lease, "test", "sbx_channel_1")
+            .unwrap();
         let material = server
             .issuer
             .mint_bridge_sandbox_key(&lease, plan)
@@ -75,6 +87,45 @@ async fn human_scope_preflight_has_no_key_effect_and_mint_verifies_person_or_exa
             .unwrap();
         assert!(!format!("{material:?}").contains(RUNTIME_SECRET));
     }
+}
+
+#[tokio::test]
+async fn mint_intent_keeps_provider_digest_separate_from_local_authority_hashes() {
+    let lease = lease(
+        ResourceOwner::Person {
+            subject: SubjectId::new("fixture-person"),
+        },
+        bridge(),
+        connector(),
+        1,
+    );
+    let server = Server::new(&lease, "test").await;
+    let plan = server
+        .issuer
+        .plan_bridge_sandbox_key(&lease, "sbx_channel_1", &[service()])
+        .await
+        .unwrap();
+    let intent = serde_json::to_value(plan.mint_intent().unwrap()).unwrap();
+    for digest in [
+        "a".repeat(64),
+        format!("sha512:{}", "a".repeat(64)),
+        format!("sha256:{}", "A".repeat(64)),
+        format!("sha256:{}", "a".repeat(63)),
+        format!("sha256:{}", "a".repeat(65)),
+        format!("sha256:{}", "g".repeat(64)),
+    ] {
+        let mut value = intent.clone();
+        value["scope_plan_digest"] = serde_json::json!(digest);
+        let retained: BridgeSandboxMintIntent = serde_json::from_value(value).unwrap();
+        assert!(retained.validate().is_err(), "{digest:?}");
+    }
+    for field in ["grant_digest", "grant_fingerprint"] {
+        let mut value = intent.clone();
+        value[field] = serde_json::json!(format!("sha256:{}", value[field].as_str().unwrap()));
+        let retained: BridgeSandboxMintIntent = serde_json::from_value(value).unwrap();
+        assert!(retained.validate().is_err(), "{field}");
+    }
+    assert_eq!(server.state.mint_count.load(Ordering::SeqCst), 0);
 }
 
 #[tokio::test]

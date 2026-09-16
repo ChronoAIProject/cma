@@ -122,6 +122,7 @@ pub(super) struct ScopePlan {
     services: Vec<ServiceGrant>,
     pub allowed_service_ids: Vec<String>,
     pub allowed_node_ids: Vec<String>,
+    allow_auto_connected_services: bool,
     pub normalized_grant_digest: String,
     completeness: Completeness,
     freshness: Freshness,
@@ -159,16 +160,13 @@ impl ScopePlan {
             || !self.intended_key_owner.matches(owner)
             || self.key_purpose != "general"
             || !self.durable_operations.is_empty()
+            || self.allow_auto_connected_services
             || super::super::normalized_identifiers(&self.allowed_service_ids)
                 != super::super::normalized_identifiers(selected)
             || super::super::normalized_identifiers(&self.allowed_node_ids).is_none()
             || grants.into_iter().collect::<Vec<_>>() != selected
             || nodes.into_iter().collect::<Vec<_>>() != self.allowed_node_ids
-            || self.normalized_grant_digest.len() != 64
-            || !self
-                .normalized_grant_digest
-                .bytes()
-                .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
+            || !valid_scope_plan_digest(&self.normalized_grant_digest)
             || !self.completeness.list_complete
             || !self.completeness.no_duplicates
             || !self.completeness.transient_node_state_excluded
@@ -181,6 +179,16 @@ impl ScopePlan {
         }
         Ok(())
     }
+}
+
+// Nyx includes the algorithm in its mutation precondition; retain it verbatim.
+pub(super) fn valid_scope_plan_digest(value: &str) -> bool {
+    value.strip_prefix("sha256:").is_some_and(|digest| {
+        digest.len() == 64
+            && digest
+                .bytes()
+                .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+    })
 }
 
 pub(super) fn material(
@@ -222,9 +230,14 @@ pub(super) struct KeyMetadata {
     allowed_node_ids: Vec<String>,
     allow_all_services: bool,
     allow_all_nodes: bool,
+    allow_auto_connected_services: bool,
     credential_source: Source,
     purpose: String,
     scheduled_write_enabled: bool,
+    platform: Option<String>,
+    callback_url: Option<String>,
+    #[serde(default)]
+    bindings_count: u64,
 }
 impl KeyMetadata {
     pub fn require(
@@ -247,6 +260,10 @@ impl KeyMetadata {
             || !self.credential_source.matches(owner, actor)
             || self.purpose != "general"
             || self.scheduled_write_enabled
+            || self.allow_auto_connected_services
+            || self.platform.is_some()
+            || self.callback_url.is_some()
+            || self.bindings_count != 0
             || super::super::normalized_identifiers(&self.allowed_service_ids)
                 != super::super::normalized_identifiers(&plan.allowed_service_ids)
             || super::super::normalized_identifiers(&self.allowed_node_ids)

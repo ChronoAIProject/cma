@@ -102,18 +102,15 @@ impl BridgeSandboxMintIntent {
             || self.bridge_id.as_str().is_empty()
             || self.actor.as_str().is_empty()
             || layer2_core::seconds_from_rfc3339(&self.expires_at).is_none()
-            || [
-                &self.grant_digest,
-                &self.grant_fingerprint,
-                &self.scope_plan_digest,
-            ]
-            .into_iter()
-            .any(|value| {
-                value.len() != 64
-                    || !value
-                        .bytes()
-                        .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
-            })
+            || !super::contract::valid_scope_plan_digest(&self.scope_plan_digest)
+            || [&self.grant_digest, &self.grant_fingerprint]
+                .into_iter()
+                .any(|value| {
+                    value.len() != 64
+                        || !value
+                            .bytes()
+                            .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
+                })
         {
             return Err(KeyIssuerError::UnexpectedAuthority);
         }

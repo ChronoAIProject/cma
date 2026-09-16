@@ -54,7 +54,10 @@ impl KeyIssuer {
             &services.services,
             wanted,
         )?;
-        let mut body = serde_json::json!({"selected_service_ids":selected});
+        let mut body = serde_json::json!({
+            "selected_service_ids": selected,
+            "allow_auto_connected_services": false,
+        });
         attach_org(&mut body, lease.owner());
         let scope: ScopePlan = self
             .bridge_json(
@@ -115,6 +118,7 @@ impl KeyIssuer {
             plan.expires_at,
         )?;
         body["allowed_node_ids"] = serde_json::json!(plan.scope.allowed_node_ids);
+        body["allow_auto_connected_services"] = serde_json::Value::Bool(false);
         body["scope_plan_digest"] =
             serde_json::Value::String(plan.scope.normalized_grant_digest.clone());
         attach_org(&mut body, &plan.owner);
