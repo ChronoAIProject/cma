@@ -3,24 +3,57 @@ use crate::config::BridgeFeatureFlags;
 use std::sync::Arc;
 
 #[test]
-fn shared_placement_runtime_abilities_never_invent_continuity_evidence() {
-    for runtime in [None, Some(layer3_adapter::AdapterCapabilities::default())] {
-        assert!(shared_placements(runtime)
-            .iter()
-            .all(|mode| { mode.availability == BridgePlacementAvailability::RuntimeUnavailable }));
-    }
+fn shared_placement_selectors_require_complete_runtime_and_remain_independent() {
     let supported = layer3_adapter::RuntimeContract::V3.capabilities();
-    let modes = shared_placements(Some(supported));
-    assert_eq!(modes.len(), 2);
-    assert_ne!(modes[0].kind, modes[1].kind);
-    assert!(modes
-        .iter()
-        .all(|mode| { mode.availability == BridgePlacementAvailability::ContinuityUnverified }));
-    let mut incomplete = supported;
-    incomplete.per_agent_home = false;
-    assert!(shared_placements(Some(incomplete))
-        .iter()
-        .all(|mode| { mode.availability == BridgePlacementAvailability::RuntimeUnavailable }));
+    for workspace in [false, true] {
+        for worktree in [false, true] {
+            let flags = BridgeFeatureFlags::from_lookup(&mut |key| {
+                Ok(Some(
+                    match key {
+                        "CHRONO_BRIDGE_WORKSPACE_PER_PARTITION_ENABLED" => workspace,
+                        "CHRONO_BRIDGE_WORKTREE_AGENT_PER_PARTITION_ENABLED" => worktree,
+                        _ => false,
+                    }
+                    .to_string(),
+                ))
+            })
+            .unwrap();
+            let modes = shared_placements(Some(supported), flags);
+            assert_eq!(modes.len(), 2);
+            for (mode, selected) in modes.iter().zip([workspace, worktree]) {
+                assert_eq!(
+                    mode.availability,
+                    if selected {
+                        BridgePlacementAvailability::Available
+                    } else {
+                        BridgePlacementAvailability::ContinuityUnverified
+                    }
+                );
+            }
+            assert_ne!(modes[0].kind, modes[1].kind);
+            for missing in 0..6 {
+                let mut incomplete = supported;
+                match missing {
+                    0 => incomplete.conversation = false,
+                    1 => incomplete.per_agent_home = false,
+                    2 => incomplete.steer = false,
+                    3 => incomplete.interrupt = false,
+                    4 => incomplete.usage = false,
+                    _ => incomplete.resources = false,
+                }
+                assert!(shared_placements(Some(incomplete), flags)
+                    .iter()
+                    .all(|mode| {
+                        mode.availability == BridgePlacementAvailability::RuntimeUnavailable
+                    }));
+            }
+            for runtime in [None, Some(layer3_adapter::AdapterCapabilities::default())] {
+                assert!(shared_placements(runtime, flags).iter().all(|mode| {
+                    mode.availability == BridgePlacementAvailability::RuntimeUnavailable
+                }));
+            }
+        }
+    }
 }
 
 #[test]
@@ -39,7 +72,10 @@ fn boundary_only_and_device_connectors_never_claim_text_admission_from_enabled_f
     assert_eq!(catalog.connectors.len(), 9);
     for c in &catalog.connectors {
         assert!(!c.live_verified);
-        assert!(!c.output_edit);
+        assert_eq!(
+            c.output_edit,
+            ["lark", "feishu"].contains(&c.platform.as_str())
+        );
         assert!(!c.attachment_output);
         assert!(!c.bot_mentions);
         if ["telegram", "telegram-new", "discord", "lark", "feishu"].contains(&c.platform.as_str())

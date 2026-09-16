@@ -162,8 +162,30 @@ impl MongoBridgeReplyToolStore {
                 capabilities,
             }));
         }
+        let document = reference_document(retained)?;
+        let database = self
+            .invokes
+            .bridges
+            .client
+            .database(&self.control_references.namespace().db);
+        crate::store::channel_history::control_record(
+            &database,
+            retained,
+            crate::store::channel_history::ReferenceKind::ControlReference,
+            &document,
+            session,
+        )
+        .await
+        .map_err(|error| match error {
+            crate::store::bridge_allocations::MutationError::Mongo(error) => {
+                MutationError::Driver(error)
+            }
+            crate::store::bridge_allocations::MutationError::Core(_) => {
+                MutationError::Core(OutboxError::SourceMismatch)
+            }
+        })?;
         self.control_references
-            .insert_one(reference_document(retained)?)
+            .insert_one(document)
             .session(&mut *session)
             .await?;
         Ok(Some(ChannelControlContextObservation {
@@ -181,7 +203,7 @@ fn reference_document(record: &ChannelControlReferenceRecord) -> Result<Document
         "document_schema_version":DOCUMENT_SCHEMA_VERSION,"record":record_bson(record).map_err(|_| OutboxError::Corrupt)?},
     )
 }
-pub(in crate::store::bridge_invokes) fn read_reference(
+pub(in crate::store) fn read_reference(
     document: &Document,
 ) -> Result<ChannelControlReferenceRecord, OutboxError> {
     let record: ChannelControlReferenceRecord =

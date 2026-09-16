@@ -4,11 +4,14 @@ use std::sync::{
     Arc,
 };
 use tokio::sync::mpsc;
+#[path = "finalization_provider.rs"]
+mod finality;
 pub(crate) struct RetirementAdapter {
     inner: Arc<dyn SandboxAdapter>,
     pub teardowns: AtomicUsize,
     pub lose_teardown: AtomicBool,
     pub inventory_unavailable: AtomicBool,
+    proof: Option<finality::ProviderFixture>,
 }
 impl RetirementAdapter {
     pub fn new(inner: Arc<dyn SandboxAdapter>) -> Self {
@@ -17,11 +20,52 @@ impl RetirementAdapter {
             teardowns: AtomicUsize::new(0),
             lose_teardown: AtomicBool::new(false),
             inventory_unavailable: AtomicBool::new(false),
+            proof: None,
         }
+    }
+    pub fn with_finality(mut self) -> Self {
+        self.proof = Some(finality::ProviderFixture::default());
+        self
     }
 }
 #[async_trait::async_trait]
 impl SandboxAdapter for RetirementAdapter {
+    async fn provision_runtime(&self, request: &RuntimeProvisionRequest) -> Result<RuntimeHandle> {
+        self.inner.provision_runtime(request).await
+    }
+    async fn provision_runtime_receipted(
+        &self,
+        request: &RuntimeProvisionRequest,
+        operation_id: &str,
+    ) -> Result<RuntimeProvisionReceipt> {
+        match &self.proof {
+            Some(proof) => {
+                proof
+                    .provision(self.inner.as_ref(), request, operation_id)
+                    .await
+            }
+            None => {
+                self.inner
+                    .provision_runtime_receipted(request, operation_id)
+                    .await
+            }
+        }
+    }
+    async fn finalize_runtime(
+        &self,
+        original: &RuntimeProvisionReceipt,
+        operation_id: &str,
+    ) -> Result<RuntimeFinalityReceipt> {
+        self.teardowns.fetch_add(1, Ordering::SeqCst);
+        match &self.proof {
+            Some(proof) => {
+                proof
+                    .finalize(self.inner.as_ref(), original, operation_id)
+                    .await
+            }
+            None => self.inner.finalize_runtime(original, operation_id).await,
+        }
+    }
     fn capabilities(&self) -> AdapterCapabilities {
         self.inner.capabilities()
     }

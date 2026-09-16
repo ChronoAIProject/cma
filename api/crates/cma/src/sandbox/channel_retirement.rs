@@ -2,6 +2,7 @@
 pub(crate) mod assessment;
 mod driver;
 pub(crate) mod model;
+pub(crate) mod provider_finality;
 pub(crate) mod retention;
 use crate::{
     bridge::provisioning::retirement::ChannelRetirementAuthoritySource,
@@ -36,7 +37,18 @@ impl ChannelRetirement for ChannelRetirementDriver {
         agents: &dyn super::worker::LiveAgentStopper,
         now: SystemTime,
     ) -> Result<(), CredentialError> {
-        match self.run_step(sandbox, agents, now).await {
+        let result = self.run_step(sandbox, agents, now).await;
+        let outcome = match &result {
+            Ok(driver::RetirementStep::Advanced) => "advanced",
+            Ok(driver::RetirementStep::Retained(_)) => "retention_held",
+            Err(_) => "unavailable",
+        };
+        crate::bridge::operations::health::retirement(
+            sandbox.id.as_str(),
+            sandbox.work.attempts,
+            outcome,
+        );
+        match result {
             Ok(driver::RetirementStep::Advanced) => Ok(()),
             Ok(driver::RetirementStep::Retained(assessment)) => {
                 Err(CredentialError::ChannelRetentionHeld(assessment))

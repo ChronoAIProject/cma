@@ -153,6 +153,13 @@ async fn publish(
     // Every share mutation and ancestry write conflicts with this guard; even
     // first publication under a legacy personal root cannot race a policy edit.
     fence_lineage(store, &snapshot, session).await?;
+    let changed = store.agents.update_one(
+        doc! {"_id": request.record().metadata.agent_id.as_str(), "channel_history_seal": {"$exists": false}},
+        doc! {"$inc": {"artifact_history_fence": 1_i64}},
+    ).session(&mut *session).await?;
+    if changed.matched_count != 1 {
+        return Err(ResourceAccessStoreError::Conflict.into());
+    }
     request.require_current()?;
     store
         .agent_artifacts

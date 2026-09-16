@@ -112,7 +112,9 @@ An exact already-admitted held Sandbox recovers its original receipt before the
 fresh-admission limit is checked. This does not revoke retained resources or
 change live profiles or owner limits. Shared-parent placement continues using
 its separately configured Workspace/Agent reserves. The owner slot reserve is
-one bounded quota rule; broader operational limits remain tracked in #868.
+one bounded quota rule. The [reply backlog cap](CHANNEL_REPLY_TOOLS.md#pending-reply-backlog)
+separately limits each Bridge to 256 outstanding prepared messages across all
+retained generations; broader operational limits remain tracked in #868.
 
 The reserve changes admission behavior without changing the stored schema.
 Older Channel writers still apply the full owner limit and can consume the
@@ -120,6 +122,28 @@ last free slot. Enabling Channel creation with mixed writer versions therefore
 remains subject to the #850 deployment gate; the reserve is not a guarantee
 until every Channel admission writer enforces it. Existing admitted resources
 remain recoverable throughout that upgrade.
+
+## Allocation interval capacity
+
+Each Bridge admits at most eight new allocation generations in a rolling sixty
+seconds. All placements and configuration generations share that deployment
+limit. Explicit resets consume a new slot; progressing or recovering an existing
+allocation does not. The limit supplements retained-count and owner-capacity
+checks and does not change ordinary UI or Trigger admission.
+
+The allocation transaction obtains the existing shared Bridge write fence before
+checking recent admissions. It records storage admission time with the new row;
+a delayed proposal cannot backdate its slot. Rejected or aborted transactions
+consume no slot, and an uncertain commit recovers the original allocation before
+checking capacity for new work. Recent legacy rows use their retained creation
+time. A backwards clock keeps future-dated slots occupied. Full capacity returns
+the existing typed allocation-capacity refusal before provider creation.
+
+Progress and retirement retain the admission timestamp and original allocation
+history. Management edits, disable/re-enable and generation resets do not clear
+it. All Channel writers must run this implementation for the interval guarantee;
+older writers do not enforce this added limit. No cluster permission or runtime
+credential change is required.
 
 ## Verification boundary
 

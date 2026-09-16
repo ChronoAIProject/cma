@@ -44,6 +44,20 @@ impl ChannelToolBackend for StoredChannelTools {
             .enqueue(ChannelReplyToolIntent::prepare(scope, request)?)
             .await
     }
+    async fn edit(
+        &self,
+        session: &ChannelReplySessionAuthorization,
+        context: &str,
+        request: ChannelReplyEditRequest,
+    ) -> Result<ReplyToolReceipt, OutboxError> {
+        if let Some(receipt) = self.replies.recover_edit(session, &request).await? {
+            return Ok(receipt);
+        }
+        let scope = self.replies.current_turn(session, context).await?;
+        self.replies
+            .enqueue(ChannelReplyToolIntent::prepare_edit(scope, request)?)
+            .await
+    }
     async fn control_context(
         &self,
         session: &ChannelReplySessionAuthorization,

@@ -20,13 +20,20 @@ pub(super) struct ChannelFixture {
     pub inbox: StoredInbox,
     pub allocation: AllocationRecord,
     pub commands: Arc<MongoChannelCommandStore>,
+    pub inbox_store: crate::store::MongoCallbackInbox,
 }
 
 impl ChannelFixture {
     pub async fn new() -> Self {
         Self::from_fixture(Fixture::new().await).await
     }
-    pub async fn from_fixture(mut f: Fixture) -> Self {
+    pub async fn from_fixture(f: Fixture) -> Self {
+        Self::from_source(f, false).await
+    }
+    pub async fn discord_text() -> Self {
+        Self::from_source(Fixture::discord_text().await, true).await
+    }
+    async fn from_source(mut f: Fixture, text_attachment: bool) -> Self {
         let grant = f
             .service
             .issue(&f.context, Some("fixture-credential"), f.issue("consent"))
@@ -39,7 +46,22 @@ impl ChannelFixture {
             .validate_connection(&f.bridge.owner, &f.bridge.current().unwrap().config)
             .await
             .unwrap();
-        let write = signed_inbox(&f.bridge, validation).await;
+        let write = if text_attachment {
+            let mut fixture = crate::bridge::attachments::discord_tests::fixture();
+            fixture.bridge = f.bridge.clone();
+            let config = &f.bridge.current().unwrap().config;
+            fixture.body["agent"]["api_key_id"] = json!(config.connector.key_id);
+            fixture.body["conversation"]["id"] = json!(config.connector.route_ids[0]);
+            fixture
+                .signed()
+                .unwrap()
+                .classify_capabilities(&fixture.bytes(), &crate::bridge::ingress::NyxidCapabilities)
+                .unwrap()
+                .bind(CallbackBinding::new(f.bridge.clone(), validation).unwrap())
+                .unwrap()
+        } else {
+            signed_inbox(&f.bridge, validation).await
+        };
         let inbox = write.record().clone();
         let key =
             crate::store::AuthEncryptionKey::from_base64(&STANDARD.encode([7_u8; 32])).unwrap();
@@ -89,6 +111,7 @@ impl ChannelFixture {
             inbox,
             allocation,
             commands,
+            inbox_store,
         }
     }
     pub async fn request(&self) -> ChannelCommandReservation {

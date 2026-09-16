@@ -194,9 +194,23 @@ impl ChannelControlReferenceBinding {
     /// Match the original allocation using the retained reference producer's
     /// digest convention. Callers must reread and fence this live record.
     pub fn require_allocation(&self, allocation: &AllocationRecord) -> Result<(), OutboxError> {
+        if allocation.state != AllocationState::Ready {
+            return Err(OutboxError::SourceMismatch);
+        }
+        self.require_retained_allocation(allocation)
+    }
+
+    /// Historical identity only; this does not grant fresh execution authority.
+    pub fn require_retained_allocation(
+        &self,
+        allocation: &AllocationRecord,
+    ) -> Result<(), OutboxError> {
         self.validate()?;
         allocation.validate().map_err(|_| OutboxError::Corrupt)?;
-        if allocation.state != AllocationState::Ready
+        if !matches!(
+            allocation.state,
+            AllocationState::Ready | AllocationState::Retired
+        ) || allocation.id != self.source.allocation_id()
             || allocation.owner != *self.source.owner()
             || allocation.placement.target() != self.source.target()
             || allocation.identity != self.allocation_identity
