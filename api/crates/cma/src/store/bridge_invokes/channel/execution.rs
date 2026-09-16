@@ -128,7 +128,7 @@ impl MongoChannelCommandStore {
 }
 
 impl MongoBridgeInvokeStore {
-    pub(super) async fn read_channel_source(
+    pub(in crate::store::bridge_invokes) async fn read_channel_source(
         &self,
         command: &AdmittedAgentCommand,
         session: &mut ClientSession,

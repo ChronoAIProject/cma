@@ -5,6 +5,7 @@ use layer2_core::bridge::ingress::{
 use mongodb::{bson::doc, ClientSession};
 
 use super::{MongoCallbackInbox, MutationError};
+mod accepted;
 mod model;
 use model::{callback_id, provider_id, CallbackDisposition};
 
@@ -80,6 +81,27 @@ impl MongoCallbackInbox {
         session: &mut ClientSession,
     ) -> Result<CallbackAcceptance, MutationError> {
         let disposition = CallbackDisposition::capture(write, receipt.clone())?;
+        self.persist_disposition(&disposition, session).await?;
+        Ok(receipt)
+    }
+
+    pub(in crate::store) async fn retain_accepted_control(
+        &self,
+        write: &layer2_core::bridge::channel_control::ChannelControlWrite,
+        control: &layer2_core::bridge::channel_control::AdmittedChannelControl,
+        session: &mut ClientSession,
+    ) -> Result<CallbackAcceptance, MutationError> {
+        let disposition = CallbackDisposition::capture_control(write, control)?;
+        let receipt = disposition.require_exact(write.inbox())?;
+        self.persist_disposition(&disposition, session).await?;
+        Ok(receipt)
+    }
+
+    async fn persist_disposition(
+        &self,
+        disposition: &CallbackDisposition,
+        session: &mut ClientSession,
+    ) -> Result<(), MutationError> {
         self.dispositions
             .insert_one(disposition.document()?)
             .session(&mut *session)
@@ -90,7 +112,7 @@ impl MongoCallbackInbox {
                 .session(&mut *session)
                 .await?;
         }
-        Ok(receipt)
+        Ok(())
     }
 }
 

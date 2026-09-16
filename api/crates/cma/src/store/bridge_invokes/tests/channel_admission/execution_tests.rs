@@ -91,6 +91,7 @@ pub(super) fn execution(
     );
     (
         Arc::new(crate::commands::ResourceCommandExecution {
+            channel_controls: None,
             channel_revival: None,
             channel: Some(Arc::new(ChannelAgentCommandService::new(
                 c.commands.clone(),

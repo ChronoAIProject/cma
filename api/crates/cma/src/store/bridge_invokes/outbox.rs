@@ -21,6 +21,7 @@ use crate::store::{
 use super::MongoBridgeInvokeStore;
 
 mod control_context;
+pub(super) use control_context::read_reference as read_control_reference;
 mod enqueue;
 mod management;
 mod rate;

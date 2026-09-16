@@ -12,6 +12,7 @@ mod binding;
 mod capabilities;
 mod channel;
 mod channel_claimed_service;
+pub(in crate::sandbox) mod channel_control;
 mod claimed_service;
 mod command;
 mod event;
@@ -55,6 +56,10 @@ pub use channel::{
     ChannelCommandHold, ChannelCommandReservation, ChannelCommandSidecar, ChannelCommandStore,
     ChannelExecutionAuthorization, ChannelExecutionFence, ChannelHoldRefusal,
     ChannelHoldRefusalReason,
+};
+pub use channel_control::{
+    ChannelControlExecutionAuthorization, ChannelControlExecutionFence,
+    ChannelControlExecutionService, ChannelControlExecutionSnapshot, ChannelControlExecutionStore,
 };
 pub use command::{AgentCommand, AgentInputOrder};
 pub use event::{
