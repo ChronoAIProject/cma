@@ -93,7 +93,7 @@ pub(crate) async fn seal(
         )
         .await?
         .iter()
-        .map(|row| Ok(read_reference(row)?.id()?))
+        .map(|row| read_reference(row)?.id())
         .collect::<Result<Vec<_>, AllocationError>>()?,
         material,
         sealed_at: at.into(),
