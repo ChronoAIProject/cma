@@ -121,6 +121,13 @@ impl ChannelCommandReservation {
             }
             _ => return Err(ChannelCommandAdmissionError::SourceMismatch),
         };
+        if new_admission {
+            if let Some(attachment) = &self.inbox.text_attachment {
+                attachment
+                    .require_custody(&self.inbox, now.as_secs().min(i64::MAX as u64) as i64)
+                    .map_err(|_| ChannelCommandAdmissionError::Unavailable)?;
+            }
+        }
         if new_admission && self.inbox.expires_at <= now.as_secs().min(i64::MAX as u64) as i64 {
             return Err(ChannelCommandAdmissionError::Unavailable);
         }

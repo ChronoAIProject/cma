@@ -60,9 +60,12 @@ impl BridgeControlPlaneGrant {
         let expiry = mongodb::bson::DateTime::parse_rfc3339_str(&self.expires_at)
             .map_err(|_| BridgeError::Corrupt)?
             .to_system_time();
-        let remaining = expiry
-            .duration_since(SystemTime::now())
-            .map_err(|_| reconnect())?;
+        let remaining = expiry.duration_since(SystemTime::now()).map_err(|_| {
+            super::operations::health::authority_failure(
+                super::operations::health::AuthorityFailure::ControlGrantExpired,
+            );
+            reconnect()
+        })?;
         Ok(tokio::time::Instant::now() + remaining)
     }
 }

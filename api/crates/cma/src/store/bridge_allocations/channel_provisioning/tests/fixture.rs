@@ -53,14 +53,17 @@ pub(crate) struct Fixture {
 
 impl Fixture {
     pub async fn new() -> Self {
-        Self::build(false).await
+        Self::build(false, BridgePlatform::Telegram).await
     }
     pub async fn with_callback_route() -> Self {
-        Self::build(true).await
+        Self::build(true, BridgePlatform::Telegram).await
     }
-    async fn build(callback_route: bool) -> Self {
+    pub async fn with_platform(platform: BridgePlatform) -> Self {
+        Self::build(false, platform).await
+    }
+    async fn build(callback_route: bool, platform: BridgePlatform) -> Self {
         let (client, database, bridges, svc, id, allocations) =
-            setup_with_callback_route(callback_route).await;
+            setup_with_platform(callback_route, platform).await;
         svc.mutate(
             &caller(),
             None,

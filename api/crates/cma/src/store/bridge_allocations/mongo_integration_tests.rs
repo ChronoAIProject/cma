@@ -37,11 +37,26 @@ async fn setup_with_callback_route(
     BridgeId,
     MongoBridgeAllocationStore,
 ) {
+    setup_with_platform(callback_route, BridgePlatform::Telegram).await
+}
+
+async fn setup_with_platform(
+    callback_route: bool,
+    platform: BridgePlatform,
+) -> (
+    Client,
+    String,
+    Arc<MongoBridgeStore>,
+    BridgeService,
+    BridgeId,
+    MongoBridgeAllocationStore,
+) {
     let (client, database, bridges) = fixture().await;
     let svc = service(bridges.clone());
     let id = BridgeService::creation_id(&caller(), "create").unwrap();
     let mut configured = config();
     configured.partition = BridgePartitionPolicy::ConversationSender;
+    configured.connector.platform = platform;
     if callback_route {
         configured.connector.callback_url = format!(
             "https://cma.example/api/v1/bridge-callbacks/{}",
@@ -114,7 +129,11 @@ async fn proposal_with_owner_limit(
         message_id: "message".into(),
         correlation_id: "correlation".into(),
         envelope: InboxEnvelope {
-            platform: "telegram".into(),
+            platform: serde_json::to_value(&config.connector.platform)
+                .unwrap()
+                .as_str()
+                .unwrap()
+                .into(),
             route_id: "route-1".into(),
             chat_id: "-100123".into(),
             conversation_type: "group".into(),
@@ -139,6 +158,7 @@ async fn proposal_with_owner_limit(
         relay: RelayCorroboration::AbsentInboxOnly,
         admission: InboxAdmission::Accepted,
         capabilities: None,
+        text_attachment: None,
         execution_hold: None,
         accepted_at: 101,
         expires_at: 3601,

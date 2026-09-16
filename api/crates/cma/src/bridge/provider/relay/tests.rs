@@ -7,6 +7,7 @@ use super::*;
 #[derive(Clone)]
 struct TestState {
     requests: Arc<Mutex<Vec<Value>>>,
+    paths: Arc<Mutex<Vec<String>>>,
     status: StatusCode,
     body: Value,
     delay: Duration,
@@ -15,11 +16,13 @@ struct TestState {
 }
 async fn handle(
     State(state): State<TestState>,
+    uri: axum::extract::OriginalUri,
     headers: axum::http::HeaderMap,
     Json(body): Json<Value>,
 ) -> axum::response::Response {
     assert_eq!(headers.get("authorization").unwrap(), "Bearer nyx_fixture");
     state.requests.lock().unwrap().push(body);
+    state.paths.lock().unwrap().push(uri.0.path().to_owned());
     tokio::time::sleep(state.delay).await;
     let mut response = (state.status, Json(state.body)).into_response();
     if let Some(value) = state.retry_after {
@@ -55,6 +58,7 @@ async fn fixture_with_retry_after(
 ) -> Fixture {
     let state = TestState {
         requests: Arc::new(Mutex::new(Vec::new())),
+        paths: Arc::new(Mutex::new(Vec::new())),
         status,
         body,
         delay,
@@ -65,6 +69,7 @@ async fn fixture_with_retry_after(
     let endpoint = format!("http://{}", listener.local_addr().unwrap());
     let app = Router::new()
         .route("/api/v1/channel-relay/reply", post(handle))
+        .route("/api/v1/channel-relay/reply/update", post(handle))
         .with_state(state.clone());
     let server = tokio::spawn(async move {
         axum::serve(listener, app).await.unwrap();
@@ -203,3 +208,6 @@ async fn throttled_post_retains_unknown_outcome_and_backoff_without_a_second_req
     assert!((before + 120_000..=after + 120_000).contains(&not_before_ms));
     assert_eq!(fixture.state.requests.lock().unwrap().len(), 1);
 }
+
+#[path = "edit_tests.rs"]
+mod edits;

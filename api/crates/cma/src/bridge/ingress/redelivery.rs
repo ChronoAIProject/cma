@@ -88,14 +88,20 @@ pub(super) fn observe(
     {
         return Ok(None);
     }
-    VerifiedPlatformRedelivery::from_verified_observation(
-        payload,
-        &facts,
-        parent.map_or(
-            VerifiedRedeliveryParent::Absent,
-            VerifiedRedeliveryParent::Message,
-        ),
-    )
+    let parent = parent.map_or(
+        VerifiedRedeliveryParent::Absent,
+        VerifiedRedeliveryParent::Message,
+    );
+    if let Some(attachment) = NyxidCapabilities.text_attachment(payload)? {
+        VerifiedPlatformRedelivery::from_verified_text_attachment(
+            payload,
+            &facts,
+            parent,
+            &attachment,
+        )
+    } else {
+        VerifiedPlatformRedelivery::from_verified_observation(payload, &facts, parent)
+    }
 }
 
 #[cfg(test)]

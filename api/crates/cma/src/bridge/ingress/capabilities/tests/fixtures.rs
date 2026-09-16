@@ -133,7 +133,7 @@ impl Fixture {
             .as_secs();
         let claims = json!({"iss":"https://nyx.example","aud":"channel-relay/callback",
             "iat":now,"exp":now+300,"jti":self.body["correlation_id"],"token_type":"relay_callback",
-            "api_key_id":"selected-key","message_id":self.body["message_id"],"platform":self.body["platform"],
+            "api_key_id":self.config().connector.key_id,"message_id":self.body["message_id"],"platform":self.body["platform"],
             "body_sha256":format!("{:x}",Sha256::digest(&body))});
         let token = sign(&claims);
         let mut headers = axum::http::HeaderMap::new();

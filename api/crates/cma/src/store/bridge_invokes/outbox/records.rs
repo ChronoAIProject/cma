@@ -92,6 +92,7 @@ impl Invocation {
         }
         Ok(ReplyToolReceipt {
             receipt_id: self.id.clone(),
+            outbox_ids: self.items.clone(),
             status,
             duplicate_risk,
             failure,

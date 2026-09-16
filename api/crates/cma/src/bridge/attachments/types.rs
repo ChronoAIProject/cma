@@ -41,6 +41,7 @@ pub(super) struct FetchRequest {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum Mime {
+    Text,
     Png,
     Jpeg,
     Pdf,
@@ -49,6 +50,7 @@ pub(super) enum Mime {
 impl Mime {
     pub(super) fn as_str(self) -> &'static str {
         match self {
+            Self::Text => "text/plain",
             Self::Png => "image/png",
             Self::Jpeg => "image/jpeg",
             Self::Pdf => "application/pdf",
@@ -59,6 +61,7 @@ impl Mime {
     // or a malware scan. The separate trusted scanner must approve all bytes.
     pub(super) fn corroborates(self, bytes: &[u8]) -> bool {
         match self {
+            Self::Text => layer2_core::bridge::ingress::valid_attachment_text(bytes),
             Self::Png => bytes.starts_with(b"\x89PNG\r\n\x1a\n"),
             Self::Jpeg => bytes.starts_with(&[0xff, 0xd8, 0xff]),
             Self::Pdf => bytes.starts_with(b"%PDF-"),
@@ -157,7 +160,7 @@ impl FetchGrant {
     }
 }
 
-/// Transient private bytes only; no publication, persisted custody or read grant.
+/// Transient private bytes; the composed worker separately captures approved text.
 /// Contents are not printable/serializable and are wiped on dropped failures.
 pub(super) struct FetchedAttachment {
     pub(super) bytes: Zeroizing<Vec<u8>>,

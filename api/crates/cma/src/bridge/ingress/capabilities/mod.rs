@@ -21,6 +21,16 @@ impl CallbackCapabilityExtractor for NyxidCapabilities {
         CapabilityContract::NyxidPlatformV1
     }
 
+    fn text_attachment(
+        &self,
+        payload: &AuthenticatedCallbackPayload<'_>,
+    ) -> Result<Option<layer2_core::bridge::ingress::VerifiedTextAttachment>, CallbackError> {
+        if self.observe(payload)?.event_kind != ChannelEventKind::DiscordTextAttachment {
+            return Ok(None);
+        }
+        crate::bridge::attachments::discord::authenticated(payload)
+    }
+
     fn observe(
         &self,
         payload: &AuthenticatedCallbackPayload<'_>,
