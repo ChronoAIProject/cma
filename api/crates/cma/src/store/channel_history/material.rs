@@ -24,9 +24,6 @@ pub(super) async fn commands(
     let mut orders = std::collections::BTreeSet::new();
     let mut result = Vec::new();
     for row in &rows {
-        if row.contains_key("channel_control_admission") {
-            return Ok(Err(HistoryHold::ControlHistoryUnresolved));
-        }
         let command = crate::store::agent_commands::read_command(row)
             .map_err(|_| AllocationError::Corrupt)?;
         if command.receipt.envelope.agent_id.as_str() != agent_id
@@ -45,6 +42,13 @@ pub(super) async fn commands(
                 if !require_reference(database, &snapshot.allocation, kind, row, session).await? {
                     return Ok(Err(HistoryHold::ReferenceAccountingIncomplete));
                 }
+            }
+        }
+        if row.contains_key("channel_control_admission") {
+            if let Err(hold) =
+                controls::command(database, &snapshot.allocation, row, session).await?
+            {
+                return Ok(Err(hold));
             }
         }
         result.push(project("agent_commands", row)?);
