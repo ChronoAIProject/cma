@@ -121,6 +121,20 @@ impl MongoBridgeAllocationStore {
         store.initialize_cleanup_jobs().await.map_err(|_| {
             layer2_core::StoreError::Unavailable("create explicit cleanup job indexes".into())
         })?;
+        for field in [
+            "sandbox_admission.sandbox_id",
+            "record.placement.target.sandbox_id",
+        ] {
+            store
+                .records
+                .create_index(IndexModel::builder().keys(doc! {field:1_i32}).build())
+                .await
+                .map_err(|_| {
+                    layer2_core::StoreError::Unavailable(
+                        "create Channel storage retention lookup index".into(),
+                    )
+                })?;
+        }
         store.initialize_workspace_cleanup().await.map_err(|_| {
             layer2_core::StoreError::Unavailable("create owned Workspace cleanup indexes".into())
         })?;

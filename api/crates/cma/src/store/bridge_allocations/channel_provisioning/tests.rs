@@ -7,6 +7,8 @@ mod channel_grants;
 mod children;
 #[path = "tests/fixture.rs"]
 pub(crate) mod fixture;
+#[path = "tests/reuse_cleanup_home.rs"]
+mod home;
 #[path = "tests/renewal.rs"]
 mod renewal;
 #[path = "tests/reuse.rs"]

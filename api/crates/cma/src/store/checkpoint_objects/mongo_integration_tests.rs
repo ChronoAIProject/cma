@@ -16,6 +16,8 @@ use crate::store::sandbox_mongo_integration_tests::sandbox;
 
 use super::model::{sha256_hex, ArchiveIdentity, ManifestDoc};
 use super::MongoCheckpointObjectStore;
+#[path = "channel_retention_tests.rs"]
+mod channel_retention;
 
 struct FailedDeleteStore {
     delegate: std::sync::Arc<dyn crate::store::CheckpointBlobStore>,

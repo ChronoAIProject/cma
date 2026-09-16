@@ -1,5 +1,5 @@
 //! A disposable in-memory volume store; runtime status still comes from the adapter.
-use super::super::super::fixture::{Fixture, VerifiedHuman};
+use super::fixture::{Fixture, VerifiedHuman};
 use crate::sandbox::channel_provisioning::{
     ChannelProvisioningDependencies, ChannelProvisioningDriver,
 };

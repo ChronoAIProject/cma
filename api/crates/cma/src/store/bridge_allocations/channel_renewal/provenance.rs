@@ -21,23 +21,22 @@ impl SandboxCredentialProvenance for MongoBridgeAllocationStore {
             .ok_or_else(held)?;
         let sandbox = read_sandbox(&document).map_err(|_| held())?;
         if sandbox.id != *sandbox_id
-            || document.contains_key("channel_creation")
-            || document.contains_key("channel_provisioning")
             || document.contains_key("channel_renewal")
             || document.contains_key("channel_lifecycle_credential")
             || document.contains_key("channel_mint_reconciliation")
-            || document.contains_key("channel_retirement")
         {
             return Err(held());
         }
         // An incomplete/corrupt resource-side provenance record must not
         // silently reclassify a Channel Sandbox into the ordinary token lane.
-        if self
-            .records
-            .find_one(doc! {"sandbox_admission.sandbox_id":sandbox_id.as_str()})
-            .await
-            .map_err(|_| held())?
-            .is_some()
+        if crate::store::channel_storage_retention::required(
+            &database,
+            sandbox_id.as_str(),
+            Some(&document),
+            None,
+        )
+        .await
+        .map_err(|_| held())?
         {
             return Err(held());
         }

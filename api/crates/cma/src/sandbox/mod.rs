@@ -58,6 +58,8 @@ pub(crate) use title_worker::ProviderTitleEndpoint;
 pub(crate) use unavailable_credentials::UnavailableSandboxCredentials;
 
 #[cfg(test)]
+pub(crate) use reconciliation::SandboxReconciler;
+#[cfg(test)]
 pub(crate) use workspace_worker::{
     WorkspaceWorker, WorkspaceWorkerConfig, WorkspaceWorkerDependencies,
 };

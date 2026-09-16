@@ -5,6 +5,8 @@ mod asynchronous;
 mod fixture;
 #[path = "retirement_recovery_tests.rs"]
 mod recovery;
+#[path = "retention_tests.rs"]
+mod retention;
 use crate::sandbox::channel_retirement::model::RetirementPhase;
 use fixture::RetirementFixture;
 use layer2_core::sandbox::store::{AgentLogStore, AgentStore};
@@ -80,7 +82,15 @@ async fn channel_retirement_records_scoped_cleanup_preserves_history_and_holds_r
     assert!(held.retired_at.is_none());
     assert_eq!(f.adapter.teardowns.load(Ordering::SeqCst), 1);
     let audits = f.db().collection::<Document>("channel_retirement_audits");
-    assert_eq!(audits.count_documents(doc! {}).await.unwrap(), 5);
+    assert_eq!(audits.count_documents(doc! {}).await.unwrap(), 6);
+    assert!(f
+        .db()
+        .collection::<Document>("sandboxes")
+        .find_one(doc! {"_id":after.id.as_str()})
+        .await
+        .unwrap()
+        .unwrap()
+        .contains_key("channel_storage_retention"));
     let audit = audits
         .find_one(doc! {"action":"key_revoked"})
         .await
