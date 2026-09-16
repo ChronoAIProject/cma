@@ -5,6 +5,7 @@ import type {
   BridgeDeliveryStatus,
 } from '@chronoai/cma-sdk';
 import { Button } from '../ui/Button';
+import { RiskConfirmation } from '../ui/RiskConfirmation';
 
 export const deliveryStatus: Readonly<Record<BridgeDeliveryStatus, string>> = {
   pending: 'Queued',
@@ -26,6 +27,7 @@ export function DeliveryHistory({
   readonly onRecover: (action: BridgeDeliveryRecoveryAction) => void;
 }) {
   const [accepted, setAccepted] = useState(false);
+  const [reviewAbandon, setReviewAbandon] = useState(false);
   const unknown = item.status === 'unknown';
   const retry =
     ['unknown', 'rejected', 'retry_wait'].includes(item.status) && item.attempts.length < 16;
@@ -93,7 +95,7 @@ export function DeliveryHistory({
           </Button>
         ) : null}
         {abandon ? (
-          <Button disabled={disabled} onClick={() => onRecover({ kind: 'abandon' })}>
+          <Button disabled={disabled} onClick={() => setReviewAbandon(true)}>
             Abandon reply
           </Button>
         ) : null}
@@ -101,6 +103,21 @@ export function DeliveryHistory({
           Check delivery state
         </Button>
       </div>
+      <RiskConfirmation
+        open={reviewAbandon}
+        title="Abandon this reply?"
+        description={`Stop all future delivery attempts for reply ${item.sequence}, part ${item.chunk_index + 1} of ${item.chunk_count}. Earlier delivery may already have occurred. This cannot be undone; the conversation and reply history remain available.`}
+        acknowledgeLabel="I understand that this reply will no longer be sent or retried."
+        confirmLabel="Confirm abandon reply"
+        confirmDisabled={disabled || !abandon}
+        onCancel={() => setReviewAbandon(false)}
+        onConfirm={() => {
+          if (!disabled && abandon) {
+            setReviewAbandon(false);
+            onRecover({ kind: 'abandon' });
+          }
+        }}
+      />
     </li>
   );
 }
