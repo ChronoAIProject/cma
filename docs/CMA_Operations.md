@@ -489,7 +489,7 @@ are not a live rewrite mechanism for published profiles or existing settings.
 
 ## Bridge rollout switches
 
-The ten Bridge switches are independent process-start booleans. Missing values
+The registered feature switches are independent process-start booleans. Missing values
 mean false; only the exact strings `true` and `false` are accepted. A stage also
 requires its pinned platform switch. Enabling management does not enable ingress
 or workers. Disabling ingress lets previously accepted work drain when its other
@@ -542,11 +542,12 @@ can renew after reset only under the original resource identity and the current
 and retired resources block renewal. Ordinary owner-token issuance never
 substitutes for missing Channel authority.
 
-Dedicated Channel revival and retirement authority remain separate lifecycle
-work. Until those paths are supported, Channel revival and image rotation hold
-before checkpoint, runtime or retained-credential delivery effects. Ordinary
-manual and Trigger lifecycle behavior continues through its existing authority
-path. The active-runtime renewal path does not authorize these restore effects.
+Dedicated Channel revival and retirement use their retained original-human,
+allocation, resource and runtime authority. Renewal alone does not authorize
+restore or teardown. Retirement retains home, checkpoint and history data and
+holds final Retired publication and physical cleanup. Image rotation remains
+held. See [Channel lifecycle recovery](CMA_Channel_Lifecycle_Recovery.md) for the
+implemented paths and their remaining verification boundaries.
 
 ## Platform Settings
 
@@ -581,120 +582,46 @@ must remain **one API replica**, with Recreate rollout, until a durable atomic
 ledger replaces them. Restart resets of process-local counters are a known
 operational limitation, not proof of a distributed quota.
 
-## One-Time Reset And Direct Deployment
+## Deployment continuity and historical reset procedure
 
-Rehearse against a disposable staging database/provider scope first and retain
-the dry-run target inventory. Do not run a migration-era binary concurrently
-with the new model. Never reuse a generic shell variable such as `HOME` to name
-a target, and never delete by an unvalidated glob or an entire shared namespace.
+The migration-era reset and direct-deployment procedure is revoked for milestone
+17 by [#850](https://github.com/ChronoAIProject/cma/issues/850). It provides no
+current authority to reset a database, rename live collections, remove owner
+Sandboxes, delete provider inventory or adopt a replacement runtime for an
+existing Agent. Deployment requires the completed continuity evidence and a
+compatible rollback floor described at the start of this document.
 
-1. Finish implementation, independent review, local gates and all three image
-   builds/scans. Submit the separately reviewed CLAUDE contract change and the
-   completed implementation to `develop`. Do not touch `main` or release workflows.
-2. Record the exact old and replacement image digests, manifest revisions,
-   Kubernetes context, database, deployment identity and provider resource ids.
-   Keep Trigger enablement off. Retain a recoverable database backup or record
-   the expressly authorized irreversible loss of historical CMA state.
-3. Scale only the context-pinned `chrono-bot/cma-api` Deployment to zero and
-   verify its pods and in-flight workers are gone. Wait for admitted provider
-   effects to settle. The old control plane must not recreate a just-deleted pod.
-   A stopped worker or elapsed client deadline does not prove that an earlier
-   external upload can no longer finish; preserve its exact cleanup authority.
-4. List the provider's complete paginated inventory, resolve only CMA's matching
-   deployment/namespace labels, and delete each resolved Sandbox via the provider
-   API. Verify each absence; do not use namespace-wide Kubernetes deletion.
-5. Resolve and confirm the exact CMA database name from live configuration.
-   Preserve `checkpoint_archive_tombstones` and all still-needed exact object
-   deletion intents before resetting historical application collections. Prefer
-   a reviewed collection-by-collection reset that leaves this cleanup authority
-   intact. `dropDatabase()` is permissible only after a protected, verified
-   export of that authority and an explicit restore plan: retain exact opaque
-   physical keys, schema versions and retry state, verify the restored inventory
-   against the export, and restore it before starting any new cleanup worker.
-   A generic backup without a verified restoration procedure is insufficient.
-   Never drop the URI's default database, an admin database, NyxID's database or
-   a database whose identity was inferred from a shell default. Historical-state
-   reset authorization does not authorize losing uncertain-upload ownership.
-6. Clean only exact historical CMA object keys proven orphaned by the retained
-   inventory. Do not delete the shared external bucket or apply broad lifecycle
-   expiry to active checkpoint metadata/tombstones. Failed/ambiguous cleanup is
-   retained for reconciliation, not reported as completed. A temporary GET 404
-   after DELETE does not expire authority for an earlier ambiguous upload; absent
-   actual backend evidence bounding its write lifetime, keep its tombstone.
-7. Apply the reviewed ConfigMaps and secret references. Install the new API/web
-   immutable digests and pin `CHRONO_SANDBOX_IMAGE` to the final contract-3 runtime.
-   Verify the manifests' health endpoints, resources, nonroot security, runtime
-   label and stream timeouts against the built images.
-8. Start exactly one new API instance. Wait for collection/index initialization,
-   default profile seeding and `/ready`; verify `/livez`, `/openapi.json`,
-   `/api/v1/defaults`, operator inventories and the three default revisions.
-9. Verify the **existing** NyxID visitor/registration/baseline prerequisites
-   without changing them. After prerequisite and image smoke checks pass, enable
-   only the controlled test campaign and exercise all final journeys with
-   disposable, unadvertised test Triggers. Pause/disable it on systemic failure.
-   If a missing provider prerequisite requires new authority, leave public
-   enablement closed and report that exact blocker.
-10. Open public use only after the required verification has passed. Publish the
-    requested public research Trigger using the three actual public profile
-    revisions; retain its descriptor and real click-through evidence. Record the
-    final `develop` commit and deployed API/web/runtime digests together.
+Health becoming Ready is not proof of conversation continuity, checkpoint
+restoration, baseline visitor access or correct embed behavior. The API pod's
+termination grace must exceed its bounded HTTP and worker drains; review it
+whenever those timeouts change. Preserve accepted operations, immutable creation
+receipts, native conversations, checkpoints and unresolved cleanup authority.
+An expired client deadline or stopped worker does not prove an earlier provider
+effect can no longer finish. No ordinary rollout may delete owner Sandboxes to
+conceal a recovery defect.
 
-Health becoming Ready is not proof of checkpoint restoration, baseline visitor
-access or correct embed behavior. The API pod's termination grace must exceed
-its bounded HTTP and worker drains; review it whenever those timeouts change.
-No ordinary rollout may delete owner Sandboxes to conceal a recovery defect.
+### Historical collection evidence
 
-### Historical Collection Isolation
+The September 7 inventory and isolated migration rehearsal remain historical
+evidence only. They do not establish the current production inventory or permit
+repeating collection renames, index removal or resets. The local ignored
+`archived_legacy_collections_preserve_custody_and_allow_full_new_store_bootstrap`
+test exercises initialization beside archived records and the prior event-index
+boundary in an owned disposable database.
 
-The reviewed September 7 inventory has 23 application collections and three
-views. The physical `system.views` namespace is not application data to export
-or restore directly. Preserve its view definitions through collection metadata:
-`sessions_v2` reads `sessions_v3`, `sessions` reads `sessions_v2`, and
-`session_events` reads `session_events_v2`; all three pipelines are empty.
-Revalidate this complete inventory at the zero-writer boundary before applying
-the procedure. A rehearsal snapshot taken while the old API is live does not
-replace the authoritative snapshot after its pod has fully exited.
+Retain historical encrypted custody with its original encryption key and
+deployment identity, unresolved revocation debts, session tombstones and exact
+legacy object-key ownership until separately verified settlement. A rejected
+revocation is not successful cleanup. Historical view definitions and index
+metadata remain part of restoration evidence; a generic backup does not prove
+that the original namespace, indexes and native conversations can be recovered.
 
-The new stores validate only their explicit collection names. Preserve the old
-collections whose names collide by renaming each to `legacy_20260907_<name>`
-inside the confirmed `chrono-bot` database, with `dropTarget: false` and majority
-acknowledgment. The exact collision set is `activity`, `auth_login_attempts`,
-`auth_subjects`, `operation_claims`, `platform_settings`, `trigger_launch_events`,
-`trigger_launches`, and `users`. Stop if a target already exists or the inventory
-changes. Leave all other historical application collections and views intact.
-Do not add new schema markers to old documents.
-
-An empty conflicting collection still needs isolation: the old unique
-`trigger_launch_events_by_sequence` index covers `launch_id` and `sequence`.
-New events use `seq`; retaining the old index would incorrectly reject the
-second event for a Launch because both old `sequence` values are missing.
-
-The protected snapshot must retain canonical, type-preserving BSON/EJSON
-documents, collection options, original UUIDs, validators, complete indexes,
-and view definitions. Read documents in a snapshot transaction and verify
-metadata remains stable before and after it. Restore into an isolated local
-Mongo instance, compare canonical document hashes, counts, index definitions
-and views, and rehearse the exact renames. Disable TTL only on that disposable
-Mongo instance during the comparison; do not change production-wide TTL policy.
-The ignored `archived_legacy_collections_preserve_custody_and_allow_full_new_store_bootstrap`
-test additionally exercises full new-store initialization and the event-index
-boundary beside preserved historical records.
-
-After backing up its exact index definition, remove only `auth_subject_expiry`
-from `legacy_20260907_auth_subjects`. Otherwise archived `delete_after` dates
-will erase owner token custody still needed for historical key cleanup. Verify
-the archived documents are unchanged and every other index remains intact.
-Retain the original encryption key and deployment identity: renaming preserves
-encrypted payloads, but does not make their historical schema readable by new
-workers. Preserve `auth_session_credentials`, its unresolved revocation debts,
-session tombstones, and exact legacy object-key ownership indefinitely until
-separately verified settlement. A rejected revocation is not a successful cleanup.
-
-Never start the old API against the post-rename live database to settle legacy
-debts. It would reopen the original namespaces and run renewal, checkpoint,
-host-sweep and reconciliation workers. Use a separately reviewed, narrowly
-scoped cleanup procedure; normal CMA-owned key revocation does not authorize
-NyxID role, account, service configuration or administrative changes.
+Never start an incompatible historical API against the live database to settle
+old debts. Its workers could reopen namespaces or run renewal, checkpoint and
+reconciliation against resources they cannot safely interpret. Any legacy
+cleanup requires a separately reviewed scope and exact retained authority;
+normal CMA-owned key revocation does not authorize NyxID role, account, service
+configuration or administrative changes.
 
 ### Existing-Owner Verification
 
