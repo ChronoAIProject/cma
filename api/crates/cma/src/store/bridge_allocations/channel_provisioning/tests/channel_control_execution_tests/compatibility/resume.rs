@@ -95,6 +95,29 @@ pub(super) async fn exercise(h: &Harness) {
     }
     if refused {
         assert!(after.work.dispatch.is_none());
+        match h.scenario.mode.as_str() {
+            "later-turn" | "consent-reenabled" => {
+                assert_eq!(after.status, AgentResponseStatus::Failed);
+                assert_eq!(sidecar.execution_hold, ChannelControlHold::Refused);
+                assert_eq!(
+                    after.work.failure.as_ref().unwrap().code,
+                    if h.scenario.mode == "later-turn" {
+                        CommandFailureCode::TargetTurnChanged
+                    } else {
+                        CommandFailureCode::AuthorityRevoked
+                    }
+                );
+            }
+            "canonical-disagreement" => {
+                assert_eq!(after.status, AgentResponseStatus::WaitingAction);
+                assert_eq!(
+                    sidecar.execution_hold,
+                    ChannelControlHold::WorkerUnavailable
+                );
+                assert!(after.work.failure.is_none());
+            }
+            _ => unreachable!(),
+        }
     } else {
         assert_eq!(
             after.work.dispatch.as_ref().unwrap().turn_sequence,

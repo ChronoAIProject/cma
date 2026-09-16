@@ -1,11 +1,12 @@
 # Channel text controls: admission and execution foundation
 
 Production Channel control ingress remains disabled for #854, with mixed-version
-acceptance still tracked by #850. The implementation includes durable admission
-and execution adapters, exercised with disposable fixtures. Production does not
-construct those adapters or advertise their operations. Authenticated CMA
-dashboard/API controls remain the available control path; approval capability
-and reply-tool eligibility are unchanged.
+acceptance still tracked by #850. Production always constructs the dedicated
+execution adapter so retained accepted controls can drain or reconcile while
+fresh ingress is disabled. The admission adapter remains unconfigured and the
+context tool advertises no control operations. Authenticated CMA dashboard/API
+controls remain the available control path; approval capability and reply-tool
+eligibility are unchanged.
 
 After signature verification, trusted raw human/message/text classification and
 the configured source-admission checks, CMA reserves the case-sensitive namespace
@@ -131,6 +132,27 @@ does not start another response. An uncertain runtime write retains its recovery
 state without automatic replay. Admission and execution create no outgoing chat
 message.
 
+Held controls also have a refusal-only transaction. A positively proved local
+grant revocation or later complete consent generation (including revoke then
+re-enable) ends the original held command with `authority_revoked`. A terminal
+original source or changed turn/runtime on the same Agent incarnation ends with
+`target_turn_changed`. The transaction rereads and fences the canonical callback
+and provider acceptance, immutable intent/reference, source, consent history,
+grant and Agent before settling the original receipt. Missing/corrupt evidence,
+an uncertain remote authority check or storage failure preserves the hold.
+Refusal uses the original bounded release attempt, never a renewed deadline;
+unknown commit recovery rereads the original common command. Genuine queue
+expiry remains separately typed as `queue_timeout`. None of these paths emits an
+outgoing message or creates runtime input.
+
+The existing `CHRONO_BRIDGE_EXECUTION_ENABLED` flag and the control's exact
+platform flag gate only the transition from a held accepted control into the
+shared command queue. Telegram and TelegramNew are separate platforms. Disabling
+these flags preserves unexpired held controls and still permits genuine queue
+expiration. Already released or claimed controls continue to require fresh
+source authority; dispatch-bound commands can reconcile uncertain outcomes
+without replay. No additional control-release flag is required.
+
 Enablement requires a selected rollback baseline that understands version-2
 receipts, counts held controls in queue capacity, and can execute or reconcile
 already accepted controls with fresh admission disabled. The published reader
@@ -139,7 +161,9 @@ Refusing an unknown receipt or merely preserving a held command does not establi
 uninterrupted rollback. Cross-process fixtures exercise the earlier reader and
 the combined compatible executor against the same actual persisted records;
 production enablement remains gated on their completed validation and deployment
-compatibility evidence.
+compatibility evidence. Constructor and database fixtures do not establish live
+worker handoff: the production runtime registry is process-local, so retained
+Agent, runtime and native conversation continuity still needs deployment evidence.
 
 NyxID ignores callback response bodies, so this response does not send a chat
 message. External messages require an actual `reply_to_channel` tool invocation;

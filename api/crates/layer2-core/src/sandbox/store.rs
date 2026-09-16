@@ -13,6 +13,9 @@ use super::{
 mod service_traits;
 pub use service_traits::*;
 
+mod agent;
+pub use agent::AgentStore;
+
 mod agent_control;
 mod background_checkpoint;
 pub use agent_control::{
@@ -277,38 +280,6 @@ pub trait WorktreeStore: Send + Sync {
         workspace_id: &WorkspaceId,
         page: &PageRequest,
     ) -> Result<Page<Worktree>, SandboxStoreError>;
-}
-
-#[async_trait]
-pub trait AgentStore: Send + Sync {
-    /// Unsupported store compositions cannot authorize Trigger command execution.
-    async fn trigger_execution_proof(
-        &self,
-        _command: &super::agent_io::AdmittedAgentCommand,
-    ) -> Result<super::agent_io::TriggerExecutionProof, SandboxStoreError> {
-        Err(SandboxStoreError::Unavailable(
-            "Trigger command execution is unavailable".into(),
-        ))
-    }
-    /// Must verify both the Agent sidecar and permanent binding before a legacy write.
-    async fn require_legacy_first_message(&self, _agent: &Agent) -> Result<(), SandboxStoreError> {
-        Err(SandboxStoreError::Unavailable(
-            "first-message protocol guard is unavailable".into(),
-        ))
-    }
-
-    async fn create_agent(&self, agent: Agent) -> Result<(), SandboxStoreError>;
-    async fn get_agent(&self, id: &AgentId) -> Result<Option<Agent>, SandboxStoreError>;
-    async fn save_agent(
-        &self,
-        expected_revision: u64,
-        agent: Agent,
-    ) -> Result<(), SandboxStoreError>;
-    async fn list_agents(
-        &self,
-        owner: &SubjectId,
-        page: &PageRequest,
-    ) -> Result<Page<Agent>, SandboxStoreError>;
 }
 
 #[async_trait]

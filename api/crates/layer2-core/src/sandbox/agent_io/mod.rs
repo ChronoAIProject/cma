@@ -60,6 +60,7 @@ pub use channel::{
 pub use channel_control::{
     ChannelControlExecutionAuthorization, ChannelControlExecutionFence,
     ChannelControlExecutionService, ChannelControlExecutionSnapshot, ChannelControlExecutionStore,
+    ChannelControlRefusalSnapshot,
 };
 pub use command::{AgentCommand, AgentInputOrder};
 pub use event::{

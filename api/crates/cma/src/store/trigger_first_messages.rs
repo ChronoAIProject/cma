@@ -15,7 +15,7 @@ mod projection;
 mod refusal;
 mod replay;
 pub(in crate::store) use admission::attach;
-pub(in crate::store) use execution::{proof, proof_in_session, require_mutation};
+pub(in crate::store) use execution::{proof, proof_in_session, ready_for_claim, require_mutation};
 pub(in crate::store) use projection::project_terminal;
 pub(in crate::store) use refusal::reject_unclaimed;
 pub(in crate::store) const COLLECTION: &str = "trigger_first_message_bindings";
