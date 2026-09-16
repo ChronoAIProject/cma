@@ -66,8 +66,18 @@ pub(super) async fn finish(
 }
 
 impl MongoBridgeAllocationStore {
+    #[cfg(test)]
     pub(in crate::store) async fn cleanup_released_workspace_capacity(
         &self,
+        allocation: &AllocationRecord,
+        session: &mut ClientSession,
+    ) -> Result<bool, MutationError> {
+        let database = self.bridges.client.database(&self.records.namespace().db);
+        Self::released_reuse_workspace_capacity(&database, allocation, session).await
+    }
+
+    pub(in crate::store) async fn released_reuse_workspace_capacity(
+        database: &Database,
         allocation: &AllocationRecord,
         session: &mut ClientSession,
     ) -> Result<bool, MutationError> {
@@ -77,10 +87,9 @@ impl MongoBridgeAllocationStore {
         ) {
             return Ok(false);
         }
-        let database = self.bridges.client.database(&self.records.namespace().db);
         let sandbox = crate::store::sandboxes::read_sandbox(
             &read(
-                &database,
+                database,
                 "sandboxes",
                 allocation.placement.target().sandbox_id.as_str(),
                 session,
@@ -88,7 +97,7 @@ impl MongoBridgeAllocationStore {
             .await?,
         )
         .map_err(|_| AllocationError::Corrupt)?;
-        let proof = proof::retained(&database, allocation, &sandbox, session)
+        let proof = proof::retained(database, allocation, &sandbox, session)
             .await
             .map_err(core_error)?;
         Ok(proof.is_some_and(|(_, state, _)| state.progress == WorkspaceCleanupProgress::Complete))

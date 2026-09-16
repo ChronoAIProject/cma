@@ -14,6 +14,8 @@ pub(crate) mod fixture;
 use fixture::ReuseFixture;
 #[path = "reuse/faults.rs"]
 mod faults;
+#[path = "reuse/owner_reserve.rs"]
+mod owner_reserve;
 #[path = "reuse/progress.rs"]
 mod progress;
 

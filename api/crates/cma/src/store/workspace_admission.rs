@@ -275,15 +275,12 @@ async fn apply_admission(
     {
         return Err(ApplyError::Domain(SandboxStoreError::WorkspaceNameConflict));
     }
-    let live = store
-        .workspaces
-        .count_documents(doc! {
-            "sandbox_id": candidate.sandbox_id.as_str(),
-            "removed_at": Bson::Null,
-        })
-        .session(&mut *session)
+    let live = super::shared_child_capacity::workspaces(store, &sandbox.id, session)
         .await
-        .map_err(ApplyError::Driver)?;
+        .map_err(|error| match error {
+            super::shared_child_capacity::CapacityError::Domain(error) => ApplyError::Domain(error),
+            super::shared_child_capacity::CapacityError::Driver(error) => ApplyError::Driver(error),
+        })?;
     if live >= u64::from(sandbox.limits.max_workspaces) {
         return Err(ApplyError::Domain(
             SandboxStoreError::WorkspaceLimitReached {

@@ -8,17 +8,16 @@ pub(in crate::store) use publication::require_complete;
 pub(super) const REMOVAL_AUDITS: &str = "channel_reuse_cleanup_removal_audits";
 
 impl MongoBridgeAllocationStore {
-    pub(in crate::store::bridge_allocations) async fn cleanup_released_agent_capacity(
-        &self,
+    pub(in crate::store) async fn released_reuse_agent_capacity(
+        database: &Database,
         allocation: &AllocationRecord,
         session: &mut ClientSession,
     ) -> Result<bool, MutationError> {
-        let database = self.bridges.client.database(&self.records.namespace().db);
         let id = format!(
             "{}:child-removal:v1",
             ChannelReuseCleanupState::id(&allocation.id)
         );
-        let row = majority_collection::<Document>(&database, CLEANUP_TOMBSTONES)
+        let row = majority_collection::<Document>(database, CLEANUP_TOMBSTONES)
             .find_one(doc! {"_id":id})
             .session(&mut *session)
             .await?;
@@ -35,12 +34,12 @@ impl MongoBridgeAllocationStore {
         {
             return Err(AllocationError::Corrupt.into());
         }
-        let audit = read(&database, REMOVAL_AUDITS, &audit_id(&state), session).await?;
+        let audit = read(database, REMOVAL_AUDITS, &audit_id(&state), session).await?;
         if read_removal(&audit)? != state {
             return Err(AllocationError::Corrupt.into());
         }
-        publication::require_complete(&database, &state, session).await?;
-        fence_row(&database, CLEANUP_TOMBSTONES, row, session).await?;
+        publication::require_complete(database, &state, session).await?;
+        fence_row(database, CLEANUP_TOMBSTONES, row, session).await?;
         Ok(true)
     }
 

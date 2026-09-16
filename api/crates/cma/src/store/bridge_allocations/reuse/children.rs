@@ -21,7 +21,7 @@ pub(super) async fn apply(
     }
     current.require(authority)?;
     store
-        .require_reuse_capacity(&current.allocation, session)
+        .require_reuse_continuation_capacity(&current.allocation, session)
         .await?;
     let database = store.bridges.client.database(&store.records.namespace().db);
     let resources = &store
