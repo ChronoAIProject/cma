@@ -200,6 +200,7 @@ fn image() -> String {
     CodexSandboxSpec::default().deployment.image.uri
 }
 
+mod connection_recovery_tests;
 mod creation_revival;
 mod service_access;
 
