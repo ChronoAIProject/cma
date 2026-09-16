@@ -221,6 +221,7 @@ impl ReuseFixture {
             relay: RelayCorroboration::AbsentInboxOnly,
             admission: InboxAdmission::Accepted,
             capabilities: None,
+            text_attachment: None,
             execution_hold: None,
             accepted_at: now,
             expires_at: now + 3600,

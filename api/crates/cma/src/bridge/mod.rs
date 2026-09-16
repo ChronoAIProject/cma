@@ -12,8 +12,8 @@ use layer2_core::resource_access::{ResourceOwner, ResourceShareStore, ResourceTa
 use crate::auth::AuthMode;
 use crate::store::MongoBridgeStore;
 
-#[allow(dead_code)] // No connector fetch grants, expiring custody or Agent media consumer yet.
-mod attachments;
+#[allow(dead_code)] // Binary media candidates still require an unavailable scanner.
+pub(crate) mod attachments;
 mod capability_catalog;
 pub(crate) mod channel_renewal_work;
 pub(crate) mod channel_scheduler;
