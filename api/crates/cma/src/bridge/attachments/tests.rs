@@ -285,3 +285,32 @@ fn mime_signatures_are_not_treated_as_scanning_or_format_validation() {
     assert!(Mime::Pdf.corroborates(b"%PDF-1.7"));
     assert!(!Mime::Png.corroborates(b"PNG"));
 }
+
+#[tokio::test]
+async fn bounded_utf8_text_uses_text_policy_and_never_claims_scanner_approval() {
+    let mut f = Fixture::new();
+    f.authority.mime = Mime::Text;
+    f.http.mime = Some("text/plain".into());
+    f.http.length = Some(5);
+    f.http.chunks = vec![Ok(b"hello".to_vec())];
+    let result = retrieve(
+        &request(),
+        &f.authority,
+        &f.dns,
+        &f.http,
+        &UnavailableScanner,
+    )
+    .await
+    .unwrap();
+    assert_eq!(&*result.bytes, b"hello");
+    assert!(!f.events().contains(&"scan"));
+    assert_eq!(
+        f.events()
+            .iter()
+            .filter(|event| **event == "revalidate")
+            .count(),
+        2
+    );
+    f.http.chunks = vec![Ok(b"ab\0cd".to_vec())];
+    assert_eq!(f.run().await.err(), Some(Unavailable::Mime));
+}

@@ -112,7 +112,9 @@ An exact already-admitted held Sandbox recovers its original receipt before the
 fresh-admission limit is checked. This does not revoke retained resources or
 change live profiles or owner limits. Shared-parent placement continues using
 its separately configured Workspace/Agent reserves. The owner slot reserve is
-one bounded quota rule; broader operational limits remain tracked in #868.
+one bounded quota rule. The [reply backlog cap](CHANNEL_REPLY_TOOLS.md#pending-reply-backlog)
+separately limits each Bridge to 256 outstanding prepared messages across all
+retained generations; broader operational limits remain tracked in #868.
 
 The reserve changes admission behavior without changing the stored schema.
 Older Channel writers still apply the full owner limit and can consume the

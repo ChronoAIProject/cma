@@ -66,17 +66,24 @@ async fn opening_session_can_negotiate_and_discover_before_publication_but_canno
     )
     .unwrap();
     let tools = body["result"]["tools"].as_array().unwrap();
-    assert_eq!(tools.len(), 3);
+    assert_eq!(tools.len(), 4);
     assert_eq!(tools[1]["name"], "reply_to_channel");
     assert_eq!(
         tools[1]["inputSchema"]["required"],
         json!(["reply_context", "request_key", "text"])
     );
     assert_eq!(tools[1]["inputSchema"]["additionalProperties"], false);
-    assert_eq!(tools[2]["name"], "read_channel_control_context");
-    assert_eq!(tools[2]["annotations"]["readOnlyHint"], true);
+    assert_eq!(tools[2]["name"], "edit_channel_reply");
+    assert_eq!(
+        tools[2]["inputSchema"]["required"],
+        json!(["reply_context", "original_outbox_id", "request_key", "text"])
+    );
     assert_eq!(tools[2]["inputSchema"]["additionalProperties"], false);
-    assert!(tools[2]["description"]
+    assert_eq!(tools[2]["annotations"]["destructiveHint"], true);
+    assert_eq!(tools[3]["name"], "read_channel_control_context");
+    assert_eq!(tools[3]["annotations"]["readOnlyHint"], true);
+    assert_eq!(tools[3]["inputSchema"]["additionalProperties"], false);
+    assert!(tools[3]["description"]
         .as_str()
         .unwrap()
         .contains("exact current runtime supports"));
