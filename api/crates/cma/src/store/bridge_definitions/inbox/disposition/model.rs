@@ -1,4 +1,4 @@
-//! Additive shared callback/provider choice. No payload or reply credentials.
+//! Shared callback/provider choice: v1 Message/refusal and v2 accepted intent.
 use layer2_core::{
     bridge::{
         ingress::{CallbackAcceptance, CallbackError, InboxWrite},
@@ -90,6 +90,8 @@ impl CallbackDisposition {
     ) -> Result<Self, CallbackError> {
         let source = Source::capture(write);
         let value = Self {
+            // Fresh ingress still supports only Message/refusal. Reading a v2
+            // receipt cannot enable an accepted-control writer through here.
             version: 1,
             original: source.clone(),
             source,
@@ -106,8 +108,7 @@ impl CallbackDisposition {
     fn validate(&self) -> Result<(), CallbackError> {
         self.source.validate()?;
         self.original.validate()?;
-        if self.version != 1
-            || !self.source.same_scope(&self.original)
+        if !self.source.same_scope(&self.original)
             || self.receipt.callback_id() != self.original.inbox_id
             || (self.source != self.original && self.provider.is_none())
             || self
@@ -118,13 +119,25 @@ impl CallbackDisposition {
             return Err(CallbackError::Unavailable);
         }
         let (bridge, message) = match &self.receipt {
-            CallbackAcceptance::Message(receipt) => (&receipt.bridge_id, &receipt.message_id),
+            CallbackAcceptance::Message(receipt) if self.version == 1 => {
+                (&receipt.bridge_id, &receipt.message_id)
+            }
             CallbackAcceptance::ControlRefused(receipt) => {
-                if receipt.version != 1 {
+                if self.version != 1 || receipt.version != 1 {
                     return Err(CallbackError::Unavailable);
                 }
                 (&receipt.bridge_id, &receipt.message_id)
             }
+            CallbackAcceptance::ControlAccepted(receipt) => {
+                if self.version != 2
+                    || receipt.version != 2
+                    || !receipt.intent_id.strip_prefix("cci_").is_some_and(hash)
+                {
+                    return Err(CallbackError::Unavailable);
+                }
+                (&receipt.bridge_id, &receipt.message_id)
+            }
+            _ => return Err(CallbackError::Unavailable),
         };
         if bridge != &self.original.pin.bridge_id || message != &self.original.message_id {
             return Err(CallbackError::Unavailable);
@@ -229,3 +242,6 @@ fn hash(value: &str) -> bool {
             .bytes()
             .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
+
+#[cfg(test)]
+mod tests;
