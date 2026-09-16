@@ -1093,6 +1093,23 @@ Read `/api/v1/bridge-connectors/capabilities?organization={id}` for the versione
 
 Creation starts disabled. The caller selects an owner, existing bot/key/routes, partition and placement, sender/chat/group policy, reply policy, and bounded limits. CMA derives the issuer, provider endpoint, callback URL, and internal custody locator; these fields are rejected in client configuration. After creation, read `/bridges/{id}/configuration` as a manager to verify the prepared callback URL and selected configuration. Preserve unrelated NyxID routes, then PUT the exact selected key to `/bridges/{id}/credential` with `expected_revision`. The key is write-only and its response contains only custody revision/presence/revocation. Identical selected-key import is idempotent; different material under the retained selected custody identity conflicts. A replacement key selection creates distinct custody.
 
+Custody retains a versioned snapshot of the selected key's authority. Each use
+checks current ownership, active/expiry state, callback, routes and possession,
+and compares permission fields before and after the possession read within one
+bounded verification. NyxID's usage-driven row version may increase; it cannot
+fall below the import version or decrease between those reads, and it never
+replaces CMA's retained custody/outbox pin. Changes to
+the retained permissions or expiry require a new selection. Keys with credential
+bindings are unavailable because key metadata does not expose their contents.
+Historical custody without this snapshot requires an explicit same-key import
+while disabled; this verifies current authority and upgrades CMA's encrypted
+record without modifying NyxID. The row counter cannot prove that an authority
+change and reversal never occurred between observations.
+
+Complete the CMA API rollout before that reimport. Earlier API builds refuse
+upgraded custody on rollback, so recovery requires a forward repair. This
+custody upgrade preserves ordinary Sandbox/Agent instances and their histories.
+
 Background metadata and provisioning require explicit `retain_control_plane_authority: true` on key import. This additive boolean defaults to false. Consent authorizes only this Bridge, its exact owner and selected connector for 30 days, using the actual human's existing encrypted OAuth sign-in and refresh custody. The grant continues after browser logout; current account activity and exact organization admin access are checked for each operation. A new sign-in, removed provider authority, grant expiry or local key revocation stops this authority. Disable and reconnect the Bridge explicitly to attach or renew a grant; an unchanged retry preserves its original expiry. Historical key-only custody never borrows the importing actor's current login automatically.
 
 NyxID human-only metadata endpoints receive that human OAuth credential with the exact organization scope. The selected bot key is used only for its key-fenced possession check and permitted channel operations. Human OAuth tokens and the selected bridge key stay in CMA's control plane; organization Sandbox provisioning must issue a distinct organization-owned key for its pinned services. Missing grant or unsupported provisioning remains `409 bridge_renewable_authority_required`; consent alone does not prove that new-Sandbox provisioning is available.

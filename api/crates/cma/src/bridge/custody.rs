@@ -45,7 +45,13 @@ pub(crate) struct BridgeCustodyMetadata {
     pub owner: ResourceOwner,
     pub connector: layer2_core::bridge::BridgeConnector,
     pub revision: u64,
+    /// Stable import observation used by local custody/outbox fences. Fresh
+    /// provider usage may advance its row counter without replacing this pin.
     pub key_state_version: i64,
+    /// Absent legacy snapshots require explicit owner reimport. Omitting None
+    /// preserves the exact serialized AAD of previously encrypted custody.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub key_authority_v1: Option<super::types::KeyAuthority>,
     pub scopes: String,
     pub allowed_service_ids: Vec<String>,
     pub allow_all_services: bool,
@@ -78,6 +84,30 @@ impl BridgeCustodyMetadata {
             || layer2_core::seconds_from_rfc3339(&self.created_at).is_none()
         {
             return Err(bad());
+        }
+        if let Some(key) = &self.key_authority_v1 {
+            if key.id != self.connector.key_id
+                || !key.is_active
+                || key.bindings_count != 0
+                || key.scopes != self.scopes
+                || key.allowed_service_ids != self.allowed_service_ids
+                || key.allow_all_services != self.allow_all_services
+                || key.allowed_node_ids != self.allowed_node_ids
+                || key.allow_all_nodes != self.allow_all_nodes
+                || key.callback_url.as_deref() != Some(self.connector.callback_url.as_str())
+                || key.platform.as_ref().is_some_and(|platform| {
+                    super::capability_catalog::supported_platform(platform).as_ref()
+                        != Some(&self.connector.platform)
+                })
+                || key.expires_at.as_ref().is_some_and(|expiry| {
+                    mongodb::bson::DateTime::parse_rfc3339_str(expiry).is_err()
+                })
+            {
+                return Err(bad());
+            }
+            key.credential_source
+                .require_owner(&self.owner, super::types::owner_subject(&self.owner))
+                .map_err(|_| bad())?;
         }
         match (
             self.revision,

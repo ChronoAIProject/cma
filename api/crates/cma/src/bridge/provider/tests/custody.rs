@@ -302,8 +302,9 @@ async fn managed_import_resolves_exact_retained_key_and_local_revocation_stops_o
         )
         .await
         .unwrap();
+    let custody = Arc::new(CredentialMemory::default());
     let manager = crate::bridge::ManagedBridgeCredentials {
-        store: Arc::new(CredentialMemory::default()),
+        store: custody.clone(),
         provider: Arc::new(
             NyxBridgeProvider::with_endpoint(reqwest::Url::parse(&f.connector.base_url).unwrap())
                 .unwrap(),
@@ -331,6 +332,83 @@ async fn managed_import_resolves_exact_retained_key_and_local_revocation_stops_o
         .unwrap();
     assert_eq!(imported.owner, personal());
     assert_eq!(imported.created_by, context.actor);
+    assert!(imported.key_authority_v1.is_some());
+    // Model a cold persisted import at version one, followed by provider usage.
+    // Only explicit import supplied its complete snapshot; old partial records
+    // must not be silently given one by resolution.
+    custody
+        .0
+        .lock()
+        .await
+        .as_mut()
+        .unwrap()
+        .metadata
+        .key_state_version = 1;
+    let snapshot = custody
+        .0
+        .lock()
+        .await
+        .as_mut()
+        .unwrap()
+        .metadata
+        .key_authority_v1
+        .take();
+    let legacy = custody.0.lock().await.as_ref().unwrap().metadata.clone();
+    assert!(serde_json::to_value(&legacy)
+        .unwrap()
+        .get("key_authority_v1")
+        .is_none());
+    assert!(manager.resolve(&personal(), &config).await.is_err());
+    custody
+        .0
+        .lock()
+        .await
+        .as_mut()
+        .unwrap()
+        .metadata
+        .key_authority_v1 = snapshot;
+    for _ in 0..3 {
+        let lease = manager.resolve(&personal(), &config).await.unwrap();
+        assert_eq!(
+            lease.key_state_version, 1,
+            "local outbox pin remains stable"
+        );
+        manager.revalidate(&lease).await.unwrap();
+    }
+    let original_rows = f.state.replies.lock().unwrap().clone();
+    for patch in [
+        json!({"scopes":"read"}),
+        json!({"allowed_service_ids":[]}),
+        json!({"allow_all_services":true}),
+        json!({"allow_auto_connected_services":true}),
+        json!({"allowed_node_ids":["another-node"]}),
+        json!({"allow_all_nodes":true}),
+        json!({"expires_at":"2099-01-01T00:00:00Z"}),
+        json!({"platform":null}),
+        json!({"rate_limit_per_second":10}),
+        json!({"rate_limit_burst":20}),
+        json!({"purpose":"scheduled_invocation"}),
+        json!({"scheduled_write_enabled":true}),
+        json!({"rotation_predecessor_id":"different-key"}),
+        json!({"is_active":false}),
+        json!({"state_version":0}),
+        json!({"bindings_count":1}),
+        json!({"callback_url":"https://other.example/callback"}),
+    ] {
+        {
+            let mut rows = f.state.replies.lock().unwrap();
+            *rows = original_rows.clone();
+            let key = &mut rows.get_mut("/api/v1/api-keys").unwrap().1["keys"][0];
+            for (field, value) in patch.as_object().unwrap() {
+                key[field] = value.clone();
+            }
+        }
+        assert!(
+            manager.resolve(&personal(), &config).await.is_err(),
+            "{patch}"
+        );
+    }
+    *f.state.replies.lock().unwrap() = original_rows;
     let lease = manager.resolve(&personal(), &config).await.unwrap();
     assert_eq!(lease.credential_subject, SubjectId::new("person-one"));
     assert_eq!(lease.key_id, "key-one");
