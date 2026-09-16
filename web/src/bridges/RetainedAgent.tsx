@@ -4,6 +4,7 @@ import type { BridgeViewsClient } from './client';
 import { useAuthorizedRead } from '../resources/useAuthorizedRead';
 import { Picker } from '../ui/Picker';
 import { Button } from '../ui/Button';
+import { RetainedReplyPreview } from './RetainedReplyPreview';
 
 type Target = Extract<BridgePlacement, { kind: 'existing_agent' }>['target'];
 export function RetainedAgent({
@@ -89,9 +90,14 @@ export function RetainedAgent({
           <dt>Model</dt>
           <dd>{selected.profile.model ?? 'Selected by the Agent profile'}</dd>
           <dt>Existing history</dt>
-          <dd>Retained and shared with allowed channel senders through Agent replies.</dd>
+          <dd>Retained. Messages from allowed channel senders enter this existing conversation.</dd>
         </dl>
       )}
+      <RetainedReplyPreview
+        client={client}
+        agentId={value.agent_id}
+        disabled={disabled || selected === undefined}
+      />
       {page?.next !== undefined || cursors.length > 1 ? (
         <div className="bridges__actions">
           <Button

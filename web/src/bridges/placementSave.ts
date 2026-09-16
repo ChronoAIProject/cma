@@ -2,6 +2,7 @@ import { ValidationError, type BridgeConfiguration, type BridgePlacement } from 
 import type { BridgeViewsClient } from './client';
 import { isShared, loadPlacementAccess } from './placementAccess';
 import { placementUnavailable } from './usePlacementEditor';
+import { loadRetainedTarget } from './retainedTargetAccess';
 
 /** Recheck new placement intent at submission. Retained receipt recovery is separate. */
 export async function verifyPlacementForSave(
@@ -12,7 +13,22 @@ export async function verifyPlacementForSave(
   signal: AbortSignal | undefined,
 ) {
   const placement = config.placement;
-  if (!isShared(placement) || JSON.stringify(placement) === JSON.stringify(original)) return;
+  if (JSON.stringify(placement) === JSON.stringify(original)) return;
+  if (!isShared(placement)) {
+    if (placement.kind === 'existing_agent' && organization !== undefined) {
+      try {
+        await loadRetainedTarget(
+          client,
+          placement.target,
+          organization,
+          signal ?? new AbortController().signal,
+        );
+      } catch {
+        throw new ValidationError('Current retained Agent access or ancestry changed.');
+      }
+    }
+    return;
+  }
   try {
     const check = async () => {
       const catalog = await client.bridges.capabilities({ organization, signal });
