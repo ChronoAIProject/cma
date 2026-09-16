@@ -207,6 +207,26 @@ impl MongoBridgeReplyToolStore {
             .insert_one(invocation.document()?)
             .session(&mut *session)
             .await?;
+        crate::store::channel_history::outbox(
+            &self
+                .invokes
+                .bridges
+                .client
+                .database(&self.items.namespace().db),
+            scope.source().allocation_id(),
+            &items,
+            &invocation.document()?,
+            session,
+        )
+        .await
+        .map_err(|error| match error {
+            crate::store::bridge_allocations::MutationError::Mongo(error) => {
+                MutationError::Driver(error)
+            }
+            crate::store::bridge_allocations::MutationError::Core(_) => {
+                MutationError::Core(OutboxError::SourceMismatch)
+            }
+        })?;
         scope.require_current()?;
         Ok(invocation.receipt(&items)?)
     }

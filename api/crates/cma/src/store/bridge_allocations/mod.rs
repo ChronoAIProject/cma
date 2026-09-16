@@ -87,6 +87,7 @@ impl MongoBridgeAllocationStore {
             ],
         )
         .await?;
+        crate::store::channel_history::initialize(&database).await?;
         let store = Self {
             bridges,
             invokes,
