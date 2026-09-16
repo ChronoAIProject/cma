@@ -215,7 +215,7 @@ it('retains unavailable placement settings and leaves existing lifecycle control
     return undefined;
   });
   render(<BridgeManager client={test.client} id="brg_one" allowed onChanged={vi.fn()} />);
-  await screen.findByText(/Shared placement is waiting for continuity verification/);
+  await screen.findByText(/Shared placement has not been enabled by the operator/);
   expect(screen.getByRole('button', { name: 'Shared Sandbox' })).toHaveTextContent('sandbox-1');
   expect(screen.getByRole('button', { name: 'Shared Workspace' })).toHaveTextContent('workspace-1');
   expect(screen.getByRole('button', { name: 'agent profile' })).toHaveTextContent('Revision 7');
