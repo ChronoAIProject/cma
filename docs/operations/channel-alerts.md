@@ -1,3 +1,13 @@
+# Channel alert policy catalog
+
+These disabled policy definitions target the existing plain-text container log
+sink. Read [Channel observability](../CMA_Channel_Observability.md) for signal
+semantics and operational limits. No policy is applied by this document.
+
+The JSON wrapper contains `schema_version` and `alert_policies`. Extract the single
+`json` fenced block to parse the catalog; each array entry is a policy object.
+
+```json
 {
   "schema_version": 1,
   "format": "tracing-subscriber text via Cloud Logging textPayload",
@@ -279,3 +289,4 @@
     }
   ]
 }
+```
