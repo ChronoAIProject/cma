@@ -25,8 +25,8 @@ pub use audit::{
 };
 pub use authority::{OrganizationAuthority, OrganizationChoice};
 pub use context::{
-    CallerContext, CredentialContext, MembershipError, OrganizationMembership, OrganizationRole,
-    MAX_MEMBERSHIP_AGE,
+    CallerContext, CredentialContext, CredentialSource, MembershipError, OrganizationMembership,
+    OrganizationRole, MAX_MEMBERSHIP_AGE,
 };
 pub use identity::{ResourceActor, ResourceOwner};
 pub use lineage::ResourceLineage;

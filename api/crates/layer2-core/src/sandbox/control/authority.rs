@@ -107,6 +107,9 @@ impl SandboxControlAuthorization {
             .decision
             .revalidation_deadline(envelope.command.capability())
             .map_or(deadline, |at| at.min(deadline));
+        let deadline = context
+            .credential_deadline()
+            .map_or(deadline, |expiry| deadline.min(expiry));
         let audit = authorized.authorization_audit(
             &envelope.actor,
             &envelope.target(),
