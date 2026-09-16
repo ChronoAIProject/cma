@@ -82,8 +82,13 @@ impl ChannelCommandReservation {
         if inbox.envelope.content_type != "text" || !inbox.envelope.attachments.is_empty() {
             return Err(crate::sandbox::AgentOperationError::ContentUnsupported.into());
         }
-        let text = inbox.envelope.text.as_ref().ok_or(Error::SourceMismatch)?;
-        let mut command = AgentCommand::message(text).canonical()?;
+        let text = match &inbox.text_attachment {
+            Some(attachment) => attachment
+                .agent_text(&inbox)
+                .map_err(|_| Error::SourceMismatch)?,
+            None => inbox.envelope.text.clone().ok_or(Error::SourceMismatch)?,
+        };
+        let mut command = AgentCommand::message(&text).canonical()?;
         if let AgentCommand::Message { metadata, .. } = &mut command {
             for (key, value) in [
                 ("channel_inbox_id", inbox.id.clone()),

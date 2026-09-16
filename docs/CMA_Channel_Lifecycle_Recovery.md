@@ -50,12 +50,13 @@ backfill certainty from canonical state. Missing evidence also supplies no
 cleanup capability. The new top-level sidecar leaves existing provisioning and
 original-provenance serialization unchanged; existing `$set` updates preserve it.
 
-The Kubernetes adapter currently provides configured scope and exact PVC
-UID/resource-version deletion preconditions, but no permanent create-operation
-ledger, provider-incarnation attestation or backing-disk absence receipt. A PVC
-404 proves neither that a lost create cannot appear later nor that a PV/CSI disk
-has been reclaimed. The current capability therefore remains unavailable;
-this evidence step adds no physical removal operation or provider permission.
+Fresh dispatch journals now distinguish actual provider acknowledgements from
+reconciliation. Runtime receipts pin the incarnation CMA adopts; home receipts
+pin the original successful PVC creation response. The adapter uses existing
+namespaced reads and UID/resource-version deletion preconditions. No additional
+service-account permissions are required. See
+[Provider cleanup](CMA_Home_Backing_Verification.md) for the exact receipt scope;
+completion of a PVC lifecycle does not assert physical disk erasure.
 
 ## An uncertain key mint
 
@@ -130,25 +131,22 @@ The resulting assessment is derived in memory and records exact evidence
 digests. Worker retry events use the `channel_retention_held` class with fixed
 reason codes. They distinguish missing original provenance or prepare evidence,
 an unbound first receipt, unresolved dispatch and generation history, unproven
-provider incarnation or backing-storage absence, and unavailable physical
-cleanup. A later successful prepare or currently absent PVC does not clear any
-original debt. A root with no configured home still retains archive/history
+runtime identity or incomplete provider cleanup receipts. A later successful
+prepare or currently absent PVC does not clear any original debt. A root with
+no configured home still retains archive/history
 policy and reader/janitor compatibility requirements.
 
-An immutable Channel history disposition and compatible supported/rollback
-readers and janitors are separate outstanding requirements. Generic Sandbox
-grace and inbox/reply-secret retention do not supply that policy. The assessment
-adds no operator approval flag, retention deadline or physical-cleanup authority;
-canonical retirement state, original home evidence and storage disposition keep
-their existing formats.
+For fresh allocations with complete dispatch and provider receipts, final
+retirement can now complete. CMA seals the retained material inventory and
+publishes the permanent finalization receipt, cleared canonical home and
+`Retired` state in one transaction. The history policy remains `retain`, with
+`purge_after` unset. Pending or ambiguous delivery/control work, missing original
+acknowledgements, foreign identities and incomplete inventories remain held.
 
-The root remains `Retiring` at `MarkRetired`, without a purge deadline or capacity
-release. Final home cleanup, archive-body deletion, publication of `Retired`, and
-history purge remain held. An older checkpoint janitor discovers `Retired`
-roots without understanding this new disposition, so final publication also
-requires compatible reader/janitor evidence. Physical cleanup needs complete
-original-home provenance, exact ownership/absence receipts and an explicit
-archive retention policy before it can be enabled.
+The supported rollback base for these sealed records is application source
+`0078b66bfff937f67cf3c94925c801ff79dd51bc`, which already preserves Channel roots
+in the generic row, checkpoint and late-upload cleanup paths. Earlier images
+are not a supported rollback target after this finalization path is used.
 
 ## Shared parents and remaining work
 
@@ -170,3 +168,32 @@ Local provider fixtures and disposable persistence/runtime tests establish only
 the behavior exercised by their recorded source. They do not establish live
 Telegram delivery or production upgrade/rollback continuity. Channel image
 rotation and the complete lifecycle/retention acceptance matrix remain pending.
+
+
+Channel history disposition is pinned when each new allocation generation is
+reserved. The initial and currently sole disposition is `retain`: no generic
+Sandbox grace period, callback TTL, reset, detach, or configuration change can
+supply a history expiry deadline. The versioned allocation sidecar binds the
+original owner, configuration, source pin, target and generation. Old allocations
+without it retain an explicit legacy-policy hold; replay never applies today's
+default retroactively.
+
+Permanent `channel_history_references` rows account for the first source pin,
+accepted command and archived source, callback idempotency receipt, explicit
+outbox items and invocation receipts, and late-upload cleanup tombstones. Each
+reference and the allocation's reference count commit in the same transaction as
+the underlying admission. Exact replay does not increment the count. Callback
+inbox TTL does not remove these references or the accepted source archive. A
+late-upload tombstone remains owned after successful cleanup and repeated
+absence checks. No reference collection has a TTL index.
+
+The retirement assessment validates the pinned policy, reference count and exact
+retained target projections. Missing legacy policy, incomplete accounting,
+missing targets and bounded-inventory overflow are typed holds; contradictory
+identity is refused. Finalization seals the contiguous Agent log, command and
+control records, terminal outbox outcomes, artifacts, audits, checkpoints and
+management journals in the same transaction as canonical retirement. Sent,
+Rejected and Abandoned replies remain distinct; unknown and pending replies
+cannot pass the seal. Fresh material writes are fenced after sealing, while
+exact replay aliases and permanent late-upload tombstone extensions retain their
+supported recovery paths.

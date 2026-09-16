@@ -40,8 +40,31 @@ impl VerifiedPlatformRedelivery {
         facts: &PlatformCapabilityObservation,
         parent: VerifiedRedeliveryParent,
     ) -> Result<Option<Self>, CallbackError> {
+        Self::with_attachment(payload, facts, parent, None)
+    }
+
+    pub fn from_verified_text_attachment(
+        payload: &AuthenticatedCallbackPayload<'_>,
+        facts: &PlatformCapabilityObservation,
+        parent: VerifiedRedeliveryParent,
+        attachment: &super::VerifiedTextAttachment,
+    ) -> Result<Option<Self>, CallbackError> {
+        attachment.metadata().validate(payload.record())?;
+        Self::with_attachment(payload, facts, parent, Some(attachment.metadata()))
+    }
+
+    fn with_attachment(
+        payload: &AuthenticatedCallbackPayload<'_>,
+        facts: &PlatformCapabilityObservation,
+        parent: VerifiedRedeliveryParent,
+        attachment: Option<&super::DiscordTextAttachment>,
+    ) -> Result<Option<Self>, CallbackError> {
         let inbox = payload.record();
-        if facts.event_kind != ChannelEventKind::UserMessage
+        let kind_matches = match attachment {
+            Some(_) => facts.event_kind == ChannelEventKind::DiscordTextAttachment,
+            None => facts.event_kind == ChannelEventKind::UserMessage,
+        };
+        if !kind_matches
             || facts.sender_kind != ChannelSenderKind::Human
             || facts.loop_evidence != LoopEvidence::NotLoop
             || inbox.envelope.content_type != "text"
@@ -98,7 +121,7 @@ impl VerifiedPlatformRedelivery {
             facts.chat_id,
             message
         ]))?;
-        let semantic_sha256 = digest(&serde_json::json!([
+        let text_semantics = serde_json::json!([
             "cma.bridge.platform-text.v1",
             facts.sender_id,
             facts.event_kind,
@@ -109,7 +132,20 @@ impl VerifiedPlatformRedelivery {
             parent,
             inbox.envelope.content_type,
             inbox.envelope.text
-        ]))?;
+        ]);
+        let semantic_sha256 = match attachment {
+            // Do not change ordinary-message identity or permit attachment
+            // changes to alias a prior caption-only or different file receipt.
+            None => digest(&text_semantics)?,
+            Some(file) => digest(&serde_json::json!([
+                "cma.bridge.discord-text-file.v1",
+                text_semantics,
+                file.attachment_id,
+                file.filename,
+                file.size_bytes,
+                file.source_url_sha256
+            ]))?,
+        };
         Ok(Some(Self {
             source,
             key_sha256,

@@ -34,6 +34,9 @@ impl CommandScheduleWork for AgentCommandWorker {
         page: &PageRequest,
     ) -> Result<Page<AgentCommandId>, CommandLedgerError> {
         let page = self.discover(page).await?;
+        for record in &page.items {
+            crate::bridge::operations::health::command(record);
+        }
         Ok(Page {
             items: page
                 .items
@@ -197,7 +200,11 @@ impl ScheduledWork {
             Ok((_, Ok(TaskOutput::Completed))) => {}
             Ok((_, Err(CommandLedgerError::StaleClaim | CommandLedgerError::Conflict))) => {}
             Ok((_, Err(error))) => {
-                tracing::error!(code = error.code(), "Agent command work failed")
+                tracing::error!(
+                    target: "cma::bridge::operations",
+                    operation = "command_worker_failure", code = error.code(),
+                    "Agent command work failed"
+                )
             }
             Err(error) => {
                 tracing::error!(error = %error, "Agent command task terminated unexpectedly")

@@ -16,6 +16,10 @@ pub use sandbox_admission::*;
 pub use store::*;
 pub use write::*;
 
+/// Deployment-wide ceiling per Bridge, including new partition generations.
+pub const MAX_NEW_ALLOCATIONS_PER_INTERVAL: u64 = 8;
+pub const ALLOCATION_INTERVAL_MS: i64 = 60_000;
+
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum AllocationError {
     #[error("selected parent cannot support the requested shared placement")]

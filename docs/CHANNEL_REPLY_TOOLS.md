@@ -21,6 +21,15 @@ NyxID message identity remains authoritative. The model never selects a bot,
 recipient, route, provider endpoint, or credential, and there is no direct
 Telegram or other platform fallback.
 
+The reply tool is a CMA-hosted HTTP MCP connection. It does not invoke the
+`nyxid` CLI installed in the Sandbox. The CLI uses the Sandbox's scoped NyxID
+credentials for connected-service work; Channel replies use the configured
+Bridge's retained bot/channel authority. The external sender need not be that
+bot's NyxID owner. CMA authorizes each reply against its original Channel input
+and owns the durable outbox and provider delivery. A future CLI interface would
+need to enter this same admission path and preserve its session eligibility,
+destination binding and retry semantics.
+
 ## Runtime contract
 
 `POST /api/v1/channel-tools` implements stateless streamable HTTP MCP with JSON
@@ -117,11 +126,80 @@ original receipt, including after that turn has finished. Reusing a key with
 different text conflicts. Receipt recovery precedes current-turn admission, so
 a retry cannot be silently routed to a newer input.
 
-The safe tool result includes a receipt ID, status, duplicate-risk indicator,
-and typed failure when present. `queued` means durable admission, not confirmed
+The safe tool result includes a receipt ID, opaque `outbox_ids` for each prepared
+message, status, duplicate-risk indicator, and typed failure when present. `queued` means durable admission, not confirmed
 platform delivery. Multiple calls append atomically to the original response's
 delivery order. Chunking retains that order. Unknown network/send outcomes are
 recorded for explicit recovery and are never automatically retried.
+
+## Explicit Lark/Feishu reply edits
+
+`edit_channel_reply` replaces one of the Agent's own confirmed Lark/Feishu text
+replies when the Agent intentionally calls it. It accepts exactly four arguments:
+
+| Argument | Meaning |
+| --- | --- |
+| `reply_context` | Exact current reference returned by `read_channel_context` |
+| `original_outbox_id` | One opaque `bro_…` ID from the original reply receipt's `outbox_ids` |
+| `request_key` | New key for this intentional edit; unchanged on retries |
+| `text` | Nonempty replacement fitting one prepared 1,900 UTF-16-unit message |
+
+For example, after `progress-1` reaches `sent`, the Agent may select its first
+`outbox_ids` entry and call `edit_channel_reply` with key `progress-1-correction`.
+Each original chunk has a separate opaque ID. An edit changes only the selected
+message and cannot split the replacement into more chunks.
+
+The original must be an initial reply with a confirmed Sent receipt containing
+its platform message ID, from this exact still-active input and the same immutable
+Channel-created Agent session. Another input, an edit item, a pending or unknown
+reply, and other platforms are rejected. Caller-supplied provider message IDs,
+recipients and credentials are never accepted. Durable lookup binds the original
+source, bot and destination, and rechecks them before delivery through NyxID
+`POST /api/v1/channel-relay/reply/update` using the configured channel authority.
+The acknowledgement must identify that same original platform message.
+
+Edits append to the same response delivery order and use the same bot pacing and
+current authority checks as initial replies. Multiple deliberate edits may target
+the same initial reply. Retrying the same key, original ID and text recovers the
+original edit receipt, including after the turn ends. Changing any of those values
+under an existing key conflicts. Reply and edit keys share one namespace.
+Unknown outcomes are retained without resend and block later output from passing
+them; changing the key cannot bypass that order. There is no automatic progress
+replacement or final-answer edit. New edit admission requires the active turn,
+while a queued edit may finish under the original retained authority afterward.
+
+The edit path is covered by controlled NyxID HTTP fixtures and disposable Mongo
+Channel-session tests. All platform `live_verified` values remain false until
+separate real-provider canaries establish them.
+
+## Pending reply backlog
+
+Each Bridge can retain at most 256 outstanding prepared messages across all
+inputs, Agents, runtime incarnations and configuration generations. Every chunk
+and explicit edit occupies one slot. Pending, claimed, sending, retry-wait and
+unknown deliveries count toward the same cap. Sent, rejected and explicitly
+abandoned outcomes release their slots while retaining their original history.
+This fixed deployment bound adds no Bridge setting or new provider permission.
+
+New reply/edit admission reserves all needed slots atomically under the existing
+Bridge fence. A message requiring more free slots is refused in full with MCP
+code `reply_backlog_full`; it creates no invocation, chunk or response-head
+progress. Exact retries recover their existing receipts before capacity checks,
+including when the queue is full or the original turn has finished. A capacity
+refusal confirms that this call admitted no output; it is distinct from an
+uncertain commit that must be recovered with the same key and content.
+
+Explicit management retry of a rejected delivery reacquires one slot and returns
+HTTP 409 `bridge_delivery_capacity` when full. Retrying an unknown delivery still
+requires duplicate-risk acceptance and keeps its existing occupied slot. The
+management command's exact replay recovers its prior receipt at capacity.
+Automatic delivery retries retain their existing slots. Configuration changes,
+key rotation and allocation reset do not reset the outstanding count.
+
+Existing backlogs above the cap remain retained and recoverable; new admissions
+wait for sufficient terminal outcomes. The cap requires every admission writer
+to run this implementation. Older mixed-version writers do not enforce it, so
+this remains part of the existing continuity deployment gate.
 
 ## Send pacing and provider cooldowns
 
@@ -208,12 +286,15 @@ required when NyxID returns 404; that response alone does not prove revocation.
 Cleanup never issues a second mint request or turns an uncertain mint into a
 usable credential.
 
-Channel retirement now has a dedicated original-human authority path for a
+Channel retirement has a dedicated original-human authority path for a
 completed, exactly owned resource tree with a proven runtime binding. It records
-Agent stop, credential revocation and runtime teardown progress durably. Paused
-or uncertain initial runtime bindings remain held, as do final home/checkpoint
-cleanup and history purge. Shared-child and owned-Workspace cleanup use their
-own explicit consent and exact allocation ownership paths, while image rotation
+Agent stop, credential revocation and runtime teardown progress durably. Fresh
+allocations with complete runtime and original PVC acknowledgements can finish
+namespaced cleanup and publish Retired with sealed, retained history using
+existing permissions. Missing or ambiguous original receipts remain held;
+history receives no purge deadline, and underlying disk reclamation belongs to
+the storage provider. Shared-child and owned-Workspace cleanup use their own
+explicit consent and exact allocation ownership paths, while image rotation
 remains unfinished. See [Channel lifecycle recovery](CMA_Channel_Lifecycle_Recovery.md)
-for these boundaries. The current milestone work has not been rolled out to
-production.
+for these boundaries. Application deployment alone does not enable Channel
+traffic; the independent rollout selectors still govern admission and effects.

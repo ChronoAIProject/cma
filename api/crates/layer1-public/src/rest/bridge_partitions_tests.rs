@@ -1,5 +1,6 @@
 mod activity;
 pub(super) mod fixture;
+mod usage;
 use axum::http::{Method, StatusCode};
 use serde_json::Value;
 use std::sync::atomic::Ordering;

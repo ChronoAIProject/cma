@@ -1,7 +1,9 @@
 //! Exact tree, human authority, cleanup receipt and canonical work share a fence.
 mod audit;
 mod authority;
+pub(crate) mod finalization;
 mod lineage;
+pub(crate) mod provider_finality;
 mod save;
 use super::{MongoBridgeAllocationStore, MutationError};
 use crate::{
@@ -27,7 +29,13 @@ pub(crate) enum RetirementChange<'a> {
     Revoke(&'a RetirementKey),
     RuntimeIntent,
     RuntimeGone,
+    ProviderRuntimeFinality(&'a layer3_adapter::RuntimeFinalityReceipt),
+    ProviderHomeDelete(&'a layer3_adapter::HomeDeleteReceipt),
+    ProviderFinality(
+        &'a crate::sandbox::channel_retirement::provider_finality::ProviderFinalityReceipt,
+    ),
     RetainStorage,
+    Finalize,
 }
 impl MongoBridgeAllocationStore {
     pub(crate) async fn change_channel_retirement(
@@ -108,7 +116,7 @@ impl MongoBridgeAllocationStore {
                 CommitOutcome::Committed => return Ok(snapshot),
                 CommitOutcome::Retry(_) => continue,
                 CommitOutcome::Unknown(_) | CommitOutcome::Failed(_) => {
-                    return Err(AllocationError::Unavailable)
+                    return Err(AllocationError::Unavailable);
                 }
             }
         }

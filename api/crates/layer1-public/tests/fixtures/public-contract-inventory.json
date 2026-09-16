@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "openapi_operations": 181,
+  "openapi_operations": 182,
   "operations": {
     "GET /api/v1/organizations": {
       "classification": "openapi",
@@ -2575,6 +2575,14 @@
       "classification": "openapi",
       "source": "api/crates/layer1-public/src/rest/bridge_partition_commands/mod.rs# Current owner/admin authorization recovers a permanent original partition command receipt before new effects.",
       "required_problems": []
+    },
+    "GET /api/v1/bridges/{id}/usage": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/bridge_partitions/usage.rs# Fresh Bridge and target authority returns bounded retained usage without admission or cleanup.",
+      "required_problems": [
+        "bridge_not_found",
+        "bridge_partition_unavailable"
+      ]
     }
   }
 }

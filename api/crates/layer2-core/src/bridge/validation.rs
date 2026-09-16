@@ -236,6 +236,12 @@ pub trait BridgeConnectionValidator: Send + Sync {
         Ok(())
     }
 
+    /// Additional rollout policy for a fresh placement selection or allocation.
+    /// Retained validation, execution and exact receipt recovery must bypass it.
+    fn check_new_placement(&self, _config: &BridgeConfig) -> Result<(), BridgeError> {
+        Ok(())
+    }
+
     /// Unknown implementations expose no capabilities by default.
     fn capabilities(&self) -> super::BridgeCapabilityCatalog {
         super::BridgeCapabilityCatalog::default()

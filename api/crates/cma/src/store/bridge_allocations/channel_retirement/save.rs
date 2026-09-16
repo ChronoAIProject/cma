@@ -19,6 +19,9 @@ pub(super) async fn apply(
     now: SystemTime,
     session: &mut ClientSession,
 ) -> Result<ChannelRetirementSnapshot, MutationError> {
+    if matches!(change, RetirementChange::Finalize) {
+        return super::finalization::apply(store, permit, snapshot, document, now, session).await;
+    }
     let previous_revision = snapshot.sandbox.revision;
     let previous_step = snapshot.sandbox.work.step;
     if snapshot.state.is_none() && !matches!(change, RetirementChange::Begin) {
@@ -86,6 +89,34 @@ pub(super) async fn apply(
             state.phase = RetirementPhase::RuntimeGone;
             snapshot.sandbox.runtime = None;
             ("runtime_gone", SandboxWorkStep::MarkRetired)
+        }
+        RetirementChange::ProviderFinality(receipt)
+            if state.phase == RetirementPhase::RuntimeIntent =>
+        {
+            super::provider_finality::write_verified(&database, &snapshot, receipt, session)
+                .await?;
+            state.phase = RetirementPhase::RuntimeGone;
+            snapshot.sandbox.runtime = None;
+            ("runtime_gone", SandboxWorkStep::MarkRetired)
+        }
+        RetirementChange::ProviderRuntimeFinality(receipt)
+            if state.phase == RetirementPhase::RuntimeIntent =>
+        {
+            super::provider_finality::write_runtime_finality(
+                &database, &snapshot, receipt, session,
+            )
+            .await?;
+            (
+                "provider_runtime_finality",
+                SandboxWorkStep::TeardownRuntime,
+            )
+        }
+        RetirementChange::ProviderHomeDelete(receipt)
+            if state.phase == RetirementPhase::RuntimeIntent =>
+        {
+            super::provider_finality::write_home_delete(&database, &snapshot, receipt, session)
+                .await?;
+            ("provider_home_delete", SandboxWorkStep::TeardownRuntime)
         }
         RetirementChange::RetainStorage
             if state.phase == RetirementPhase::RuntimeGone && snapshot.retention.is_none() =>

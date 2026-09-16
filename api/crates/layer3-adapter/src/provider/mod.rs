@@ -17,6 +17,7 @@ pub use reclaimer::BatchSandboxReclaimer;
 pub use volumes::{ProviderPersistentVolumeClaim, ProviderVolume};
 
 pub(crate) use client::ProviderDeleteTarget;
+pub(crate) use reclaimer::finality::{dispatch_marker, DISPATCH_LABEL};
 
 #[cfg(test)]
 #[path = "client_tests.rs"]

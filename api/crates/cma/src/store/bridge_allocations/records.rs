@@ -35,6 +35,7 @@ pub(in crate::store) fn decode_record(
             return Err(AllocationError::Corrupt);
         }
     }
+    crate::store::channel_history::policy(document, &record)?;
     Ok(record)
 }
 

@@ -17,12 +17,17 @@ data:
   CHRONO_BRIDGE_TELEGRAM_ENABLED: "false"
   CHRONO_BRIDGE_TELEGRAM_NEW_ENABLED: "false"
   CHRONO_BRIDGE_DISCORD_ENABLED: "false"
+  # New file admissions only; supporting readers/workers must precede enablement.
+  CHRONO_BRIDGE_DISCORD_TEXT_ATTACHMENTS_ENABLED: "false"
   CHRONO_BRIDGE_LARK_ENABLED: "false"
   CHRONO_BRIDGE_FEISHU_ENABLED: "false"
   CHRONO_BRIDGE_SLACK_ENABLED: "false"
   CHRONO_BRIDGE_WHATSAPP_ENABLED: "false"
   CHRONO_BRIDGE_X_ENABLED: "false"
   CHRONO_BRIDGE_V2_UI_TRANSPORT_ENABLED: "false"
+  # Independent placement rollout selections; these do not attest continuity.
+  CHRONO_BRIDGE_WORKSPACE_PER_PARTITION_ENABLED: "false"
+  CHRONO_BRIDGE_WORKTREE_AGENT_PER_PARTITION_ENABLED: "false"
   # Admission-only protocol selector. Requires a compatible worker/rollback floor.
   CHRONO_TRIGGER_COMMAND_ADMISSION_ENABLED: "false"
   # Bounded policy pinned before each Sandbox/Workspace provisioning effect.
@@ -85,7 +90,7 @@ data:
   # Default for new allocations. Existing live Sandboxes retain their recorded
   # image across API upgrades and rollback; drift never admits rotation work.
   # Prove retained-runtime compatibility before deploying any new API image.
-  CHRONO_SANDBOX_IMAGE: "us-central1-docker.pkg.dev/aelf-shared-k8s-prod/aelf-prod-registry/cma-runtime@sha256:5541f5a711d90c61824fe6a55b4c762d21a37cb2a63574f552390520eabf5ee4"
+  CHRONO_SANDBOX_IMAGE: "us-central1-docker.pkg.dev/aelf-shared-k8s-prod/aelf-prod-registry/cma-runtime@sha256:7c06fd035664675a5b66c559c0f3917c81f9ffc529e4ff3bdbe8dad5cfeb5ba8"
   # Public Profile availability controls credential-free warm runtime counts
   # (1-5 per Profile) in MongoDB. The worker pins this image, the service floor
   # and install bounds; changed pins retire old unowned reservations before

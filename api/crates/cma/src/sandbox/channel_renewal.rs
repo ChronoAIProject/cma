@@ -42,6 +42,13 @@ impl ChannelCredentialRenewalDriver {
             .allocations
             .current_channel_renewal(authority, lease, allocation)
             .await?;
+        if let Some(current) = &previous.sandbox.credential.current {
+            if let Some(expires_at) =
+                crate::bridge::operations::health::timestamp_ms(&current.expires_at)
+            {
+                crate::bridge::operations::health::credential_expiry(&allocation.id, expires_at);
+            }
+        }
         if !previous.due(now_ms(now)?)? {
             return Ok(());
         }
@@ -88,7 +95,10 @@ impl ChannelCredentialRenewalDriver {
         let now = SystemTime::now();
         match admission {
             RenewalAdmission::NotDue => Ok(()),
-            RenewalAdmission::MintOutcomeUnknown => Err(AllocationError::Unavailable),
+            RenewalAdmission::MintOutcomeUnknown => {
+                crate::bridge::operations::health::mint_unknown(&allocation.id);
+                Err(AllocationError::Unavailable)
+            },
             RenewalAdmission::Reconcile(snapshot) => {
                 crate::sandbox::channel_mint_reconciliation::reconcile(&self.allocations, self.credentials.as_ref(), &self.issuer,
                     crate::sandbox::channel_mint_reconciliation::authority::ChannelMintAttempt::Renewal { authority, human: lease, snapshot: &snapshot }).await

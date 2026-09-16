@@ -217,6 +217,46 @@ impl CallbackDisposition {
         Ok(())
     }
 
+    pub(super) fn require_retained_control(
+        &self,
+        intent: &layer2_core::bridge::channel_control::ChannelControlIntent,
+    ) -> Result<(), CallbackError> {
+        self.validate()?;
+        let mut original = self.clone();
+        original.source = original.original.clone();
+        original.require_control_intent(intent)
+    }
+
+    pub(super) fn require_control_alias(
+        &self,
+        intent: &layer2_core::bridge::channel_control::ChannelControlIntent,
+        callback: &layer2_core::bridge::channel_control::ChannelControlCallback,
+    ) -> Result<(), CallbackError> {
+        self.validate()?;
+        intent
+            .callback
+            .require_alias(callback)
+            .map_err(|_| CallbackError::ReplayConflict)?;
+        let mut original = self.clone();
+        original.source = original.original.clone();
+        original.require_control_intent(intent)?;
+        let source = Source {
+            inbox_id: callback.callback_id.clone(),
+            owner: callback.owner.clone(),
+            pin: callback.pin.clone(),
+            bot_id: callback.bot_id.clone(),
+            key_id: callback.key_id.clone(),
+            message_id: callback.message_id.clone(),
+            correlation_id: callback.correlation_id.clone(),
+            issuer: callback.issuer.clone(),
+            body_sha256: callback.body_sha256.clone(),
+        };
+        if self.source != source {
+            return Err(CallbackError::ReplayConflict);
+        }
+        Ok(())
+    }
+
     pub(super) fn require_exact(
         &self,
         write: &InboxWrite,

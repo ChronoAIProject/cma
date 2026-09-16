@@ -10,6 +10,12 @@ use crate::{
 #[path = "home_volume_identity.rs"]
 mod identity;
 
+#[path = "home_original_claim.rs"]
+mod original_claim;
+
+#[path = "home_finality_receipts.rs"]
+mod finality_receipts;
+
 #[path = "home_snapshots.rs"]
 mod snapshots;
 
@@ -129,6 +135,27 @@ impl PersistentHomeVolumes {
 
 #[async_trait::async_trait]
 impl HomeVolumeStore for PersistentHomeVolumes {
+    async fn delete_original_home(
+        &self,
+        original: &crate::HomeProvisionReceipt,
+        operation_id: &str,
+    ) -> Result<crate::HomeDeleteReceipt> {
+        self.delete_home_acknowledged(original, operation_id).await
+    }
+    async fn observe_home_finality(
+        &self,
+        delete: &crate::HomeDeleteReceipt,
+    ) -> Result<crate::HomeFinalityReceipt> {
+        self.observe_home_claim_absence(delete).await
+    }
+    async fn prepare_receipted(
+        &self,
+        request: &HomeVolumeRequest,
+        operation_id: &str,
+    ) -> Result<crate::HomeProvisionReceipt> {
+        self.prepare_original(request, operation_id).await
+    }
+
     fn allocation_scope(&self) -> Option<HomeVolumeScope> {
         Some(self.scope.clone())
     }
