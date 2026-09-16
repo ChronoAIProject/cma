@@ -17,6 +17,7 @@ pub async fn dispatch(c: &Context<'_>) -> Result<()> {
                 .detach_partition(c.param("id"), c.param("allocation"), &c.body()?, &c.key()?)
                 .await,
         ),
+        "GET /api/v1/bridges/{id}/usage" => c.check(bridges.usage(c.param("id")).await),
         "GET /api/v1/bridges/{id}/partitions" => {
             c.check(bridges.list_partitions(c.param("id"), &c.page()?).await)
         }

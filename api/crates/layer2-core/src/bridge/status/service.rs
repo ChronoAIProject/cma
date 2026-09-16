@@ -10,7 +10,7 @@ use std::{sync::Arc, time::Duration};
 pub struct BridgePartitionService {
     pub(super) definitions: BridgeService,
     pub(super) resources: Arc<ResourceAccessService>,
-    store: Arc<dyn BridgePartitionStore>,
+    pub(super) store: Arc<dyn BridgePartitionStore>,
 }
 
 impl BridgePartitionService {
@@ -25,7 +25,7 @@ impl BridgePartitionService {
             store,
         }
     }
-    async fn management(
+    pub(super) async fn management(
         &self,
         context: &CallerContext,
         credential: Option<&str>,
@@ -188,7 +188,7 @@ impl BridgePartitionService {
         Ok(())
     }
 
-    async fn revalidate_management(
+    pub(super) async fn revalidate_management(
         &self,
         context: &CallerContext,
         credential: Option<&str>,
