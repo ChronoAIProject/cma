@@ -33,7 +33,6 @@ struct HomeDispatch {
     operation_id: String,
     request: layer3_adapter::HomeVolumeRequest,
     receipt: Option<layer3_adapter::HomeProvisionReceipt>,
-    backing: Option<layer3_adapter::HomeBackingIdentity>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -77,7 +76,7 @@ pub(crate) struct ReadyRuntimeJournal {
     pub original: RuntimeProvisionReceipt,
     pub runtime_dispatch_set_sha256: String,
     pub home_dispatch_set_sha256: String,
-    pub home: Option<layer3_adapter::HomeBackingIdentity>,
+    pub home: Option<layer3_adapter::HomeProvisionReceipt>,
     pub runtime_finality: Option<layer3_adapter::RuntimeFinalityReceipt>,
     pub home_delete: Option<layer3_adapter::HomeDeleteReceipt>,
 }
@@ -131,11 +130,10 @@ pub(crate) async fn read_ready_runtime(
         ),
         Some(policy) if journal.home.len() == 1 => {
             let row = &journal.home[0];
-            let (Some(receipt), Some(backing)) = (&row.receipt, &row.backing) else {
+            let Some(receipt) = &row.receipt else {
                 return Ok(None);
             };
             receipt.validate().map_err(|_| AllocationError::Corrupt)?;
-            backing.validate().map_err(|_| AllocationError::Corrupt)?;
             let attachment = snapshot
                 .sandbox
                 .lifecycle
@@ -151,13 +149,12 @@ pub(crate) async fn read_ready_runtime(
                 || receipt.home().request != row.request
                 || &row.request.policy != policy
                 || receipt.home() != &attachment
-                || backing.reference.home != attachment
-                || backing.reference.provider_scope != provenance.scope
+                || receipt.provider_scope() != &provenance.scope
                 || provenance.first_receipt.as_ref() != Some(&attachment.receipt)
             {
                 return Err(AllocationError::IdentityMismatch.into());
             }
-            (Some(backing.clone()), digest(&journal.home)?)
+            (Some(receipt.clone()), digest(&journal.home)?)
         }
         _ => return Ok(None),
     };

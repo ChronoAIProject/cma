@@ -130,8 +130,8 @@ impl ProviderFinalityReceipt {
                     .as_ref()
                     .ok_or(AllocationError::IdentityMismatch)?;
                 if self.origin.original_home_policy.as_ref() != Some(&home.request.policy)
-                    || receipt.original().reference.home != home
-                    || receipt.original().reference.provider_scope != original.scope
+                    || receipt.original().home() != &home
+                    || receipt.original().provider_scope() != &original.scope
                     || original.first_receipt.as_ref() != Some(&home.receipt)
                     || receipt.delete_operation_id() != home_delete_operation_id(snapshot)
                 {

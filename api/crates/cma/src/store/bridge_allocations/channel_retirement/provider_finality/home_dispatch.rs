@@ -58,22 +58,6 @@ impl MongoBridgeAllocationStore {
         }
         Ok(())
     }
-
-    pub(crate) async fn record_channel_home_backing(
-        &self,
-        authority: &AllocationAuthority,
-        human: &BridgeControlPlaneLease,
-        snapshot: &ChannelProvisioningSnapshot,
-        backing: &layer3_adapter::HomeBackingIdentity,
-    ) -> Result<(), AllocationError> {
-        if !self
-            .change_runtime_dispatch(authority, human, snapshot, Change::HomeBacking { backing })
-            .await?
-        {
-            return Err(AllocationError::Conflict);
-        }
-        Ok(())
-    }
 }
 
 pub(super) fn apply(
@@ -111,7 +95,6 @@ pub(super) fn apply(
                 operation_id: (*operation_id).to_owned(),
                 request: (*request).clone(),
                 receipt: None,
-                backing: None,
             });
         }
         Change::HomeComplete {
@@ -136,46 +119,14 @@ pub(super) fn apply(
             {
                 return Err(AllocationError::IdentityMismatch);
             }
-            row.receipt = Some((*receipt).clone());
-        }
-        Change::HomeBacking { backing } => {
-            if snapshot.state.phase != ChannelProvisioningPhase::Runtime
-                || journal.home.len() != 1
-                || journal.runtime.len() != 1
-                || journal.runtime[0].receipt.is_none()
-            {
-                return Err(AllocationError::AuthorityUnavailable);
-            }
-            backing
-                .validate()
-                .map_err(|_| AllocationError::IdentityMismatch)?;
-            let row = &mut journal.home[0];
-            let receipt = row
-                .receipt
-                .as_ref()
-                .ok_or(AllocationError::AuthorityUnavailable)?;
-            let attachment = snapshot
-                .sandbox
-                .lifecycle
-                .home
-                .as_ref()
-                .and_then(|home| home.attachment())
-                .ok_or(AllocationError::IdentityMismatch)?;
             let provenance = snapshot
                 .home_provenance
                 .as_ref()
                 .ok_or(AllocationError::IdentityMismatch)?;
-            if receipt.home() != &attachment
-                || backing.reference.home != attachment
-                || backing.reference.provider_scope != provenance.scope
-                || row
-                    .backing
-                    .as_ref()
-                    .is_some_and(|previous| previous != *backing)
-            {
+            if receipt.provider_scope() != &provenance.scope {
                 return Err(AllocationError::IdentityMismatch);
             }
-            row.backing = Some((*backing).clone());
+            row.receipt = Some((*receipt).clone());
         }
         _ => return Err(AllocationError::InvalidTransition),
     }

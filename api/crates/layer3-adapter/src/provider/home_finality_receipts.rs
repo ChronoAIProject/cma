@@ -1,32 +1,22 @@
 use super::*;
-use crate::{HomeBackingIdentity, HomeBackingObserver, HomeDeleteReceipt, HomeFinalityReceipt};
+use crate::{HomeCleanupScope, HomeDeleteReceipt, HomeFinalityReceipt, HomeProvisionReceipt};
 
 impl PersistentHomeVolumes {
     pub(super) async fn delete_home_acknowledged(
         &self,
-        original: &HomeBackingIdentity,
+        original: &HomeProvisionReceipt,
         operation_id: &str,
-        observer: &dyn HomeBackingObserver,
     ) -> Result<HomeDeleteReceipt> {
         original.validate()?;
-        if original.reference.provider_scope != self.scope
+        if original.provider_scope() != &self.scope
             || !crate::provider_finality::identifier(operation_id)
-            || self
-                .capture_original_backing(&original.reference.home, observer)
-                .await?
-                != *original
         {
             return Err(invalid());
         }
-        let home = &original.reference.home;
+        let home = original.home();
         let claim = self.read(&home.request).await?.ok_or_else(invalid)?;
         if self.receipt(&home.request, &claim)? != home.receipt
             || claim.metadata.deletion_timestamp.is_some()
-            || claim
-                .spec
-                .as_ref()
-                .and_then(|spec| spec.volume_name.as_deref())
-                != Some(original.reference.pv_name.as_str())
         {
             return Err(invalid());
         }
@@ -62,30 +52,26 @@ impl PersistentHomeVolumes {
         Ok(receipt)
     }
 
-    pub(super) async fn observe_home_backing_absence(
+    pub(super) async fn observe_home_claim_absence(
         &self,
         delete: &HomeDeleteReceipt,
-        observer: &dyn HomeBackingObserver,
     ) -> Result<HomeFinalityReceipt> {
         delete.validate()?;
-        if delete.original.reference.provider_scope != self.scope {
+        if delete.original.provider_scope() != &self.scope {
             return Err(invalid());
         }
-        let home = &delete.original.reference.home;
-        // A name rebound to another claim remains conservative; a PVC 404 only
-        // permits the separate exact backing-disk observation below.
+        let home = delete.original.home();
+        // Existing or rebound names remain held. An authorized namespaced GET
+        // must observe absence after the persisted original delete acknowledgement.
         if self.read(&home.request).await?.is_some() {
             return Err(AdapterError::Unavailable(
                 "original home claim deletion is pending".into(),
             ));
         }
-        let backing_absence = observer.observe_original_absence(&delete.original).await?;
         let receipt = HomeFinalityReceipt {
-            original: delete.original.clone(),
-            claim_delete_operation_id: delete.operation_id.clone(),
-            claim_delete_resource_version: delete.resource_version.clone(),
-            claim_delete_response_sha256: delete.response_sha256.clone(),
-            backing_absence,
+            delete: delete.clone(),
+            claim_absence_observation_sha256: HomeFinalityReceipt::absence_digest(delete)?,
+            cleanup_scope: HomeCleanupScope::NamespacedClaim,
         };
         receipt.validate()?;
         Ok(receipt)
