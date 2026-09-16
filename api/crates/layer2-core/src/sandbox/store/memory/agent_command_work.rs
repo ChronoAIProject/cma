@@ -180,54 +180,16 @@ impl AgentCommandWorkerStore for InMemorySandboxStore {
         &self,
         request: CommandClaimRequest,
     ) -> Result<Option<AdmittedAgentCommand>, CommandLedgerError> {
-        request.validate()?;
-        let mut state = self.lock();
-        let Some(mut lane) = state.agent_command_orders.get(&request.agent_id).cloned() else {
-            return Ok(None);
-        };
-        if lane
-            .lease
-            .as_ref()
-            .is_some_and(|lease| lease.live_at(&request.now))
-        {
-            return Ok(None);
-        }
-        let agent = state.agents.get(&request.agent_id);
-        let mut waiting: Vec<_> = state
-            .agent_commands
-            .values()
-            .filter(|command| command.receipt.envelope.agent_id == request.agent_id)
-            .collect();
-        waiting.sort_by_key(|command| command.receipt.agent_order);
-        let mut selected = None;
-        let mut message_held = false;
-        for command in waiting {
-            command.validate()?;
-            message_held |= command.holds_message_order();
-            if message_held
-                && matches!(
-                    command.receipt.envelope.command,
-                    AgentCommand::Message { .. }
-                )
-            {
-                continue;
-            }
-            if command_ready_for_claim(command, agent, &request.now) {
-                selected = Some(command.clone());
-                break;
-            }
-        }
-        let Some(mut command) = selected else {
-            return Ok(None);
-        };
-        if !lane.claim(&mut command, &request)? {
-            return Ok(None);
-        }
-        state.agent_command_orders.insert(request.agent_id, lane);
-        state
-            .agent_commands
-            .insert(command.receipt.envelope.command_id.clone(), command.clone());
-        Ok(Some(command))
+        claim_next(self, request, None)
+    }
+
+    async fn claim_observed_command(
+        &self,
+        request: CommandClaimRequest,
+        command_id: &crate::ids::AgentCommandId,
+        expected_revision: u64,
+    ) -> Result<Option<AdmittedAgentCommand>, CommandLedgerError> {
+        claim_next(self, request, Some((command_id, expected_revision)))
     }
 
     async fn renew_command_claim(
@@ -330,4 +292,64 @@ fn change(
         .agent_commands
         .insert(claim.command_id.clone(), command.clone());
     Ok(command)
+}
+
+fn claim_next(
+    store: &InMemorySandboxStore,
+    request: CommandClaimRequest,
+    observed: Option<(&crate::ids::AgentCommandId, u64)>,
+) -> Result<Option<AdmittedAgentCommand>, CommandLedgerError> {
+    request.validate()?;
+    let mut state = store.lock();
+    let Some(mut lane) = state.agent_command_orders.get(&request.agent_id).cloned() else {
+        return Ok(None);
+    };
+    if lane
+        .lease
+        .as_ref()
+        .is_some_and(|lease| lease.live_at(&request.now))
+    {
+        return Ok(None);
+    }
+    let agent = state.agents.get(&request.agent_id);
+    let mut waiting: Vec<_> = state
+        .agent_commands
+        .values()
+        .filter(|command| command.receipt.envelope.agent_id == request.agent_id)
+        .collect();
+    waiting.sort_by_key(|command| command.receipt.agent_order);
+    let mut selected = None;
+    let mut message_held = false;
+    for command in waiting {
+        command.validate()?;
+        message_held |= command.holds_message_order();
+        if message_held
+            && matches!(
+                command.receipt.envelope.command,
+                AgentCommand::Message { .. }
+            )
+        {
+            continue;
+        }
+        if command_ready_for_claim(command, agent, &request.now) {
+            selected = Some(command.clone());
+            break;
+        }
+    }
+    let Some(mut command) = selected else {
+        return Ok(None);
+    };
+    if observed.is_some_and(|(id, revision)| {
+        id != &command.receipt.envelope.command_id || revision != command.revision
+    }) {
+        return Ok(None);
+    }
+    if !lane.claim(&mut command, &request)? {
+        return Ok(None);
+    }
+    state.agent_command_orders.insert(request.agent_id, lane);
+    state
+        .agent_commands
+        .insert(command.receipt.envelope.command_id.clone(), command.clone());
+    Ok(Some(command))
 }

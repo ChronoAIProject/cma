@@ -138,12 +138,16 @@ impl AgentCommandWorker {
             }
         }
         let now = SystemTime::now();
-        let selected = bounded(self.store.claim_next_command(CommandClaimRequest {
-            agent_id: candidate.receipt.envelope.agent_id.clone(),
-            holder: self.holder.clone(),
-            now: rfc3339_at(now),
-            expires_at: rfc3339_at(now + LEASE_LIFETIME),
-        }))
+        let selected = bounded(self.store.claim_observed_command(
+            CommandClaimRequest {
+                agent_id: candidate.receipt.envelope.agent_id.clone(),
+                holder: self.holder.clone(),
+                now: rfc3339_at(now),
+                expires_at: rfc3339_at(now + LEASE_LIFETIME),
+            },
+            id,
+            candidate.revision,
+        ))
         .await?;
         let Some(command) = selected else {
             // No short lane lease is held while a paused context is revived.
@@ -172,6 +176,14 @@ impl AgentCommandWorker {
         command.require_claim(&claim, &now_rfc3339())?;
         if claim.holder != self.holder
             || claim.agent_id != candidate.receipt.envelope.agent_id
+            || command.receipt != candidate.receipt
+            || command.key_sha256 != candidate.key_sha256
+            || command.target_turn != candidate.target_turn
+            || command.revision
+                != candidate
+                    .revision
+                    .checked_add(1)
+                    .ok_or(CommandLedgerError::Corrupt)?
             || command.work.dispatch.is_some()
         {
             return Err(CommandLedgerError::Corrupt);
