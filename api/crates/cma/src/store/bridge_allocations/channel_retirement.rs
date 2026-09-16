@@ -1,6 +1,7 @@
 //! Exact tree, human authority, cleanup receipt and canonical work share a fence.
 mod audit;
 mod authority;
+pub(crate) mod finalization;
 mod lineage;
 pub(crate) mod provider_finality;
 mod save;
@@ -32,6 +33,7 @@ pub(crate) enum RetirementChange<'a> {
         &'a crate::sandbox::channel_retirement::provider_finality::ProviderFinalityReceipt,
     ),
     RetainStorage,
+    Finalize,
 }
 impl MongoBridgeAllocationStore {
     pub(crate) async fn change_channel_retirement(

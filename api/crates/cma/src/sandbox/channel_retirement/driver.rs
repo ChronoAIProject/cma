@@ -129,6 +129,17 @@ impl ChannelRetirementDriver {
                 self.commit(&permit, Change::RetainStorage, now).await
             }
             (SandboxWorkStep::MarkRetired, RetirementPhase::RuntimeGone) => {
+                self.credentials
+                    .revalidate_control_plane(permit.human())
+                    .await
+                    .map_err(|_| AllocationError::AuthorityUnavailable)?;
+                let snapshot = self
+                    .allocations
+                    .change_channel_retirement(&permit, &self.custody, Change::Finalize, now)
+                    .await?;
+                if snapshot.sandbox.status == layer2_core::sandbox::SandboxStatus::Retired {
+                    return Ok(RetirementStep::Advanced);
+                }
                 Ok(RetirementStep::Retained(Box::new(
                     super::assessment::FinalRetentionAssessment::capture(&snapshot)?,
                 )))

@@ -2,15 +2,20 @@
 //! Every reference is written with its source effect; no TTL or expiry exists.
 mod assessment;
 mod bindings;
+mod inventory;
+mod material;
 mod model;
+mod seal;
 use crate::store::{
     bridge_allocations::MutationError,
     durability::majority_collection,
     sandbox_mongo::{read_record, record_bson, DOCUMENT_SCHEMA_VERSION},
 };
 pub(crate) use assessment::assess;
-pub(crate) use bindings::{accepted_command, outbox, tombstone};
+pub(crate) use bindings::{accepted_command, outbox, partition_command, tombstone};
 use layer2_core::bridge::allocation::{AllocationError, AllocationRecord};
+#[cfg(test)]
+pub(crate) use material::outbox as assess_outbox;
 use model::{digest, Reference, COUNT, POLICY, REFERENCES};
 pub(crate) use model::{
     policy, ChannelHistoryAssessment, ChannelHistoryPolicy, HistoryHold, ReferenceKind,
@@ -19,6 +24,7 @@ use mongodb::{
     bson::{doc, Document},
     ClientSession, Collection, Database, IndexModel,
 };
+pub(crate) use seal::{seal, HistorySeal};
 
 pub(crate) async fn initialize(database: &Database) -> Result<(), layer2_core::StoreError> {
     crate::store::schema::initialize_collections(database, &[REFERENCES]).await?;
@@ -116,6 +122,16 @@ async fn append(
         return Ok(());
     }
     let next = count.checked_add(1).ok_or(AllocationError::Corrupt)?;
+    // Retained management journals and late-upload tombstones are permanent
+    // extensions. A material seal never grants authority to erase either.
+    if document.contains_key("channel_history_seal")
+        && !matches!(
+            kind,
+            ReferenceKind::PartitionCommand | ReferenceKind::LateUploadTombstone
+        )
+    {
+        return Err(AllocationError::InvalidTransition.into());
+    }
     let mut filter = doc! {"_id": &allocation.id};
     filter.insert(
         COUNT,
