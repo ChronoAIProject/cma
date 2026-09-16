@@ -181,12 +181,13 @@ async fn scope(
 ) -> Result<Json<Value>, StatusCode> {
     authorized(&headers)?;
     assert_eq!(body["selected_service_ids"], json!(["service-models"]));
+    assert_eq!(body["allow_auto_connected_services"], false);
     require_owner(&state, &body);
     Ok(Json(
         json!({"authority":"nyxid","contract_version":"1","policy_version":"api-key-scope-v1",
         "authenticated_actor":{"type":"personal","id":state.actor},"intended_key_owner":state.owner,
         "services":[{"user_service_id":"service-models","resource_owner":state.owner,"node_grant":{"type":"required","node_ids":["node-models"]}}],
-        "allowed_service_ids":["service-models"],"allowed_node_ids":["node-models"],"normalized_grant_digest":"a".repeat(64),
+        "allowed_service_ids":["service-models"],"allowed_node_ids":["node-models"],"allow_auto_connected_services":false,"normalized_grant_digest":format!("sha256:{}", "a".repeat(64)),
         "completeness":{"list_complete":true,"no_duplicates":true,"route_candidate_basis":"active_configured_routes","transient_node_state_excluded":true},
         "freshness":{"mode":"mutation_revalidated_snapshot","precondition_field":"scope_plan_digest","post_creation_drift":"fail_closed"},"key_purpose":"general"}),
     ))
@@ -201,7 +202,7 @@ fn require_owner(state: &HttpState, body: &Value) {
 fn key_metadata(id: &str, body: &Value, source: Value, state_version: i64) -> Value {
     json!({"id":id,"name":body["name"],"expires_at":body["expires_at"],"is_active":true,"created_at":layer2_core::rfc3339_at(SystemTime::now()),
         "scopes":"proxy read","state_version":state_version,"allowed_service_ids":["service-models"],"allowed_node_ids":["node-models"],
-        "allow_all_services":false,"allow_all_nodes":false,"credential_source":source,"purpose":"general","scheduled_write_enabled":false})
+        "allow_all_services":false,"allow_all_nodes":false,"allow_auto_connected_services":false,"credential_source":source,"purpose":"general","scheduled_write_enabled":false})
 }
 async fn mint(
     State(state): State<Arc<HttpState>>,
@@ -212,6 +213,7 @@ async fn mint(
     require_owner(&state, &body);
     assert_eq!(body["allowed_service_ids"], json!(["service-models"]));
     assert_eq!(body["allowed_node_ids"], json!(["node-models"]));
+    assert_eq!(body["allow_auto_connected_services"], false);
     let number = state.mint_count.fetch_add(1, Ordering::SeqCst) + 1;
     let id = format!("key-renewed-{number}");
     state.keys.lock().unwrap().insert(
