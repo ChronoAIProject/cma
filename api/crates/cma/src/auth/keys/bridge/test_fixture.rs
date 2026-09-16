@@ -54,6 +54,7 @@ pub(crate) fn lease(
         }),
     );
     let context = CallerContext {
+        credential_source: layer2_core::resource_access::CredentialSource::Retained,
         caller: Caller::new(subject.clone(), state.authorization.clone()),
         credential: CredentialContext {
             issuer: connector.issuer.clone(),

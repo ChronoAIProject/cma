@@ -11,6 +11,8 @@ use super::*;
 
 #[path = "resource_admission_tests.rs"]
 mod admission;
+#[path = "api_bearer_command_tests.rs"]
+mod api_bearer;
 #[path = "sandbox_controls_tests.rs"]
 mod sandbox_controls;
 
