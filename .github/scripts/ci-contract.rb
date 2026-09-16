@@ -47,6 +47,20 @@ module CIContract
     }, "runtime evidence must remain exact, required and retained")
   end
 
+  def self.native_image_artifacts(images)
+    condition = "success() && (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository)"
+    export = step(images, "Export tested native image", 'python3 .github/scripts/export-ci-native-image.py "$IMAGE_COMPONENT" "$GITHUB_SHA" "$RUNNER_TEMP/ci-native-image"', condition)
+    require!(export["timeout-minutes"] == 10 && export["env"] == { "IMAGE_COMPONENT" => "${{ matrix.component }}" }, "native export must retain exact component and timeout")
+    upload = step(images, "Retain tested native image", nil, condition)
+    require!(upload["uses"] == "actions/upload-artifact@v4" && upload["timeout-minutes"] == 10, "native image upload changed")
+    require!(upload["with"] == {
+      "name" => "ci-native-image-${{ matrix.component }}-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}",
+      "path" => "${{ runner.temp }}/ci-native-image/",
+      "if-no-files-found" => "error", "compression-level" => 0, "retention-days" => 1,
+    }, "native images must remain exact, required and short-lived")
+    order(images, ["Vulnerability scan", "Require passing runtime image evidence", "Export tested native image", "Retain tested native image"])
+  end
+
   def self.release(inputs)
     ci = inputs.fetch("ci")
     publish = inputs.fetch("publish")
@@ -61,6 +75,7 @@ module CIContract
     step(images, "Require passing runtime image evidence", 'node .github/scripts/runtime-image-evidence.mjs verify cma-runtime:ci "$GITHUB_SHA" "$RUNNER_TEMP/runtime-image-evidence.json"', "always() && matrix.component == 'runtime'")
     artifact(images, "always() && matrix.component == 'runtime'", "runtime-image-evidence")
     order(images, ["Load native image for scanning", "Vulnerability scan", "Execute built runtime image contract", "Retain runtime image evidence", "Require passing runtime image evidence"])
+    native_image_artifacts(images)
     runtime = job(publish, "runtime-image-gate", "Runtime image evidence")
     require!(runtime["needs"] == %w[plan images image-exports] && !runtime.key?("if"), "release runtime dependency authority changed")
     require!(runtime["permissions"] == { "contents" => "read", "packages" => "read" }, "runtime evidence cannot publish")
