@@ -1,18 +1,14 @@
 // Read-only evidence for #850. This observer does not authorize deployment or
 // replace the disposable live-turn/browser/fault campaign required by #873.
 import { createHash } from 'node:crypto';
-import { execFile } from 'node:child_process';
-import { lstat, readFile, writeFile } from 'node:fs/promises';
+import { readFile, writeFile } from 'node:fs/promises';
 import { isAbsolute } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { promisify } from 'node:util';
+import { check, errorCode } from './cma-bridge-continuity-errors.mjs';
+import { transport } from './cma-bridge-continuity-transport.mjs';
 
-const execute = promisify(execFile);
 const schema = 'cma-bridge-continuity-observation-v1';
 const id = /^(agt|sbx|wks|wkt)_[A-Za-z0-9_-]+$/;
-const check = (condition, code) => {
-  if (!condition) throw new Error(code);
-};
 
 function canonical(value) {
   if (Array.isArray(value)) return value.map(canonical);
@@ -159,30 +155,6 @@ export async function capture(config, { get, pods }, now = () => new Date()) {
   return result;
 }
 
-async function transport(config) {
-  const stat = await lstat(config.tokenFile);
-  check(stat.isFile() && !stat.isSymbolicLink() && stat.uid === process.getuid() && (stat.mode & 0o077) === 0, 'private_token_file_required');
-  const token = (await readFile(config.tokenFile, 'utf8')).trim();
-  check(token.length > 0 && !/\s/.test(token), 'invalid_saved_token');
-  return {
-    get: async (path, authenticated) => {
-      const response = await fetch(new URL(path, config.origin), {
-        headers: { 'User-Agent': 'Mozilla/5.0', ...(authenticated ? { Authorization: `Bearer ${token}` } : {}) },
-        redirect: 'error', signal: AbortSignal.timeout(15_000),
-      });
-      check(response.ok, `public_read_failed_${response.status}`);
-      if (!authenticated) { await response.body?.cancel(); return null; }
-      const body = await response.text();
-      check(Buffer.byteLength(body) <= 4 * 1024 * 1024, 'public_response_too_large');
-      return JSON.parse(body);
-    },
-    pods: async () => {
-      const { stdout } = await execute('kubectl', ['--context', config.context, '--request-timeout=20s', '-n', config.namespace, 'get', 'pods', '-l', `cma/control-plane=${config.deploymentId}`, '-o', 'json'], { timeout: 30_000, maxBuffer: 4 * 1024 * 1024 });
-      return JSON.parse(stdout);
-    },
-  };
-}
-
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   try {
     const [action, first, second] = process.argv.slice(2);
@@ -200,7 +172,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     }
   } catch (error) {
     // Network/provider exception text can carry private request details.
-    console.error(JSON.stringify({ status: 'failed', code: error.message?.match(/^[a-z_0-9]+$/)?.[0] ?? 'continuity_observation_failed' }));
+    console.error(JSON.stringify({ status: 'failed', code: errorCode(error) }));
     process.exitCode = 1;
   }
 }
