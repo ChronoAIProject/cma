@@ -4,7 +4,7 @@ CMA emits these observations through its existing `tracing-subscriber` text
 formatter, with ANSI color disabled so field queries are stable. The container
 log sink stores the line in Cloud Logging
 `textPayload`; it is not a JSON `jsonPayload` event. The checked-in
-[`channel-alerts.json`](operations/channel-alerts.json) contains eleven concrete
+[`channel-alerts.md`](operations/channel-alerts.md) contains eleven concrete
 Google Cloud Monitoring `conditionMatchedLog` policy definitions for that format.
 They are **disabled**, have no notification destinations, and are not installed
 by the CMA manifests. This change does not apply cloud policy or require a new
@@ -101,7 +101,7 @@ auto-close is a notification setting and **does not establish recovery**.
 To prepare an operational rollout, select existing notification destinations and
 review thresholds against the disposable canary's observed timings. Enabling or
 installing policies is a separate operator action using existing authority; no
-policy application is part of this source change. The policy catalog is a wrapper
+policy application is part of this source change. The Markdown policy catalog has one `json` fenced block containing a wrapper
 with `schema_version` and `alert_policies`; each array entry is a policy object.
 Keep optional log-derived metrics limited to the fixed dimensions above, and use
 duration samples for distributions rather than per-ID time series.
