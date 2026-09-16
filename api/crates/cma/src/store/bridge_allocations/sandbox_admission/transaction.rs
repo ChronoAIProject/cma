@@ -132,7 +132,7 @@ pub(super) async fn apply(
             )
             .session(&mut *session)
             .await?;
-        if live >= u64::from(request.live_limit()) {
+        if live >= u64::from(request.fresh_channel_live_limit()) {
             return Err(AllocationError::Capacity.into());
         }
         let mut document =

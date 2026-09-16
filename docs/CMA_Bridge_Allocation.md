@@ -98,6 +98,29 @@ identity permit subsequent retries to observe the already committed record;
 uncertainty never permits another resource tree. This is a storage guarantee,
 not proof that an unimplemented provider effect or Agent command is exactly once.
 
+## Ordinary owner capacity
+
+Fresh Channel Sandbox admission leaves one free slot within the owner's current
+live Sandbox limit for ordinary UI or Trigger creation. The transaction counts
+all live Sandboxes for that personal or organization owner, across all Bridges,
+under the same owner serialization fence as ordinary admission. A limit of one
+therefore permits no fresh Channel Sandbox. Capacity refusal inserts no Sandbox,
+resource policy, creation event or started-effect linkage; the retained
+allocation can retry with fresh authority when capacity becomes available.
+
+An exact already-admitted held Sandbox recovers its original receipt before the
+fresh-admission limit is checked. This does not revoke retained resources or
+change live profiles or owner limits. Shared-parent placement continues using
+its separately configured Workspace/Agent reserves. The owner slot reserve is
+one bounded quota rule; broader operational limits remain tracked in #868.
+
+The reserve changes admission behavior without changing the stored schema.
+Older Channel writers still apply the full owner limit and can consume the
+last free slot. Enabling Channel creation with mixed writer versions therefore
+remains subject to the #850 deployment gate; the reserve is not a guarantee
+until every Channel admission writer enforces it. Existing admitted resources
+remain recoverable throughout that upgrade.
+
 ## Verification boundary
 
 Focused core tests cover stable identity, profile/trust pinning, original

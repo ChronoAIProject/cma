@@ -122,6 +122,16 @@ async fn held_sandbox_owner_quota_includes_ordinary_admission_and_rolls_back_all
         .delete_one(doc! {"_id":"sbx_ordinary_0"})
         .await
         .unwrap();
+    // The last free owner slot remains available for ordinary creation.
+    assert!(matches!(
+        allocations.admit_channel_sandbox(request.clone()).await,
+        Err(AllocationError::Capacity)
+    ));
+    resources
+        .sandboxes
+        .delete_one(doc! {"_id":"sbx_ordinary_1"})
+        .await
+        .unwrap();
     assert!(
         allocations
             .admit_channel_sandbox(request)

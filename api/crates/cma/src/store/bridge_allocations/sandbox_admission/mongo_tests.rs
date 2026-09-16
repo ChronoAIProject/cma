@@ -8,6 +8,9 @@ use layer2_core::sandbox::{
 #[path = "rollback_tests.rs"]
 mod rollback;
 
+#[path = "owner_reserve_tests.rs"]
+mod owner_reserve;
+
 async fn request(
     svc: &BridgeService,
     bridges: &MongoBridgeStore,
