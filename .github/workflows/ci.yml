@@ -545,3 +545,21 @@ jobs:
       - name: Require passing runtime image evidence
         if: always() && matrix.component == 'runtime'
         run: node .github/scripts/runtime-image-evidence.mjs verify cma-runtime:ci "$GITHUB_SHA" "$RUNNER_TEMP/runtime-image-evidence.json"
+      # Preserve the exact native bytes that passed this job. PR artifacts keep
+      # their actual merge-checkout revision; consumers must verify tree equality.
+      - name: Export tested native image
+        if: success() && (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository)
+        timeout-minutes: 10
+        env:
+          IMAGE_COMPONENT: ${{ matrix.component }}
+        run: python3 .github/scripts/export-ci-native-image.py "$IMAGE_COMPONENT" "$GITHUB_SHA" "$RUNNER_TEMP/ci-native-image"
+      - name: Retain tested native image
+        if: success() && (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository)
+        timeout-minutes: 10
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-native-image-${{ matrix.component }}-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/ci-native-image/
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 1

@@ -328,6 +328,35 @@ build layer; final images contain neither compiler nor cache. Cached artifacts
 are not acceptance evidence. Build, identity, runtime and vulnerability gates
 apply to the resulting immutable image on every delivery.
 
+CI retains each tested native API, web and runtime image for one day after a
+successful component job on `develop` pushes and pull requests from this same
+repository. Export runs after the vulnerability scan and, for runtime, the
+executed contract and its evidence verification. The artifact is named
+`ci-native-image-<component>-<actual-source-sha>-<run-id>-<attempt>` and contains a
+compressed Docker-save archive plus `metadata.json`. Export saves the inspected
+immutable image ID with fast gzip compression; Actions does not recompress it.
+It adds no image build, registry credentials, registry write or deployment.
+
+Use artifacts only from the exact successful CI run and attempt whose complete
+required checks passed. Verify the repository, source revision, source tree,
+component, `linux/amd64` platform, image ID, archive filename, size and SHA-256
+against the metadata. For a PR artifact, independently compare its recorded Git
+tree to the merged `develop` commit; a matching branch name or PR number is not
+equivalence. After `docker load`, inspect that exact image ID again and require
+its source/revision/version labels and the runtime contract to match the
+metadata. Preserve its actual tested revision and version labels, including CI's
+`development`/`dev` version; do not relabel it as a later commit or release.
+Source-tree equivalence and the original successful checks provide the delivery
+identity for this CI handoff. A registry push still requires separately
+authorized delivery and verification of the resulting immutable registry digest.
+
+These archives contain only the tested native platform and do not establish the
+multi-platform root digest or release identity described in [Release](Release.md).
+They are unencrypted and readable by the repository's Actions-artifact audience;
+one-day retention limits duration, not readership. Expired artifacts require a
+new successful CI run. SDK packages, release workflows, registry ACLs and tags
+are unaffected.
+
 ### Lifecycle Scheduling
 
 Bridge ingress, worker occupancy/results and outbound attempts emit bounded
