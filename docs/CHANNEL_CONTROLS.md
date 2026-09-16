@@ -81,6 +81,46 @@ ingress writer without this guard can still admit newly received reserved text;
 mixed-version and rollback acceptance remains an explicit #850 gate. This
 foundation does not enable source control or claim mixed-writer safety.
 
+## Accepted-intent receipt reader
+
+Readers also recognize a separate version-2 retained accepted-control receipt:
+
+```json
+{
+  "status": "control_accepted",
+  "receipt": {
+    "version": 2,
+    "callback_id": "<64 lowercase hexadecimal characters>",
+    "bridge_id": "brg_example",
+    "message_id": "nyx-message-id",
+    "intent_id": "cci_<64 lowercase hexadecimal characters>",
+    "persisted_at": 1790000000
+  }
+}
+```
+
+This acknowledges durable intent acceptance only. It carries no fabricated
+command/response identity and makes no claim that a runtime operation ran or
+completed. HTTP recovery uses `202` with `Cache-Control: no-store`; the body
+does not send a platform message.
+
+Only `record.version: 2` in the shared disposition can contain
+`control_accepted`; version 1 remains exclusively Message or ControlRefused.
+The common outer `document_schema_version` stays 1. Readers validate the
+receipt's version, original callback/Bridge/message identity, intent identifier,
+provider identity and record digest. Exact and verified provider-alias recovery
+return the original receipt without selecting Message work. Cross-version or
+malformed retained records fail closed instead of admitting new work.
+
+Fresh accepted-control writing is not enabled by this reader foundation. The
+existing writer still emits only version-1 Message/refusal dispositions, and a
+permanent refusal can never become an accepted intent on retry or re-enablement.
+A future accepted writer must bind the matching retained intent and commit its
+canonical/provider dispositions atomically with admission. Enablement also
+requires a selected rollback baseline that understands version-2 receipts and
+accounts for held controls in queue capacity. An older reader refusing an
+unknown receipt is not proof of uninterrupted rollback compatibility.
+
 NyxID ignores callback response bodies, so this response does not send a chat
 message. External messages require an actual `reply_to_channel` tool invocation;
 channel-created Agents can invoke that tool during an active turn. This slice

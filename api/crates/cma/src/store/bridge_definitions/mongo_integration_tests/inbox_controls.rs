@@ -5,6 +5,8 @@ use crate::store::bridge_definitions::inbox::receipts::model::AcceptedCallbackRe
 use crate::store::sandbox_mongo::{record_bson, DOCUMENT_SCHEMA_VERSION};
 use futures_util::TryStreamExt;
 
+#[path = "inbox_controls/accepted.rs"]
+mod accepted;
 #[path = "inbox_controls/failures.rs"]
 mod failures;
 #[path = "inbox_controls/http.rs"]
