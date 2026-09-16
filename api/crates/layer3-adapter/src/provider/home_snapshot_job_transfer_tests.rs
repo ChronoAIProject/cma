@@ -108,7 +108,13 @@ async fn serve(replies: Vec<Reply>) -> Fixture {
     ))
     .unwrap();
     Fixture {
-        store: PersistentHomeVolumes::namespaced(client, "cma-test", "deployment").unwrap(),
+        store: PersistentHomeVolumes::namespaced(
+            client,
+            "cma-test",
+            "deployment",
+            &format!("http://{address}"),
+        )
+        .unwrap(),
         task,
         requests,
     }

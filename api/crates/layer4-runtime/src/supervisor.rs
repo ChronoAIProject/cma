@@ -35,6 +35,8 @@ mod mutations;
 mod recovery;
 #[path = "supervisor_status.rs"]
 mod status;
+#[path = "supervisor_workspace_reconciliation.rs"]
+mod workspace_reconciliation;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Phase {
@@ -102,7 +104,10 @@ impl Supervisor {
                 "sandbox home is not a directory",
             ));
         }
+        let boot_id = uuid::Uuid::new_v4().simple().to_string();
+        let _removal_writer = crate::workspace_removal_writer::claim(&config, &boot_id)?;
         let home = crate::persistent_home::initialize(&config)?;
+        crate::workspace_removal_writer::publish_claim(&config, &boot_id)?;
         let install_state = crate::install::recover(&config)?;
         let restored = home
             .as_ref()
@@ -124,7 +129,7 @@ impl Supervisor {
         let checkpoint = CheckpointStore::new(&config);
         Ok(Arc::new(Self {
             config,
-            boot_id: uuid::Uuid::new_v4().simple().to_string(),
+            boot_id,
             phase: RwLock::new(phase),
             allow_unowned_preparation: phase == Phase::Provisioned,
             restore_bootstrap: RwLock::new(restore_bootstrap),
@@ -155,6 +160,18 @@ impl Supervisor {
                 Err(error) => error.response(operation),
             };
         }
+        if let RequestFrame::WorkspaceRemovalSupport(request) = request {
+            return match self.workspace_removal_support(request).await {
+                Ok(support) => ResponseFrame::WorkspaceRemovalSupport(support),
+                Err(error) => error.response(operation),
+            };
+        }
+        if let RequestFrame::ReconcileWorkspaceRemoval(request) = request {
+            return match self.reconcile_workspace_removal(request).await {
+                Ok(observation) => ResponseFrame::ReconcileWorkspaceRemoval(observation),
+                Err(error) => error.response(operation),
+            };
+        }
         if matches!(
             request,
             RequestFrame::PrepareWorkspace(_)
@@ -164,21 +181,35 @@ impl Supervisor {
             if self.held_checkpoint.lock().await.is_some() {
                 return writers_held_error().response(operation);
             }
-            if let Err(error) = self.recover_journals().await {
+            // Keep recovery, the idle check and the detached mutation in one
+            // critical section so an Agent cannot open between them.
+            let operation_guard = Arc::clone(&self.operation_gate).lock_owned().await;
+            if self.held_checkpoint.lock().await.is_some() {
+                return writers_held_error().response(operation);
+            }
+            if let Err(error) = self.recover_journals_locked().await {
                 return error.response(operation);
             }
             if let Err(error) = self.authorize_preparation(&request).await {
                 return error.response(operation);
             }
-            if let RequestFrame::RemoveWorkspace(reference) = &request {
+            let removal_writer = if let RequestFrame::RemoveWorkspace(reference) = &request {
+                let guard = match self.removal_writer_guard() {
+                    Ok(guard) => guard,
+                    Err(error) => return error.response(operation),
+                };
                 if let Err(error) = self.ensure_workspace_idle(&reference.name).await {
                     return error.response(operation);
                 }
-            }
+                guard
+            } else {
+                None
+            };
             return match crate::workspace_runtime::dispatch(
                 self.config.clone(),
-                Arc::clone(&self.operation_gate),
+                operation_guard,
                 Arc::clone(&self.held_checkpoint),
+                removal_writer,
                 request,
             )
             .await
@@ -290,65 +321,12 @@ impl Supervisor {
             RequestFrame::Resources => Ok(ResponseFrame::Resources(
                 self.resources.sample(std::time::Instant::now()).into(),
             )),
-            RequestFrame::RuntimeStatus(_) => {
+            RequestFrame::WorkspaceRemovalSupport(_)
+            | RequestFrame::ReconcileWorkspaceRemoval(_)
+            | RequestFrame::RuntimeStatus(_) => {
                 unreachable!("status requests observe without mutation")
             }
         }
-    }
-
-    async fn authorize_mutation(&self, request: &RequestFrame) -> Result<()> {
-        use crate::mutation_journal::Operation;
-
-        let fenced = match request {
-            RequestFrame::AddWorktree(request) => {
-                crate::worktree::validate_add_request(&request.request)?;
-                Some((
-                    request.authority_fence,
-                    Operation::add_worktree(&request.request),
-                ))
-            }
-            RequestFrame::RemoveWorktree(request) => {
-                crate::worktree::validate_remove_request(&request.request)?;
-                Some((
-                    request.authority_fence,
-                    Operation::remove_worktree(&request.request),
-                ))
-            }
-            RequestFrame::MaterializeAgentHome(request) => {
-                agent_validation::materialize_home(&request.request)?;
-                Some((
-                    request.authority_fence,
-                    Operation::create_agent_home(&request.request),
-                ))
-            }
-            RequestFrame::RemoveAgentHome(request) => {
-                agent_validation::remove_home(&request.request)?;
-                Some((
-                    request.authority_fence,
-                    Operation::remove_agent_home(&request.request),
-                ))
-            }
-            RequestFrame::OpenAgent(request) => {
-                agent_validation::open(&request.request)?;
-                Some((
-                    request.authority_fence,
-                    Operation::open_agent(&request.request),
-                ))
-            }
-            RequestFrame::CloseAgent(request) => {
-                agent_validation::close(&request.request)?;
-                Some((
-                    request.authority_fence,
-                    Operation::close_agent(&request.request),
-                ))
-            }
-            _ => None,
-        };
-        let Some((authority_fence, operation)) = fenced else {
-            return Ok(());
-        };
-        self.authorize_preparation(request).await?;
-        crate::mutation_authority::admit(&self.config, authority_fence, &operation)
     }
 
     async fn install(&self, request: InstallRequest) -> Result<ResponseFrame> {

@@ -16,6 +16,25 @@ impl Bridge {
         settings: HostedAgentOpenSettings,
         updates: &UpdateRelay,
     ) -> crate::Result<()> {
+        let protected = settings.channel_tool.is_some();
+        self.handshake_inner(resume, cwd, settings, updates)
+            .await
+            .map_err(|error| {
+                if protected {
+                    protected_setup_failure(error)
+                } else {
+                    error
+                }
+            })
+    }
+
+    async fn handshake_inner(
+        &self,
+        resume: Option<String>,
+        cwd: String,
+        settings: HostedAgentOpenSettings,
+        updates: &UpdateRelay,
+    ) -> crate::Result<()> {
         validate_settings(&cwd, &settings)?;
         let greeting = self
             .greet(serde_json::json!({
@@ -29,8 +48,30 @@ impl Bridge {
                         "jetbrains": { "air": { "version": 1, "capabilities": ["sessionFailure"] } }
                     },
                 },
-            }))
+            }),settings.channel_tool.is_some())
             .await?;
+
+        if let Some(binding) = &settings.channel_tool {
+            match &greeting {
+                Greeting::Fresh(hello)
+                    if hello.pointer("/agentCapabilities/mcpCapabilities/http")
+                        == Some(&serde_json::Value::Bool(true)) => {}
+                Greeting::Existing
+                    if resume.as_deref().is_some_and(|id| binding.retained_for(id)) => {}
+                _ => {
+                    return Err(AdapterError::Unsupported(
+                        "runtime cannot establish the required channel reply tool connection"
+                            .into(),
+                    ))
+                }
+            }
+        }
+        let tool_servers: Vec<_> = settings
+            .channel_tool
+            .as_ref()
+            .map(|binding| binding.acp_server())
+            .into_iter()
+            .collect();
 
         if settings.own_credential && self.subscription.is_some() {
             self.call("cma/codex/authenticate", serde_json::json!({}))
@@ -53,7 +94,7 @@ impl Bridge {
                     serde_json::json!({
                         "sessionId": conversation,
                         "cwd": cwd,
-                        "mcpServers": [],
+                        "mcpServers": tool_servers,
                     }),
                 )
                 .await
@@ -64,7 +105,7 @@ impl Bridge {
                 let started = self
                     .call(
                         "session/new",
-                        serde_json::json!({ "cwd": cwd, "mcpServers": [] }),
+                        serde_json::json!({ "cwd": cwd, "mcpServers": tool_servers }),
                     )
                     .await?;
                 let conversation = started
@@ -102,11 +143,15 @@ impl Bridge {
         Ok(())
     }
 
-    async fn greet(&self, params: serde_json::Value) -> crate::Result<Greeting> {
+    async fn greet(&self, params: serde_json::Value, protected: bool) -> crate::Result<Greeting> {
         match self.call("initialize", params).await {
             Ok(hello) => Ok(Greeting::Fresh(hello)),
             Err(refused @ AdapterError::Rejected(_)) => {
-                tracing::info!(%refused, "runtime bridge was already initialized");
+                if protected {
+                    tracing::info!("channel runtime bridge was already initialized");
+                } else {
+                    tracing::info!(%refused, "runtime bridge was already initialized");
+                }
                 Ok(Greeting::Existing)
             }
             Err(error) => Err(error),
@@ -137,6 +182,22 @@ impl Bridge {
         .await
         .map_err(|error| error.context("owner sign-in did not complete"))?;
         Ok(())
+    }
+}
+
+/// MCP setup carries a limited CMA bearer. Runtimes may echo that descriptor in
+/// error JSON; preserve only the category before worker logs retain the failure.
+fn protected_setup_failure(error: AdapterError) -> AdapterError {
+    let detail = "channel tool session setup did not complete".to_string();
+    match error {
+        AdapterError::Unavailable(_) => AdapterError::Unavailable(detail),
+        AdapterError::Rejected(_) => AdapterError::Rejected(detail),
+        AdapterError::OperationIdentityConflict(_) => {
+            AdapterError::OperationIdentityConflict(detail)
+        }
+        AdapterError::AtCapacity(_) => AdapterError::AtCapacity(detail),
+        AdapterError::Unsupported(_) => AdapterError::Unsupported(detail),
+        AdapterError::RuntimeContractMismatch(_) => AdapterError::Rejected(detail),
     }
 }
 

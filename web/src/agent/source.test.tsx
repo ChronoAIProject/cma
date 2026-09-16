@@ -12,48 +12,92 @@ const value: AgentSource = {
   trigger: { title: 'Project introduction', public_id: 'pub_one', revision: 2, quick_messages: [] },
 };
 
-it('shows original source names and native links, never internal IDs as labels', () => {
-  const { rerender } = render(
-    <AgentSourceLabel source={{ status: 'ready', agentId: 'agt_one', value }} />,
-  );
-  expect(screen.getByRole('link', { name: 'Project introduction' })).toHaveAttribute(
-    'href',
-    '/t/pub_one',
-  );
-  expect(screen.queryByText('trg_one')).not.toBeInTheDocument();
-  rerender(
-    <AgentSourceLabel
-      source={{
-        status: 'ready',
-        agentId: 'agt_one',
-        value: { agent_id: 'agt_one', origin: { type: 'manual' } },
-      }}
-    />,
-  );
-  expect(screen.getByText('Created manually')).toBeVisible();
-  rerender(
-    <AgentSourceLabel
-      source={{
-        status: 'ready',
-        agentId: 'agt_one',
-        value: { agent_id: 'agt_one', origin: { type: 'workspace_profile' } },
-      }}
-    />,
-  );
-  expect(screen.getByText('Created from Workspace Profile')).toBeVisible();
-  rerender(
+it.each([
+  ['manual', 'Created manually'],
+  ['trigger', 'Created by Trigger'],
+  ['channel_bridge', 'Created by channel bridge'],
+  ['legacy_unknown', 'Creation origin unknown'],
+] as const)('keeps %s creation separate from a later published Trigger', (origin, label) => {
+  render(
     <AgentSourceLabel
       source={{
         status: 'ready',
         agentId: 'agt_one',
         value: { ...value, origin: { type: 'workspace_profile' } },
       }}
+      provenance={{
+        status: 'ready',
+        agentId: 'agt_one',
+        value: {
+          agent_id: 'agt_one',
+          created_at: '2026-09-06T00:00:00Z',
+          creation_origin: origin,
+        },
+      }}
     />,
   );
+  expect(screen.getByText(label, { exact: false })).toBeVisible();
+  expect(screen.getByText('Published Trigger:', { exact: false })).toBeVisible();
   expect(screen.getByRole('link', { name: 'Project introduction' })).toHaveAttribute(
     'href',
     '/t/pub_one',
   );
+  expect(screen.queryByText('From Trigger', { exact: false })).not.toBeInTheDocument();
+  expect(screen.queryByText('trg_one')).not.toBeInTheDocument();
+});
+
+it('does not infer creation when provenance is unavailable, even with a Trigger shortcut', () => {
+  render(
+    <AgentSourceLabel
+      source={{ status: 'ready', agentId: 'agt_one', value }}
+      provenance={{ status: 'unavailable', agentId: 'agt_one' }}
+    />,
+  );
+  expect(screen.getByText('Creation origin unavailable', { exact: false })).toBeVisible();
+  expect(screen.getByRole('link', { name: 'Project introduction' })).toBeVisible();
+  expect(screen.queryByText('Created by Trigger', { exact: false })).not.toBeInTheDocument();
+});
+
+it('keeps creation visible without privileged shortcuts and hides mismatched Agent links', () => {
+  const provenance = {
+    status: 'ready' as const,
+    agentId: 'agt_one',
+    value: {
+      agent_id: 'agt_one',
+      created_at: '2026-09-06T00:00:00Z',
+      creation_origin: 'trigger' as const,
+    },
+  };
+  const { rerender } = render(
+    <AgentSourceLabel
+      source={{
+        status: 'ready',
+        agentId: 'agt_one',
+        value: {
+          access: 'shared',
+          agent_id: 'agt_one',
+          origin: { type: 'trigger' },
+        },
+      }}
+      provenance={provenance}
+    />,
+  );
+  expect(screen.getByText('Created by Trigger')).toBeVisible();
+  expect(screen.queryByRole('link')).not.toBeInTheDocument();
+  rerender(
+    <AgentSourceLabel
+      source={{ status: 'unavailable', agentId: 'agt_one' }}
+      provenance={provenance}
+    />,
+  );
+  expect(screen.getByText('Created by Trigger')).toBeVisible();
+  rerender(
+    <AgentSourceLabel
+      source={{ status: 'ready', agentId: 'agt_two', value: { ...value, agent_id: 'agt_two' } }}
+      provenance={provenance}
+    />,
+  );
+  expect(screen.queryByRole('link')).not.toBeInTheDocument();
 });
 
 it('does not leak an earlier Agent source while the selected Agent is changing', async () => {

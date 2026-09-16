@@ -22,6 +22,7 @@ mod documents;
 mod event_log;
 mod handoffs;
 mod indexes;
+pub(super) mod input_protocol;
 mod queries;
 mod transactions;
 mod validation;
@@ -29,6 +30,7 @@ mod validation;
 pub(super) const LAUNCHES: &str = "trigger_launches";
 pub(super) const LAUNCH_EVENTS: &str = "trigger_launch_events";
 pub(super) const SERVICE_HANDOFFS: &str = "service_connection_handoffs";
+pub(super) const INPUT_PROTOCOLS: &str = "trigger_launch_input_protocols";
 pub(super) const TRANSACTION_ATTEMPTS: usize = 8;
 
 #[derive(Clone)]
@@ -36,15 +38,21 @@ pub(in crate::store) struct LaunchCollections {
     launches: Collection<Document>,
     events: Collection<Document>,
     handoffs: Collection<Document>,
+    input_protocols: Collection<Document>,
 }
 
 impl LaunchCollections {
     pub(super) async fn open(database: &Database) -> Result<Self, StoreError> {
-        initialize_collections(database, &[LAUNCHES, LAUNCH_EVENTS, SERVICE_HANDOFFS]).await?;
+        initialize_collections(
+            database,
+            &[LAUNCHES, LAUNCH_EVENTS, SERVICE_HANDOFFS, INPUT_PROTOCOLS],
+        )
+        .await?;
         let collections = Self {
             launches: majority_collection(database, LAUNCHES),
             events: majority_collection(database, LAUNCH_EVENTS),
             handoffs: majority_collection(database, SERVICE_HANDOFFS),
+            input_protocols: majority_collection(database, INPUT_PROTOCOLS),
         };
         indexes::ensure(&collections).await?;
         Ok(collections)
@@ -189,4 +197,10 @@ pub(super) fn trigger_error(
         | TriggerStoreError::Reference(_)
         | TriggerStoreError::ProfileReferenced { .. } => LaunchStoreError::TriggerUnavailable,
     }
+}
+
+pub(in crate::store) fn decode_launch_aggregate(
+    document: &Document,
+) -> Result<Launch, LaunchStoreError> {
+    documents::read_launch(document).map(|stored| stored.launch)
 }

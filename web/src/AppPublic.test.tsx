@@ -110,6 +110,9 @@ it.each(
       if (method === 'GET' && requestPath === '/api/v1/sandboxes') {
         return reply({ items: [] });
       }
+      if (method === 'GET' && requestPath === '/api/v1/organizations' && !visitor) {
+        return reply({ items: [] });
+      }
       if (method === 'GET' && requestPath === '/api/v1/triggers/public/public-example') {
         return reply({ ...PUBLIC_PREVIEW, always_review: false });
       }

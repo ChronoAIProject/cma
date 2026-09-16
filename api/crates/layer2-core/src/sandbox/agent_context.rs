@@ -89,6 +89,16 @@ pub struct AgentContextService {
 }
 
 impl AgentContextService {
+    /// One bounded preparation step. The command worker observes lifecycle
+    /// progress on its next sweep without retaining renewable authority here.
+    pub async fn prepare_command_input(
+        &self,
+        authorization: Arc<super::agent_io::CommandRevivalAuthorization>,
+    ) -> Result<(), AgentContextError> {
+        self.sandboxes.revive_for_command(authorization).await?;
+        Ok(())
+    }
+
     pub fn new(
         sandboxes: Arc<SandboxService>,
         workspaces: Arc<WorkspaceService>,

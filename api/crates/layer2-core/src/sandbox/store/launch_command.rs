@@ -123,6 +123,7 @@ where
             };
             match self
                 .commit(SandboxTransaction::SaveSandboxAndAppend {
+                    command_revival: None,
                     expected_revision,
                     sandbox: Box::new(sandbox.clone()),
                     event_at: command.requested_at.clone(),

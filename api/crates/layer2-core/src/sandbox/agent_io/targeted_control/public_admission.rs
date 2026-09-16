@@ -1,0 +1,82 @@
+use crate::resource_access::{CallerContext, ResourceTarget};
+
+use super::super::admission_service::command_capability;
+use super::super::{
+    AgentCommandService, CommandAdmissionError, CommandLedgerError, CommandSubmissionSource,
+};
+use super::{
+    ResponseControlRuntimeSupport, TargetedControlInspection, TargetedControlStatusView,
+    TargetedControlSubmission,
+};
+
+/// Additive interface error; v1 admission errors and persisted failures retain
+/// their existing meanings. A later capability race remains a generic conflict.
+#[derive(Debug, thiserror::Error)]
+pub enum TargetedControlError {
+    #[error(transparent)]
+    Admission(#[from] CommandAdmissionError),
+    #[error("the observed runtime does not support this control operation")]
+    CapabilityUnsupported,
+    #[error("the original response control intent was not admitted and is permanently stale")]
+    NotAdmitted,
+}
+
+impl From<CommandLedgerError> for TargetedControlError {
+    fn from(error: CommandLedgerError) -> Self {
+        Self::Admission(error.into())
+    }
+}
+
+impl AgentCommandService {
+    /// Exact receipt recovery precedes target/capability checks. All reads and
+    /// writes retain the same fresh operation authorization and bounded fence.
+    pub async fn admit_response_control(
+        &self,
+        context: &CallerContext,
+        credential: &str,
+        source: CommandSubmissionSource,
+        submission: TargetedControlSubmission,
+    ) -> Result<TargetedControlStatusView, TargetedControlError> {
+        let (authorized, request) = self
+            .prepare_targeted(context, credential, source, submission)
+            .await?;
+        let resource = ResourceTarget::Agent {
+            agent_id: request.command.envelope.agent_id.clone(),
+        };
+        let capability = command_capability(&request.command.envelope.command);
+        let result = self
+            .with_authority_bound(&authorized, capability, async {
+                match self.store.inspect_targeted_control(request.clone()).await? {
+                    TargetedControlInspection::Existing(existing) => return Ok(*existing),
+                    TargetedControlInspection::NotAdmitted => {
+                        return Err(TargetedControlError::NotAdmitted)
+                    }
+                    TargetedControlInspection::Missing => {}
+                }
+                let agent = authorized
+                    .snapshot
+                    .lineage
+                    .agent
+                    .as_ref()
+                    .ok_or(CommandLedgerError::Corrupt)?;
+                let response = self
+                    .store
+                    .get_response_command(&request.target.response_id)
+                    .await?
+                    .ok_or(CommandLedgerError::NotFound)?;
+                // A stale target cannot be mislabeled as an unsupported operation.
+                request.validate_target(agent, &response)?;
+                if !ResponseControlRuntimeSupport::from_runtime(&agent.capabilities)
+                    .supports(&request.command.envelope.command)
+                {
+                    return Err(TargetedControlError::CapabilityUnsupported);
+                }
+                Ok(self.store.reserve_targeted_control(request.clone()).await?)
+            })
+            .await;
+        self.fence(&authorized, &resource, capability).await?;
+        let result = result??;
+        let result = request.replay(result.record, Some(result.binding))?;
+        Ok(TargetedControlStatusView::from_record(&result))
+    }
+}

@@ -8,6 +8,19 @@ use super::{SandboxMutationGuard, SandboxStoreError};
 /// One generation-fenced, all-or-nothing conversation mutation.
 #[derive(Debug, Clone)]
 pub struct AgentConversationMutation {
+    /// Ledger claim bound to the new runtime operation in this same transaction.
+    pub command_claim: Option<crate::sandbox::agent_io::CommandClaim>,
+    /// Opaque current resource permission; never attached to outcome evidence.
+    pub execution_fence: Option<std::sync::Arc<crate::sandbox::agent_io::CommandExecutionFence>>,
+    /// Exact Channel invoke authority, independently fenced with original source.
+    pub channel_execution_fence:
+        Option<std::sync::Arc<crate::sandbox::agent_io::ChannelExecutionFence>>,
+    /// Exact original-source control authority, mutually exclusive with Message authority.
+    pub channel_control_execution_fence:
+        Option<std::sync::Arc<crate::sandbox::agent_io::ChannelControlExecutionFence>>,
+    /// Exact immutable Trigger first-message binding and current store proof.
+    pub trigger_execution_fence:
+        Option<std::sync::Arc<crate::sandbox::agent_io::TriggerExecutionFence>>,
     /// Exact parent authority for newly admitted input; absent for runtime evidence.
     pub admission_guard: Option<SandboxMutationGuard>,
     pub expected_agent_revision: u64,
@@ -27,6 +40,27 @@ pub fn validate_agent_conversation_admission(
     mutation: &AgentConversationMutation,
 ) -> Result<(), SandboxStoreError> {
     let admission = admits_input(current, mutation);
+    if [
+        mutation.execution_fence.is_some(),
+        mutation.channel_execution_fence.is_some(),
+        mutation.channel_control_execution_fence.is_some(),
+        mutation.trigger_execution_fence.is_some(),
+    ]
+    .into_iter()
+    .filter(|present| *present)
+    .count()
+        > 1
+    {
+        return Err(SandboxStoreError::Conflict);
+    }
+    if (mutation.execution_fence.is_some()
+        || mutation.channel_execution_fence.is_some()
+        || mutation.channel_control_execution_fence.is_some()
+        || mutation.trigger_execution_fence.is_some())
+        && (mutation.command_claim.is_none() || mutation.admission_guard.is_none() || !admission)
+    {
+        return Err(SandboxStoreError::Conflict);
+    }
     let Some(guard) = mutation.admission_guard.as_ref() else {
         return if admission {
             Err(SandboxStoreError::Conflict)

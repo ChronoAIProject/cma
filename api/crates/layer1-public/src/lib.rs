@@ -1,17 +1,20 @@
 //! Public-boundary foundations retained while the resource APIs are rebuilt.
 
 pub mod a2a;
+pub mod agent_v2;
 pub mod agui;
 pub mod auth;
 mod conversation;
 pub mod mcp;
 pub mod pty;
+mod resource_auth;
 pub mod responses;
 pub mod rest;
 pub mod tickets;
 
 pub use auth::{AuthenticatedCaller, AuthenticatedSubject, DelegatedCredential};
 pub use conversation::AgentConversationState;
+pub use resource_auth::AuthenticatedResourceCaller;
 pub use tickets::{
     AttachmentClaim, AttachmentTickets, IssuedTicket, MemoryTicketStore, RedeemedTicket,
     StoredTicket, TicketId, TicketStore,

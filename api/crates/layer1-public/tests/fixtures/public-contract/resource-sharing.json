@@ -1,0 +1,1377 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "share-effective-success",
+      "operation": "GET /api/v1/resource-access/{kind}/{id}",
+      "scenario": "share_effective",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/resource-access/agent/agt_share",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "owner": {
+            "kind": "person",
+            "is_current_person": true
+          },
+          "capabilities": [
+            "view_details",
+            "view_history",
+            "view_artifacts",
+            "view_files",
+            "interact",
+            "resolve_approval",
+            "operate_agent",
+            "manage_sandbox",
+            "manage_bridge",
+            "manage_sharing"
+          ],
+          "revalidate_at": null,
+          "policy_revision": 1
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "share-effective-anonymous",
+      "operation": "GET /api/v1/resource-access/{kind}/{id}",
+      "scenario": "share_anonymous",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/resource-access/agent/agt_share",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "share-effective-not-found",
+      "operation": "GET /api/v1/resource-access/{kind}/{id}",
+      "scenario": "share_outsider",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/resource-access/agent/agt_share",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource_not_found",
+          "title": "resource_not_found",
+          "status": 404,
+          "detail": "Resource not found.",
+          "code": "resource_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "share-effective-unavailable",
+      "operation": "GET /api/v1/resource-access/{kind}/{id}",
+      "scenario": "share_store_unavailable",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/resource-access/agent/agt_share",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource_access_unavailable",
+          "title": "resource_access_unavailable",
+          "status": 503,
+          "detail": "Resource access is temporarily unavailable. Retry the same command key to recover an unacknowledged result.",
+          "code": "resource_access_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "share-effective-invalid-kind",
+      "operation": "GET /api/v1/resource-access/{kind}/{id}",
+      "scenario": "share_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/resource-access/unknown/agt_share",
+        "headers": {}
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid_share_command",
+          "title": "invalid_share_command",
+          "status": 400,
+          "detail": "Share command or resource selector is invalid.",
+          "code": "invalid_share_command"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "share-list-success",
+      "operation": "GET /api/v1/resource-shares/{kind}/{id}",
+      "scenario": "share_list",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/resource-shares/agent/agt_share",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "items": [
+            {
+              "id": "shr_fixture",
+              "owner": {
+                "kind": "person",
+                "subject": "owner-a"
+              },
+              "selector": {
+                "kind": "agent",
+                "agent_id": "agt_share"
+              },
+              "target_org_id": "org",
+              "mode": "view",
+              "issuer_actor": {
+                "kind": "api",
+                "subject": "owner-a",
+                "delegation_id": null
+              },
+              "created_at": "2026-09-05T00:00:00Z",
+              "revoked_at": null,
+              "revision": 1
+            }
+          ]
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "share-list-anonymous",
+      "operation": "GET /api/v1/resource-shares/{kind}/{id}",
+      "scenario": "share_anonymous",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/resource-shares/agent/agt_share",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "share-list-not-found",
+      "operation": "GET /api/v1/resource-shares/{kind}/{id}",
+      "scenario": "share_outsider",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/resource-shares/agent/agt_share",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource_not_found",
+          "title": "resource_not_found",
+          "status": 404,
+          "detail": "Resource not found.",
+          "code": "resource_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "share-list-unavailable",
+      "operation": "GET /api/v1/resource-shares/{kind}/{id}",
+      "scenario": "share_store_unavailable",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/resource-shares/agent/agt_share",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource_access_unavailable",
+          "title": "resource_access_unavailable",
+          "status": 503,
+          "detail": "Resource access is temporarily unavailable. Retry the same command key to recover an unacknowledged result.",
+          "code": "resource_access_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "share-list-recipient-denied",
+      "operation": "GET /api/v1/resource-shares/{kind}/{id}",
+      "scenario": "share_recipient",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/resource-shares/agent/agt_share",
+        "headers": {}
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource_forbidden",
+          "title": "resource_forbidden",
+          "status": 403,
+          "detail": "Current authority does not permit this operation.",
+          "code": "resource_forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "share-list-invalid-kind",
+      "operation": "GET /api/v1/resource-shares/{kind}/{id}",
+      "scenario": "share_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/resource-shares/unknown/agt_share",
+        "headers": {}
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid_share_command",
+          "title": "invalid_share_command",
+          "status": 400,
+          "detail": "Share command or resource selector is invalid.",
+          "code": "invalid_share_command"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "share-read-success",
+      "operation": "GET /api/v1/resource-shares/{kind}/{id}/{share_id}",
+      "scenario": "share_read",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/resource-shares/agent/agt_share/shr_fixture",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "id": "shr_fixture",
+          "owner": {
+            "kind": "person",
+            "subject": "owner-a"
+          },
+          "selector": {
+            "kind": "agent",
+            "agent_id": "agt_share"
+          },
+          "target_org_id": "org",
+          "mode": "view",
+          "issuer_actor": {
+            "kind": "api",
+            "subject": "owner-a",
+            "delegation_id": null
+          },
+          "created_at": "2026-09-05T00:00:00Z",
+          "revoked_at": null,
+          "revision": 1
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "share-read-anonymous",
+      "operation": "GET /api/v1/resource-shares/{kind}/{id}/{share_id}",
+      "scenario": "share_anonymous",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/resource-shares/agent/agt_share/shr_fixture",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "share-read-not-found",
+      "operation": "GET /api/v1/resource-shares/{kind}/{id}/{share_id}",
+      "scenario": "share_outsider",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/resource-shares/agent/agt_share/shr_fixture",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource_not_found",
+          "title": "resource_not_found",
+          "status": 404,
+          "detail": "Resource not found.",
+          "code": "resource_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "share-read-unavailable",
+      "operation": "GET /api/v1/resource-shares/{kind}/{id}/{share_id}",
+      "scenario": "share_store_unavailable",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/resource-shares/agent/agt_share/shr_fixture",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource_access_unavailable",
+          "title": "resource_access_unavailable",
+          "status": 503,
+          "detail": "Resource access is temporarily unavailable. Retry the same command key to recover an unacknowledged result.",
+          "code": "resource_access_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "share-read-recipient-denied",
+      "operation": "GET /api/v1/resource-shares/{kind}/{id}/{share_id}",
+      "scenario": "share_recipient",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/resource-shares/agent/agt_share/shr_fixture",
+        "headers": {}
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource_forbidden",
+          "title": "resource_forbidden",
+          "status": 403,
+          "detail": "Current authority does not permit this operation.",
+          "code": "resource_forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "share-read-invalid-kind",
+      "operation": "GET /api/v1/resource-shares/{kind}/{id}/{share_id}",
+      "scenario": "share_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/resource-shares/unknown/agt_share/shr_fixture",
+        "headers": {}
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid_share_command",
+          "title": "invalid_share_command",
+          "status": 400,
+          "detail": "Share command or resource selector is invalid.",
+          "code": "invalid_share_command"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "share-create-success",
+      "operation": "POST /api/v1/resource-shares/{kind}/{id}",
+      "scenario": "share_empty_create",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/resource-shares/agent/agt_share",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "create-success"
+        },
+        "body": {
+          "target_org_id": "org",
+          "mode": "view"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "operation_id": "d10b207989d6e4ce9bd3b2d6c8c6b1a66853dcf0116c4488558150faa018d4e4",
+          "share": {
+            "id": "shr_canonical",
+            "owner": {
+              "kind": "person",
+              "subject": "owner-a"
+            },
+            "selector": {
+              "kind": "agent",
+              "agent_id": "agt_share"
+            },
+            "target_org_id": "org",
+            "mode": "view",
+            "issuer_actor": {
+              "kind": "api",
+              "subject": "owner-a",
+              "delegation_id": null
+            },
+            "created_at": "2026-09-15T00:00:00Z",
+            "revoked_at": null,
+            "revision": 1
+          },
+          "actor": {
+            "kind": "api",
+            "subject": "owner-a",
+            "delegation_id": null
+          },
+          "at": "2026-09-15T00:00:00Z",
+          "policy_revision": 1
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "at": "/at",
+        "new_share": "/share/id"
+      }
+    },
+    {
+      "id": "share-create-anonymous",
+      "operation": "POST /api/v1/resource-shares/{kind}/{id}",
+      "scenario": "share_anonymous",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/resource-shares/agent/agt_share",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "create-anonymous"
+        },
+        "body": {
+          "target_org_id": "org",
+          "mode": "view"
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "share-create-not-found",
+      "operation": "POST /api/v1/resource-shares/{kind}/{id}",
+      "scenario": "share_outsider",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/resource-shares/agent/agt_share",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "create-not-found"
+        },
+        "body": {
+          "target_org_id": "org",
+          "mode": "view"
+        }
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource_not_found",
+          "title": "resource_not_found",
+          "status": 404,
+          "detail": "Resource not found.",
+          "code": "resource_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "share-create-unavailable",
+      "operation": "POST /api/v1/resource-shares/{kind}/{id}",
+      "scenario": "share_store_unavailable",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/resource-shares/agent/agt_share",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "create-unavailable"
+        },
+        "body": {
+          "target_org_id": "org",
+          "mode": "view"
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource_access_unavailable",
+          "title": "resource_access_unavailable",
+          "status": 503,
+          "detail": "Resource access is temporarily unavailable. Retry the same command key to recover an unacknowledged result.",
+          "code": "resource_access_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "share-create-recipient-denied",
+      "operation": "POST /api/v1/resource-shares/{kind}/{id}",
+      "scenario": "share_recipient",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/resource-shares/agent/agt_share",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "create-recipient-denied"
+        },
+        "body": {
+          "target_org_id": "org",
+          "mode": "view"
+        }
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource_forbidden",
+          "title": "resource_forbidden",
+          "status": 403,
+          "detail": "Current authority does not permit this operation.",
+          "code": "resource_forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "share-create-invalid-kind",
+      "operation": "POST /api/v1/resource-shares/{kind}/{id}",
+      "scenario": "share_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/resource-shares/unknown/agt_share",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "create-invalid-kind"
+        },
+        "body": {
+          "target_org_id": "org",
+          "mode": "view"
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid_share_command",
+          "title": "invalid_share_command",
+          "status": 400,
+          "detail": "Share command or resource selector is invalid.",
+          "code": "invalid_share_command"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "share-update-success",
+      "operation": "PATCH /api/v1/resource-shares/{kind}/{id}/{share_id}",
+      "scenario": "share_update",
+      "request": {
+        "method": "PATCH",
+        "path": "/api/v1/resource-shares/agent/agt_share/shr_fixture",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "update-success"
+        },
+        "body": {
+          "expected_revision": 1,
+          "mode": "view"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "operation_id": "06f242b4f634e88f040ee7a342b27edb420aa99510c27a1b2c05599dd357b8e6",
+          "share": {
+            "id": "shr_fixture",
+            "owner": {
+              "kind": "person",
+              "subject": "owner-a"
+            },
+            "selector": {
+              "kind": "agent",
+              "agent_id": "agt_share"
+            },
+            "target_org_id": "org",
+            "mode": "view",
+            "issuer_actor": {
+              "kind": "api",
+              "subject": "owner-a",
+              "delegation_id": null
+            },
+            "created_at": "2026-09-05T00:00:00Z",
+            "revoked_at": null,
+            "revision": 2
+          },
+          "actor": {
+            "kind": "api",
+            "subject": "owner-a",
+            "delegation_id": null
+          },
+          "at": "2026-09-15T00:00:00Z",
+          "policy_revision": 2
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "at": "/at"
+      }
+    },
+    {
+      "id": "share-update-anonymous",
+      "operation": "PATCH /api/v1/resource-shares/{kind}/{id}/{share_id}",
+      "scenario": "share_anonymous",
+      "request": {
+        "method": "PATCH",
+        "path": "/api/v1/resource-shares/agent/agt_share/shr_fixture",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "update-anonymous"
+        },
+        "body": {
+          "expected_revision": 1,
+          "mode": "view"
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "share-update-not-found",
+      "operation": "PATCH /api/v1/resource-shares/{kind}/{id}/{share_id}",
+      "scenario": "share_outsider",
+      "request": {
+        "method": "PATCH",
+        "path": "/api/v1/resource-shares/agent/agt_share/shr_fixture",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "update-not-found"
+        },
+        "body": {
+          "expected_revision": 1,
+          "mode": "view"
+        }
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource_not_found",
+          "title": "resource_not_found",
+          "status": 404,
+          "detail": "Resource not found.",
+          "code": "resource_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "share-update-unavailable",
+      "operation": "PATCH /api/v1/resource-shares/{kind}/{id}/{share_id}",
+      "scenario": "share_store_unavailable",
+      "request": {
+        "method": "PATCH",
+        "path": "/api/v1/resource-shares/agent/agt_share/shr_fixture",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "update-unavailable"
+        },
+        "body": {
+          "expected_revision": 1,
+          "mode": "view"
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource_access_unavailable",
+          "title": "resource_access_unavailable",
+          "status": 503,
+          "detail": "Resource access is temporarily unavailable. Retry the same command key to recover an unacknowledged result.",
+          "code": "resource_access_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "share-update-recipient-denied",
+      "operation": "PATCH /api/v1/resource-shares/{kind}/{id}/{share_id}",
+      "scenario": "share_recipient",
+      "request": {
+        "method": "PATCH",
+        "path": "/api/v1/resource-shares/agent/agt_share/shr_fixture",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "update-recipient-denied"
+        },
+        "body": {
+          "expected_revision": 1,
+          "mode": "view"
+        }
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource_forbidden",
+          "title": "resource_forbidden",
+          "status": 403,
+          "detail": "Current authority does not permit this operation.",
+          "code": "resource_forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "share-update-invalid-kind",
+      "operation": "PATCH /api/v1/resource-shares/{kind}/{id}/{share_id}",
+      "scenario": "share_owner",
+      "request": {
+        "method": "PATCH",
+        "path": "/api/v1/resource-shares/unknown/agt_share/shr_fixture",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "update-invalid-kind"
+        },
+        "body": {
+          "expected_revision": 1,
+          "mode": "view"
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid_share_command",
+          "title": "invalid_share_command",
+          "status": 400,
+          "detail": "Share command or resource selector is invalid.",
+          "code": "invalid_share_command"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "share-revoke-success",
+      "operation": "DELETE /api/v1/resource-shares/{kind}/{id}/{share_id}",
+      "scenario": "share_revoke",
+      "request": {
+        "method": "DELETE",
+        "path": "/api/v1/resource-shares/agent/agt_share/shr_fixture?expected_revision=1",
+        "headers": {
+          "idempotency-key": "revoke-success"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "operation_id": "911d0b2aabeb35c81357f4ac686b048e3907a67c078a7fa28806f78a9cfe0151",
+          "share": {
+            "id": "shr_fixture",
+            "owner": {
+              "kind": "person",
+              "subject": "owner-a"
+            },
+            "selector": {
+              "kind": "agent",
+              "agent_id": "agt_share"
+            },
+            "target_org_id": "org",
+            "mode": "view",
+            "issuer_actor": {
+              "kind": "api",
+              "subject": "owner-a",
+              "delegation_id": null
+            },
+            "created_at": "2026-09-05T00:00:00Z",
+            "revoked_at": "2026-09-15T00:00:00Z",
+            "revision": 2
+          },
+          "actor": {
+            "kind": "api",
+            "subject": "owner-a",
+            "delegation_id": null
+          },
+          "at": "2026-09-15T00:00:00Z",
+          "policy_revision": 2
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "at": "/at"
+      }
+    },
+    {
+      "id": "share-revoke-anonymous",
+      "operation": "DELETE /api/v1/resource-shares/{kind}/{id}/{share_id}",
+      "scenario": "share_anonymous",
+      "request": {
+        "method": "DELETE",
+        "path": "/api/v1/resource-shares/agent/agt_share/shr_fixture?expected_revision=1",
+        "headers": {
+          "idempotency-key": "revoke-anonymous"
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "share-revoke-not-found",
+      "operation": "DELETE /api/v1/resource-shares/{kind}/{id}/{share_id}",
+      "scenario": "share_outsider",
+      "request": {
+        "method": "DELETE",
+        "path": "/api/v1/resource-shares/agent/agt_share/shr_fixture?expected_revision=1",
+        "headers": {
+          "idempotency-key": "revoke-not-found"
+        }
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource_not_found",
+          "title": "resource_not_found",
+          "status": 404,
+          "detail": "Resource not found.",
+          "code": "resource_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "share-revoke-unavailable",
+      "operation": "DELETE /api/v1/resource-shares/{kind}/{id}/{share_id}",
+      "scenario": "share_store_unavailable",
+      "request": {
+        "method": "DELETE",
+        "path": "/api/v1/resource-shares/agent/agt_share/shr_fixture?expected_revision=1",
+        "headers": {
+          "idempotency-key": "revoke-unavailable"
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource_access_unavailable",
+          "title": "resource_access_unavailable",
+          "status": 503,
+          "detail": "Resource access is temporarily unavailable. Retry the same command key to recover an unacknowledged result.",
+          "code": "resource_access_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "share-revoke-recipient-denied",
+      "operation": "DELETE /api/v1/resource-shares/{kind}/{id}/{share_id}",
+      "scenario": "share_recipient",
+      "request": {
+        "method": "DELETE",
+        "path": "/api/v1/resource-shares/agent/agt_share/shr_fixture?expected_revision=1",
+        "headers": {
+          "idempotency-key": "revoke-recipient-denied"
+        }
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource_forbidden",
+          "title": "resource_forbidden",
+          "status": 403,
+          "detail": "Current authority does not permit this operation.",
+          "code": "resource_forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "share-revoke-invalid-kind",
+      "operation": "DELETE /api/v1/resource-shares/{kind}/{id}/{share_id}",
+      "scenario": "share_owner",
+      "request": {
+        "method": "DELETE",
+        "path": "/api/v1/resource-shares/unknown/agt_share/shr_fixture?expected_revision=1",
+        "headers": {
+          "idempotency-key": "revoke-invalid-kind"
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid_share_command",
+          "title": "invalid_share_command",
+          "status": 400,
+          "detail": "Share command or resource selector is invalid.",
+          "code": "invalid_share_command"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "share-effective-recipient",
+      "operation": "GET /api/v1/resource-access/{kind}/{id}",
+      "scenario": "share_recipient_effective",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/resource-access/agent/agt_share",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "owner": {
+            "kind": "person",
+            "is_current_person": false
+          },
+          "capabilities": [
+            "view_details",
+            "view_history",
+            "view_artifacts"
+          ],
+          "revalidate_at": "2026-09-15T00:01:00Z",
+          "policy_revision": 1
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "expiry": "/revalidate_at"
+      }
+    },
+    {
+      "id": "share-effective-outage",
+      "operation": "GET /api/v1/resource-access/{kind}/{id}",
+      "scenario": "share_recipient_outage",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/resource-access/agent/agt_share",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/organization_authority_unavailable",
+          "title": "organization_authority_unavailable",
+          "status": 503,
+          "detail": "Current organization authorization is unavailable. Retry after the identity provider recovers.",
+          "code": "organization_authority_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "share-create-outage",
+      "operation": "POST /api/v1/resource-shares/{kind}/{id}",
+      "scenario": "share_empty_outage",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/resource-shares/agent/agt_share",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "create-outage"
+        },
+        "body": {
+          "target_org_id": "org",
+          "mode": "view"
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/organization_authority_unavailable",
+          "title": "organization_authority_unavailable",
+          "status": 503,
+          "detail": "Current organization authorization is unavailable. Retry after the identity provider recovers.",
+          "code": "organization_authority_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "share-create-capacity",
+      "operation": "POST /api/v1/resource-shares/{kind}/{id}",
+      "scenario": "share_capacity",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/resource-shares/agent/agt_share",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "create-capacity"
+        },
+        "body": {
+          "target_org_id": "org",
+          "mode": "view"
+        }
+      },
+      "response": {
+        "status": 429,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/share_capacity",
+          "title": "share_capacity",
+          "status": 429,
+          "detail": "This Sandbox has reached its active-share limit.",
+          "code": "share_capacity"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "share-create-unsafe",
+      "operation": "POST /api/v1/resource-shares/{kind}/{id}",
+      "scenario": "share_empty_unsafe",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/resource-shares/agent/agt_share",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "create-unsafe"
+        },
+        "body": {
+          "target_org_id": "org",
+          "mode": "org_roles"
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/unsafe_interactive_share",
+          "title": "unsafe_interactive_share",
+          "status": 409,
+          "detail": "Interactive Agent sharing requires independent isolation or an explicit compatible whole-Sandbox grant. Use view sharing for this Agent.",
+          "code": "unsafe_interactive_share"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "share-update-stale",
+      "operation": "PATCH /api/v1/resource-shares/{kind}/{id}/{share_id}",
+      "scenario": "share_stale_update",
+      "request": {
+        "method": "PATCH",
+        "path": "/api/v1/resource-shares/agent/agt_share/shr_fixture",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "update-stale"
+        },
+        "body": {
+          "expected_revision": 2,
+          "mode": "view"
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource_access_changed",
+          "title": "resource_access_changed",
+          "status": 409,
+          "detail": "Resource access changed. Read current access and retry with the current revision.",
+          "code": "resource_access_changed"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "share-create-replay",
+      "operation": "POST /api/v1/resource-shares/{kind}/{id}",
+      "scenario": "share_empty_create",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/resource-shares/agent/agt_share",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "create-success"
+        },
+        "body": {
+          "target_org_id": "org",
+          "mode": "view"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "operation_id": "d10b207989d6e4ce9bd3b2d6c8c6b1a66853dcf0116c4488558150faa018d4e4",
+          "share": {
+            "id": "shr_canonical",
+            "owner": {
+              "kind": "person",
+              "subject": "owner-a"
+            },
+            "selector": {
+              "kind": "agent",
+              "agent_id": "agt_share"
+            },
+            "target_org_id": "org",
+            "mode": "view",
+            "issuer_actor": {
+              "kind": "api",
+              "subject": "owner-a",
+              "delegation_id": null
+            },
+            "created_at": "2026-09-15T00:00:00Z",
+            "revoked_at": null,
+            "revision": 1
+          },
+          "actor": {
+            "kind": "api",
+            "subject": "owner-a",
+            "delegation_id": null
+          },
+          "at": "2026-09-15T00:00:00Z",
+          "policy_revision": 1
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "at": "/at",
+        "new_share": "/share/id"
+      }
+    },
+    {
+      "id": "share-create-changed-key",
+      "operation": "POST /api/v1/resource-shares/{kind}/{id}",
+      "scenario": "share_empty_create",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/resource-shares/agent/agt_share",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "create-success"
+        },
+        "body": {
+          "target_org_id": "other",
+          "mode": "view"
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/idempotency_key_reused",
+          "title": "idempotency_key_reused",
+          "status": 409,
+          "detail": "The idempotency key was used for another share command.",
+          "code": "idempotency_key_reused"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    }
+  ]
+}

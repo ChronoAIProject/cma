@@ -1,0 +1,216 @@
+import { ResourceAccessDetails } from './ResourceAccessSummary';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import type { SharedAgent as SharedAgentDetail } from '@chronoai/cma-sdk';
+import { ApiError } from '@chronoai/cma-sdk';
+import type { CmaWebClient } from '../api/client';
+import { CommandKeys } from '../api/client';
+import type { ResourceViewsClient } from './client';
+import { useAuthorizedRead } from './useAuthorizedRead';
+import { loadSharedAgent } from './loadSharedAgent';
+import { MessageStream } from '../agent/MessageStream';
+import { Composer } from '../agent/Composer';
+import { foldLiveEvent, type ConversationState } from '../agent/conversation';
+import { useAgentProvenance, creationLabel } from '../agent/provenance';
+import { Button } from '../ui/Button';
+import { ArtifactButton } from './ArtifactButton';
+import type { ArtifactPublicationScope } from './artifactRecovery';
+import { ChannelUsage } from './ChannelUsage';
+import { statusLabel } from '../vocabulary/status';
+import type { ApprovalDecision } from '../agent/controller';
+import '../agent/Agent.css';
+
+interface Props {
+  readonly client: ResourceViewsClient;
+  readonly web: CmaWebClient;
+  readonly detail: SharedAgentDetail;
+  readonly onAccessChanged: () => void;
+  readonly publicationScope?: ArtifactPublicationScope;
+}
+
+export function SharedAgent({ client, web, detail, onAccessChanged, publicationScope }: Props) {
+  const agentId = detail.id;
+  const read = useMemo(
+    () => async (signal: AbortSignal) => {
+      try {
+        return await loadSharedAgent(web, client, agentId, signal);
+      } catch (error) {
+        if (
+          !signal.aborted &&
+          error instanceof ApiError &&
+          [401, 403, 404, 409].includes(error.status)
+        )
+          onAccessChanged();
+        throw error;
+      }
+    },
+    [web, client, agentId, onAccessChanged],
+  );
+  const history = useAuthorizedRead(read);
+  const ready = history.state.status === 'ready' ? history.state.value : undefined;
+  const [live, setLive] = useState<{
+    readonly basis: typeof ready;
+    readonly conversation: ConversationState;
+  }>();
+  const [command, setCommand] = useState<AbortController>();
+  const busy = command !== undefined && !command.signal.aborted;
+  const [error, setError] = useState<string>();
+  const [notice, setNotice] = useState<string>();
+  const [keys] = useState(() => new CommandKeys());
+  const mutation = useRef<AbortController | undefined>(undefined);
+  const refreshHistory = history.reload;
+  const provenance = useAgentProvenance(agentId, ready !== undefined);
+  useEffect(() => {
+    if (ready === undefined) {
+      mutation.current?.abort();
+      mutation.current = undefined;
+      return;
+    }
+    const stream = new AbortController();
+    let retry: ReturnType<typeof setTimeout> | undefined;
+    void web
+      .replayAgent(agentId, {
+        after: ready.conversation.cursor,
+        signal: stream.signal,
+        onEvent: (event) => {
+          if (stream.signal.aborted) return;
+          setLive((current) => ({
+            basis: ready,
+            conversation: foldLiveEvent(
+              current?.basis === ready ? current.conversation : ready.conversation,
+              event,
+              new Date().toISOString(),
+            ),
+          }));
+        },
+      })
+      .then(() => {
+        if (!stream.signal.aborted) retry = setTimeout(refreshHistory, 5_000);
+      })
+      .catch(() => {
+        if (!stream.signal.aborted) onAccessChanged();
+      });
+    return () => {
+      stream.abort();
+      clearTimeout(retry);
+    };
+  }, [web, agentId, ready, refreshHistory, onAccessChanged]);
+  useEffect(() => () => mutation.current?.abort(), []);
+
+  const can = (capability: string) => ready?.access.capabilities.includes(capability) === true;
+  const run = async (
+    capability: string,
+    logicalKey: string,
+    action: (signal: AbortSignal, idempotencyKey: string) => Promise<unknown>,
+  ) => {
+    if (mutation.current !== undefined || !can(capability)) return;
+    const request = new AbortController();
+    mutation.current = request;
+    setCommand(request);
+    setError(undefined);
+    setNotice(undefined);
+    try {
+      const current = await client.resourceAccess.effective('agent', agentId, {
+        signal: request.signal,
+      });
+      if (!current.capabilities.includes(capability)) {
+        onAccessChanged();
+        throw new Error('Current access does not permit this action.');
+      }
+      const result = await action(request.signal, keys.for(logicalKey));
+      if (request.signal.aborted) return;
+      keys.settle(logicalKey);
+      refreshHistory();
+      return result;
+    } catch (caught) {
+      if (!request.signal.aborted) {
+        setError(caught instanceof Error ? caught.message : 'The Agent command did not complete.');
+        if (caught instanceof ApiError && [401, 403, 404, 409, 503].includes(caught.status))
+          onAccessChanged();
+      }
+      return undefined;
+    } finally {
+      if (mutation.current === request) mutation.current = undefined;
+      if (!request.signal.aborted) setCommand(undefined);
+    }
+  };
+  const approve = (id: string, decision: ApprovalDecision) => {
+    void run('resolve_approval', `approval:${id}:${decision}`, (signal, idempotencyKey) =>
+      client.agents.answerApproval(agentId, id, { decision }, { signal, idempotencyKey }),
+    );
+  };
+  const conversation =
+    live !== undefined && live.basis === ready ? live.conversation : ready?.conversation;
+  return (
+    <section className="agent-surface">
+      <header className="agent-header">
+        <p>Shared Agent</p>
+        <div className="agent-header__title">
+          <h1>{detail.title?.trim() || 'Untitled agent'}</h1>
+          <span>{statusLabel(detail.status)}</span>
+        </div>
+        <p>{creationLabel(provenance)}</p>
+        {ready === undefined ? null : (
+          <ResourceAccessDetails client={client} access={ready.access} />
+        )}
+        {ready === undefined ? null : <ChannelUsage client={client} id={agentId} />}
+        <Button size="sm" onClick={onAccessChanged}>
+          Refresh access
+        </Button>
+        {can('view_artifacts') ? (
+          <ArtifactButton client={client} id={agentId} publicationScope={publicationScope} />
+        ) : null}
+      </header>
+      <div className="agent-surface__conversation">
+        {history.state.status === 'loading' ? (
+          <p role="status">Loading authorized Agent history</p>
+        ) : null}
+        {history.state.status === 'error' ? (
+          <div role="alert">
+            <p>{history.state.message}</p>
+            <Button onClick={onAccessChanged}>Check access again</Button>
+          </div>
+        ) : null}
+        {conversation === undefined ? null : (
+          <MessageStream
+            emptyMessage="No messages yet."
+            conversation={conversation}
+            approvalBusy={busy}
+            approvalReadOnly={!can('resolve_approval')}
+            onApproval={approve}
+          />
+        )}
+      </div>
+      {error === undefined ? null : <p role="alert">{error}</p>}
+      {notice === undefined ? null : <p role="status">{notice}</p>}
+      {ready === undefined ? null : can('interact') ? (
+        <div className="agent-surface__input">
+          <p>Your messages are attributed to you.</p>
+          <Composer
+            status={detail.status}
+            running={conversation?.activeRunId !== undefined}
+            busy={busy}
+            inputAvailability={{ allowed: true }}
+            onSend={async (text, accepted) => {
+              const result = await run('interact', `input:${text}`, (signal, idempotencyKey) =>
+                client.agents.input(agentId, { text }, { signal, idempotencyKey }),
+              );
+              if (result !== undefined) {
+                accepted();
+                setNotice('Message accepted.');
+              }
+            }}
+            onStop={() =>
+              run('interact', 'interrupt', (signal, idempotencyKey) =>
+                client.agents.interrupt(agentId, { signal, idempotencyKey }),
+              ).then(() => {})
+            }
+          />
+        </div>
+      ) : (
+        <div className="agent-surface__input">
+          <p>You can view this Agent. Your current access does not allow interaction.</p>
+        </div>
+      )}
+    </section>
+  );
+}

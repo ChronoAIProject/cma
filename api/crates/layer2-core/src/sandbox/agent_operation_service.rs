@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use crate::{AgentId, Caller, Capability, RuntimeCapability};
+use crate::{AgentId, Caller, RuntimeCapability};
 
 use super::store::{
     AgentConversationStore, AgentLogStore, AgentStore, SandboxLifecycleExecutionStore,
@@ -16,6 +16,9 @@ pub(super) const MAX_OPERATION_COMMIT_RETRIES: usize = 8;
 
 #[path = "agent_linear_input.rs"]
 mod linear_input;
+
+#[path = "agent_operation_authority.rs"]
+mod execution_authority;
 
 pub trait AgentOperationStore:
     AgentStore + AgentLogStore + AgentConversationStore + SandboxStore + SandboxLifecycleExecutionStore
@@ -67,6 +70,8 @@ pub enum AgentOperationError {
     DispatchRecoveryRequired { operation_sequence: u64 },
     #[error("agent runtime does not support {capability:?}")]
     CapabilityUnsupported { capability: RuntimeCapability },
+    #[error("agent input content is not supported")]
+    ContentUnsupported,
     #[error("agent queued-message capacity reached: {limit}")]
     QueueCapacityExceeded { limit: usize },
     #[error("agent lifecycle authority is stale")]
@@ -109,6 +114,7 @@ impl AgentOperationError {
             Self::DispatchInProgress { .. } => "agent_dispatch_in_progress",
             Self::DispatchRecoveryRequired { .. } => "agent_dispatch_recovery_required",
             Self::CapabilityUnsupported { .. } => "agent_capability_unsupported",
+            Self::ContentUnsupported => "agent_content_unsupported",
             Self::QueueCapacityExceeded { .. } => "agent_message_queue_full",
             Self::StaleWorkAuthority => "agent_work_authority_stale",
             Self::InvalidRequest(_) => "invalid_agent_operation",
@@ -126,6 +132,12 @@ impl AgentOperationError {
 }
 
 pub struct AgentOperationService {
+    pub(super) command_claim: Option<super::agent_io::CommandClaim>,
+    pub(super) execution_authority: Option<super::agent_io::CommandExecutionAuthorization>,
+    pub(super) trigger_authority: Option<super::agent_io::TriggerExecutionAuthorization>,
+    pub(super) channel_control_authority:
+        Option<super::agent_io::ChannelControlExecutionAuthorization>,
+    pub(super) channel_authority: Option<super::agent_io::ChannelExecutionAuthorization>,
     pub(super) connections: Arc<dyn super::SandboxCredentialPrerequisite>,
     pub(super) store: Arc<dyn AgentOperationStore>,
     pub(super) runtimes: Arc<dyn AgentRuntimeRegistry>,
@@ -138,6 +150,11 @@ impl AgentOperationService {
         R: AgentRuntimeRegistry + 'static,
     {
         Arc::new(Self {
+            command_claim: None,
+            execution_authority: None,
+            channel_control_authority: None,
+            channel_authority: None,
+            trigger_authority: None,
             store,
             runtimes,
             connections: Arc::new(super::FixedSandboxCredentialPrerequisite::Ready),
@@ -149,6 +166,11 @@ impl AgentOperationService {
         connections: Arc<dyn super::SandboxCredentialPrerequisite>,
     ) -> Arc<Self> {
         Arc::new(Self {
+            command_claim: self.command_claim.clone(),
+            execution_authority: self.execution_authority.clone(),
+            channel_control_authority: self.channel_control_authority.clone(),
+            channel_authority: self.channel_authority.clone(),
+            trigger_authority: self.trigger_authority.clone(),
             connections,
             store: self.store.clone(),
             runtimes: self.runtimes.clone(),
@@ -170,11 +192,12 @@ impl AgentOperationService {
         Ok(())
     }
 
-    pub async fn send_message(
+    pub(super) async fn execute_message(
         &self,
         caller: &Caller,
         id: &AgentId,
         text: String,
+        metadata: std::collections::BTreeMap<String, String>,
     ) -> Result<AgentMessageOutcome, AgentOperationError> {
         self.require_owner_authority(caller)?;
         self.validate_message(&text)?;
@@ -190,6 +213,13 @@ impl AgentOperationService {
             }
             self.require_agent_connections(&current).await?;
             let (parent, queues) = self.parent_admission(&current).await?;
+            // Existing queued records have no metadata field. Do not accept
+            // metadata that a retained reader or lifecycle worker would lose.
+            if (queues || current.status == AgentStatus::Paused) && !metadata.is_empty() {
+                return Err(AgentOperationError::InvalidRequest(
+                    "queued message metadata is not supported".into(),
+                ));
+            }
             match current.status {
                 AgentStatus::Ready if queues => {
                     match self.queue_message(current, text.clone(), parent).await {
@@ -199,14 +229,14 @@ impl AgentOperationService {
                     }
                 }
                 AgentStatus::Ready => match self
-                    .fence_message(current, text.clone(), parent, Default::default())
+                    .fence_message(current, text.clone(), parent, metadata.clone())
                     .await
                 {
                     Ok(prepared) => {
                         return self
                             .dispatch_prepared(prepared)
                             .await
-                            .map(AgentMessageOutcome::Dispatched)
+                            .map(AgentMessageOutcome::Dispatched);
                     }
                     Err(AgentOperationError::Conflict) => continue,
                     Err(error) => return Err(error),
@@ -266,7 +296,7 @@ impl AgentOperationService {
         Ok((SandboxMutationGuard::capture(&sandbox), queues))
     }
 
-    pub async fn steer(
+    pub(super) async fn execute_steer(
         &self,
         caller: &Caller,
         id: &AgentId,
@@ -293,7 +323,7 @@ impl AgentOperationService {
         Err(AgentOperationError::Conflict)
     }
 
-    pub async fn interrupt(
+    pub(super) async fn execute_interrupt(
         &self,
         caller: &Caller,
         id: &AgentId,
@@ -324,7 +354,7 @@ impl AgentOperationService {
         Err(AgentOperationError::Conflict)
     }
 
-    pub async fn answer_approval(
+    pub(super) async fn execute_approval(
         &self,
         caller: &Caller,
         id: &AgentId,
@@ -352,32 +382,6 @@ impl AgentOperationService {
         Err(AgentOperationError::Conflict)
     }
 
-    fn require_owner_authority(&self, caller: &Caller) -> Result<(), AgentOperationError> {
-        caller
-            .authorization
-            .allows(Capability::UseOwnSandboxes)
-            .then_some(())
-            .ok_or(AgentOperationError::Forbidden)
-    }
-
-    async fn owned_agent(
-        &self,
-        caller: &Caller,
-        id: &AgentId,
-    ) -> Result<Agent, AgentOperationError> {
-        let agent = AgentStore::get_agent(self.store.as_ref(), id)
-            .await
-            .map_err(operation_store_error)?
-            .filter(|agent| agent.id == *id && agent.owner == caller.subject)
-            .ok_or(AgentOperationError::NotFound)?;
-        if agent.requested_stop_reason.is_some() {
-            return Err(AgentOperationError::StatusConflict {
-                status: agent.status,
-            });
-        }
-        Ok(agent)
-    }
-
     fn require_active_status(
         &self,
         agent: &Agent,
@@ -395,7 +399,10 @@ impl AgentOperationService {
             .ok_or(AgentOperationError::NoActiveTurn)
     }
 
-    fn require_first_message_settled(&self, agent: &Agent) -> Result<(), AgentOperationError> {
+    pub(super) fn require_first_message_settled(
+        &self,
+        agent: &Agent,
+    ) -> Result<(), AgentOperationError> {
         if let Some(record) = agent
             .conversation
             .first_message
@@ -409,7 +416,7 @@ impl AgentOperationService {
         Ok(())
     }
 
-    fn require_first_message_dispatch_settled(
+    pub(super) fn require_first_message_dispatch_settled(
         &self,
         agent: &Agent,
     ) -> Result<(), AgentOperationError> {
@@ -428,7 +435,10 @@ impl AgentOperationService {
         Ok(())
     }
 
-    fn require_dispatch_available(&self, agent: &Agent) -> Result<(), AgentOperationError> {
+    pub(super) fn require_dispatch_available(
+        &self,
+        agent: &Agent,
+    ) -> Result<(), AgentOperationError> {
         match agent.conversation.operation.as_ref() {
             Some(record) if record.state == AgentOperationDelivery::DispatchFenced => {
                 Err(AgentOperationError::DispatchInProgress {

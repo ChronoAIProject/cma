@@ -1,0 +1,2001 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "responses-v2-capabilities",
+      "operation": "GET /api/v2",
+      "scenario": "responses_v2_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v2",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "object": "cma.responses.capabilities",
+          "version": 2,
+          "create": "/api/v2/responses",
+          "agent_alias": "/api/v2/agents/{agent_id}/responses",
+          "retrieve": "/api/v2/responses/{response_id}",
+          "conversation": "/api/v2/conversations/{conversation_id}",
+          "items": "/api/v2/conversations/{conversation_id}/items",
+          "replay": {
+            "path": "/api/v2/responses/{response_id}/events",
+            "cursor": "starting_after",
+            "header": "Last-Event-ID",
+            "durable": true
+          },
+          "creation": {
+            "stream": true,
+            "conversation": "existing_agent",
+            "previous_response_id": false,
+            "store": true,
+            "input": "user_text",
+            "model": "pinned_agent_profile",
+            "idempotency_header": "Idempotency-Key"
+          },
+          "output": {
+            "standard_items": [
+              "message"
+            ],
+            "text_deltas": "durable_message_commits",
+            "tools": "agui_companion"
+          },
+          "companion": "/api/v1/agui/events?thread_id={agent_id}",
+          "documentation": "https://github.com/ChronoAIProject/cma/blob/main/docs/API_Responses.md",
+          "controls": {
+            "path": "/api/v2/agents/{agent_id}/responses/{response_id}/controls",
+            "observe": "GET",
+            "submit": "POST",
+            "commands": [
+              "cancel",
+              "steer",
+              "resolve_approval"
+            ],
+            "idempotency_header": "Idempotency-Key",
+            "idempotency_required": true,
+            "target": "bound_response_turn",
+            "completion": "command_delivery"
+          },
+          "command_status": "/api/v2/commands/{command_id}",
+          "queued_cancellation": {
+            "path": "/api/v2/agents/{agent_id}/responses/{response_id}/queued-cancellation",
+            "observe": "GET",
+            "submit": "POST",
+            "idempotency_header": "Idempotency-Key",
+            "idempotency_required": true,
+            "target": "unbound_response_command",
+            "completion": "source_cancelled"
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "responses-v2-create-retry",
+      "operation": "POST /api/v2/responses",
+      "scenario": "responses_v2_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v2/responses",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "fixture-key"
+        },
+        "body": {
+          "conversation": "agt_fixture",
+          "input": "Hello",
+          "stream": true
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "no-cache, no-store",
+          "content-type": "text/event-stream",
+          "link": "</api/v2>; rel=\"service-desc\"",
+          "x-accel-buffering": "no",
+          "x-cma-command-id": "cmd_contract",
+          "x-cma-response-id": "resp_contract"
+        },
+        "body": [
+          {
+            "event": "response.created",
+            "id": "0",
+            "data": {
+              "response": {
+                "id": "resp_contract",
+                "object": "response",
+                "created_at": 1788566400,
+                "completed_at": null,
+                "conversation": {
+                  "id": "agt_fixture"
+                },
+                "status": "queued",
+                "background": false,
+                "error": null,
+                "incomplete_details": null,
+                "instructions": null,
+                "max_output_tokens": null,
+                "model": "gpt-proof",
+                "output": [],
+                "parallel_tool_calls": false,
+                "previous_response_id": null,
+                "reasoning": {
+                  "effort": null,
+                  "summary": null
+                },
+                "store": true,
+                "temperature": null,
+                "text": {
+                  "format": {
+                    "type": "text"
+                  },
+                  "verbosity": "medium"
+                },
+                "tool_choice": "none",
+                "tools": [],
+                "top_p": null,
+                "truncation": "disabled",
+                "usage": null,
+                "metadata": {}
+              },
+              "type": "response.created",
+              "sequence_number": 0
+            }
+          },
+          {
+            "event": "response.in_progress",
+            "id": "1",
+            "data": {
+              "response": {
+                "id": "resp_contract",
+                "object": "response",
+                "created_at": 1788566400,
+                "completed_at": null,
+                "conversation": {
+                  "id": "agt_fixture"
+                },
+                "status": "in_progress",
+                "background": false,
+                "error": null,
+                "incomplete_details": null,
+                "instructions": null,
+                "max_output_tokens": null,
+                "model": "gpt-proof",
+                "output": [],
+                "parallel_tool_calls": false,
+                "previous_response_id": null,
+                "reasoning": {
+                  "effort": null,
+                  "summary": null
+                },
+                "store": true,
+                "temperature": null,
+                "text": {
+                  "format": {
+                    "type": "text"
+                  },
+                  "verbosity": "medium"
+                },
+                "tool_choice": "none",
+                "tools": [],
+                "top_p": null,
+                "truncation": "disabled",
+                "usage": null,
+                "metadata": {}
+              },
+              "type": "response.in_progress",
+              "sequence_number": 1
+            }
+          },
+          {
+            "event": "response.completed",
+            "id": "2",
+            "data": {
+              "response": {
+                "id": "resp_contract",
+                "object": "response",
+                "created_at": 1788566400,
+                "completed_at": 1788570000,
+                "conversation": {
+                  "id": "agt_fixture"
+                },
+                "status": "completed",
+                "background": false,
+                "error": null,
+                "incomplete_details": null,
+                "instructions": null,
+                "max_output_tokens": null,
+                "model": "gpt-proof",
+                "output": [],
+                "parallel_tool_calls": false,
+                "previous_response_id": null,
+                "reasoning": {
+                  "effort": null,
+                  "summary": null
+                },
+                "store": true,
+                "temperature": null,
+                "text": {
+                  "format": {
+                    "type": "text"
+                  },
+                  "verbosity": "medium"
+                },
+                "tool_choice": "none",
+                "tools": [],
+                "top_p": null,
+                "truncation": "disabled",
+                "usage": null,
+                "metadata": {}
+              },
+              "type": "response.completed",
+              "sequence_number": 2
+            }
+          }
+        ],
+        "bodyKind": "sse"
+      },
+      "captures": {}
+    },
+    {
+      "id": "responses-v2-alias-retry",
+      "operation": "POST /api/v2/agents/{agent_id}/responses",
+      "scenario": "responses_v2_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v2/agents/agt_fixture/responses",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "fixture-key"
+        },
+        "body": {
+          "conversation": "agt_fixture",
+          "input": "Hello",
+          "stream": true
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "no-cache, no-store",
+          "content-type": "text/event-stream",
+          "link": "</api/v2>; rel=\"service-desc\"",
+          "x-accel-buffering": "no",
+          "x-cma-command-id": "cmd_contract",
+          "x-cma-response-id": "resp_contract"
+        },
+        "body": [
+          {
+            "event": "response.created",
+            "id": "0",
+            "data": {
+              "response": {
+                "id": "resp_contract",
+                "object": "response",
+                "created_at": 1788566400,
+                "completed_at": null,
+                "conversation": {
+                  "id": "agt_fixture"
+                },
+                "status": "queued",
+                "background": false,
+                "error": null,
+                "incomplete_details": null,
+                "instructions": null,
+                "max_output_tokens": null,
+                "model": "gpt-proof",
+                "output": [],
+                "parallel_tool_calls": false,
+                "previous_response_id": null,
+                "reasoning": {
+                  "effort": null,
+                  "summary": null
+                },
+                "store": true,
+                "temperature": null,
+                "text": {
+                  "format": {
+                    "type": "text"
+                  },
+                  "verbosity": "medium"
+                },
+                "tool_choice": "none",
+                "tools": [],
+                "top_p": null,
+                "truncation": "disabled",
+                "usage": null,
+                "metadata": {}
+              },
+              "type": "response.created",
+              "sequence_number": 0
+            }
+          },
+          {
+            "event": "response.in_progress",
+            "id": "1",
+            "data": {
+              "response": {
+                "id": "resp_contract",
+                "object": "response",
+                "created_at": 1788566400,
+                "completed_at": null,
+                "conversation": {
+                  "id": "agt_fixture"
+                },
+                "status": "in_progress",
+                "background": false,
+                "error": null,
+                "incomplete_details": null,
+                "instructions": null,
+                "max_output_tokens": null,
+                "model": "gpt-proof",
+                "output": [],
+                "parallel_tool_calls": false,
+                "previous_response_id": null,
+                "reasoning": {
+                  "effort": null,
+                  "summary": null
+                },
+                "store": true,
+                "temperature": null,
+                "text": {
+                  "format": {
+                    "type": "text"
+                  },
+                  "verbosity": "medium"
+                },
+                "tool_choice": "none",
+                "tools": [],
+                "top_p": null,
+                "truncation": "disabled",
+                "usage": null,
+                "metadata": {}
+              },
+              "type": "response.in_progress",
+              "sequence_number": 1
+            }
+          },
+          {
+            "event": "response.completed",
+            "id": "2",
+            "data": {
+              "response": {
+                "id": "resp_contract",
+                "object": "response",
+                "created_at": 1788566400,
+                "completed_at": 1788570000,
+                "conversation": {
+                  "id": "agt_fixture"
+                },
+                "status": "completed",
+                "background": false,
+                "error": null,
+                "incomplete_details": null,
+                "instructions": null,
+                "max_output_tokens": null,
+                "model": "gpt-proof",
+                "output": [],
+                "parallel_tool_calls": false,
+                "previous_response_id": null,
+                "reasoning": {
+                  "effort": null,
+                  "summary": null
+                },
+                "store": true,
+                "temperature": null,
+                "text": {
+                  "format": {
+                    "type": "text"
+                  },
+                  "verbosity": "medium"
+                },
+                "tool_choice": "none",
+                "tools": [],
+                "top_p": null,
+                "truncation": "disabled",
+                "usage": null,
+                "metadata": {}
+              },
+              "type": "response.completed",
+              "sequence_number": 2
+            }
+          }
+        ],
+        "bodyKind": "sse"
+      },
+      "captures": {}
+    },
+    {
+      "id": "responses-v2-retrieve",
+      "operation": "GET /api/v2/responses/{response_id}",
+      "scenario": "responses_v2_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v2/responses/resp_contract",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "id": "resp_contract",
+          "object": "response",
+          "created_at": 1788566400,
+          "completed_at": 1788570000,
+          "conversation": {
+            "id": "agt_fixture"
+          },
+          "status": "completed",
+          "background": false,
+          "error": null,
+          "incomplete_details": null,
+          "instructions": null,
+          "max_output_tokens": null,
+          "model": "gpt-proof",
+          "output": [],
+          "parallel_tool_calls": false,
+          "previous_response_id": null,
+          "reasoning": {
+            "effort": null,
+            "summary": null
+          },
+          "store": true,
+          "temperature": null,
+          "text": {
+            "format": {
+              "type": "text"
+            },
+            "verbosity": "medium"
+          },
+          "tool_choice": "none",
+          "tools": [],
+          "top_p": null,
+          "truncation": "disabled",
+          "usage": null,
+          "metadata": {}
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "completed_at": "/completed_at"
+      }
+    },
+    {
+      "id": "responses-v2-replay",
+      "operation": "GET /api/v2/responses/{response_id}/events",
+      "scenario": "responses_v2_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v2/responses/resp_contract/events",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "no-cache, no-store",
+          "content-type": "text/event-stream",
+          "link": "</api/v2>; rel=\"service-desc\"",
+          "x-accel-buffering": "no",
+          "x-cma-command-id": "cmd_contract",
+          "x-cma-response-id": "resp_contract"
+        },
+        "body": [
+          {
+            "event": "response.created",
+            "id": "0",
+            "data": {
+              "response": {
+                "id": "resp_contract",
+                "object": "response",
+                "created_at": 1788566400,
+                "completed_at": null,
+                "conversation": {
+                  "id": "agt_fixture"
+                },
+                "status": "queued",
+                "background": false,
+                "error": null,
+                "incomplete_details": null,
+                "instructions": null,
+                "max_output_tokens": null,
+                "model": "gpt-proof",
+                "output": [],
+                "parallel_tool_calls": false,
+                "previous_response_id": null,
+                "reasoning": {
+                  "effort": null,
+                  "summary": null
+                },
+                "store": true,
+                "temperature": null,
+                "text": {
+                  "format": {
+                    "type": "text"
+                  },
+                  "verbosity": "medium"
+                },
+                "tool_choice": "none",
+                "tools": [],
+                "top_p": null,
+                "truncation": "disabled",
+                "usage": null,
+                "metadata": {}
+              },
+              "type": "response.created",
+              "sequence_number": 0
+            }
+          },
+          {
+            "event": "response.in_progress",
+            "id": "1",
+            "data": {
+              "response": {
+                "id": "resp_contract",
+                "object": "response",
+                "created_at": 1788566400,
+                "completed_at": null,
+                "conversation": {
+                  "id": "agt_fixture"
+                },
+                "status": "in_progress",
+                "background": false,
+                "error": null,
+                "incomplete_details": null,
+                "instructions": null,
+                "max_output_tokens": null,
+                "model": "gpt-proof",
+                "output": [],
+                "parallel_tool_calls": false,
+                "previous_response_id": null,
+                "reasoning": {
+                  "effort": null,
+                  "summary": null
+                },
+                "store": true,
+                "temperature": null,
+                "text": {
+                  "format": {
+                    "type": "text"
+                  },
+                  "verbosity": "medium"
+                },
+                "tool_choice": "none",
+                "tools": [],
+                "top_p": null,
+                "truncation": "disabled",
+                "usage": null,
+                "metadata": {}
+              },
+              "type": "response.in_progress",
+              "sequence_number": 1
+            }
+          },
+          {
+            "event": "response.completed",
+            "id": "2",
+            "data": {
+              "response": {
+                "id": "resp_contract",
+                "object": "response",
+                "created_at": 1788566400,
+                "completed_at": 1788570000,
+                "conversation": {
+                  "id": "agt_fixture"
+                },
+                "status": "completed",
+                "background": false,
+                "error": null,
+                "incomplete_details": null,
+                "instructions": null,
+                "max_output_tokens": null,
+                "model": "gpt-proof",
+                "output": [],
+                "parallel_tool_calls": false,
+                "previous_response_id": null,
+                "reasoning": {
+                  "effort": null,
+                  "summary": null
+                },
+                "store": true,
+                "temperature": null,
+                "text": {
+                  "format": {
+                    "type": "text"
+                  },
+                  "verbosity": "medium"
+                },
+                "tool_choice": "none",
+                "tools": [],
+                "top_p": null,
+                "truncation": "disabled",
+                "usage": null,
+                "metadata": {}
+              },
+              "type": "response.completed",
+              "sequence_number": 2
+            }
+          }
+        ],
+        "bodyKind": "sse"
+      },
+      "captures": {}
+    },
+    {
+      "id": "responses-v2-conversation",
+      "operation": "GET /api/v2/conversations/{conversation_id}",
+      "scenario": "responses_v2_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v2/conversations/agt_fixture",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "id": "agt_fixture",
+          "object": "conversation",
+          "created_at": 1788566400,
+          "metadata": {}
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "responses-v2-items",
+      "operation": "GET /api/v2/conversations/{conversation_id}/items",
+      "scenario": "responses_v2_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v2/conversations/agt_fixture/items",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "object": "list",
+          "first_id": "msg_agt_fixture_5",
+          "last_id": "msg_agt_fixture_5",
+          "has_more": false,
+          "data": [
+            {
+              "id": "msg_agt_fixture_5",
+              "type": "message",
+              "status": "completed",
+              "role": "user",
+              "content": [
+                {
+                  "type": "input_text",
+                  "text": "Hello"
+                }
+              ]
+            }
+          ]
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "responses-v2-field-stream",
+      "operation": "POST /api/v2/responses",
+      "scenario": "responses_v2_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v2/responses",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "fixture-key"
+        },
+        "body": {
+          "conversation": "agt_fixture",
+          "input": "Hello",
+          "stream": false
+        }
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "error": {
+            "type": "invalid_request_error",
+            "code": "stream_required",
+            "message": "Response creation requires stream: true.",
+            "param": "stream"
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "responses-v2-field-previous_response_id",
+      "operation": "POST /api/v2/responses",
+      "scenario": "responses_v2_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v2/responses",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "fixture-key"
+        },
+        "body": {
+          "conversation": "agt_fixture",
+          "input": "Hello",
+          "stream": true,
+          "previous_response_id": "resp_contract"
+        }
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "error": {
+            "type": "invalid_request_error",
+            "code": "conversation_previous_response_conflict",
+            "message": "Use conversation on every turn. previous_response_id continuation is unsupported and cannot be combined with conversation.",
+            "param": "previous_response_id"
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "responses-v2-field-model",
+      "operation": "POST /api/v2/responses",
+      "scenario": "responses_v2_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v2/responses",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "fixture-key"
+        },
+        "body": {
+          "conversation": "agt_fixture",
+          "input": "Hello",
+          "stream": true,
+          "model": "wrong-model"
+        }
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "error": {
+            "type": "invalid_request_error",
+            "code": "model_mismatch",
+            "message": "model must match the pinned Agent Profile model.",
+            "param": "model"
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "responses-v2-field-tools",
+      "operation": "POST /api/v2/responses",
+      "scenario": "responses_v2_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v2/responses",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "fixture-key"
+        },
+        "body": {
+          "conversation": "agt_fixture",
+          "input": "Hello",
+          "stream": true,
+          "tools": []
+        }
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "error": {
+            "type": "invalid_request_error",
+            "code": "responses_field_unsupported",
+            "message": "This field is outside the streaming Responses subset; execution configuration belongs to the pinned Agent Profile.",
+            "param": "tools"
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "responses-v2-field-store",
+      "operation": "POST /api/v2/responses",
+      "scenario": "responses_v2_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v2/responses",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "fixture-key"
+        },
+        "body": {
+          "conversation": "agt_fixture",
+          "input": "Hello",
+          "stream": true,
+          "store": false
+        }
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "error": {
+            "type": "invalid_request_error",
+            "code": "store_required",
+            "message": "Responses are durable; only store: true is supported.",
+            "param": "store"
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "responses-v2-field-metadata",
+      "operation": "POST /api/v2/responses",
+      "scenario": "responses_v2_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v2/responses",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "fixture-key"
+        },
+        "body": {
+          "conversation": "agt_fixture",
+          "input": "Hello",
+          "stream": true,
+          "metadata": {
+            "bad": 1
+          }
+        }
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "error": {
+            "type": "invalid_request_error",
+            "code": "invalid_metadata",
+            "message": "metadata must contain string pairs.",
+            "param": "metadata"
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "responses-v2-field-input",
+      "operation": "POST /api/v2/responses",
+      "scenario": "responses_v2_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v2/responses",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "fixture-key"
+        },
+        "body": {
+          "conversation": "agt_fixture",
+          "input": [
+            {
+              "role": "assistant",
+              "content": "bad"
+            }
+          ],
+          "stream": true
+        }
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "error": {
+            "type": "invalid_request_error",
+            "code": "invalid_response_input",
+            "message": "input must be non-empty text or exactly one user message containing text/input_text parts.",
+            "param": "input"
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "responses-v2-field-conversation",
+      "operation": "POST /api/v2/responses",
+      "scenario": "responses_v2_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v2/responses",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "fixture-key"
+        },
+        "body": {
+          "conversation": null,
+          "input": "Hello",
+          "stream": true
+        }
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "error": {
+            "type": "invalid_request_error",
+            "code": "invalid_conversation",
+            "message": "conversation must be an Agent ID or an object containing its id.",
+            "param": "conversation"
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "responses-v2-key-conflict",
+      "operation": "POST /api/v2/responses",
+      "scenario": "responses_v2_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v2/responses",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "fixture-key"
+        },
+        "body": {
+          "conversation": "agt_fixture",
+          "input": "Changed",
+          "stream": true
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "error": {
+            "type": "invalid_request_error",
+            "code": "agent_command_key_conflict",
+            "message": "This idempotency key already identifies different input.",
+            "param": "Idempotency-Key"
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "responses-v2-alias-mismatch",
+      "operation": "POST /api/v2/agents/{agent_id}/responses",
+      "scenario": "responses_v2_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v2/agents/agt_fixture/responses",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "fixture-key"
+        },
+        "body": {
+          "conversation": "agt_other",
+          "input": "Hello",
+          "stream": true
+        }
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "error": {
+            "type": "invalid_request_error",
+            "code": "conversation_alias_mismatch",
+            "message": "conversation must match the Agent selected by the URL.",
+            "param": "conversation"
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "responses-v2-capabilities-anonymous",
+      "operation": "GET /api/v2",
+      "scenario": "responses_v2_anonymous",
+      "request": {
+        "method": "GET",
+        "path": "/api/v2",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "error": {
+            "type": "invalid_request_error",
+            "code": "authentication_required",
+            "message": "A current authenticated request credential is required.",
+            "param": null
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "responses-v2-retrieve-anonymous",
+      "operation": "GET /api/v2/responses/{response_id}",
+      "scenario": "responses_v2_anonymous",
+      "request": {
+        "method": "GET",
+        "path": "/api/v2/responses/resp_contract",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "error": {
+            "type": "invalid_request_error",
+            "code": "authentication_required",
+            "message": "A current authenticated request credential is required.",
+            "param": null
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "responses-v2-retrieve-foreign",
+      "operation": "GET /api/v2/responses/{response_id}",
+      "scenario": "responses_v2_foreign",
+      "request": {
+        "method": "GET",
+        "path": "/api/v2/responses/resp_contract",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "error": {
+            "type": "invalid_request_error",
+            "code": "response_not_found",
+            "message": "The requested response or conversation is unavailable.",
+            "param": null
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "responses-v2-replay-anonymous",
+      "operation": "GET /api/v2/responses/{response_id}/events",
+      "scenario": "responses_v2_anonymous",
+      "request": {
+        "method": "GET",
+        "path": "/api/v2/responses/resp_contract/events",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "error": {
+            "type": "invalid_request_error",
+            "code": "authentication_required",
+            "message": "A current authenticated request credential is required.",
+            "param": null
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "responses-v2-replay-foreign",
+      "operation": "GET /api/v2/responses/{response_id}/events",
+      "scenario": "responses_v2_foreign",
+      "request": {
+        "method": "GET",
+        "path": "/api/v2/responses/resp_contract/events",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "error": {
+            "type": "invalid_request_error",
+            "code": "response_not_found",
+            "message": "The requested response or conversation is unavailable.",
+            "param": null
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "responses-v2-conversation-anonymous",
+      "operation": "GET /api/v2/conversations/{conversation_id}",
+      "scenario": "responses_v2_anonymous",
+      "request": {
+        "method": "GET",
+        "path": "/api/v2/conversations/agt_fixture",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "error": {
+            "type": "invalid_request_error",
+            "code": "authentication_required",
+            "message": "A current authenticated request credential is required.",
+            "param": null
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "responses-v2-conversation-foreign",
+      "operation": "GET /api/v2/conversations/{conversation_id}",
+      "scenario": "responses_v2_foreign",
+      "request": {
+        "method": "GET",
+        "path": "/api/v2/conversations/agt_fixture",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "error": {
+            "type": "invalid_request_error",
+            "code": "response_not_found",
+            "message": "The requested response or conversation is unavailable.",
+            "param": null
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "responses-v2-items-anonymous",
+      "operation": "GET /api/v2/conversations/{conversation_id}/items",
+      "scenario": "responses_v2_anonymous",
+      "request": {
+        "method": "GET",
+        "path": "/api/v2/conversations/agt_fixture/items",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "error": {
+            "type": "invalid_request_error",
+            "code": "authentication_required",
+            "message": "A current authenticated request credential is required.",
+            "param": null
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "responses-v2-items-foreign",
+      "operation": "GET /api/v2/conversations/{conversation_id}/items",
+      "scenario": "responses_v2_foreign",
+      "request": {
+        "method": "GET",
+        "path": "/api/v2/conversations/agt_fixture/items",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "error": {
+            "type": "invalid_request_error",
+            "code": "response_not_found",
+            "message": "The requested response or conversation is unavailable.",
+            "param": null
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "responses-v2-create-anonymous",
+      "operation": "POST /api/v2/responses",
+      "scenario": "responses_v2_anonymous",
+      "request": {
+        "method": "POST",
+        "path": "/api/v2/responses",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "fixture-key"
+        },
+        "body": {
+          "conversation": "agt_fixture",
+          "input": "Hello",
+          "stream": true
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "error": {
+            "type": "invalid_request_error",
+            "code": "authentication_required",
+            "message": "A current authenticated request credential is required.",
+            "param": null
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "responses-v2-create-foreign",
+      "operation": "POST /api/v2/responses",
+      "scenario": "responses_v2_foreign",
+      "request": {
+        "method": "POST",
+        "path": "/api/v2/responses",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "fixture-key"
+        },
+        "body": {
+          "conversation": "agt_fixture",
+          "input": "Hello",
+          "stream": true
+        }
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "error": {
+            "type": "invalid_request_error",
+            "code": "response_not_found",
+            "message": "The requested response or conversation is unavailable.",
+            "param": null
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "responses-v2-alias-anonymous",
+      "operation": "POST /api/v2/agents/{agent_id}/responses",
+      "scenario": "responses_v2_anonymous",
+      "request": {
+        "method": "POST",
+        "path": "/api/v2/agents/agt_fixture/responses",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "fixture-key"
+        },
+        "body": {
+          "conversation": "agt_fixture",
+          "input": "Hello",
+          "stream": true
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "error": {
+            "type": "invalid_request_error",
+            "code": "authentication_required",
+            "message": "A current authenticated request credential is required.",
+            "param": null
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "responses-v2-alias-foreign",
+      "operation": "POST /api/v2/agents/{agent_id}/responses",
+      "scenario": "responses_v2_foreign",
+      "request": {
+        "method": "POST",
+        "path": "/api/v2/agents/agt_fixture/responses",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "fixture-key"
+        },
+        "body": {
+          "conversation": "agt_fixture",
+          "input": "Hello",
+          "stream": true
+        }
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "error": {
+            "type": "invalid_request_error",
+            "code": "response_not_found",
+            "message": "The requested response or conversation is unavailable.",
+            "param": null
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "responses-v2-missing",
+      "operation": "GET /api/v2/responses/{response_id}",
+      "scenario": "responses_v2_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v2/responses/resp_missing",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "error": {
+            "type": "invalid_request_error",
+            "code": "response_not_found",
+            "message": "The requested response or conversation is unavailable.",
+            "param": null
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "responses-v2-retrieve-query",
+      "operation": "GET /api/v2/responses/{response_id}",
+      "scenario": "responses_v2_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v2/responses/resp_contract?stream=true",
+        "headers": {}
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "error": {
+            "type": "invalid_request_error",
+            "code": "responses_field_unsupported",
+            "message": "Retrieve the durable response without query parameters. Use the documented events extension for replay.",
+            "param": "query"
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "responses-v2-replay-future",
+      "operation": "GET /api/v2/responses/{response_id}/events",
+      "scenario": "responses_v2_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v2/responses/resp_contract/events?starting_after=99",
+        "headers": {}
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "error": {
+            "type": "invalid_request_error",
+            "code": "invalid_replay_cursor",
+            "message": "The cursor is ahead of this response's durable events.",
+            "param": "starting_after"
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "responses-v2-items-limit",
+      "operation": "GET /api/v2/conversations/{conversation_id}/items",
+      "scenario": "responses_v2_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v2/conversations/agt_fixture/items?limit=0",
+        "headers": {}
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "error": {
+            "type": "invalid_request_error",
+            "code": "invalid_items_limit",
+            "message": "limit must be between 1 and 100.",
+            "param": "limit"
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "responses-v2-items-order",
+      "operation": "GET /api/v2/conversations/{conversation_id}/items",
+      "scenario": "responses_v2_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v2/conversations/agt_fixture/items?order=bad",
+        "headers": {}
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "error": {
+            "type": "invalid_request_error",
+            "code": "invalid_items_order",
+            "message": "order must be asc or desc.",
+            "param": "order"
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "responses-v2-items-cursor",
+      "operation": "GET /api/v2/conversations/{conversation_id}/items",
+      "scenario": "responses_v2_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v2/conversations/agt_fixture/items?after=missing",
+        "headers": {}
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "error": {
+            "type": "invalid_request_error",
+            "code": "invalid_items_cursor",
+            "message": "The cursor must identify an item in this conversation.",
+            "param": "after"
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "responses-v2-failed-retrieve",
+      "operation": "GET /api/v2/responses/{response_id}",
+      "scenario": "responses_v2_failed",
+      "request": {
+        "method": "GET",
+        "path": "/api/v2/responses/resp_contract",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "id": "resp_contract",
+          "object": "response",
+          "created_at": 1788566400,
+          "completed_at": null,
+          "conversation": {
+            "id": "agt_fixture"
+          },
+          "status": "failed",
+          "background": false,
+          "error": {
+            "code": "agent_command_authority_revoked",
+            "message": "The admitted Agent command could not complete."
+          },
+          "incomplete_details": null,
+          "instructions": null,
+          "max_output_tokens": null,
+          "model": "gpt-proof",
+          "output": [],
+          "parallel_tool_calls": false,
+          "previous_response_id": null,
+          "reasoning": {
+            "effort": null,
+            "summary": null
+          },
+          "store": true,
+          "temperature": null,
+          "text": {
+            "format": {
+              "type": "text"
+            },
+            "verbosity": "medium"
+          },
+          "tool_choice": "none",
+          "tools": [],
+          "top_p": null,
+          "truncation": "disabled",
+          "usage": null,
+          "metadata": {}
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "responses-v2-failed-create",
+      "operation": "POST /api/v2/responses",
+      "scenario": "responses_v2_failed",
+      "request": {
+        "method": "POST",
+        "path": "/api/v2/responses",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "fixture-key"
+        },
+        "body": {
+          "conversation": "agt_fixture",
+          "input": "Hello",
+          "stream": true
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "no-cache, no-store",
+          "content-type": "text/event-stream",
+          "link": "</api/v2>; rel=\"service-desc\"",
+          "x-accel-buffering": "no",
+          "x-cma-command-id": "cmd_contract",
+          "x-cma-response-id": "resp_contract"
+        },
+        "body": [
+          {
+            "event": "response.created",
+            "id": "0",
+            "data": {
+              "response": {
+                "id": "resp_contract",
+                "object": "response",
+                "created_at": 1788566400,
+                "completed_at": null,
+                "conversation": {
+                  "id": "agt_fixture"
+                },
+                "status": "queued",
+                "background": false,
+                "error": null,
+                "incomplete_details": null,
+                "instructions": null,
+                "max_output_tokens": null,
+                "model": "gpt-proof",
+                "output": [],
+                "parallel_tool_calls": false,
+                "previous_response_id": null,
+                "reasoning": {
+                  "effort": null,
+                  "summary": null
+                },
+                "store": true,
+                "temperature": null,
+                "text": {
+                  "format": {
+                    "type": "text"
+                  },
+                  "verbosity": "medium"
+                },
+                "tool_choice": "none",
+                "tools": [],
+                "top_p": null,
+                "truncation": "disabled",
+                "usage": null,
+                "metadata": {}
+              },
+              "type": "response.created",
+              "sequence_number": 0
+            }
+          },
+          {
+            "event": "response.failed",
+            "id": "1",
+            "data": {
+              "response": {
+                "id": "resp_contract",
+                "object": "response",
+                "created_at": 1788566400,
+                "completed_at": null,
+                "conversation": {
+                  "id": "agt_fixture"
+                },
+                "status": "failed",
+                "background": false,
+                "error": {
+                  "code": "agent_command_authority_revoked",
+                  "message": "The admitted Agent command could not complete."
+                },
+                "incomplete_details": null,
+                "instructions": null,
+                "max_output_tokens": null,
+                "model": "gpt-proof",
+                "output": [],
+                "parallel_tool_calls": false,
+                "previous_response_id": null,
+                "reasoning": {
+                  "effort": null,
+                  "summary": null
+                },
+                "store": true,
+                "temperature": null,
+                "text": {
+                  "format": {
+                    "type": "text"
+                  },
+                  "verbosity": "medium"
+                },
+                "tool_choice": "none",
+                "tools": [],
+                "top_p": null,
+                "truncation": "disabled",
+                "usage": null,
+                "metadata": {}
+              },
+              "type": "response.failed",
+              "sequence_number": 1
+            }
+          }
+        ],
+        "bodyKind": "sse"
+      },
+      "captures": {}
+    },
+    {
+      "id": "responses-v2-failed-alias",
+      "operation": "POST /api/v2/agents/{agent_id}/responses",
+      "scenario": "responses_v2_failed",
+      "request": {
+        "method": "POST",
+        "path": "/api/v2/agents/agt_fixture/responses",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "fixture-key"
+        },
+        "body": {
+          "conversation": "agt_fixture",
+          "input": "Hello",
+          "stream": true
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "no-cache, no-store",
+          "content-type": "text/event-stream",
+          "link": "</api/v2>; rel=\"service-desc\"",
+          "x-accel-buffering": "no",
+          "x-cma-command-id": "cmd_contract",
+          "x-cma-response-id": "resp_contract"
+        },
+        "body": [
+          {
+            "event": "response.created",
+            "id": "0",
+            "data": {
+              "response": {
+                "id": "resp_contract",
+                "object": "response",
+                "created_at": 1788566400,
+                "completed_at": null,
+                "conversation": {
+                  "id": "agt_fixture"
+                },
+                "status": "queued",
+                "background": false,
+                "error": null,
+                "incomplete_details": null,
+                "instructions": null,
+                "max_output_tokens": null,
+                "model": "gpt-proof",
+                "output": [],
+                "parallel_tool_calls": false,
+                "previous_response_id": null,
+                "reasoning": {
+                  "effort": null,
+                  "summary": null
+                },
+                "store": true,
+                "temperature": null,
+                "text": {
+                  "format": {
+                    "type": "text"
+                  },
+                  "verbosity": "medium"
+                },
+                "tool_choice": "none",
+                "tools": [],
+                "top_p": null,
+                "truncation": "disabled",
+                "usage": null,
+                "metadata": {}
+              },
+              "type": "response.created",
+              "sequence_number": 0
+            }
+          },
+          {
+            "event": "response.failed",
+            "id": "1",
+            "data": {
+              "response": {
+                "id": "resp_contract",
+                "object": "response",
+                "created_at": 1788566400,
+                "completed_at": null,
+                "conversation": {
+                  "id": "agt_fixture"
+                },
+                "status": "failed",
+                "background": false,
+                "error": {
+                  "code": "agent_command_authority_revoked",
+                  "message": "The admitted Agent command could not complete."
+                },
+                "incomplete_details": null,
+                "instructions": null,
+                "max_output_tokens": null,
+                "model": "gpt-proof",
+                "output": [],
+                "parallel_tool_calls": false,
+                "previous_response_id": null,
+                "reasoning": {
+                  "effort": null,
+                  "summary": null
+                },
+                "store": true,
+                "temperature": null,
+                "text": {
+                  "format": {
+                    "type": "text"
+                  },
+                  "verbosity": "medium"
+                },
+                "tool_choice": "none",
+                "tools": [],
+                "top_p": null,
+                "truncation": "disabled",
+                "usage": null,
+                "metadata": {}
+              },
+              "type": "response.failed",
+              "sequence_number": 1
+            }
+          }
+        ],
+        "bodyKind": "sse"
+      },
+      "captures": {}
+    },
+    {
+      "id": "responses-v2-failed-replay",
+      "operation": "GET /api/v2/responses/{response_id}/events",
+      "scenario": "responses_v2_failed",
+      "request": {
+        "method": "GET",
+        "path": "/api/v2/responses/resp_contract/events",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "no-cache, no-store",
+          "content-type": "text/event-stream",
+          "link": "</api/v2>; rel=\"service-desc\"",
+          "x-accel-buffering": "no",
+          "x-cma-command-id": "cmd_contract",
+          "x-cma-response-id": "resp_contract"
+        },
+        "body": [
+          {
+            "event": "response.created",
+            "id": "0",
+            "data": {
+              "response": {
+                "id": "resp_contract",
+                "object": "response",
+                "created_at": 1788566400,
+                "completed_at": null,
+                "conversation": {
+                  "id": "agt_fixture"
+                },
+                "status": "queued",
+                "background": false,
+                "error": null,
+                "incomplete_details": null,
+                "instructions": null,
+                "max_output_tokens": null,
+                "model": "gpt-proof",
+                "output": [],
+                "parallel_tool_calls": false,
+                "previous_response_id": null,
+                "reasoning": {
+                  "effort": null,
+                  "summary": null
+                },
+                "store": true,
+                "temperature": null,
+                "text": {
+                  "format": {
+                    "type": "text"
+                  },
+                  "verbosity": "medium"
+                },
+                "tool_choice": "none",
+                "tools": [],
+                "top_p": null,
+                "truncation": "disabled",
+                "usage": null,
+                "metadata": {}
+              },
+              "type": "response.created",
+              "sequence_number": 0
+            }
+          },
+          {
+            "event": "response.failed",
+            "id": "1",
+            "data": {
+              "response": {
+                "id": "resp_contract",
+                "object": "response",
+                "created_at": 1788566400,
+                "completed_at": null,
+                "conversation": {
+                  "id": "agt_fixture"
+                },
+                "status": "failed",
+                "background": false,
+                "error": {
+                  "code": "agent_command_authority_revoked",
+                  "message": "The admitted Agent command could not complete."
+                },
+                "incomplete_details": null,
+                "instructions": null,
+                "max_output_tokens": null,
+                "model": "gpt-proof",
+                "output": [],
+                "parallel_tool_calls": false,
+                "previous_response_id": null,
+                "reasoning": {
+                  "effort": null,
+                  "summary": null
+                },
+                "store": true,
+                "temperature": null,
+                "text": {
+                  "format": {
+                    "type": "text"
+                  },
+                  "verbosity": "medium"
+                },
+                "tool_choice": "none",
+                "tools": [],
+                "top_p": null,
+                "truncation": "disabled",
+                "usage": null,
+                "metadata": {}
+              },
+              "type": "response.failed",
+              "sequence_number": 1
+            }
+          }
+        ],
+        "bodyKind": "sse"
+      },
+      "captures": {}
+    }
+  ]
+}

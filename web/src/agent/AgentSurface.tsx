@@ -21,6 +21,8 @@ import { Resources } from './Resources';
 import { BrandLoading } from '../landing/LandingCharacter';
 import { LifecycleProgress } from '../sandbox/LifecycleProgress';
 import { AgentSourceLabel, useAgentSource } from './source';
+import { useAgentProvenance } from './provenance';
+import { QueuedMessageNotice } from './QueuedMessageNotice';
 
 interface AgentSurfaceProps {
   readonly viewerId?: string;
@@ -81,6 +83,7 @@ export function AgentSurface({
   const documentTitle =
     state.status === 'ready' ? `${state.detail.title ?? 'Untitled agent'} · CMA` : undefined;
   const source = useAgentSource(agentId, state.status === 'ready');
+  const provenance = useAgentProvenance(agentId, state.status === 'ready');
   const sandboxOwner = controller.progressObservation?.sandbox.owner;
   const readOnly =
     viewerId !== undefined && sandboxOwner !== undefined && viewerId !== sandboxOwner;
@@ -141,7 +144,10 @@ export function AgentSurface({
   const starting = controller.pending === 'send' && !running;
   const historyIncomplete = state.historyLoading === true || state.historyUnavailable === true;
   const approvalBusy =
-    controller.pending === 'approval' || historyIncomplete || !controller.inputAvailability.allowed;
+    controller.pending === 'approval' ||
+    historyIncomplete ||
+    !controller.inputAvailability.allowed ||
+    controller.controlsUnavailable === true;
   const issue = state.historyLoading
     ? 'Loading conversation activity.'
     : state.historyUnavailable
@@ -180,7 +186,7 @@ export function AgentSurface({
             onClick={() => onDetailsOpenChange(!detailsOpen)}
           />
         </div>
-        <AgentSourceLabel source={source} />
+        <AgentSourceLabel source={source} provenance={provenance} />
         {verified?.services.some((service) => service.service === subscriptionService) ? (
           <Button
             onClick={() =>
@@ -215,6 +221,31 @@ export function AgentSurface({
         )}
       </Presence>
 
+      {controller.pendingMessage === undefined && !controller.pendingControl ? null : (
+        <div className="agent-action-error" role="status">
+          <span>
+            {controller.pendingMessage !== undefined
+              ? 'Your message is awaiting confirmation. Recover it before sending another message.'
+              : 'Your response action is awaiting confirmation.'}
+          </span>
+          <Button
+            size="sm"
+            disabled={controller.pending !== undefined || historyIncomplete}
+            onClick={() => void controller.recoverPending?.()}
+          >
+            Recover pending request
+          </Button>
+        </div>
+      )}
+
+      {controller.controlNotice === undefined ? null : (
+        <div className="agent-action-error" role="status">
+          {controller.controlNotice}
+        </div>
+      )}
+
+      <QueuedMessageNotice control={controller.queuedMessage} readOnly={readOnly} />
+
       <div className="agent-surface__conversation">
         {status === 'starting' ||
         detail.failure !== undefined ||
@@ -240,12 +271,18 @@ export function AgentSurface({
         <Composer
           key={`composer:${agentId}`}
           quickMessages={
-            source.status === 'ready' ? source.value.trigger?.quick_messages : undefined
+            source.status === 'ready' && source.value.access !== 'shared'
+              ? source.value.trigger?.quick_messages
+              : undefined
           }
           status={status}
           pausedNotice={pausedNotice}
           running={running}
+          queueWhileRunning={state.v2 !== undefined}
           starting={starting}
+          controlsUnavailable={controller.controlsUnavailable}
+          requestPending={controller.pendingMessage !== undefined}
+          acceptedMessage={controller.acceptedMessage}
           inputAvailability={
             readOnly
               ? {

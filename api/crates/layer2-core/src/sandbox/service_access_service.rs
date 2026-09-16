@@ -34,6 +34,7 @@ impl SandboxService {
         match self
             .store
             .commit(SandboxTransaction::SaveSandboxAndAppend {
+                command_revival: None,
                 expected_revision: revision,
                 sandbox: Box::new(sandbox.clone()),
                 event_at: at,

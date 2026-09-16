@@ -194,6 +194,7 @@ async fn commit_advance(
     })?;
     store
         .commit(SandboxTransaction::SaveSandboxAndAppend {
+            command_revival: None,
             expected_revision,
             sandbox: Box::new(sandbox),
             event_at,
@@ -353,6 +354,9 @@ pub(super) fn credential_failure(error: CredentialError) -> WorkerFailure {
         }
         CredentialError::Unavailable(_) => {
             WorkerFailure::retryable("credential dependency unavailable")
+        }
+        CredentialError::ChannelRetentionHeld(assessment) => {
+            WorkerFailure::new("channel_retention_held", &assessment.hold_detail(), true)
         }
         CredentialError::Security(_) => {
             WorkerFailure::terminal_security("credential authority was refused")

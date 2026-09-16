@@ -1,4 +1,6 @@
+mod launch;
 mod support;
+use launch::CreationAttribution;
 use support::{
     control_error, creation_key, profile_error, require, require_launch, runtime_error,
     store_error, validate_title,
@@ -183,43 +185,47 @@ impl AgentService {
         workspace_id: &WorkspaceId,
         request: CreateAgent,
     ) -> Result<Agent, AgentServiceError> {
+        self.create_as(
+            caller,
+            &crate::resource_access::ResourceActor::Human {
+                subject: caller.subject.clone(),
+            },
+            workspace_id,
+            request,
+        )
+        .await
+    }
+
+    /// Attribution is supplied by authentication, independently of ownership.
+    pub async fn create_as(
+        &self,
+        caller: &Caller,
+        actor: &crate::resource_access::ResourceActor,
+        workspace_id: &WorkspaceId,
+        request: CreateAgent,
+    ) -> Result<Agent, AgentServiceError> {
         require(caller)?;
+        if !matches!(actor,
+            crate::resource_access::ResourceActor::Human { subject }
+            | crate::resource_access::ResourceActor::Api { subject, delegation_id: None }
+            if subject == &caller.subject)
+        {
+            return Err(AgentServiceError::Forbidden);
+        }
         if !matches!(&request.origin, AgentOrigin::Manual) {
             return Err(AgentServiceError::InvalidRequest(
                 "trigger origin requires launch admission".into(),
             ));
         }
-        self.create_with_profile(caller, workspace_id, request, false, false)
-            .await
-    }
-
-    pub async fn create_for_launch(
-        &self,
-        caller: &Caller,
-        authority: Capability,
-        workspace_id: &WorkspaceId,
-        request: CreateAgent,
-    ) -> Result<Agent, AgentServiceError> {
-        self.create_or_reuse_for_launch(caller, authority, workspace_id, request, false)
-            .await
-    }
-
-    pub async fn create_or_reuse_for_launch(
-        &self,
-        caller: &Caller,
-        authority: Capability,
-        workspace_id: &WorkspaceId,
-        request: CreateAgent,
-        reuse_existing: bool,
-    ) -> Result<Agent, AgentServiceError> {
-        require_launch(caller, authority)?;
-        if !matches!(&request.origin, AgentOrigin::Trigger { .. }) {
-            return Err(AgentServiceError::InvalidRequest(
-                "launch admission requires trigger origin".into(),
-            ));
-        }
-        self.create_with_profile(caller, workspace_id, request, true, reuse_existing)
-            .await
+        self.create_with_profile(
+            caller,
+            workspace_id,
+            request,
+            false,
+            false,
+            CreationAttribution::ordinary(actor.clone()),
+        )
+        .await
     }
 
     async fn create_with_profile(
@@ -229,6 +235,7 @@ impl AgentService {
         request: CreateAgent,
         frozen_profile: bool,
         reuse_existing: bool,
+        attribution: CreationAttribution,
     ) -> Result<Agent, AgentServiceError> {
         self.runtime_capabilities
             .require([RuntimeCapability::Conversation])
@@ -263,6 +270,7 @@ impl AgentService {
             .transpose()
             .map_err(|error| AgentServiceError::InvalidRequest(error.to_string()))?;
         let admission = AgentAdmission {
+            created_by: Some(attribution.actor),
             owner: caller.subject.clone(),
             workspace_id: workspace.id,
             agent_id,
@@ -275,7 +283,11 @@ impl AgentService {
             creation_key,
             event_at: now,
         };
-        let result = if reuse_existing {
+        let result = if let Some(initiation) = attribution.initiation {
+            self.store
+                .admit_agent_with_trigger_initiator(admission, initiation, reuse_existing)
+                .await
+        } else if reuse_existing {
             self.store.admit_agent_reusing_profile(admission).await
         } else {
             self.store.admit_agent(admission).await

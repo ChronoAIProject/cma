@@ -25,9 +25,11 @@ use super::sandbox_mongo::{
 mod admission;
 #[cfg(test)]
 mod admission_tests;
+mod cleanup_admission;
 
 #[cfg_attr(test, derive(Clone))]
 pub(super) struct ConversationReceipt {
+    pub(super) command_dispatch: Option<layer2_core::sandbox::agent_io::CommandDispatch>,
     pub(super) agent: Agent,
     pub(super) logs: Vec<AgentLogEntry>,
 }
@@ -104,6 +106,7 @@ async fn commit_conversation(
                 return Err(SandboxStoreError::Unavailable(error.to_string()));
             }
         };
+        admission::require_current(&mutation, &mut session).await?;
         match commit_transaction(&mut session).await {
             CommitOutcome::Committed => return Ok(receipt.logs),
             CommitOutcome::Retry(error) => last_transient = Some(error.to_string()),
@@ -148,18 +151,19 @@ async fn apply_mutation(
     mutation: &AgentConversationMutation,
     session: &mut mongodb::ClientSession,
 ) -> Result<ConversationReceipt, ApplyError> {
-    let current = store
+    let current_row = store
         .agents
         .find_one(doc! { "_id": mutation.agent.id.as_str() })
         .session(&mut *session)
         .await
         .map_err(ApplyError::Driver)?
-        .as_ref()
-        .map(read_agent)
-        .transpose()
-        .map_err(ApplyError::Domain)?
         .ok_or(ApplyError::Domain(SandboxStoreError::NotFound))?;
+    let current = read_agent(&current_row).map_err(ApplyError::Domain)?;
+    super::trigger_first_messages::require_mutation(store, &current, mutation, session)
+        .await
+        .map_err(ApplyError::Domain)?;
     let mut actual_last_seq = 0;
+    let mut latest_turn = None;
     let log_summary = scan_complete_log_with_session(
         store,
         &mutation.agent.id,
@@ -167,19 +171,35 @@ async fn apply_mutation(
         session,
         |entry| {
             actual_last_seq = entry.seq;
+            if let layer2_core::sandbox::AgentLogKind::TurnStarted { turn_sequence, .. } =
+                entry.kind
+            {
+                latest_turn = Some(turn_sequence);
+            }
             Ok(())
         },
     )
     .await?;
     validate_mutation(&current, actual_last_seq, mutation).map_err(ApplyError::Domain)?;
+    cleanup_admission::require(&current_row, &current, mutation).map_err(ApplyError::Domain)?;
     let logs = conversation_logs(mutation).map_err(ApplyError::Domain)?;
     ensure_append_capacity(&log_summary, &logs, AppendCapacity::Normal)
         .map_err(ApplyError::Domain)?;
 
     admission::validate_and_fence(store, &current, mutation, session).await?;
+    let command_dispatch =
+        super::agent_commands::binding::bind(store, &current, latest_turn, mutation, session)
+            .await
+            .map_err(|error| match error {
+                super::agent_commands::ApplyError::Domain(error) => {
+                    ApplyError::Domain(super::agent_commands::binding::domain_error(error))
+                }
+                super::agent_commands::ApplyError::Driver(error) => ApplyError::Driver(error),
+            })?;
     replace_agent(store, &current, mutation, session).await?;
     insert_logs(store, &logs, session).await?;
     Ok(ConversationReceipt {
+        command_dispatch,
         agent: mutation.agent.clone(),
         logs,
     })
@@ -368,6 +388,11 @@ pub(super) async fn reconcile_conversation_snapshot(
         .transpose()?;
     if agent.as_ref() != Some(&receipt.agent) {
         return Ok(false);
+    }
+    if let Some(dispatch) = &receipt.command_dispatch {
+        if !super::agent_commands::binding::matches_snapshot(store, dispatch, session).await? {
+            return Ok(false);
+        }
     }
     let Some(first_receipt_seq) = receipt.logs.first().map(|entry| entry.seq) else {
         return Ok(false);

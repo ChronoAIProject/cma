@@ -20,7 +20,9 @@
 }
 
 .risk__warning p {
+  min-width: 0;
   margin: 0;
+  overflow-wrap: anywhere;
 }
 
 /* The one red thing on the card. The button is not red — see the component. */

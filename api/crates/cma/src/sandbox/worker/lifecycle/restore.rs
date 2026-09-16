@@ -195,6 +195,20 @@ impl SandboxWorker {
         sandbox: Sandbox,
         now: SystemTime,
     ) -> Result<(), SandboxStoreError> {
+        match self
+            .dependencies
+            .credentials
+            .restore_channel_credential(&sandbox)
+            .await
+        {
+            Ok(true) => return Ok(()),
+            Ok(false) => {}
+            Err(error) => {
+                return self
+                    .handle_lifecycle_failure(sandbox, credential_failure(error), now)
+                    .await
+            }
+        }
         if sandbox.needs_service_access_credential() {
             return self.renew_lifecycle_service_access(sandbox, now).await;
         }
@@ -303,6 +317,20 @@ impl SandboxWorker {
         sandbox: Sandbox,
         now: SystemTime,
     ) -> Result<(), SandboxStoreError> {
+        match self
+            .dependencies
+            .credentials
+            .publish_channel_active(&sandbox)
+            .await
+        {
+            Ok(true) => return Ok(()),
+            Ok(false) => {}
+            Err(error) => {
+                return self
+                    .handle_lifecycle_failure(sandbox, credential_failure(error), now)
+                    .await
+            }
+        }
         let agents = self.lifecycle_agents(&sandbox).await?;
         if !agents
             .iter()

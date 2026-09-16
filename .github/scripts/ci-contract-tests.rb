@@ -36,6 +36,9 @@ guarded = mode == "release" ? [
   ["publish", "runtime-image-gate", "Pull verified immutable runtime"],
   ["publish", "runtime-image-gate", "Execute published runtime image contract"],
 ] : [
+  ["ci", "trigger-provider-smoke-contract", "Staging authority and evidence regressions"],
+  ["ci", "trigger-provider-smoke-contract", "Install continuity fixture tooling"],
+  ["ci", "trigger-provider-smoke-contract", "Continuity fixture ownership and isolation regressions"],
   ["ci", "trigger-provider-smoke-contract", "Typecheck every harness entry point"],
   ["ci", "trigger-provider-smoke-contract", "Local browser guard mechanics"],
   ["ci", "backend", "Disposable real Mongo persistence contracts"],

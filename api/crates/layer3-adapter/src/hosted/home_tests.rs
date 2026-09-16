@@ -194,3 +194,27 @@ async fn runtime_status_requires_exact_persistent_storage_and_does_not_deliver_c
             .credential_delivered
     );
 }
+
+#[tokio::test]
+async fn retained_v3_runtime_without_live_removal_protocol_cannot_claim_capability() {
+    let (adapter, backend) = CodexAdapter::in_memory(CodexSandboxSpec::default());
+    let adapter = adapter.with_home_volumes(Arc::new(Storage::default()));
+    let handle = adapter.provision(&spec()).await.unwrap();
+    assert!(adapter.capabilities().conversation);
+    assert!(matches!(
+        adapter.workspace_removal_support(&handle).await,
+        Err(AdapterError::Unsupported(_))
+    ));
+    assert!(
+        !backend
+            .snapshot(&handle)
+            .await
+            .unwrap()
+            .credential_delivered
+    );
+    assert!(backend.requests().await.iter().all(|(_, request)| matches!(
+        request,
+        crate::wire::RequestFrame::RuntimeStatus(_)
+            | crate::wire::RequestFrame::WorkspaceRemovalSupport(_)
+    )));
+}

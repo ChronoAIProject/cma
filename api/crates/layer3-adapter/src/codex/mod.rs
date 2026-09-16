@@ -60,6 +60,7 @@ impl HostedAgentRuntime for CodexRuntime {
         Ok(HostedAgentOpenSettings {
             permission_mode: Some(permission_mode.into()),
             own_credential: request.options.own_credential,
+            channel_tool: None,
         })
     }
 }
@@ -98,6 +99,14 @@ impl CodexAdapter {
 
     pub fn with_home_volumes(mut self, store: Arc<dyn crate::HomeVolumeStore>) -> Self {
         self.hosted = self.hosted.with_home_volumes(store);
+        self
+    }
+
+    pub fn with_channel_tools(
+        mut self,
+        source: Arc<dyn crate::hosted::HostedChannelToolSource>,
+    ) -> Self {
+        self.hosted = self.hosted.with_channel_tools(source);
         self
     }
 }
@@ -188,6 +197,24 @@ impl SandboxAdapter for CodexAdapter {
         request: &WorkspaceRemoveRequest,
     ) -> crate::Result<()> {
         self.hosted.remove_workspace(handle, request).await
+    }
+
+    async fn workspace_removal_support(
+        &self,
+        handle: &RuntimeHandle,
+    ) -> crate::Result<crate::WorkspaceRemovalSupport> {
+        self.hosted.workspace_removal_support(handle).await
+    }
+
+    async fn reconcile_workspace_removal(
+        &self,
+        handle: &RuntimeHandle,
+        expected_runtime: &crate::RuntimeStatus,
+        request: &WorkspaceRemoveRequest,
+    ) -> crate::Result<crate::WorkspaceRemovalObservation> {
+        self.hosted
+            .reconcile_workspace_removal(handle, expected_runtime, request)
+            .await
     }
 
     async fn add_worktree(

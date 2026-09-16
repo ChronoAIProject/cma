@@ -6,6 +6,7 @@ pub trait SandboxServiceStore:
     + SandboxAdmissionStore
     + SandboxTransactionStore
     + SandboxLifecycleCommandStore
+    + CommandRevivalStore
     + SandboxLaunchCommandStore
 {
 }
@@ -16,6 +17,7 @@ impl<T> SandboxServiceStore for T where
         + SandboxAdmissionStore
         + SandboxTransactionStore
         + SandboxLifecycleCommandStore
+        + CommandRevivalStore
         + SandboxLaunchCommandStore
 {
 }

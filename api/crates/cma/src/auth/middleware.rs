@@ -29,6 +29,9 @@ pub async fn attach_subject(
         }
     };
     if let Some(resolved) = resolved {
+        request
+            .extensions_mut()
+            .insert(auth.resource_request_context(&resolved));
         if let Some(value) = resolved.delegated_credential {
             request
                 .extensions_mut()
@@ -166,7 +169,12 @@ mod tests {
         async fn inspect(
             Extension(subject): Extension<AuthenticatedSubject>,
             Extension(authority): Extension<Authorization>,
+            Extension(context): Extension<layer2_core::resource_access::CallerContext>,
         ) -> String {
+            assert!(context.validate_principal());
+            assert_eq!(&context.caller.subject, subject.subject());
+            assert_eq!(context.caller.authorization, authority);
+            assert!(context.memberships.is_empty());
             format!("{}:{}", subject.subject(), authority.iter().count())
         }
         let auth = AuthState::in_memory(

@@ -6,7 +6,7 @@
 use serde::{Deserialize, Serialize};
 
 pub use crate::conversation_channel::{
-    ConversationChannel, ConversationInputSender, ConversationSendOutcome,
+    ConversationChannel, ConversationInputGuard, ConversationInputSender, ConversationSendOutcome,
 };
 pub use agent_client_protocol_schema::v1::{
     AvailableCommand, AvailableCommandsUpdate, ContentBlock, ContentChunk, MessageId,

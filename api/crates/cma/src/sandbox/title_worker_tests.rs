@@ -44,7 +44,7 @@ impl SandboxCredentialController for Credentials {
     async fn forget(&self, _: &SandboxId, _: u64) -> Result<(), CredentialError> {
         panic!("title must not forget credentials")
     }
-    async fn revoke(&self, _: &SubjectId, _: &str) -> Result<(), CredentialError> {
+    async fn revoke(&self, _: &Sandbox, _: &str) -> Result<(), CredentialError> {
         panic!("title must not revoke credentials")
     }
 }

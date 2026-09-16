@@ -32,6 +32,14 @@ pub(super) const WORKTREES: &str = "worktrees";
 pub(super) const AGENTS: &str = "agents";
 pub(super) const AGENT_REUSE_BINDINGS: &str = "agent_reuse_bindings";
 pub(super) const AGENT_LOG: &str = "agent_log";
+pub(super) const AGENT_COMMANDS: &str = "agent_commands";
+pub(super) const AGENT_ARTIFACTS: &str = "agent_artifacts";
+pub(super) const SANDBOX_CONTROLS: &str = "sandbox_controls";
+pub(super) const COMMAND_AUTHORIZATION_AUDITS: &str = "command_authorization_audits";
+pub(super) const AGENT_COMMAND_ORDERS: &str = "agent_command_orders";
+pub(super) const RESOURCE_POLICIES: &str = "resource_policies";
+pub(super) const RESOURCE_SHARE_COMMANDS: &str = "resource_share_commands";
+pub(super) const RESOURCE_SHARES: &str = "resource_shares";
 pub(super) const SANDBOX_EVENTS: &str = "sandbox_events";
 pub(super) const SANDBOX_ADMISSIONS: &str = "sandbox_admissions";
 pub(super) const CHECKPOINTS: &str = "checkpoints";
@@ -49,7 +57,17 @@ const SANDBOX_COLLECTIONS: &[&str] = &[
     WORKTREES,
     AGENTS,
     AGENT_REUSE_BINDINGS,
+    super::trigger_first_messages::COLLECTION,
     AGENT_LOG,
+    "agent_channel_usage",
+    "channel_usage_events",
+    AGENT_COMMANDS,
+    AGENT_ARTIFACTS,
+    SANDBOX_CONTROLS,
+    AGENT_COMMAND_ORDERS,
+    RESOURCE_POLICIES,
+    RESOURCE_SHARES,
+    RESOURCE_SHARE_COMMANDS,
     SANDBOX_EVENTS,
     SANDBOX_ADMISSIONS,
     CHECKPOINTS,
@@ -68,6 +86,8 @@ const PROFILE_COLLECTIONS: &[&str] = &[
 /// share a client session and therefore a real Mongo transaction.
 #[derive(Clone)]
 pub struct MongoSandboxStore {
+    pub(crate) channel_invokes:
+        std::sync::Arc<std::sync::OnceLock<std::sync::Weak<super::MongoBridgeInvokeStore>>>,
     pub(super) client: Client,
     pub(super) checkpoint_objects: MongoCheckpointObjectStore,
     pub(super) sandboxes: Collection<Document>,
@@ -76,6 +96,17 @@ pub struct MongoSandboxStore {
     pub(super) agents: Collection<Document>,
     pub(super) agent_reuse_bindings: Collection<Document>,
     pub(super) agent_log: Collection<Document>,
+    pub(super) agent_creation_provenance: Collection<Document>,
+    pub(super) agent_channel_usage: Collection<Document>,
+    pub(super) channel_usage_events: Collection<Document>,
+    pub(super) agent_commands: Collection<Document>,
+    pub(super) agent_artifacts: Collection<Document>,
+    pub(super) sandbox_controls: Collection<Document>,
+    pub(super) command_authorization_audits: Collection<Document>,
+    pub(super) agent_command_orders: Collection<Document>,
+    pub(super) resource_policies: Collection<Document>,
+    pub(super) resource_share_commands: Collection<Document>,
+    pub(super) resource_shares: Collection<Document>,
     pub(super) sandbox_events: Collection<Document>,
     pub(super) sandbox_admissions: Collection<Document>,
     pub(super) checkpoints: Collection<Document>,
@@ -91,7 +122,7 @@ pub struct MongoSandboxStore {
 
 impl MongoSandboxStore {
     #[cfg(test)]
-    pub(super) async fn open(client: &Client, name: &str) -> Result<Self, StoreError> {
+    pub(crate) async fn open(client: &Client, name: &str) -> Result<Self, StoreError> {
         Self::open_with_storage(client, name, super::checkpoint_storage::test_storage(name)).await
     }
 
@@ -106,6 +137,7 @@ impl MongoSandboxStore {
         let checkpoint_objects =
             MongoCheckpointObjectStore::open_with_storage(client, name, objects).await?;
         let store = Self {
+            channel_invokes: std::sync::Arc::new(std::sync::OnceLock::new()),
             client: client.clone(),
             checkpoint_objects,
             sandboxes: majority_collection(&database, SANDBOXES),
@@ -114,6 +146,20 @@ impl MongoSandboxStore {
             agents: majority_collection(&database, AGENTS),
             agent_reuse_bindings: majority_collection(&database, AGENT_REUSE_BINDINGS),
             agent_log: majority_collection(&database, AGENT_LOG),
+            agent_creation_provenance: majority_collection(&database, "agent_creation_provenance"),
+            agent_channel_usage: majority_collection(&database, "agent_channel_usage"),
+            channel_usage_events: majority_collection(&database, "channel_usage_events"),
+            agent_commands: majority_collection(&database, AGENT_COMMANDS),
+            agent_artifacts: majority_collection(&database, AGENT_ARTIFACTS),
+            sandbox_controls: majority_collection(&database, SANDBOX_CONTROLS),
+            command_authorization_audits: majority_collection(
+                &database,
+                COMMAND_AUTHORIZATION_AUDITS,
+            ),
+            agent_command_orders: majority_collection(&database, AGENT_COMMAND_ORDERS),
+            resource_policies: majority_collection(&database, RESOURCE_POLICIES),
+            resource_share_commands: majority_collection(&database, RESOURCE_SHARE_COMMANDS),
+            resource_shares: majority_collection(&database, RESOURCE_SHARES),
             sandbox_events: majority_collection(&database, SANDBOX_EVENTS),
             sandbox_admissions: majority_collection(&database, SANDBOX_ADMISSIONS),
             checkpoints: majority_collection(&database, CHECKPOINTS),
@@ -130,7 +176,14 @@ impl MongoSandboxStore {
         super::workspaces::ensure_indexes(&store.workspaces).await?;
         super::worktrees::ensure_indexes(&store.worktrees).await?;
         super::agents::ensure_indexes(&store.agents).await?;
+        super::trigger_first_messages::ensure_indexes(&store).await?;
         super::agent_log::ensure_indexes(&store.agent_log).await?;
+        super::agent_channel_usage::ensure_indexes(&store.channel_usage_events).await?;
+        super::agent_commands::ensure_indexes(&store.agent_commands).await?;
+        super::sandbox_controls::ensure_indexes(&store.sandbox_controls).await?;
+        super::agent_commands::audit::ensure_indexes(&store.command_authorization_audits).await?;
+        super::resource_access::ensure_indexes(&store).await?;
+        super::resource_access::ensure_artifact_indexes(&store.agent_artifacts).await?;
         super::sandbox_events::ensure_indexes(&store.sandbox_events).await?;
         super::checkpoints::ensure_indexes(&store.checkpoints).await?;
         super::warm_sandboxes::ensure_indexes(&store.warm_sandboxes).await?;

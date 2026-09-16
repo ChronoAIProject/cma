@@ -27,7 +27,9 @@
         "headers": {
           "cache-control": "no-cache, no-store",
           "content-type": "text/event-stream",
-          "x-accel-buffering": "no"
+          "x-accel-buffering": "no",
+          "x-cma-command-id": "cmd_contract_agui_run_completes",
+          "x-cma-response-id": "resp_contract_agui_run_completes"
         },
         "body": [
           {
@@ -107,6 +109,10 @@
         "event_time_3": "/3/data/timestamp",
         "event_time_4": "/4/data/timestamp",
         "event_time_5": "/5/data/timestamp"
+      },
+      "headerCaptures": {
+        "agui_run_completes_command": "x-cma-command-id",
+        "agui_run_completes_response": "x-cma-response-id"
       }
     },
     {
@@ -135,7 +141,9 @@
         "headers": {
           "cache-control": "no-cache, no-store",
           "content-type": "text/event-stream",
-          "x-accel-buffering": "no"
+          "x-accel-buffering": "no",
+          "x-cma-command-id": "cmd_contract_agui_followup_run_completes",
+          "x-cma-response-id": "resp_contract_agui_followup_run_completes"
         },
         "body": [
           {
@@ -215,6 +223,10 @@
         "event_time_3": "/3/data/timestamp",
         "event_time_4": "/4/data/timestamp",
         "event_time_5": "/5/data/timestamp"
+      },
+      "headerCaptures": {
+        "agui_followup_run_completes_command": "x-cma-command-id",
+        "agui_followup_run_completes_response": "x-cma-response-id"
       }
     },
     {
@@ -242,7 +254,9 @@
         "headers": {
           "cache-control": "no-cache, no-store",
           "content-type": "text/event-stream",
-          "x-accel-buffering": "no"
+          "x-accel-buffering": "no",
+          "x-cma-command-id": "cmd_contract_responses_create_completes",
+          "x-cma-response-id": "resp_contract_responses_create_completes"
         },
         "body": [
           {
@@ -377,6 +391,10 @@
       "captures": {
         "admitted_response_id": "/0/data/response/id",
         "admitted_seconds": "/0/data/response/created_at"
+      },
+      "headerCaptures": {
+        "responses_create_completes_command": "x-cma-command-id",
+        "responses_create_completes_response": "x-cma-response-id"
       }
     },
     {
@@ -455,7 +473,9 @@
       "response": {
         "status": 409,
         "headers": {
-          "content-type": "application/problem+json"
+          "content-type": "application/problem+json",
+          "x-cma-command-id": "cmd_contract_responses_completed_stale_previous",
+          "x-cma-response-id": "resp_contract_responses_completed_stale_previous"
         },
         "body": {
           "type": "https://spec.chrono-ai.fun/cma/1.0/problems/previous-response-conflict",
@@ -467,7 +487,11 @@
         },
         "bodyKind": "json"
       },
-      "captures": {}
+      "captures": {},
+      "headerCaptures": {
+        "responses_completed_stale_previous_command": "x-cma-command-id",
+        "responses_completed_stale_previous_response": "x-cma-response-id"
+      }
     },
     {
       "id": "responses-concurrent-conflict",
@@ -490,20 +514,26 @@
         }
       },
       "response": {
-        "status": 409,
+        "status": 504,
         "headers": {
-          "content-type": "application/problem+json"
+          "content-type": "application/problem+json",
+          "x-cma-command-id": "cmd_contract_responses_concurrent_conflict",
+          "x-cma-response-id": "resp_contract_responses_concurrent_conflict"
         },
         "body": {
-          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/response-in-progress",
-          "title": "response in progress",
-          "status": 409,
-          "detail": "This conversation already has a response in progress.",
-          "code": "response_in_progress"
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent-command-observation-timeout",
+          "title": "agent command observation timeout",
+          "status": 504,
+          "detail": "The admitted command has no observed turn binding yet. Its outcome remains unknown; retry the same input with the retained Idempotency-Key or read its command status.",
+          "code": "agent_command_observation_timeout"
         },
         "bodyKind": "json"
       },
-      "captures": {}
+      "captures": {},
+      "headerCaptures": {
+        "responses_concurrent_conflict_command": "x-cma-command-id",
+        "responses_concurrent_conflict_response": "x-cma-response-id"
+      }
     },
     {
       "id": "agui-delivery-ambiguous",
@@ -527,20 +557,68 @@
         }
       },
       "response": {
-        "status": 503,
+        "status": 200,
         "headers": {
-          "content-type": "application/problem+json"
+          "cache-control": "no-cache, no-store",
+          "content-type": "text/event-stream",
+          "x-accel-buffering": "no",
+          "x-cma-command-id": "cmd_contract_agui_delivery_ambiguous",
+          "x-cma-response-id": "resp_contract_agui_delivery_ambiguous"
         },
-        "body": {
-          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent-delivery-ambiguous",
-          "title": "agent delivery ambiguous",
-          "status": 503,
-          "detail": "The operation outcome is ambiguous and requires durable reconciliation.",
-          "code": "agent_delivery_ambiguous"
-        },
-        "bodyKind": "json"
+        "body": [
+          {
+            "id": "12",
+            "data": {
+              "type": "RUN_STARTED",
+              "threadId": "agt_contract",
+              "runId": "12",
+              "timestamp": "2026-09-07T00:00:00Z"
+            }
+          },
+          {
+            "data": {
+              "type": "TEXT_MESSAGE_START",
+              "threadId": "agt_contract",
+              "runId": "12",
+              "messageId": "msg_13",
+              "role": "user",
+              "timestamp": "2026-09-07T00:00:00Z"
+            }
+          },
+          {
+            "data": {
+              "type": "TEXT_MESSAGE_CONTENT",
+              "threadId": "agt_contract",
+              "runId": "12",
+              "messageId": "msg_13",
+              "delta": "Continue the proof",
+              "timestamp": "2026-09-07T00:00:00Z"
+            }
+          },
+          {
+            "id": "13",
+            "data": {
+              "type": "TEXT_MESSAGE_END",
+              "threadId": "agt_contract",
+              "runId": "12",
+              "messageId": "msg_13",
+              "timestamp": "2026-09-07T00:00:00Z"
+            }
+          }
+        ],
+        "bodyKind": "sse",
+        "streamPrefix": true
       },
-      "captures": {}
+      "captures": {
+        "agui_delivery_ambiguous_time_0": "/0/data/timestamp",
+        "agui_delivery_ambiguous_time_1": "/1/data/timestamp",
+        "agui_delivery_ambiguous_time_2": "/2/data/timestamp",
+        "agui_delivery_ambiguous_time_3": "/3/data/timestamp"
+      },
+      "headerCaptures": {
+        "agui_delivery_ambiguous_command": "x-cma-command-id",
+        "agui_delivery_ambiguous_response": "x-cma-response-id"
+      }
     },
     {
       "id": "agui-ambiguous-retry-refused",
@@ -564,20 +642,26 @@
         }
       },
       "response": {
-        "status": 409,
+        "status": 504,
         "headers": {
-          "content-type": "application/problem+json"
+          "content-type": "application/problem+json",
+          "x-cma-command-id": "cmd_contract_agui_ambiguous_retry_refused",
+          "x-cma-response-id": "resp_contract_agui_ambiguous_retry_refused"
         },
         "body": {
-          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent-operation-in-flight",
-          "title": "agent operation in flight",
-          "status": 409,
-          "detail": "Another durable operation currently owns this agent.",
-          "code": "agent_operation_in_flight"
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent-command-observation-timeout",
+          "title": "agent command observation timeout",
+          "status": 504,
+          "detail": "The admitted command has no observed turn binding yet. Its outcome remains unknown; retry the same input with the retained Idempotency-Key or read its command status.",
+          "code": "agent_command_observation_timeout"
         },
         "bodyKind": "json"
       },
-      "captures": {}
+      "captures": {},
+      "headerCaptures": {
+        "agui_ambiguous_retry_refused_command": "x-cma-command-id",
+        "agui_ambiguous_retry_refused_response": "x-cma-response-id"
+      }
     },
     {
       "id": "responses-delivery-ambiguous",
@@ -600,20 +684,111 @@
         }
       },
       "response": {
-        "status": 503,
+        "status": 200,
         "headers": {
-          "content-type": "application/problem+json"
+          "cache-control": "no-cache, no-store",
+          "content-type": "text/event-stream",
+          "x-accel-buffering": "no",
+          "x-cma-command-id": "cmd_contract_responses_delivery_ambiguous",
+          "x-cma-response-id": "resp_contract_responses_delivery_ambiguous"
         },
-        "body": {
-          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent-delivery-ambiguous",
-          "title": "agent delivery ambiguous",
-          "status": 503,
-          "detail": "The operation outcome is ambiguous and requires durable reconciliation.",
-          "code": "agent_delivery_ambiguous"
-        },
-        "bodyKind": "json"
+        "body": [
+          {
+            "event": "response.created",
+            "data": {
+              "response": {
+                "id": "resp_agt_contract_12",
+                "object": "response",
+                "created_at": 1700000000,
+                "status": "in_progress",
+                "background": false,
+                "error": null,
+                "incomplete_details": null,
+                "instructions": null,
+                "max_output_tokens": null,
+                "model": "gpt-proof",
+                "output": [],
+                "parallel_tool_calls": false,
+                "previous_response_id": "resp_agt_contract_3",
+                "reasoning": {
+                  "effort": null,
+                  "summary": null
+                },
+                "store": true,
+                "temperature": null,
+                "text": {
+                  "format": {
+                    "type": "text"
+                  },
+                  "verbosity": "medium"
+                },
+                "tool_choice": "none",
+                "tools": [],
+                "top_p": null,
+                "truncation": "disabled",
+                "usage": null,
+                "metadata": {
+                  "request": "admitted"
+                }
+              },
+              "type": "response.created",
+              "sequence_number": 0
+            }
+          },
+          {
+            "event": "response.in_progress",
+            "data": {
+              "response": {
+                "id": "resp_agt_contract_12",
+                "object": "response",
+                "created_at": 1700000000,
+                "status": "in_progress",
+                "background": false,
+                "error": null,
+                "incomplete_details": null,
+                "instructions": null,
+                "max_output_tokens": null,
+                "model": "gpt-proof",
+                "output": [],
+                "parallel_tool_calls": false,
+                "previous_response_id": "resp_agt_contract_3",
+                "reasoning": {
+                  "effort": null,
+                  "summary": null
+                },
+                "store": true,
+                "temperature": null,
+                "text": {
+                  "format": {
+                    "type": "text"
+                  },
+                  "verbosity": "medium"
+                },
+                "tool_choice": "none",
+                "tools": [],
+                "top_p": null,
+                "truncation": "disabled",
+                "usage": null,
+                "metadata": {
+                  "request": "admitted"
+                }
+              },
+              "type": "response.in_progress",
+              "sequence_number": 1
+            }
+          }
+        ],
+        "bodyKind": "sse",
+        "streamPrefix": true
       },
-      "captures": {}
+      "captures": {
+        "responses_delivery_ambiguous_time_0": "/0/data/response/created_at",
+        "responses_delivery_ambiguous_time_1": "/1/data/response/created_at"
+      },
+      "headerCaptures": {
+        "responses_delivery_ambiguous_command": "x-cma-command-id",
+        "responses_delivery_ambiguous_response": "x-cma-response-id"
+      }
     },
     {
       "id": "responses-ambiguous-retry-refused",
@@ -636,21 +811,26 @@
         }
       },
       "response": {
-        "status": 409,
+        "status": 504,
         "headers": {
-          "content-type": "application/problem+json"
+          "content-type": "application/problem+json",
+          "x-cma-command-id": "cmd_contract_responses_ambiguous_retry_refused",
+          "x-cma-response-id": "resp_contract_responses_ambiguous_retry_refused"
         },
         "body": {
-          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/previous-response-conflict",
-          "title": "previous response conflict",
-          "status": 409,
-          "detail": "previous_response_id is not the conversation's latest response.",
-          "code": "previous_response_id_conflict",
-          "field": "previous_response_id"
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent-command-observation-timeout",
+          "title": "agent command observation timeout",
+          "status": 504,
+          "detail": "The admitted command has no observed turn binding yet. Its outcome remains unknown; retry the same input with the retained Idempotency-Key or read its command status.",
+          "code": "agent_command_observation_timeout"
         },
         "bodyKind": "json"
       },
-      "captures": {}
+      "captures": {},
+      "headerCaptures": {
+        "responses_ambiguous_retry_refused_command": "x-cma-command-id",
+        "responses_ambiguous_retry_refused_response": "x-cma-response-id"
+      }
     }
   ]
 }
