@@ -60,7 +60,8 @@ impl AgentLiveSubscription {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct AgentLiveMessageIdentity {
     generation: u64,
     turn: u64,

@@ -7,13 +7,25 @@ use super::AgentLogEntry;
 pub const MAX_DURABLE_AGENT_MESSAGE_BYTES: usize = 1024 * 1024;
 
 /// Live message fragments for one runtime generation.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct AgentMessageAssembly {
     pub(crate) message_id: Option<String>,
     pub(crate) content: String,
     pub(crate) prompt_evidence: bool,
     pub(crate) live_message: Option<super::conversation_recorder::live::AgentLiveMessageIdentity>,
     pub(crate) live_thought: Option<super::conversation_recorder::live::AgentLiveMessageIdentity>,
+    #[serde(skip)]
+    pub(crate) pending_update: Option<Box<PendingAgentUpdate>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct PendingAgentUpdate {
+    pub id: String,
+    pub fingerprint: String,
+    pub runtime_generation: u64,
+    pub active_turn: Option<u64>,
+    pub after_seq: u64,
 }
 
 impl AgentMessageAssembly {
@@ -22,7 +34,7 @@ impl AgentMessageAssembly {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct AgentUpdateOutcome {
     pub appended: Vec<AgentLogEntry>,
     pub turn_closed: bool,
