@@ -24,6 +24,13 @@ must use an explicitly configured CORS origin. Allowed request headers include
 `X-Request-Id`; exposed response headers include `Link`, `Retry-After` and
 `X-Request-Id`. CORS is not authorization.
 
+An unavailable identity provider, including a rate-limited verification request,
+returns a sanitized `503` rather than reporting an invalid login. An invalid,
+expired or revoked credential remains an authentication refusal. Overlapping
+verification of the same bearer can share one provider request sequence; a later
+request verifies it again. A temporary verification error does not authorize a
+request or change the idempotency key of an uncertain command.
+
 Creating a new Sandbox also requires renewable owner delegation already held by
 CMA. A request bearer does not establish renewable Sandbox authority.
 Complete the existing `/auth/login` OAuth

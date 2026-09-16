@@ -363,6 +363,14 @@ binding and an expiry index. It does not modify `auth_subjects`, capture refresh
 tokens or use an owner's saved credential. Repeated admission retains the same
 authority and command idempotency scope.
 
+Overlapping verification calls for the exact same bearer share one in-flight
+provider request sequence within an `AuthState`. Completed authorization is not
+cached: a later call performs fresh provider verification. Independent custody,
+resource policy, membership and dispatch fences remain separate checks. Provider
+rate limits, transport failures and temporary server failures are unavailable
+authority, not evidence that a credential was revoked or a user must sign in
+again. Ambient requests expose these failures as sanitized `503` responses.
+
 The production `ResourceCommandExecution` adapter obtains fresh resource authority
 from `AuthState` using the exact retained human credential. Refresh stays within
 the original sign-in incarnation. Current provider permissions and organization
@@ -377,6 +385,15 @@ The resulting transaction proof expires no later than the credential. Provider
 revocation, lost permissions, changed identity, missing custody or expiry prevents
 dispatch. Reads of existing history retain their independent authorization.
 Sandbox runtime credential renewal continues to use its separate owner delegation.
+
+Before an execution claim, unavailable authority leaves the durable command
+queued. The worker paces transient retries and pending revival checks by up to
+15 seconds, bounded by the original queue deadline, and holds no execution lease
+during that wait. The delay is per worker process; a process restart can shorten
+it, while the durable command, deadline and claim fences remain authoritative.
+Every later attempt checks current authority again. Definitive refusal and
+expiry retain their terminal behavior, and a bound dispatch continues through
+its existing reconciliation path rather than being submitted again.
 
 After admitting `api:` commands, an application rollback must retain support for
 this authority and its additive custody collection. Older authorizers cannot
