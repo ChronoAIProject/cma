@@ -50,7 +50,8 @@ selects the exact verified cluster context, namespace and deployment identity:
   "namespace": "your-cma-namespace",
   "deploymentId": "your-cma-deployment-id",
   "tokenFile": "/absolute/private/nyxid/access_token",
-  "agentIds": ["agt_selected_existing_agent"]
+  "agentIds": ["agt_selected_existing_agent"],
+  "watch": { "durationMs": 60000, "intervalMs": 2000, "sampleTimeoutMs": 15000 }
 }
 ```
 
@@ -58,15 +59,43 @@ selects the exact verified cluster context, namespace and deployment identity:
 node .github/scripts/cma-bridge-continuity-observer.mjs capture /private/continuity.json /private/before.json
 node .github/scripts/cma-bridge-continuity-observer.mjs capture /private/continuity.json /private/after.json
 node .github/scripts/cma-bridge-continuity-observer.mjs compare /private/before.json /private/after.json
+node .github/scripts/cma-bridge-continuity-watch.mjs /private/continuity.json /private/watch.json
 ```
 
 Capture refuses to overwrite receipts. A comparison fails on changed Agent
 ancestry, creation identity or profile pin, lost/changed historical event prefix,
 loss of live availability, replaced Pod, changed container/image or restart count.
 Normal appended history and transitions among Ready, Working and Waiting for
-approval are permitted. A failure aborts rollout; it never authorizes repairs or
-cleanup against the observed user resources. Record a failed command separately
-and use new receipt paths for its corrected rerun.
+approval are permitted. Review identity and history regressions against the
+requirement to resume the exact retained work. A temporary API interruption may
+be allowed by the deployment scope; an observer finding does not create a
+zero-outage permission gate or authorize repairs or cleanup. Record a failed
+command separately and use new receipt paths for its corrected rerun.
+
+The bounded watcher uses the same protected token and exact resource scope. It
+polls sequentially, retains intermediate read failures and later recoveries,
+compares each complete observation with the last complete observation, and
+records public read timings, hashed event prefixes, durable cursors and runtime
+identity. Each poll rereads the event prefix so changed historical records are
+detectable. The receipt explicitly records intervals between samples,
+incomplete samples and scheduled polls skipped by slow observations. Event and
+tool bodies and external exception text are excluded from the receipt.
+
+`durationMs` is between 1 second and 1 hour; `intervalMs` is between 250 ms and
+60 seconds; `sampleTimeoutMs` is between 250 ms and 60 seconds. Neither interval
+nor sample timeout may exceed the duration, and at most 1,200 polls may be
+scheduled. A sample timeout cancels the current read before a later poll starts.
+The total deadline, SIGINT or SIGTERM aborts active HTTP/body reads and kills and
+reaps the active `kubectl` process. No new poll starts after stopping. Cleanup
+and writing the receipt can finish after the sampling deadline.
+
+The watcher reserves a new mode-0600 output file before making reads. Existing
+files and symlinks are refused. Its `completed` status and zero exit code mean
+the bounded observation finished; inspect `assessment`, `findings`, `samples`
+and `gaps` for the recorded evidence. Temporary outages remain findings after
+recovery. Cancellation or setup failure writes an incomplete receipt and exits
+nonzero. These statuses do not decide deployment permission or establish exact
+resume by themselves.
 
 Successful sampled observations prove only their declared coverage. They do not
 prove availability between samples, native conversation identity, dirty-file
