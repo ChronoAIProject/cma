@@ -48,6 +48,8 @@ pub enum ChannelSenderKind {
 pub enum ChannelEventKind {
     UserMessage,
     AttachmentMessage,
+    /// New persisted kind: older readers refuse this whole row.
+    DiscordTextAttachment,
     UnsupportedContent,
     MessageEdit,
     InteractiveAction,

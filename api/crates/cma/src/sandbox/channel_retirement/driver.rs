@@ -1,3 +1,5 @@
+#[path = "provider_driver.rs"]
+mod provider;
 use super::*;
 use crate::{
     bridge::provisioning::retirement::ChannelRetirementAuthority,
@@ -90,6 +92,9 @@ impl ChannelRetirementDriver {
                 self.commit(&permit, Change::RuntimeIntent, now).await
             }
             (SandboxWorkStep::TeardownRuntime, RetirementPhase::RuntimeIntent) => {
+                if let Some(ready) = self.allocations.channel_provider_runtime(&snapshot).await? {
+                    return self.provider_teardown(&permit, &snapshot, ready, now).await;
+                }
                 self.teardown(&permit, &snapshot, now).await?;
                 self.commit(&permit, Change::RuntimeGone, now).await
             }
@@ -99,6 +104,17 @@ impl ChannelRetirementDriver {
                 self.commit(&permit, Change::RetainStorage, now).await
             }
             (SandboxWorkStep::MarkRetired, RetirementPhase::RuntimeGone) => {
+                self.credentials
+                    .revalidate_control_plane(permit.human())
+                    .await
+                    .map_err(|_| AllocationError::AuthorityUnavailable)?;
+                let snapshot = self
+                    .allocations
+                    .change_channel_retirement(&permit, &self.custody, Change::Finalize, now)
+                    .await?;
+                if snapshot.sandbox.status == layer2_core::sandbox::SandboxStatus::Retired {
+                    return Ok(RetirementStep::Advanced);
+                }
                 Ok(RetirementStep::Retained(Box::new(
                     super::assessment::FinalRetentionAssessment::capture(&snapshot)?,
                 )))

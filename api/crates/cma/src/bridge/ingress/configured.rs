@@ -28,17 +28,21 @@ pub(crate) fn configured(
             provisioning: credentials.provisioning.clone(),
             custody: credentials,
             resources,
+            flags,
         }),
         flags,
     );
-    Ok(Some(CallbackIngress::new(
+    let mut ingress = CallbackIngress::new(
         bridges,
         connections,
         inbox,
         deployment.keys,
         deployment.policy,
         deployment.callback_root,
-    )?))
+    )?;
+    ingress.text_attachments =
+        flags.enabled(crate::config::bridge_flags::BridgeFlag::DiscordTextAttachments);
+    Ok(Some(ingress))
 }
 
 struct Deployment {

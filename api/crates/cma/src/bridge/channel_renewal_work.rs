@@ -38,6 +38,9 @@ impl ChannelWorkPort for ChannelRenewalWork {
                 Error::Changed => (Duration::from_secs(1), "changed"),
                 Error::Unavailable => (Duration::from_secs(5), "unavailable"),
                 Error::Corrupt => (Duration::from_secs(30), "inconsistent"),
+                Error::AttachmentExpired | Error::AttachmentUnavailable => {
+                    (Duration::from_secs(30), "inconsistent")
+                }
                 Error::Unsupported => (Duration::from_secs(30), "unsupported"),
             };
             self.allocations

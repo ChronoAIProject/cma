@@ -11,7 +11,8 @@ use axum::{
     Json, Router,
 };
 use layer2_core::bridge::outbox::{
-    ChannelReplySessionAuthorization, ChannelReplyToolRequest, OutboxError, ReplyToolReceipt,
+    ChannelReplyEditRequest, ChannelReplySessionAuthorization, ChannelReplyToolRequest,
+    OutboxError, ReplyToolReceipt,
 };
 use layer3_adapter::RuntimeCredential;
 use serde::Deserialize;
@@ -50,6 +51,14 @@ pub(crate) trait ChannelToolBackend: Send + Sync {
         _session: &ChannelReplySessionAuthorization,
     ) -> Result<ChannelControlContext, OutboxError> {
         Err(OutboxError::ToolUnavailable)
+    }
+    async fn edit(
+        &self,
+        _session: &ChannelReplySessionAuthorization,
+        _context: &str,
+        _request: ChannelReplyEditRequest,
+    ) -> Result<ReplyToolReceipt, OutboxError> {
+        Err(OutboxError::CapabilityUnavailable)
     }
     async fn reply(
         &self,

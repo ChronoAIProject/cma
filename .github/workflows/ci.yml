@@ -255,9 +255,9 @@ jobs:
           supervisor::mutation_tests::workspace_reconciliation_tests::real_linux_writer_boundary_reconciles_target_and_resumes_live_sibling
           -- --ignored --exact --test-threads=1
       - name: Disposable real Mongo persistence contracts
-        # The complete 567-contract run took 19m24s on the hosted runner.
-        # Leave room for the added partition/control contracts and fixture setup.
-        timeout-minutes: 25
+        # The complete 608-contract run took 24m42s on the hosted runner.
+        # Retain every contract and bounded fixture concurrency as the corpus grows.
+        timeout-minutes: 35
         run: bash ../.github/scripts/mongo-contract-tests.sh
       - name: Doctests
         run: cargo test --doc --workspace --locked
@@ -545,3 +545,21 @@ jobs:
       - name: Require passing runtime image evidence
         if: always() && matrix.component == 'runtime'
         run: node .github/scripts/runtime-image-evidence.mjs verify cma-runtime:ci "$GITHUB_SHA" "$RUNNER_TEMP/runtime-image-evidence.json"
+      # Preserve the exact native bytes that passed this job. PR artifacts keep
+      # their actual merge-checkout revision; consumers must verify tree equality.
+      - name: Export tested native image
+        if: success() && (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository)
+        timeout-minutes: 10
+        env:
+          IMAGE_COMPONENT: ${{ matrix.component }}
+        run: python3 .github/scripts/export-ci-native-image.py "$IMAGE_COMPONENT" "$GITHUB_SHA" "$RUNNER_TEMP/ci-native-image"
+      - name: Retain tested native image
+        if: success() && (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository)
+        timeout-minutes: 10
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-native-image-${{ matrix.component }}-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/ci-native-image/
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 1

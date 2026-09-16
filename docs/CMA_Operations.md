@@ -328,6 +328,35 @@ build layer; final images contain neither compiler nor cache. Cached artifacts
 are not acceptance evidence. Build, identity, runtime and vulnerability gates
 apply to the resulting immutable image on every delivery.
 
+CI retains each tested native API, web and runtime image for one day after a
+successful component job on `develop` pushes and pull requests from this same
+repository. Export runs after the vulnerability scan and, for runtime, the
+executed contract and its evidence verification. The artifact is named
+`ci-native-image-<component>-<actual-source-sha>-<run-id>-<attempt>` and contains a
+compressed Docker-save archive plus `metadata.json`. Export saves the inspected
+immutable image ID with fast gzip compression; Actions does not recompress it.
+It adds no image build, registry credentials, registry write or deployment.
+
+Use artifacts only from the exact successful CI run and attempt whose complete
+required checks passed. Verify the repository, source revision, source tree,
+component, `linux/amd64` platform, image ID, archive filename, size and SHA-256
+against the metadata. For a PR artifact, independently compare its recorded Git
+tree to the merged `develop` commit; a matching branch name or PR number is not
+equivalence. After `docker load`, inspect that exact image ID again and require
+its source/revision/version labels and the runtime contract to match the
+metadata. Preserve its actual tested revision and version labels, including CI's
+`development`/`dev` version; do not relabel it as a later commit or release.
+Source-tree equivalence and the original successful checks provide the delivery
+identity for this CI handoff. A registry push still requires separately
+authorized delivery and verification of the resulting immutable registry digest.
+
+These archives contain only the tested native platform and do not establish the
+multi-platform root digest or release identity described in [Release](Release.md).
+They are unencrypted and readable by the repository's Actions-artifact audience;
+one-day retention limits duration, not readership. Expired artifacts require a
+new successful CI run. SDK packages, release workflows, registry ACLs and tags
+are unaffected.
+
 ### Lifecycle Scheduling
 
 Bridge ingress, worker occupancy/results and outbound attempts emit bounded
@@ -472,11 +501,14 @@ are referenced in `infra/api/secret.yaml`, never stored in ConfigMaps.
 | `CHRONO_BRIDGE_TELEGRAM_ENABLED` | Telegram fresh-effect gate, independent of other platforms and stages; false by default |
 | `CHRONO_BRIDGE_TELEGRAM_NEW_ENABLED` | Telegram-new fresh-effect gate, independent of Telegram and other stages; false by default |
 | `CHRONO_BRIDGE_DISCORD_ENABLED` | Discord fresh-effect gate; false by default |
+| `CHRONO_BRIDGE_DISCORD_TEXT_ATTACHMENTS_ENABLED` | New single Discord text-file admission; false by default. Requires independent Discord/ingress gates and current authority; retrieval/Agent work also requires normal allocation/execution gates. Deploy supporting readers/workers before enablement. Disabling preserves original receipts and lets accepted work drain under normal gates; before rollback, drain it with a supporting worker or retain explicit suspension. See [attachment retrieval](BRIDGE_ATTACHMENT_RETRIEVAL.md). |
 | `CHRONO_BRIDGE_LARK_ENABLED` | Lark fresh-effect gate, independent of Feishu; false by default |
 | `CHRONO_BRIDGE_FEISHU_ENABLED` | Feishu fresh-effect gate, independent of Lark; false by default |
 | `CHRONO_BRIDGE_SLACK_ENABLED` | Slack boundary gate; false by default; missing human/loop evidence still refuses admission |
 | `CHRONO_BRIDGE_WHATSAPP_ENABLED` | WhatsApp boundary gate; false by default; missing human/loop evidence still refuses admission |
 | `CHRONO_BRIDGE_X_ENABLED` | X DM boundary gate; false by default; missing human/loop evidence still refuses admission |
+| `CHRONO_BRIDGE_WORKSPACE_PER_PARTITION_ENABLED` | Fresh shared-Sandbox Workspace placement selection and allocation; false by default; requires complete runtime support and management/allocation/execution gates. Independent operator rollout choice after canary, not continuity attestation; exact receipts, unchanged placement edits and retained work survive disabling. |
+| `CHRONO_BRIDGE_WORKTREE_AGENT_PER_PARTITION_ENABLED` | Fresh shared-Workspace Worktree/Agent placement selection and allocation; false by default; independent of Workspace-per-partition selection with the same runtime and stage requirements. Retained execution, reconciliation and cleanup stay authorized normally. |
 | `CHRONO_BRIDGE_V2_UI_TRANSPORT_ENABLED` | Eligibility for the separately integrated v2 browser transport; false by default; does not disable existing public v2 API routes or change an accepted request protocol |
 | `CHRONO_TRIGGER_COMMAND_ADMISSION_ENABLED` | New authenticated Launch admission selects common first-message commands under retained personal ownership; false by default. Proven pre-write failure is terminal for new common prompts; ambiguous writes retain the same command/response and refuse legacy recovery. Accepted protocol is immutable; disabling the selector retains accepted common commands and legacy launches retain their original delivery/recovery behavior. Keep false until every worker and permitted rollback version recognizes and transactionally excludes common/legacy dispatch; older workers ignore additive sidecars. |
 | `CHRONO_TRUSTED_SUBJECT` | Local trusted-mode subject; default `local-developer`, irrelevant in provider mode |
@@ -531,6 +563,11 @@ profile and service scope. Startup defaults seed missing default profiles; they
 are not a live rewrite mechanism for published profiles or existing settings.
 
 ## Bridge rollout switches
+
+See [Channel operational signals and alert definitions](CMA_Channel_Observability.md)
+for the existing text log format, durable queue/cleanup/authority observations,
+and disabled alert policy definitions. Health observations never authorize replay
+or replace retained recovery evidence.
 
 The registered feature switches are independent process-start booleans. Missing values
 mean false; only the exact strings `true` and `false` are accepted. A stage also
@@ -587,10 +624,13 @@ substitutes for missing Channel authority.
 
 Dedicated Channel revival and retirement use their retained original-human,
 allocation, resource and runtime authority. Renewal alone does not authorize
-restore or teardown. Retirement retains home, checkpoint and history data and
-holds final Retired publication and physical cleanup. Image rotation remains
-held. See [Channel lifecycle recovery](CMA_Channel_Lifecycle_Recovery.md) for the
-implemented paths and their remaining verification boundaries.
+restore or teardown. Fresh retirement can remove its exact owned runtime and
+PVC through existing namespaced authority, then publish Retired with sealed,
+retained history. Missing or ambiguous original receipts hold finalization.
+Underlying disk reclamation belongs to the storage provider; CMA requests no
+additional Kubernetes or cloud permissions. Image rotation remains held. See
+[Channel lifecycle recovery](CMA_Channel_Lifecycle_Recovery.md) for the implemented
+paths and their remaining verification boundaries.
 
 ## Platform Settings
 

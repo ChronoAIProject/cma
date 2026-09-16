@@ -230,6 +230,12 @@ pub(super) fn read_sandbox(document: &Document) -> Result<Sandbox, SandboxStoreE
         ));
     }
     read_admission_replay_metadata(document, &sandbox)?;
+    crate::store::bridge_allocations::channel_retirement::finalization::validate_document(
+        document, &sandbox,
+    )
+    .map_err(|_| {
+        SandboxStoreError::Corrupt("Channel retirement finalization is inconsistent".into())
+    })?;
     Ok(sandbox)
 }
 
@@ -389,6 +395,7 @@ impl SandboxStore for MongoSandboxStore {
                     "document_schema_version": DOCUMENT_SCHEMA_VERSION,
                     "revision": expected,
                     "channel_reuse_cleanup_execution": { "$exists": false },
+                    "channel_retirement_finalization": { "$exists": false },
                     "origin_type": origin_type,
                     "origin_launch_id": origin_launch_id,
                 },
