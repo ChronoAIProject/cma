@@ -10,7 +10,7 @@ async fn rows(c: &ControlFixture, name: &str) -> u64 {
         .await
         .unwrap()
 }
-async fn rates(c: &ControlFixture) -> i64 {
+pub(super) async fn rates(c: &ControlFixture) -> i64 {
     c.f.client
         .database(&c.f.database)
         .collection::<Document>("bridge_callback_rates")
@@ -24,7 +24,7 @@ async fn rates(c: &ControlFixture) -> i64 {
         .map(|row| row.get_i64("count").unwrap())
         .sum()
 }
-async fn order(c: &ControlFixture) -> Document {
+pub(super) async fn order(c: &ControlFixture) -> Document {
     c.f.client
         .database(&c.f.database)
         .collection::<Document>("agent_command_orders")

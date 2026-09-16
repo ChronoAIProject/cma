@@ -19,7 +19,12 @@ pub(crate) struct ControlFixture {
 
 impl ControlFixture {
     pub async fn new() -> Self {
-        let f = ReplyFixture::new().await;
+        Self::build(ReplyFixture::new().await).await
+    }
+    pub async fn with_callback_route() -> Self {
+        Self::build(ReplyFixture::with_callback_route().await).await
+    }
+    async fn build(f: ReplyFixture) -> Self {
         let invokes = Arc::new(
             crate::store::MongoBridgeInvokeStore::open(
                 f.bridges.clone(),
@@ -323,7 +328,7 @@ impl ControlFixture {
     }
 }
 
-fn sign(claims: serde_json::Value) -> String {
+pub(super) fn sign(claims: serde_json::Value) -> String {
     let pair = RsaKeyPair::from_pkcs8(include_bytes!(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/../layer2-core/src/bridge/ingress/fixtures/callback-test-only.pk8"

@@ -18,10 +18,11 @@ pub(crate) enum BridgeFlag {
     V2UiTransport,
     TelegramNew,
     TriggerCommandAdmission,
+    ControlAdmission,
 }
 
 impl BridgeFlag {
-    pub(crate) const ALL: [Self; 12] = [
+    pub(crate) const ALL: [Self; 13] = [
         Self::Management,
         Self::Ingress,
         Self::Allocation,
@@ -34,6 +35,7 @@ impl BridgeFlag {
         Self::V2UiTransport,
         Self::TelegramNew,
         Self::TriggerCommandAdmission,
+        Self::ControlAdmission,
     ];
 
     pub(crate) const fn key(self) -> &'static str {
@@ -50,6 +52,7 @@ impl BridgeFlag {
             Self::Feishu => "CHRONO_BRIDGE_FEISHU_ENABLED",
             Self::V2UiTransport => "CHRONO_BRIDGE_V2_UI_TRANSPORT_ENABLED",
             Self::TriggerCommandAdmission => "CHRONO_TRIGGER_COMMAND_ADMISSION_ENABLED",
+            Self::ControlAdmission => "CHRONO_BRIDGE_CONTROL_ADMISSION_ENABLED",
         }
     }
 }
@@ -139,7 +142,7 @@ pub(crate) enum AcceptedWorkDecision {
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct BridgeFeatureFlags {
-    enabled: [bool; 12],
+    enabled: [bool; 13],
 }
 
 impl BridgeFeatureFlags {
