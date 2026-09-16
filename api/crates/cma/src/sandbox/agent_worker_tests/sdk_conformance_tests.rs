@@ -25,6 +25,7 @@ use crate::projections::{AgentProjectionServices, UnavailableSandboxResources};
 mod approval_tests;
 mod cancellation_tests;
 mod cross_interface_tests;
+mod mongo_tests;
 mod runtime_tests;
 mod terminal_failure_tests;
 mod v2_tests;
@@ -230,8 +231,8 @@ async fn conversation_router(
     conversation_router_with_probe(harness, None, "official-sdk-command-worker").await
 }
 
-async fn conversation_router_with_probe(
-    harness: &Harness,
+async fn conversation_router_with_probe<S: FixtureStore>(
+    harness: &Harness<S>,
     probe: Option<Arc<runtime_tests::RuntimeProbe>>,
     worker_holder: &str,
 ) -> (

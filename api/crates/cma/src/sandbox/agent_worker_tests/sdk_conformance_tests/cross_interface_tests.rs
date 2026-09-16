@@ -41,7 +41,7 @@ impl Route {
     }
 }
 
-pub(super) fn authenticated(router: Router, harness: &Harness) -> Router {
+pub(super) fn authenticated<S>(router: Router, harness: &Harness<S>) -> Router {
     router.layer(middleware::from_fn_with_state(
         harness.workspace.owner.clone(),
         authenticate,
