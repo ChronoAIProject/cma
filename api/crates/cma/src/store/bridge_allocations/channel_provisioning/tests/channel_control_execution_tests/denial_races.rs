@@ -11,7 +11,7 @@ async fn channel_control_held_denial_cannot_overwrite_released_or_claimed_work()
             worker::claim(&c, &held).await;
         } else {
             worker::service(&c)
-                .release_held(&held.command)
+                .release_held(&held.command, &worker::operations(&c))
                 .await
                 .unwrap();
         }
