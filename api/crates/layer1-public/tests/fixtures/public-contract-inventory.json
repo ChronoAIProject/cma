@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "openapi_operations": 182,
+  "openapi_operations": 183,
   "operations": {
     "GET /api/v1/organizations": {
       "classification": "openapi",
@@ -2582,6 +2582,21 @@
       "required_problems": [
         "bridge_not_found",
         "bridge_partition_unavailable"
+      ]
+    },
+    "GET /api/v1/bridge-creation-target": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/bridges/creation_target.rs# Read-only stable creation identity and callback discovery under current owner/admin and management authorization; the same key must be reused for creation.",
+      "required_problems": [
+        "bridge_authority_unavailable",
+        "bridge_management_required",
+        "bridge_not_found",
+        "bridge_setup_unavailable",
+        "bridge_unavailable",
+        "invalid_idempotency_key",
+        "invalid_query",
+        "missing_idempotency_key",
+        "not_authenticated"
       ]
     }
   }
