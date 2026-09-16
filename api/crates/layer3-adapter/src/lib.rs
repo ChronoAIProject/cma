@@ -71,7 +71,8 @@ pub use home_snapshot_view::{
     HomeSnapshotViewStore,
 };
 pub use home_volume::{
-    HomeVolumeAttachment, HomeVolumePolicy, HomeVolumeReceipt, HomeVolumeRequest, HomeVolumeStore,
+    HomeVolumeAttachment, HomeVolumePolicy, HomeVolumeReceipt, HomeVolumeRequest, HomeVolumeScope,
+    HomeVolumeStore,
 };
 pub use runtime::{
     CommandReceipt, CredentialFrame, InstallReceipt, InstallRequest, RuntimeAdoptionRequest,

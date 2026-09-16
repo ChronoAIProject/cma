@@ -9,6 +9,8 @@ mod children;
 pub(crate) mod fixture;
 #[path = "tests/reuse_cleanup_home.rs"]
 mod home;
+#[path = "tests/home_provenance_tests.rs"]
+mod home_provenance;
 #[path = "tests/renewal.rs"]
 mod renewal;
 #[path = "tests/reuse.rs"]
