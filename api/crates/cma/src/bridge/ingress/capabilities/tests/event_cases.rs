@@ -79,6 +79,9 @@ pub(crate) fn text(body: &mut Value, platform: &BridgePlatform, text: &str) {
             body["raw_platform_data"]["event"]["message"]["content"] =
                 json!(json!({"text":text}).to_string())
         }
+        BridgePlatform::Slack | BridgePlatform::Whatsapp | BridgePlatform::X => {
+            unreachable!("separate boundary fixtures")
+        }
     }
 }
 
@@ -169,6 +172,9 @@ impl EventCase {
                 ConflictingDiscriminator => raw["schema"] = json!("unknown-schema"),
                 _ => unreachable!(),
             },
+            BridgePlatform::Slack | BridgePlatform::Whatsapp | BridgePlatform::X => {
+                unreachable!("separate boundary fixtures")
+            }
         }
     }
 }

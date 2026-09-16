@@ -51,6 +51,9 @@ fn signed_platform_text_uses_actual_chat_type_and_retains_distinct_default_parti
                     .remove("guild_id");
                 private.raw_mut()["d"]["channel"] = json!({"id":"discord-chat","type":1});
             }
+            BridgePlatform::Slack | BridgePlatform::Whatsapp | BridgePlatform::X => {
+                unreachable!("separate boundary fixtures")
+            }
         }
         assert_ne!(initial, sender.key());
         assert_ne!(initial, chat.key());
@@ -77,6 +80,9 @@ fn signed_stable_threads_require_actual_supported_fields_and_ignore_generic_cont
             }
             BridgePlatform::Discord => {
                 fixture.raw_mut()["d"]["channel"] = json!({"id":"discord-chat","type":11});
+            }
+            BridgePlatform::Slack | BridgePlatform::Whatsapp | BridgePlatform::X => {
+                unreachable!("separate boundary fixtures")
             }
         }
         let key = fixture.key();

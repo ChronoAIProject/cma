@@ -194,6 +194,8 @@ fn stable_thread(platform: &BridgePlatform, id: &str) -> ThreadEvidence {
         BridgePlatform::Discord => StableThreadKind::DiscordChannelThread,
         BridgePlatform::Lark => StableThreadKind::LarkThread,
         BridgePlatform::Feishu => StableThreadKind::FeishuThread,
+        BridgePlatform::Slack => StableThreadKind::SlackThread,
+        BridgePlatform::Whatsapp | BridgePlatform::X => return ThreadEvidence::Unsupported,
     };
     ThreadEvidence::Verified(StableThreadReference::from_verified_field(kind, id.into()).unwrap())
 }
