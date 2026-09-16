@@ -6,6 +6,57 @@ permission to mint, revoke or retire the parent. Every advancing operation
 revalidates the original current management and custody proofs against the
 retained allocation and resource identities.
 
+## Original home allocation evidence
+
+When the home adapter supplies a configured storage scope, fresh Channel
+provisioning commits the exact home request and its opaque scope before calling
+prepare. The separate `channel_home_provenance` sidecar binds the allocation,
+Sandbox creation time, resource owner and creation approver. Only a successful
+provider response for that exact request can bind its first physical receipt;
+later stages preserve the request, scope and bound receipt. A lost prepare reply
+retries the same durable request. A changed scope or bound physical generation
+holds the operation before it can target replacement storage.
+
+The adapter computes scope from its configured provider authority. The domain
+stores an opaque digest and does not interpret provider namespaces or endpoints.
+Adapters without this evidence capability preserve their existing provisioning
+behavior and supply no deletion provenance.
+
+This sidecar does not change the serialized provisioning state older workers
+decode. Their existing field updates preserve the separate evidence while
+accepted provisioning remains recoverable. Existing homes without provenance
+are not backfilled from canonical observation. If an older worker advances past
+Home without binding the new sidecar receipt, later stages keep that evidence
+incomplete. Future destructive cleanup must hold on absent or incomplete
+provenance. A first bound receipt is not proof that an earlier lost request
+could never have created another physical generation.
+
+Original allocation evidence alone does not enable home removal, archive
+deletion, `Retired` publication, capacity release or a history deadline.
+
+The separate `channel_home_prepare_evidence` sidecar commits before a new
+worker calls prepare. It binds the immutable original request/provenance digest
+and records that dispatch may have happened, generation history is unresolved,
+provider incarnation and backing-storage absence are unproven, and physical
+cleanup capability is unavailable. The marker can precede the actual call;
+a crash before dispatch and a lost response both require conservative handling.
+Its unknown history remains immutable after successful later observations,
+receipt binding and old-worker progression. It does not count attempts or claim
+that the first recorded response was the only physical generation ever created.
+
+An already-admitted unbound Home row without dispatch evidence records unknown
+history before a new worker makes another prepare call. Later phases never
+backfill certainty from canonical state. Missing evidence also supplies no
+cleanup capability. The new top-level sidecar leaves existing provisioning and
+original-provenance serialization unchanged; existing `$set` updates preserve it.
+
+The Kubernetes adapter currently provides configured scope and exact PVC
+UID/resource-version deletion preconditions, but no permanent create-operation
+ledger, provider-incarnation attestation or backing-disk absence receipt. A PVC
+404 proves neither that a lost create cannot appear later nor that a PV/CSI disk
+has been reclaimed. The current capability therefore remains unavailable;
+this evidence step adds no physical removal operation or provider permission.
+
 ## An uncertain key mint
 
 Provisioning, renewal and lifecycle credential replacement record the original
@@ -71,8 +122,8 @@ The root remains `Retiring` at `MarkRetired`, without a purge deadline or capaci
 release. Final home cleanup, archive-body deletion, publication of `Retired`, and
 history purge remain held. An older checkpoint janitor discovers `Retired`
 roots without understanding this new disposition, so final publication also
-requires compatible reader/janitor evidence. Physical cleanup needs a separate
-immutable original-home intent, exact ownership/absence receipts and an explicit
+requires compatible reader/janitor evidence. Physical cleanup needs complete
+original-home provenance, exact ownership/absence receipts and an explicit
 archive retention policy before it can be enabled.
 
 ## Shared parents and remaining work

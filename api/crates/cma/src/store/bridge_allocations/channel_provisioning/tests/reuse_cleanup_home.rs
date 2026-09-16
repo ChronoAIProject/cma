@@ -15,6 +15,15 @@ struct Storage(Mutex<BTreeMap<String, HomeVolumeAttachment>>);
 
 #[async_trait::async_trait]
 impl HomeVolumeStore for Storage {
+    fn allocation_scope(&self) -> Option<layer3_adapter::HomeVolumeScope> {
+        Some(
+            layer3_adapter::HomeVolumeScope::from_authority(
+                "in-memory-fixture",
+                &["channel-home-fixture"],
+            )
+            .unwrap(),
+        )
+    }
     async fn inventory(&self) -> layer3_adapter::Result<Vec<HomeVolumeAttachment>> {
         Ok(self.0.lock().await.values().cloned().collect())
     }

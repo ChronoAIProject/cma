@@ -53,6 +53,8 @@ pub(super) async fn retire_deleted_sandboxes(
         doc! { "$match": {
             "sandbox.channel_creation": { "$exists": false },
             "sandbox.channel_provisioning": { "$exists": false },
+            "sandbox.channel_home_provenance": { "$exists": false },
+            "sandbox.channel_home_prepare_evidence": { "$exists": false },
             "sandbox.channel_retirement": { "$exists": false },
             "sandbox.channel_storage_retention": { "$exists": false },
         } },

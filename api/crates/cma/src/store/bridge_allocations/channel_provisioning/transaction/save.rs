@@ -50,6 +50,18 @@ pub(super) async fn apply(
         "channel_provisioning",
         record_bson(&change.state).map_err(|_| AllocationError::Corrupt)?,
     );
+    if let Some(provenance) = &change.home_provenance {
+        fields.insert(
+            "channel_home_provenance",
+            record_bson(provenance).map_err(|_| AllocationError::Corrupt)?,
+        );
+    }
+    if let Some(evidence) = &change.home_prepare_evidence {
+        fields.insert(
+            "channel_home_prepare_evidence",
+            record_bson(evidence).map_err(|_| AllocationError::Corrupt)?,
+        );
+    }
     if let Some(kind) = &change.event {
         let seq = document
             .get_i64("last_seq")
@@ -127,6 +139,8 @@ pub(super) async fn apply(
     snapshot.allocation = progressed;
     snapshot.sandbox = change.sandbox.clone();
     snapshot.state = change.state.clone();
+    snapshot.home_provenance = change.home_provenance.clone();
+    snapshot.home_prepare_evidence = change.home_prepare_evidence.clone();
     Ok(snapshot)
 }
 
@@ -138,6 +152,8 @@ fn require_successor(
         || change.previous.sandbox != snapshot.sandbox
         || change.previous.state != snapshot.state
         || change.previous.creation != snapshot.creation
+        || change.previous.home_provenance != snapshot.home_provenance
+        || change.previous.home_prepare_evidence != snapshot.home_prepare_evidence
         || Some(change.sandbox.revision) != snapshot.sandbox.revision.checked_add(1)
         || change.state.allocation_id != snapshot.allocation.id
         || Some(change.state.revision) != snapshot.state.revision.checked_add(1)
@@ -156,12 +172,16 @@ fn require_successor(
     snapshot
         .creation
         .require_creation(&snapshot.allocation, &change.sandbox)?;
-    ChannelProvisioningSnapshot {
+    let next = ChannelProvisioningSnapshot {
         allocation: snapshot.allocation.clone(),
         sandbox: change.sandbox.clone(),
         creation: snapshot.creation.clone(),
         state: change.state.clone(),
-    }
-    .validate()?;
+        home_provenance: change.home_provenance.clone(),
+        home_prepare_evidence: change.home_prepare_evidence.clone(),
+    };
+    next.validate()?;
+    crate::sandbox::channel_provisioning::home_provenance::ChannelHomeProvenance::require_successor(snapshot, &next)?;
+    crate::sandbox::channel_provisioning::home_prepare_evidence::ChannelHomePrepareEvidence::require_successor(snapshot, &next)?;
     Ok(())
 }

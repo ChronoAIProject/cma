@@ -10,6 +10,8 @@ pub(super) fn has_marker(document: &Document) -> bool {
     [
         "channel_creation",
         "channel_provisioning",
+        "channel_home_provenance",
+        "channel_home_prepare_evidence",
         "channel_retirement",
         "channel_storage_retention",
     ]

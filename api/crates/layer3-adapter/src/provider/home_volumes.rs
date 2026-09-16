@@ -4,7 +4,7 @@ use kube::core::{ApiResource, GroupVersionKind};
 
 use crate::{
     AdapterError, HomeVolumeAttachment, HomeVolumePolicy, HomeVolumeReceipt, HomeVolumeRequest,
-    HomeVolumeStore, Result,
+    HomeVolumeScope, HomeVolumeStore, Result,
 };
 
 #[path = "home_volume_identity.rs"]
@@ -27,6 +27,7 @@ pub struct PersistentHomeVolumes {
     export_pods: Api<Pod>,
     namespace: String,
     controller: String,
+    scope: HomeVolumeScope,
 }
 
 impl PersistentHomeVolumes {
@@ -34,20 +35,29 @@ impl PersistentHomeVolumes {
         namespace: impl Into<String>,
         controller: impl Into<String>,
     ) -> Result<Self> {
-        let client = kube::Client::try_default().await.map_err(|_| {
+        let config = kube::Config::infer().await.map_err(|_| {
             AdapterError::Unavailable("durable home Kubernetes authority is unavailable".into())
         })?;
-        Self::namespaced(client, namespace, controller)
+        let authority = config.cluster_url.to_string();
+        let client = kube::Client::try_from(config).map_err(|_| {
+            AdapterError::Unavailable("durable home Kubernetes authority is unavailable".into())
+        })?;
+        Self::namespaced(client, namespace, controller, &authority)
     }
 
     pub fn namespaced(
         client: kube::Client,
         namespace: impl Into<String>,
         controller: impl Into<String>,
+        api_authority: &str,
     ) -> Result<Self> {
         let namespace = namespace.into();
         let controller = controller.into();
         identity::validate_scope(&namespace, &controller)?;
+        let scope = HomeVolumeScope::from_authority(
+            "kubernetes-pvc-v1",
+            &[api_authority, &namespace, &controller],
+        )?;
         let resource = ApiResource::from_gvk_with_plural(
             &GroupVersionKind::gvk("snapshot.storage.k8s.io", "v1", "VolumeSnapshot"),
             "volumesnapshots",
@@ -58,6 +68,7 @@ impl PersistentHomeVolumes {
             templates: Api::namespaced_with(client, &namespace, &resource),
             namespace,
             controller,
+            scope,
         })
     }
 
@@ -118,6 +129,9 @@ impl PersistentHomeVolumes {
 
 #[async_trait::async_trait]
 impl HomeVolumeStore for PersistentHomeVolumes {
+    fn allocation_scope(&self) -> Option<HomeVolumeScope> {
+        Some(self.scope.clone())
+    }
     async fn remove_captures(&self, attachment: &HomeVolumeAttachment) -> Result<()> {
         use crate::{HomeSnapshotExportJobStore, HomeSnapshotStore, HomeSnapshotViewStore};
         attachment.receipt.validate_for(&attachment.request)?;
