@@ -122,7 +122,7 @@ pub struct MongoSandboxStore {
 
 impl MongoSandboxStore {
     #[cfg(test)]
-    pub(super) async fn open(client: &Client, name: &str) -> Result<Self, StoreError> {
+    pub(crate) async fn open(client: &Client, name: &str) -> Result<Self, StoreError> {
         Self::open_with_storage(client, name, super::checkpoint_storage::test_storage(name)).await
     }
 
