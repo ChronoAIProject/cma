@@ -21,13 +21,23 @@ pub(super) struct SdkRegistry {
 pub(super) struct RuntimeProbe {
     inputs: Mutex<Vec<(AgentRuntimeTarget, ConversationInput)>>,
     replies: tokio::sync::Semaphore,
+    terminal_failure: bool,
 }
 
 impl RuntimeProbe {
     pub(super) fn gated() -> Arc<Self> {
+        Self::with_failure(false)
+    }
+
+    pub(super) fn failing() -> Arc<Self> {
+        Self::with_failure(true)
+    }
+
+    fn with_failure(terminal_failure: bool) -> Arc<Self> {
         Arc::new(Self {
             inputs: Mutex::new(Vec::new()),
             replies: tokio::sync::Semaphore::new(0),
+            terminal_failure,
         })
     }
 
@@ -86,11 +96,12 @@ impl AgentRuntimeRegistry for SdkRegistry {
                         return Err(AdapterError::Unsupported("SDK fixture accepts only prompts".into()));
                     };
                     let with_tools = content.iter().any(|block| matches!(block, ContentBlock::Text(text) if text.text == "sdk-raw-with-tools"));
+                    let terminal_failure = probe.as_ref().is_some_and(|probe| probe.terminal_failure);
                     tokio::spawn(async move {
                         if let Some(probe) = probe {
                             probe.replies.acquire().await.unwrap().forget();
                         }
-                        emit_reply(recorder, target, with_tools).await;
+                        emit_reply(recorder, target, with_tools, terminal_failure).await;
                     });
                     Ok(())
                 }
@@ -115,6 +126,7 @@ async fn emit_reply(
     recorder: Arc<DurableAgentUpdateRecorder>,
     target: AgentRuntimeTarget,
     with_tools: bool,
+    terminal_failure: bool,
 ) {
     let mut updates = vec![ConversationUpdate::Said(SessionUpdate::AgentThoughtChunk(
         ContentChunk::new(ContentBlock::from("Checking the proof")),
@@ -132,7 +144,12 @@ async fn emit_reply(
             ),
         )));
     }
-    for text in ["Hello ", "from CMA"] {
+    let text = if terminal_failure {
+        ["Partial output ", "before failure"]
+    } else {
+        ["Hello ", "from CMA"]
+    };
+    for text in text {
         updates.push(ConversationUpdate::Said(SessionUpdate::AgentMessageChunk(
             ContentChunk::new(ContentBlock::from(text)).message_id(MessageId::new("sdk-answer")),
         )));
@@ -152,12 +169,20 @@ async fn emit_reply(
             .unwrap();
     }
     tokio::time::sleep(Duration::from_millis(150)).await;
+    let terminal = if terminal_failure {
+        ConversationUpdate::Failed {
+            message: "The runtime failed after producing partial output.".into(),
+            capability: Some("fixture_turn_failed".into()),
+        }
+    } else {
+        ConversationUpdate::TurnEnded(PromptResponse::new(TurnStopReason::EndTurn))
+    };
     recorder
         .record_update(
             &target.agent_id,
             target.runtime_generation,
             &mut assembly,
-            ConversationUpdate::TurnEnded(PromptResponse::new(TurnStopReason::EndTurn)),
+            terminal,
             now_rfc3339(),
         )
         .await

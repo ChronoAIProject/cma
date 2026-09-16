@@ -8,26 +8,26 @@ use tower::ServiceExt;
 const INPUT: &str = "sdk-raw-with-tools";
 
 #[derive(Clone, Copy, Debug)]
-enum Route {
+pub(super) enum Route {
     Agui,
     Responses,
     ResponsesV2,
 }
 
 impl Route {
-    fn request(self, agent: &AgentId) -> Request<Body> {
+    pub(super) fn request(self, agent: &AgentId, input: &str) -> Request<Body> {
         let (path, body) = match self {
             Self::Agui => (
                 "/api/v1/agui/run",
-                json!({"threadId":agent,"messages":[{"role":"user","content":INPUT}]}),
+                json!({"threadId":agent,"messages":[{"role":"user","content":input}]}),
             ),
             Self::Responses => (
                 "/api/v1/responses",
-                json!({"conversation":agent,"input":INPUT,"stream":true}),
+                json!({"conversation":agent,"input":input,"stream":true}),
             ),
             Self::ResponsesV2 => (
                 "/api/v2/responses",
-                json!({"conversation":agent,"input":INPUT,"stream":true}),
+                json!({"conversation":agent,"input":input,"stream":true}),
             ),
         };
         Request::builder()
@@ -41,14 +41,14 @@ impl Route {
     }
 }
 
-fn authenticated(router: Router, harness: &Harness) -> Router {
+pub(super) fn authenticated(router: Router, harness: &Harness) -> Router {
     router.layer(middleware::from_fn_with_state(
         harness.workspace.owner.clone(),
         authenticate,
     ))
 }
 
-async fn read(router: &Router, path: &str) -> String {
+pub(super) async fn read(router: &Router, path: &str) -> String {
     let response = router
         .clone()
         .oneshot(
@@ -73,7 +73,7 @@ async fn read(router: &Router, path: &str) -> String {
     text
 }
 
-async fn admitted(harness: &Harness) -> AdmittedAgentCommand {
+pub(super) async fn admitted(harness: &Harness) -> AdmittedAgentCommand {
     tokio::time::timeout(Duration::from_secs(5), async {
         loop {
             let page = harness
@@ -113,7 +113,7 @@ async fn exercise(route: Route) -> Vec<Value> {
     let (router, worker) =
         conversation_router_with_probe(&harness, Some(probe.clone()), "public-first-worker").await;
     let router = authenticated(router, &harness);
-    let request = route.request(&agent.id);
+    let request = route.request(&agent.id, INPUT);
     let pending = tokio::spawn(async move { router.oneshot(request).await.unwrap() });
     let original = admitted(&harness).await;
     let id = &original.receipt.envelope.command_id;
@@ -255,7 +255,10 @@ async fn exercise(route: Route) -> Vec<Value> {
     );
 
     // Explicit keyed recovery is independently idempotent after read-only replay.
-    let recovered = reopened.oneshot(route.request(&agent.id)).await.unwrap();
+    let recovered = reopened
+        .oneshot(route.request(&agent.id, INPUT))
+        .await
+        .unwrap();
     assert_eq!(recovered.status(), StatusCode::OK, "{route:?}");
     assert_eq!(recovered.headers()["x-cma-command-id"], id.as_str());
     assert_eq!(
