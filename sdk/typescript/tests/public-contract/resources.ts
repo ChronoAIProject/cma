@@ -1,12 +1,134 @@
 import type { Dispatch } from './context.js';
+import type { AgentProvenanceInventoryOptions } from '../../src/agents.js';
+import type { AccessibleSandboxListOptions } from '../../src/sandboxes.js';
 
 export const resourceDispatch: Record<string, Dispatch> = {
+  'GET /api/v1/bridges/{id}/allocations/{allocation}/workspace-cleanup': ({ client, param }) =>
+    client.bridges.readWorkspaceCleanup(param('id'), param('allocation')),
+  'POST /api/v1/bridges/{id}/allocations/{allocation}/workspace-cleanup': ({
+    client,
+    param,
+    body,
+    command,
+  }) => client.bridges.requestWorkspaceCleanup(param('id'), param('allocation'), body, command),
+  'GET /api/v1/bridge-invoke-grants/{id}/source-controls': ({ client, param }) =>
+    client.bridges.readSourceControls(param('id')),
+  'PUT /api/v1/bridge-invoke-grants/{id}/source-controls': ({ client, param, body, command }) =>
+    client.bridges.setSourceControls(param('id'), body, command),
+  'POST /api/v1/bridges/{id}/partitions/{allocation}/reset': ({ client, param, body, command }) =>
+    client.bridges.resetPartition(param('id'), param('allocation'), body, command),
+  'POST /api/v1/bridges/{id}/partitions/{allocation}/detach': ({ client, param, body, command }) =>
+    client.bridges.detachPartition(param('id'), param('allocation'), body, command),
+  'GET /api/v1/bridges/{id}/partitions': ({ client, param, options }) =>
+    client.bridges.listPartitions(param('id'), options),
+  'GET /api/v1/bridges/{id}/partitions/{allocation}': ({ client, param }) =>
+    client.bridges.readPartition(param('id'), param('allocation')),
+  'GET /api/v1/bridges/{id}/allocations': ({ client, param, options }) =>
+    client.bridges.listAllocations(param('id'), options),
+  'GET /api/v1/bridges/{id}/allocations/{allocation}/child-cleanup': ({ client, param }) =>
+    client.bridges.readChildCleanup(param('id'), param('allocation')),
+  'POST /api/v1/bridges/{id}/allocations/{allocation}/child-cleanup': ({
+    client,
+    param,
+    body,
+    command,
+  }) => client.bridges.requestChildCleanup(param('id'), param('allocation'), body, command),
+  'GET /api/v1/bridges/{id}/deliveries': ({ client, param, options }) =>
+    client.bridges.listDeliveries(param('id'), options),
+  'GET /api/v1/bridges/{id}/deliveries/{item}': ({ client, param }) =>
+    client.bridges.readDelivery(param('id'), param('item')),
+  'POST /api/v1/bridges/{id}/delivery-recovery': ({ client, param, body, command }) =>
+    client.bridges.recoverDelivery(param('id'), body, command),
+  'GET /api/v1/bridges/{id}/invoke-grants': ({ client, param, options }) =>
+    client.bridges.listInvokeGrants(param('id'), options),
+  'GET /api/v1/bridges/{id}/invoke-readiness': ({ client, param }) =>
+    client.bridges.invokeReadiness(param('id')),
+  'GET /api/v1/bridge-invoke-grants/{id}': ({ client, param }) =>
+    client.bridges.readInvokeGrant(param('id')),
+  'POST /api/v1/bridges/{id}/invoke-grants': ({ client, param, body, command }) =>
+    client.bridges.issueInvokeGrant(param('id'), body, command),
+  'POST /api/v1/bridge-invoke-grants/{id}/revoke': ({ client, param, body, command }) =>
+    client.bridges.revokeInvokeGrant(param('id'), body, command),
+  'GET /api/v1/bridge-connectors/capabilities': ({ client, options }) =>
+    client.bridges.capabilities(options),
+  'GET /api/v1/bridge-connectors': ({ client, options }) => client.bridges.choices(options),
+  'GET /api/v1/bridges': ({ client, options }) => client.bridges.list(options),
+  'GET /api/v1/bridges/{id}': ({ client, param }) => client.bridges.read(param('id')),
+  'POST /api/v1/bridges': ({ client, body, command }) => client.bridges.create(body, command),
+  'GET /api/v1/bridges/{id}/configuration': ({ client, param }) =>
+    client.bridges.configuration(param('id')),
+  'PUT /api/v1/bridges/{id}/configuration': ({ client, param, body, command }) =>
+    client.bridges.update(param('id'), body, command),
+  'POST /api/v1/bridges/{id}/commands': ({ client, param, body, command }) =>
+    client.bridges.control(param('id'), body, command),
+  'POST /api/v1/bridges/{id}/validate': ({ client, param, body }) =>
+    client.bridges.validate(param('id'), (body as { expected_revision: number }).expected_revision),
+  'PUT /api/v1/bridges/{id}/credential': ({ client, param, body }) => {
+    const request = body as { expected_revision: number; key: string };
+    return client.bridges.importKey(param('id'), request.expected_revision, request.key);
+  },
+  'POST /api/v1/bridges/{id}/credential/revoke': ({ client, param, body, command }) => {
+    const request = body as { expected_revision: number; expected_custody_revision: number };
+    return client.bridges.revokeKey(
+      param('id'),
+      request.expected_revision,
+      request.expected_custody_revision,
+      command,
+    );
+  },
+  'GET /api/v1/agents/{id}/channel-usage': ({ client, param }) =>
+    client.agents.channelUsage(param('id')),
+  'GET /api/v1/agents/{id}/channel-usage/history': ({ client, param, options }) =>
+    client.agents.channelUsageHistory(param('id'), options),
+  'GET /api/v1/agents/{id}/artifacts': ({ client, param, options }) =>
+    client.agents.listArtifacts(param('id'), options),
+  'GET /api/v1/agents/{id}/artifacts/{artifact_id}': ({ client, param }) =>
+    client.agents.readArtifact(param('id'), param('artifact_id')),
+  'POST /api/v1/agents/{id}/artifacts': ({ client, param, body, command }) =>
+    client.agents.publishArtifact(param('id'), body, command),
+  'GET /api/v1/agents/{id}/artifacts/{artifact_id}/download': async ({ client, param }) =>
+    new TextDecoder('utf-8', { fatal: true }).decode(
+      await client.agents.downloadArtifact(param('id'), param('artifact_id')),
+    ),
+  'GET /api/v1/organizations': ({ client }) => client.resourceAccess.organizations(),
+  'GET /api/v1/resource-access/{kind}/{id}': ({ client, param }) =>
+    client.resourceAccess.effective(param('kind'), param('id')),
+  'GET /api/v1/resource-shares/{kind}/{id}': ({ client, param }) =>
+    client.resourceAccess.listShares(param('kind'), param('id')),
+  'GET /api/v1/resource-shares/{kind}/{id}/{share_id}': ({ client, param }) =>
+    client.resourceAccess.readShare(param('kind'), param('id'), param('share_id')),
+  'POST /api/v1/resource-shares/{kind}/{id}': ({ client, param, body, command }) =>
+    client.resourceAccess.createShare(param('kind'), param('id'), body, command),
+  'PATCH /api/v1/resource-shares/{kind}/{id}/{share_id}': ({ client, param, body, command }) =>
+    client.resourceAccess.updateShare(param('kind'), param('id'), param('share_id'), body, command),
+  'DELETE /api/v1/resource-shares/{kind}/{id}/{share_id}': ({ client, param, query, command }) =>
+    client.resourceAccess.revokeShare(
+      param('kind'),
+      param('id'),
+      param('share_id'),
+      Number(query.get('expected_revision')),
+      command,
+    ),
   'GET /api/v1/conformance': ({ client }) => client.readConformance(),
   'GET /openapi.json': ({ client }) => client.readOpenApi(),
   'GET /api/v1/defaults': ({ client }) => client.readDefaults(),
-  'GET /api/v1/sandboxes': ({ client, options }) => client.sandboxes.list(options),
+  'GET /api/v1/sandboxes': ({ client, options, query }) =>
+    client.sandboxes.listAccessible({
+      ...(options as AccessibleSandboxListOptions),
+      shared: query.has('shared')
+        ? query.get('shared') === 'true'
+          ? true
+          : query.get('shared') === 'false'
+            ? false
+            : (query.get('shared') as never)
+        : undefined,
+    }),
   'POST /api/v1/sandboxes': ({ client, body, command }) => client.sandboxes.create(body, command),
-  'GET /api/v1/sandboxes/{id}': ({ client, param }) => client.sandboxes.read(param('id')),
+  'GET /api/v1/sandboxes/{id}': ({ client, param }) => client.sandboxes.readAccessible(param('id')),
+  'POST /api/v1/sandboxes/{id}/commands': ({ client, param, body, command }) =>
+    client.sandboxes.submitCommand(param('id'), body, command),
+  'GET /api/v1/sandbox-commands/{id}': ({ client, param }) =>
+    client.sandboxes.readCommand(param('id')),
   'DELETE /api/v1/sandboxes/{id}': ({ client, param, command }) =>
     client.sandboxes.delete(param('id'), command),
   'POST /api/v1/sandboxes/{id}/pause': ({ client, param, command }) =>
@@ -18,18 +140,44 @@ export const resourceDispatch: Record<string, Dispatch> = {
   'GET /api/v1/sandboxes/{id}/events': ({ client, param, options }) =>
     client.sandboxes.events(param('id'), options),
   'GET /api/v1/sandboxes/{id}/workspaces': ({ client, param, options }) =>
-    client.workspaces.list(param('id'), options),
+    client.workspaces.listAccessible(param('id'), options),
   'POST /api/v1/sandboxes/{id}/workspaces': ({ client, param, body, command }) =>
     client.workspaces.create(param('id'), body, command),
-  'GET /api/v1/workspaces/{id}': ({ client, param }) => client.workspaces.read(param('id')),
+  'GET /api/v1/workspaces/{id}': ({ client, param }) =>
+    client.workspaces.readAccessible(param('id')),
   'DELETE /api/v1/workspaces/{id}': ({ client, param, command }) =>
     client.workspaces.delete(param('id'), command),
   'GET /api/v1/workspaces/{id}/worktrees': ({ client, param, options }) =>
-    client.worktrees.list(param('id'), options),
-  'GET /api/v1/worktrees/{id}': ({ client, param }) => client.worktrees.read(param('id')),
-  'GET /api/v1/agents': ({ client, options }) => client.agents.list(options),
-  'GET /api/v1/agents/{id}': ({ client, param }) => client.agents.read(param('id')),
-  'GET /api/v1/agents/{id}/source': ({ client, param }) => client.agents.source(param('id')),
+    client.worktrees.listAccessible(param('id'), options),
+  'GET /api/v1/worktrees/{id}': ({ client, param }) => client.worktrees.readAccessible(param('id')),
+  'GET /api/v1/agents': ({ client, options }) => client.agents.listAccessible(options),
+  'GET /api/v1/agents/provenance': ({ client, options, query }) =>
+    client.agents.provenanceInventory({
+      ...(options as AgentProvenanceInventoryOptions),
+      shared: query.has('shared') ? query.get('shared') === 'true' : undefined,
+      creationOrigin:
+        (query.get('creation_origin') as AgentProvenanceInventoryOptions['creationOrigin']) ??
+        undefined,
+      channelActive: query.has('channel_active')
+        ? query.get('channel_active') === 'true'
+          ? true
+          : query.get('channel_active') === 'false'
+            ? false
+            : (query.get('channel_active') as never)
+        : undefined,
+      channelHistory: query.has('channel_history')
+        ? query.get('channel_history') === 'true'
+          ? true
+          : query.get('channel_history') === 'false'
+            ? false
+            : (query.get('channel_history') as never)
+        : undefined,
+    }),
+  'GET /api/v1/agents/{id}': ({ client, param }) => client.agents.readAccessible(param('id')),
+  'GET /api/v1/agents/{id}/provenance': ({ client, param }) =>
+    client.agents.provenance(param('id')),
+  'GET /api/v1/agents/{id}/source': ({ client, param }) =>
+    client.agents.sourceAccessible(param('id')),
   'POST /api/v1/workspaces/{id}/agents': ({ client, param, body, command }) =>
     client.agents.create(param('id'), body, command),
   'DELETE /api/v1/agents/{id}': ({ client, param, command }) =>

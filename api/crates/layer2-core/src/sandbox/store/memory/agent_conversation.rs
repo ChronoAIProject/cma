@@ -11,12 +11,17 @@ impl AgentConversationStore for InMemorySandboxStore {
         &self,
         mutation: AgentConversationMutation,
     ) -> Result<Vec<AgentLogEntry>, SandboxStoreError> {
+        // This store has no durable Bridge/grant/custody transaction participant.
+        if mutation.channel_execution_fence.is_some() {
+            return Err(SandboxStoreError::Conflict);
+        }
         if mutation.agent_logs.len() > MAX_AGENT_LOG_BATCH_SIZE {
             return Err(SandboxStoreError::AgentLogCapacityExceeded);
         }
         let mut state = self.lock();
         let mut candidate = state.clone();
         validate_mutation(&candidate, &mutation)?;
+        super::agent_command_work::bind_dispatch(&mut candidate, &mutation)?;
         if mutation.admission_guard.is_some() {
             candidate
                 .sandboxes
@@ -35,6 +40,11 @@ impl AgentConversationStore for InMemorySandboxStore {
             mutation.appended_at,
             mutation.agent_logs,
         )?;
+        if let Some(fence) = &mutation.execution_fence {
+            fence
+                .require_current()
+                .map_err(|_| SandboxStoreError::Conflict)?;
+        }
         *state = candidate;
         Ok(appended)
     }

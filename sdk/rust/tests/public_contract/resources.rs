@@ -1,8 +1,8 @@
 use super::context::{Context, invalid};
 use cma_sdk::{
     Result,
-    agents::AgentListOptions,
-    instances::SandboxListOptions,
+    agents::{AccessibleAgentListOptions, AgentListOptions, AgentProvenanceInventoryOptions},
+    instances::{AccessibleSandboxListOptions, SandboxListOptions},
     profiles::{
         AgentProfileContent, MarketplaceListOptions, ProfileContent, Profiles,
         SandboxProfileContent, WorkspaceProfileContent,
@@ -31,16 +31,115 @@ pub async fn dispatch(c: &Context<'_>) -> Result<()> {
         };
     }
     match op {
+        "GET /api/v1/agents/{id}/channel-usage" => {
+            c.check(client.agents().channel_usage(c.param("id")).await)
+        }
+        "GET /api/v1/agents/{id}/channel-usage/history" => c.check(
+            client
+                .agents()
+                .channel_usage_history(c.param("id"), &c.page()?)
+                .await,
+        ),
+        "GET /api/v1/agents/{id}/artifacts" => c.check(
+            client
+                .agents()
+                .list_artifacts(c.param("id"), &c.page()?)
+                .await,
+        ),
+        "GET /api/v1/agents/{id}/artifacts/{artifact_id}" => c.check(
+            client
+                .agents()
+                .read_artifact(c.param("id"), c.param("artifact_id"))
+                .await,
+        ),
+        "POST /api/v1/agents/{id}/artifacts" => c.check(
+            client
+                .agents()
+                .publish_artifact(c.param("id"), &c.body()?, &c.key()?)
+                .await,
+        ),
+        "GET /api/v1/agents/{id}/artifacts/{artifact_id}/download" => c.check(
+            client
+                .agents()
+                .download_artifact(c.param("id"), c.param("artifact_id"))
+                .await
+                .map(|bytes| String::from_utf8(bytes).unwrap()),
+        ),
+        "POST /api/v1/sandboxes/{id}/commands" => c.check(
+            client
+                .sandboxes()
+                .submit_command(c.param("id"), &c.body()?, &c.key()?)
+                .await,
+        ),
+        "GET /api/v1/sandbox-commands/{id}" => {
+            c.check(client.sandboxes().read_command(c.param("id")).await)
+        }
+        "GET /api/v1/organizations" => c.check(client.resource_access().organizations().await),
+        "GET /api/v1/resource-access/{kind}/{id}" => c.check(
+            client
+                .resource_access()
+                .effective(c.param("kind"), c.param("id"))
+                .await,
+        ),
+        "GET /api/v1/resource-shares/{kind}/{id}" => c.check(
+            client
+                .resource_access()
+                .list_shares(c.param("kind"), c.param("id"))
+                .await,
+        ),
+        "GET /api/v1/resource-shares/{kind}/{id}/{share_id}" => c.check(
+            client
+                .resource_access()
+                .read_share(c.param("kind"), c.param("id"), c.param("share_id"))
+                .await,
+        ),
+        "POST /api/v1/resource-shares/{kind}/{id}" => c.check(
+            client
+                .resource_access()
+                .create_share(c.param("kind"), c.param("id"), &c.body()?, &c.key()?)
+                .await,
+        ),
+        "PATCH /api/v1/resource-shares/{kind}/{id}/{share_id}" => c.check(
+            client
+                .resource_access()
+                .update_share(
+                    c.param("kind"),
+                    c.param("id"),
+                    c.param("share_id"),
+                    &c.body()?,
+                    &c.key()?,
+                )
+                .await,
+        ),
+        "DELETE /api/v1/resource-shares/{kind}/{id}/{share_id}" => c.check(
+            client
+                .resource_access()
+                .revoke_share(
+                    c.param("kind"),
+                    c.param("id"),
+                    c.param("share_id"),
+                    c.number("expected_revision")?
+                        .ok_or_else(|| invalid("revision required"))?,
+                    &c.key()?,
+                )
+                .await,
+        ),
         "GET /api/v1/sandboxes" => c.check(
             client
                 .sandboxes()
-                .list(&SandboxListOptions {
-                    status: c.tag("status")?,
-                    page: c.page()?,
+                .list_accessible(&AccessibleSandboxListOptions {
+                    organization: c.q("organization"),
+                    shared: c.number::<bool>("shared")?.unwrap_or(false),
+                    filters: SandboxListOptions {
+                        status: c.tag("status")?,
+                        page: c.page()?,
+                    },
                 })
                 .await,
         ),
-        "GET /api/v1/sandboxes/{id}" => c.check(client.sandboxes().read(c.param("id")).await),
+        "GET /api/v1/sandboxes/{id}" => {
+            c.check(client.sandboxes().read_accessible(c.param("id")).await)
+        }
         "GET /api/v1/sandboxes/{id}/events" => {
             c.check(client.sandboxes().events(c.param("id"), c.events()?).await)
         }
@@ -61,7 +160,7 @@ pub async fn dispatch(c: &Context<'_>) -> Result<()> {
                 .await,
         ),
         "GET /api/v1/sandboxes/{id}/workspaces" => {
-            c.check(client.workspaces().list(c.param("id")).await)
+            c.check(client.workspaces().list_accessible(c.param("id")).await)
         }
         "POST /api/v1/sandboxes/{id}/workspaces" => c.check(
             client
@@ -69,22 +168,49 @@ pub async fn dispatch(c: &Context<'_>) -> Result<()> {
                 .create(c.param("id"), &c.body()?, &c.key()?)
                 .await,
         ),
-        "GET /api/v1/workspaces/{id}" => c.check(client.workspaces().read(c.param("id")).await),
+        "GET /api/v1/workspaces/{id}" => {
+            c.check(client.workspaces().read_accessible(c.param("id")).await)
+        }
         "DELETE /api/v1/workspaces/{id}" => {
             c.check(client.workspaces().delete(c.param("id"), &c.key()?).await)
         }
         "GET /api/v1/workspaces/{id}/worktrees" => {
-            c.check(client.worktrees().list(c.param("id")).await)
+            c.check(client.worktrees().list_accessible(c.param("id")).await)
         }
-        "GET /api/v1/worktrees/{id}" => c.check(client.worktrees().read(c.param("id")).await),
+        "GET /api/v1/worktrees/{id}" => {
+            c.check(client.worktrees().read_accessible(c.param("id")).await)
+        }
         "GET /api/v1/agents" => c.check(
             client
                 .agents()
-                .list(&AgentListOptions {
-                    status: c.tag("status")?,
-                    sandbox: c.q("sandbox"),
-                    workspace: c.q("workspace"),
-                    page: c.page()?,
+                .list_accessible(&AccessibleAgentListOptions {
+                    organization: c.q("organization"),
+                    filters: AgentListOptions {
+                        status: c.tag("status")?,
+                        sandbox: c.q("sandbox"),
+                        workspace: c.q("workspace"),
+                        page: c.page()?,
+                    },
+                })
+                .await,
+        ),
+        "GET /api/v1/agents/provenance" => c.check(
+            client
+                .agents()
+                .provenance_inventory(&AgentProvenanceInventoryOptions {
+                    shared: c.q("shared").as_deref() == Some("true"),
+                    scope: AccessibleAgentListOptions {
+                        organization: c.q("organization"),
+                        filters: AgentListOptions {
+                            status: c.tag("status")?,
+                            sandbox: c.q("sandbox"),
+                            workspace: c.q("workspace"),
+                            page: c.page()?,
+                        },
+                    },
+                    creation_origin: c.tag("creation_origin")?,
+                    channel_active: c.number::<bool>("channel_active")?,
+                    channel_history: c.number::<bool>("channel_history")?,
                 })
                 .await,
         ),
@@ -94,8 +220,13 @@ pub async fn dispatch(c: &Context<'_>) -> Result<()> {
                 .create(c.param("id"), &c.body()?, &c.key()?)
                 .await,
         ),
-        "GET /api/v1/agents/{id}" => c.check(client.agents().read(c.param("id")).await),
-        "GET /api/v1/agents/{id}/source" => c.check(client.agents().source(c.param("id")).await),
+        "GET /api/v1/agents/{id}" => c.check(client.agents().read_accessible(c.param("id")).await),
+        "GET /api/v1/agents/{id}/provenance" => {
+            c.check(client.agents().provenance(c.param("id")).await)
+        }
+        "GET /api/v1/agents/{id}/source" => {
+            c.check(client.agents().source_accessible(c.param("id")).await)
+        }
         "GET /api/v1/agents/{id}/events" => {
             c.check(client.agents().events(c.param("id"), c.events()?).await)
         }

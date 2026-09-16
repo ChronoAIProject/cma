@@ -179,6 +179,8 @@ async fn apply(
         "_id": id,
         "document_schema_version": DOCUMENT_SCHEMA_VERSION,
         "revision": revision,
+        "channel_reuse_cleanup_execution": { "$exists": false },
+                "owned_workspace_cleanup_admission_v1": { "$exists": false },
     };
     if let ChildWriterClaim::Agent(agent) = claim {
         filter.insert(

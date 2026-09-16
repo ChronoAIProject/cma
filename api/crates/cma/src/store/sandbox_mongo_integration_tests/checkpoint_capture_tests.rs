@@ -445,6 +445,7 @@ async fn assert_generic_save_rejected(store: &MongoSandboxStore, current: &Sandb
     assert_eq!(
         store
             .commit(SandboxTransaction::SaveSandboxAndAppend {
+                command_revival: None,
                 expected_revision: current.revision,
                 sandbox: Box::new(next),
                 event_at: NOW.into(),

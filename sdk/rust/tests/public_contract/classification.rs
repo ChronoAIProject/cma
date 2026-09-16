@@ -13,6 +13,289 @@ pub enum Classification {
 // Exact backend-invalid cases not claimed as typed HTTP replay. Each is checked
 // against its source shape or the SDK's real preflight, then its shared error is decoded.
 pub const LOCAL_CASES: &[(&str, Classification)] = &[
+    (
+        "bridge-workspace-cleanup-invalid-allocation",
+        Classification::Local,
+    ),
+    (
+        "bridge-workspace-cleanup-invalid-revision",
+        Classification::Local,
+    ),
+    (
+        "bridge-workspace-cleanup-invalid-workspace-revision",
+        Classification::Local,
+    ),
+    (
+        "bridge-workspace-cleanup-invalid-child-receipt",
+        Classification::Local,
+    ),
+    (
+        "bridge-workspace-cleanup-missing-key",
+        Classification::Local,
+    ),
+    (
+        "bridge-workspace-cleanup-closed-body",
+        Classification::TypedShape,
+    ),
+    (
+        "bridge-workspace-cleanup-unknown-action",
+        Classification::TypedShape,
+    ),
+    ("source-consent-invalid-id-get", Classification::Local),
+    ("source-consent-invalid-id-put", Classification::Local),
+    (
+        "source-consent-invalid-expected_bridge_revision-0",
+        Classification::Local,
+    ),
+    (
+        "source-consent-invalid-expected_bridge_revision-9223372036854775808",
+        Classification::Local,
+    ),
+    (
+        "source-consent-invalid-expected_grant_revision-0",
+        Classification::Local,
+    ),
+    (
+        "source-consent-invalid-expected_grant_revision-3",
+        Classification::Local,
+    ),
+    (
+        "source-consent-invalid-expected_policy_revision-256",
+        Classification::Local,
+    ),
+    (
+        "source-consent-invalid-expected_policy_revision-255",
+        Classification::Local,
+    ),
+    (
+        "source-consent-missing-field-expected_bridge_revision",
+        Classification::TypedShape,
+    ),
+    (
+        "source-consent-missing-field-expected_grant_revision",
+        Classification::TypedShape,
+    ),
+    (
+        "source-consent-missing-field-expected_policy_revision",
+        Classification::TypedShape,
+    ),
+    (
+        "source-consent-missing-field-action",
+        Classification::TypedShape,
+    ),
+    ("source-consent-injected-actor", Classification::TypedShape),
+    ("source-consent-injected-owner", Classification::TypedShape),
+    ("source-consent-injected-scope", Classification::TypedShape),
+    (
+        "source-consent-injected-approval_mode",
+        Classification::TypedShape,
+    ),
+    ("source-consent-injected-target", Classification::TypedShape),
+    (
+        "source-consent-injected-enabled",
+        Classification::TypedShape,
+    ),
+    (
+        "source-consent-unknown-action-approve",
+        Classification::TypedShape,
+    ),
+    (
+        "source-consent-unknown-action-cancel",
+        Classification::TypedShape,
+    ),
+    (
+        "source-consent-unknown-action-steer",
+        Classification::TypedShape,
+    ),
+    ("source-consent-long-key", Classification::Local),
+    ("source-consent-missing-key", Classification::Local),
+    ("source-consent-invalid-key", Classification::Local),
+    (
+        "source-consent-missing-media-type",
+        Classification::MediaType,
+    ),
+    ("source-consent-malformed-json", Classification::RawJson),
+    ("bridge-cleanup-invalid-limit", Classification::Local),
+    ("bridge-cleanup-invalid-allocation", Classification::Local),
+    ("bridge-cleanup-invalid-revision", Classification::Local),
+    ("bridge-cleanup-missing-key", Classification::Local),
+    ("bridge-cleanup-closed-body", Classification::TypedShape),
+    ("bridge-cleanup-unknown-action", Classification::TypedShape),
+    ("queued-cancellation-v2-missing-key", Classification::Local),
+    (
+        "queued-cancellation-v2-invalid-revision",
+        Classification::Local,
+    ),
+    (
+        "queued-cancellation-v2-unknown-field",
+        Classification::TypedShape,
+    ),
+    (
+        "queued-cancellation-v2-invalid-json",
+        Classification::RawJson,
+    ),
+    (
+        "queued-cancellation-v2-query-observe",
+        Classification::QueryShape,
+    ),
+    (
+        "queued-cancellation-v2-query-submit",
+        Classification::QueryShape,
+    ),
+    ("agent-events-v2-snapshot-invalid", Classification::Local),
+    ("agent-events-v2-events-invalid", Classification::Local),
+    ("agent-events-v2-snapshot-query", Classification::QueryShape),
+    ("agent-events-v2-events-query", Classification::QueryShape),
+    (
+        "agent-events-v2-snapshot-duplicate",
+        Classification::QueryShape,
+    ),
+    (
+        "agent-events-v2-events-duplicate",
+        Classification::QueryShape,
+    ),
+    ("response-controls-v2-missing-key", Classification::Local),
+    (
+        "response-controls-v2-unknown-body",
+        Classification::TypedShape,
+    ),
+    (
+        "response-controls-v2-invalid-observation",
+        Classification::Local,
+    ),
+    ("response-controls-v2-invalid-json", Classification::RawJson),
+    (
+        "response-controls-v2-observe-query",
+        Classification::QueryShape,
+    ),
+    (
+        "response-controls-v2-status-query",
+        Classification::QueryShape,
+    ),
+    (
+        "bridge-setup-capabilities-invalid-query",
+        Classification::QueryShape,
+    ),
+    ("bridge-outbox-list-invalid-limit", Classification::Local),
+    ("bridge-outbox-recover-missing-key", Classification::Local),
+    (
+        "bridge-outbox-recover-unknown-field",
+        Classification::TypedShape,
+    ),
+    (
+        "bridge-outbox-recover-nested-field",
+        Classification::TypedShape,
+    ),
+    ("bridge-invoke-issue-missing-key", Classification::Local),
+    ("bridge-invoke-revoke-missing-key", Classification::Local),
+    ("bridge-invoke-list-invalid-limit", Classification::Local),
+    ("bridge-invoke-list-invalid-cursor", Classification::Local),
+    ("bridge-invoke-detail-invalid-id", Classification::Local),
+    (
+        "bridge-invoke-issue-unknown-field",
+        Classification::TypedShape,
+    ),
+    (
+        "bridge-invoke-revoke-unknown-field",
+        Classification::TypedShape,
+    ),
+    (
+        "bridge-invoke-issue-missing-consent",
+        Classification::TypedShape,
+    ),
+    ("bridge-setup-list-zero-limit", Classification::Local),
+    (
+        "bridge-setup-list-unknown-query",
+        Classification::QueryShape,
+    ),
+    ("bridge-setup-create-missing-key", Classification::Local),
+    ("bridge-setup-update-missing-key", Classification::Local),
+    ("bridge-setup-control-missing-key", Classification::Local),
+    ("bridge-setup-revoke-missing-key", Classification::Local),
+    (
+        "bridge-setup-create-injected-issuer",
+        Classification::TypedShape,
+    ),
+    (
+        "bridge-setup-create-injected-base_url",
+        Classification::TypedShape,
+    ),
+    (
+        "bridge-setup-create-injected-custody",
+        Classification::TypedShape,
+    ),
+    (
+        "bridge-setup-create-injected-callback_url",
+        Classification::TypedShape,
+    ),
+    (
+        "bridge-setup-create-incompatible-context",
+        Classification::Local,
+    ),
+    (
+        "channel-inventory-invalid-active",
+        Classification::TypedShape,
+    ),
+    (
+        "channel-inventory-invalid-history",
+        Classification::TypedShape,
+    ),
+    ("channel-usage-zero-limit", Classification::Local),
+    ("channel-usage-large-limit", Classification::Local),
+    ("channel-usage-invalid-cursor", Classification::Local),
+    ("artifact-missing-key", Classification::Local),
+    ("artifact-invalid-name", Classification::Local),
+    ("artifact-invalid-media_type", Classification::Local),
+    ("artifact-invalid-content_base64", Classification::Local),
+    ("artifact-zero-limit", Classification::Local),
+    ("artifact-large-limit", Classification::Local),
+    ("artifact-invalid-cursor", Classification::Local),
+    (
+        "shared-sandbox-inventory-mixed-scope",
+        Classification::Local,
+    ),
+    (
+        "shared-sandbox-inventory-invalid-shared",
+        Classification::TypedShape,
+    ),
+    ("sandbox-command-missing-key", Classification::Local),
+    ("sandbox-command-invalid-key", Classification::Local),
+    ("sandbox-command-invalid-revision", Classification::Local),
+    ("sandbox-command-spoofed-owner", Classification::TypedShape),
+    (
+        "creation-inventory-invalid-category",
+        Classification::TypedShape,
+    ),
+    (
+        "creation-inventory-invalid-creator",
+        Classification::QueryShape,
+    ),
+    ("responses-v2-field-stream", Classification::Local),
+    (
+        "responses-v2-field-previous_response_id",
+        Classification::Local,
+    ),
+    ("responses-v2-field-tools", Classification::TypedShape),
+    ("responses-v2-field-store", Classification::Local),
+    ("responses-v2-field-metadata", Classification::TypedShape),
+    ("responses-v2-field-input", Classification::TypedShape),
+    ("responses-v2-field-conversation", Classification::Local),
+    ("responses-v2-alias-mismatch", Classification::Local),
+    ("responses-v2-items-limit", Classification::Local),
+    ("responses-v2-items-order", Classification::TypedShape),
+    ("responses-v2-retrieve-query", Classification::QueryShape),
+    (
+        "sandbox-inventory-status-invalid",
+        Classification::TypedShape,
+    ),
+    (
+        "sandbox-inventory-invalid-owner",
+        Classification::QueryShape,
+    ),
+    (
+        "org-inventory-invalid-authority-injection",
+        Classification::QueryShape,
+    ),
     ("sandbox-service-access-missing-key", Classification::Local),
     ("sandbox-service-access-invalid-key", Classification::Local),
     (
@@ -761,17 +1044,55 @@ pub fn assert_unrepresentable(case: &Case, class: Classification) {
         }
         Classification::QueryShape => {
             let url = reqwest::Url::parse(&format!("http://fixture{}", case.request.path)).unwrap();
+            if case.id.starts_with("agent-events-v2-") && case.id.ends_with("-duplicate") {
+                let key = if case.id.contains("snapshot") {
+                    "page_cursor"
+                } else {
+                    "after_cursor"
+                };
+                assert_eq!(url.query_pairs().filter(|(name, _)| name == key).count(), 2);
+                return;
+            }
             if case.id == "authoring-skills-duplicate-query" {
                 assert_eq!(url.query_pairs().filter(|(key, _)| key == "q").count(), 2);
                 return;
             }
             let allowed: &[&str] = match case.operation.as_str() {
+                "GET /api/v2/agents/{agent_id}/events/snapshot" => &["limit", "page_cursor"],
+                "GET /api/v2/agents/{agent_id}/events" => &["after_cursor", "follow"],
+                "GET /api/v1/bridge-connectors/capabilities" => &["organization"],
+                "GET /api/v1/bridges" => &["organization", "cursor", "limit"],
+                "GET /api/v1/agents/provenance" => &[
+                    "organization",
+                    "sandbox",
+                    "workspace",
+                    "status",
+                    "creation_origin",
+                    "cursor",
+                    "limit",
+                ],
+                "GET /api/v1/sandboxes" => &["organization", "status", "cursor", "limit"],
+                "GET /api/v1/agents" => &[
+                    "organization",
+                    "sandbox",
+                    "workspace",
+                    "status",
+                    "cursor",
+                    "limit",
+                ],
                 "GET /api/v1/profile-authoring/skills" => &["q", "limit", "cursor"],
                 "GET /api/v1/agui/events" => &["thread_id", "starting_after", "follow"],
                 "GET /api/v1/conversations/{id}/items" => &["after", "limit"],
                 "GET /api/v1/triggers/{id}/embed" => &["placement_id"],
                 "GET /api/v1/agui/launches/{id}/events" => &["starting_after", "limit", "follow"],
-                "GET /api/v1/responses/{response_id}" => &[],
+                "GET /api/v1/responses/{response_id}"
+                | "GET /api/v2/responses/{response_id}"
+                | "GET /api/v2/agents/{agent_id}/responses/{response_id}/controls"
+                | "GET /api/v2/commands/{command_id}"
+                | "GET /api/v2/agents/{agent_id}/responses/{response_id}/queued-cancellation"
+                | "POST /api/v2/agents/{agent_id}/responses/{response_id}/queued-cancellation" => {
+                    &[]
+                }
                 _ => panic!("unclassified query shape {}", case.id),
             };
             assert!(

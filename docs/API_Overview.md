@@ -90,6 +90,38 @@ Responses conversation creation resolves an Agent context from platform defaults
 and optional owned identifiers. Both protocols use the same durable Agent
 log and operation service. Neither creates a hidden frontend-only conversation.
 
+The core operation service now routes input, steering, interruption and approval
+answers through typed `AgentCommand` and `AgentInput` contracts. Existing v1
+adapters retain their request/response shapes and predecessor rules. Text
+partitions normalize without changing whitespace; canonical fingerprints include
+content, control kind, predecessor conditions and metadata. Attachment references
+have an immutable digest, but dispatch currently refuses them with
+`agent_content_unsupported` before sending any accompanying text.
+
+The common `AgentEvent` projection retains the original Agent log cursor and
+safe message, tool, approval, delivery and lifecycle data. Native conversation
+ids, approval locators and sign-in credentials are absent from this projection.
+Live fragments have a separate type with no durable cursor. New command-envelope
+and admission-receipt types distinguish owner, actor, source and grant revision;
+they are separate ledger contracts and do not alter retained Agent records.
+The additive command ledger reserves these receipts, a response identity and a
+per-Agent order atomically. Its key scope combines verified authority, Agent and
+command kind; identical retries return the original receipt and changed input
+conflicts. No expiration index silently makes an old key reusable. A bounded
+background worker discovers admitted commands, verifies retained credential custody
+and current resource authority, then claims the Agent's lane and atomically binds
+dispatch before sending input.
+Recovery reconciles the existing binding without sending another input. The
+worker separately authorizes Sandbox management before requesting revival. That
+transaction fences the exact pending command, current resource policy and expiry;
+accepted lifecycle work survives cancellation of the requesting worker. The
+[Responses v2 contract](API_Responses.md) provides durable human admission to
+personal, shared and organization-owned Agents, receipts and explicit replay.
+The authenticated actor retains their own credential custody independently of
+resource ownership. Current interaction policy is required at admission and
+dispatch; organization resource creation and credential provisioning remain
+under development.
+
 Agent logs, Sandbox events and Launch events have independent monotonic
 sequences. REST exposes JSON event pages. AG-UI exposes SSE with a durable
 cursor only on the last frame projecting a committed log entry. Live text and
@@ -102,9 +134,11 @@ durable projection. A replay connection failure is not an Agent turn failure.
 Disconnecting a streaming POST does not cancel its admitted work; replay reads,
 not repeated input POSTs, are the recovery path.
 
-The Responses subset has no stream-resume operation. Its response and item
+The Responses v1 subset has no stream-resume operation. Its response and item
 reads recover retained output, while its strict predecessor fence prevents a
-caller from silently forking the Agent's linear conversation.
+caller from silently forking the Agent's linear conversation. Responses v2 uses
+the common command queue and explicit durable event replay; it requires an
+existing conversation and does not accept a nonnull predecessor.
 
 ## Lifecycle And Availability
 
@@ -114,9 +148,11 @@ and first-message admission/delivery/completion are separately recorded facts.
 Do not enable input merely because one earlier provisioning step completed.
 
 Idle Sandboxes pause when every Agent is quiet. A later admitted operation
-revives the Sandbox when needed. Runtime-image drift triggers writer-fenced
-whole-home checkpoint and restore, preserving hierarchy, dirty work, Agent
-homes and conversation identity. A temporarily unavailable observation does not
+revives the Sandbox when needed. Changing the runtime-image default applies to
+new allocations. Existing live runtimes retain their recorded images across
+control-plane upgrades and rollbacks; image drift does not pause or replace them.
+Independently admitted pause and recovery preserve hierarchy, dirty work, Agent
+homes and conversation identity through checkpoint and restore. A temporarily unavailable observation does not
 prove resource death. Render recorded recovery state and keep history visible.
 
 Each capability must be proved against the pinned runtime contract. This

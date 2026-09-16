@@ -3,7 +3,7 @@
 use std::time::SystemTime;
 
 use layer2_core::sandbox::Sandbox;
-use layer2_core::{SandboxId, SubjectId};
+use layer2_core::SandboxId;
 
 use super::credential::{CredentialError, CredentialMaterial, SandboxCredentialController};
 
@@ -46,7 +46,7 @@ impl SandboxCredentialController for UnavailableSandboxCredentials {
 
     async fn revoke(
         &self,
-        _owner: &SubjectId,
+        _sandbox: &Sandbox,
         _provider_key_id: &str,
     ) -> Result<(), CredentialError> {
         Err(unavailable())

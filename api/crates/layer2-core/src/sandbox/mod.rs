@@ -2,7 +2,9 @@
 
 mod admin;
 mod agent;
+pub mod agent_artifacts;
 mod agent_context;
+pub mod agent_io;
 mod agent_operation;
 mod agent_operation_dispatch;
 mod agent_operation_queue;
@@ -15,14 +17,28 @@ mod agent_runtime;
 mod agent_service;
 mod agent_work;
 mod background_checkpoint;
+pub mod channel_usage;
 mod checkpoint;
 mod checkpoint_capture;
 mod checkpoint_writer_recovery;
+pub mod control;
 mod conversation;
 mod conversation_fold;
 mod conversation_fold_support;
 mod conversation_recorder;
 mod creation_admission;
+mod provenance;
+mod provenance_inventory;
+mod provenance_service;
+pub use provenance::{
+    channel_fingerprint, AgentCreationCategory, AgentCreationOrigin, AgentCreationProvenance,
+};
+pub use provenance_inventory::{
+    AgentProvenanceInventoryQuery, AgentProvenanceInventoryRow, AgentProvenanceInventoryService,
+};
+pub use provenance_service::{
+    AgentProvenanceDetails, AgentProvenanceReading, AgentProvenanceService,
+};
 mod credential;
 mod credential_prerequisite;
 mod error;
@@ -101,7 +117,12 @@ pub use agent_read_types::{
     AgentTranscriptMessage, AgentTranscriptRole, AgentTranscriptTurn, AgentTurnOutcome, AgentUsage,
     AgentUsageReading, SandboxResourceReadError, SandboxResourceReader, SandboxResourceReading,
 };
-pub use agent_reads::AgentReadService;
+pub use agent_reads::{
+    AgentDetailReading, AgentEventStreamAuthorization, AgentEventStreamHeader,
+    AgentEventStreamSnapshot, AgentReadService, AgentReplayEntry, AgentReplayWindow,
+    AgentResponseBinding, AgentSourceReadError, AgentSourceReading, AgentVisibleLogEntry,
+    SharedAgentDetail, SharedAgentOrigin,
+};
 pub use agent_runtime::{
     AgentRuntimeConnection, AgentRuntimeError, AgentRuntimeInputError, AgentRuntimeInputSender,
     AgentRuntimePromptResponse, AgentRuntimeRegistry, AgentRuntimeTarget,
@@ -150,10 +171,12 @@ pub use first_message::{
 pub use first_message_service::{AgentWorkAuthority, FirstMessageDispatchOutcome};
 pub use hierarchy::{
     AgentHierarchySummary, HierarchyCounts, HierarchyReadError, HierarchyReadService,
-    HierarchyReadStore, OwnerSandboxQuery, SandboxHierarchyRecord, SandboxHierarchySummary,
-    SandboxHierarchyView, SandboxInventoryRecord, SandboxSnapshotDownload,
-    WorkspaceHierarchyRecord, WorkspaceHierarchySummary, WorkspaceHierarchyView,
-    WorktreeHierarchySummary,
+    HierarchyReadStore, OwnerSandboxQuery, SandboxHierarchyReading, SandboxHierarchyRecord,
+    SandboxHierarchySummary, SandboxHierarchyView, SandboxInventoryReading, SandboxInventoryRecord,
+    SandboxSnapshotDownload, SharedHierarchyAgent, SharedSandboxHierarchy, SharedSandboxSummary,
+    SharedWorkspaceHierarchy, SharedWorkspaceSummary, SharedWorktreeSummary,
+    WorkspaceHierarchyReading, WorkspaceHierarchyRecord, WorkspaceHierarchySummary,
+    WorkspaceHierarchyView, WorktreeHierarchyReading, WorktreeHierarchySummary,
 };
 pub use home::SandboxHome;
 pub use inactivity::{

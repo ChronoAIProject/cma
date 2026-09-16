@@ -7,6 +7,7 @@ use layer2_core::sandbox::{
 use super::{problem_document, problem_response};
 
 pub(crate) enum HierarchyProblem {
+    ResourceAccess(layer2_core::resource_access::ResourceAccessError),
     CredentialSetupRequired,
     ConnectionsRequired(Vec<layer2_core::ServiceId>),
     Forbidden,
@@ -141,6 +142,7 @@ impl HierarchyProblem {
     fn read(error: HierarchyReadError, not_found: Self) -> Self {
         match error {
             HierarchyReadError::Forbidden => Self::Forbidden,
+            HierarchyReadError::Access(error) => Self::ResourceAccess(error),
             HierarchyReadError::NotFound => not_found,
             HierarchyReadError::InvalidPage => Self::InvalidPage,
             HierarchyReadError::Corrupt(_) | HierarchyReadError::Unavailable(_) => {
@@ -153,6 +155,9 @@ impl HierarchyProblem {
 impl IntoResponse for HierarchyProblem {
     fn into_response(self) -> Response {
         let (status, slug, detail, code, fields) = match self {
+            Self::ResourceAccess(error) => {
+                return super::resource_access_problem::ResourceProblem(error).into_response()
+            }
             Self::ConnectionsRequired(services) => (
                 StatusCode::CONFLICT,
                 "connections-required",

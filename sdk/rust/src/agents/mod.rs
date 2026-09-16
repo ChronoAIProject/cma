@@ -7,9 +7,17 @@ use crate::{
 };
 use reqwest::{Method, StatusCode};
 
+mod artifacts;
+mod channel_usage;
 mod events;
+mod provenance;
+mod shared;
 mod types;
+pub use artifacts::*;
+pub use channel_usage::*;
 pub use events::*;
+pub use provenance::*;
+pub use shared::*;
 pub use types::*;
 
 /// Owner Agent list filters and opaque pagination.
@@ -25,23 +33,73 @@ pub struct AgentListOptions {
     pub page: PageOptions,
 }
 
+/// Organization-scoped Agent filters; omission preserves personal inventory.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct AccessibleAgentListOptions {
+    /// Canonical organization ID to inspect under current membership.
+    pub organization: Option<String>,
+    /// Status, parent and cursor filters.
+    pub filters: AgentListOptions,
+}
+impl AgentListOptions {
+    fn query(&self) -> Vec<(&'static str, String)> {
+        let mut query = self.page.query();
+        if let Some(id) = &self.sandbox {
+            query.push(("sandbox", id.clone()));
+        }
+        if let Some(id) = &self.workspace {
+            query.push(("workspace", id.clone()));
+        }
+        if let Some(status) = self.status {
+            query.push(("status", status.as_str().into()));
+        }
+        query
+    }
+}
+
 /// Owner-facing Agent operations.
 pub struct Agents<'a> {
     client: &'a Client,
 }
 
 impl Agents<'_> {
+    /// List safe creation facts, including retained archived Agents. A filtered
+    /// page may be empty; keep following `next` until it is absent.
+    pub async fn provenance_inventory(
+        &self,
+        options: &AgentProvenanceInventoryOptions,
+    ) -> Result<ResourcePage<AgentProvenanceInventoryItem>> {
+        let mut query = options.scope.filters.query();
+        if options.shared {
+            query.push(("shared", "true".into()));
+        }
+        if let Some(id) = &options.scope.organization {
+            query.push(("organization", id.clone()));
+        }
+        if let Some(category) = options.creation_origin {
+            query.push(("creation_origin", category.as_str().into()));
+        }
+        if let Some(active) = options.channel_active {
+            query.push(("channel_active", active.to_string()));
+        }
+        if let Some(history) = options.channel_history {
+            query.push(("channel_history", history.to_string()));
+        }
+        self.client.get(&["agents", "provenance"], &query).await
+    }
     /// List owned Agents.
     pub async fn list(&self, options: &AgentListOptions) -> Result<ResourcePage<AgentSummary>> {
-        let mut query = options.page.query();
-        if let Some(id) = &options.sandbox {
-            query.push(("sandbox", id.clone()));
-        }
-        if let Some(id) = &options.workspace {
-            query.push(("workspace", id.clone()));
-        }
-        if let Some(status) = options.status {
-            query.push(("status", status.as_str().into()));
+        let query = options.query();
+        self.client.get(&["agents"], &query).await
+    }
+    /// List personal Agents or Agents accessible in an explicit organization.
+    pub async fn list_accessible(
+        &self,
+        options: &AccessibleAgentListOptions,
+    ) -> Result<ResourcePage<AccessibleAgentSummary>> {
+        let mut query = options.filters.query();
+        if let Some(id) = &options.organization {
+            query.push(("organization", id.clone()));
         }
         self.client.get(&["agents"], &query).await
     }
@@ -51,10 +109,31 @@ impl Agents<'_> {
         identity(&value.id, id)?;
         Ok(value)
     }
+    /// Read personal full detail or the safe Agent-only shared projection.
+    pub async fn read_accessible(&self, id: &str) -> Result<AccessibleAgent> {
+        let value: AccessibleAgent = self.client.get(&["agents", id], &[]).await?;
+        identity(value.id(), id)?;
+        Ok(value)
+    }
+    /// Read immutable creation facts; details require current resource management.
+    pub async fn provenance(&self, id: &str) -> Result<AgentProvenance> {
+        let value: AgentProvenance = self.client.get(&["agents", id, "provenance"], &[]).await?;
+        identity(&value.agent_id, id)?;
+        Ok(value)
+    }
     /// Read creation provenance and current published Trigger shortcuts.
     pub async fn source(&self, id: &str) -> Result<AgentSource> {
-        let value: AgentSource = self.client.get(&["agents", id, "source"], &[]).await?;
-        identity(&value.agent_id, id)?;
+        match self.source_accessible(id).await? {
+            AccessibleAgentSource::Personal(value) => Ok(value),
+            AccessibleAgentSource::Shared(_) => Err(crate::Error::protocol(
+                "shared Agent source requires source_accessible",
+            )),
+        }
+    }
+    /// Read personal source details or a safe shared creation category.
+    pub async fn source_accessible(&self, id: &str) -> Result<AccessibleAgentSource> {
+        let value: AccessibleAgentSource = self.client.get(&["agents", id, "source"], &[]).await?;
+        identity(value.agent_id(), id)?;
         Ok(value)
     }
     /// Read the named unsupported-terminal refusal; this release has no terminal plane.

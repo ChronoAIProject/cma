@@ -5,6 +5,44 @@ use sha2::{Digest, Sha256};
 
 use crate::{AdapterError, Result};
 
+/// Opaque configured provider scope, captured before any physical allocation.
+/// Its digest never exposes provider endpoints or credentials to domain storage.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct HomeVolumeScope(String);
+
+impl HomeVolumeScope {
+    pub fn from_authority(provider: &str, components: &[&str]) -> Result<Self> {
+        if !identifier(provider)
+            || components.is_empty()
+            || components.iter().any(|value| {
+                value.is_empty() || value.len() > 8_192 || value.chars().any(char::is_control)
+            })
+        {
+            return Err(invalid("home provider scope is unavailable"));
+        }
+        let mut digest = Sha256::new();
+        digest.update(b"cma-home-provider-scope-v1\0");
+        for value in std::iter::once(provider).chain(components.iter().copied()) {
+            digest.update((value.len() as u64).to_be_bytes());
+            digest.update(value.as_bytes());
+        }
+        Ok(Self(format!("{:x}", digest.finalize())))
+    }
+
+    pub fn validate(&self) -> Result<()> {
+        if self.0.len() != 64
+            || !self
+                .0
+                .bytes()
+                .all(|value| value.is_ascii_hexdigit() && !value.is_ascii_uppercase())
+        {
+            return Err(invalid("home provider scope is invalid"));
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct HomeVolumePolicy {
@@ -117,6 +155,10 @@ impl HomeVolumeAttachment {
 /// Control-plane storage effects. Runtime teardown alone never releases a home.
 #[async_trait::async_trait]
 pub trait HomeVolumeStore: Send + Sync {
+    /// Optional evidence capability. Absence never grants deletion provenance.
+    fn allocation_scope(&self) -> Option<HomeVolumeScope> {
+        None
+    }
     /// Complete, validated inventory in this controller's storage scope.
     async fn inventory(&self) -> Result<Vec<HomeVolumeAttachment>>;
     async fn prepare(&self, request: &HomeVolumeRequest) -> Result<HomeVolumeReceipt>;

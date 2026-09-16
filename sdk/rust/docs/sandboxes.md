@@ -70,3 +70,99 @@ worker or writer credentials. Missing lifecycle data from an older server means
 eligibility is unavailable, not that status alone authorizes an action. A race
 with new work can return HTTP 409 `sandbox_lifecycle_busy`; refresh before
 retrying. Existing command replay semantics are unchanged.
+
+## Shared hierarchy
+
+Use `sandboxes().read_accessible`, `workspaces().read_accessible` and
+`worktrees().read_accessible` for a typed personal/shared union. Its `Personal`
+variant retains the full detail, while `Shared` contains safe metadata without
+owner/profile configuration, repository paths, credentials or runtime internals.
+The old `read` methods keep their full personal types and refuse shared output.
+`workspaces().list_accessible(sandbox_id)` and
+`worktrees().list_accessible(workspace_id)` return corresponding child unions.
+
+```rust,no_run
+use cma_sdk::{Client, instances::AccessibleSandboxDetail};
+# async fn inspect(client: &Client, id: &str) -> cma_sdk::Result<()> {
+match client.sandboxes().read_accessible(id).await? {
+    AccessibleSandboxDetail::Personal(detail) => println!("{}", detail.summary.sandbox.id),
+    AccessibleSandboxDetail::Shared(detail) => println!("{}: {} Agents", detail.id, detail.agent_count),
+}
+# Ok(())
+# }
+```
+
+A narrow Agent grant cannot reveal any parent or its counts. Whole-Sandbox or
+organization access is checked for each hierarchy request, including current
+policy after the read. Snapshot archive downloads remain personal-only. Default
+Sandbox inventory excludes explicit organization ownership before pagination;
+use `list_accessible` with an organization for explicit discovery.
+
+## Organization and Shared with me inventory
+
+```rust,no_run
+use cma_sdk::{Client, instances::AccessibleSandboxListOptions};
+# async fn inventory(client: &Client, organization: String) -> cma_sdk::Result<()> {
+let page = client.sandboxes().list_accessible(&AccessibleSandboxListOptions {
+    organization: Some(organization),
+    ..Default::default()
+}).await?;
+for sandbox in page.items {
+    println!("{}", sandbox.id());
+}
+# Ok(())
+# }
+```
+
+Organization-owned resources and whole-Sandbox grants enter this explicit scope
+under current canonical membership. Narrow Agent grants never reveal a parent
+or its counts. `AccessibleSandboxSummary::Personal` retains the full personal
+summary; `Shared` contains safe metadata/counts. Leave both scope selectors at
+their defaults for personal inventory. The old `list` method keeps its personal type. Every page
+revalidates current policy and the hidden lookahead after count IO; changed or
+expired authority yields a typed error without partial rows or stale cursors.
+
+Set `shared: true` in `AccessibleSandboxListOptions` to discover incoming
+whole-Sandbox grants across all current organizations. The server deduplicates
+Sandboxes and excludes your own personal resources before pagination. Explicit
+organization ownership alone does not enter this scope. Individually shared
+Agents remain discoverable through the shared provenance inventory without
+exposing parents. Combining `shared: true` with `organization: Some(...)` fails
+local validation. Unavailable organization authority refuses incomplete discovery;
+every page revalidates all original membership evidence and grants.
+
+## Shared lifecycle commands
+
+`sandboxes().submit_command(id, &request, &key)` admits an explicit lifecycle
+intent with HTTP 202. `read_command(command_id)` recovers its safe receipt with
+HTTP 200. Shared detail `revision` remains optional for older servers; require a
+current positive revision before submission.
+
+```rust,no_run
+use cma_sdk::{Client, IdempotencyKey};
+use cma_sdk::instances::{SandboxCommandKind, SandboxCommandRequest};
+# async fn request_pause(client: &Client, id: &str, revision: u64, key: &IdempotencyKey) -> cma_sdk::Result<()> {
+let request = SandboxCommandRequest {
+    command: SandboxCommandKind::Pause,
+    expected_revision: revision,
+};
+let receipt = client.sandboxes().submit_command(id, &request, key).await?;
+let current = client.sandboxes().read_command(&receipt.command_id).await?;
+# let _ = current;
+# Ok(())
+# }
+```
+
+Retain the exact request and key through an uncertain response. Replay uses the
+original revision even after the Sandbox changes. Receipt states are `Queued`,
+`Applied`, and `Rejected`. Applied records a durable transition or an already
+scheduled/satisfied intent; current Sandbox status reports runtime completion.
+Rejected state carries a typed reason. The SDK validates request/receipt identity,
+state revision and resulting Sandbox revision before reporting success.
+
+Pause/revive require current Sandbox management. Retirement requires owner/admin
+sharing management plus the personal owner's deletion capability when applicable;
+share recipients cannot retire the owner's Sandbox. Execution rechecks the original
+actor and current resource authority. Receipt reads require that actor's current
+Sandbox visibility. Queue deadlines never renew. Public receipts include no owner
+configuration, credential reference or internal audit.

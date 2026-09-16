@@ -4,16 +4,15 @@ use futures_util::TryStreamExt;
 use layer2_core::ids::{SandboxId, SubjectId, WorkspaceId, WorktreeId};
 use layer2_core::sandbox::store::{Page, PageRequest, SandboxStoreError, MAX_PAGE_SIZE};
 use layer2_core::sandbox::{
-    Agent, HierarchyCounts, HierarchyReadStore, SandboxHierarchyRecord, SandboxInventoryRecord,
-    SandboxStatus, Workspace, WorkspaceHierarchyRecord, Worktree,
+    HierarchyCounts, HierarchyReadStore, SandboxHierarchyRecord, SandboxInventoryRecord,
+    SandboxStatus, WorkspaceHierarchyRecord, Worktree,
 };
 use mongodb::bson::{doc, Document};
 use mongodb::Collection;
 
-use super::agents::read_agent;
-use super::sandbox_mongo::MongoSandboxStore;
+use super::sandbox_mongo::{MongoSandboxStore, RESOURCE_POLICIES};
+mod snapshot;
 use super::sandboxes::read_sandbox;
-use super::workspaces::read_workspace;
 use super::worktrees::read_worktree;
 
 fn unavailable(error: mongodb::error::Error) -> SandboxStoreError {
@@ -60,86 +59,6 @@ async fn inventory_counts(
         worktrees,
         agents,
     })
-}
-
-async fn sandbox_workspaces(
-    store: &MongoSandboxStore,
-    id: &SandboxId,
-) -> Result<Vec<Workspace>, SandboxStoreError> {
-    let mut cursor = store
-        .workspaces
-        .find(doc! { "sandbox_id": id.as_str() })
-        .await
-        .map_err(unavailable)?;
-    let mut values = Vec::new();
-    while let Some(document) = cursor.try_next().await.map_err(unavailable)? {
-        values.push(read_workspace(&document)?);
-    }
-    Ok(values)
-}
-
-async fn sandbox_worktrees(
-    store: &MongoSandboxStore,
-    id: &SandboxId,
-) -> Result<Vec<Worktree>, SandboxStoreError> {
-    let mut cursor = store
-        .worktrees
-        .find(doc! { "sandbox_id": id.as_str() })
-        .await
-        .map_err(unavailable)?;
-    let mut values = Vec::new();
-    while let Some(document) = cursor.try_next().await.map_err(unavailable)? {
-        values.push(read_worktree(&document)?);
-    }
-    Ok(values)
-}
-
-async fn sandbox_agents(
-    store: &MongoSandboxStore,
-    id: &SandboxId,
-) -> Result<Vec<Agent>, SandboxStoreError> {
-    let mut cursor = store
-        .agents
-        .find(doc! { "sandbox_id": id.as_str() })
-        .await
-        .map_err(unavailable)?;
-    let mut values = Vec::new();
-    while let Some(document) = cursor.try_next().await.map_err(unavailable)? {
-        values.push(read_agent(&document)?);
-    }
-    Ok(values)
-}
-
-async fn workspace_worktrees(
-    store: &MongoSandboxStore,
-    id: &WorkspaceId,
-) -> Result<Vec<Worktree>, SandboxStoreError> {
-    let mut cursor = store
-        .worktrees
-        .find(doc! { "workspace_id": id.as_str() })
-        .await
-        .map_err(unavailable)?;
-    let mut values = Vec::new();
-    while let Some(document) = cursor.try_next().await.map_err(unavailable)? {
-        values.push(read_worktree(&document)?);
-    }
-    Ok(values)
-}
-
-async fn workspace_agents(
-    store: &MongoSandboxStore,
-    id: &WorkspaceId,
-) -> Result<Vec<Agent>, SandboxStoreError> {
-    let mut cursor = store
-        .agents
-        .find(doc! { "workspace_id": id.as_str() })
-        .await
-        .map_err(unavailable)?;
-    let mut values = Vec::new();
-    while let Some(document) = cursor.try_next().await.map_err(unavailable)? {
-        values.push(read_agent(&document)?);
-    }
-    Ok(values)
 }
 
 #[async_trait::async_trait]
@@ -197,16 +116,39 @@ impl HierarchyReadStore for MongoSandboxStore {
         if page.limit == 0 || page.limit > MAX_PAGE_SIZE {
             return Err(SandboxStoreError::InvalidPage);
         }
-        let mut cursor = self
-            .sandboxes
-            .find(owner_filter(owner, status, page.cursor.as_deref()))
-            .sort(doc! { "_id": 1 })
-            .limit(i64::from(page.limit) + 1)
-            .await
-            .map_err(unavailable)?;
+        let mut cursor = self.sandboxes.aggregate(vec![
+            doc! {"$match":owner_filter(owner, status, page.cursor.as_deref())},
+            doc! {"$sort":{"_id":1}},
+            doc! {"$lookup":{"from":RESOURCE_POLICIES,"localField":"_id","foreignField":"_id","as":"inventory_policy"}},
+            doc! {"$match":{"inventory_policy.owner_kind":{"$ne":"organization"}}},
+            doc! {"$limit":i64::from(page.limit)+1},
+        ]).max_time(std::time::Duration::from_secs(10)).await.map_err(unavailable)?;
         let mut items = Vec::new();
         while let Some(document) = cursor.try_next().await.map_err(unavailable)? {
             let sandbox = read_sandbox(&document)?;
+            let policies = document.get_array("inventory_policy").map_err(|_| {
+                SandboxStoreError::Corrupt("missing inventory policy lookup".into())
+            })?;
+            if policies.len() > 1 {
+                return Err(SandboxStoreError::Corrupt(
+                    "duplicate inventory policy".into(),
+                ));
+            }
+            if let Some(policy) = policies.first() {
+                let policy = policy
+                    .as_document()
+                    .ok_or_else(|| SandboxStoreError::Corrupt("invalid inventory policy".into()))?;
+                let personal = super::resource_access::read_inventory_policy(policy)
+                    .and_then(|policy| policy.personal_owner_of(&sandbox))
+                    .map_err(|_| {
+                        SandboxStoreError::Corrupt("invalid inventory ownership policy".into())
+                    })?;
+                if !personal {
+                    return Err(SandboxStoreError::Corrupt(
+                        "personal inventory selected an organization".into(),
+                    ));
+                }
+            }
             let counts = inventory_counts(self, &sandbox.id).await?;
             items.push(SandboxInventoryRecord { sandbox, counts });
         }
@@ -229,48 +171,20 @@ impl HierarchyReadStore for MongoSandboxStore {
         &self,
         id: &SandboxId,
     ) -> Result<Option<SandboxHierarchyRecord>, SandboxStoreError> {
-        let Some(document) = self
-            .sandboxes
-            .find_one(doc! { "_id": id.as_str() })
-            .await
-            .map_err(unavailable)?
-        else {
-            return Ok(None);
-        };
-        let sandbox = read_sandbox(&document)?;
-        let (workspaces, worktrees, agents) = tokio::try_join!(
-            sandbox_workspaces(self, id),
-            sandbox_worktrees(self, id),
-            sandbox_agents(self, id),
-        )?;
-        Ok(Some(SandboxHierarchyRecord {
-            sandbox,
-            workspaces,
-            worktrees,
-            agents,
-        }))
+        match snapshot::read(self, snapshot::Target::Sandbox(id)).await? {
+            snapshot::Reading::Sandbox(value) => Ok(value.map(|value| *value)),
+            _ => unreachable!("requested Sandbox hierarchy"),
+        }
     }
 
     async fn read_workspace_hierarchy(
         &self,
         id: &WorkspaceId,
     ) -> Result<Option<WorkspaceHierarchyRecord>, SandboxStoreError> {
-        let Some(document) = self
-            .workspaces
-            .find_one(doc! { "_id": id.as_str() })
-            .await
-            .map_err(unavailable)?
-        else {
-            return Ok(None);
-        };
-        let workspace = read_workspace(&document)?;
-        let (worktrees, agents) =
-            tokio::try_join!(workspace_worktrees(self, id), workspace_agents(self, id),)?;
-        Ok(Some(WorkspaceHierarchyRecord {
-            workspace,
-            worktrees,
-            agents,
-        }))
+        match snapshot::read(self, snapshot::Target::Workspace(id)).await? {
+            snapshot::Reading::Workspace(value) => Ok(value.map(|value| *value)),
+            _ => unreachable!("requested Workspace hierarchy"),
+        }
     }
 
     async fn read_hierarchy_worktree(

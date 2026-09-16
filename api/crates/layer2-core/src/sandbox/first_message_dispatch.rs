@@ -36,6 +36,10 @@ impl AgentOperationService {
             .ok_or(AgentOperationError::NotFound)?;
         require_work_authority(&current, &prepared.authority)?;
         require_exact_first_message_fence(&current, &prepared.record)?;
+        self.store
+            .require_legacy_first_message(&current)
+            .await
+            .map_err(operation_store_error)?;
         let classification = match self.runtimes.resolve(&prepared.target).await {
             Ok(connection) => match connection
                 .capabilities

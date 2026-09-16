@@ -239,6 +239,7 @@ async fn memory_cooldown_rejects_forged_begin_and_generic_timestamp_changes_atom
         assert_eq!(
             store
                 .commit(SandboxTransaction::SaveSandboxAndAppend {
+                    command_revival: None,
                     expected_revision: current.revision,
                     sandbox: Box::new(forged),
                     event_at: RELEASED.into(),

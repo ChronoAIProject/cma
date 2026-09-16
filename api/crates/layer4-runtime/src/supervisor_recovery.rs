@@ -70,7 +70,7 @@ impl Supervisor {
         }
         drop(bootstrap);
         drop(phase);
-        crate::workspace_runtime::recover_locked(&self.config).await?;
+        crate::workspace_runtime::recover_locked(&self.config, self).await?;
         self.recover_mutations_locked().await
     }
 }

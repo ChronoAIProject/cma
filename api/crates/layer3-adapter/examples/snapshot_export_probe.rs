@@ -324,13 +324,19 @@ async fn main() -> Result<()> {
         ..KubeConfigOptions::default()
     })
     .await?;
+    let api_authority = config.cluster_url.to_string();
     let client = kube::Client::try_from(config)?;
     let identity = format!(
         "cma-export-proof-{}",
         SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos()
     );
     let mut probe = Probe {
-        store: PersistentHomeVolumes::namespaced(client.clone(), &args[1], &identity)?,
+        store: PersistentHomeVolumes::namespaced(
+            client.clone(),
+            &args[1],
+            &identity,
+            &api_authority,
+        )?,
         pods: Api::namespaced(client, &args[1]),
         namespace: args[1].clone(),
         identity: identity.clone(),

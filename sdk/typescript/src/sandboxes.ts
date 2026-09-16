@@ -1,7 +1,7 @@
 import type { ResolvedConfig } from './config.js';
 import type { OperationOptions } from './http.js';
-import { ProtocolError } from './errors.js';
-import { array } from './schema.js';
+import { ProtocolError, ValidationError } from './errors.js';
+import { array, boolean } from './schema.js';
 import {
   command,
   identity,
@@ -26,14 +26,80 @@ import {
   type SandboxStatus,
 } from './instances/types.js';
 import { sandboxEvent } from './instances/events.js';
+import { accessibleSandboxDetail, accessibleSandboxSummary } from './instances/shared.js';
+import {
+  sandboxCommandReceipt,
+  sandboxCommandRequest,
+  type SandboxCommandRequest,
+} from './instances/commands.js';
 
 export interface SandboxListOptions extends PageOptions {
   readonly status?: SandboxStatus;
 }
 
+export interface AccessibleSandboxListOptions extends SandboxListOptions {
+  readonly organization?: string;
+  readonly shared?: boolean;
+}
+
 /** Owner-scoped Sandbox provisioning, hierarchy reads, and lifecycle commands. */
 export class Sandboxes {
   constructor(private readonly config: ResolvedConfig) {}
+
+  /** Admit a durable personal/shared lifecycle intent with a current revision. */
+  submitCommand(id: string, body: SandboxCommandRequest, options: CommandOptions) {
+    input(sandboxCommandRequest, body);
+    return read(
+      this.config,
+      `/api/v1/sandboxes/${segment(id)}/commands`,
+      (value) => {
+        const result = sandboxCommandReceipt(value);
+        if (
+          result.sandbox_id !== id ||
+          result.command !== body.command ||
+          result.expected_revision !== body.expected_revision
+        )
+          throw new ProtocolError('Sandbox command receipt did not match the request');
+        return result;
+      },
+      { ...command(options), method: 'POST', body, expectedStatus: 202 },
+    );
+  }
+
+  /** Recover a receipt while the requesting actor retains target visibility. */
+  readCommand(commandId: string, options: OperationOptions = {}) {
+    return read(
+      this.config,
+      `/api/v1/sandbox-commands/${segment(commandId)}`,
+      (value) => {
+        const result = sandboxCommandReceipt(value);
+        if (result.command_id !== commandId)
+          throw new ProtocolError('Sandbox command identity did not match the request');
+        return result;
+      },
+      options,
+    );
+  }
+
+  /** Personal inventory by default, or current organization / incoming shared scope. */
+  listAccessible(options: AccessibleSandboxListOptions = {}) {
+    if (options.shared !== undefined) input(boolean, options.shared);
+    if (options.shared === true && options.organization !== undefined)
+      throw new ValidationError('Choose an organization or Shared with me, not both.');
+    if (options.status !== undefined) input(sandboxStatus, options.status);
+    return read(
+      this.config,
+      query('/api/v1/sandboxes', {
+        cursor: options.cursor,
+        limit: options.limit,
+        status: options.status,
+        organization: options.organization,
+        shared: options.shared === true ? 'true' : undefined,
+      }),
+      page(accessibleSandboxSummary),
+      options,
+    );
+  }
 
   list(options: SandboxListOptions = {}) {
     if (options.status !== undefined) input(sandboxStatus, options.status);
@@ -54,6 +120,16 @@ export class Sandboxes {
       this.config,
       `/api/v1/sandboxes/${segment(id)}`,
       identity(sandboxDetail, id),
+      options,
+    );
+  }
+
+  /** Personal detail or safe shared metadata and authorized child counts. */
+  readAccessible(id: string, options: OperationOptions = {}) {
+    return read(
+      this.config,
+      `/api/v1/sandboxes/${segment(id)}`,
+      identity(accessibleSandboxDetail, id),
       options,
     );
   }

@@ -5,7 +5,16 @@ import { parseRoute, routePath, useAppRouter, type AppRoute } from './routes';
 const ROUTES: readonly AppRoute[] = [
   { kind: 'home' },
   { kind: 'sandbox', sandboxId: 'sbx_123' },
+  { kind: 'workspace', workspaceId: 'wks_123' },
   { kind: 'agent', agentId: 'agt_123' },
+  { kind: 'inventory' },
+  { kind: 'bridges' },
+  { kind: 'bridges', organization: 'org_123' },
+  { kind: 'bridge_new' },
+  { kind: 'bridge_new', organization: 'org_123' },
+  { kind: 'bridge', bridgeId: 'brg_123' },
+  { kind: 'inventory', shared: true },
+  { kind: 'inventory', organization: 'org_123' },
   { kind: 'profiles' },
   { kind: 'profile', profileKind: 'agent', profileId: 'agp_123' },
   { kind: 'profile', profileKind: 'workspace', profileId: 'wkp_123' },
@@ -35,7 +44,6 @@ describe('application routes', () => {
 
   it.each([
     'agents/agt_1',
-    '/agents',
     '/agents/',
     '/agents/a/b',
     '/agents/%',

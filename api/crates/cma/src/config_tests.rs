@@ -403,3 +403,24 @@ fn nyxid_browser_origin_is_canonical_https() {
         assert!(parse_canonical_https_origin("CHRONO_NYXID_PUBLIC_URL", value).is_err());
     }
 }
+
+#[test]
+fn existing_configuration_has_every_bridge_feature_disabled() {
+    let config = configured(&[]).expect("existing configuration starts");
+    assert_eq!(config.bridge_flags, BridgeFeatureFlags::default());
+}
+
+#[test]
+fn deployment_bridge_flags_are_strict_independent_booleans() {
+    use super::bridge_flags::BridgeFlag;
+    for flag in BridgeFlag::ALL {
+        let config = configured(&[(flag.key(), "true")]).expect("explicit flag enables");
+        for checked in BridgeFlag::ALL {
+            assert_eq!(config.bridge_flags.enabled(checked), checked == flag);
+        }
+        assert_eq!(
+            configured(&[(flag.key(), "enabled")]).unwrap_err(),
+            format!("{} must be true or false", flag.key()),
+        );
+    }
+}

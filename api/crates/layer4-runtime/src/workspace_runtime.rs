@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use layer3_adapter::wire::{RequestFrame, ResponseFrame};
 use layer3_adapter::{WorkspaceReceipt, WorkspaceRemoveReceipt};
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, OwnedMutexGuard};
 
 use crate::config::RuntimeConfig;
 use crate::failure::{Result, RuntimeError};
@@ -11,12 +11,16 @@ use crate::workspace_journal::{self, Begin, Pending, Ticket};
 
 pub(crate) async fn dispatch(
     config: RuntimeConfig,
-    gate: Arc<Mutex<()>>,
+    operation_guard: OwnedMutexGuard<()>,
     held_checkpoint: Arc<Mutex<Option<crate::supervisor::HeldCheckpoint>>>,
+    removal_writer: Option<std::fs::File>,
     request: RequestFrame,
 ) -> Result<ResponseFrame> {
     tokio::spawn(async move {
-        let _operation = gate.lock().await;
+        // The supervisor checked live and durable Agent inventory while
+        // holding this same gate; retain it even if the caller disconnects.
+        let _operation = operation_guard;
+        let _removal_writer = removal_writer;
         crate::persistent_home::verify(&config)?;
         if held_checkpoint.lock().await.is_some() {
             return Err(RuntimeError::rejected(
@@ -34,7 +38,6 @@ pub(crate) async fn dispatch(
                 "workspace mutation requires a durable completed installation",
             ));
         }
-        recover_locked(&config).await?;
         dispatch_locked(&config, request).await
     })
     .await
@@ -53,7 +56,10 @@ async fn dispatch_locked(config: &RuntimeConfig, request: RequestFrame) -> Resul
     }
 }
 
-pub(crate) async fn recover_locked(config: &RuntimeConfig) -> Result<()> {
+pub(crate) async fn recover_locked(
+    config: &RuntimeConfig,
+    supervisor: &crate::supervisor::Supervisor,
+) -> Result<()> {
     for pending in workspace_journal::started(
         &config.state_root,
         &config.sandbox_id,
@@ -78,7 +84,7 @@ pub(crate) async fn recover_locked(config: &RuntimeConfig) -> Result<()> {
                     "workspace setup may have executed before runtime restart; explicit recovery is required",
                 )?;
             }
-            "remove" => recover_remove(config, pending)?,
+            "remove" => recover_remove(config, supervisor, pending).await?,
             _ => {
                 return Err(RuntimeError::rejected(
                     "workspace_journal_corrupt",
@@ -276,9 +282,25 @@ fn remove(
         &request.request_sha256,
         &request,
     )? {
-        Begin::Completed(receipt) => Ok(ResponseFrame::RemoveWorkspace(receipt)),
+        Begin::Completed(receipt) => {
+            match crate::workspace_removal_paths::inspect(&config.home, &request.workspace_id, &request.name)? {
+                crate::workspace_removal_paths::Presence::Original => Err(RuntimeError::rejected(
+                    "workspace_removal_reconciliation_required",
+                    "the removed Workspace reappeared; a current boot-correlated reconciliation is required",
+                )),
+                crate::workspace_removal_paths::Presence::Absent | crate::workspace_removal_paths::Presence::Successor => Ok(ResponseFrame::RemoveWorkspace(receipt)),
+            }
+        }
         Begin::Failed(error) | Begin::Indeterminate(error) => Err(error),
-        Begin::New(ticket) | Begin::Started(ticket) => execute_remove(config, request, ticket),
+        Begin::New(ticket) | Begin::Started(ticket) => {
+            if crate::workspace_removal_intent::requires_current(config, &request)? {
+                return Err(RuntimeError::rejected(
+                    "workspace_removal_reconciliation_required",
+                    "this removal requires a current boot-correlated reconciliation",
+                ));
+            }
+            execute_remove(config, request, ticket)
+        }
     }
 }
 
@@ -319,10 +341,24 @@ async fn recover_prepare(config: &RuntimeConfig, pending: Pending) -> Result<()>
         .or_else(|error| (!error.retryable).then_some(()).ok_or(error))
 }
 
-fn recover_remove(config: &RuntimeConfig, pending: Pending) -> Result<()> {
+async fn recover_remove(
+    config: &RuntimeConfig,
+    supervisor: &crate::supervisor::Supervisor,
+    pending: Pending,
+) -> Result<()> {
     let request: layer3_adapter::WorkspaceRemoveRequest = pending.request()?;
     if !request.has_valid_sha256() {
         return Err(invalid_digest());
+    }
+    if crate::workspace_removal_intent::requires_current(config, &request)? {
+        return Ok(());
+    }
+    let _removal_writer = supervisor.removal_writer_guard()?;
+    match supervisor.ensure_workspace_idle(&request.name).await {
+        // Keep the original intent pending while allowing the Agent's close
+        // request to run. Recovery will retry after its durable close receipt.
+        Err(error) if error.code == "workspace_agent_open" => return Ok(()),
+        result => result?,
     }
     execute_remove(config, request, pending.ticket)
         .map(|_| ())

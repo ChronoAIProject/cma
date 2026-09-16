@@ -12,6 +12,93 @@ import {
 } from './resource-fixtures.js';
 
 describe('Agent resource commands', () => {
+  it('reads safe source categories and rejects mismatched, unknown or personal-only projections', async () => {
+    const test = transport();
+    for (const kind of ['manual', 'workspace_profile', 'trigger']) {
+      const shared = { access: 'shared', agent_id: agent.id, origin: { type: kind } };
+      test.answer(shared);
+      expect(await test.client.agents.sourceAccessible(agent.id)).toEqual(shared);
+      test.answer(shared);
+      await expect(test.client.agents.source(agent.id)).rejects.toBeInstanceOf(ProtocolError);
+    }
+    const personal = {
+      agent_id: agent.id,
+      origin: { type: 'trigger', trigger_id: 'trg_one', launch_id: 'lch_one' },
+    };
+    test.answer(personal);
+    expect(await test.client.agents.source(agent.id)).toEqual(personal);
+    for (const malformed of [
+      { access: 'shared', agent_id: 'other', origin: { type: 'manual' } },
+      { access: 'future', agent_id: agent.id, origin: { type: 'manual' } },
+      { access: 'shared', agent_id: agent.id, origin: { type: 'future' } },
+      { agent_id: agent.id, origin: { type: 'trigger' } },
+    ]) {
+      test.answer(malformed);
+      await expect(test.client.agents.sourceAccessible(agent.id)).rejects.toBeInstanceOf(
+        ProtocolError,
+      );
+    }
+  });
+
+  it('lists organization scopes and typed shared summaries with encoded filters', async () => {
+    const test = transport();
+    const shared = {
+      access: 'shared',
+      id: 'agt_shared',
+      status: 'ready',
+      created_at: now,
+      updated_at: now,
+    };
+    test.answer({ items: [agentSummary, shared], next: 'agt_shared' });
+    expect(
+      (await test.client.agents.listAccessible({ organization: 'org & scope', limit: 2 })).items,
+    ).toEqual([agentSummary, shared]);
+    expect(new URL(test.calls.at(-1)!.url).searchParams.get('organization')).toBe('org & scope');
+    test.answer({ items: [{ ...shared, access: 'future' }] });
+    await expect(test.client.agents.listAccessible({ organization: 'org' })).rejects.toBeInstanceOf(
+      ProtocolError,
+    );
+    test.answer({ items: [{ id: 'org', role: 'viewer', display_name: 'Example' }] });
+    expect((await test.client.resourceAccess.organizations()).items[0]?.role).toBe('viewer');
+    expect(test.calls.at(-1)?.url).toContain('/api/v1/organizations');
+    test.answer({ items: [{ id: 'org', role: 'future' }] });
+    await expect(test.client.resourceAccess.organizations()).rejects.toBeInstanceOf(ProtocolError);
+  });
+
+  it('reads explicit shared detail without weakening personal detail or identity checks', async () => {
+    const test = transport();
+    const shared = {
+      access: 'shared',
+      id: agent.id,
+      status: 'ready',
+      created_at: now,
+      updated_at: now,
+    };
+    test.answer(shared);
+    expect(await test.client.agents.readAccessible(agent.id)).toEqual(shared);
+    test.answer(agent);
+    expect(await test.client.agents.readAccessible(agent.id)).toEqual(agent);
+    test.answer(shared);
+    await expect(test.client.agents.read(agent.id)).rejects.toBeInstanceOf(ProtocolError);
+    for (const changed of [
+      { ...shared, id: 'other' },
+      { ...shared, access: 'future' },
+      { ...shared, status: undefined },
+      { ...shared, access: undefined },
+    ]) {
+      test.answer(changed);
+      await expect(test.client.agents.readAccessible(agent.id)).rejects.toBeInstanceOf(
+        ProtocolError,
+      );
+    }
+    test.answer({
+      items: [{ seq: 1, appended_at: now, kind: { type: 'access_redacted' } }],
+      next: 1,
+    });
+    const page = await test.client.agents.events(agent.id, { limit: 1 });
+    expect(page.items[0]?.kind.type).toBe('access_redacted');
+    expect(page.next).toBe(1);
+  });
   it('reads Trigger provenance and shortcuts without admitting any command and checks Agent identity', async () => {
     const test = transport();
     const source = {

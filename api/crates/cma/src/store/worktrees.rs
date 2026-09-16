@@ -157,6 +157,7 @@ impl WorktreeStore for MongoSandboxStore {
                     "document_schema_version": DOCUMENT_SCHEMA_VERSION,
                     "revision": signed(expected_revision, "expected worktree revision")
                         .map_err(|_| SandboxStoreError::Conflict)?,
+                    "channel_reuse_cleanup_execution": { "$exists": false },
                 },
                 doc! { "$set": worktree_replacement_fields(&worktree)? },
             )

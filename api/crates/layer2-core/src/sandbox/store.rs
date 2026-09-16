@@ -13,6 +13,9 @@ use super::{
 mod service_traits;
 pub use service_traits::*;
 
+mod agent;
+pub use agent::AgentStore;
+
 mod agent_control;
 mod background_checkpoint;
 pub use agent_control::{
@@ -27,6 +30,17 @@ pub use reconciliation::{
     SandboxRuntimeLossAgentMutation, SandboxRuntimeLossApplication, SandboxRuntimeLossMutation,
     SandboxRuntimeLossOutcome, SandboxRuntimeLossRequest,
 };
+mod channel_usage;
+pub use channel_usage::{
+    channel_usage_cursor, channel_usage_page, AgentChannelUsageSnapshot, AgentChannelUsageStore,
+};
+mod provenance;
+mod provenance_inventory;
+pub use provenance::{
+    AgentProvenanceBackfillStore, AgentProvenanceSnapshot, AgentProvenanceStore,
+    ProvenanceBackfillOutcome,
+};
+pub use provenance_inventory::AgentProvenanceInventoryStore;
 mod agent_admission;
 pub use agent_admission::{
     AgentAdmission, AgentAdmissionResult, AgentAdmissionStore, AgentCreation,
@@ -58,6 +72,8 @@ pub use sandbox_admission::{
 };
 mod lifecycle_command;
 pub use lifecycle_command::*;
+mod command_revival;
+pub use command_revival::{validate_command_revival_transition, CommandRevivalStore};
 mod launch_command;
 pub use launch_command::*;
 pub mod checkpoint_capture;
@@ -115,6 +131,11 @@ pub enum SandboxStoreError {
     Conflict,
     #[error("sandbox checkpoint is in progress; input was not admitted")]
     CheckpointInProgress,
+    #[error("sandbox lifecycle is busy: {status:?} ({reason:?})")]
+    LifecycleBusy {
+        status: SandboxStatus,
+        reason: super::SandboxLifecycleBlocker,
+    },
     #[error("event sequence would not be gap-free")]
     SequenceConflict,
     #[error("agent log capacity exceeded")]
@@ -262,22 +283,6 @@ pub trait WorktreeStore: Send + Sync {
 }
 
 #[async_trait]
-pub trait AgentStore: Send + Sync {
-    async fn create_agent(&self, agent: Agent) -> Result<(), SandboxStoreError>;
-    async fn get_agent(&self, id: &AgentId) -> Result<Option<Agent>, SandboxStoreError>;
-    async fn save_agent(
-        &self,
-        expected_revision: u64,
-        agent: Agent,
-    ) -> Result<(), SandboxStoreError>;
-    async fn list_agents(
-        &self,
-        owner: &SubjectId,
-        page: &PageRequest,
-    ) -> Result<Page<Agent>, SandboxStoreError>;
-}
-
-#[async_trait]
 pub trait SandboxEventStore: Send + Sync {
     async fn append_sandbox_event(
         &self,
@@ -361,6 +366,9 @@ pub enum SandboxTransaction {
         event: SandboxEventKind,
     },
     SaveSandboxAndAppend {
+        /// Internal authority for deferred command revival; absent on legacy
+        /// owner/system lifecycle transactions. Never serialized into aggregates.
+        command_revival: Option<Arc<super::agent_io::CommandRevivalAuthorization>>,
         expected_revision: u64,
         sandbox: Box<Sandbox>,
         event_at: String,
@@ -387,6 +395,26 @@ pub struct InMemorySandboxStore {
 
 #[derive(Clone, Default)]
 struct State {
+    agent_artifacts: HashMap<String, super::agent_artifacts::StoredAgentArtifact>,
+    agent_channel_usage: HashMap<AgentId, super::channel_usage::StoredAgentChannelUsage>,
+    channel_usage_events:
+        std::collections::BTreeMap<(AgentId, u64), super::channel_usage::ChannelUsageEvent>,
+    channel_usage_operations: HashMap<String, (AgentId, u64)>,
+    channel_usage_bindings: HashMap<String, (AgentId, u64)>,
+    agent_creation_provenance: HashMap<AgentId, super::AgentCreationProvenance>,
+    resource_policies: HashMap<SandboxId, crate::resource_access::ResourcePolicyRecord>,
+    resource_shares: HashMap<String, crate::resource_access::ShareMutationReceipt>,
+    resource_share_commands: HashMap<String, crate::resource_access::ShareMutationReceipt>,
+    sandbox_controls: HashMap<crate::ids::SandboxCommandId, super::control::SandboxControlRecord>,
+    sandbox_control_keys: HashMap<(String, String), crate::ids::SandboxCommandId>,
+    agent_commands: HashMap<crate::ids::AgentCommandId, super::agent_io::AdmittedAgentCommand>,
+    targeted_controls: HashMap<crate::ids::AgentCommandId, super::agent_io::TargetedControlBinding>,
+    queued_cancellations:
+        HashMap<crate::ids::AgentCommandId, super::agent_io::QueuedCancellationBinding>,
+    command_authorization_audits:
+        std::collections::BTreeMap<String, super::agent_io::CommandAuthorizationAudit>,
+    agent_command_keys: HashMap<(String, String), crate::ids::AgentCommandId>,
+    agent_command_orders: HashMap<AgentId, super::agent_io::CommandLane>,
     sandboxes: HashMap<SandboxId, Sandbox>,
     workspaces: HashMap<WorkspaceId, Workspace>,
     worktrees: HashMap<WorktreeId, Worktree>,

@@ -2,7 +2,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use axum::extract::State;
-use axum::http::{header, StatusCode};
+use axum::http::{header, HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::Router;
@@ -14,8 +14,16 @@ use super::*;
 use crate::auth::persistence::{AuthStore, DurableSubjectTokens, MemoryAuthStore, SecretValue};
 use crate::auth::{profile::Profile, AuthMode};
 
+#[path = "cookie_authorization_tests/bridge_grants.rs"]
+mod bridge_grants;
 #[path = "cookie_authorization_tests/concurrency_tests.rs"]
 mod concurrency_tests;
+#[path = "cookie_authorization_tests/deferred_command_tests.rs"]
+mod deferred_command_tests;
+#[path = "cookie_authorization_tests/resource_command_tests.rs"]
+mod resource_command_tests;
+#[path = "cookie_authorization_tests/resource_fixture.rs"]
+mod resource_fixture;
 
 #[derive(Default)]
 struct Gate {
@@ -46,6 +54,10 @@ struct ProviderControl {
     discovery: RwLock<Reply>,
     userinfo: RwLock<Reply>,
     introspection: RwLock<Reply>,
+    organization: RwLock<Reply>,
+    exchange: RwLock<Reply>,
+    organization_token: RwLock<String>,
+    organization_requests: AtomicUsize,
     requests: AtomicUsize,
 }
 
@@ -75,6 +87,19 @@ async fn userinfo(State(control): State<Arc<ProviderControl>>) -> Response {
 
 async fn introspection(State(control): State<Arc<ProviderControl>>) -> Response {
     respond(&control, &control.introspection).await
+}
+
+async fn organization(State(control): State<Arc<ProviderControl>>, headers: HeaderMap) -> Response {
+    assert_eq!(
+        headers[header::AUTHORIZATION],
+        format!("Bearer {}", control.organization_token.read().await)
+    );
+    control.organization_requests.fetch_add(1, Ordering::SeqCst);
+    respond(&control, &control.organization).await
+}
+
+async fn exchange(State(control): State<Arc<ProviderControl>>) -> Response {
+    respond(&control, &control.exchange).await
 }
 
 struct Fixture {
@@ -107,12 +132,21 @@ impl Fixture {
             introspection: RwLock::new(Reply::json(json!({
                 "active": true, "sub": "owner", "permissions": ["cma:sandbox:use"],
             }))),
+            organization: RwLock::new(Reply::json(json!({"id":"org", "your_role":"admin"}))),
+            exchange: RwLock::new(Reply::json(json!({
+                "access_token":"rotated-fixture-token", "refresh_token":"rotated-fixture-refresh",
+                "expires_in":3600
+            }))),
+            organization_token: RwLock::new("must-not-leak-access-token".into()),
+            organization_requests: AtomicUsize::new(0),
             requests: AtomicUsize::new(0),
         });
         let app = Router::new()
             .route("/.well-known/openid-configuration", get(discovery))
             .route("/userinfo", get(userinfo))
             .route("/introspect", post(introspection))
+            .route("/token", post(exchange))
+            .route("/api/v1/orgs/org/authorization", get(organization))
             .with_state(control.clone());
         let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
         let store = Arc::new(MemoryAuthStore::default());
@@ -245,6 +279,38 @@ async fn inactive_cookie_retains_identity_but_no_grants_or_delegated_credential(
         .await
         .unwrap()
         .is_none());
+}
+
+#[tokio::test]
+async fn relay_owner_projection_cannot_establish_ordinary_bearer_or_login_authority() {
+    use base64::Engine as _;
+    let fixture = Fixture::new().await;
+    let metadata = fixture.auth.metadata().await.unwrap();
+    let before = fixture.control.requests.load(Ordering::SeqCst);
+    for channel in [
+        json!({"relay":true, "sub":"owner", "permissions":["cma:*"]}),
+        json!({"token_type":"relay_callback"}),
+        json!({"token_type":"relay_reply"}),
+    ] {
+        let payload = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .encode(serde_json::to_vec(&channel).unwrap());
+        let token = format!("header.{payload}.signature");
+        assert!(identity::request_for_bearer(&fixture.auth, token.clone())
+            .await
+            .unwrap()
+            .is_none());
+        assert!(identity::resolve_subject(&fixture.auth, &metadata, &token)
+            .await
+            .is_err());
+        assert_eq!(fixture.control.requests.load(Ordering::SeqCst), before);
+    }
+    let ordinary = identity::request_for_bearer(&fixture.auth, "access".into())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(ordinary.authorization.allows(Capability::UseOwnSandboxes));
+    assert_eq!(ordinary.subject, layer2_core::SubjectId::new("owner"));
+    assert!(fixture.control.requests.load(Ordering::SeqCst) > before);
 }
 
 #[tokio::test]

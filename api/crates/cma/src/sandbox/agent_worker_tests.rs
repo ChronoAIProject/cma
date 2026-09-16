@@ -47,6 +47,8 @@ use super::live_agents::{
 
 const DEPLOYMENT_ID: &str = "lifecycle-test";
 
+mod fixture_store;
+use fixture_store::FixtureStore;
 mod lifecycle_connection_tests;
 mod retired_runtime_tests;
 mod runtime_attachment_tests;
@@ -57,8 +59,8 @@ mod startup_publication_tests;
 mod warm_handoff_tests;
 mod workspace_removal_tests;
 
-struct Harness {
-    store: Arc<InMemorySandboxStore>,
+struct Harness<S = InMemorySandboxStore> {
+    store: Arc<S>,
     worker: Arc<AgentWorker>,
     registry: Arc<LiveAgentRegistry>,
     backend: InMemoryHostedBackend,
@@ -75,9 +77,23 @@ impl Harness {
     }
 
     async fn with_generation(skills: Arc<dyn AgentSkillResolver>, generation: u64) -> Self {
+        Self::with_store(
+            Arc::new(InMemorySandboxStore::default()),
+            skills,
+            generation,
+        )
+        .await
+    }
+}
+
+impl<S: FixtureStore> Harness<S> {
+    async fn with_store(
+        store: Arc<S>,
+        skills: Arc<dyn AgentSkillResolver>,
+        generation: u64,
+    ) -> Self {
         let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_788_537_600);
         let stamp = rfc3339_at(now);
-        let store = Arc::new(InMemorySandboxStore::default());
         let owner = SubjectId::new("owner");
         let sandbox_id = SandboxId::generate();
         let mut sandbox = sandbox(&sandbox_id, owner.clone(), &stamp);
@@ -184,6 +200,7 @@ impl Harness {
         let result = self
             .store
             .admit_agent(AgentAdmission {
+                created_by: None,
                 owner: self.workspace.owner.clone(),
                 workspace_id: self.workspace.id.clone(),
                 agent_id: AgentId::generate(),
@@ -228,7 +245,9 @@ impl Harness {
     async fn stored(&self, id: &AgentId) -> Agent {
         self.store.get_agent(id).await.unwrap().unwrap()
     }
+}
 
+impl Harness {
     fn target(agent: &Agent) -> LiveAgentTarget {
         LiveAgentTarget {
             agent_id: agent.id.clone(),
@@ -875,6 +894,11 @@ async fn worker_does_not_resend_a_first_message_fenced_by_the_same_lease() {
     harness
         .store
         .commit_agent_conversation(AgentConversationMutation {
+            command_claim: None,
+            execution_fence: None,
+            channel_control_execution_fence: None,
+            channel_execution_fence: None,
+            trigger_execution_fence: None,
             admission_guard: Some(layer2_core::sandbox::store::SandboxMutationGuard::capture(
                 &parent,
             )),

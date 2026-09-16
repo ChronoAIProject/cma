@@ -51,6 +51,22 @@ impl<'a> Request<'a> {
         Ok(request)
     }
 
+    pub(crate) fn with_command_key(mut self, key: Option<&str>) -> Result<Self> {
+        if let Some(key) = key {
+            if key.is_empty() || key.len() > 256 || key.chars().any(char::is_control) {
+                return Err(Error::validation(
+                    "idempotency key must contain 1 through 256 bytes without control characters",
+                ));
+            }
+            self.headers.insert(
+                "idempotency-key",
+                header::HeaderValue::from_str(key)
+                    .map_err(|_| Error::validation("idempotency key is not a valid HTTP header"))?,
+            );
+        }
+        Ok(self)
+    }
+
     pub(crate) fn operation<B: Serialize>(
         method: Method,
         segments: &'a [&'a str],
@@ -85,6 +101,14 @@ pub(crate) struct ResponseBody {
 }
 
 pub(crate) async fn receive(client: &ClientInner, request: Request<'_>) -> Result<ResponseBody> {
+    receive_bounded(client, request, MAX_RESPONSE_BYTES).await
+}
+
+pub(crate) async fn receive_bounded(
+    client: &ClientInner,
+    request: Request<'_>,
+    max_bytes: usize,
+) -> Result<ResponseBody> {
     let statuses = request.statuses.clone();
     let mut response = outgoing(client, request)?
         .send()
@@ -104,9 +128,9 @@ pub(crate) async fn receive(client: &ClientInner, request: Request<'_>) -> Resul
         .and_then(parse_retry_after);
     if response
         .content_length()
-        .is_some_and(|length| length > MAX_RESPONSE_BYTES as u64)
+        .is_some_and(|length| length > max_bytes as u64)
     {
-        return too_large();
+        return too_large(max_bytes);
     }
     let mut body = Vec::new();
     while let Some(chunk) = response
@@ -114,8 +138,8 @@ pub(crate) async fn receive(client: &ClientInner, request: Request<'_>) -> Resul
         .await
         .map_err(|_| Error::transport("could not read response body"))?
     {
-        if chunk.len() > MAX_RESPONSE_BYTES.saturating_sub(body.len()) {
-            return too_large();
+        if chunk.len() > max_bytes.saturating_sub(body.len()) {
+            return too_large(max_bytes);
         }
         body.extend_from_slice(&chunk);
     }
@@ -189,9 +213,9 @@ pub(crate) fn outgoing(
     Ok(outgoing)
 }
 
-fn too_large<T>() -> Result<T> {
+fn too_large<T>(max_bytes: usize) -> Result<T> {
     Err(Error::protocol(format!(
-        "response exceeds the {MAX_RESPONSE_BYTES}-byte boundary"
+        "response exceeds the {max_bytes}-byte boundary"
     )))
 }
 
@@ -238,6 +262,48 @@ pub(crate) fn problem_error(
             "problem status did not match HTTP {}",
             status.as_u16()
         ));
+    }
+    if problem
+        .detail
+        .as_ref()
+        .is_none_or(|value| value.trim().is_empty())
+        && problem
+            .title
+            .as_ref()
+            .is_none_or(|value| value.trim().is_empty())
+        && let Some(error) = problem.extensions.remove("error")
+    {
+        let Some(value) = error.as_object() else {
+            return Error::protocol("Responses error envelope is invalid");
+        };
+        let field = |name| {
+            value
+                .get(name)
+                .and_then(serde_json::Value::as_str)
+                .filter(|value| !value.trim().is_empty())
+        };
+        let (Some(code), Some(message), Some(kind), Some(param)) = (
+            field("code"),
+            field("message"),
+            field("type"),
+            value.get("param"),
+        ) else {
+            return Error::protocol("Responses error fields are invalid");
+        };
+        if !param.is_null() && !param.is_string() {
+            return Error::protocol("Responses error param is invalid");
+        }
+        return Error::Api {
+            status: status.as_u16(),
+            code: Some(code.into()),
+            message: message.into(),
+            request_id,
+            retry_after,
+            extensions: BTreeMap::from([
+                ("type".into(), kind.into()),
+                ("param".into(), param.clone()),
+            ]),
+        };
     }
     let message = problem
         .detail

@@ -461,6 +461,7 @@ impl CompletionProof {
 
 fn current_agent_filter(agent: &Agent) -> Document {
     doc! {
+        "channel_reuse_cleanup_execution": { "$exists": false },
         "_id": agent.id.as_str(),
         "document_schema_version": DOCUMENT_SCHEMA_VERSION,
         "revision": signed(agent.revision, "agent revision").unwrap_or(i64::MIN),

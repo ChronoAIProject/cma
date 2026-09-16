@@ -141,12 +141,24 @@ pub(super) fn agent_document(agent: &Agent) -> Result<Document, SandboxStoreErro
             .map_err(SandboxStoreError::Corrupt)?,
         "record": record_bson(agent).map_err(SandboxStoreError::Corrupt)?,
     };
+    if let Some(binding) = agent
+        .conversation
+        .first_message
+        .as_ref()
+        .and_then(|first| first.common_binding.as_ref())
+    {
+        document.insert(
+            super::trigger_first_messages::FIELD,
+            record_bson(binding).map_err(SandboxStoreError::Corrupt)?,
+        );
+    }
     document.extend(initial_title_fields(agent)?);
     Ok(document)
 }
 
 pub(super) fn read_agent(document: &Document) -> Result<Agent, SandboxStoreError> {
-    let agent: Agent = read_record(document).map_err(SandboxStoreError::Corrupt)?;
+    let mut agent: Agent = read_record(document).map_err(SandboxStoreError::Corrupt)?;
+    super::trigger_first_messages::hydrate(document, &mut agent)?;
     agent
         .work
         .validate_resolved_skills(&agent.profile.content.skills)
@@ -227,6 +239,23 @@ async fn classify_miss(
 
 #[async_trait::async_trait]
 impl AgentStore for MongoSandboxStore {
+    async fn trigger_ready_for_claim(
+        &self,
+        command: &layer2_core::sandbox::agent_io::AdmittedAgentCommand,
+    ) -> Result<(), SandboxStoreError> {
+        super::trigger_first_messages::ready_for_claim(self, command).await
+    }
+
+    async fn trigger_execution_proof(
+        &self,
+        command: &layer2_core::sandbox::agent_io::AdmittedAgentCommand,
+    ) -> Result<layer2_core::sandbox::agent_io::TriggerExecutionProof, SandboxStoreError> {
+        super::trigger_first_messages::proof(self, command).await
+    }
+    async fn require_legacy_first_message(&self, agent: &Agent) -> Result<(), SandboxStoreError> {
+        super::trigger_first_messages::legacy(self, agent).await
+    }
+
     async fn create_agent(&self, agent: Agent) -> Result<(), SandboxStoreError> {
         if agent.revision != 1 || agent.work.resolved_skills.is_some() {
             return Err(SandboxStoreError::Conflict);
@@ -279,6 +308,7 @@ impl AgentStore for MongoSandboxStore {
                         .map_err(|_| SandboxStoreError::Conflict)?,
                     "last_seq": signed(agent.conversation.last_seq, "agent log sequence")
                         .map_err(SandboxStoreError::Corrupt)?,
+                    "channel_reuse_cleanup_execution": { "$exists": false },
                     "record.title": record_title_value(&agent),
                     "owner": agent.owner.as_str(),
                     "record.owner": agent.owner.as_str(),

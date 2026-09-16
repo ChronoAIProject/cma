@@ -25,6 +25,7 @@ The changelog at the end is **append-only**. Entries are never edited or deleted
 | Public Trigger | A visitor's landing, consent, review, connection assistance and progress. |
 | Operations | Capability-gated inventory, Profiles, activity and settings. |
 | Developer | Public TypeScript and Rust SDK guides bundled with the frontend. |
+| Bridges | Personal and organization channel connections, explicit context permission, configuration and lifecycle controls. |
 
 Each view has a canonical route. Refresh and browser history restore it without
 admitting work. The terminal plane, separate Chat model, session list, canvas
@@ -32,7 +33,8 @@ arrangement, pricing and contribution-specific workflow are retired.
 
 - The surface owns the remaining width. Details concede before the tree;
   narrow layouts keep the primary conversation or task usable.
-- The first-party client uses public REST and AG-UI, never private routes.
+- The first-party client uses public REST, AG-UI and the flagged Responses v2
+  transport with rich Agent replay. It never uses private routes.
 - Agent output and user-authored commands remain intact; styling applies to
   their reading frame.
 - Progress comes from public records and events, not a local timer. Navigation
@@ -434,6 +436,15 @@ shows title, state and last activity. Rows retain 32px minimum height and 8px
 radius, with consistent status/icon slots. Expansion state is scoped to the
 signed-in viewer and survives route changes.
 
+Agent metadata also shows its authorized immutable creation category in the
+existing secondary text style: Manual, Trigger, Channel, or Unknown origin.
+Parent summaries count each child's category and remain complete when the tree
+is filtered; an unavailable child fact suppresses the summary. An existing
+native select labeled Agent creation filters the current tree by category.
+Loading and refused facts never become the Unknown origin category. The filter
+reports incomplete reads and does not imply that archived or other inventories
+were searched. No private actor or external source references appear in rows.
+
 Expansion and navigation are separate keyboard-operable commands, with named
 `aria-expanded` state. A collapsed group retains its count. Paused or reviving
 Sandboxes hide their descendants and expansion controls until fully Active with
@@ -710,6 +721,43 @@ remaining activity pages load. Use the same status band to name loading, retain
 the editable draft, and hold Send, approvals, lifecycle controls and live replay
 until history is complete. The snapshot's sequence does not skip activity pages.
 
+For new Agent tabs, the authenticated transport eligibility selects Responses v2
+input with independent rich Agent snapshot/tail observation. Retain the tab's
+selection through reloads and flag changes; existing AG-UI tabs keep their
+transport. Preserve an uncertain message or response action with its exact key,
+body and original target. Use the existing status band and compact Button for
+**Recover pending request**; recovery is explicit and never retargets an action.
+Keep the draft editable and clear only the draft matching a retained acceptance.
+A refused intent may be corrected after an authoritative admission refusal.
+
+For the latest locally accepted message, a fresh public observation may offer
+**Cancel queued message** before execution starts. Reuse the existing status
+band and compact Button, with a bounded preview identifying that message. Keep
+queued cancellation separate from Stop response. Retain its original message,
+source revision and key before submission; **Recover cancellation** repeats only
+that exact intent after uncertainty. A completed cancellation receipt confirms
+that the message was cancelled before starting. Account changes clear this view;
+incomplete history and read-only access hold its actions. The draft and any other
+active response stay visible while status observation and cancellation proceed.
+
+Responses v2 tabs offer **Queue message** beside **Stop response** while a turn
+is running, using the existing circular composer buttons. Keep both controls
+centered on the same row beside the input, with a flexible input column and two
+40px button columns (44px on mobile), separated by the existing 8px gap. Enter
+and Trigger
+quick messages admit ordinary queued input; they do not steer the running turn.
+Keep the draft editable and retain it until admission is confirmed. An uncertain
+earlier input holds another queue submission until explicit recovery. Existing
+AG-UI tabs retain their current composer behavior during protocol migration.
+
+Read accepted action receipts to show queued, delivered or failed delivery in
+the existing status band. Delivery does not finish the displayed response; only
+its recorded outcome does. A turn lacking a safe response binding keeps history
+readable and disables response controls with an explanatory title. Account or
+local sign-in epoch changes clear the prior view before any new-account read is
+shown. A live gap discards uncommitted partial text and Thinking while preserving
+recorded messages, settled tools and the turn's original start time.
+
 The composer uses its existing capsule, send/stop icon seat, focus treatment, and
 bounded growth. Stop interrupts the current turn; it does not delete the Agent.
 Approval decisions are explicit at the point of interruption. Only public API
@@ -720,9 +768,11 @@ the draft. Track composition lifecycle as well as native composition flags and
 the IME key code used by Safari. Ordinary Enter sends after composition ends;
 Shift+Enter inserts a newline. Composition completion alone never sends.
 
-Trigger-created Agents show their original Trigger name as a native link in the
-conversation header; manually created and Workspace-Profile-created Agents have
-distinct written source labels. Source loading or failure does not block history
+The conversation header labels immutable creation as Created manually, Created
+by Trigger, Created by channel bridge, or Creation origin unknown. A missing or
+refused read says Creation origin unavailable. A resolvable published Trigger
+appears separately as a native link labeled Published Trigger; later Trigger
+reuse cannot relabel an Agent. Source loading or failure does not block history
 or ordinary messages. Do not substitute internal IDs for missing display names.
 
 An unframed, wrapping row directly above the composer contains up to eight
@@ -739,7 +789,8 @@ placement helper, 12px viewport inset and overlay level 1100. A 150ms hover-exit
 delay lets the pointer reach and scroll a long description; Escape dismisses it
 immediately without moving focus. Clicking
 sends the configured text through ordinary message admission, preserving any
-typed draft. The same availability, pending and active-turn guards apply. Reads,
+typed draft. The same availability and pending-request guards apply; active turns
+allow ordinary queue submission only in Responses v2 tabs. Reads,
 reloads and publication never send a message. Quick messages use the latest
 published Trigger revision; original creation provenance and first message stay
 unchanged. Retired Triggers expose provenance but no new quick-message actions.
@@ -780,7 +831,12 @@ remains available during saving or failed Sandbox reads for a known active turn.
 
 ### Details and readings
 
-The Details drawer contains Sandbox status, pinned profile, size and services;
+The Details drawer starts with immutable creation origin and timestamp in the
+existing fact layout. Authorized Workspace Profile provisioning is a separate
+fact, including when creation category is unknown. Closing or changing the view
+clears optional provenance until it is authorized again.
+
+The drawer also contains Sandbox status, pinned profile, size and services;
 Workspace path, source and resolved commit; Worktree path and branch; Agent
 Profile model, effort, permission and skills; first-message state; and the
 separately confirmed Stop/Delete controls. No credential, provider token, private
@@ -790,6 +846,114 @@ Usage and context sit below the composer with tabular figures. Missing usage is
 not zero. A context ceiling adds a neutral 2px track no wider than 240px, with
 accessible numeric values. Without a reported ceiling, show only the known
 figure. Context-summary boundaries use neutral metadata, not failure colour.
+
+### Organization inventory and shared Agent views
+
+The scoped navigation's **Bridges** entry opens `/bridges` or
+`/organizations/{organization}/bridges`. Creation uses the corresponding `/new`
+route and saved details use `/bridges/{bridge_id}`. Use existing Button, Picker,
+Input, fieldset, confirmation and surface tokens. Forms use the existing
+24/16/12/8px spacing, with capacity fields and inventory rows stacking on narrow
+screens. Personal and organization scope is explicit; only current owners or
+organization admins load management settings, bot/key/route choices or grants.
+
+Bridge setup starts disabled with separate Sandbox placement and sender-in-chat
+context. Explain resource ownership, CMA visibility, context sharing and where
+group replies appear before the user's exposure acknowledgment. Retained Agents
+need separate explicit permission to use their existing history and execution
+context. Show unsupported placement and platform controls as disabled choices
+with reasons. Saving settings, validating the connection, recording permission,
+enabling the bridge and observing successful execution/delivery are distinct.
+Never claim processing is available from a settings or connection result alone.
+
+Show the exact callback for manual NyxID configuration. Import the selected key
+through a password input without browser storage; clear it on submission and
+never display raw provider failure text. Retain nonsecret edited settings across
+ordinary access refreshes, clear protected choices while access is unavailable,
+and retain the exact command and key for uncertain-result recovery. Changing
+viewer, client or owner resets that management context. Retirement uses the
+existing risk confirmation and explicitly preserves retained resources/history;
+key and invocation-grant revocation use inline confirmation.
+
+The account menu's **Agents** entry opens `/agents`; an organization selection
+uses `/organizations/{organization}/agents` so reload and deep links retain the
+scope. Named organization choices use the existing Picker. The inventory keeps
+creation and lifecycle status as separate filters, includes retained Agents,
+and shows title, recorded status, immutable creation category and creation date.
+Rows open the canonical Agent route. Previous/Next actions operate on fresh
+pages; an empty filtered page with continuation explicitly invites the next page.
+The **Export this page** action rechecks access and downloads only that page's
+safe JSON summary fields. It cancels on changed scope or client. A completed
+download cannot be recalled by later revocation.
+
+Use the existing surface, border, font, Button and Picker tokens. The inventory
+filters wrap, and its four-column rows become two columns on narrow screens.
+Do not show private source IDs, creators, parent identities or profile controls
+in these rows. An organization-choice outage has its own retry and leaves the
+personal inventory independently usable.
+
+Shared Agent routes have a safe title/status/creation header and Agent history.
+They never start the personal controller, parent/profile loaders, connection
+wizard or runtime readings. Pending approvals remain readable without action
+buttons for a viewer. The composer, response interruption and approval buttons
+follow current effective capabilities. Commands use the current public SDK
+principal; an organization admin's message is attributed to that admin.
+Personal controllers retain their draft and stream while the access-classification
+read refreshes. A real refusal clears the selected shared/denied view, not the
+account's independent personal work.
+
+Scoped results refresh every 30 seconds and expire at the earlier server deadline
+or 55 seconds from request start, even while another refresh is pending. A read
+that exceeds 15 seconds loses its display authority. Foreground, scope/client
+changes and denied access clear old shared values and cancel streams/exports.
+Channel-use presentation remains subsequent work.
+
+The sidebar's existing Picker chooses Personal, a named Organization or Shared
+with me without
+changing the current conversation. Keep selection through sidebar collapse and
+preserve the personal composer/draft during organization browsing and access
+loss. Organization and shared Sandboxes page independently; expanding a named Sandbox or
+Workspace reads that authorized branch. The Agent inventory link includes narrow
+Agent grants whose parents are not visible. Do not fetch hidden parent metadata
+to fill out the tree.
+
+Shared with me uses the aggregate Sandbox endpoint for parent branches and the
+shared Agent inventory for flat Agent discovery. These lists page and refresh
+independently. Empty Sandbox results explain where individually shared Agents
+appear. A parent branch is never inferred from a shared Agent. Switching scopes
+cancels pending branch reads and clears descendant labels; refreshing shared
+access preserves the active personal composer, its DOM and its draft.
+
+Shared Sandbox and Workspace details use safe names, status, child counts and
+canonical Agent links. They expose no profile, connection, path, runtime or file
+content. Refused child reads invalidate parent branch data. Scope/client changes,
+foreground and bounded authority expiry clear stale labels and stop child reads.
+Keep personal lifecycle pages behind their own accessible-resource classification.
+
+### Owner sharing
+
+The existing **Sharing** button in personal Agent Details and Sandbox actions
+appears only after current effective permission allows sharing management. Use
+the existing Modal, Picker and Button primitives. The dialog starts on the Agent
+when opened from Agent Details. Whole-Sandbox scope is a separate explicit
+selection; creation requires acknowledging its current and future children.
+
+Use named current organization choices and explain **View only** versus **Use
+organization roles** before submission. Agent grants provide no implicit parent,
+sibling or file exposure. Whole-Sandbox previews include children, scoped files
+and the extra admin controls permitted by organization-role mode. A server
+refusal for unproved Agent execution isolation explains view access and the
+explicit whole-Sandbox option. It never changes scope or moves the Agent.
+
+Direct grants show their current mode, an editable choice and an in-place revoke
+confirmation. Explain that other grants may still provide access. Refresh after
+changes and conflicts; a newer revision needs another explicit action. Unconfirmed
+commands retain their request identity while the resource view remains mounted.
+Organization lookup failure uses an unavailable-name label and still permits
+independently authorized revocation. No internal organization, actor or grant IDs
+are primary copy. Share changes preserve personal draft/controller state and
+creation labels. The dialog follows current permission, expiry and context
+cancellation and keeps every control within phone and desktop viewports.
 
 ## 13a. Agent resources
 
@@ -1772,3 +1936,50 @@ Append-only. Never edit or delete an entry.
 | 2026-09-09 | Add shared showing and dismissal fades for notification messages and dialogs, retaining only an inert exit frame, releasing focus immediately, cancelling stale dismissal on reopen, and honoring reduced motion without changing message semantics or geometry. |
 | 2026-09-09 | Add the Sandbox Profile Availability band with public-only warmup, a one-to-five target and Always keep alive, using existing fields and checkbox rows. Clarify the editable private-copy Marketplace action and its fresh Sandbox provisioning behavior. |
 | 2026-09-14 | Keep active Thinking visible above the composer with the rotating compact CMA character and elapsed time restored from the recorded turn start. Limit its disclosure to live reasoning and pending tools; show each settled tool in its own chronological container, preserving replay identity, unknown outcomes and accessible bounded details. |
+| 2026-09-15 | Display immutable Agent creation categories independently of published Trigger shortcuts, add creation facts to Details, and use existing tree metadata and native-select patterns for per-Agent categories, complete child summaries and current-tree origin filtering. Clear optional facts on changed view/access context and keep private source references out of tree rows. |
+| 2026-09-16 | Document authenticated per-tab Agent transport selection, explicit retained-request recovery, response action delivery status, account-change clearing and live-gap handling using the existing Agent status band, Button and composer patterns. |
+| 2026-09-16 | Add explicit cancellation and exact recovery for the latest locally accepted queued message using the existing Agent status band and Button. Preserve active-response controls, pending input, account isolation and editable drafts. |
+| 2026-09-16 | Offer ordinary queued input beside Stop response in Responses v2 tabs, with distinct accessible labels, existing composer controls and draft-preserving admission recovery. |
+| 2026-09-16 | Keep Queue message and Stop response aligned beside the input at every supported viewport, using explicit composer grid columns and existing control sizes and gaps. |
+
+### Approved Agent artifacts
+
+Personal Agent Details offers **Artifacts** under current artifact visibility;
+current sharing managers may publish a selected file after explicit exposure
+acknowledgment. Shared Agents offer lazy artifact browsing alongside history.
+No parent, repository, credential or runtime files are requested by this view.
+Use the standard Modal and Button primitives, safe display names, byte counts,
+independent paging and clear empty/denied states. Downloads recheck access before
+and after byte buffering and verify the immutable size/hash before creating a
+local file. Content is downloaded as opaque bytes and never executed or rendered.
+
+Keep publication key and body after an uncertain response, including dialog
+close/reopen and Agent navigation within the mounted viewer Console. A retry cannot swap
+selected content. New content requires a new deliberate selection and exposure
+acknowledgment. Current scope/access loss clears artifact rows, disables
+publication and cancels pending downloads while preserving independent personal
+conversation work. Explain that published content is retained with the Agent
+and existing downloads cannot be recalled.
+
+### Channel activity and management history
+
+Show channel activity independently of immutable creation origin. Agent Details
+and shared Agent headers distinguish current linkage, past linkage and absent
+history. Inventory and personal tree filters combine creation origin with current linkage,
+any history, detached history or no history. Tree facts use at most four optional
+reads concurrently and expire under the existing bounded read policy. Sandbox
+and Workspace channel counts require facts for every represented child; an
+unknown child suppresses the summary instead of relabeling its siblings. Use the existing Picker and page controls;
+changing a filter resets pagination. A filtered page can be empty with a next page.
+Rows and JSON exports include only the safe active/history flags and recorded
+first/last accepted-message times. An older server that omits these facts shows
+activity unavailable rather than guessing absence.
+
+Managers can open **Channel history** in the standard Modal. Load history lazily,
+page immutable events, label the actor and time, and place before/after binding
+references inside an expandable event detail. Attachment alone shows no accepted
+message time. Keep raw external conversation identifiers out of the presentation.
+Check current management access before and after each buffered page and retain
+the initial authority deadline. Changed scope, revoked authority or an expired
+read clears private history. Viewing history preserves the personal composer and
+draft. Summary readers never receive the management history control.

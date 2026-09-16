@@ -95,6 +95,13 @@ impl Agui<'_> {
     }
     /// Admit exactly one message or approval answer; dropping the stream does not cancel work.
     pub async fn run(&self, body: &RunRequest) -> Result<AgentStream> {
+        self.submit(body, None).await
+    }
+    /// Recover an uncertain run by retaining this key and the same input. No automatic retry occurs.
+    pub async fn run_with_key(&self, body: &RunRequest, key: &str) -> Result<AgentStream> {
+        self.submit(body, Some(key)).await
+    }
+    async fn submit(&self, body: &RunRequest, key: Option<&str>) -> Result<AgentStream> {
         if body.thread_id.is_empty()
             || body.resume.len() > 1
             || body
@@ -112,7 +119,8 @@ impl Agui<'_> {
             ));
         }
         let request =
-            Request::operation(Method::POST, &["agui", "run"], Some(body), StatusCode::OK)?;
+            Request::operation(Method::POST, &["agui", "run"], Some(body), StatusCode::OK)?
+                .with_command_key(key)?;
         Ok(AgentStream {
             inner: stream::open(&self.client.inner, request).await?,
             thread_id: body.thread_id.clone(),

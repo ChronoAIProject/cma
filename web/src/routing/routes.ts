@@ -5,7 +5,12 @@ export type ProfileKind = 'agent' | 'workspace' | 'sandbox';
 export type AppRoute =
   | { readonly kind: 'home' }
   | { readonly kind: 'sandbox'; readonly sandboxId: string }
+  | { readonly kind: 'workspace'; readonly workspaceId: string }
   | { readonly kind: 'agent'; readonly agentId: string }
+  | { readonly kind: 'inventory'; readonly organization?: string; readonly shared?: boolean }
+  | { readonly kind: 'bridges'; readonly organization?: string }
+  | { readonly kind: 'bridge_new'; readonly organization?: string }
+  | { readonly kind: 'bridge'; readonly bridgeId: string }
   | { readonly kind: 'profiles' }
   | { readonly kind: 'profile'; readonly profileKind: ProfileKind; readonly profileId: string }
   | { readonly kind: 'marketplace' }
@@ -56,6 +61,10 @@ export function parseRoute(pathname: string): AppRoute {
 
   if (path.length === 1) {
     switch (path[0]) {
+      case 'agents':
+        return { kind: 'inventory' };
+      case 'bridges':
+        return { kind: 'bridges' };
       case 'profiles':
         return { kind: 'profiles' };
       case 'marketplace':
@@ -71,8 +80,12 @@ export function parseRoute(pathname: string): AppRoute {
 
   if (path.length === 2) {
     const [resource = '', id = ''] = path;
+    if (resource === 'shared' && id === 'agents') return { kind: 'inventory', shared: true };
     if (resource === 'sandboxes') return { kind: 'sandbox', sandboxId: id };
+    if (resource === 'workspaces') return { kind: 'workspace', workspaceId: id };
     if (resource === 'agents') return { kind: 'agent', agentId: id };
+    if (resource === 'bridges')
+      return id === 'new' ? { kind: 'bridge_new' } : { kind: 'bridge', bridgeId: id };
     if (resource === 'launches') return { kind: 'launch', launchId: id };
     if (resource === 't') return { kind: 'public_trigger', publicId: id };
     if (resource === 'triggers' && id === 'manage') return { kind: 'triggers' };
@@ -80,6 +93,10 @@ export function parseRoute(pathname: string): AppRoute {
 
   if (path.length === 3) {
     const [resource = '', qualifier = '', id = ''] = path;
+    if (resource === 'organizations' && id === 'agents')
+      return { kind: 'inventory', organization: qualifier };
+    if (resource === 'organizations' && id === 'bridges')
+      return { kind: 'bridges', organization: qualifier };
     if (resource === 'profiles') {
       const profileKind = PROFILE_KINDS.find((kind) => `${kind}-profiles` === qualifier);
       if (profileKind !== undefined) return { kind: 'profile', profileKind, profileId: id };
@@ -95,6 +112,14 @@ export function parseRoute(pathname: string): AppRoute {
     }
   }
 
+  if (
+    path.length === 4 &&
+    path[0] === 'organizations' &&
+    path[2] === 'bridges' &&
+    path[3] === 'new'
+  ) {
+    return { kind: 'bridge_new', organization: path[1] };
+  }
   if (path.length === 4 && path[0] === 'triggers' && path[1] === 'manage' && path[3] === 'embed') {
     return { kind: 'trigger_embed', triggerId: path[2] ?? '' };
   }
@@ -112,8 +137,25 @@ export function routePath(route: AppRoute): string {
       return '/';
     case 'sandbox':
       return `/sandboxes/${segment(route.sandboxId)}`;
+    case 'workspace':
+      return `/workspaces/${segment(route.workspaceId)}`;
     case 'agent':
       return `/agents/${segment(route.agentId)}`;
+    case 'inventory':
+      if (route.shared === true) return '/shared/agents';
+      return route.organization === undefined
+        ? '/agents'
+        : `/organizations/${segment(route.organization)}/agents`;
+    case 'bridges':
+      return route.organization === undefined
+        ? '/bridges'
+        : `/organizations/${segment(route.organization)}/bridges`;
+    case 'bridge_new':
+      return route.organization === undefined
+        ? '/bridges/new'
+        : `/organizations/${segment(route.organization)}/bridges/new`;
+    case 'bridge':
+      return `/bridges/${segment(route.bridgeId)}`;
     case 'profiles':
       return '/profiles';
     case 'profile':

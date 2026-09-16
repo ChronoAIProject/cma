@@ -13,7 +13,7 @@ async fn touch_gate(
     sandbox_id: &str,
     session: &mut ClientSession,
 ) -> AdapterResult<()> {
-    let touched = store.gates.update_one(doc! { "_id": sandbox_id, "document_schema_version": DOCUMENT_SCHEMA_VERSION, "retired": false }, doc! { "$inc": { "serial": 1_i64 } })
+    let touched = store.gates.update_one(doc! { "_id": sandbox_id, "document_schema_version": DOCUMENT_SCHEMA_VERSION, "retired": false, "channel_storage_retention": { "$exists": false } }, doc! { "$inc": { "serial": 1_i64 } })
         .session(session).await.map_err(|_| unavailable("checkpoint archive writer gate is unavailable"))?;
     if touched.matched_count == 1 {
         Ok(())
@@ -87,7 +87,7 @@ pub(super) async fn verify_active(
     store: &MongoCheckpointObjectStore,
     sandbox_id: &str,
 ) -> AdapterResult<()> {
-    let active = store.gates.find_one(doc! { "_id": sandbox_id, "document_schema_version": DOCUMENT_SCHEMA_VERSION, "retired": false }).await
+    let active = store.gates.find_one(doc! { "_id": sandbox_id, "document_schema_version": DOCUMENT_SCHEMA_VERSION, "retired": false, "channel_storage_retention": { "$exists": false } }).await
         .map_err(|_| unavailable("checkpoint archive writer gate is unavailable"))?;
     if active.is_some() {
         Ok(())

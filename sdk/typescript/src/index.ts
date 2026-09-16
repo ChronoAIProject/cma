@@ -1,8 +1,19 @@
 /** Typed, repository-only client for CMA's public resource APIs. */
 
 export { Cma, createClient } from './client.js';
-export { Agents, type AgentListOptions } from './agents.js';
-export { Sandboxes, type SandboxListOptions } from './sandboxes.js';
+export * from './resource-access.js';
+export * from './bridges.js';
+export {
+  Agents,
+  type AgentListOptions,
+  type AccessibleAgentListOptions,
+  type AgentProvenanceInventoryOptions,
+} from './agents.js';
+export {
+  Sandboxes,
+  type SandboxListOptions,
+  type AccessibleSandboxListOptions,
+} from './sandboxes.js';
 export { Workspaces, Worktrees } from './workspaces.js';
 export { Profiles } from './profiles.js';
 export { Marketplace, type MarketplaceListOptions } from './marketplace.js';
@@ -12,13 +23,21 @@ export * from './profile-authoring/index.js';
 export * from './triggers.js';
 export * from './auth.js';
 export * from './responses.js';
+export * from './responses-v2.js';
+export * from './agent-events-v2/index.js';
 export * from './agui/index.js';
 export * from './launch/index.js';
 export type { CommandOptions, EventOptions, PageOptions, ResourcePage } from './resources.js';
 export type * from './agents/types.js';
+export type * from './agents/shared.js';
+export type * from './agents/provenance.js';
+export type * from './agents/artifacts.js';
+export type * from './agents/channel-usage.js';
+export type * from './instances/shared.js';
 export type * from './agents/events.js';
 export type * from './instances/types.js';
 export type * from './instances/events.js';
+export type * from './instances/commands.js';
 export type * from './profiles/types.js';
 export type * from './profiles/marketplace.js';
 export {
