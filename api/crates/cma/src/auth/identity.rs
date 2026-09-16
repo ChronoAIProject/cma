@@ -3,6 +3,7 @@
 use layer2_core::StoreError;
 
 use super::{permissions, profile::Profile, AuthState, ProviderMetadata, RequestAuth};
+use super::verification_error::ProviderVerificationError;
 
 pub(super) struct VerifiedSubject {
     pub subject: layer2_core::SubjectId,
@@ -28,7 +29,7 @@ pub(super) async fn request_for_bearer(
         Ok(metadata) => metadata,
         Err(error) => {
             tracing::warn!(error = %error, "could not discover identity provider for bearer verification");
-            return Ok(None);
+            return Err(StoreError::Unavailable("identity provider discovery is unavailable".into()));
         }
     };
     match verify_subject(auth, &metadata, &token).await {
@@ -44,10 +45,13 @@ pub(super) async fn request_for_bearer(
             })),
             permissions::PermissionEvidence::Inactive => Ok(None),
         },
-        Err(error) => {
+        Err(ProviderVerificationError::Rejected(error)) => {
             tracing::debug!(error = %error, "bearer credential was not accepted");
             Ok(None)
         }
+        Err(ProviderVerificationError::Unavailable(_)) => Err(StoreError::Unavailable(
+            "bearer authorization could not be verified".into(),
+        )),
     }
 }
 
@@ -56,7 +60,9 @@ pub(super) async fn resolve_subject(
     metadata: &ProviderMetadata,
     access_token: &str,
 ) -> Result<(layer2_core::SubjectId, Vec<String>, Profile), String> {
-    let verified = verify_subject(auth, metadata, access_token).await?;
+    let verified = verify_subject(auth, metadata, access_token)
+        .await
+        .map_err(|error| error.to_string())?;
     match verified.permissions {
         permissions::PermissionEvidence::Active(permissions) => {
             Ok((verified.subject, permissions, verified.profile))
@@ -71,15 +77,16 @@ pub(super) async fn verify_subject(
     auth: &AuthState,
     metadata: &ProviderMetadata,
     access_token: &str,
-) -> Result<VerifiedSubject, String> {
+) -> Result<VerifiedSubject, ProviderVerificationError> {
+    use ProviderVerificationError::{Rejected, Unavailable};
     if !super::bearer::permits_ambient_auth(access_token) {
         verification_failure("userinfo", "restricted_credential", None);
-        return Err("credential is restricted to its dedicated channel interface".into());
+        return Err(Rejected("credential is restricted to its dedicated channel interface".into()));
     }
     let endpoint = metadata
         .userinfo_endpoint
         .as_ref()
-        .ok_or_else(|| "identity provider advertises no userinfo endpoint".to_string())?;
+        .ok_or_else(|| Unavailable("identity provider advertises no userinfo endpoint".into()))?;
     let response = auth
         .http
         .get(endpoint)
@@ -88,32 +95,39 @@ pub(super) async fn verify_subject(
         .await
         .map_err(|error| {
             verification_failure("userinfo", "transport", None);
-            format!("userinfo request failed: {error}")
+            Unavailable(format!("userinfo request failed: {error}"))
         })?;
     if !response.status().is_success() {
         verification_failure("userinfo", "http_status", Some(response.status().as_u16()));
-        return Err(format!(
+        let message = format!(
             "userinfo returned HTTP {}",
             response.status().as_u16()
-        ));
+        );
+        return Err(if matches!(response.status().as_u16(), 401 | 403) {
+            Rejected(message)
+        } else {
+            Unavailable(message)
+        });
     }
     let body = response
         .json::<serde_json::Value>()
         .await
         .map_err(|error| {
             verification_failure("userinfo", "invalid_json", None);
-            format!("userinfo response is invalid: {error}")
+            Unavailable(format!("userinfo response is invalid: {error}"))
         })?;
     let subject = body
         .get("sub")
         .and_then(serde_json::Value::as_str)
         .filter(|subject| !subject.trim().is_empty())
-        .ok_or_else(|| "userinfo response has no subject".to_string())?;
+        .ok_or_else(|| Unavailable("userinfo response has no subject".into()))?;
     let (permissions, api_expires_at) =
         match permissions::introspect_permissions(auth, metadata, access_token, subject).await? {
             Some(evidence) => (evidence.permissions, evidence.api_expires_at),
             None => (
-                permissions::PermissionEvidence::Active(permissions::permissions_claim(&body)?),
+                permissions::PermissionEvidence::Active(
+                    permissions::permissions_claim(&body).map_err(Unavailable)?,
+                ),
                 None,
             ),
         };
