@@ -1,0 +1,21 @@
+Description: Accept an already configured loopback in a fresh network namespace
+ gVisor creates the loopback address before bubblewrap configures it. Request
+ the same address idempotently; retain the namespace, address, ACK and link-up
+ operations, including every error check. No network interface is shared.
+Bug: https://github.com/google/gvisor/issues/13438
+Bug: https://github.com/containers/bubblewrap/issues/745
+--- a/network.c
++++ b/network.c
+@@ -159,8 +159,11 @@ loopback_setup (void)
+   if (r < 0)
+     die_with_error ("loopback: Failed to bind NETLINK_ROUTE socket");
+ 
++  /* Some kernels configure lo when creating the network namespace. Adding
++   * the same address must be idempotent; all other setup failures are fatal.
++   * This does not change the namespace or introduce an external interface. */
+   header = rtnl_setup_request (buffer, RTM_NEWADDR,
+-                               NLM_F_CREATE | NLM_F_EXCL | NLM_F_ACK,
++                               NLM_F_CREATE | NLM_F_ACK,
+                                sizeof (struct ifaddrmsg));
+   addmsg = NLMSG_DATA (header);
+ 
