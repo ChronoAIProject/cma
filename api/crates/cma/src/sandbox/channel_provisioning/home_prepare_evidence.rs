@@ -72,6 +72,13 @@ impl ChannelHomePrepareEvidence {
             .home_provenance
             .as_ref()
             .ok_or(AllocationError::IdentityMismatch)?;
+        self.validate_original(original)
+    }
+
+    pub fn validate_original(
+        &self,
+        original: &ChannelHomeProvenance,
+    ) -> Result<(), AllocationError> {
         if *self != Self::capture(original)? {
             return Err(AllocationError::IdentityMismatch);
         }

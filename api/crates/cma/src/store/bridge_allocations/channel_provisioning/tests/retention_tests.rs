@@ -4,6 +4,8 @@ use layer2_core::sandbox::store::{SandboxStore, SandboxWorkerStore};
 #[path = "retention_fixture.rs"]
 mod support;
 use support::*;
+#[path = "final_retention_tests.rs"]
+mod final_assessment;
 
 #[tokio::test]
 #[ignore = "requires the disposable MongoDB replica contract runner"]
