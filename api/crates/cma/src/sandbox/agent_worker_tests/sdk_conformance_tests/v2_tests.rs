@@ -145,8 +145,8 @@ impl AgentCommandAuthorizer for Authority {
         Ok(context(&self.0).caller)
     }
 }
-pub(super) fn compose(
-    harness: &Harness,
+pub(super) fn compose<S: FixtureStore>(
+    harness: &Harness<S>,
     services: AgentProjectionServices,
     context: Arc<AgentContextService>,
     worker_holder: &str,
