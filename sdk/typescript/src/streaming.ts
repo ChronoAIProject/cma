@@ -24,6 +24,7 @@ export async function* eventStream<Value>(
   decode: (response: Response, signal: AbortSignal) => AsyncIterable<Value>,
   protocol: string,
   body?: unknown,
+  extraHeaders?: Readonly<Record<string, string>>,
 ): AsyncGenerator<Value> {
   const timeoutMs = options.timeoutMs ?? config.requestTimeoutMs;
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0) {
@@ -43,7 +44,11 @@ export async function* eventStream<Value>(
   try {
     response = await raceWithAbortSignal(controller.signal, async () => {
       const requestId = await resolveRequestId(config, options.requestId);
-      const headers = await headersFor(config, { Accept: 'text/event-stream' }, { requestId });
+      const headers = await headersFor(
+        config,
+        { ...extraHeaders, Accept: 'text/event-stream' },
+        { requestId },
+      );
       throwIfSignalAborted(controller.signal);
       const received = await config.fetch(urlOf(config, path), {
         method: body === undefined ? 'GET' : 'POST',

@@ -2,6 +2,12 @@
 
 <!-- nav: 11 Reference -->
 
+`bridges` exposes `list`, `read`, `choices`, `configuration`, `create`, `update`,
+`control`, `validate`, `importKey` and `revokeKey` for bridge setup. Its explicit
+consent methods are `listInvokeGrants`, `readInvokeGrant`, `invokeReadiness`,
+`issueInvokeGrant` and `revokeInvokeGrant`. See [Bridge setup](bridges.md) for
+exact target consent, current authority, revision and cancellation semantics.
+
 `createClient(config)` returns a `Cma` with the following public resources:
 
 | Resource                                                | Methods                                                                                                                                                                                                                                           |
@@ -16,6 +22,8 @@
 | `triggerAuthoring`                                      | `list`, `read`, `create`, `save`, `delete`, `publish`, `retire`, `listRevisions`, `listPlacements`, `createPlacement`, `retirePlacement`, `embed`, `stats`                                                                                        |
 | `launches`                                              | `preview`, `createOrResume`, `read`, `list`, `start`, `cancel`, `requirements`, `events`, `stream`, `createConnection`, `readConnection`                                                                                                          |
 | `agui`                                                  | `run`, `replay`, `readCapabilities`, `readSandboxSnapshot`, `streamLaunchEvents`                                                                                                                                                                  |
+| `responsesV2`                                           | `readCapabilities`, `create`, `createForAgent`, `read`, `readConversation`, `listConversationItems`, `replay`, `observeControls`, `submitControl`, `readCommand`, `observeQueuedCancellation`, `cancelQueuedResponse`                             |
+| `agentEventsV2`                                         | `readTransportEligibility`, `snapshot`, `events` with acknowledgement after consumer success                                                                                                                                                      |
 | `responses`                                             | `createConversation`, `readConversation`, `listConversationItems`, `create`, `read`, `delete`, `cancel`                                                                                                                                           |
 | `auth`                                                  | `readSession`, `readSignupOptions`, `loginUrl`, `logoutUrl`                                                                                                                                                                                       |
 | `admin`                                                 | `listSandboxes`, `readSandbox`, `sandboxEvents`, `retireSandbox`, `listProfiles`, `retireProfile`, `readSettings`, `replaceSettings`, `patchSettings`, `resetSettings`, `pauseTriggers`, `resumeTriggers`, `readRuntimeInventory`, `listActivity` |
@@ -232,6 +240,15 @@ accepts HTTP 201 and 202 and returns a `Launch` for both. Inspect `state` and
 progress. Repeated admission with the same key returns the recorded response;
 it is not a way to refresh or advance an existing Draft.
 
+Owner Launch reads and lists expose optional `first_message_command` with
+`agent_id`, `command_id`, and `response_id` for an attached common first prompt.
+Legacy Launches and reuse with no new prompt omit it. Use the response ID with
+`responsesV2.read` or the events extension under current Agent history
+authority; reading the association never submits input or grants authority.
+Refresh with `launches.read` after an old cached admission response. Retain the
+same response when delivery is ambiguous and never infer resend permission from
+an absent association.
+
 After explicit trust review or satisfied account setup, continue that same Draft
 with `start(id, { trust_confirmed_digest, acknowledgements }, options)`. Show the
 recorded commands and environment values verbatim, and submit the exact digest
@@ -291,6 +308,9 @@ over requires a new explicit intent and new key.
 `agui.run` posts once to `/api/v1/agui/run`, and `agui.replay` reads
 `/api/v1/agui/events`. In both, `threadId` is an existing Agent id, not a new Chat
 identity. A run request supplies user messages or resolved approval interrupts.
+`AgentRunOptions.idempotencyKey` is optional; retain it with the same input for
+explicit recovery. Ordinary Working input queues a Message. `runId` remains
+correlation only, and the request/key are captured before credentials resolve.
 
 ```ts
 import { createClient, type AgentConversationEvent } from '@chronoai/cma-sdk';
@@ -384,9 +404,36 @@ use `signal` to bound the complete operation. Never resubmit a disconnected POST
 automatically. Recover with durable `read(responseId)` or the Agent history.
 
 The subset requires `conversation`, exactly one nonempty user text message, and
-`stream: true`. Optional `previous_response_id` enforces a linear prior response;
+`stream: true`. `ResponseStreamOptions.idempotencyKey` optionally retains one
+invocation for explicit recovery; existing calls stay valid. An absent/null
+`previous_response_id` requires the first turn; otherwise it enforces a linear prior response;
 `model` is accepted but cannot override the pinned Agent Profile. `store: false`,
 background execution, tools and instruction overrides are unsupported. The
 explicit `delete` and `cancel` helpers preserve the server's
 `responses_field_unsupported` problem as `ApiError`; neither operation is
 advertised as a supported Agent action.
+
+`bridges.listAllocations`, `readChildCleanup` and `requestChildCleanup` expose
+explicit child removal. `BridgeCleanupAllocationPage` has a nullable opaque
+`next_cursor`, including on empty or short filtered pages. The cleanup request
+pins both observed revisions and `remove_child`; HTTP 202 returns an immutable
+`BridgeChildCleanupReceipt` within current `BridgeChildCleanupStatus`. Retain the
+exact request and 200-character-bounded key after uncertain responses. Capacity
+is released only at `complete`, with Workspace and history retained. See
+[Bridge setup](bridges.md#explicit-child-cleanup) for consent and replay examples.
+
+### Separate owned Workspace cleanup
+
+`bridges.readWorkspaceCleanup` reads `BridgeWorkspaceCleanupStatus` for one allocation;
+`bridges.requestWorkspaceCleanup` submits the independent `BridgeWorkspaceCleanupRequest`.
+The request pins three revisions and the completed child receipt, with only
+`BridgeWorkspaceCleanupAction`'s `remove_owned_workspace` action.
+`BridgeWorkspaceCleanupReceipt`, `BridgeWorkspaceCleanupProgress`, and
+`BridgeWorkspaceCleanupHold` keep acceptance, current eligibility and permanent
+completion distinct. Both methods use the separate `workspace-cleanup` route;
+child `remove_child` retains its original Workspace-preserving scope. See
+[Bridge management](bridges.md#separate-owned-workspace-cleanup).
+
+## Source-control consent
+
+`bridges.readSourceControls(grantId, options?)` and `bridges.setSourceControls(grantId, request, command)` observe and record separate original-sender consent. Types: `BridgeSourceControlAction`, `BridgeSourceControlRequest`, `BridgeSourceControlPolicy`, `BridgeSourceControlState`, `BridgeSourceControlReceipt`, `BridgeSourceControlScope`, and `BridgeSourceControlApprovalMode`. Read absence is required null. PUT returns exactly 200. Consent never demonstrates runtime control support. See [Bridges](bridges.md) for revision bounds and exact-request recovery.

@@ -12,7 +12,7 @@ use axum::{
 use layer2_core::trigger_domain::{LaunchServiceError, PublicTriggerId, MAX_LAUNCH_EVENT_LIMIT};
 use layer2_core::{Capability, LaunchId};
 
-use crate::AuthenticatedCaller;
+use crate::{AuthenticatedCaller, AuthenticatedResourceCaller};
 
 use super::idempotency::{self, IdempotencyKey, RequestBody};
 use super::trigger_openapi_shapes::{
@@ -69,6 +69,7 @@ pub(super) async fn require_owned_launch(
 pub(super) async fn create(
     State(state): State<TriggerRoutesState>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
+    resource: Option<AuthenticatedResourceCaller>,
     Path(public_id): Path<String>,
     key: IdempotencyKey,
     body: Result<RequestBody<CreateLaunchRequest>, BodyProblem>,
@@ -97,14 +98,22 @@ pub(super) async fn create(
         Ok(permit) => permit,
         Err(error) => return guard.finish(Err(error.into_response())).await,
     };
-    let result = state
-        .launches
-        .create_or_resume(
-            &caller,
-            &PublicTriggerId(public_id),
-            body.into_domain(command_key),
-        )
-        .await;
+    let request = body.into_domain(command_key);
+    let public_id = PublicTriggerId(public_id);
+    let result = match resource {
+        Some(resource) => {
+            state
+                .launches
+                .create_or_resume_as(&resource.context, &public_id, request)
+                .await
+        }
+        None => {
+            state
+                .launches
+                .create_or_resume(&caller, &public_id, request)
+                .await
+        }
+    };
     let response = match result {
         Ok(result) => {
             permit.settle(&result);

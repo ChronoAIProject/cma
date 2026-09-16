@@ -59,7 +59,7 @@ export const conversation = object({
   metadata: dictionary(text),
 });
 export type Conversation = Output<typeof conversation>;
-export const responseObject = object({
+export const responseFields = {
   id: text,
   object: enumeration('response'),
   created_at: integer,
@@ -91,7 +91,8 @@ export const responseObject = object({
     }),
   ),
   metadata: dictionary(text),
-});
+};
+export const responseObject = object(responseFields);
 export type ResponseObject = Output<typeof responseObject>;
 
 const conversationMessage = tagged(

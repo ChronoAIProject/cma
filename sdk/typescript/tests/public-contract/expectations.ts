@@ -3,6 +3,86 @@ import type { ContractCase } from './context.js';
 import { browserOperations } from './navigation.js';
 
 export const localCodes = new Map([
+  ['bridge-workspace-cleanup-invalid-allocation', 'invalid_bridge_workspace_cleanup'],
+  ['bridge-workspace-cleanup-invalid-revision', 'invalid_bridge_workspace_cleanup'],
+  ['bridge-workspace-cleanup-invalid-workspace-revision', 'invalid_bridge_workspace_cleanup'],
+  ['bridge-workspace-cleanup-invalid-child-receipt', 'invalid_bridge_workspace_cleanup'],
+  ['bridge-workspace-cleanup-closed-body', 'invalid_json'],
+  ['bridge-workspace-cleanup-unknown-action', 'invalid_json'],
+  ['source-consent-invalid-id-get', 'invalid_bridge_source_control_request'],
+  ['source-consent-invalid-id-put', 'invalid_bridge_source_control_request'],
+  ['source-consent-invalid-expected_bridge_revision-0', 'invalid_bridge_source_control_request'],
+  [
+    'source-consent-invalid-expected_bridge_revision-9223372036854775808',
+    'invalid_bridge_source_control_request',
+  ],
+  ['source-consent-invalid-expected_grant_revision-0', 'invalid_bridge_source_control_request'],
+  ['source-consent-invalid-expected_grant_revision-3', 'invalid_bridge_source_control_request'],
+  ['source-consent-invalid-expected_policy_revision-256', 'invalid_bridge_source_control_request'],
+  ['source-consent-invalid-expected_policy_revision-255', 'invalid_bridge_source_control_request'],
+  ['source-consent-missing-field-expected_bridge_revision', 'invalid_json'],
+  ['source-consent-missing-field-expected_grant_revision', 'invalid_json'],
+  ['source-consent-missing-field-expected_policy_revision', 'invalid_json'],
+  ['source-consent-missing-field-action', 'invalid_json'],
+  ['source-consent-injected-actor', 'invalid_json'],
+  ['source-consent-injected-owner', 'invalid_json'],
+  ['source-consent-injected-scope', 'invalid_json'],
+  ['source-consent-injected-approval_mode', 'invalid_json'],
+  ['source-consent-injected-target', 'invalid_json'],
+  ['source-consent-injected-enabled', 'invalid_json'],
+  ['source-consent-unknown-action-approve', 'invalid_json'],
+  ['source-consent-unknown-action-cancel', 'invalid_json'],
+  ['source-consent-unknown-action-steer', 'invalid_json'],
+  ['source-consent-long-key', 'invalid_bridge_source_control_request'],
+
+  ['bridge-cleanup-invalid-limit', 'invalid_bridge_child_cleanup'],
+  ['bridge-cleanup-invalid-allocation', 'invalid_bridge_child_cleanup'],
+  ['bridge-cleanup-invalid-revision', 'invalid_bridge_child_cleanup'],
+  ['bridge-cleanup-closed-body', 'invalid_json'],
+  ['bridge-cleanup-unknown-action', 'invalid_json'],
+  ['queued-cancellation-v2-invalid-revision', 'invalid_queued_cancellation_request'],
+  ['queued-cancellation-v2-unknown-field', 'invalid_queued_cancellation_request'],
+  ['agent-events-v2-snapshot-invalid', 'invalid_agent_cursor'],
+  ['agent-events-v2-events-invalid', 'invalid_agent_cursor'],
+  ['response-controls-v2-unknown-body', 'invalid_control_request'],
+  ['response-controls-v2-invalid-observation', 'invalid_control_observation'],
+  ['bridge-outbox-list-invalid-limit', 'invalid_bridge_delivery_request'],
+  ['bridge-outbox-recover-unknown-field', 'invalid_json'],
+  ['bridge-outbox-recover-nested-field', 'invalid_json'],
+  ['bridge-invoke-issue-unknown-field', 'invalid_json'],
+  ['bridge-invoke-revoke-unknown-field', 'invalid_json'],
+  ['bridge-invoke-issue-missing-consent', 'invalid_json'],
+  ['bridge-invoke-list-invalid-limit', 'invalid_bridge_invoke_request'],
+  ['bridge-invoke-list-invalid-cursor', 'invalid_bridge_invoke_request'],
+  ['bridge-invoke-detail-invalid-id', 'invalid_bridge_invoke_request'],
+  ['bridge-setup-list-zero-limit', 'invalid_bridge_configuration'],
+  ['bridge-setup-create-incompatible-context', 'invalid_bridge_configuration'],
+  ['channel-inventory-invalid-active', 'invalid_instance_query'],
+  ['channel-inventory-invalid-history', 'invalid_instance_query'],
+  ['channel-usage-zero-limit', 'invalid_query'],
+  ['channel-usage-large-limit', 'invalid_query'],
+  ['channel-usage-invalid-cursor', 'invalid_query'],
+  ['artifact-invalid-name', 'invalid_artifact_request'],
+  ['artifact-invalid-media_type', 'invalid_artifact_request'],
+  ['artifact-invalid-content_base64', 'invalid_artifact_request'],
+  ['artifact-zero-limit', 'invalid_artifact_request'],
+  ['artifact-large-limit', 'invalid_artifact_request'],
+  ['artifact-invalid-cursor', 'invalid_artifact_request'],
+  ['shared-sandbox-inventory-mixed-scope', 'invalid_query'],
+  ['shared-sandbox-inventory-invalid-shared', 'invalid_query'],
+  ['sandbox-command-invalid-revision', 'invalid_sandbox_command'],
+  ['creation-inventory-invalid-category', 'invalid_instance_query'],
+  ['responses-v2-field-stream', 'stream_required'],
+  ['responses-v2-field-previous_response_id', 'conversation_previous_response_conflict'],
+  ['responses-v2-field-tools', 'responses_field_unsupported'],
+  ['responses-v2-field-store', 'store_required'],
+  ['responses-v2-field-metadata', 'invalid_metadata'],
+  ['responses-v2-field-input', 'invalid_response_input'],
+  ['responses-v2-field-conversation', 'invalid_conversation'],
+  ['responses-v2-alias-mismatch', 'conversation_alias_mismatch'],
+  ['responses-v2-items-limit', 'invalid_items_limit'],
+  ['responses-v2-items-order', 'invalid_items_order'],
+  ['sandbox-inventory-status-invalid', 'invalid_query'],
   ['authoring-skills-limit-zero', 'invalid_profile_authoring_query'],
   ['authoring-skills-limit-overflow', 'invalid_profile_authoring_query'],
   ['authoring-skills-limit-too-large', 'invalid_profile_authoring_query'],
@@ -46,19 +126,33 @@ export const localCodes = new Map([
 ]);
 
 const protectedQueries = new Map([
+  ['queued-cancellation-v2-query-observe', ['unexpected']],
+  ['queued-cancellation-v2-query-submit', ['unexpected']],
+  ['agent-events-v2-snapshot-query', ['unknown']],
+  ['agent-events-v2-events-query', ['unknown']],
+  ['agent-events-v2-snapshot-duplicate', ['page_cursor']],
+  ['agent-events-v2-events-duplicate', ['after_cursor']],
+  ['response-controls-v2-observe-query', ['unexpected']],
+  ['response-controls-v2-status-query', ['unexpected']],
+  ['bridge-setup-list-unknown-query', ['unexpected']],
+  ['bridge-setup-capabilities-invalid-query', ['unexpected']],
+  ['creation-inventory-invalid-creator', ['created_by']],
+  ['responses-v2-retrieve-query', ['stream']],
+  ['sandbox-inventory-invalid-owner', ['owner']],
   ['agui-invalid-replay-query', ['unexpected']],
   ['responses-items-bad-query', ['unknown']],
   ['responses-read-bad-query', ['unknown']],
   ['responses-read-stream-refused', ['stream']],
   ['triggers-embed-invalid-query', ['extra']],
   ['launch-error-stream-invalid-query', ['unknown']],
+  ['org-inventory-invalid-authority-injection', ['owner']],
 ]);
 
 export function expectation(
   fixture: ContractCase,
 ): 'wire' | 'preflight-validation' | 'serializer-protection' | 'browser-only' | 'raw-wire-only' {
   if (browserOperations.has(fixture.operation)) return 'browser-only';
-  const body = fixture.response.body as Record<string, unknown>;
+  const body = problemBody(fixture);
   if (['authoring-skills-unknown-query', 'authoring-skills-duplicate-query'].includes(fixture.id)) {
     assert.equal(fixture.operation, 'GET /api/v1/profile-authoring/skills');
     assert.equal(body.code, 'invalid_profile_authoring_query');
@@ -148,6 +242,10 @@ export function expectation(
   }
   if (protectedQueries.has(fixture.id)) {
     const url = new URL(fixture.request.path, 'https://contract.example');
+    if (fixture.id.startsWith('agent-events-v2-') && fixture.id.endsWith('-duplicate')) {
+      const key = protectedQueries.get(fixture.id)![0]!;
+      assert.equal(url.searchParams.getAll(key).length, 2);
+    }
     for (const key of protectedQueries.get(fixture.id)!) assert(url.searchParams.has(key));
     assert(fixture.response.status >= 400);
     return 'serializer-protection';
@@ -235,4 +333,24 @@ export function expectedProjection(fixture: ContractCase): unknown {
     return detail ? { ...body, sandbox: projected } : projected;
   }
   return fixture.response.body;
+}
+
+/** Both public error envelopes retain their exact machine code and extensions. */
+export function problemBody(fixture: ContractCase): Record<string, unknown> {
+  const body = fixture.response.body as Record<string, unknown>;
+  return fixture.operation.includes('/api/v2') &&
+    fixture.response.status >= 400 &&
+    body.error !== undefined
+    ? (body.error as Record<string, unknown>)
+    : body;
+}
+export function problemExtensions(fixture: ContractCase): Record<string, unknown> {
+  const body = problemBody(fixture);
+  if ((fixture.response.body as Record<string, unknown>).error !== undefined)
+    return { type: body.type, param: body.param };
+  return Object.fromEntries(
+    Object.entries(body).filter(
+      ([key]) => !['type', 'title', 'status', 'detail', 'instance', 'code'].includes(key),
+    ),
+  );
 }

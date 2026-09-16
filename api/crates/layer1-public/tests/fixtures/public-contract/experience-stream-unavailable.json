@@ -19,140 +19,26 @@
         }
       },
       "response": {
-        "status": 200,
+        "status": 503,
         "headers": {
-          "cache-control": "no-cache, no-store",
-          "content-type": "text/event-stream",
-          "x-accel-buffering": "no"
+          "content-type": "application/problem+json",
+          "x-cma-command-id": "cmd_contract_responses_create_durable_read_unavailable",
+          "x-cma-response-id": "resp_contract_responses_create_durable_read_unavailable"
         },
-        "body": [
-          {
-            "event": "response.created",
-            "data": {
-              "response": {
-                "id": "resp_agt_contract_12",
-                "object": "response",
-                "created_at": 0,
-                "status": "in_progress",
-                "background": false,
-                "error": null,
-                "incomplete_details": null,
-                "instructions": null,
-                "max_output_tokens": null,
-                "model": "gpt-proof",
-                "output": [],
-                "parallel_tool_calls": false,
-                "previous_response_id": null,
-                "reasoning": {
-                  "effort": null,
-                  "summary": null
-                },
-                "store": true,
-                "temperature": null,
-                "text": {
-                  "format": {
-                    "type": "text"
-                  },
-                  "verbosity": "medium"
-                },
-                "tool_choice": "none",
-                "tools": [],
-                "top_p": null,
-                "truncation": "disabled",
-                "usage": null,
-                "metadata": {}
-              },
-              "type": "response.created",
-              "sequence_number": 0
-            }
-          },
-          {
-            "event": "response.in_progress",
-            "data": {
-              "response": {
-                "id": "resp_agt_contract_12",
-                "object": "response",
-                "created_at": 0,
-                "status": "in_progress",
-                "background": false,
-                "error": null,
-                "incomplete_details": null,
-                "instructions": null,
-                "max_output_tokens": null,
-                "model": "gpt-proof",
-                "output": [],
-                "parallel_tool_calls": false,
-                "previous_response_id": null,
-                "reasoning": {
-                  "effort": null,
-                  "summary": null
-                },
-                "store": true,
-                "temperature": null,
-                "text": {
-                  "format": {
-                    "type": "text"
-                  },
-                  "verbosity": "medium"
-                },
-                "tool_choice": "none",
-                "tools": [],
-                "top_p": null,
-                "truncation": "disabled",
-                "usage": null,
-                "metadata": {}
-              },
-              "type": "response.in_progress",
-              "sequence_number": 1
-            }
-          },
-          {
-            "event": "response.failed",
-            "data": {
-              "response": {
-                "id": "resp_agt_contract_12",
-                "object": "response",
-                "created_at": 0,
-                "status": "failed",
-                "background": false,
-                "error": {
-                  "code": "response_unavailable",
-                  "message": "The durable response could not be read."
-                },
-                "incomplete_details": null,
-                "instructions": null,
-                "max_output_tokens": null,
-                "model": "gpt-proof",
-                "output": [],
-                "parallel_tool_calls": false,
-                "previous_response_id": null,
-                "reasoning": {
-                  "effort": null,
-                  "summary": null
-                },
-                "store": true,
-                "temperature": null,
-                "text": {
-                  "format": {
-                    "type": "text"
-                  },
-                  "verbosity": "medium"
-                },
-                "tool_choice": "none",
-                "tools": [],
-                "top_p": null,
-                "truncation": "disabled",
-                "usage": null,
-                "metadata": {}
-              },
-              "type": "response.failed",
-              "sequence_number": 2
-            }
-          }
-        ],
-        "bodyKind": "sse"
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/instance-service-unavailable",
+          "title": "instance service unavailable",
+          "status": 503,
+          "detail": "An instance dependency could not complete this request.",
+          "code": "instance_service_unavailable"
+        },
+        "bodyKind": "json"
       },
-      "captures": {}
+      "captures": {},
+      "headerCaptures": {
+        "responses_create_durable_read_unavailable_command": "x-cma-command-id",
+        "responses_create_durable_read_unavailable_response": "x-cma-response-id"
+      }
     }
   ]
 }

@@ -1,9 +1,10 @@
 # AG-UI Interface
 
 AG-UI is CMA's primary live conversation interface. `threadId` identifies an
-existing caller-owned Agent, never a Sandbox, Workspace, Launch or a separately
+existing Agent, never a Sandbox, Workspace, Launch or a separately
 created Chat. Provision and manage those resources through [REST](API_REST.md).
-The same authentication and ownership rules apply to streaming requests.
+Replay/follow supports current organization ownership and sharing grants. Run
+admission and the companion routes retain their documented personal scope.
 
 ## Routes
 
@@ -25,6 +26,7 @@ terminal capabilities, WebSocket transport and snapshot events are absent.
 POST /api/v1/agui/run
 Content-Type: application/json
 Accept: text/event-stream
+Idempotency-Key: retained-run-1
 
 {
   "threadId": "agt_example",
@@ -38,13 +40,36 @@ bytes. It is **not an idempotency key**, is not the durable turn id and does not
 make a repeated POST safe. Output `runId` is the server's durable turn sequence
 as a string. `messages` supplies the last user text, not a replacement history;
 CMA retains prior history itself. Empty input without an approval is refused.
-When the Agent is already working, user input is a steer operation.
+Ordinary input always reserves a Message in the common command queue. Input
+submitted while the Agent is Working waits for a later turn. Use the explicit
+public control operations when steering the current turn is intended.
 
-CMA checks owner access and waits for an input-ready context, including Sandbox
-revival where needed, before opening the stream. A failed admission returns a
-normal typed HTTP problem. Once admission starts, loss of the HTTP connection
-does not cancel it. Do not automatically repeat a run POST after a timeout or
-lost response. Recover by reading the Agent and its durable events.
+CMA checks personal owner access and current credential authority, reserves a
+common durable receipt, and lets the worker own readiness, checkpoint waits,
+revival and dispatch. The stream opens only after that exact command has a
+durable turn binding. It starts at its own turn even when other turns finished
+while it waited. Disconnecting during admission or observation does not cancel
+accepted work.
+
+One optional `Idempotency-Key` accepts 1–256 bytes without control characters.
+Retain the key with the same selected input or approval decision before sending.
+Equivalent canonical intent and the same key share the existing authority,
+Agent and command-kind namespace with the other common interfaces; differing
+intent conflicts. A keyed retry reopens the same turn under current authority.
+Omitting the key creates a separate immutable key for that HTTP invocation;
+separate unkeyed attempts are separate commands, even if `runId` and text match.
+
+Responses include `x-cma-command-id` and, for Message commands,
+`x-cma-response-id`. These common IDs never replace the turn-derived `runId`.
+The same headers accompany a prebinding error when the receipt is known.
+`GET /api/v2/commands/{command_id}` observes the common command. After ten minutes
+without an observed binding, `504 agent_command_observation_timeout` describes
+uncertainty; it does not fail or cancel the accepted command. Committed queue
+expiry instead returns `agent_command_queue_timeout`. Other committed unbound
+refusals use typed authority, resource, target or execution problems, without
+inventing `RUN_STARTED` or a terminal runtime event. Recover an uncertain keyed
+POST with the same input/key, or read retained Agent events. The SDK never
+resubmits automatically.
 
 ## Approval Answers
 
@@ -68,7 +93,10 @@ At most one resume is accepted. Decisions are `allow`, `deny` or `abort`.
 Missing/unknown decisions and a status other than `resolved` are conservative
 denials. Do not submit both a message and an approval expecting two operations:
 when a resume exists it selects the approval path. Approval resolution removes
-the entry from `/pendingApprovals/<escaped-id>`.
+the entry from `/pendingApprovals/<escaped-id>`. Its common receipt binds to the
+original target turn and creates no new Message response. The resumed stream
+starts at that approval command's exact dispatch boundary, preserving events
+that followed it while excluding earlier unrelated approval activity.
 
 Explicit interruption is `POST /api/v1/agents/{id}/interrupt` through REST with
 its required idempotency key. Closing a stream is not interruption.
@@ -148,6 +176,32 @@ reconnection attempts and callback delivery, resumes only acknowledged durable
 progress, and accepts cancellation via `AbortSignal`. See the SDK reference for
 its exact option names and error classes. The web client uses this same public
 binding, with no private conversation transport.
+
+## Organization And Shared Replay
+
+`GET /api/v1/agui/events` requires current Agent history access. A narrow Agent
+view grant permits only that Agent's events. It supplies no sibling, parent,
+file, terminal or command access. Personal-owner replay keeps its existing frames.
+Other readers receive the approved history projection: sign-in URLs/codes,
+private correlation metadata, native conversation identifiers, configuration,
+available commands and first-message internals are withheld. Runtime failure
+messages are sanitized. A withheld durable record emits `STATE_DELTA` with an
+empty `delta` array, its timestamp and its final cursor; apply no state change
+and acknowledge that cursor normally. Live fragments have no durable cursor and
+must still match the Agent, runtime generation, active turn and committed log.
+
+The server checks current resource policy immediately before releasing each
+buffered frame. Grant changes close the shared connection; a new GET evaluates
+remaining grants. Membership evidence is bound to the exact authenticated
+credential and expires within 60 seconds, including idle time and store IO.
+The connection closes at expiry and stores no renewable request credential.
+Reconnect from the last fully acknowledged durable cursor to obtain fresh
+membership evidence. Removal, unknown roles or provider failures cannot extend
+the old connection. An authorization failure before headers is a typed HTTP
+problem; a failure after streaming starts ends observation without an Agent
+failure event. The TypeScript replay client can reconnect within its configured
+bounds; Rust callers reconnect explicitly. Personal-owner streams remain usable
+when recipient grants change or the organization provider is unavailable.
 
 ## Read-Only Companions
 

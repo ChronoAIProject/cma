@@ -5,17 +5,21 @@ pub(in super::super) async fn snapshot_launch(
     id: &LaunchId,
     session: &mut ClientSession,
 ) -> Result<Option<StoredLaunch>, LaunchStoreError> {
-    store
+    let mut result = store
         .launch_data
         .launches
         .find_one(doc! { "_id": id.as_str() })
         .read_concern(ReadConcern::snapshot())
-        .session(session)
+        .session(&mut *session)
         .await
         .map_err(unavailable)?
         .as_ref()
         .map(read_launch)
-        .transpose()
+        .transpose()?;
+    if let Some(stored) = &mut result {
+        input_protocol::verify_snapshot(store, &mut stored.launch, session).await?;
+    }
+    Ok(result)
 }
 
 pub(in super::super) async fn snapshot_owned_launch(
@@ -29,13 +33,14 @@ pub(in super::super) async fn snapshot_owned_launch(
         .launches
         .find_one(doc! { "_id": id.as_str(), "owner": owner.as_str() })
         .read_concern(ReadConcern::snapshot())
-        .session(session)
+        .session(&mut *session)
         .await
         .map_err(unavailable)?;
     let Some(document) = document else {
         return Ok(None);
     };
-    let launch = read_launch(&document)?.launch;
+    let mut launch = read_launch(&document)?.launch;
+    input_protocol::verify_snapshot(store, &mut launch, session).await?;
     if &launch.id != id || &launch.owner != owner {
         return Err(corrupt("owned Launch snapshot crossed its boundary"));
     }

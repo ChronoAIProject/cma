@@ -21,7 +21,12 @@ use crate::sandbox::{
 
 use super::InMemorySandboxStore;
 
+mod channel_usage;
 mod creation_revival;
+mod provenance;
+mod provenance_backfill;
+mod provenance_inventory;
+mod sandbox_controls_tests;
 
 pub(super) const NOW: &str = "2026-09-05T00:00:00Z";
 
@@ -127,6 +132,7 @@ fn profile() -> AgentProfileSnapshot {
 
 pub(super) fn admission(key: &str) -> AgentAdmission {
     AgentAdmission {
+        created_by: None,
         owner: SubjectId::new("owner"),
         workspace_id: WorkspaceId("wks_agent_admission".into()),
         agent_id: AgentId::generate(),

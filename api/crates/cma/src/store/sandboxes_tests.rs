@@ -253,6 +253,7 @@ async fn save_generation_successor(
     if transactional {
         store
             .commit(SandboxTransaction::SaveSandboxAndAppend {
+                command_revival: None,
                 expected_revision,
                 sandbox: Box::new(sandbox),
                 event_at: NOW.into(),

@@ -145,6 +145,17 @@ pub struct Confirmation {
     pub confirmed_at: String,
 }
 
+/// Immutable association to an admitted Trigger first-message response.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct FirstMessageCommand {
+    /// Existing Agent conversation identity.
+    pub agent_id: String,
+    /// Common command identity for authorized status reads.
+    pub command_id: String,
+    /// The one admitted response; reading it does not resend input.
+    pub response_id: String,
+}
+
 /// Complete owner-only Launch document.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct Launch {
@@ -174,6 +185,8 @@ pub struct Launch {
     pub trust: Trust,
     /// First-message delivery state.
     pub first_message: FirstMessageDelivery,
+    /// Omitted for legacy launches and reuse that attached no prompt.
+    pub first_message_command: Option<FirstMessageCommand>,
     /// Recorded explicit confirmations.
     pub confirmations: Vec<Confirmation>,
     /// Current orchestration blocker.

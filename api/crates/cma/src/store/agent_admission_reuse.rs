@@ -1,11 +1,27 @@
 use super::*;
 
+#[cfg(test)]
+pub(in crate::store) async fn reuse_profile_agent_in_snapshot(
+    store: &MongoSandboxStore,
+    admission: &AgentAdmission,
+    workspace: &layer2_core::sandbox::Workspace,
+    sandbox: &layer2_core::sandbox::Sandbox,
+    session: &mut mongodb::ClientSession,
+) -> Result<(), mongodb::error::Error> {
+    match reuse_profile_agent(store, admission, workspace, sandbox, true, None, session).await {
+        Ok(_) => Ok(()),
+        Err(ApplyError::Driver(error)) => Err(error),
+        Err(_) => panic!("unexpected non-driver candidate failure"),
+    }
+}
+
 pub(super) async fn reuse_profile_agent(
     store: &MongoSandboxStore,
     admission: &AgentAdmission,
     workspace: &layer2_core::sandbox::Workspace,
     sandbox: &layer2_core::sandbox::Sandbox,
     reuse_existing: bool,
+    common_launch: Option<&layer2_core::trigger_domain::Launch>,
     session: &mut mongodb::ClientSession,
 ) -> Result<Option<layer2_core::sandbox::store::AgentCreation>, ApplyError> {
     use super::super::agents::{agent_replacement_fields, read_agent};
@@ -17,6 +33,20 @@ pub(super) async fn reuse_profile_agent(
     {
         return Ok(None);
     }
+    let open = store
+        .workspaces
+        .update_one(
+            doc! {"_id":workspace.id.as_str(),"revision":workspace.revision as i64,
+            "channel_reuse_cleanup_execution":{"$exists":false},
+            "owned_workspace_cleanup_admission_v1":{"$exists":false}},
+            doc! {"$inc":{"owned_workspace_admission_fence":1_i64}},
+        )
+        .session(&mut *session)
+        .await
+        .map_err(ApplyError::Driver)?;
+    if open.matched_count != 1 {
+        return Err(ApplyError::Domain(SandboxStoreError::WorkspaceNotReady));
+    }
     let mut query = doc! {
         "owner": admission.owner.as_str(),
         "workspace_id": workspace.id.as_str(),
@@ -24,6 +54,7 @@ pub(super) async fn reuse_profile_agent(
         "record.profile.digest": &admission.profile.digest,
         "status": { "$in": LIVE_STATUSES },
         "record.requested_stop_reason": { "$exists": false },
+        "channel_reuse_cleanup_admission": { "$exists": false },
     };
     if prepared_only {
         query.insert("record.origin.type", "workspace_profile");
@@ -57,6 +88,23 @@ pub(super) async fn reuse_profile_agent(
     let mut agent = read_agent(&document).map_err(ApplyError::Domain)?;
     if !admission.can_reuse(&agent, workspace, reuse_existing) {
         return Ok(None);
+    }
+    // Selection always writes the actual candidate, including reuse that only
+    // binds a creation key and adds no first prompt. Closure must serialize
+    // with this transaction before the binding can commit.
+    let changed = store
+        .agents
+        .update_one(
+            doc! {"_id":agent.id.as_str(),"revision":signed(agent.revision,"Agent revision")
+            .map_err(|error| ApplyError::Domain(SandboxStoreError::Corrupt(error)))?,
+            "channel_reuse_cleanup_admission":{"$exists":false}},
+            doc! {"$inc":{"agent_reuse_admission_fence":1_i64}},
+        )
+        .session(&mut *session)
+        .await
+        .map_err(ApplyError::Driver)?;
+    if changed.matched_count != 1 {
+        return Err(ApplyError::Domain(SandboxStoreError::Conflict));
     }
     if prepared_only
         && store
@@ -94,10 +142,20 @@ pub(super) async fn reuse_profile_agent(
     if prepared_only && has_input {
         return Ok(None);
     }
+    if common_launch.is_some() {
+        has_input |= store
+            .agent_commands
+            .find_one(doc! {"agent_id":agent.id.as_str()})
+            .session(&mut *session)
+            .await
+            .map_err(ApplyError::Driver)?
+            .is_some();
+    }
     let prior_revision = agent.revision;
     let kind = admission
         .initialize_reused_agent(&mut agent, has_input)
         .map_err(ApplyError::Domain)?;
+    let attached_first = kind.is_some();
     if let Some(kind) = kind {
         let log = layer2_core::sandbox::AgentLogEntry {
             agent_id: agent.id.clone(),
@@ -160,6 +218,15 @@ pub(super) async fn reuse_profile_agent(
                 event,
             )
             .await?;
+        }
+    }
+    if attached_first {
+        if let Some(launch) = common_launch {
+            super::super::trigger_first_messages::attach(
+                store, launch, admission, &mut agent, session,
+            )
+            .await
+            .map_err(ApplyError::from)?;
         }
     }
     let worktree = store

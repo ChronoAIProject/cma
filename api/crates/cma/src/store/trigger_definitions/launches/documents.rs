@@ -26,7 +26,7 @@ pub(super) fn launch_document(
 ) -> Result<Document, LaunchStoreError> {
     launch.validate()?;
     let lease = launch.work.lease.as_ref();
-    Ok(doc! {
+    let mut document = doc! {
         "_id": launch.id.as_str(),
         "document_schema_version": DOCUMENT_SCHEMA_VERSION,
         "owner": launch.owner.as_str(),
@@ -50,12 +50,43 @@ pub(super) fn launch_document(
         "revision": storage_integer(launch.revision, "Launch revision")?,
         "mutation_version": storage_integer(mutation_version, "Launch mutation version")?,
         "record": encode(launch)?,
-    })
+    };
+    if let Some(initiation) = &launch.initiation {
+        document.insert("launch_initiation", encode(initiation)?);
+    }
+    if let Some(protocol) = &launch.input_protocol {
+        document.insert("trigger_input_protocol", encode(protocol)?);
+    }
+    if let Some(binding) = &launch.input_binding_sha256 {
+        document.insert("trigger_input_binding_sha256", binding);
+    }
+    Ok(document)
 }
 
 pub(super) fn read_launch(document: &Document) -> Result<StoredLaunch, LaunchStoreError> {
     require_version(document).map_err(corrupt)?;
-    let launch: Launch = read_record(document).map_err(corrupt)?;
+    let mut launch: Launch = read_record(document).map_err(corrupt)?;
+    launch.initiation = document
+        .get("launch_initiation")
+        .map(|value| {
+            mongodb::bson::deserialize_from_bson(value.clone())
+                .map_err(|error| corrupt(error.to_string()))
+        })
+        .transpose()?;
+    launch.input_protocol = document
+        .get("trigger_input_protocol")
+        .map(|value| {
+            mongodb::bson::deserialize_from_bson(value.clone())
+                .map_err(|error| corrupt(error.to_string()))
+        })
+        .transpose()?;
+    launch.input_binding_sha256 = document
+        .get("trigger_input_binding_sha256")
+        .map(|value| {
+            mongodb::bson::deserialize_from_bson(value.clone())
+                .map_err(|error| corrupt(error.to_string()))
+        })
+        .transpose()?;
     launch
         .validate()
         .map_err(|error| corrupt(error.to_string()))?;

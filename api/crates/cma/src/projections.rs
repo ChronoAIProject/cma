@@ -13,14 +13,33 @@ use layer2_core::sandbox::{
 };
 use layer2_core::{OperationStore, RuntimeCapabilities};
 use layer3_adapter::{AdapterError, RuntimeHandle, SandboxAdapter};
+#[path = "projections/agent_v2.rs"]
+mod agent_v2;
 
 pub(crate) struct AgentProjectionServices {
+    commands: Option<Arc<layer2_core::sandbox::agent_io::AgentCommandService>>,
     agents: Arc<AgentService>,
     operations: Arc<AgentOperationService>,
     reads: Arc<AgentReadService>,
 }
 
 impl AgentProjectionServices {
+    pub(crate) fn with_commands(
+        mut self,
+        commands: Arc<layer2_core::sandbox::agent_io::AgentCommandService>,
+    ) -> Self {
+        self.commands = Some(commands);
+        self
+    }
+
+    pub(crate) fn with_resource_access(
+        mut self,
+        access: Arc<layer2_core::resource_access::ResourceAccessService>,
+    ) -> Self {
+        self.reads = self.reads.with_resource_access(access);
+        self
+    }
+
     pub(crate) fn with_connections(
         mut self,
         connections: Arc<dyn layer2_core::sandbox::SandboxCredentialPrerequisite>,
@@ -52,6 +71,7 @@ impl AgentProjectionServices {
         let reads = AgentReadService::new(store.clone(), resources);
         let operations = AgentOperationService::new(store, runtimes);
         Self {
+            commands: None,
             agents,
             operations,
             reads,
@@ -77,6 +97,10 @@ impl AgentProjectionServices {
             Arc::clone(&self.operations),
             operation_records,
         );
+        let agent_routes = match &self.commands {
+            Some(commands) => agent_routes.with_commands(commands.clone()),
+            None => agent_routes,
+        };
         Router::new()
             .merge(agent_router(agent_routes))
             .merge(layer1_public::pty::router(self.reads.clone()))
@@ -93,6 +117,10 @@ impl AgentProjectionServices {
             context,
         )
         .with_updates(updates);
+        let state = match &self.commands {
+            Some(commands) => state.with_commands(commands.clone()),
+            None => state,
+        };
         layer1_public::agui::router(state.clone())
             .merge(layer1_public::responses::router(state))
             .merge(layer1_public::mcp::router())

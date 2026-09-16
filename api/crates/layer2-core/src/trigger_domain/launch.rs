@@ -208,6 +208,17 @@ pub struct LaunchSeed {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Launch {
+    /// Stored beside the legacy aggregate; never accepted from public JSON.
+    #[serde(skip)]
+    pub initiation: Option<super::LaunchInitiation>,
+    /// Persisted sidecar, never accepted from a serialized legacy aggregate.
+    #[serde(skip)]
+    pub input_protocol: Option<super::LaunchInputProtocol>,
+    #[serde(skip)]
+    pub input_binding_sha256: Option<String>,
+    /// Read projection derived from the verified permanent binding in the same snapshot.
+    #[serde(skip)]
+    pub first_message_command: Option<super::LaunchFirstMessageCommand>,
     pub id: LaunchId,
     pub trigger_id: TriggerId,
     pub revision_digest: String,

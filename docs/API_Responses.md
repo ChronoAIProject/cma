@@ -2,6 +2,286 @@
 
 **Priority 2 - for chat clients and OpenAI-compatible SDKs.**
 
+The canonical contract for new clients is `/api/v2`. It accepts an existing
+Agent as `conversation` on every turn and admits input to a durable command
+ledger before opening SSE. Existing `/api/v1` clients keep their original
+conversation creation, predecessor and turn-derived response identity rules.
+Legacy response POSTs also enter common durable command admission. The v1 contract below continues
+to apply to those routes; changing a client's base URL requires adopting the
+v2 rules in this section.
+
+## Responses v2
+
+All v2 endpoints belong to the control plane. No Responses server runs inside
+an Agent Sandbox. Creation requires a current authenticated credential in CMA's
+durable custody, bound to the requesting sign-in incarnation. Current history
+authorization is sufficient for reads, even when the command's original execution
+credential has been revoked. Personal owners and currently authorized human
+administrators can admit commands to shared or organization-owned Agents using
+their own retained credentials. View grants and member/viewer roles permit
+history without interaction. Before deferred execution the worker checks current
+membership, resource policy and the original sign-in custody again. Sandbox
+revival additionally requires independent `manage_sandbox` authority and uses
+the resource owner's connections. Organization resource creation and credential
+provisioning remain separate capabilities under development.
+
+| Method and route | Behavior |
+|---|---|
+| `GET /api/v2` | Discover the supported subset, replay extension and companion stream |
+| `POST /api/v2/responses` | Admit text input for `conversation=AgentId`; require `stream=true` |
+| `POST /api/v2/agents/{agent_id}/responses` | Same admission, receipt and events; optional `conversation` must match the URL |
+| `GET /api/v2/responses/{response_id}` | Retrieve a queued, active or terminal durable response as JSON |
+| `GET /api/v2/responses/{response_id}/events` | CMA extension: replay and follow deterministic durable Responses events |
+| `GET /api/v2/conversations/{conversation_id}` | Read the existing Agent as a conversation, with empty metadata |
+| `GET /api/v2/conversations/{conversation_id}/items` | Read standard user/assistant message items under current history authority |
+| `GET /api/v2/agents/{agent_id}/responses/{response_id}/controls` | CMA extension: observe the bound response turn, Agent revision and runtime control support |
+| `POST /api/v2/agents/{agent_id}/responses/{response_id}/controls` | CMA extension: durably request cancellation, steering or approval resolution for that exact turn |
+| `GET /api/v2/agents/{agent_id}/responses/{response_id}/queued-cancellation` | CMA extension: observe the exact unbound source command revision and cancellation eligibility under current operation authority |
+| `POST /api/v2/agents/{agent_id}/responses/{response_id}/queued-cancellation` | CMA extension: atomically cancel that unbound source and retain a completed cancellation receipt |
+| `GET /api/v2/commands/{command_id}` | CMA extension: poll a safe durable command receipt and delivery state |
+
+Creating conversations, stateless Agent auto-creation, response deletion and
+the standard OpenAI cancellation endpoint are outside v2. Select an existing Agent using CMA's
+resource APIs. A conversation ID can be a string or `{ "id": "agt_..." }`.
+The model pinned in the Agent Profile remains authoritative.
+
+| Request field | V2 policy |
+|---|---|
+| `conversation` | Required on the canonical route; an existing authorized Agent |
+| `input` | Required nonempty text, or one user message with string content or one or more `input_text` parts; adjacent text parts canonicalize |
+| `stream` | Literal `true` required; absent/false returns `stream_required` |
+| `model` | Optional nonempty string; mismatch returns `model_mismatch` |
+| `metadata` | Optional object/null; 16 string pairs, 64 characters per key, 512 per value; visible only to the personal owner |
+| `store` | Omitted or literal `true`; data is retained under Agent history policy |
+| `previous_response_id` | Omitted/null only; predecessor continuation is unsupported; combining a nonnull predecessor with conversation returns `conversation_previous_response_conflict` |
+| `instructions`, `reasoning`, `tools`, `tool_choice` | Refused by name; execution configuration belongs to the pinned profile |
+| `background`, `include`, `stream_options`, sampling fields, file/media parts, all other fields | Unsupported; named validation refusal |
+
+Use the `Idempotency-Key` header for retry recovery. It allows 1–256 bytes without
+control characters. The scope includes the actual custody authority, Agent and
+command kind. Equivalent retries return the original command/response identity;
+changed input or metadata returns `409 agent_command_key_conflict`. If the header
+is absent, the server creates a fresh key. A client that loses that first reply
+must have supplied its own stable key to recover by retry.
+
+A `200 text/event-stream` handshake identifies a durably admitted response through
+`X-CMA-Response-ID` and `X-CMA-Command-ID`. The response ID is opaque and retained
+from admission onward; it is not derived from a not-yet-assigned turn. An Agent
+can be queued, busy, paused or reviving. Server-owned execution continues after a
+stream disconnect. The queue holds at most 64 waiting commands, with a five-minute
+admission deadline. Queue expiry or lost execution authority produces a durable
+failed response. A lost reply does not revoke already-admitted work.
+
+| Event | V2 behavior |
+|---|---|
+| `response.created` | Exactly once in a full replay; stable ID, creation time and initial queued status |
+| `response.in_progress` | Once execution is bound to a durable turn |
+| `response.output_item.added`, `response.output_item.done` | Standard assistant message items with stable indexes and IDs |
+| `response.content_part.added`, `response.content_part.done` | Standard `output_text` parts |
+| `response.output_text.delta`, `response.output_text.done` | Text emitted at durable message commit boundaries; done contains the complete text |
+| `response.completed`, `response.failed`, `response.incomplete` | Terminal projection from durable command/turn state |
+| `error` | Observation failure after headers; does not change the command's durable outcome |
+
+This version streams committed messages, not transient provider token fragments.
+Tool activity, reasoning fragments, approval and steer details stay in the
+separately authorized AG-UI companion discovered by `GET /api/v2`; v2 does not
+mislabel them as standard output items. `GET` and terminal SSE output agree on
+response IDs, item IDs, metadata, text and usage. `previous_response_id` in v2
+response objects is null because the primary mode uses conversation identity.
+
+The replay extension accepts `starting_after=<sequence_number>` or `Last-Event-ID`.
+Both, when supplied, must agree. Sequence numbers and SSE `id` values start at zero
+and are deterministic for durable events, independent of aliases or reconnects.
+Unknown/future cursors are refused. Connection `error` events have no SSE `id`, so
+an observation failure cannot skip future durable output on reconnect. Standard
+response retrieval accepts no stream/include/replay query parameters.
+
+Streams retain opaque, nonrenewing authorization, with no request credential.
+Every buffered frame passes a current policy check before release. Membership
+expiry or revocation ends observation; reconnect obtains fresh current authority.
+Shared response metadata is empty, private events are omitted, and private runtime
+failure text is sanitized. Conversation items accept `limit=1..100`, `order=asc|desc`
+(default desc), and one of `after` or `before`, scoped to that conversation.
+
+Before SSE, v2 route errors have JSON `{ "error": { "type", "code", "message", "param" } }`.
+Malformed JSON returns 400; missing authentication 401; unsupported fields 422;
+current visible interaction refusal 403; missing/inaccessible IDs the same 404;
+key/resource conflicts 409; full queues 429; unavailable authority/storage 503.
+429 and 503 route responses include `Retry-After: 1`. Deployment-wide middleware
+authentication/dependency failures and limits retain the shared REST problem
+envelope; both CMA SDKs accept both error shapes. After headers, a connection error instructs
+the client to retrieve/reconnect; only durable execution failures emit `response.failed`.
+
+### CMA response controls
+
+Observe `/api/v2/agents/{agent_id}/responses/{response_id}/controls` before forming
+a new control intent. The response contains the safe source command view,
+`agent_revision`, optional `target` (`response_id` and `turn_sequence`),
+`target_active`, and `runtime_support` booleans for `cancel`, `steer` and
+`resolve_approval`. A queued response has `target: null`; these controls require
+a turn already bound by durable dispatch. Runtime support describes an observation,
+not the caller's permission or a guarantee that an approval remains pending.
+
+POST to the same path with exactly one retained `Idempotency-Key` and strict JSON:
+
+```json
+{
+  "turn_sequence": 42,
+  "expected_agent_revision": 17,
+  "command": { "type": "cancel" }
+}
+```
+
+Use the observed Agent aggregate revision, not the nested Agent Profile revision.
+Other commands are `{ "type": "steer", "text": "Check this first" }` and
+`{ "type": "resolve_approval", "approval_id": "approval_...", "decision": "allow" }`;
+approval decisions are `allow`, `deny` or `abort`. Only the current pending approval
+on the selected turn can be resolved. Unknown/duplicate body fields, caller-supplied
+authority fields and unsupported command shapes are refused. Cancel/steer require
+current `operate_agent`, approvals require `resolve_approval`, and all mutations
+require the caller's current credential custody. History access permits observation
+and command polling without granting control authority.
+
+A `202` body has object `cma.response.control`, the safe `control` command view,
+the immutable `target`, and the originally submitted `expected_agent_revision`.
+The control receipt's own `response_id` is null. Poll its `command_id` through
+`GET /api/v2/commands/{command_id}`. Queued, waiting, delivery-uncertain, failed
+and completed command states remain distinct. **Completed control means delivered;
+it does not establish that the target response was cancelled.** Observe the target
+response's own durable outcome for cancellation confirmation. Neither disconnect
+nor aborting a local stream reader is a cancellation request.
+
+After an uncertain admission, repeat the original key and immutable JSON body,
+including the old revision and turn. Exact recovery precedes active-target/runtime
+support checks and returns the original receipt even after a newer turn starts,
+subject to fresh authorization. Changing target, revision or command content with
+that key returns `409 agent_command_key_conflict`.
+
+`409 response_control_not_admitted` proves that no receipt exists for the original
+scope/key and that its submitted Agent revision is permanently stale in the same
+Agent incarnation. The server verifies the original bound source and commits fresh
+Agent/parent authority fences before returning this outcome. A concurrent earlier
+admission must either remain recoverable or conflict with those fences. This code
+allows the client to discard that pending intent, observe again and ask for a new
+explicit action. Equal/future revisions, missing or invalid source provenance,
+authority races and unknown commits cannot establish that proof.
+
+`409 response_control_conflict` remains uncertain even on the first client call;
+preserve the original key and body for recovery. An observed unsupported runtime
+operation returns `422 capability_unsupported`. Capability loss during a later
+race remains a conflict or existing durable execution failure. Never silently
+issue a fresh key against a newer turn.
+
+These are authenticated human/API controls, also exposed by both CMA SDKs.
+Verified platform-sender controls and web transport rollout have separate
+acceptance gates. Existing v1 controls and standard Responses events retain
+their established contracts.
+
+```python
+from openai import OpenAI
+client = OpenAI(base_url="https://cma.example/api/v2", api_key="CURRENT_CMA_CREDENTIAL")
+for prompt, key in [("First question", "turn-one"), ("Follow up", "turn-two")]:
+    for event in client.responses.create(
+        conversation="agt_EXISTING", input=prompt, stream=True,
+        extra_headers={"Idempotency-Key": key},
+    ):
+        if event.type == "response.output_text.delta":
+            print(event.delta, end="")
+```
+
+This subset follows the official OpenAI
+[create contract](https://developers.openai.com/api/reference/resources/responses/methods/create)
+and [streaming event shapes](https://developers.openai.com/api/reference/resources/responses/streaming-events).
+Pinned official-client fixtures for v2 are
+[`openai_python_v2.py`](../api/crates/cma/tests/official_responses/openai_python_v2.py)
+and [`openai_node_v2.mjs`](../api/crates/cma/tests/official_responses/openai_node_v2.mjs).
+The pinned `openai-node` 7.10.0 (Node 25.5.0) and `openai-python` 3.8.0
+(Python 3.13) fixtures completed two conversation-only turns through a disposable
+CMA HTTP server, the real command scheduler and personal execution adapter, and a
+fixture runtime that commits output. Each exercised nine raw/helper events, four
+conversation items, alias retries, retrieval, replay and named refusals. Python's
+aggregate helper requires a model argument; the fixture uses the first response's
+pinned model. The unchanged v1 fixtures also passed on that server.
+
+Intermittent Python `503 response_unavailable` was reproduced while a new Agent
+had durably opened its native conversation but had not yet published Ready.
+History now recognizes that intermediate state only with the exact open receipt
+and matching completion log. It creates no synthetic conversation event or turn;
+missing or mismatched published history remains corrupt. A deterministic actual
+handler test freezes that startup phase, and all four official/CMA clients passed
+two turns and recovery concurrently after the fix, without retries. An earlier
+eight-Agent probe hit Agent-creation capacity (429). These are local fixture
+results; production rollout and previous-version continuity remain release gates.
+
+CMA SDKs expose this contract separately as TypeScript `responsesV2` and Rust
+`responses_v2()`. Their stream receipt callbacks/accessors expose durable IDs
+before frames; replay is explicit and never resubmits input. The v1 SDK methods
+retain their previous behavior. Both CMA SDKs also completed two turns with receipt,
+alias, retrieval, mid-message replay and item checks concurrently with the pinned
+official clients on the disposable worker fixture. Reproduce with
+[`responses-v2-fixture.mjs`](../sdk/typescript/scripts/responses-v2-fixture.mjs) and
+[`responses_v2_fixture.rs`](../sdk/rust/tests/responses_v2_fixture.rs), setting
+`CMA_SDK_FIXTURE_ROOT` to the loopback server root; Rust requires `--ignored`.
+See the SDK streaming guides for recovery examples.
+
+### CMA queued response cancellation
+
+Use `/api/v2/agents/{agent_id}/responses/{response_id}/queued-cancellation` for
+a Message response with no durable runtime dispatch or assigned turn. Both GET
+and POST require current human or nondelegated API `operate_agent` authority;
+history access alone does not permit eligibility observation. An unbound Channel
+response held in `waiting_action` is also eligible under that human/API authority.
+This endpoint does not authorize an external platform sender to cancel work.
+
+GET returns object `cma.response.queued_cancellation.observation`, the existing
+safe `response` command-status view, `command_revision`, and `cancellable`.
+The revision identifies the source command, independently of the Agent aggregate.
+POST requires exactly one retained `Idempotency-Key` and this strict body:
+
+```json
+{
+  "source_command_id": "cmd_SOURCE",
+  "expected_command_revision": 1
+}
+```
+
+A `200` response has object `cma.response.queued_cancellation`, a `cancellation`
+command-status view, a current source `response` view, and immutable `target`
+containing `response_id`, `source_command_id`, and `expected_command_revision`.
+The transaction has already settled the source as `cancelled` and the cancellation
+receipt as `completed`. The cancellation receipt has no response ID, turn,
+delivery, observed cursor, or failure. It can be polled using the existing command
+status endpoint. Cancellation works while the Agent is paused or has no runtime
+and does not consume a waiting queue slot or create an Agent turn or log event.
+
+A worker claim alone does not prevent cancellation: the exact source lease is
+invalidated atomically. Any durable dispatch binding, including uncertain dispatch
+or a pre-write failure, prevents this operation from applying. For an unbound
+cancelled response, standard Responses replay emits `response.created` followed
+by `response.incomplete` with reason `interrupted`; it emits no fabricated
+`response.in_progress`, output item, or turn event.
+
+After a lost or uncertain reply, retry the original key and exact body. An existing
+receipt recovers before current source eligibility is checked. The cancellation
+receipt and target remain immutable; the accompanying source status is a separate
+current view. Reusing the key with a changed target or revision returns
+`409 agent_command_key_conflict`. The key shares the existing Interrupt scope;
+an incompatible older control receipt also returns that conflict.
+
+`409 queued_response_cancellation_not_admitted` is definitive: the server committed
+that the original scope/key has no receipt and the source command revision is now
+strictly newer. Its source and resource writes exclude an older cancellation from
+committing afterward. Only this code permits discarding that old intent before a
+fresh observation and explicit new action. `409 queued_response_cancellation_conflict`
+is uncertain; retain the original body and key. Unknown database commits and
+unavailable authority return an unavailable response, never a refusal proof.
+Success and definitive refusal are exposed only after a final current authority
+check. Unknown fields, invalid revisions, and query parameters return
+`422 invalid_queued_cancellation_request`; malformed JSON returns `400 invalid_json`.
+Missing or invalid keys return `422 invalid_idempotency_key`.
+
+## Retained Responses v1 contract
+
 CMA serves a stateful, streaming subset of the OpenAI Responses API at
 `/api/v1`. It is a Layer 1 projection of the same durable Agents used by
 the other interfaces: creating a conversation creates an Agent context, and
@@ -111,13 +391,25 @@ failure. An `Idempotency-Key` does not make this endpoint replay-safe.
 The `metadata` on a response POST is separate: it accepts at most 16 string
 pairs, with keys at most 64 characters and values at most 512 characters.
 
-Threads are linear. On the first turn, `previous_response_id` must be absent or
-null. On every later turn it must equal the latest response identifier for that
-conversation. Omitting it after a turn exists, naming a stale response, naming
-another conversation, or naming malformed data returns `409
-previous_response_id_conflict` before the prompt reaches the runtime. Clients
-should retrieve current history and retry from its latest response rather than
-creating a fork.
+Threads are linear. An absent/null `previous_response_id` requires no previous
+turn; it never means append to whichever turn is latest. A later invocation
+must name the latest `resp_<agent-id>_<turn>` identifier for that conversation.
+Malformed or cross-conversation predecessors are refused statically. A command
+that reaches dispatch with a stale predecessor receives the committed
+`409 previous_response_id_conflict` refusal before any runtime send. Ordinary
+input may wait behind active work, so this refusal can arrive after admission.
+A keyed retry recovers its original receipt before rechecking a new dynamic
+predecessor condition. To change the predecessor or input after a definitive
+refusal, make a new explicit invocation with a new key.
+
+One optional `Idempotency-Key` accepts 1–256 bytes without control characters.
+Keep it with the input, metadata and predecessor before sending. The supplied
+key uses the common stable authority/Agent/command-kind namespace directly.
+Equivalent canonical intent recovers the same receipt across interfaces;
+Append and `AfterTurn(None)` are different semantics and conflict under the
+same key. The optional ignored `model` does not change intent. Without a key,
+separate HTTP attempts reserve separate commands and cannot safely deduplicate
+an uncertain earlier attempt. Conversation creation remains unkeyed.
 
 Stateless response creation, non-streaming creation, background execution,
 stream resumption, caller tools, response deletion, and response cancellation
@@ -183,19 +475,36 @@ v1. Reconnect by reading the response resource when its identifier is known and
 list conversation items to recover durable output. If a terminal response is
 not yet available, retry the read under the ordinary REST retry policy.
 
-Posting a response to an Agent in a paused Sandbox also requests revival. CMA
-opens the response only after checkpoint restoration and prompt admission, and
-then streams the same event sequence as an already-live host. A restored host
-uses a new runtime generation while the conversation and response identifiers
-remain tied to durable Agent history.
+CMA first reserves the common durable command, then the worker handles queue
+order, checkpoint waits, revival and execution. An ordinary Message waits behind
+an active turn. `200 text/event-stream` opens only when this exact command has a
+durable turn binding. A keyed retry projects that same legacy response again,
+with connection-local sequence numbers restarting at zero.
 
-Admission is bounded by ten minutes. If provisioning or restoration does not
-make the conversation reachable by that deadline, the stream contains one
-`response.failed` event with code `provisioning_timeout`. Because no durable
-`TurnStarted` sequence exists yet, CMA uses the provisional identifier
-`resp_<agent-id>_0` for this event. That provisional `_0` identifier is
-explicitly CMA behavior, is not a durable retrievable response identifier, and
-must not be attributed to the standard OpenAI API.
+The response headers carry `x-cma-command-id` and `x-cma-response-id`, also on
+prebinding errors when admission is known. These identify the common command
+and response; they never replace legacy `response.id`, output IDs or
+`previous_response_id`. Observe the command through
+`GET /api/v2/commands/{command_id}` or repeat an uncertain keyed POST with the
+same input and key under current authority. The common response can also be
+observed through v2 without changing its legacy turn projection.
+
+Prebinding observation is bounded by ten minutes; the command queue has its
+existing five-minute deadline. `504 agent_command_observation_timeout` reports
+that no binding was observed within the HTTP budget and leaves work intact.
+A committed queue expiry returns `agent_command_queue_timeout`; other committed
+unbound failures use explicit authority, Agent, target, runtime or execution
+problems. A cancelled queued command returns `409 agent_command_cancelled`.
+These errors do not fabricate a `response.failed` event or a `resp_<agent-id>_0`
+resource. After a stream opens, loss of authorized history observation closes
+the connection without inventing a durable runtime failure.
+
+New keyed admission cannot establish whether a request already executed on an
+older server that ignored its key. Do not infer an old receipt from matching
+text or nearby history. During cutover, route mutations to upgraded writers and
+drain old direct-admission tasks; a rollback must keep the common worker and
+ledger available for accepted commands or stop new mutations while they settle.
+Retained reads still reconstruct old turns that have no common receipt.
 
 Response retrieval never reads a response database. It identifies the durable
 turn, bounds it at the next `TurnStarted`, and folds the retained event log into
@@ -254,3 +563,8 @@ SDK's `index.mjs`; the Python runner uses its environment's installed `openai`
 package. No real API key is needed. The fixture accepts only its static local
 test credential and exposes an authenticated `POST /__sdk/shutdown` for orderly
 shutdown, with a ten-minute lifetime bound as a fallback.
+
+Agent chronology, bounded snapshot/tail replay, ephemeral text and Thinking, and
+authenticated new-tab transport eligibility are documented in
+[Agent event replay v2](API_Agent_Events_V2.md). Agent cursors are independent of
+Responses sequence numbers; retained response bindings identify control targets.

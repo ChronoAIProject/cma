@@ -1,7 +1,15 @@
 mod support;
 
+#[path = "rest/artifacts.rs"]
+mod artifacts;
+#[path = "rest/channel_usage.rs"]
+mod channel_usage;
+#[path = "rest/hierarchy.rs"]
+mod hierarchy;
 #[path = "rest/lifecycle.rs"]
 mod lifecycle;
+#[path = "rest/source.rs"]
+mod source;
 
 use cma_sdk::{
     Error, EventOptions, IdempotencyKey, PageOptions, agents::*, instances::*, profiles::*,
@@ -807,3 +815,111 @@ fn profile_content_and_dependency_variants_are_typed() {
     .unwrap();
     assert_eq!(serde_json::to_value(draft).unwrap()["name"], "Renamed");
 }
+
+#[tokio::test]
+async fn accessible_agent_keeps_shared_and_personal_shapes_and_checks_identity() {
+    let server = Server::new().await;
+    let personal = agent();
+    let id = personal["id"].as_str().unwrap();
+    let path = format!("/agents/{id}");
+    let shared = json!({"access":"shared","id":id,"status":"ready","created_at":"2026-09-05T00:00:00Z","updated_at":"2026-09-05T00:00:00Z"});
+    server.expect("GET", &path, None, 200, Some(shared.clone()));
+    assert!(matches!(
+        server.client.agents().read_accessible(id).await.unwrap(),
+        AccessibleAgent::Shared(_)
+    ));
+    server.expect("GET", &path, None, 200, Some(personal.clone()));
+    assert!(matches!(
+        server.client.agents().read_accessible(id).await.unwrap(),
+        AccessibleAgent::Personal(_)
+    ));
+    server.expect("GET", &path, None, 200, Some(shared.clone()));
+    assert!(server.client.agents().read(id).await.is_err());
+    for (key, value) in [
+        ("id", json!("other")),
+        ("access", json!("future")),
+        ("status", Value::Null),
+        ("access", Value::Null),
+    ] {
+        let mut malformed = shared.clone();
+        malformed[key] = value;
+        server.expect("GET", &path, None, 200, Some(malformed));
+        assert!(server.client.agents().read_accessible(id).await.is_err());
+    }
+}
+
+#[tokio::test]
+async fn organization_inventory_parses_shared_summaries_and_rejects_unknown_roles() {
+    let server = Server::new().await;
+    let shared = json!({"access":"shared","id":"agt_shared","status":"ready","created_at":"2026-09-05T00:00:00Z","updated_at":"2026-09-05T00:00:00Z"});
+    let options = AccessibleAgentListOptions {
+        organization: Some("org".into()),
+        ..Default::default()
+    };
+    server.expect(
+        "GET",
+        "/agents?organization=org",
+        None,
+        200,
+        Some(json!({"items":[agent_summary(), shared]})),
+    );
+    let page = server
+        .client
+        .agents()
+        .list_accessible(&options)
+        .await
+        .unwrap();
+    assert!(matches!(page.items[0], AccessibleAgentSummary::Personal(_)));
+    assert!(matches!(page.items[1], AccessibleAgentSummary::Shared(_)));
+    server.expect(
+        "GET",
+        "/agents?organization=org",
+        None,
+        200,
+        Some(json!({"items":[{"access":"future"}]})),
+    );
+    assert!(
+        server
+            .client
+            .agents()
+            .list_accessible(&options)
+            .await
+            .is_err()
+    );
+    server.expect(
+        "GET",
+        "/organizations",
+        None,
+        200,
+        Some(json!({"items":[{"id":"org","role":"viewer"}]})),
+    );
+    assert_eq!(
+        server
+            .client
+            .resource_access()
+            .organizations()
+            .await
+            .unwrap()
+            .items[0]
+            .role,
+        cma_sdk::resource_access::OrganizationRole::Viewer
+    );
+    server.expect(
+        "GET",
+        "/organizations",
+        None,
+        200,
+        Some(json!({"items":[{"id":"org","role":"future"}]})),
+    );
+    assert!(
+        server
+            .client
+            .resource_access()
+            .organizations()
+            .await
+            .is_err()
+    );
+}
+
+#[path = "rest/sandbox_commands.rs"]
+mod sandbox_commands;

@@ -9,6 +9,33 @@ use super::super::sandbox_mongo::{signed, MongoSandboxStore, DOCUMENT_SCHEMA_VER
 use super::super::sandboxes::{read_sandbox, sandbox_replacement_fields};
 use super::ApplyError;
 
+pub(super) async fn require_current(
+    mutation: &AgentConversationMutation,
+    session: &mut ClientSession,
+) -> Result<(), SandboxStoreError> {
+    if mutation
+        .execution_fence
+        .as_ref()
+        .is_some_and(|fence| fence.require_current().is_err())
+        || mutation
+            .channel_control_execution_fence
+            .as_ref()
+            .is_some_and(|fence| fence.require_current().is_err())
+        || mutation
+            .channel_execution_fence
+            .as_ref()
+            .is_some_and(|fence| fence.require_current().is_err())
+        || mutation
+            .trigger_execution_fence
+            .as_ref()
+            .is_some_and(|fence| fence.require_current().is_err())
+    {
+        let _ = session.abort_transaction().await;
+        return Err(SandboxStoreError::Conflict);
+    }
+    Ok(())
+}
+
 pub(super) async fn validate_and_fence(
     store: &MongoSandboxStore,
     current: &Agent,
@@ -33,6 +60,39 @@ pub(super) async fn validate_and_fence(
     let Some(mut parent) = parent else {
         return Ok(());
     };
+    if let Some(fence) = &mutation.execution_fence {
+        use super::super::resource_access::{read_execution_snapshot, ReadError};
+        let snapshot = read_execution_snapshot(store, &fence.target(), session)
+            .await
+            .map_err(|error| match error {
+                ReadError::Driver(error) => ApplyError::Driver(error),
+                ReadError::Domain(_) => ApplyError::Domain(SandboxStoreError::Conflict),
+            })?;
+        fence
+            .validate_snapshot(&snapshot)
+            .map_err(|_| ApplyError::Domain(SandboxStoreError::Conflict))?;
+    } else if mutation.command_claim.is_some()
+        && mutation.channel_execution_fence.is_none()
+        && mutation.channel_control_execution_fence.is_none()
+        && mutation.trigger_execution_fence.is_none()
+    {
+        let policy = store
+            .resource_policies
+            .find_one(doc! { "_id": parent.id.as_str() })
+            .session(&mut *session)
+            .await
+            .map_err(ApplyError::Driver)?;
+        if let Some(document) = policy {
+            let personal = super::super::resource_access::read_inventory_policy(&document)
+                .and_then(|policy| policy.personal_owner_of(&parent))
+                .map_err(|error| {
+                    ApplyError::Domain(SandboxStoreError::Corrupt(error.to_string()))
+                })?;
+            if !personal {
+                return Err(ApplyError::Domain(SandboxStoreError::Conflict));
+            }
+        }
+    }
     let expected_revision = parent.revision;
     let mut update = doc! { "$inc": { "agent_conversation_admission_fence": 1_i64 } };
     if parent
@@ -44,7 +104,8 @@ pub(super) async fn validate_and_fence(
             sandbox_replacement_fields(&parent).map_err(ApplyError::Domain)?,
         );
     }
-    // A real parent write serializes the phase check with maintenance and lifecycle commits.
+    // A real parent write serializes phase/owner-kind checks with maintenance,
+    // lifecycle and resource-policy commits (including an absent sidecar).
     let locked = store
         .sandboxes
         .update_one(

@@ -11,6 +11,7 @@ keywords = ["cma", "agent", "sdk", "async"]
 categories = ["api-bindings", "asynchronous"]
 
 [dependencies]
+base64 = "0.22"
 eventsource-stream = "0.2.3"
 futures-util = "0.3"
 httpdate = "1"

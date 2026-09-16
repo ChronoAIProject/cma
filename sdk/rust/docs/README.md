@@ -4,7 +4,7 @@
 
 The repository-only Rust SDK provides typed async access to CMA discovery,
 Agent/Workspace/Sandbox profiles, the profile marketplace, Sandboxes,
-Workspaces, Worktrees, Agents, Triggers, Launches, operator settings, and live
+Workspaces, Worktrees, Agents, bridge setup, Triggers, Launches, operator settings, and live
 conversation protocols. It is a standalone client package with no
 service-crate dependencies and is not published to a package registry.
 

@@ -531,6 +531,11 @@ async fn maintenance_agent_fence_conflicts_with_a_turn_after_the_evidence_snapsh
     working.conversation.last_seq = 3;
     store
         .commit_agent_conversation(AgentConversationMutation {
+            command_claim: None,
+            execution_fence: None,
+            channel_control_execution_fence: None,
+            channel_execution_fence: None,
+            trigger_execution_fence: None,
             admission_guard: Some(layer2_core::sandbox::store::SandboxMutationGuard::capture(
                 &sandbox,
             )),
@@ -661,6 +666,7 @@ async fn maintenance_sandbox_write_conflicts_with_a_newly_admitted_agent() {
         .unwrap();
     store
         .admit_agent(AgentAdmission {
+            created_by: None,
             owner: sandbox.owner.clone(),
             workspace_id: workspace.id,
             agent_id: AgentId("agt_newly_admitted".into()),

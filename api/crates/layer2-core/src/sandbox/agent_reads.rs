@@ -1,6 +1,9 @@
 use std::sync::Arc;
 
 use crate::ids::AgentId;
+use crate::resource_access::{
+    AccessDecision, ResourceAccessService, ResourceCapability, ResourceTarget,
+};
 use crate::{Caller, Capability, SubjectId};
 
 use super::agent_reads_fold::{fold_agent_log, AgentLogProjection};
@@ -14,7 +17,26 @@ use super::{
 pub struct AgentReadService {
     store: Arc<dyn AgentReadStore>,
     resources: Arc<dyn SandboxResourceReader>,
+    access: Option<Arc<ResourceAccessService>>,
 }
+
+#[path = "agent_reads/authorized.rs"]
+mod authorized;
+pub use authorized::{AgentDetailReading, SharedAgentDetail};
+#[path = "agent_reads/source.rs"]
+mod source;
+pub use source::{AgentSourceReadError, AgentSourceReading, SharedAgentOrigin};
+#[path = "agent_reads/visibility.rs"]
+mod visibility;
+pub use visibility::AgentVisibleLogEntry;
+#[path = "agent_reads/stream.rs"]
+mod stream;
+pub use stream::{AgentEventStreamAuthorization, AgentEventStreamSnapshot};
+#[path = "agent_reads/window.rs"]
+mod window;
+pub use window::{
+    AgentEventStreamHeader, AgentReplayEntry, AgentReplayWindow, AgentResponseBinding,
+};
 
 impl AgentReadService {
     pub fn new<S, R>(store: Arc<S>, resources: Arc<R>) -> Arc<Self>
@@ -22,7 +44,19 @@ impl AgentReadService {
         S: AgentReadStore + 'static,
         R: SandboxResourceReader + 'static,
     {
-        Arc::new(Self { store, resources })
+        Arc::new(Self {
+            store,
+            resources,
+            access: None,
+        })
+    }
+
+    pub fn with_resource_access(self: &Arc<Self>, access: Arc<ResourceAccessService>) -> Arc<Self> {
+        Arc::new(Self {
+            store: self.store.clone(),
+            resources: self.resources.clone(),
+            access: Some(access),
+        })
     }
 
     pub async fn list(
@@ -37,8 +71,7 @@ impl AgentReadService {
             .list_owned_agents(&caller.subject, query, page)
             .await
             .map_err(store_error)?;
-        self.validate_page(&caller.subject, query, page, &result)
-            .await?;
+        self.validate_page(caller, query, page, &result).await?;
         Ok(result)
     }
 
@@ -149,12 +182,29 @@ impl AgentReadService {
         caller: &Caller,
         id: &AgentId,
     ) -> Result<AgentLineage, AgentReadError> {
+        if let Some(access) = &self.access {
+            let authorized = access
+                .authorize_personal(
+                    caller,
+                    &ResourceTarget::Agent {
+                        agent_id: id.clone(),
+                    },
+                    ResourceCapability::ViewHistory,
+                )
+                .await
+                .map_err(authorized::access_error)?;
+            return authorized::lineage(authorized.snapshot.lineage);
+        }
         let agent = self
             .store
             .get_agent(id)
             .await
             .map_err(store_error)?
-            .filter(|agent| agent.id == *id && agent.owner == caller.subject)
+            .filter(|agent| {
+                agent.id == *id
+                    && AccessDecision::personal(caller, &agent.owner)
+                        .allows(ResourceCapability::ViewHistory)
+            })
             .ok_or(AgentReadError::NotFound)?;
         let (worktree, workspace, sandbox) = self.validate_lineage(&caller.subject, &agent).await?;
         Ok(AgentLineage {
@@ -221,11 +271,12 @@ impl AgentReadService {
 
     async fn validate_page(
         &self,
-        owner: &SubjectId,
+        caller: &Caller,
         query: &AgentListQuery,
         request: &PageRequest,
         result: &Page<Agent>,
     ) -> Result<(), AgentReadError> {
+        let owner = &caller.subject;
         validate_limit(request.limit)?;
         if result.items.len() > usize::from(request.limit) {
             return Err(corrupt("agent page exceeds its requested bound"));
@@ -235,6 +286,18 @@ impl AgentReadService {
         }
         let mut previous = request.cursor.as_deref();
         for agent in &result.items {
+            if let Some(access) = &self.access {
+                access
+                    .authorize_personal(
+                        caller,
+                        &ResourceTarget::Agent {
+                            agent_id: agent.id.clone(),
+                        },
+                        ResourceCapability::ViewDetails,
+                    )
+                    .await
+                    .map_err(authorized::access_error)?;
+            }
             if agent.owner != *owner || !query.matches(agent) {
                 return Err(corrupt("agent page contains an out-of-scope row"));
             }

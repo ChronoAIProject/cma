@@ -1,5 +1,6 @@
 use super::*;
 use layer2_core::profiles::{content_digest, AgentProfileRef};
+use layer2_core::sandbox::store::AgentProvenanceStore;
 use layer2_core::sandbox::{
     RuntimeBinding, WarmSandbox, WarmSandboxPlan, WarmSandboxState, WarmWorkspacePlan,
 };
@@ -118,6 +119,14 @@ async fn warm_automatic_agent_is_claimed_once_by_a_new_conversation_trigger() {
         .agent
         .clone();
     assert_eq!(prepared.id, warm.workspaces[0].agents[0].id);
+    let provenance = store
+        .agent_provenance_snapshot(&prepared.id)
+        .await
+        .unwrap()
+        .creation_provenance(&prepared.id)
+        .unwrap();
+    assert_eq!(provenance.agent_id, prepared.id);
+    assert_eq!(provenance.provisioning_origin, prepared.origin);
     let mut trigger = agent_admission(&workspace, "new-conversation", "trigger");
     trigger.profile = prepared.profile.clone();
     trigger.origin = layer2_core::sandbox::AgentOrigin::Trigger {
@@ -144,6 +153,15 @@ async fn warm_automatic_agent_is_claimed_once_by_a_new_conversation_trigger() {
             .agent
             .id,
         prepared.id
+    );
+    assert_eq!(
+        reopened
+            .agent_provenance_snapshot(&prepared.id)
+            .await
+            .unwrap()
+            .creation
+            .unwrap(),
+        provenance
     );
     trigger.creation_key = "next-conversation".into();
     trigger.agent_id = AgentId::generate();
@@ -194,6 +212,18 @@ async fn warm_hierarchy_adopts_once_replays_and_reserves_worktree_numbers() {
     assert_eq!(replayed.unwrap(), created);
     let prepared = &warm.workspaces[0].agents[0];
     assert_eq!(created.agent.id, prepared.id);
+    let provenance = store
+        .agent_provenance_snapshot(&prepared.id)
+        .await
+        .unwrap()
+        .creation_provenance(&prepared.id)
+        .unwrap();
+    assert_eq!(provenance.agent_id, prepared.id);
+    assert_eq!(provenance.worktree_id, prepared.worktree_id);
+    assert!(matches!(
+        provenance.creation_origin,
+        layer2_core::sandbox::AgentCreationOrigin::Trigger { .. }
+    ));
     assert_eq!(created.worktree.id, prepared.worktree_id);
     assert_eq!(
         created.agent.work.warm_conversation_id,
@@ -212,6 +242,15 @@ async fn warm_hierarchy_adopts_once_replays_and_reserves_worktree_numbers() {
     let reconciled = store.admit_agent(automatic).await.unwrap();
     assert!(matches!(&reconciled, AgentAdmissionResult::Existing(_)));
     assert_eq!(reconciled.creation().agent.id, created.agent.id);
+    assert_eq!(
+        store
+            .agent_provenance_snapshot(&prepared.id)
+            .await
+            .unwrap()
+            .creation
+            .unwrap(),
+        provenance
+    );
     request.creation_key = "another-user-action".into();
     request.agent_id = AgentId::generate();
     request.worktree_id = WorktreeId::generate();

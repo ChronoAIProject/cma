@@ -131,18 +131,7 @@ async fn request_with_timeout(
     }
 
     // Provider evidence describes exactly this token generation, not a later login.
-    let current = auth.store.subject(owner).await?.ok_or_else(unavailable)?;
-    let unchanged = current.subject == state.subject
-        && current.incarnation == state.incarnation
-        && current.token_generation == state.token_generation
-        && current.tokens.as_ref().is_some_and(|current_tokens| {
-            current_tokens.access_token == tokens.access_token
-                && current_tokens.expires_at > SystemTime::now()
-        });
-    if !unchanged {
-        identity::verification_failure("cookie", "authority_changed", None);
-        return Err(unavailable());
-    }
+    require_current_custody(auth, &state).await?;
     let (authorization, delegated_credential) = match &verified.permissions {
         PermissionEvidence::Active(permissions) => (
             crate::permissions::capabilities_from_permissions(permissions.iter().cloned()),
@@ -156,6 +145,33 @@ async fn request_with_timeout(
         profile: verified.profile.clone(),
         delegated_credential,
     })
+}
+
+/// Recheck the exact selected credential after any subsequent authorization IO.
+/// An unchanged sign-in alone is insufficient: replacement or removal of the
+/// verified access token must also invalidate evidence obtained using it.
+pub(super) async fn require_current_custody(
+    auth: &AuthState,
+    state: &SubjectAuthState,
+) -> Result<(), StoreError> {
+    let tokens = state.tokens.as_ref().ok_or_else(unavailable)?;
+    let current = auth
+        .store
+        .subject(&state.subject)
+        .await?
+        .ok_or_else(unavailable)?;
+    let unchanged = current.subject == state.subject
+        && current.incarnation == state.incarnation
+        && current.token_generation == state.token_generation
+        && current.tokens.as_ref().is_some_and(|current_tokens| {
+            current_tokens.access_token == tokens.access_token
+                && current_tokens.expires_at > SystemTime::now()
+        });
+    if !unchanged {
+        identity::verification_failure("cookie", "authority_changed", None);
+        return Err(unavailable());
+    }
+    Ok(())
 }
 
 fn unavailable() -> StoreError {

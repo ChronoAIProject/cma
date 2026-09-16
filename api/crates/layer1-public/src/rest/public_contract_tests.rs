@@ -9,18 +9,42 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 mod agent_cases;
+mod agent_event_cases;
+mod artifact_cases;
 mod authoring_cases;
+mod bridge_cases;
+mod channel_usage_cases;
+mod cleanup_cases;
+mod creation_inventory_cases;
 mod credential_cases;
 mod domains;
 mod experience_cases;
 mod fault_cases;
 mod inventory;
+mod inventory_cases;
+mod invoke_cases;
+mod outbox_cases;
+mod partition_cases;
+mod partition_command_cases;
+mod provenance_cases;
+mod queued_cancellation_cases;
 mod replay;
+mod response_control_cases;
+mod responses_v2_cases;
+mod sandbox_command_cases;
+mod sandbox_inventory_cases;
+mod share_cases;
+mod shared_agent_cases;
+mod shared_hierarchy_cases;
+mod shared_source_cases;
+mod shared_stream_cases;
 mod snapshot_cases;
 mod source_cases;
+mod source_consent_cases;
 mod state_cases;
 mod symbols;
 mod trigger_cases;
+mod workspace_cleanup_cases;
 
 use symbols::Symbols;
 
@@ -48,6 +72,12 @@ pub(super) struct Case {
     pub response: ResponseFixture,
     #[serde(default)]
     pub captures: BTreeMap<String, String>,
+    #[serde(
+        default,
+        rename = "headerCaptures",
+        skip_serializing_if = "BTreeMap::is_empty"
+    )]
+    pub header_captures: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -77,6 +107,12 @@ pub(super) struct ResponseFixture {
     pub body: Value,
     #[serde(rename = "bodyKind")]
     pub body_kind: BodyKind,
+    #[serde(default, rename = "streamPrefix", skip_serializing_if = "is_false")]
+    pub stream_prefix: bool,
+}
+
+fn is_false(value: &bool) -> bool {
+    !value
 }
 
 #[derive(Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -107,6 +143,78 @@ fn paths() -> Vec<PathBuf> {
 }
 
 async fn scenario(name: &str) -> Scenario {
+    if let Some(scenario) = partition_command_cases::scenario(name).await {
+        return scenario;
+    }
+    if let Some(scenario) = partition_cases::scenario(name).await {
+        return scenario;
+    }
+    if let Some(scenario) = workspace_cleanup_cases::scenario(name).await {
+        return scenario;
+    }
+    if let Some(scenario) = source_consent_cases::scenario(name).await {
+        return scenario;
+    }
+    if let Some(scenario) = cleanup_cases::scenario(name).await {
+        return scenario;
+    }
+    if let Some(scenario) = queued_cancellation_cases::scenario(name).await {
+        return scenario;
+    }
+    if let Some(scenario) = agent_event_cases::scenario(name).await {
+        return scenario;
+    }
+    if let Some(scenario) = response_control_cases::scenario(name).await {
+        return scenario;
+    }
+    if let Some(scenario) = outbox_cases::scenario(name).await {
+        return scenario;
+    }
+    if let Some(scenario) = invoke_cases::scenario(name).await {
+        return scenario;
+    }
+    if let Some(scenario) = bridge_cases::scenario(name).await {
+        return scenario;
+    }
+    if let Some(scenario) = channel_usage_cases::scenario(name).await {
+        return scenario;
+    }
+    if let Some(scenario) = artifact_cases::scenario(name).await {
+        return scenario;
+    }
+    if let Some(scenario) = sandbox_command_cases::scenario(name).await {
+        return scenario;
+    }
+    if let Some(scenario) = creation_inventory_cases::scenario(name).await {
+        return scenario;
+    }
+    if let Some(scenario) = provenance_cases::scenario(name).await {
+        return scenario;
+    }
+    if let Some(scenario) = responses_v2_cases::scenario(name).await {
+        return scenario;
+    }
+    if let Some(scenario) = shared_stream_cases::scenario(name).await {
+        return scenario;
+    }
+    if let Some(scenario) = sandbox_inventory_cases::scenario(name).await {
+        return scenario;
+    }
+    if let Some(scenario) = shared_hierarchy_cases::scenario(name).await {
+        return scenario;
+    }
+    if let Some(scenario) = shared_source_cases::scenario(name).await {
+        return scenario;
+    }
+    if let Some(scenario) = inventory_cases::scenario(name).await {
+        return scenario;
+    }
+    if let Some(scenario) = shared_agent_cases::scenario(name).await {
+        return scenario;
+    }
+    if let Some(scenario) = share_cases::scenario(name).await {
+        return scenario;
+    }
     if let Some(scenario) = source_cases::scenario(name).await {
         return scenario;
     }
@@ -165,6 +273,25 @@ async fn shared_public_contract_matches_real_backend() {
         assert_eq!(corpus.version, 1);
         let mut canonical: BTreeMap<String, BTreeMap<String, Value>> = BTreeMap::new();
         for case in &corpus.cases {
+            for (name, header) in &case.header_captures {
+                let value = Value::String(
+                    case.response
+                        .headers
+                        .get(header)
+                        .expect("declared header capture")
+                        .clone(),
+                );
+                if let Some(previous) = canonical
+                    .entry(case.scenario.clone())
+                    .or_default()
+                    .insert(name.clone(), value.clone())
+                {
+                    assert_eq!(
+                        previous, value,
+                        "conflicting canonical header capture {name}"
+                    );
+                }
+            }
             for (name, pointer) in &case.captures {
                 let value = case
                     .response

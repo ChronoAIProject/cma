@@ -14,7 +14,8 @@ revives automatically. Navigation away does not cancel an admitted Launch.
 
 A Sandbox pins an immutable Sandbox Profile when provisioned. Workspaces and
 Agents belong to that Sandbox; profile edits do not change existing instances.
-The client reads only the caller's resources unless an operator helper is used.
+The default Sandbox list contains the caller's personal resources. Accessible
+read methods also support current organization ownership and whole-Sandbox grants.
 
 `grantServiceAccess(id, { services }, { idempotencyKey })` records explicit owner
 authorization for additional NyxID services on a fully paused Sandbox. Original
@@ -76,3 +77,95 @@ Agent's real working checkout; a Worktree is not an independent terminal surface
 
 See [Profiles](profiles.md) for revision selection and [Errors](errors.md) for
 quota, trust and uncertain-command handling.
+
+## Shared hierarchy
+
+Use `sandboxes.readAccessible`, `workspaces.readAccessible` and
+`worktrees.readAccessible` when the result can be shared. The return type preserves
+the full personal detail or provides a safe shape marked `access: 'shared'`.
+Shared shapes include authorized IDs, names, statuses, timestamps and counts,
+without owner/profile configuration, repository paths, credentials or runtime
+internals. The existing `read` methods keep their personal types and refuse shared
+responses. `workspaces.listAccessible(sandboxId)` and
+`worktrees.listAccessible(workspaceId)` provide the corresponding child unions.
+
+```ts
+import { createClient } from '@chronoai/cma-sdk';
+
+export async function inspectSandbox(id: string) {
+  const cma = createClient();
+  const sandbox = await cma.sandboxes.readAccessible(id);
+  if (sandbox.access === 'shared') return { id: sandbox.id, count: sandbox.agent_count };
+  return { id: sandbox.id, count: sandbox.agent_count, profile: sandbox.profile };
+}
+```
+
+A narrow Agent grant cannot reveal any parent or its counts. Each hierarchy read
+requires current parent visibility; revoked, expired or unavailable authority
+can refuse a later request. Snapshot archives remain personal-only. The default
+Sandbox collection excludes explicit organization ownership before pagination;
+use `listAccessible({ organization })` for explicit organization discovery.
+
+## Organization and Shared with me inventory
+
+```ts
+import { createClient } from '@chronoai/cma-sdk';
+
+export async function organizationSandboxes(organization: string) {
+  const cma = createClient();
+  const page = await cma.sandboxes.listAccessible({ organization, limit: 20 });
+  return page.items.map((sandbox) => ({ id: sandbox.id, agents: sandbox.agent_count }));
+}
+```
+
+The organization must be a current canonical choice from `resourceAccess.organizations()`.
+Each page obtains new membership evidence. Organization-owned resources and
+whole-Sandbox grants are filtered before pagination; narrow Agent grants cannot
+reveal a parent or its counts. Shared summaries include `access: 'shared'` and safe
+metadata/counts. Personal owners retain the full personal summary. Omit the
+organization and shared selectors for personal inventory. Existing `sandboxes.list()` retains its
+personal type and refuses shared summaries. A changed policy or unavailable
+membership yields a typed error without partial rows or a stale `next` cursor.
+
+Set `shared: true` to discover incoming whole-Sandbox grants across all current
+organizations: `cma.sandboxes.listAccessible({ shared: true, limit: 20 })`.
+The server deduplicates Sandboxes and excludes your own personal resources before
+pagination. Organization ownership alone does not enter this scope. Individually
+shared Agents remain discoverable through `agents.provenanceInventory({ shared: true })`
+without exposing their parents. `shared: true` and `organization` are mutually
+exclusive. Discovery refuses an incomplete result if organization authority is
+unavailable; each page revalidates all original membership evidence and grants.
+
+## Shared lifecycle commands
+
+`submitCommand(id, { command, expected_revision }, { idempotencyKey })` admits an
+explicit `pause`, `revive`, or `retire` intent and returns a safe receipt with HTTP 202. `readCommand(commandId)` recovers that receipt with HTTP 200. Shared detail
+`revision` is optional for older-server compatibility; require it before submitting.
+
+```ts
+import { createClient } from '@chronoai/cma-sdk';
+
+export async function requestPause(id: string, key: string) {
+  const cma = createClient();
+  const detail = await cma.sandboxes.readAccessible(id);
+  if (detail.revision === undefined) throw new Error('Current Sandbox revision unavailable');
+  const request = { command: 'pause', expected_revision: detail.revision } as const;
+  const receipt = await cma.sandboxes.submitCommand(id, request, { idempotencyKey: key });
+  return cma.sandboxes.readCommand(receipt.command_id);
+}
+```
+
+Retain the request and key before submitting. If the response is uncertain, retry
+that exact body and key, including its original revision. Do not call the example
+again to derive a replacement revision. `state.status` is `queued`, `applied`, or
+`rejected`. Applied records a committed transition (or one already scheduled or
+satisfied); read current Sandbox status for runtime progress. Rejection supplies
+a typed reason. Receipts expose no credential references or owner configuration.
+The SDK rejects inconsistent receipt identities, revisions and terminal states.
+
+Pause/revive require current `manage_sandbox`; retire requires owner/admin
+`manage_sharing` plus the personal owner's deletion capability when applicable.
+Shared recipients cannot retire the owner’s Sandbox. The server rechecks authority
+before scheduling; receipt reads require the requesting actor and current Sandbox
+visibility. The five-minute queue deadline never renews. HTTP 409 busy and HTTP
+503 unavailable responses require reading/retrying; they do not establish success.

@@ -1,3 +1,7 @@
+#[path = "public_contract/agent_events_v2.rs"]
+mod agent_events_v2;
+#[path = "public_contract/bridges.rs"]
+mod bridges;
 #[path = "public_contract/context.rs"]
 mod context;
 #[path = "public_contract/experience.rs"]
@@ -6,6 +10,8 @@ mod experience;
 mod operator;
 #[path = "public_contract/resources.rs"]
 mod resources;
+#[path = "public_contract/responses_v2.rs"]
+mod responses_v2;
 #[path = "public_contract/triggers.rs"]
 mod triggers;
 #[path = "support/wire.rs"]
@@ -16,7 +22,19 @@ use context::{Case, Context};
 
 async fn dispatch(c: &Context<'_>) -> Result<()> {
     let op = c.case.operation.as_str();
-    if op.contains("/admin/")
+    if op.contains("/bridges")
+        || op.contains("/bridge-connectors")
+        || op.contains("/bridge-invoke-grants")
+    {
+        bridges::dispatch(c).await
+    } else if op == "GET /api/v2/ui/transport"
+        || op == "GET /api/v2/agents/{agent_id}/events"
+        || op == "GET /api/v2/agents/{agent_id}/events/snapshot"
+    {
+        agent_events_v2::dispatch(c).await
+    } else if op.contains("/api/v2") {
+        responses_v2::dispatch(c).await
+    } else if op.contains("/admin/")
         || op.contains("/profile-authoring/")
         || [
             "GET /api/v1/conformance",
@@ -47,7 +65,12 @@ async fn dispatch(c: &Context<'_>) -> Result<()> {
 }
 
 fn check_error(case: &Case, error: Error) {
-    let expected = &case.response.body;
+    let v2 = case.response.body.get("error").is_some();
+    let expected = if v2 {
+        &case.response.body["error"]
+    } else {
+        &case.response.body
+    };
     let Error::Api {
         status,
         code,
@@ -65,7 +88,12 @@ fn check_error(case: &Case, error: Error) {
         case.id
     );
     let mut expected = expected.as_object().unwrap().clone();
-    for key in ["type", "title", "detail", "status", "code", "instance"] {
+    let standard = if v2 {
+        vec!["code", "message"]
+    } else {
+        vec!["type", "title", "detail", "status", "code", "instance"]
+    };
+    for key in standard {
         expected.remove(key);
     }
     assert_eq!(

@@ -1,8 +1,10 @@
 //! OpenAPI generation for the currently composed REST boundary.
-
+use utoipa::openapi::security::SecurityRequirement;
 use utoipa::{openapi, OpenApi};
 
+mod identity;
 mod projections;
+use identity::{anonymous_path, operation_id};
 
 use self::projections::{
     EmbedContentSecurityPolicy, EmbedDescriptor, EmbedSnippets, SignupOptions,
@@ -18,6 +20,7 @@ use super::admin::settings::{
 };
 use super::admin::{ActivityPageView, ActivityView, RuntimeEntryView, RuntimeInventoryView};
 use super::agent_openapi_shapes::*;
+use super::agent_shared_shapes::*;
 use super::instances_openapi_shapes::{
     CreateSandboxRequest, CreateWorkspaceRequest, FailureView, OwnerAgentSummaryView,
     OwnerSandboxDetailView, OwnerSandboxPageView, OwnerSandboxSummaryView,
@@ -35,7 +38,48 @@ use super::trigger_openapi_shapes::*;
 #[derive(OpenApi)]
 #[openapi(
     paths(
+        super::bridge_invokes::list,
+        super::bridge_invokes::issue,
+        super::bridge_invokes::detail,
+        super::bridge_invokes::revoke,
+        super::bridge_invokes::readiness,
+        super::bridge_source_controls::detail,
+        super::bridge_source_controls::submit,
+        super::bridge_cleanup::list,
+        super::bridge_partitions::list,
+        super::bridge_partitions::detail,
+        super::bridge_partition_commands::reset,
+        super::bridge_partition_commands::detach,
+        super::bridge_cleanup::detail,
+        super::bridge_cleanup::submit,
+        super::bridge_cleanup::workspace::detail,
+        super::bridge_cleanup::workspace::submit,
+        super::bridge_outbox::list,
+        super::bridge_outbox::detail,
+        super::bridge_outbox::recover,
+        super::bridges::choices,
+        super::bridges::capabilities,
+        super::bridges::list,
+        super::bridges::read,
+        super::bridges::create,
+        super::bridges::configuration,
+        super::bridges::update,
+        super::bridges::control,
+        super::bridges::validate,
+        super::bridges::import,
+        super::bridges::revoke,
+        super::agent_artifacts::publish,
+        super::agent_artifacts::list,
+        super::agent_artifacts::read,
+        super::agent_artifacts::download,
         super::conformance,
+        super::organizations::list,
+        super::resource_access::effective,
+        super::resource_access::list,
+        super::resource_access::read,
+        super::resource_access::create,
+        super::resource_access::update,
+        super::resource_access::revoke,
         super::defaults::read,
         super::profile_authoring::bounds,
         super::profile_authoring::services,
@@ -104,16 +148,20 @@ use super::trigger_openapi_shapes::*;
         super::agents::list,
         super::agents::read,
         super::agent_source::read,
+        super::agent_provenance::read,
+        super::agent_channel_usage::read,
+        super::agent_channel_usage::history,
+        super::agent_provenance_inventory::list,
         super::agents::delete_agent,
         super::agent_operate::input,
         super::agent_operate::steer,
         super::agent_operate::interrupt,
         super::agent_operate::approval,
         super::agent_operate::stop,
-        super::agent_operate::events,
-        super::agent_operate::transcript,
-        super::agent_operate::usage,
-        super::agent_operate::resources,
+        super::agent_reads::events,
+        super::agent_reads::transcript,
+        super::agent_reads::usage,
+        super::agent_reads::resources,
         super::sandboxes::create,
         super::sandboxes::list,
         super::sandboxes::read,
@@ -121,6 +169,8 @@ use super::trigger_openapi_shapes::*;
         super::sandboxes::remove,
         super::sandboxes::pause,
         super::sandboxes::revive,
+        super::sandbox_commands::create,
+        super::sandbox_commands::read,
         super::sandbox_service_access::grant,
         super::sandboxes::events,
         super::workspaces::create,
@@ -145,6 +195,9 @@ use super::trigger_openapi_shapes::*;
         super::admin::activity,
     ),
     components(schemas(
+        super::agent_artifacts::AgentArtifactView,
+        super::agent_artifacts::AgentArtifactPageView,
+        super::agent_artifacts::PublishAgentArtifactRequest,
         ConformanceDocument,
         super::defaults::DefaultProfilesView,
         ProblemDocument,
@@ -169,6 +222,20 @@ use super::trigger_openapi_shapes::*;
         TriggerConsentBody,
         TriggerContentBody,
         TriggerQuickMessageBody,
+        super::agent_provenance::AgentProvenanceView,
+        super::agent_channel_usage::AgentChannelUsageView,
+        super::agent_channel_usage::AgentChannelUsageHistoryView,
+        super::agent_channel_usage::ChannelUsageSummaryView,
+        super::agent_channel_usage::ChannelBindingView,
+        super::agent_channel_usage::ChannelUsageEventView,
+        super::agent_channel_usage::ChannelBindingChangeReasonView,
+        super::agent_channel_usage::ChannelUsageChangeView,
+        super::agent_provenance_inventory::AgentProvenanceInventoryItemView,
+        super::agent_provenance_inventory::AgentProvenanceInventoryPageView,
+        super::agent_provenance::AgentProvenanceDetailsView,
+        super::agent_provenance::AgentCreationCategoryView,
+        super::agent_provenance::AgentCreationTriggerView,
+        super::agent_provenance::AgentCreationBridgeView,
         super::agent_source::AgentSourceView,
         super::agent_source::AgentOriginView,
         super::agent_source::AgentTriggerSourceView,
@@ -206,6 +273,7 @@ use super::trigger_openapi_shapes::*;
         LaunchConsentSurfaceValue,
         LaunchConfirmationView,
         LaunchView,
+        LaunchFirstMessageCommandView,
         LaunchPageView,
         LaunchEventPageView,
         ServiceConnectionStateValue,
@@ -286,6 +354,10 @@ use super::trigger_openapi_shapes::*;
         AgentListItemView,
         AgentPageView,
         AgentView,
+        AccessibleAgentView,
+        AccessibleAgentPageView,
+        AccessibleAgentListItemView,
+        SharedAgentView,
         AgentFailureView,
         InputAcceptedView,
         AgentEventPageView,
@@ -298,6 +370,12 @@ use super::trigger_openapi_shapes::*;
         AgentResourcesView,
         ProfileReferenceView,
         CreateSandboxRequest,
+        super::sandbox_commands::shapes::SandboxCommandRequest,
+        super::sandbox_commands::shapes::SandboxCommandReceiptView,
+        super::sandbox_commands::shapes::SandboxCommandKindView,
+        super::sandbox_commands::shapes::SandboxCommandStateView,
+        super::sandbox_commands::shapes::SandboxCommandDispositionView,
+        super::sandbox_commands::shapes::SandboxCommandFailureView,
         super::instances_openapi_shapes::GrantSandboxServiceAccessRequest,
         CreateWorkspaceRequest,
         FailureView,
@@ -357,6 +435,7 @@ use super::trigger_openapi_shapes::*;
         (name = "sandbox profiles", description = "Owned Sandbox Profile drafts and immutable revisions"),
         (name = "profile marketplace", description = "Published profiles available to authenticated callers"),
         (name = "agents", description = "Owned CMA Agents and their durable history"),
+        (name = "resource-access", description = "Current effective policy and owner-managed organization shares"),
         (name = "agent operations", description = "Input and control operations for owned CMA Agents"),
         (name = "agent usage", description = "Usage and resource readings for owned CMA Agents"),
         (name = "sandboxes", description = "Owned Sandbox lifecycle and event replay"),
@@ -371,6 +450,7 @@ pub fn document() -> utoipa::openapi::OpenApi {
     let mut document = ApiDoc::openapi();
     document.merge(crate::responses::document());
     document.merge(crate::agui::document());
+    document.merge(crate::agent_v2::document());
     let components = document
         .components
         .get_or_insert_with(openapi::Components::new);
@@ -407,56 +487,13 @@ pub fn document() -> utoipa::openapi::OpenApi {
                 Vec::new()
             } else {
                 vec![
-                    openapi::security::SecurityRequirement::new(
-                        "bearerAuth",
-                        std::iter::empty::<String>(),
-                    ),
-                    openapi::security::SecurityRequirement::new(
-                        "sessionCookie",
-                        std::iter::empty::<String>(),
-                    ),
+                    SecurityRequirement::new("bearerAuth", std::iter::empty::<String>()),
+                    SecurityRequirement::new("sessionCookie", std::iter::empty::<String>()),
                 ]
             });
         }
     }
     document
-}
-
-fn anonymous_path(path: &str) -> bool {
-    matches!(
-        path,
-        "/auth/signup-options"
-            | "/api/v1/conformance"
-            | "/api/v1/agui/capabilities"
-            | "/api/v1/triggers/public/{public_id}"
-            | "/api/v1/triggers/public/{public_id}/badge.svg"
-            | "/api/v1/triggers/public/{public_id}/open/{placement_id}"
-            | "/api/v1/triggers/public/{public_id}/entry-intent"
-    )
-}
-
-fn operation_id(method: &str, path: &str) -> String {
-    let mut id = method.to_owned();
-    for segment in path.split('/').filter(|segment| !segment.is_empty()) {
-        id.push('_');
-        if segment.starts_with('{') && segment.ends_with('}') {
-            id.push_str("by_");
-        }
-        let mut previous_was_separator = false;
-        for character in segment.trim_matches(['{', '}']).chars() {
-            if character.is_ascii_alphanumeric() || character == '_' {
-                id.push(character.to_ascii_lowercase());
-                previous_was_separator = false;
-            } else if !previous_was_separator {
-                id.push('_');
-                previous_was_separator = true;
-            }
-        }
-        if id.ends_with('_') {
-            id.pop();
-        }
-    }
-    id
 }
 
 #[cfg(test)]

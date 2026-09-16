@@ -22,9 +22,13 @@ returns `Conformance`, containing `service`, `status`, and the currently exposed
 | `worktrees()` | `list`, `read` |
 | `agents()` | `list`, `read`, `create`, `input`, `steer`, `interrupt`, `answer_approval`, `stop`, `delete`, `events`, `transcript`, `usage`, `resources` |
 | `auth()` | `read_session`, anonymous `read_signup_options`, navigation-only `login_url`, `logout_url` |
+| `bridges()` | `list`, `read`, `choices`, `configuration`, `create`, `update`, `control`, `validate`, `import_key`, `revoke_key` |
+| `bridges()` explicit consent | `list_invoke_grants`, `read_invoke_grant`, `invoke_readiness`, `issue_invoke_grant`, `revoke_invoke_grant` |
 | `triggers()` | `list`, `read`, `create`, `save`, `delete`, `publish`, `retire`, `list_revisions`, `list_placements`, `create_placement`, `retire_placement`, `embed`, `stats` |
 | `launches()` | `create_or_resume`, `list`, `read`, `start`, `cancel`, `requirements`, `events`, `stream`, `create_connection`, `read_connection` |
 | `agui()` | `read_capabilities`, `read_sandbox`, `run`, `events` |
+| `responses_v2()` | `read_capabilities`, `create`, `create_for_agent`, `read`, `read_conversation`, `list_items`, `replay`, `observe_controls`, `submit_control`, `read_command`, `observe_queued_cancellation`, `cancel_queued_response` |
+| `agent_events_v2()` | `read_transport_eligibility`, `snapshot`, `events` with `consume_next` and `acknowledged_cursor` |
 | `responses()` | `create_conversation`, `read_conversation`, `list_items`, `create`, `read`, unsupported `delete`, `cancel` |
 | `admin()` | `list_sandboxes`, `read_sandbox`, `sandbox_events`, `retire_sandbox`, `list_profiles`, `retire_profile`, `read_settings`, `replace_settings`, `patch_settings`, `reset_settings`, `pause_triggers`, `resume_triggers`, `read_runtime_inventory`, `list_activity` |
 | `Client` reads | `read_conformance`, `read_openapi`, `read_defaults`, `read_trigger_preview`, `read_trigger_badge` |
@@ -48,6 +52,13 @@ marketplace results return `ResourcePage<T>`, whose `next` is the exclusive
 cursor for the next call. Child Workspace and Worktree lists return
 `ResourceList<T>`. `SandboxListOptions` and `AgentListOptions` add typed filters;
 `MarketplaceListOptions` adds search text.
+
+`BridgeListOptions` adds current organization scope. Bridge inventory returns
+`BridgePage::next_cursor`, preserves strict identity ordering and validates the
+requested owner scope. Bridge management keys have a 200-byte bound. Selected
+key import uses a borrowed `ImportBridgeKeyRequest` with redacted Debug; the
+client retains no bot-key value. See [Bridge setup](bridges.md) for configuration,
+explicit context sharing, current custody and accepted-work controls.
 
 `EventOptions` holds an exclusive durable sequence `after` and optional `limit`.
 Sandbox events return `Vec<SandboxEvent>`; Agent events return
@@ -73,8 +84,18 @@ Trigger and Launch list responses normalize the backend's `next_cursor` into
 at `GET /api/v1/agui/launches/{id}/events`. Stream `cursor()` returns the last
 complete event, without implying the application has persisted it.
 
+`Launch::first_message_command` is an optional immutable association containing
+`agent_id`, `command_id`, and `response_id`. Owner reads/lists include it only for
+an attached common first prompt; legacy Launches and reuse with no new prompt
+omit it. Use `responses_v2().read` and the events extension with current Agent
+history authority to observe that response. The association grants no authority
+and never triggers input submission. Refresh it with `launches().read` rather
+than replaying cached admission, and retain the same response after ambiguity.
+
 `ReplayOptions` controls AG-UI finite history or follow mode. `RunRequest` admits
-one user message or approval answer. `AgentEvent::cursor` is set only at a new
+one user message or approval answer. `agui().run_with_key(&request, key)` adds an
+optional retained key alongside existing unkeyed `run`; Working ordinary input
+queues a Message and `runId` remains correlation only. `AgentEvent::cursor` is set only at a new
 durable record boundary; live frames never acknowledge one. `SandboxCompanion`
 has typed Sandbox, Workspace, Worktree, and first-message lifecycle snapshots.
 
@@ -83,6 +104,11 @@ plain text or exactly one user message with plain text or one `input_text` part.
 Streaming and durable storage are required. Standard tools, background work,
 stateless generation, and conversation deletion are not invented. Response
 event names and connection-local sequences are checked before yielding.
+`responses().create_with_key(&request, key)` retains an explicit command key;
+existing `create` is unkeyed. Missing/null predecessor means the first turn.
+Both keyed legacy helpers accept 1–256 bytes without control characters in a
+valid HTTP header and never retry automatically. See [Streaming](streaming.md)
+for uncertain admission and previous-server recovery rules.
 
 Badge retrieval returns a typed modified SVG or not-modified result, retaining
 the required nonempty ETag. A 304 requires an explicit request validator. Markup
@@ -97,3 +123,30 @@ semantics. It does not execute the script and is not a Layer1 API operation.
 Chronological transcript `messages` are required typed entries with sequence,
 user/assistant role, content, and append timestamp; preserve this order rather
 than concatenating the owner/Agent summary fields.
+
+
+`bridges().list_allocations`, `read_child_cleanup` and `request_child_cleanup`
+expose explicit child removal. `BridgeCleanupAllocationPage::next_cursor` stays
+opaque and may be present on empty or short filtered pages. The cleanup request
+pins both observed revisions and `RemoveChild`; HTTP 202 returns an immutable
+`BridgeChildCleanupReceipt` within current `BridgeChildCleanupStatus`. Retain the
+exact request and 200-byte-bounded key after uncertain responses. Capacity is
+released only at `Complete`, with Workspace and history retained. See
+[Bridge setup](bridges.md#explicit-child-cleanup) for consent and replay examples.
+
+
+### Separate owned Workspace cleanup
+
+`bridges.read_workspace_cleanup` reads `BridgeWorkspaceCleanupStatus` for one allocation;
+`bridges.request_workspace_cleanup` submits the independent `BridgeWorkspaceCleanupRequest`.
+The request pins three revisions and the completed child receipt, with only
+`BridgeWorkspaceCleanupAction`'s `remove_owned_workspace` action.
+`BridgeWorkspaceCleanupReceipt`, `BridgeWorkspaceCleanupProgress`, and
+`BridgeWorkspaceCleanupHold` keep acceptance, current eligibility and permanent
+completion distinct. Both methods use the separate `workspace-cleanup` route;
+child `remove_child` retains its original Workspace-preserving scope. See
+[Bridge management](bridges.md#separate-owned-workspace-cleanup).
+
+## Source-control consent
+
+`bridges().read_source_controls(grant_id)` and `bridges().set_source_controls(grant_id, &request, &key)` observe and record separate original-sender consent. Types: `BridgeSourceControlAction`, `BridgeSourceControlRequest`, `BridgeSourceControlPolicy`, `BridgeSourceControlState`, `BridgeSourceControlReceipt`, `BridgeSourceControlScope`, and `BridgeSourceControlApprovalMode`. Read absence is required null. PUT returns exactly 200. Consent never demonstrates runtime control support. See [Bridges](bridges.md) for revision bounds and exact-request recovery.

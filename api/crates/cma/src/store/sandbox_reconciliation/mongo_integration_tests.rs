@@ -23,6 +23,8 @@ use crate::store::sandboxes::{sandbox_document, sandbox_replacement_fields};
 const BEFORE: &str = "2026-09-05T00:00:00Z";
 const OBSERVED: &str = "2026-09-05T00:30:00Z";
 
+mod channel_home_retention;
+
 fn loss(sandbox: &Sandbox) -> SandboxRuntimeLossRequest {
     SandboxRuntimeLossRequest {
         sandbox_id: sandbox.id.clone(),

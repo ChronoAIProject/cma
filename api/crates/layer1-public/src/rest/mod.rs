@@ -11,22 +11,68 @@ use axum::{
 use layer2_core::StoreError;
 
 pub mod admin;
+mod agent_artifacts;
 mod agent_openapi_shapes;
+pub use agent_artifacts::agent_artifacts_router;
+#[cfg(test)]
+mod agent_artifacts_tests;
+mod agent_channel_usage;
+mod agent_command_admission;
 mod agent_operate;
+pub use agent_channel_usage::agent_channel_usage_router;
+#[cfg(test)]
+mod agent_channel_usage_tests;
+mod agent_provenance;
+mod agent_provenance_inventory;
+pub use agent_provenance_inventory::agent_provenance_inventory_router;
+#[cfg(test)]
+mod agent_provenance_inventory_tests;
+mod agent_reads;
+mod agent_shared_shapes;
 mod agent_source;
+pub use agent_provenance::agent_provenance_router;
+#[cfg(test)]
+mod agent_provenance_tests;
 mod agents;
 #[cfg(test)]
 pub(crate) mod agents_tests;
+mod bridges;
+#[cfg(test)]
+mod bridges_tests;
+pub use bridges::bridge_router;
+mod bridge_invokes;
+pub use bridge_invokes::bridge_invoke_router;
+mod bridge_source_controls;
+pub use bridge_source_controls::bridge_source_control_router;
+mod bridge_cleanup;
+mod bridge_partition_commands;
+mod bridge_partitions;
+pub use bridge_partition_commands::bridge_partition_commands_router;
+#[cfg(test)]
+mod bridge_partitions_tests;
+pub use bridge_partitions::bridge_partitions_router;
+#[cfg(test)]
+mod bridge_source_controls_tests;
+pub use bridge_cleanup::bridge_cleanup_router;
+mod bridge_outbox;
+pub use bridge_outbox::bridge_outbox_router;
 mod badge;
 mod badge_mark;
 #[cfg(test)]
 mod badge_tests;
+#[cfg(test)]
+mod bridge_cleanup_tests;
+#[cfg(test)]
+mod bridge_invokes_tests;
+#[cfg(test)]
+mod bridge_outbox_tests;
 mod defaults;
 mod embed;
 #[cfg(test)]
 mod embed_tests;
 pub mod openapi;
 mod openapi_shapes;
+mod organizations;
 pub mod pagination;
 mod problems;
 mod profile_authoring;
@@ -43,9 +89,24 @@ mod profiles_workspace;
 #[cfg(test)]
 mod public_contract_tests;
 mod remediation;
+mod resource_access;
+pub(crate) mod resource_access_problem;
+mod resource_access_shapes;
+#[cfg(test)]
+mod resource_access_tests;
+#[cfg(test)]
+mod shared_agent_tests;
+#[cfg(test)]
+mod shared_hierarchy_tests;
+#[cfg(test)]
+mod shared_source_tests;
+#[cfg(test)]
+mod shared_stream_tests;
+pub use resource_access::resource_access_router;
 #[cfg(test)]
 mod trigger_assets_test_support;
 
+mod hierarchy_shared_shapes;
 mod idempotency;
 pub(crate) mod instance_problem;
 mod instances;
@@ -57,7 +118,11 @@ mod launch_events;
 mod launch_quota;
 mod launches;
 mod public_names;
+mod sandbox_commands;
+#[cfg(test)]
+mod sandbox_commands_tests;
 mod sandbox_service_access;
+pub use sandbox_commands::sandbox_commands_router;
 mod sandboxes;
 mod service_connections;
 mod trigger_entry;

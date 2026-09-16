@@ -35,6 +35,10 @@ use public AG-UI, and the public Responses interface projects the same Agent
 conversation for compatible clients. A missing first-party capability must be
 added to the appropriate public interface, never a private route.
 
+New Agent tabs may select public Responses v2 input and rich Agent replay through
+the authenticated transport flag. Existing tabs retain their selected transport
+through flag changes and reloads; uncertain requests keep their original keys.
+
 A CMA Trigger brings a visitor to an Agent of their own, never the publisher's.
 GET, navigation, and an OAuth callback do not start work. An explicit visitor
 action supplies consent and admits the durable operation.
@@ -350,10 +354,16 @@ does not need to repair a deployment by clicking a revive control.
 
 ### Runtime rotation and checkpoints
 
-Runtime image drift causes recorded rotation. A writer fence first holds the
-whole Sandbox home, including Workspaces, Worktrees, Agent homes and transcripts,
-for a consistent checkpoint. Restore installs that snapshot into a replacement
-runtime; the controller resumes the Agents and records the resulting version.
+Changing the configured runtime image never rotates existing live Sandboxes.
+Reconciliation adopts each retained runtime using its recorded image; new
+allocations use the configured image. API/web upgrade and rollback must preserve
+the existing runtime, native conversation, admitted turns, approvals and dirty
+work without user repair. An incompatible feature stays disabled until retained
+runtime coexistence and uninterrupted interaction are proved. Previously admitted
+rotation operations remain readable and recoverable; image drift cannot admit
+new ones. For an independently admitted pause or recovery, a writer fence holds
+the whole Sandbox home for a consistent checkpoint, and restore preserves that
+snapshot and the retained conversation identity.
 Only the latest completed checkpoint is retained. A replacement must commit before
 older completed objects are pruned; legacy two-generation records are accepted until
 their next successful publication. Periodic capture defaults to thirty minutes and
@@ -452,7 +462,11 @@ The merge is the release. Nothing is tagged or published before it, and nothing 
 
 The tag is the version of record. `api/Cargo.toml` and `web/package.json` are not bumped: a bot writing to `main` would put it ahead of `develop` for no gain, and the version those files carry is not what anything deploys.
 
-Publishing is not deploying. `infra/` is untouched by a release, and a new image becomes live only when someone changes a manifest to name it. `CHRONO_SANDBOX_IMAGE` is the sharpest case: under §5 it is the runtime version every live Sandbox is measured against, so moving it rotates every Sandbox, and that has to be a decision rather than a consequence of merging.
+Publishing is not deploying. `infra/` is untouched by a release, and a new image
+becomes live only when someone changes a manifest to name it.
+`CHRONO_SANDBOX_IMAGE` selects the image for new allocations. Under §5, existing
+live Sandboxes retain their recorded runtime images across control-plane
+upgrades and rollbacks; changing this default never admits image-drift rotation.
 
 Full procedure in `docs/Release.md`.
 

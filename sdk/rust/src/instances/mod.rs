@@ -7,11 +7,15 @@ use crate::{
     resources::{identity, positive},
 };
 
+mod commands;
 mod events;
+pub use commands::*;
 mod lifecycle;
+mod shared;
 mod types;
 pub use events::*;
 pub use lifecycle::*;
+pub use shared::*;
 pub use types::*;
 
 /// Pagination and optional status filter for owned Sandboxes.
@@ -23,12 +27,52 @@ pub struct SandboxListOptions {
     pub status: Option<SandboxStatus>,
 }
 
+/// Personal or explicit current organization Sandbox inventory.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct AccessibleSandboxListOptions {
+    /// Canonical organization ID; omission selects personal resources.
+    pub organization: Option<String>,
+    /// Explicit incoming whole-Sandbox grants, mutually exclusive with organization.
+    pub shared: bool,
+    /// Pagination and status filters.
+    pub filters: SandboxListOptions,
+}
+
 /// Owner-facing Sandbox resources and lifecycle commands.
 pub struct Sandboxes<'a> {
     client: &'a Client,
 }
 
 impl Sandboxes<'_> {
+    /// List personally owned Sandboxes or current organization-visible metadata.
+    pub async fn list_accessible(
+        &self,
+        options: &AccessibleSandboxListOptions,
+    ) -> Result<ResourcePage<AccessibleSandboxSummary>> {
+        if options.shared && options.organization.is_some() {
+            return Err(crate::Error::validation(
+                "choose organization or shared inventory",
+            ));
+        }
+        let mut query = options.filters.page.query();
+        if let Some(status) = options.filters.status {
+            query.push(("status", status.as_str().into()));
+        }
+        if let Some(organization) = &options.organization {
+            query.push(("organization", organization.clone()));
+        }
+        if options.shared {
+            query.push(("shared", "true".into()));
+        }
+        self.client.get(&["sandboxes"], &query).await
+    }
+
+    /// Read personal detail or shared metadata and authorized child counts.
+    pub async fn read_accessible(&self, id: &str) -> Result<AccessibleSandboxDetail> {
+        let value: AccessibleSandboxDetail = self.client.get(&["sandboxes", id], &[]).await?;
+        identity(value.id(), id)?;
+        Ok(value)
+    }
     /// List owned Sandboxes with hierarchy counts.
     pub async fn list(&self, options: &SandboxListOptions) -> Result<ResourcePage<SandboxSummary>> {
         let mut query = options.page.query();
@@ -128,6 +172,21 @@ pub struct Workspaces<'a> {
 }
 
 impl Workspaces<'_> {
+    /// List personal/shared summaries under current parent Sandbox access.
+    pub async fn list_accessible(
+        &self,
+        sandbox_id: &str,
+    ) -> Result<ResourceList<AccessibleWorkspaceSummary>> {
+        self.client
+            .get(&["sandboxes", sandbox_id, "workspaces"], &[])
+            .await
+    }
+    /// Read personal detail or a safe shared Workspace hierarchy.
+    pub async fn read_accessible(&self, id: &str) -> Result<AccessibleWorkspaceDetail> {
+        let value: AccessibleWorkspaceDetail = self.client.get(&["workspaces", id], &[]).await?;
+        identity(value.id(), id)?;
+        Ok(value)
+    }
     /// List Workspace summaries in an owned Sandbox.
     pub async fn list(&self, sandbox_id: &str) -> Result<ResourceList<WorkspaceSummary>> {
         self.client
@@ -181,6 +240,21 @@ pub struct Worktrees<'a> {
 }
 
 impl Worktrees<'_> {
+    /// List personal/shared metadata under current parent Workspace access.
+    pub async fn list_accessible(
+        &self,
+        workspace_id: &str,
+    ) -> Result<ResourceList<AccessibleWorktree>> {
+        self.client
+            .get(&["workspaces", workspace_id, "worktrees"], &[])
+            .await
+    }
+    /// Read a personal Worktree or safe shared metadata.
+    pub async fn read_accessible(&self, id: &str) -> Result<AccessibleWorktree> {
+        let value: AccessibleWorktree = self.client.get(&["worktrees", id], &[]).await?;
+        identity(value.id(), id)?;
+        Ok(value)
+    }
     /// List Worktrees allocated within an owned Workspace.
     pub async fn list(&self, workspace_id: &str) -> Result<ResourceList<Worktree>> {
         self.client

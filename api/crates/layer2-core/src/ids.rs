@@ -69,10 +69,25 @@ macro_rules! generated_id {
     };
 }
 
+generated_id!(
+    SandboxCommandId,
+    "scmd_",
+    "Identifier of a durable Sandbox lifecycle command."
+);
 generated_id!(SandboxId, "sbx_", "Identifier of a CMA Sandbox.");
 generated_id!(WorkspaceId, "wks_", "Identifier of a CMA Workspace.");
 generated_id!(WorktreeId, "wkt_", "Identifier of a CMA Worktree.");
 generated_id!(AgentId, "agt_", "Identifier of a CMA Agent.");
+generated_id!(
+    AgentCommandId,
+    "cmd_",
+    "Identifier of a durable Agent command."
+);
+generated_id!(
+    AgentResponseId,
+    "resp_",
+    "Identifier of a durable Agent response."
+);
 generated_id!(AgentProfileId, "agp_", "Identifier of an Agent Profile.");
 generated_id!(
     WorkspaceProfileId,

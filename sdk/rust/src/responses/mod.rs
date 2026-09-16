@@ -72,6 +72,21 @@ impl Responses<'_> {
     }
     /// Admit one streaming response on an existing Agent; reconnecting cannot resume this stream.
     pub async fn create(&self, body: &CreateResponseRequest) -> Result<ResponseStream> {
+        self.submit(body, None).await
+    }
+    /// Recover an uncertain response using this retained key and identical input, without automatic retry.
+    pub async fn create_with_key(
+        &self,
+        body: &CreateResponseRequest,
+        key: &str,
+    ) -> Result<ResponseStream> {
+        self.submit(body, Some(key)).await
+    }
+    async fn submit(
+        &self,
+        body: &CreateResponseRequest,
+        key: Option<&str>,
+    ) -> Result<ResponseStream> {
         if body.conversation.trim().is_empty()
             || body.input.is_empty()
             || !body.stream
@@ -86,7 +101,8 @@ impl Responses<'_> {
                 "Responses requires an existing conversation, one user message, streaming, and durable storage",
             ));
         }
-        let request = Request::operation(Method::POST, &["responses"], Some(body), StatusCode::OK)?;
+        let request = Request::operation(Method::POST, &["responses"], Some(body), StatusCode::OK)?
+            .with_command_key(key)?;
         Ok(ResponseStream {
             inner: stream::open(&self.client.inner, request).await?,
             sequence: 0,

@@ -13,6 +13,8 @@ pub struct Case {
     pub response: Response,
     #[serde(default)]
     pub captures: BTreeMap<String, String>,
+    #[serde(default, rename = "headerCaptures")]
+    pub header_captures: BTreeMap<String, String>,
 }
 #[derive(Clone, Debug, Deserialize)]
 pub struct Request {
@@ -47,6 +49,8 @@ pub struct Response {
     pub headers: BTreeMap<String, String>,
     #[serde(rename = "bodyKind")]
     pub body_kind: String,
+    #[serde(default, rename = "streamPrefix")]
+    pub stream_prefix: bool,
     pub body: Value,
 }
 
@@ -77,6 +81,22 @@ pub fn load() -> Vec<Case> {
         assert_eq!(corpus.version, 1);
         let mut scenes: BTreeMap<String, BTreeMap<String, Value>> = BTreeMap::new();
         for case in &corpus.cases {
+            for (name, header) in &case.header_captures {
+                let value = Value::String(
+                    case.response
+                        .headers
+                        .get(header)
+                        .expect("receipt header capture")
+                        .clone(),
+                );
+                if let Some(prior) = scenes
+                    .entry(case.scenario.clone())
+                    .or_default()
+                    .insert(name.clone(), value.clone())
+                {
+                    assert_eq!(prior, value, "conflicting header capture {name}");
+                }
+            }
             for (name, pointer) in &case.captures {
                 let value = case.response.body.pointer(pointer).unwrap().clone();
                 if let Some(prior) = scenes
@@ -300,7 +320,11 @@ pub fn invalid(message: impl Into<String>) -> Error {
 pub fn wire(case: &Case) -> Expected {
     let stream = case.operation.contains("/agui/")
         && (case.operation.ends_with("/events") || case.operation.ends_with("/run"))
-        || case.operation == "POST /api/v1/responses";
+        || case.operation == "POST /api/v1/responses"
+        || case.operation.contains("/api/v2")
+            && (case.operation == "POST /api/v2/responses"
+                || case.operation == "POST /api/v2/agents/{agent_id}/responses"
+                || case.operation.ends_with("/events"));
     let mut request_headers = headers(
         false,
         if stream {
@@ -311,7 +335,12 @@ pub fn wire(case: &Case) -> Expected {
             "application/json"
         },
     );
-    request_headers.extend(case.request.headers.clone());
+    request_headers.extend(
+        case.request
+            .headers
+            .iter()
+            .map(|(name, value)| (name.to_ascii_lowercase(), value.clone())),
+    );
     let response = if case.response.body_kind == "sse" {
         case.response
             .body

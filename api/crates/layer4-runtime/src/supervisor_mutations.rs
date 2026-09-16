@@ -1,11 +1,64 @@
-use layer3_adapter::wire::{FencedReceipt, ResponseFrame};
+use layer3_adapter::wire::{FencedReceipt, RequestFrame, ResponseFrame};
 use layer3_adapter::{WorktreeReceipt, WorktreeRef, WorktreeRemoveReceipt, WorktreeRequest};
 
-use super::Supervisor;
+use super::{agent_validation, Supervisor};
 use crate::failure::Result;
 use crate::mutation_journal::{self, Begin, Operation, Subject, Ticket};
 
 impl Supervisor {
+    pub(super) async fn authorize_mutation(&self, request: &RequestFrame) -> Result<()> {
+        let fenced = match request {
+            RequestFrame::AddWorktree(request) => {
+                crate::worktree::validate_add_request(&request.request)?;
+                Some((
+                    request.authority_fence,
+                    Operation::add_worktree(&request.request),
+                ))
+            }
+            RequestFrame::RemoveWorktree(request) => {
+                crate::worktree::validate_remove_request(&request.request)?;
+                Some((
+                    request.authority_fence,
+                    Operation::remove_worktree(&request.request),
+                ))
+            }
+            RequestFrame::MaterializeAgentHome(request) => {
+                agent_validation::materialize_home(&request.request)?;
+                Some((
+                    request.authority_fence,
+                    Operation::create_agent_home(&request.request),
+                ))
+            }
+            RequestFrame::RemoveAgentHome(request) => {
+                agent_validation::remove_home(&request.request)?;
+                Some((
+                    request.authority_fence,
+                    Operation::remove_agent_home(&request.request),
+                ))
+            }
+            RequestFrame::OpenAgent(request) => {
+                agent_validation::open(&request.request)?;
+                Some((
+                    request.authority_fence,
+                    Operation::open_agent(&request.request),
+                ))
+            }
+            RequestFrame::CloseAgent(request) => {
+                agent_validation::close(&request.request)?;
+                Some((
+                    request.authority_fence,
+                    Operation::close_agent(&request.request),
+                ))
+            }
+            _ => None,
+        };
+        let Some((authority_fence, operation)) = fenced else {
+            return Ok(());
+        };
+        self.authorize_preparation(request).await?;
+        crate::mutation_authority::admit(&self.config, authority_fence, &operation)
+    }
+
     pub(super) async fn add_worktree(
         &self,
         authority_fence: u64,

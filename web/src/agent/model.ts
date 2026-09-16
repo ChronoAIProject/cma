@@ -54,6 +54,13 @@ export interface RecoveryNotice {
 }
 
 export interface ConversationState {
+  readonly agentCursor?: string;
+  readonly agentIncarnation?: string;
+  readonly responseBinding?: {
+    readonly responseId: string;
+    readonly commandId: string;
+    readonly turnSequence: number;
+  };
   readonly messages: readonly ConversationMessage[];
   readonly toolCalls: readonly ToolCall[];
   readonly reasoning: readonly ReasoningBlock[];

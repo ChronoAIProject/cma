@@ -42,7 +42,11 @@ jobs:
       - name: Provider contract mutation regressions
         run: ruby .github/scripts/ci-contract-tests.rb provider
       - name: Staging authority and evidence regressions
-        run: node --test .github/scripts/staging-authority.test.mjs .github/scripts/deployment-observer.test.mjs .github/scripts/mongo-contract-tests.test.mjs
+        run: node --test .github/scripts/staging-authority.test.mjs .github/scripts/deployment-observer.test.mjs .github/scripts/cma-bridge-continuity-observer.test.mjs .github/scripts/cma-bridge-continuity-transport.test.mjs .github/scripts/cma-bridge-continuity-watch.test.mjs .github/scripts/mongo-contract-tests.test.mjs
+      - name: Install continuity fixture tooling
+        run: python3 -m pip install -r .github/tools/cma-bridge-continuity/requirements.txt
+      - name: Continuity fixture ownership and isolation regressions
+        run: python3 -m unittest discover -s .github/tools/cma-bridge-continuity -p 'test_*.py' -v
       - name: Install harness dependencies
         working-directory: web
         run: npm ci
@@ -245,8 +249,15 @@ jobs:
       - uses: taiki-e/install-action@nextest
       - name: Tests
         run: cargo nextest run --workspace --locked
+      - name: Isolated Linux Workspace removal writer boundary
+        run: >-
+          cargo test --locked -p layer4-runtime
+          supervisor::mutation_tests::workspace_reconciliation_tests::real_linux_writer_boundary_reconciles_target_and_resumes_live_sibling
+          -- --ignored --exact --test-threads=1
       - name: Disposable real Mongo persistence contracts
-        timeout-minutes: 20
+        # The complete 567-contract run took 19m24s on the hosted runner.
+        # Leave room for the added partition/control contracts and fixture setup.
+        timeout-minutes: 25
         run: bash ../.github/scripts/mongo-contract-tests.sh
       - name: Doctests
         run: cargo test --doc --workspace --locked

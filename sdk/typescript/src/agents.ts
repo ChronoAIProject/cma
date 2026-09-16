@@ -18,7 +18,6 @@ import { agentStatus, type AgentStatus } from './instances/types.js';
 import {
   agent,
   agentResources,
-  agentSource,
   agentSummary,
   agentTextRequest,
   agentTranscript,
@@ -31,8 +30,23 @@ import {
   type CreateAgentRequest,
   type StopAgentRequest,
 } from './agents/types.js';
+import {
+  agentCreationCategory,
+  agentProvenance,
+  agentProvenanceInventoryItem,
+  type AgentCreationCategory,
+} from './agents/provenance.js';
 import { agentEvent } from './agents/events.js';
+import { accessibleAgent, accessibleAgentSource, accessibleAgentSummary } from './agents/shared.js';
 import { requireRefusal } from './unsupported.js';
+import { readAgentChannelUsage, listAgentChannelUsageHistory } from './agents/channel-usage.js';
+import {
+  listAgentArtifacts,
+  readAgentArtifact,
+  publishAgentArtifact,
+  downloadAgentArtifact,
+  type PublishAgentArtifactRequest,
+} from './agents/artifacts.js';
 
 export interface AgentListOptions extends PageOptions {
   readonly sandbox?: string;
@@ -40,9 +54,77 @@ export interface AgentListOptions extends PageOptions {
   readonly status?: AgentStatus;
 }
 
+export interface AccessibleAgentListOptions extends AgentListOptions {
+  /** Canonical organization ID; omission selects personal inventory. */
+  readonly organization?: string;
+}
+
+export interface AgentProvenanceInventoryOptions extends AccessibleAgentListOptions {
+  /** Explicit incoming shares across current organizations; mutually exclusive with organization. */
+  readonly shared?: boolean;
+  /** Immutable category. Continue with `next` even after an empty filtered page. */
+  readonly creationOrigin?: AgentCreationCategory;
+  /** Filter explicit current bindings without changing creation categories. */
+  readonly channelActive?: boolean;
+  /** Filter any retained channel attachment/use history, including detached bindings. */
+  readonly channelHistory?: boolean;
+}
+
 /** Public Agent REST commands and durable read projections. */
 export class Agents {
   constructor(private readonly config: ResolvedConfig) {}
+
+  /** Explicit active/historical channel facts under current resource visibility. */
+  channelUsage(id: string, options: OperationOptions = {}) {
+    return readAgentChannelUsage(this.config, id, options);
+  }
+  /** Current bridge managers can page retained channel binding history. */
+  channelUsageHistory(id: string, options: PageOptions = {}) {
+    return listAgentChannelUsageHistory(this.config, id, options);
+  }
+
+  /** List explicitly approved artifacts under current Agent visibility. */
+  listArtifacts(id: string, options: PageOptions = {}) {
+    return listAgentArtifacts(this.config, id, options);
+  }
+  readArtifact(id: string, artifactId: string, options: OperationOptions = {}) {
+    return readAgentArtifact(this.config, id, artifactId, options);
+  }
+  /** Publish immutable selected content; requires current sharing-management authority. */
+  publishArtifact(id: string, body: PublishAgentArtifactRequest, options: CommandOptions) {
+    return publishAgentArtifact(this.config, id, body, options);
+  }
+  /** Download selected artifact bytes with current authorization; does not execute or render them. */
+  downloadArtifact(id: string, artifactId: string, options: OperationOptions = {}) {
+    return downloadAgentArtifact(this.config, id, artifactId, options);
+  }
+
+  /** Safe creation inventory. Omit organization and shared for personal scope. */
+  provenanceInventory(options: AgentProvenanceInventoryOptions = {}) {
+    if (options.status !== undefined) input(agentStatus, options.status);
+    if (options.creationOrigin !== undefined) input(agentCreationCategory, options.creationOrigin);
+    if (options.channelActive !== undefined) input(boolean, options.channelActive);
+    if (options.channelHistory !== undefined) input(boolean, options.channelHistory);
+    return read(
+      this.config,
+      query('/api/v1/agents/provenance', {
+        shared: options.shared === undefined ? undefined : String(options.shared),
+        organization: options.organization,
+        sandbox: options.sandbox,
+        workspace: options.workspace,
+        status: options.status,
+        creation_origin: options.creationOrigin,
+        channel_active:
+          options.channelActive === undefined ? undefined : String(options.channelActive),
+        channel_history:
+          options.channelHistory === undefined ? undefined : String(options.channelHistory),
+        cursor: options.cursor,
+        limit: options.limit,
+      }),
+      page(agentProvenanceInventoryItem),
+      options,
+    );
+  }
 
   list(options: AgentListOptions = {}) {
     if (options.status !== undefined) input(agentStatus, options.status);
@@ -60,8 +142,36 @@ export class Agents {
     );
   }
 
+  /** List personal Agents or the Agents visible in one current organization. */
+  listAccessible(options: AccessibleAgentListOptions = {}) {
+    if (options.status !== undefined) input(agentStatus, options.status);
+    return read(
+      this.config,
+      query('/api/v1/agents', {
+        organization: options.organization,
+        sandbox: options.sandbox,
+        workspace: options.workspace,
+        status: options.status,
+        cursor: options.cursor,
+        limit: options.limit,
+      }),
+      page(accessibleAgentSummary),
+      options,
+    );
+  }
+
   read(id: string, options: OperationOptions = {}) {
     return read(this.config, `/api/v1/agents/${segment(id)}`, identity(agent, id), options);
+  }
+
+  /** Read an owner detail or the safe Agent-only shared detail. */
+  readAccessible(id: string, options: OperationOptions = {}) {
+    return read(
+      this.config,
+      `/api/v1/agents/${segment(id)}`,
+      identity(accessibleAgent, id),
+      options,
+    );
   }
 
   create(workspaceId: string, body: CreateAgentRequest, options: CommandOptions) {
@@ -135,8 +245,21 @@ export class Agents {
     return this.readProjection(id, 'resources', agentResources, options);
   }
 
-  source(id: string, options: OperationOptions = {}) {
-    return this.readProjection(id, 'source', agentSource, options);
+  /** Immutable creation facts; source details require current resource management. */
+  provenance(id: string, options: OperationOptions = {}) {
+    return this.readProjection(id, 'provenance', agentProvenance, options);
+  }
+
+  async source(id: string, options: OperationOptions = {}) {
+    const value = await this.sourceAccessible(id, options);
+    if (value.access === 'shared')
+      throw new ProtocolError('shared Agent source requires sourceAccessible');
+    return value;
+  }
+
+  /** Personal provenance or a shared creation category, under current access. */
+  sourceAccessible(id: string, options: OperationOptions = {}) {
+    return this.readProjection(id, 'source', accessibleAgentSource, options);
   }
 
   /** Preserve the named terminal capability refusal; no attachment is available. */

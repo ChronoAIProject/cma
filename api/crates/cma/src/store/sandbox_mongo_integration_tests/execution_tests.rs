@@ -49,6 +49,7 @@ async fn execution_pins_survive_reopen_and_reject_cas_or_transaction_replacement
         assert_eq!(
             reopened
                 .commit(SandboxTransaction::SaveSandboxAndAppend {
+                    command_revival: None,
                     expected_revision: pinned.revision,
                     sandbox: Box::new(next),
                     event_at: NOW.into(),

@@ -18,9 +18,11 @@ export interface ContractCase {
     status: number;
     headers: Record<string, string>;
     bodyKind: 'json' | 'empty' | 'text' | 'sse';
+    streamPrefix?: boolean;
     body: unknown;
   };
   captures: Record<string, string>;
+  headerCaptures?: Record<string, string>;
 }
 
 export interface DispatchContext {
@@ -133,6 +135,13 @@ export function loadCorpus(): ContractCase[] {
       ids.add(fixture.id);
       let scope = symbols.get(fixture.scenario);
       if (!scope) symbols.set(fixture.scenario, (scope = new Map()));
+      for (const [name, header] of Object.entries(fixture.headerCaptures ?? {})) {
+        const value = fixture.response.headers[header];
+        assert(typeof value === 'string', `Missing receipt header ${header}`);
+        if (scope.has(name))
+          assert.deepEqual(scope.get(name), value, `Conflicting capture ${name}`);
+        scope.set(name, value);
+      }
       for (const [name, path] of Object.entries(fixture.captures)) {
         const value = pointer(fixture.response.body, path);
         if (scope.has(name))

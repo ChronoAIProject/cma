@@ -23,6 +23,24 @@ const STEP_KEYS: [LaunchStepKey; 7] = [
 
 impl Launch {
     pub fn validate(&self) -> Result<(), TriggerError> {
+        if let Some(initiation) = &self.initiation {
+            initiation.require_launch(self)?;
+        }
+        if self.input_binding_sha256.as_ref().is_some_and(|digest| {
+            self.input_protocol.is_none()
+                || digest.len() != 64
+                || !digest
+                    .bytes()
+                    .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        }) {
+            return Err(super::TriggerError::new(
+                "invalid_launch_input_binding",
+                "input_binding",
+            ));
+        }
+        if let Some(protocol) = &self.input_protocol {
+            protocol.require_launch(self)?;
+        }
         let created = seconds_from_rfc3339(&self.created_at);
         let updated = seconds_from_rfc3339(&self.updated_at);
         if !valid_digest(&self.revision_digest)

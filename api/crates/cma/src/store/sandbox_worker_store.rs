@@ -188,6 +188,17 @@ async fn purge_in_transaction(
     let Some(aggregate) = aggregate else {
         return Err(PurgeError::Conflict);
     };
+    if super::channel_storage_retention::required(
+        &store.client.database(&store.sandboxes.namespace().db),
+        id.as_str(),
+        Some(&aggregate),
+        Some(&mut *session),
+    )
+    .await
+    .map_err(PurgeError::Driver)?
+    {
+        return Err(PurgeError::Conflict);
+    }
     let sandbox = read_sandbox(&aggregate).map_err(|_| PurgeError::Conflict)?;
     if sandbox.status != SandboxStatus::Retired || !sandbox.credential.revoke_debt.is_empty() {
         return Err(PurgeError::Conflict);

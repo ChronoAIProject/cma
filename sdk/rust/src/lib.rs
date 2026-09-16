@@ -17,10 +17,12 @@
 #[macro_use]
 mod macros;
 pub mod admin;
+pub mod agent_events_v2;
 pub mod agents;
 pub mod agui;
 pub mod assets;
 pub mod auth;
+pub mod bridges;
 mod client;
 mod conformance;
 pub mod defaults;
@@ -31,8 +33,10 @@ pub mod instances;
 pub mod launches;
 pub mod profile_authoring;
 pub mod profiles;
+pub mod resource_access;
 mod resources;
 pub mod responses;
+pub mod responses_v2;
 pub mod stream;
 pub mod triggers;
 
@@ -48,6 +52,8 @@ pub mod guides {
     pub mod sandboxes {}
     #[doc = include_str!("../docs/agents.md")]
     pub mod agents {}
+    #[doc = include_str!("../docs/bridges.md")]
+    pub mod bridges {}
     #[doc = include_str!("../docs/profiles.md")]
     pub mod profiles {}
     #[doc = include_str!("../docs/streaming.md")]

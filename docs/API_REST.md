@@ -6,6 +6,8 @@ security declarations and response media types. The operation inventory below
 is checked against that document, including its AG-UI and Responses projections.
 [CMA Model](CMA_Model.md) defines lifecycle and profile semantics;
 [CMA Trigger](CMA_Trigger.md) defines publishing, consent and visitor reuse.
+[NyxID bridge callbacks](BRIDGE_CALLBACKS.md) documents the dedicated signed
+connector endpoint, durable inbox receipts and explicit execution holds.
 
 There are no `/sessions`, `/chats`, environment-profile, contribution,
 sponsorship or terminal-attachment APIs in this release. Resource management
@@ -274,6 +276,53 @@ and home. Workspace removal and Sandbox retirement are durable operations,
 not a direct recursive filesystem API. The [CMA Model](CMA_Model.md#lifecycle-states)
 contains the actual transition whitelist.
 
+## Durable Sandbox commands
+
+`POST /api/v1/sandboxes/{id}/commands` accepts an explicit `pause`, `revive`, or
+`retire` command and the positive `expected_revision` from a current authorized
+Sandbox detail. Supply `Idempotency-Key`. A shared detail now includes `revision`;
+older servers may omit it, in which case clients cannot submit this command.
+
+```json
+{"command":"pause","expected_revision":7}
+```
+
+Every successful submission or replay returns HTTP 202, `Location` pointing to
+`GET /api/v1/sandbox-commands/{id}`, and `Cache-Control: private, no-store`.
+The receipt contains `command_id`, `sandbox_id`, `command`, `expected_revision`,
+`admitted_at`, the original five-minute `queue_deadline`, `revision`, and `state`.
+It exposes no owner configuration, credential custody reference or internal audit.
+A queued receipt has revision 1 and `state: {"status":"queued"}`. Terminal receipts
+have revision 2. Applied state includes `at`, `sandbox_revision`, and `disposition`
+(`scheduled`, `already_scheduled`, or `already_satisfied`). Applied means the
+durable transition was committed; refresh Sandbox status for runtime progress.
+Rejected state includes `at` and one of `authority_revoked`, `queue_expired`,
+`target_changed`, `not_eligible`, `connections_required`, or
+`credential_setup_required`; the command scheduled no effect.
+
+Pause/revive require current `manage_sandbox`; retirement requires owner/admin
+`manage_sharing` and personal owners also need their existing deletion capability.
+A share recipient cannot retire the owner's Sandbox. The scheduler rechecks the
+actual admitting actor and current resource authority before committing a
+transition. Revival checks the resource owner's required connections.
+
+An uncertain response must be recovered with the **same key and request body**,
+including its original expected revision. One queued intent per Sandbox is allowed.
+HTTP 409 `sandbox_command_busy` and HTTP 503 `sandbox_command_unavailable` include
+`Retry-After: 1`; neither indicates completed runtime work. A different request
+under an existing key returns `idempotency_key_reused`. A stale new intent returns
+`sandbox_command_conflict`. Receipt reads require the original requesting actor,
+current target visibility and the same resource incarnation, and return HTTP 200.
+
+The shared Sandbox page offers these controls from current effective access and
+rechecks it on each submission. Retirement requires an inline confirmation.
+Unconfirmed intents retain their key/body through refresh and shared navigation
+within the same mounted viewer console; sign-out or a different viewer starts a
+new scope. This recovery state is not persisted across a full browser reload. Queued receipts are polled, and terminal results refresh
+actual Sandbox status. Access loss cancels receipt reads and removes the shared
+view. Personal Sandbox controls and personal conversation drafts retain their
+existing behavior.
+
 ## Agent Input And Reads
 
 REST input and steer accept `{ text }`. Input returns `202` with `{ queued }`;
@@ -283,13 +332,221 @@ use `{ decision: "allow" | "deny" | "abort" }`. Stop accepts `{}` or
 Interrupt, approval, stop and deletion return empty 202 bodies where indicated.
 Do not parse those bodies as JSON or infer completion from acceptance alone.
 
-The Agent detail includes its Sandbox, Workspace, Worktree, profile, status
+Production input, steer, interrupt and approval routes admit work through the
+common Agent command ledger using the actual authenticated human/API actor and
+current resource permissions. Organization admins may interact where effective
+access permits it; view grants and member/viewer roles remain read-only. Input's
+new durable acceptance returns `{ "queued": true }`, including receipt recovery
+after execution finishes. Controls bind the active turn observed atomically at
+admission and cannot drift to a later turn; an idle Agent refuses controls.
+
+These v1 routes preserve their original operation-scoped `Idempotency-Key` and
+exact request-byte fingerprint. An existing completed v1 receipt replays its
+original status, headers and body. New common commands use a distinct derived
+operation key. If a process loses its outer v1 response after common admission,
+the retry looks up that exact receipt under fresh current authority without
+reserving or dispatching again. A pending/expired older operation with no common
+receipt remains fenced with its named idempotency error. Changing its key is not
+a recovery operation. Admission uncertainty is never stored as a final failed
+receipt that would hide accepted work. This migration does not change v1
+Responses/AG-UI parsing. Response-targeted controls use the separate v2 contract
+documented in [Responses](API_Responses.md#cma-response-controls). Rich Agent
+history and new-tab transport selection use [Agent event replay v2](API_Agent_Events_V2.md).
+
+The personal-owner Agent detail includes its Sandbox, Workspace, Worktree, profile, status
 and first-message information, not an aggregate revision field. Transcript returns `{ agent_id,
 through_seq, turns }`; usage has its own `through_seq` and cumulative input,
 output and context readings. Resource readings are Sandbox-scoped observations
 projected alongside Agent identity, not per-Agent billing.
 
-`GET /api/v1/agents/{id}/source` returns owner-scoped creation provenance:
+Detail, transcript, event and usage reads accept current organization or share
+authority. Other authorized readers receive an explicit shared detail document:
+`access: "shared"`, `id`, `status`, optional `title`/`model`, `created_at`,
+`updated_at`, and optional `ready_at`/`stopped_at`/`deleted_at`. Parent hierarchy,
+paths, profiles, credentials and native conversation identifiers are omitted.
+Sandbox metrics require independent Sandbox access. The TypeScript
+`agents.readAccessible` and Rust `agents().read_accessible` methods parse both
+personal and shared details while existing `read` methods retain their full type.
+
+Shared event pages replace out-of-scope records with
+`kind: { type: "access_redacted" }` at the unchanged sequence/timestamp. Count
+these records and advance cursors normally. Shared transcripts and events omit
+correlation metadata, sign-in secrets and private runtime diagnostics. The
+stored log is unchanged and complete-log validation still applies. Buffered
+results are refused when access changes or expires during IO. Organization
+outages return 503 `organization_authority_unavailable`; inaccessible Agents
+retain 404 `agent_not_found`. Shared hierarchy, live and interaction
+interfaces remain under development.
+
+`GET /api/v1/organizations` returns `{ items: [{ id, role, display_name? }] }`
+ordered by canonical organization ID. Roles are `admin`, `member` or `viewer`.
+These choices support scope selection; each resource request obtains new evidence.
+
+`GET /api/v1/agents?organization=<canonical-id>` lists Agents owned by that
+organization or covered by its current Agent/whole-Sandbox shares. Omit
+`organization` to retain the existing personal inventory without organization
+lookups. `status`, `cursor` and `limit` apply after organization filtering and
+overlapping grants are deduplicated. Only authorized rows determine `next`;
+there is no unfiltered resource count. Each subsequent page rechecks membership
+and grants. An inaccessible Sandbox or Workspace filter is refused, including
+for a narrow-shared Agent, because a filter result could otherwise reveal its
+parent. A buffered page is refused after a policy change, even if only its
+hidden lookahead row lost access. Other authorized readers receive the same
+safe Agent-only fields as shared detail; personal owners retain their full list
+summary. The SDK methods are TypeScript `agents.listAccessible` and Rust
+`agents().list_accessible` with `AccessibleAgentListOptions`.
+
+`GET /api/v1/agents/{id}/provenance` returns immutable creation facts:
+`agent_id`, `created_at`, and `creation_origin` (`manual`, `trigger`,
+`channel_bridge`, or `legacy_unknown`). The owner and a current manager of the
+owning organization also receive `details`: optional creating actor, original
+Trigger/launch references, channel references, and Workspace profile index.
+Shared recipients and independent operators receive only the category and
+timestamp. Policy and the original membership deadline are checked after IO.
+
+New manual creation records the authenticated actor separately from ownership.
+New authenticated Trigger launches capture the original verified initiating actor
+in an immutable Launch sidecar. Trigger workers retain their exact Trigger actor
+and launch ID as the creating identity, while Agent provenance separately records
+that initiating actor. Launch replay and Agent creation recheck the original
+sidecar; request JSON cannot select either actor. Older launches without this
+evidence retain an unknown initiator. Legacy inference
+requires the matching initial creation log and canonical creation key and never
+invents a creator from the owner. Workspace profile origins are retained with
+unknown creation category when no supported category can be proved. Retries,
+profile changes, sharing and runtime recovery preserve creation facts. This read
+does not write historical records. A separate online worker starts 30 seconds
+after startup, scans at most 25 Agent IDs per page and spaces individual captures
+by 250 milliseconds. Each store call has a 15-second deadline. It repeats complete
+sweeps after five minutes, retries refused rows on a later sweep and stops with
+service shutdown. New facts are captured transactionally; existing provenance is
+never rewritten. Missing or inconsistent ancestry refuses capture, and missing
+creation evidence produces `legacy_unknown` without inventing a creator. Mongo
+uses metadata lineage guards while preserving serialized resource records,
+revisions, conversations, runtime attachments and history. Staged channel
+allocation records the actual channel-created Agent category and original source.
+Explicit channel binding and accepted-command history is available through the
+separate channel-usage routes below.
+The web provides authorized organization hierarchy navigation and owner share management.
+
+`GET /api/v1/agents/provenance` lists safe creation summaries in stable Agent-ID
+order. Omit `organization` and `shared` for personal ownership; explicit organization scope
+requires current membership and selects organization-owned or shared Agents.
+Rows contain only `agent_id`, optional `title`, `status`, `created_at`,
+`updated_at`, and `creation_origin`. Private source/creator details and hierarchy
+IDs are omitted even for managers. The inventory includes retained Agents in
+all lifecycle states, including deleted Agents, unless `status` is supplied.
+Additional filters are `sandbox`, `workspace`, and `creation_origin`; parent
+filters require independent visibility of that parent. A narrow Agent grant
+cannot reveal the result of a parent filter.
+
+`shared=true` selects **Shared with me**, the union of explicit Agent and whole-Sandbox
+grants to current organizations, excluding personally owned resources before paging.
+Overlapping organizations and grants produce one row per Agent. Organization ownership
+alone does not add a resource to this aggregate; use Organization scope for those
+resources. `shared=true` and `organization` are mutually exclusive. Each request
+rediscovers organizations and obtains fresh evidence for at most 128 choices, with
+at most eight provider lookups concurrently. A confirmed nonmembership removes a
+stale choice; an outage refuses the aggregate rather than returning an incomplete
+successful page. Original membership deadlines remain binding through final checks.
+
+`limit` defaults to 50 and accepts 1–200; `cursor` resumes after a consumed Agent
+ID. Without a category filter the server reads at most `limit + 1` candidates.
+With `creation_origin` it examines at most 201 candidates per request, so a
+successful page can be partial or empty and still have `next`. **Continue until
+`next` is absent, even when `items` is empty.** This cursor may identify a consumed
+authorized Agent excluded by the category filter. All candidates, filtered rows
+and lookahead are authorized and rechecked before release; policy changes or
+expired authority refuse the whole page. Each request has a 15-second deadline.
+Listing reads conservative legacy evidence without mutating retained records.
+The existing `/agents` response and cursor behavior remain compatible.
+
+The web Agent header and details panel use this immutable category for creation
+labels. A later published Trigger shortcut is displayed separately and cannot
+relabel a manual or Workspace Profile Agent. Missing or refused provenance stays
+unavailable; it is never inferred from a shortcut. The Sandbox tree shows a
+category per Agent, derives parent summaries from all loaded child facts, and
+offers a creation-origin filter over Agents in that tree. It reads at most four
+optional provenance projections concurrently and retains only categories for
+tree rows. Facts refresh once per minute and on foreground, and are discarded
+on changed viewer/client context, disabled views, or read refusal. These tree
+filters apply to loaded tree rows. The dedicated REST inventory also covers
+retained archived Agents.
+
+The web inventory is available at `/agents` and
+`/organizations/{organization}/agents`, and through **Agents** in the account
+menu. It offers named Personal/Organization scopes, immutable creation and status
+filters, previous/next paging and **Export this page**. Empty filtered pages retain
+the next-page action. Exports perform a fresh authorized page read and include
+only the safe creation-summary fields. Changing scope cancels an outstanding
+export; downloaded files remain outside later revocation.
+
+Agent deep links classify the public accessible response before choosing a
+controller. Shared/organization Agent views read only the Agent's authorized
+history and effective capabilities. They do not fetch parent resources, profile
+drafts or runtime readings. Viewers see history and pending approvals without
+interaction buttons; current interaction/approval capabilities enable the
+composer, response interruption and approval answers. These use the public SDK
+and recheck effective access before the server independently authorizes each
+command. An access refusal clears the shared view and cancels its stream without
+logging out the user's unrelated personal work. Personal controllers and drafts
+survive a foreground classification refresh; an actual refusal removes them.
+
+Scoped inventory/history values refresh every 30 seconds, expire no later than
+55 seconds from the read start (or the earlier server authority deadline), and
+clear on foreground, viewer/client/scope change or refusal. A 15-second timeout
+also clears an unverified result. Approved Agent artifacts use the separately authorized routes below.
+
+The sidebar offers Personal and named Organization navigation. Organization
+Sandboxes use the SDK's authorized paginated inventory, with fresh previous/next
+reads. Expanding a Sandbox loads authorized Workspace summaries; expanding a
+Workspace loads its safe Agent/Worktree projection. Narrow Agent grants remain
+discoverable through **All authorized Agents**, without requesting their hidden
+parents. Changing sidebar scope preserves the active personal Agent controller
+and its unsent draft. Organization selection survives sidebar collapse.
+
+Canonical `/sandboxes/{id}` links classify current accessible metadata before
+mounting the personal Sandbox page or a safe shared view. `/workspaces/{id}`
+provides authorized Workspace names, counts and Agent/Worktree summaries. Shared
+hierarchy views read no profiles, provider connections, runtime observations,
+paths or secret contents. Each buffered detail checks original policy and
+authority expiry after IO, validates parent and Agent/Worktree assignment, and
+clears on refusal or scope/client change. Child access refusal invalidates its
+parent's displayed branch. Personal Sandbox controls remain mounted through a
+classification refresh; refusal discards remembered personal classification.
+
+Effective access includes a safe `owner` summary: a personal owner reports only
+`is_current_person`, while an organization reports `organization_id` for matching
+an authorized organization choice. Personal IDs and parent identities remain
+private. Inventory, tree and shared detail views display this ownership with the
+current resource access role derived from the returned capabilities. An organization
+admin holding a view-only share is shown as **View only**. Organization names come
+only from current authorized choices; unavailable names never fall back to raw IDs.
+Visible-row policy reads are limited to four concurrent requests and expire with
+the earliest returned authority deadline. These labels do not authorize actions.
+
+Owners can open **Sharing** from personal Agent Details or a Sandbox page when
+current effective access includes `manage_sharing`. Agent sharing starts with
+the narrow Agent scope; selecting **Whole Sandbox** is explicit and requires
+acknowledging current and future children before creating a grant. Named current
+organization choices, view/org-role exposure previews, direct grant mode changes
+and revocation use the public SDK. The panel explains inherited access and never
+automatically broadens a refused interactive Agent grant. Current stores require
+a compatible whole-Sandbox grant while independent isolation remains unproved.
+Recipients cannot reshare; ownership, origin and conversations are unchanged.
+
+Grant lists are checked against their resource identity, initial policy and
+authority deadline after buffering. Each change rechecks effective permission,
+uses an idempotency key and validates the receipt's requested effect. Edits and
+revocation send the displayed revision; a conflict reloads current grants and
+requires another explicit action. Unconfirmed attempts retain their logical
+command key within the current resource view. Scope/client changes and access
+loss cancel pending reads/preflights; late replies cannot send a new command.
+Organization-choice failure leaves independently authorized revocation available.
+Backend share routes enforce the final owner, membership and isolation checks.
+
+`GET /api/v1/agents/{id}/source` returns authorized provisioning origin and shortcuts.
+Personal owners retain the existing source document:
 `manual`, `workspace_profile`, or `trigger`. Trigger-created Agents also include
 the published Trigger title, public id, revision and quick messages when the
 source remains resolvable. Quick messages follow the latest published revision;
@@ -298,6 +555,15 @@ Reading source never sends a message or replays the first prompt. Each optional
 Trigger content `quick_messages` entry has a required unique name (120 UTF-8
 bytes), description (2,000 bytes) and text (32,768 bytes), with at most eight
 entries. Missing or empty arrays preserve legacy content digests.
+
+Other authorized readers receive `{ access: "shared", agent_id, origin: { type } }`
+with the same three creation categories. Private Trigger/Launch IDs, profile
+indexes and published shortcuts are withheld. Shared reads do not consult the
+owner's Launch or Trigger dependencies. Success and dependency errors are fenced
+against current Agent policy and evidence lifetime after IO. TypeScript
+`agents.sourceAccessible` and Rust `agents().source_accessible` return explicit
+personal/shared unions. Existing `source` methods retain their personal types
+and reject a shared projection.
 
 `GET /api/v1/agents/{id}/events` is a **JSON page**, not SSE. It accepts `after`
 and `limit` (1-200, default 200), returns `items` and optional `next`, and omits
@@ -363,6 +629,22 @@ arbitrary shell, database deletion or NyxID administration endpoint here.
 
 ## Operation Inventory
 
+Resource share management uses `kind=agent|sandbox`. The owner can create a
+`view` or `org_roles` grant for a canonical current organization choice, list
+active direct grants, read a revoked grant, change its mode, or revoke it.
+Create bodies contain `target_org_id` and `mode`; update bodies contain `mode`
+and `expected_revision`; revoke requires the `expected_revision` query.
+Every mutation requires an explicit `Idempotency-Key`. Equivalent retries return
+the original receipt even after later revocation; changed input with that key
+returns 409. Owner/actor/evidence fields in request bodies are rejected.
+
+Effective-access kinds additionally include `workspace` and `worktree`. Its
+capabilities are a current policy projection, with a bounded revalidation time;
+they are not credentials for later commands. Shared Agent REST history and
+AG-UI replay/follow enforce current policy. File, attachment and interaction
+boundaries are still being integrated. See
+[Resource authorization](CMA_Resource_Authorization.md) for the current limits.
+
 The following rows are derived from the actual OpenAPI export and checked for
 complete method/path coverage. Schema names refer to
 `/openapi.json#/components/schemas/<name>`. `key` means the required
@@ -372,6 +654,19 @@ not a guarantee that asynchronous work has finished. The shared error contract
 above applies even when an operation annotates only its principal responses.
 
 <!-- openapi-operations:start -->
+
+### Resource access and share management
+
+| Operation | Body / Key | Query | Response |
+|---|---|---|---|
+| `GET /api/v1/organizations` | - | - | 200 OrganizationChoicesView; 401/403/503 ProblemDocument |
+| `GET /api/v1/resource-access/{kind}/{id}` | - | - | 200 EffectiveAccessView |
+| `GET /api/v1/resource-shares/{kind}/{id}` | - | - | 200 ActiveShareList |
+| `POST /api/v1/resource-shares/{kind}/{id}` | CreateShareBody; key | - | 200 ShareReceiptView |
+| `GET /api/v1/resource-shares/{kind}/{id}/{share_id}` | - | - | 200 ResourceShareView |
+| `PATCH /api/v1/resource-shares/{kind}/{id}/{share_id}` | UpdateShareBody; key | - | 200 ShareReceiptView |
+| `DELETE /api/v1/resource-shares/{kind}/{id}/{share_id}` | -; key | expected_revision* | 200 ShareReceiptView |
+
 ### Administration
 
 | Operation | Body / Key | Query | Response |
@@ -409,11 +704,13 @@ above applies even when an operation annotates only its principal responses.
 
 | Operation | Body / Key | Query | Response |
 |---|---|---|---|
-| `GET /api/v1/agents` | - | sandbox, workspace, status, cursor, limit | 200 AgentPageView |
-| `GET /api/v1/agents/{id}` | - | - | 200 AgentView |
+| `GET /api/v1/agents` | - | organization, sandbox, workspace, status, cursor, limit | 200 AccessibleAgentPageView |
+| `GET /api/v1/agents/{id}` | - | - | 200 AccessibleAgentView |
 | `DELETE /api/v1/agents/{id}` | -; key | - | 202 empty |
 | `GET /api/v1/agents/{id}/events` | - | after, limit | 200 AgentEventPageView |
-| `GET /api/v1/agents/{id}/source` | - | - | 200 AgentSourceView |
+| `GET /api/v1/agents/provenance` | `shared`, `organization`, `sandbox`, `workspace`, `status`, `creation_origin`, `cursor`, `limit` | - | 200 AgentProvenanceInventoryPageView |
+| `GET /api/v1/agents/{id}/provenance` | - | - | 200 AgentProvenanceView |
+| `GET /api/v1/agents/{id}/source` | - | - | 200 AccessibleAgentSourceView |
 | `POST /api/v1/agents/{id}/stop` | StopAgentRequest; key | - | 202 empty |
 | `GET /api/v1/agents/{id}/terminal` | - | - | 404 ProblemDocument; 501 ProblemDocument |
 | `GET /api/v1/agents/{id}/transcript` | - | - | 200 AgentTranscriptView |
@@ -472,6 +769,21 @@ above applies even when an operation annotates only its principal responses.
 | `POST /api/v1/conversations` | CreateConversationRequest | - | 200 Conversation |
 | `GET /api/v1/conversations/{id}` | - | - | 200 Conversation |
 | `GET /api/v1/conversations/{id}/items` | - | after, limit | 200 ConversationItemList |
+| `GET /api/v2/ui/transport` | - | - | 200 UiTransportView |
+| `GET /api/v2/agents/{agent_id}/events/snapshot` | - | limit, page_cursor | 200 EventPage |
+| `GET /api/v2/agents/{agent_id}/events` | - | after_cursor, follow / Last-Event-ID | 200 Agent event SSE |
+| `GET /api/v2` | - | - | 200 JSON capabilities |
+| `POST /api/v2/responses` | CreateV2ResponseRequest | - | 200 SSE |
+| `POST /api/v2/agents/{agent_id}/responses` | CreateV2ResponseRequest | - | 200 SSE |
+| `GET /api/v2/responses/{response_id}` | - | - | 200 V2ResponseObject |
+| `GET /api/v2/responses/{response_id}/events` | - | starting_after | 200 SSE |
+| `GET /api/v2/conversations/{conversation_id}` | - | - | 200 Conversation |
+| `GET /api/v2/conversations/{conversation_id}/items` | - | after, before, limit, order | 200 JSON items |
+| `GET /api/v2/agents/{agent_id}/responses/{response_id}/controls` | - | - | 200 V2ResponseControls |
+| `POST /api/v2/agents/{agent_id}/responses/{response_id}/controls` | V2ResponseControlRequest / required Idempotency-Key | - | 202 V2ResponseControl |
+| `GET /api/v2/agents/{agent_id}/responses/{response_id}/queued-cancellation` | - | - | 200 V2QueuedCancellationObservation |
+| `POST /api/v2/agents/{agent_id}/responses/{response_id}/queued-cancellation` | V2QueuedCancellationRequest / required Idempotency-Key | - | 200 V2QueuedCancellation |
+| `GET /api/v2/commands/{command_id}` | - | - | 200 V2CommandStatus |
 | `POST /api/v1/responses` | CreateResponseRequest | - | 200 SSE |
 | `GET /api/v1/responses/{response_id}` | - | - | 200 ResponseObject |
 | `DELETE /api/v1/responses/{response_id}` | - | - | 422 ProblemDocument |
@@ -514,27 +826,95 @@ above applies even when an operation annotates only its principal responses.
 | `GET /api/v1/sandbox-profiles/{id}/revisions/{revision}` | - | - | 200 SandboxProfileRevisionView |
 | `PUT /api/v1/sandbox-profiles/{id}/visibility` | SetProfileVisibilityRequest; key | - | 200 SandboxProfileView |
 
+### Agent channel usage
+
+| Operation | Body / Key | Query | Response |
+|---|---|---|---|
+| `GET /api/v1/agents/{id}/channel-usage` | - | - | 200 AgentChannelUsageView |
+| `GET /api/v1/agents/{id}/channel-usage/history` | - | cursor, limit | 200 AgentChannelUsageHistoryView |
+
+Channel usage is separate from immutable creation origin. An authorized summary
+contains `agent_id` and `channel_usage` with `active`, `has_history`, nullable
+`first_used_at` and nullable `last_used_at`. Only current bridge managers receive
+`bindings` or can request paginated history. Binding attachment records history
+without inventing an accepted external command. History retains actor, time,
+reason and before/after binding generations, including reset, rebind and detach.
+Current policy, original authority deadline and retained Agent identity are
+rechecked after buffering. Public callers cannot write channel facts through
+these routes, and channel use grants no additional CMA resource rights.
+
+The creation inventory also returns the safe `channel_usage` summary on each row.
+`channel_active=true|false` and `channel_history=true|false` combine with creation
+origin, status and resource scope before pagination. For example, a manual Agent
+with `channel_active=false&channel_history=true` retains its manual creation
+origin after detachment. Empty filtered pages can have a continuation cursor.
+Private binding, actor and external conversation references are absent from
+inventory rows and exports.
+
+### Approved Agent artifacts
+
+| Operation | Body / Key | Query | Response |
+|---|---|---|---|
+| `GET /api/v1/agents/{id}/artifacts` | - | cursor, limit (1–50) | 200 AgentArtifactPageView |
+| `POST /api/v1/agents/{id}/artifacts` | PublishAgentArtifactRequest; key | - | 201 AgentArtifactView, including idempotent replay |
+| `GET /api/v1/agents/{id}/artifacts/{artifact_id}` | - | - | 200 AgentArtifactView |
+| `GET /api/v1/agents/{id}/artifacts/{artifact_id}/download` | - | - | 200 application/octet-stream attachment |
+
+Publication requires current `manage_sharing` authority and an explicit selected
+`{name, media_type, content_base64}` body. No caller owner, actor, filesystem path
+or remote URL is accepted. It records immutable bytes and publication audit
+under exact retained Agent ancestry. Content must be 1 byte through 1 MiB of
+canonical standard base64. Display names contain 1–160 UTF-8 bytes, trimmed,
+without controls, slash/backslash or `.`/`..`. Supported types are `text/plain`,
+`text/markdown`, `application/json`, `application/pdf`, `application/octet-stream`,
+`image/png`, `image/jpeg` and `image/webp`. There are at most 256 artifacts per
+Agent. Invalid content returns `invalid_artifact_request` (400); full capacity
+returns `artifact_capacity` (429). Keep the same key/body when the result is
+uncertain; a changed request under the same key returns `idempotency_key_reused`.
+
+Metadata exposes exactly `id`, `agent_id`, `name`, `media_type`, `size_bytes`,
+`sha256` and `created_at`. `view_artifacts` grants access to this explicit registry,
+including for narrow Agent readers. It does not add `view_files` or reveal parent
+paths/archives. Reads recheck current policy and the original authority after
+buffering; revoked/expired access prevents later downloads. Download filenames
+in HTTP headers are generated from the content hash, with `nosniff` and
+`private, no-store`. SDK downloads return bytes; the web verifies size/hash and
+current permission before creating its local file. Previously downloaded copies
+cannot be recalled. Existing full Sandbox snapshot exports remain owner-only.
+
 ### Sandboxes
 
 | Operation | Body / Key | Query | Response |
 |---|---|---|---|
-| `GET /api/v1/sandboxes` | - | status, cursor, limit | 200 OwnerSandboxPageView |
+| `GET /api/v1/sandboxes` | - | organization, shared, status, cursor, limit | 200 AccessibleSandboxPageView |
 | `POST /api/v1/sandboxes` | CreateSandboxRequest; key | - | 201 SandboxView |
-| `GET /api/v1/sandboxes/{id}` | - | - | 200 OwnerSandboxDetailView |
+| `GET /api/v1/sandboxes/{id}` | - | - | 200 AccessibleSandboxDetailView |
 | `GET /api/v1/sandboxes/{id}/snapshots/{epoch}/download` | - | - | 200 application/octet-stream attachment; owner-authenticated latest completed snapshot |
 | `DELETE /api/v1/sandboxes/{id}` | -; key | - | 202 SandboxView |
 | `GET /api/v1/sandboxes/{id}/events` | - | after, limit | 200 array<SandboxEventView> |
 | `POST /api/v1/sandboxes/{id}/pause` | -; key | - | 202 SandboxView |
+| `POST /api/v1/sandboxes/{id}/commands` | SandboxCommandRequest; key | - | 202 SandboxCommandReceiptView |
+| `GET /api/v1/sandbox-commands/{id}` | - | - | 200 SandboxCommandReceiptView |
 | `POST /api/v1/sandboxes/{id}/revive` | -; key | - | 202 SandboxView |
 | `POST /api/v1/sandboxes/{id}/service-access` | GrantSandboxServiceAccessRequest; key | - | 200 SandboxView; new grants require fully Paused, existing grants replay without change |
+
+Sandbox inventory is personal by default. `organization=<canonical ID>` selects
+current organization ownership and whole-Sandbox grants. `shared=true` selects the
+deduplicated union of incoming whole-Sandbox grants across current organizations,
+excluding the caller's own personal resources before pagination. The two selectors
+are mutually exclusive. Narrow Agent grants never reveal parent rows or counts.
+Every aggregate page requires complete current membership discovery and checks
+policy, evidence lifetime and hidden lookahead after count reads. Dependency
+failure refuses the result without partial rows or a stale continuation. Both
+SDKs expose this scope through their accessible Sandbox list method.
 
 ### Workspaces
 
 | Operation | Body / Key | Query | Response |
 |---|---|---|---|
-| `GET /api/v1/sandboxes/{id}/workspaces` | - | - | 200 WorkspaceListView |
+| `GET /api/v1/sandboxes/{id}/workspaces` | - | - | 200 AccessibleWorkspaceListView |
 | `POST /api/v1/sandboxes/{id}/workspaces` | CreateWorkspaceRequest; key | - | 201 WorkspaceView |
-| `GET /api/v1/workspaces/{id}` | - | - | 200 WorkspaceDetailView |
+| `GET /api/v1/workspaces/{id}` | - | - | 200 AccessibleWorkspaceDetailView |
 | `DELETE /api/v1/workspaces/{id}` | -; key | - | 202 WorkspaceView |
 
 ### Service connections
@@ -588,9 +968,39 @@ above applies even when an operation annotates only its principal responses.
 
 | Operation | Body / Key | Query | Response |
 |---|---|---|---|
-| `GET /api/v1/workspaces/{id}/worktrees` | - | - | 200 WorktreeListView |
-| `GET /api/v1/worktrees/{id}` | - | - | 200 WorktreeView |
+| `GET /api/v1/workspaces/{id}/worktrees` | - | - | 200 AccessibleWorktreeListView |
+| `GET /api/v1/worktrees/{id}` | - | - | 200 AccessibleWorktreeView |
 
+| `GET /api/v1/bridge-connectors` | Bridge setup and management with current owner or organization authority. |
+| `GET /api/v1/bridge-connectors/capabilities` | Owner/admin source capabilities and current deployment switches, including disabled connectors. |
+| `GET /api/v1/bridge-invoke-grants/{id}` | Read a retained-Agent invocation grant under current bridge management authority. |
+| `POST /api/v1/bridge-invoke-grants/{id}/revoke` | Revoke an exact invocation-grant revision with retained idempotent attribution. |
+| `GET /api/v1/bridges/{id}/invoke-grants` | Page current and revoked invocation grants for this bridge. |
+| `POST /api/v1/bridges/{id}/invoke-grants` | Explicitly authorize the selected retained Agent context for this saved bridge configuration. |
+| `GET /api/v1/bridges/{id}/invoke-readiness` | Observe current retained-Agent consent without granting execution or enable authority. |
+| `POST /api/v1/bridges/{id}/partitions/{allocation}/reset` | Exact Bridge/allocation revisions and retained Idempotency-Key; 202 reserves the next binding generation. |
+| `POST /api/v1/bridges/{id}/partitions/{allocation}/detach` | Exact Bridge/allocation revisions and retained Idempotency-Key; 202 blocks future partition input until explicit reset. |
+| `GET /api/v1/bridges/{id}/allocations` | Current Bridge and whole-parent management inventory; opaque cursor, limit 1–100. |
+| `GET /api/v1/bridges/{id}/partitions` | Current Bridge management and per-target access; scoped cursor, limit 1–25. |
+| `GET /api/v1/bridges/{id}/partitions/{allocation}` | Exact retained partition generation, bounded pending commands and latest correlated response. |
+| `GET /api/v1/bridges/{id}/allocations/{allocation}/child-cleanup` | Retained child cleanup acceptance, proved progress and observed holds. |
+| `POST /api/v1/bridges/{id}/allocations/{allocation}/child-cleanup` | Explicit remove_child acceptance with current revisions and retained Idempotency-Key; 202 does not mean physical removal. |
+| `GET /api/v1/bridges/{id}/allocations/{allocation}/workspace-cleanup` | Exact allocation-owned Workspace status, reviewed consent inputs, current eligibility and retained completion. |
+| `POST /api/v1/bridges/{id}/allocations/{allocation}/workspace-cleanup` | Separately consented remove_owned_workspace with three revisions, exact completed child receipt and original Idempotency-Key; 202 confirms acceptance. |
+| `GET /api/v1/bridges/{id}/deliveries` | Current owner/admin delivery history; exclusive cursor, limit 1–100. |
+| `GET /api/v1/bridges/{id}/deliveries/{item}` | Safe original reply status and ordered attempts. |
+| `POST /api/v1/bridges/{id}/delivery-recovery` | Explicit retry, abandon or local reconciliation with durable idempotency and exact revisions. |
+| `GET /api/v1/bridges` | Bridge setup and management with current owner or organization authority. |
+| `GET /api/v1/bridges/{id}` | Bridge setup and management with current owner or organization authority. |
+| `GET /api/v1/bridges/{id}/configuration` | Bridge setup and management with current owner or organization authority. |
+| `POST /api/v1/bridges` | Bridge setup and management with current owner or organization authority. |
+| `POST /api/v1/bridges/{id}/commands` | Bridge setup and management with current owner or organization authority. |
+| `POST /api/v1/bridges/{id}/credential/revoke` | Bridge setup and management with current owner or organization authority. |
+| `POST /api/v1/bridges/{id}/validate` | Bridge setup and management with current owner or organization authority. |
+| `PUT /api/v1/bridges/{id}/configuration` | Bridge setup and management with current owner or organization authority. |
+| `PUT /api/v1/bridges/{id}/credential` | Bridge setup and management with current owner or organization authority. |
+| `GET /api/v1/bridge-invoke-grants/{id}/source-controls` | Observe separate original-sender consent; required nullable policy. |
+| `PUT /api/v1/bridge-invoke-grants/{id}/source-controls` | Explicitly allow or revoke original-sender consent using exact revisions and one retained idempotency key. |
 <!-- openapi-operations:end -->
 
 ## Contract Verification
@@ -608,3 +1018,203 @@ The Layer 1 test suite independently checks that every exported method/path is
 present in this document, so route additions cannot silently pass the backend
 gates while leaving this inventory stale. The OpenAPI JSON remains a generated
 artifact, not a checked-in substitute for the server's current contract.
+
+### Shared hierarchy reads
+
+The Sandbox detail, Sandbox Workspace list, Workspace detail, Workspace Worktree
+list and Worktree detail routes require current visibility of the requested
+hierarchy. A narrow Agent share exposes none of these parents or their counts.
+Whole-Sandbox grants, organization ownership and explicit global authority can
+supply visibility under the common resource policy.
+
+Personal-owner responses preserve the existing complete JSON. Other readers get
+an explicit `access: "shared"` projection containing authorized IDs, names,
+statuses, timestamps and child counts/summaries. These projections omit owner
+identity, profile configuration, repository paths/URLs/branches/commits, runtime
+bindings, lifecycle internals, credentials and failure diagnostics. Every child
+and assigned Agent must agree with the authorized ancestry. Current policy and
+unexpired request-bound membership are checked after the hierarchy read; changed
+policy returns `resource_access_changed`, and unavailable/expired membership
+returns `organization_authority_unavailable` without partial data.
+
+`GET /api/v1/sandboxes` remains a personal collection. Explicit organization
+ownership is excluded before pagination, including lookahead. An explicit `organization` filter selects organization-owned
+and whole-Sandbox-shared resources under current membership. Organization
+ownership admission remains to implement. Snapshot download remains
+personal-only: hierarchy metadata visibility does not grant whole-home export.
+
+`GET /api/v1/sandboxes?organization=<canonical ID>` returns an
+`AccessibleSandboxPageView`. Each item is the compatible personal summary for
+its personal owner or a safe shared summary with `access: "shared"`, Sandbox
+ID/name/status/timestamps and authorized child counts. Child names/IDs are
+available through separately authorized hierarchy detail/list reads. A narrow
+Agent grant never supplies a Sandbox inventory candidate. Current organization
+membership is required even for an empty page; failures do not become a false
+successful empty scope. Ownership and whole-Sandbox grants are filtered and
+deduplicated before pagination. The hidden lookahead and held evidence are
+checked after count IO, before releasing either rows or `next`.
+
+
+### Channel bridge setup
+
+Bridge management uses `/api/v1/bridges`; `/api/v1/bridge-connectors?organization={id}` lists complete bounded existing NyxID bot/key/route choices only for the personal owner or current organization administrator. CMA performs read-only discovery. A deployment without a NyxID provider and HTTPS CMA public origin returns `503 bridge_setup_unavailable`.
+
+Read `/api/v1/bridge-connectors/capabilities?organization={id}` for the versioned [connector capability matrix](BRIDGE_CAPABILITIES.md), source revision and current deployment switches. This owner/admin diagnostic remains available when switches are off, performs no provider requests and grants no execution or reply authority. Telegram-new retains a distinct signed platform identity and an independent default-off deployment gate. Live platform verification and attachment retrieval remain unavailable.
+
+Creation starts disabled. The caller selects an owner, existing bot/key/routes, partition and placement, sender/chat/group policy, reply policy, and bounded limits. CMA derives the issuer, provider endpoint, callback URL, and internal custody locator; these fields are rejected in client configuration. Read `/bridges/{id}/configuration` as a manager to obtain the callback URL and selected configuration. Configure that exact callback on a dedicated matching NyxID key manually while preserving unrelated routes, then PUT the exact selected key to `/bridges/{id}/credential` with `expected_revision`. The key is write-only and its response contains only custody revision/presence/revocation. Identical selected-key import is idempotent; different material under the retained selected custody identity conflicts. A replacement key selection creates distinct custody.
+
+Background metadata and provisioning require explicit `retain_control_plane_authority: true` on key import. This additive boolean defaults to false. Consent authorizes only this Bridge, its exact owner and selected connector for 30 days, using the actual human's existing encrypted OAuth sign-in and refresh custody. The grant continues after browser logout; current account activity and exact organization admin access are checked for each operation. A new sign-in, removed provider authority, grant expiry or local key revocation stops this authority. Disable and reconnect the Bridge explicitly to attach or renew a grant; an unchanged retry preserves its original expiry. Historical key-only custody never borrows the importing actor's current login automatically.
+
+NyxID human-only metadata endpoints receive that human OAuth credential with the exact organization scope. The selected bot key is used only for its key-fenced possession check and permitted channel operations. Human OAuth tokens and the selected bridge key stay in CMA's control plane; organization Sandbox provisioning must issue a distinct organization-owned key for its pinned services. Missing grant or unsupported provisioning remains `409 bridge_renewable_authority_required`; consent alone does not prove that new-Sandbox provisioning is available.
+
+POST `/bridges/{id}/validate` with `expected_revision` performs current verification. Its success proves the current setup check only. POST `/bridges/{id}/commands` with an Idempotency-Key and expected revision applies `enable`, `disable`, `retire`, or independent emergency controls. Disable/retire require `accepted_work` (`drain_original` or `suspend_original`); retained Agents and historical resources are preserved. Configuration PUT also requires an idempotency key and expected revision; fixed-target rebinding requires an explicit previous-work policy. Retained generations keep their original routing. Retrying an unacknowledged management command uses the same key and body.
+
+Current organization members can list/read safe bridge summaries; configuration, selected identities, credential custody and provider choices require manager authority. None of these responses include key material or local custody references. Revocation uses `/bridges/{id}/credential/revoke` with both expected bridge and custody revisions plus an idempotency key.
+
+New partition configuration defaults to a sender in each actual chat, with explicit alternatives for shared chat/thread context, one fixed shared Agent, or a sender across chats. Existing-Agent placement requires the `fixed_shared_agent` selection. Sender/chat allowlists, deliberate open admission, and group addressing policy are separate. Unsupported platform addressing/thread evidence is refused. New Sandbox placement requires current retained human control-plane authority and verified distinct scoped key issuance; absent or unsupported authority returns `bridge_renewable_authority_required`. The staged background driver creates the pinned Sandbox, Workspace and Agent, confirms its runtime/tool connection, and publishes the original conversation. Automatic runtime credential renewal remains separate milestone work.
+
+The message path is channel platform → NyxID → CMA, with asynchronous CMA reply tool → durable outbox → NyxID channel-relay reply → the original bot/chat/thread. The callback HTTP body acknowledges durable acceptance. An eligible Agent can send multiple tool replies while its turn continues. Successful setup validation proves the current configuration check; live platform acceptance and production rollout remain pending.
+
+### Retained Agent invocation permission
+
+Fixed placement requires explicit `use_retained_agent_context` consent through
+POST `/api/v1/bridges/{id}/invoke-grants`. Supply `expected_bridge_revision`, the
+exact Sandbox/Workspace/Worktree/Agent `target`, `shared_context`, and an
+Idempotency-Key. Issuance is allowed while the bridge is disabled so permission
+can be reviewed before enabling. The actual manager must currently have both
+bridge-management and Agent-interaction authority. The resulting grant pins
+configuration, owner, full target lineage and retained resource creation facts.
+
+GET `/api/v1/bridges/{id}/invoke-readiness` returns `not_applicable`,
+`consent_required` or `consent_present`, with a candidate only for the latter.
+It observes consent only. Connection validation remains independent; fixed-Agent
+enable requires a separate opaque proof and transactionally checks the exact
+current grant and target. Revocation, reconfiguration or resource replacement
+between validation and commit refuses enable. A missing live grant produces
+`409 bridge_invoke_consent_required`.
+
+GET `/api/v1/bridges/{id}/invoke-grants` pages safe current and revoked grant
+records; GET `/api/v1/bridge-invoke-grants/{id}` reads one. POST
+`/api/v1/bridge-invoke-grants/{id}/revoke` requires both
+`expected_bridge_revision` and `expected_revision`, plus an Idempotency-Key.
+Revocation is terminal and preserves history. Issuing a new grant does not alter
+the authority or routing pinned to already accepted work. Safe public grant and
+receipt DTOs contain no credential or internal custody reference. All five
+operations require current bridge management authority.
+
+The separately authenticated callback endpoint is registered at
+`POST /api/v1/bridge-callbacks/{bridge_id}`. Its signed protocol, private response
+statuses, durable-before-ack behavior, capability refusals and retained
+`worker_unavailable` hold are documented in [Bridge callbacks](BRIDGE_CALLBACKS.md).
+
+Channel-created Agents send explicit mid-turn replies through the independently
+CMA-authenticated MCP endpoint `POST /api/v1/channel-tools`, documented in
+[Channel reply tools](CHANNEL_REPLY_TOOLS.md). Final answers are not forwarded
+automatically. Manual and Trigger sessions, including existing Agents later
+bound to a bridge, do not receive the reply tool.
+
+### Reply history and explicit recovery
+
+Current Bridge owners and organization admins can inspect deliveries through the
+three delivery management routes above. Organization members/viewers have no
+delivery-management access. `GET` returns private, noncacheable projections with
+original configuration generation, invocation receipt, sequence/chunks, state,
+bounded failure, retry time and ordered attempt history. Text, chat/thread
+identity, original inbound IDs and credential/custody references are omitted.
+The list uses ascending `bro_` identity order, an exclusive `cursor`, default
+limit 50 and maximum 100, and nullable `next_cursor`.
+
+Recovery requires `Idempotency-Key` and the closed body
+`{item_id, expected_revision, expected_bridge_revision, action}`. The action is
+`{kind: "retry", accept_duplicate_risk: true|false}`, `{kind: "abandon"}` or
+`{kind: "reconcile"}`. The server checks current actual owner/admin authority,
+exact Bridge/item revisions and immutable original source; retry also verifies
+the original retained matching key custody. It preserves the original tool
+invocation receipt and all earlier attempts. An Unknown retry requires explicit
+duplicate-risk acceptance (`400 bridge_delivery_duplicate_risk_required`) and
+sets `duplicate_risk`; queued still does not mean delivered. Retry cannot revive
+a sent/abandoned item or exceed sixteen retained attempts. Suspend and original
+audience expiry prevent retry; history and abandon remain usable when suspended.
+
+Reconcile recovers an expired local Claimed lease to Pending or an expired
+Sending lease to Unknown. Pinned NyxID exposes no trustworthy generic send
+reconciliation: `upstream_reconciliation_supported` is false, existing Unknown
+stays Unknown, and the request never accepts user-provided sent/message IDs.
+It makes no platform request. Abandon preserves prior ambiguous attempt history
+and is refused while a nonexpired Sending attempt is active.
+
+All recovery commands return HTTP 200 with a durable command receipt and original
+post-command result. A repeated identical key/body recovers that result before
+checking current item revision or provider availability, under fresh current
+manager authority. Changed input is `409 idempotency_key_reused`; stale state is
+`409 bridge_delivery_revision_conflict`. Storage/authority uncertainty returns a
+503 with Retry-After; explicitly repeat the exact key/body after response loss.
+These local receipts never imply end-to-end exactly-once platform delivery.
+
+### Explicit retained child cleanup
+
+The [child cleanup contract](BRIDGE_CHILD_CLEANUP.md) describes allocation listing,
+explicit acceptance and retained progress. Only retired allocations that created
+a child in a reused parent can admit `remove_child`. The command retains the
+Workspace, siblings and conversation history; it removes the selected child
+process, Agent home and Worktree and releases only the proved Agent reservation.
+Recover an uncertain POST using the original key, body, Bridge and allocation.
+GET and allocation listing require current Bridge management and whole-parent
+management. New acceptance additionally requires the actual original configuring
+actor and fresh retained authority; another administrator cannot impersonate that
+actor. Accepted work drains independently of new allocation and execution flags.
+
+
+### Separate allocation-owned Workspace cleanup
+
+The [owned Workspace cleanup contract](BRIDGE_WORKSPACE_CLEANUP.md) adds separate
+GET/POST operations after explicit child completion. The five-field consent pins
+Bridge, allocation and Workspace revisions plus the original child cleanup receipt.
+The original `remove_child` effect still retains its Workspace. New Workspace
+consent requires demonstrated runtime capability and exact original ownership;
+no inferred consent, cascading child removal or parent deletion is permitted.
+Only a separately proved `complete` status releases that Workspace reservation.
+
+## Source-control consent
+
+GET and PUT `/api/v1/bridge-invoke-grants/{id}/source-controls` manage separate original-sender consent. GET returns a required `policy` field: null means no consent was ever recorded. PUT returns exactly 200 with an immutable `{id, request, result}` receipt. See [Bridge source-control consent](BRIDGE_SOURCE_CONTROLS.md) for bounds, exact-request recovery and the distinction between recorded consent and demonstrated runtime support.
+
+## Partition status
+
+GET `/api/v1/bridges/{id}/partitions` lists retained allocation generations with
+an opaque scoped cursor and a default and maximum page size of 25. GET
+`/api/v1/bridges/{id}/partitions/{allocation}` adds at most 64 pending Channel
+commands and the latest correlated response. Both require current Bridge
+management authority; target details and activity also require the relevant
+Agent permissions. Responses distinguish reserved, available and redacted
+targets, unavailable source evidence, and truncated pending work. Source labels
+describe the first accepted message and must be rendered as text. These reads
+admit no work and do not assert current runtime connectivity.
+
+### Explicit partition reset and detach
+
+`reset` and `detach` require current Bridge owner/admin management authority,
+`Idempotency-Key`, and the closed JSON body
+`{"expected_bridge_revision":7,"expected_revision":5}`. The allocation ID and
+action are bound from the path. A successful request or exact replay returns
+202 with the same permanent `PartitionCommandReceipt`: actor, request digest,
+original generation/revision, retired result, optional successor, and acceptance
+time. Keep the exact path, body and key after cancellation or response loss.
+Current management authority is revalidated before receipt recovery; recovery
+precedes stale revision checks and live provider preflight. Reusing that key for
+different input conflicts.
+
+Reset reserves generation N+1 using the original accepted source and immutable
+configuration. Existing-Agent placement binds the same retained Agent and keeps
+its native conversation; new/shared placement reserves its configured successor
+and then ordinary workers provision it. The receipt does not claim provisioning
+has completed. Active allocation leases and unresolved creation effects prevent
+reset or detach.
+
+Detach retires the current allocation without creating a successor. Its head
+remains current and blocks fresh input until an explicit reset. Already accepted
+commands, explicit replies, resource identity, usage history and capacity remain
+retained under their original live authority. Reset and detach neither request
+cleanup nor release resource capacity; cleanup requires its separate explicit
+operation. Missing or inconsistent original source evidence refuses a new
+mutation, while an exact committed receipt remains recoverable.

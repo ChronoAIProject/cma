@@ -1,6 +1,14 @@
 mod admission_fence_tests;
+mod channel_hold_tests;
+mod command_authorization_tests;
+mod command_driver_selection_tests;
+mod command_driver_tests;
+mod command_evidence_tests;
+mod command_tests;
+mod command_work_tests;
 mod first_message_tests;
 mod fixtures;
+mod ledger_tests;
 mod linear_input_tests;
 mod queued_message_tests;
 

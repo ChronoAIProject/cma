@@ -64,6 +64,11 @@ impl AgentOperationService {
         text: String,
         parent: SandboxMutationGuard,
     ) -> Result<AgentMessageOutcome, AgentOperationError> {
+        if self.command_claim.is_some() {
+            return Err(AgentOperationError::StatusConflict {
+                status: current.status,
+            });
+        }
         if current.conversation.queued_messages.len() >= MAX_QUEUED_AGENT_MESSAGES {
             return Err(AgentOperationError::QueueCapacityExceeded {
                 limit: MAX_QUEUED_AGENT_MESSAGES,
@@ -119,7 +124,10 @@ impl AgentOperationService {
             operation_log(&next, operation_sequence)?,
             AgentLogKind::TurnStarted {
                 turn_sequence,
-                origin_key: None,
+                origin_key: self
+                    .command_claim
+                    .as_ref()
+                    .map(|claim| format!("command:{}", claim.command_id.as_str())),
             },
             AgentLogKind::OwnerMessage {
                 content: text.clone(),
@@ -134,6 +142,19 @@ impl AgentOperationService {
                 turn_sequence,
                 metadata,
             });
+        }
+        if let Some(authority) = &self.trigger_authority {
+            super::agent_io::trigger::fence_first(
+                authority,
+                &current,
+                &mut next,
+                self.command_claim
+                    .as_ref()
+                    .ok_or(AgentOperationError::Conflict)?
+                    .fence,
+                &at,
+                &mut logs,
+            )?;
         }
         self.commit_admission(&current, next, logs, at, parent)
             .await?;

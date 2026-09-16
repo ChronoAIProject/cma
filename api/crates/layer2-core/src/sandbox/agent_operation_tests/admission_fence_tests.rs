@@ -298,6 +298,11 @@ async fn direct_store_admission_requires_exact_parent_even_when_agent_revision_i
         .queued_messages
         .push(QueuedAgentMessage::new(1, "Accepted owner work".into(), LATER.into()).unwrap());
     let mut mutation = AgentConversationMutation {
+        command_claim: None,
+        execution_fence: None,
+        channel_control_execution_fence: None,
+        channel_execution_fence: None,
+        trigger_execution_fence: None,
         admission_guard: None,
         expected_agent_revision: ready.revision,
         expected_last_seq: 0,

@@ -14,6 +14,13 @@ import {
   type SandboxResourceAvailability,
 } from './sandboxInput';
 import { foldAgentEvent, foldLiveEvent, type ConversationState } from './conversation';
+import { useAgentState } from './state';
+import { foldV2Frame, foldV2Item } from './transport/projection';
+import { followV2Agent } from './transport/replay';
+import { useAgentActions } from './actions';
+import { IdentityChangedError, isIdentityChanged } from './transport/identity';
+import { useControlStatus } from './transport/controlStatus';
+import { useQueuedMessage, type QueuedMessageControl } from './transport/queuedStatus';
 
 export type AgentResourceState =
   | { readonly status: 'idle' }
@@ -25,6 +32,13 @@ export type AgentCommand = 'send' | 'interrupt' | 'approval' | 'stop' | 'delete'
 export type ApprovalDecision = 'allow' | 'deny' | 'abort';
 
 export interface AgentController {
+  readonly queuedMessage?: QueuedMessageControl;
+  readonly pendingMessage?: string;
+  readonly acceptedMessage?: string;
+  readonly pendingControl?: boolean;
+  readonly controlNotice?: string;
+  readonly controlsUnavailable?: boolean;
+  readonly recoverPending?: () => Promise<void>;
   readonly state: AgentResourceState;
   readonly inputAvailability: SandboxInputAvailability;
   readonly resourceAvailability: SandboxResourceAvailability;
@@ -47,6 +61,7 @@ interface AgentControllerOptions {
 }
 
 function errorMessage(error: unknown): string {
+  if (isIdentityChanged(error)) return new IdentityChangedError().message;
   if (error instanceof ApiError && error.code === 'sandbox_checkpoint_in_progress')
     return 'Progress is being saved. Your input was not accepted. Try again after saving finishes.';
   return error instanceof Error ? error.message : 'The Agent operation did not complete.';
@@ -56,6 +71,11 @@ function refreshConversation(
   current: ConversationState,
   next: Awaited<ReturnType<typeof loadAgent>>,
 ): ConversationState {
+  if (next.v2Items !== undefined) {
+    if (current.agentIncarnation !== next.conversation.agentIncarnation)
+      throw new Error('Agent snapshot changed conversation identity.');
+    return next.v2Items.reduce(foldV2Item, current);
+  }
   if (current.cursor > next.conversation.cursor) return current;
   const folded = next.durableEvents.reduce(foldAgentEvent, current);
   return {
@@ -67,12 +87,6 @@ function refreshConversation(
   };
 }
 
-function runId(): string {
-  return typeof crypto.randomUUID === 'function'
-    ? crypto.randomUUID()
-    : `run-${String(Date.now())}-${String(Math.random()).slice(2)}`;
-}
-
 export function useAgentController(
   client: CmaWebClient,
   agentId: string | undefined,
@@ -80,7 +94,8 @@ export function useAgentController(
 ): AgentController {
   const [revision, setRevision] = useState(0);
   const [replayRevision, setReplayRevision] = useState(0);
-  const [state, setState] = useState<AgentResourceState>(
+  const [, setRequestRevision] = useState(0);
+  const [state, setState, stateRef] = useAgentState(
     agentId === undefined ? { status: 'idle' } : { status: 'loading' },
   );
   const { inputAvailability, resourceAvailability, progressObservation } = useSandboxInput(
@@ -96,10 +111,23 @@ export function useAgentController(
   const [actionError, setActionError] = useState<string>();
   const [replayError, setReplayError] = useState<string>();
   const [keys] = useState(() => new CommandKeys());
-  const actionAbort = useRef<AbortController | undefined>(undefined);
-  const actionKind = useRef<AgentCommand | undefined>(undefined);
-  const replayAbort = useRef<AbortController | undefined>(undefined);
+  const actionAbortRef = useRef<AbortController | undefined>(undefined);
+  const actionKindRef = useRef<AgentCommand | undefined>(undefined);
+  const replayAbortRef = useRef<AbortController | undefined>(undefined);
   const liveCursor = useRef(0);
+  const onIdentityChange = useCallback(
+    (error: unknown) => {
+      if (!isIdentityChanged(error)) return false;
+      actionAbortRef.current?.abort();
+      replayAbortRef.current?.abort();
+      setPending(undefined);
+      setActionError(undefined);
+      setReplayError(undefined);
+      setState({ status: 'error', message: new IdentityChangedError().message });
+      return true;
+    },
+    [setState],
+  );
   const hierarchyChanged = useRef(options.onHierarchyChange);
   useEffect(() => {
     hierarchyChanged.current = options.onHierarchyChange;
@@ -140,7 +168,7 @@ export function useAgentController(
     return () => {
       cancelled = true;
     };
-  }, [agentId, detail, summary]);
+  }, [agentId, detail, summary, setState]);
 
   const applyLive = useCallback(
     (event: AgentLiveEvent) => {
@@ -152,7 +180,7 @@ export function useAgentController(
         return { ...current, conversation };
       });
     },
-    [agentId],
+    [agentId, setState],
   );
 
   useEffect(() => {
@@ -183,13 +211,14 @@ export function useAgentController(
     return () => {
       controller.abort();
     };
-  }, [agentId, applyLive, client, revision]);
+  }, [agentId, applyLive, client, revision, setState]);
 
   const historyUnavailable =
     state.status === 'ready' && state.detail.id === agentId && state.historyUnavailable === true;
   const historyLoading =
     state.status === 'ready' && state.detail.id === agentId && state.historyLoading === true;
   const historyIncomplete = historyLoading || historyUnavailable;
+  const v2 = state.status === 'ready' && state.detail.id === agentId ? state.v2 : undefined;
   useEffect(() => {
     if (!historyUnavailable || agentId === undefined) return;
     const request = new AbortController();
@@ -214,15 +243,14 @@ export function useAgentController(
       request.abort();
       clearTimeout(timer);
     };
-  }, [agentId, client, historyUnavailable]);
+  }, [agentId, client, historyUnavailable, setState]);
 
   const replayEnabled =
     agentId !== undefined &&
     state.status === 'ready' &&
     state.detail.id === agentId &&
     !historyIncomplete &&
-    pending !== 'send' &&
-    pending !== 'approval';
+    (v2 !== undefined || (pending !== 'send' && pending !== 'approval'));
 
   const provisioning =
     state.status === 'ready' &&
@@ -257,8 +285,8 @@ export function useAgentController(
           hierarchyChanged.current?.();
         observedStatus = next.detail.status;
         timer = setTimeout(() => void poll(), 1500);
-      } catch {
-        if (!request.signal.aborted) {
+      } catch (error) {
+        if (!request.signal.aborted && !onIdentityChange(error)) {
           setActionError('Preparation progress could not be refreshed. Reconnecting.');
           timer = setTimeout(() => void poll(), 5000);
         }
@@ -269,40 +297,65 @@ export function useAgentController(
       request.abort();
       clearTimeout(timer);
     };
-  }, [agentId, client, pending, provisioning]);
+  }, [agentId, client, pending, provisioning, setState, onIdentityChange]);
 
   useEffect(() => {
     if (!replayEnabled || agentId === undefined) return;
     const controller = new AbortController();
-    replayAbort.current = controller;
+    replayAbortRef.current = controller;
     queueMicrotask(() => {
       if (!controller.signal.aborted) setReplayError(undefined);
     });
-    void client
-      .replayAgent(agentId, {
-        after: liveCursor.current,
-        signal: controller.signal,
-        onEvent: (event) => {
-          if (!controller.signal.aborted) applyLive(event);
-        },
-      })
-      .catch((error: unknown) => {
-        if (controller.signal.aborted) return;
-        setReplayError(`Live Agent updates are unavailable. ${errorMessage(error)}`);
-      });
+    const replay =
+      v2 === undefined
+        ? client.replayAgent(agentId, {
+            after: liveCursor.current,
+            signal: controller.signal,
+            onEvent: (event) => {
+              if (!controller.signal.aborted) applyLive(event);
+            },
+          })
+        : followV2Agent(
+            v2,
+            stateRef.current.status === 'ready' ? stateRef.current.conversation.agentCursor! : '',
+            controller.signal,
+            (frame) => {
+              const current = stateRef.current;
+              if (current.status !== 'ready' || current.detail.id !== agentId)
+                throw new Error('The Agent view no longer accepts live updates.');
+              const conversation = foldV2Frame(current.conversation, frame, agentId);
+              liveCursor.current = conversation.cursor;
+              setState({ ...current, conversation });
+            },
+            setReplayError,
+          );
+    void replay.catch((error: unknown) => {
+      if (controller.signal.aborted || onIdentityChange(error)) return;
+      setReplayError(`Live Agent updates are unavailable. ${errorMessage(error)}`);
+    });
     return () => {
       controller.abort();
-      if (replayAbort.current === controller) replayAbort.current = undefined;
+      if (replayAbortRef.current === controller) replayAbortRef.current = undefined;
     };
-  }, [agentId, applyLive, client, replayEnabled, replayRevision]);
+  }, [
+    agentId,
+    applyLive,
+    client,
+    replayEnabled,
+    replayRevision,
+    v2,
+    setState,
+    stateRef,
+    onIdentityChange,
+  ]);
 
   useEffect(() => {
     return () => {
-      const controller = actionAbort.current;
+      const controller = actionAbortRef.current;
       controller?.abort();
-      if (actionAbort.current === controller) {
-        actionAbort.current = undefined;
-        actionKind.current = undefined;
+      if (actionAbortRef.current === controller) {
+        actionAbortRef.current = undefined;
+        actionKindRef.current = undefined;
       }
     };
   }, [agentId, client]);
@@ -312,114 +365,54 @@ export function useAgentController(
     setReplayError(undefined);
     setState(agentId === undefined ? { status: 'idle' } : { status: 'loading' });
     setRevision((value) => value + 1);
-  }, [agentId]);
+  }, [agentId, setState]);
 
-  const run = useCallback(
-    async (
-      approval: { readonly id: string; readonly decision: ApprovalDecision } | string,
-      onAccepted?: () => void,
-    ) => {
-      if (
-        agentId === undefined ||
-        actionAbort.current !== undefined ||
-        historyIncomplete ||
-        !inputAvailability.allowed
-      )
-        return;
-      replayAbort.current?.abort();
-      const controller = new AbortController();
-      actionAbort.current = controller;
-      const approving = typeof approval !== 'string';
-      actionKind.current = approving ? 'approval' : 'send';
-      setPending(approving ? 'approval' : 'send');
-      setActionError(undefined);
-      let accepted = false;
-      try {
-        await client.runAgent(
-          {
-            threadId: agentId,
-            runId: runId(),
-            ...(approving
-              ? {
-                  resume: [
-                    {
-                      interruptId: approval.id,
-                      status: 'resolved' as const,
-                      payload: { decision: approval.decision },
-                    },
-                  ],
-                }
-              : { messages: [{ role: 'user' as const, content: approval }] }),
-          },
-          {
-            signal: controller.signal,
-            onEvent: (event) => {
-              if (controller.signal.aborted || event.threadId !== agentId) return;
-              if (!accepted && event.type !== 'RUN_ERROR') {
-                accepted = true;
-                onAccepted?.();
-              }
-              applyLive(event);
-            },
-          },
-        );
-      } catch (error: unknown) {
-        if (!controller.signal.aborted) setActionError(errorMessage(error));
-      } finally {
-        if (actionAbort.current === controller) {
-          actionAbort.current = undefined;
-          actionKind.current = undefined;
-          setPending(undefined);
-          setReplayRevision((value) => value + 1);
-        }
-      }
-    },
-    [agentId, applyLive, client, historyIncomplete, inputAvailability.allowed],
-  );
-
-  const command = useCallback(
-    async (
-      name: Exclude<AgentCommand, 'send' | 'approval'>,
-      operation: (id: string, key: string, signal: AbortSignal) => Promise<void>,
-    ) => {
-      const mayPreemptSend = name === 'interrupt' && actionKind.current === 'send';
-      if (historyLoading) return;
-      if (name === 'interrupt' && !activeTurn) return;
-      if (agentId === undefined || (actionAbort.current !== undefined && !mayPreemptSend)) {
-        return;
-      }
-      if (name === 'interrupt') actionAbort.current?.abort();
-      const scope = `agent:${agentId}:${name}`;
-      const controller = new AbortController();
-      actionAbort.current = controller;
-      actionKind.current = name;
-      setPending(name);
-      setActionError(undefined);
-      try {
-        await operation(agentId, keys.for(scope), controller.signal);
-        keys.settle(scope);
-        options.onHierarchyChange?.();
-        if (name === 'delete') options.onDeleted?.();
-        else reload();
-      } catch (error: unknown) {
-        if (!controller.signal.aborted) setActionError(errorMessage(error));
-      } finally {
-        if (actionAbort.current === controller) {
-          actionAbort.current = undefined;
-          actionKind.current = undefined;
-          setPending(undefined);
-          if (name === 'interrupt') setReplayRevision((value) => value + 1);
-        }
-      }
-    },
-    [activeTurn, agentId, historyLoading, keys, options, reload],
-  );
+  const { run, command, recoverPending } = useAgentActions({
+    agentId,
+    client,
+    historyIncomplete,
+    activeTurn,
+    inputAvailability,
+    actionAbortRef,
+    actionKindRef,
+    replayAbortRef,
+    stateRef,
+    keys,
+    v2,
+    setPending,
+    setActionError,
+    setReplayRevision,
+    setRequestRevision,
+    applyLive,
+    reload,
+    errorMessage,
+    onIdentityChange,
+    options,
+  });
 
   const displayedStatus =
     state.status === 'ready'
       ? currentAgentStatus(state.detail, state.conversation, summary)
       : undefined;
+  const retained = v2?.pending();
+  const controlNotice = useControlStatus(v2, onIdentityChange);
+  const queuedMessage = useQueuedMessage(
+    v2,
+    !historyIncomplete,
+    pending !== undefined,
+    onIdentityChange,
+  );
   return {
+    queuedMessage: v2 === undefined ? undefined : queuedMessage,
+    pendingMessage: retained?.input,
+    acceptedMessage: retained?.accepted,
+    pendingControl: retained?.control,
+    controlNotice,
+    controlsUnavailable:
+      v2 !== undefined &&
+      state.status === 'ready' &&
+      state.conversation.responseBinding === undefined,
+    recoverPending: v2 === undefined ? undefined : recoverPending,
     state:
       state.status === 'ready' &&
       displayedStatus !== undefined &&

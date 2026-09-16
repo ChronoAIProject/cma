@@ -18,11 +18,14 @@ import { resourceDispatch } from './public-contract/resources.js';
 import { operatorDispatch } from './public-contract/operator.js';
 import { triggerDispatch } from './public-contract/triggers.js';
 import { experienceDispatch } from './public-contract/experience.js';
+import { agentEventsV2Dispatch } from './public-contract/agent-events-v2.js';
 import {
   expectation,
   expectedProjection,
   expectedRequestUrl,
   localCodes,
+  problemBody,
+  problemExtensions,
 } from './public-contract/expectations.js';
 import { browserOperations, verifyNavigation } from './public-contract/navigation.js';
 
@@ -31,6 +34,7 @@ const dispatch = {
   ...operatorDispatch,
   ...triggerDispatch,
   ...experienceDispatch,
+  ...agentEventsV2Dispatch,
 };
 const corpus = loadCorpus();
 
@@ -98,7 +102,7 @@ describe('shared public contract', () => {
     for (const [id, code] of localCodes) {
       const fixture = corpus.find((entry) => entry.id === id);
       expect(fixture, id).toBeDefined();
-      expect((fixture!.response.body as { code: string }).code).toBe(code);
+      expect(problemBody(fixture!).code).toBe(code);
     }
   });
 
@@ -115,7 +119,7 @@ describe('shared public contract', () => {
     const required = Object.entries(inventory.operations).flatMap(([operation, contract]) =>
       (contract.required_protocol_failures ?? []).map((code) => ({ operation, code })),
     );
-    expect(required).toHaveLength(19);
+    expect(required).toHaveLength(23);
     for (const { operation, code } of required) {
       const fixtures = corpus.filter(
         (fixture) =>
@@ -188,17 +192,14 @@ describe('shared public contract', () => {
       }
       if (mode === 'raw-wire-only') {
         // Closed query/header shapes and raw padding cannot be emitted by these typed methods.
-        const body = (fixture.response.body ?? {}) as Record<string, unknown>;
+        const body = problemBody(fixture);
         const error = await errorFromResponse(response(fixture));
         expect(error).toBeInstanceOf(ApiError);
         expect(error).toMatchObject({
           status: fixture.response.status,
           code: body.code,
         });
-        const standard = ['type', 'title', 'status', 'detail', 'instance', 'code'];
-        expect((error as ApiError).extensions).toEqual(
-          Object.fromEntries(Object.entries(body).filter(([key]) => !standard.includes(key))),
-        );
+        expect((error as ApiError).extensions).toEqual(problemExtensions(fixture));
         expect(fetch).not.toHaveBeenCalled();
         return;
       }
@@ -209,13 +210,13 @@ describe('shared public contract', () => {
         expect(problem).toBeInstanceOf(ApiError);
         expect(problem).toMatchObject({
           status: fixture.response.status,
-          code: (fixture.response.body as { code: string }).code,
+          code: problemBody(fixture).code,
         });
       } else if (
         fixture.response.status >= 400 &&
         !(fixture.operation === 'GET /auth/session' && fixture.response.status === 401)
       ) {
-        const body = (fixture.response.body ?? {}) as Record<string, unknown>;
+        const body = problemBody(fixture);
         const result = await invoke().then(
           () => {
             throw new Error('Expected named refusal');
@@ -224,10 +225,7 @@ describe('shared public contract', () => {
         );
         expect(result).toBeInstanceOf(ApiError);
         expect(result).toMatchObject({ status: fixture.response.status, code: body.code });
-        const standard = ['type', 'title', 'status', 'detail', 'instance', 'code'];
-        expect((result as ApiError).extensions).toEqual(
-          Object.fromEntries(Object.entries(body).filter(([key]) => !standard.includes(key))),
-        );
+        expect((result as ApiError).extensions).toEqual(problemExtensions(fixture));
         expect(fetch).toHaveBeenCalledOnce();
       } else {
         const result = await invoke();

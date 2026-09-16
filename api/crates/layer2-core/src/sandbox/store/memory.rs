@@ -36,6 +36,9 @@ macro_rules! save_record {
 mod agent_admission;
 #[cfg(test)]
 mod agent_admission_tests;
+mod agent_artifacts;
+mod agent_command_work;
+mod agent_commands;
 #[cfg(test)]
 mod agent_connection_recovery_tests;
 mod agent_control;
@@ -48,6 +51,16 @@ mod agent_lifecycle;
 #[cfg(test)]
 mod agent_lifecycle_tests;
 mod agent_reads;
+mod channel_usage;
+mod command_audit;
+mod command_revival;
+mod events;
+mod provenance;
+mod provenance_inventory;
+mod queued_cancellations;
+#[cfg(test)]
+mod queued_cancellations_tests;
+use events::{append_sandbox_event, bounded_events};
 #[cfg(test)]
 mod launch_command_tests;
 mod lifecycle;
@@ -64,6 +77,11 @@ mod maintenance_tests;
 mod reconciliation;
 #[cfg(test)]
 mod reconciliation_tests;
+mod resource_access;
+mod sandbox_controls;
+mod targeted_controls;
+#[cfg(test)]
+mod targeted_controls_tests;
 mod workspace_lifecycle;
 
 #[async_trait]
@@ -241,6 +259,22 @@ impl WorktreeStore for InMemorySandboxStore {
 
 #[async_trait]
 impl AgentStore for InMemorySandboxStore {
+    async fn require_legacy_first_message(&self, agent: &Agent) -> Result<(), SandboxStoreError> {
+        let current = self
+            .get_agent(&agent.id)
+            .await?
+            .ok_or(SandboxStoreError::NotFound)?;
+        if current
+            .conversation
+            .first_message
+            .as_ref()
+            .is_some_and(|first| first.common_binding.is_some())
+        {
+            return Err(SandboxStoreError::Conflict);
+        }
+        Ok(())
+    }
+
     async fn create_agent(&self, agent: Agent) -> Result<(), SandboxStoreError> {
         if agent.work.resolved_skills.is_some() {
             return Err(SandboxStoreError::Conflict);
@@ -392,11 +426,15 @@ impl SandboxTransactionStore for InMemorySandboxStore {
                 append_sandbox_event(&mut candidate, &sandbox_id, event_at, event)?;
             }
             SandboxTransaction::SaveSandboxAndAppend {
+                command_revival,
                 expected_revision,
                 sandbox,
                 event_at,
                 event,
             } => {
+                if let Some(proof) = &command_revival {
+                    command_revival::validate(&mut candidate, proof, &sandbox, &event_at, &event)?;
+                }
                 let id = sandbox.id.clone();
                 if candidate.sandboxes.get(&id).is_some_and(|current| {
                     current.owner != sandbox.owner
@@ -426,6 +464,11 @@ impl SandboxTransactionStore for InMemorySandboxStore {
                     *sandbox
                 )?;
                 append_sandbox_event(&mut candidate, &id, event_at, event)?;
+                if let Some(proof) = command_revival {
+                    proof
+                        .require_current()
+                        .map_err(|_| SandboxStoreError::Conflict)?;
+                }
             }
             SandboxTransaction::SaveWorkspaceAndAppend {
                 expected_revision,
@@ -451,46 +494,4 @@ impl SandboxTransactionStore for InMemorySandboxStore {
         *state = candidate;
         Ok(())
     }
-}
-
-fn append_sandbox_event(
-    state: &mut State,
-    sandbox_id: &SandboxId,
-    appended_at: String,
-    kind: SandboxEventKind,
-) -> Result<SandboxEvent, SandboxStoreError> {
-    if !state.sandboxes.contains_key(sandbox_id) {
-        return Err(SandboxStoreError::NotFound);
-    }
-    let events = state.sandbox_events.entry(sandbox_id.clone()).or_default();
-    let seq = u64::try_from(events.len())
-        .map_err(|_| SandboxStoreError::SequenceConflict)?
-        .checked_add(1)
-        .ok_or(SandboxStoreError::SequenceConflict)?;
-    let event = SandboxEvent {
-        sandbox_id: sandbox_id.clone(),
-        seq,
-        appended_at,
-        kind,
-    };
-    events.push(event.clone());
-    Ok(event)
-}
-
-fn bounded_events<T: Clone>(
-    events: Option<&Vec<T>>,
-    after: u64,
-    limit: u16,
-    sequence: impl Fn(&T) -> u64,
-) -> Result<Vec<T>, SandboxStoreError> {
-    if limit == 0 || limit > MAX_PAGE_SIZE {
-        return Err(SandboxStoreError::InvalidPage);
-    }
-    Ok(events
-        .into_iter()
-        .flatten()
-        .filter(|event| sequence(event) > after)
-        .take(usize::from(limit))
-        .cloned()
-        .collect())
 }

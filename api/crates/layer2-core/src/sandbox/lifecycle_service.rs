@@ -53,6 +53,45 @@ impl SandboxLifecycleCommandError {
 }
 
 impl SandboxService {
+    /// Internal command preparation keeps connection custody with the actual
+    /// resource owner. The proof supplies independent current Sandbox authority.
+    pub async fn revive_for_command(
+        &self,
+        authorization: std::sync::Arc<super::agent_io::CommandRevivalAuthorization>,
+    ) -> Result<SandboxLifecycleCommandResult, SandboxLifecycleCommandError> {
+        let snapshot = authorization
+            .current_snapshot()
+            .await
+            .map_err(|_| SandboxLifecycleCommandError::Forbidden)?;
+        let sandbox = snapshot.lineage.sandbox;
+        self.credentials
+            .check_services(
+                &sandbox.owner,
+                &sandbox
+                    .profile
+                    .content
+                    .connection_services_for_grants(&sandbox.credential.effective_reaches()),
+            )
+            .await
+            .map_err(|error| match error {
+                super::SandboxCredentialPrerequisiteError::SetupRequired => {
+                    SandboxLifecycleCommandError::CredentialSetupRequired
+                }
+                super::SandboxCredentialPrerequisiteError::ConnectionsRequired { services } => {
+                    SandboxLifecycleCommandError::ConnectionsRequired { services }
+                }
+                super::SandboxCredentialPrerequisiteError::Unavailable(_) => {
+                    SandboxLifecycleCommandError::Unavailable(
+                        "connection verification is unavailable".into(),
+                    )
+                }
+            })?;
+        self.store
+            .schedule_command_revival(authorization)
+            .await
+            .map_err(lifecycle_store_error)
+    }
+
     pub async fn pause(
         &self,
         caller: &Caller,
@@ -193,6 +232,9 @@ fn require_owner_authority(caller: &Caller) -> Result<(), SandboxLifecycleComman
 fn lifecycle_store_error(error: SandboxStoreError) -> SandboxLifecycleCommandError {
     match error {
         SandboxStoreError::NotFound => SandboxLifecycleCommandError::NotFound,
+        SandboxStoreError::LifecycleBusy { status, reason } => {
+            SandboxLifecycleCommandError::SandboxBusy { status, reason }
+        }
         SandboxStoreError::Corrupt(detail) => SandboxLifecycleCommandError::Corrupt(detail),
         other => SandboxLifecycleCommandError::Unavailable(other.to_string()),
     }

@@ -12,6 +12,7 @@ import { createCreationClient } from './api/creation';
 import { createOperatorClient } from './operator/client';
 import { createTriggerPublisherClient } from './trigger-publisher/client';
 import { createPublicClient } from './public/client';
+import { clearAgentTransport } from './agent/transport/journal';
 
 /*
  * Before the first render, so the page never paints in the wrong theme and
@@ -29,9 +30,23 @@ if (!container) {
  * replacing the mock with the real adapter a one-line change. The mock remains
  * for tests.
  */
-const authProvider = createNyxidAuthProvider();
+const identityProvider = createNyxidAuthProvider();
+const authProvider = {
+  ...identityProvider,
+  async signOut() {
+    await identityProvider.signOut();
+    clearAgentTransport(sessionStorage);
+  },
+};
 const sdk = createClient();
-const client = createRestWebClient(sdk);
+const client = createRestWebClient(sdk, {
+  storage: sessionStorage,
+  async currentUser() {
+    const identity = await identityProvider.current();
+    if (identity.status === 'error') throw new Error(identity.message);
+    return identity.status === 'authenticated' ? identity.user.id : undefined;
+  },
+});
 const profiles = createProfileViewsClient(sdk);
 const creation = createCreationClient(sdk);
 const operator = createOperatorClient(sdk);
