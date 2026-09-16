@@ -1,4 +1,4 @@
-//! Test provider: native creation identities are captured on dispatch and
+//! Test provider: native binding identities are captured on dispatch and
 //! persisted by production journals. No standalone database proof is seeded.
 use layer3_adapter::*;
 use serde_json::json;
@@ -23,10 +23,11 @@ impl ProviderFixture {
         let handle = adapter.provision_runtime(request).await?;
         let scope = HomeVolumeScope::from_authority("fixture-native", &["history-finalization"])?;
         let receipt: RuntimeProvisionReceipt = serde_json::from_value(json!({
-            "operation_id": operation, "request_sha256": provider_request_digest(request)?, "creation_observation_version": "9",
+            "operation_id": operation, "request_sha256": provider_request_digest(request)?,
+            "provider_response_sha256": provider_request_digest(&handle)?, "pre_dispatch_list_version": "9",
             "handle": handle, "incarnation": {"scope": scope, "namespace": "fixture",
                 "name": handle.0, "uid": format!("native-{}", uuid::Uuid::new_v4()),
-                "generation": 1, "creation_resource_version": "10", "identity_sha256": provider_request_digest(request)?},
+                "generation": 1, "binding_resource_version": "10", "identity_sha256": provider_request_digest(request)?},
         }))
         .unwrap();
         receipt.validate()?;

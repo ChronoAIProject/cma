@@ -22,19 +22,23 @@ impl Fixture {
             .await
             .expect("every expected provider request was sent")
             .expect("fixture completed");
-        self.requests.lock().unwrap().clone()
+        let requests = self.requests.lock().unwrap().clone();
+        assert!(requests.iter().all(|request| !request.contains("watch=")));
+        requests
     }
     async fn original(&self) -> RuntimeProvisionReceipt {
         let observation = self
             .reclaimer
-            .begin_creation_observation(OPERATION)
+            .observe_before_dispatch(OPERATION)
             .await
             .unwrap();
         self.reclaimer
-            .capture_created(
+            .capture_for_binding(
                 &RuntimeHandle::new(HANDLE),
                 OPERATION,
                 &"a".repeat(64),
+                &"b".repeat(64),
+                &request_metadata(),
                 observation,
             )
             .await
@@ -102,87 +106,126 @@ fn list(kind: &str, version: &str, rows: Vec<Value>, cursor: &str) -> (u16, Stri
 fn baseline() -> (u16, String) {
     list("BatchSandboxList", "10", vec![], "")
 }
-fn added() -> (u16, String) {
-    row(json!({"type":"ADDED","object":object("original-uid","11")}))
+fn pinned() -> (u16, String) {
+    row(object("original-uid", "11"))
+}
+fn request_metadata() -> BTreeMap<String, String> {
+    BTreeMap::from([
+        ("cma/control-plane".into(), "cma-test".into()),
+        ("cma/sandbox".into(), "sandbox-original".into()),
+        ("cma/runtime-generation".into(), "1".into()),
+        ("cma/spec-sha256".into(), "original-spec".into()),
+        (DISPATCH_LABEL.into(), dispatch_marker(OPERATION).unwrap()),
+    ])
 }
 fn success() -> (u16, String) {
     row(json!({"apiVersion":"v1","kind":"Status","status":"Success","code":200}))
 }
 
 #[tokio::test]
-async fn creation_watch_pins_first_uid_and_rejects_replacement_with_copied_labels() {
-    let stream = [
-        json!({"type":"ADDED","object":object("original-uid","11")}),
-        json!({"type":"DELETED","object":object("original-uid","12")}),
-        json!({"type":"ADDED","object":object("replacement-uid","13")}),
-    ]
-    .map(|value| value.to_string())
-    .join("\n");
+async fn binding_get_pins_uid_and_rejects_later_replacement_with_copied_labels_without_watch() {
     let fixture = serve(vec![
         baseline(),
-        (200, stream),
+        pinned(),
+        row(object("original-uid", "12")),
         row(object("replacement-uid", "13")),
     ])
     .await;
     let original = fixture.original().await;
     assert_eq!(original.incarnation.uid, "original-uid");
-    assert_eq!(original.incarnation.creation_resource_version, "11");
-    assert_eq!(original.creation_observation_version, "10");
-    assert!(fixture.reclaimer.require_original(&original).await.is_err());
+    assert_eq!(original.incarnation.binding_resource_version, "11");
+    assert_eq!(original.pre_dispatch_list_version, "10");
+    assert_eq!(original.provider_response_sha256, "b".repeat(64));
+    fixture
+        .reclaimer
+        .require_bound_runtime(&original)
+        .await
+        .unwrap();
+    assert!(fixture
+        .reclaimer
+        .require_bound_runtime(&original)
+        .await
+        .is_err());
     let requests = fixture.finish().await;
+    assert!(requests[0].contains("labelSelector=cma%2Fprovider-dispatch%3D"));
     let query = requests[1].lines().next().unwrap();
-    assert!(query.contains("watch=true"));
-    assert!(query.contains("resourceVersion=10"));
-    assert!(query.contains("fieldSelector=metadata.name%3Druntime-finality"));
-    assert!(!query.contains("labelSelector"));
+    assert_eq!(query, "GET /apis/sandbox.opensandbox.io/v1alpha1/namespaces/cma-test/batchsandboxes/runtime-finality HTTP/1.1");
 }
 
 #[tokio::test]
-async fn creation_watch_rejects_missing_original_event_and_compacted_history() {
-    for event in [
-        json!({"type":"MODIFIED","object":object("copied-uid","12")}),
-        json!({"type":"DELETED","object":object("lost-uid","12")}),
-        json!({"type":"ERROR","object":{"apiVersion":"v1","kind":"Status","status":"Failure","message":"too old resource version","reason":"Expired","code":410}}),
+async fn binding_get_requires_present_readable_object_and_exact_request_metadata() {
+    let mut changed_metadata = object("candidate-uid", "11");
+    changed_metadata["metadata"]["labels"]["cma/sandbox"] = json!("another-sandbox");
+    let mut missing_metadata = object("candidate-uid", "11");
+    missing_metadata["metadata"]["labels"]
+        .as_object_mut()
+        .unwrap()
+        .remove("cma/spec-sha256");
+    let mut copied_dispatch = object("candidate-uid", "11");
+    copied_dispatch["metadata"]["labels"][DISPATCH_LABEL] = json!("another-dispatch");
+    let missing = json!({"apiVersion":"v1","kind":"Status","status":"Failure","reason":"NotFound","message":"missing","code":404});
+    let forbidden = json!({"apiVersion":"v1","kind":"Status","status":"Failure","reason":"Forbidden","message":"forbidden","code":403});
+    for response in [
+        (404, missing.to_string()),
+        (403, forbidden.to_string()),
+        (200, String::new()),
+        row(changed_metadata),
+        row(missing_metadata),
+        row(copied_dispatch),
     ] {
-        let fixture = serve(vec![baseline(), row(event)]).await;
+        let fixture = serve(vec![baseline(), response]).await;
         let observation = fixture
             .reclaimer
-            .begin_creation_observation(OPERATION)
+            .observe_before_dispatch(OPERATION)
             .await
             .unwrap();
         assert!(fixture
             .reclaimer
-            .capture_created(
+            .capture_for_binding(
                 &RuntimeHandle::new(HANDLE),
                 OPERATION,
                 &"a".repeat(64),
-                observation
+                &"b".repeat(64),
+                &request_metadata(),
+                observation,
             )
             .await
             .is_err());
         assert_eq!(fixture.finish().await.len(), 2);
     }
-    let fixture = serve(vec![baseline(), (200, String::new())]).await;
+}
+
+#[tokio::test]
+async fn binding_get_compares_encoded_hash_labels_to_canonical_request_metadata() {
+    let canonical = format!("-{}", "a".repeat(42));
+    let mut candidate = object("original-uid", "11");
+    candidate["metadata"]["labels"]["cma/spec-sha256"] = json!(format!("h.{canonical}"));
+    let fixture = serve(vec![baseline(), row(candidate)]).await;
     let observation = fixture
         .reclaimer
-        .begin_creation_observation(OPERATION)
+        .observe_before_dispatch(OPERATION)
         .await
         .unwrap();
-    assert!(fixture
+    let mut metadata = request_metadata();
+    metadata.insert("cma/spec-sha256".into(), canonical);
+    let receipt = fixture
         .reclaimer
-        .capture_created(
+        .capture_for_binding(
             &RuntimeHandle::new(HANDLE),
             OPERATION,
             &"a".repeat(64),
-            observation
+            &"b".repeat(64),
+            &metadata,
+            observation,
         )
         .await
-        .is_err());
+        .unwrap();
+    assert_eq!(receipt.incarnation.uid, "original-uid");
     fixture.finish().await;
 }
 
 #[tokio::test]
-async fn creation_observation_rejects_existing_dispatch_or_incomplete_baseline() {
+async fn pre_dispatch_list_rejects_existing_marker_or_incomplete_baseline() {
     for initial in [
         list("BatchSandboxList", "10", vec![object("old-uid", "9")], ""),
         list("BatchSandboxList", "10", vec![], "more"),
@@ -190,7 +233,7 @@ async fn creation_observation_rejects_existing_dispatch_or_incomplete_baseline()
         let fixture = serve(vec![initial]).await;
         assert!(fixture
             .reclaimer
-            .begin_creation_observation(OPERATION)
+            .observe_before_dispatch(OPERATION)
             .await
             .is_err());
         assert_eq!(fixture.finish().await.len(), 1);
@@ -201,7 +244,7 @@ async fn creation_observation_rejects_existing_dispatch_or_incomplete_baseline()
 async fn finality_requires_acknowledged_uid_delete_and_complete_absence() {
     let fixture = serve(vec![
         baseline(),
-        added(),
+        pinned(),
         row(object("original-uid", "15")),
         success(),
         list("BatchSandboxList", "20", vec![], ""),
@@ -212,7 +255,7 @@ async fn finality_requires_acknowledged_uid_delete_and_complete_absence() {
     let original = fixture.original().await;
     let proof = fixture
         .reclaimer
-        .finalize_original(&original, "delete-1")
+        .finalize_bound_runtime(&original, "delete-1")
         .await
         .unwrap();
     assert_eq!(proof.original, original);
@@ -235,7 +278,7 @@ async fn missing_delete_response_cannot_be_replaced_by_absence() {
     let missing = json!({"apiVersion":"v1","kind":"Status","status":"Failure","reason":"NotFound","message":"missing","code":404});
     let fixture = serve(vec![
         baseline(),
-        added(),
+        pinned(),
         row(object("original-uid", "15")),
         (404, missing.to_string()),
     ])
@@ -243,7 +286,7 @@ async fn missing_delete_response_cannot_be_replaced_by_absence() {
     let original = fixture.original().await;
     assert!(fixture
         .reclaimer
-        .finalize_original(&original, "delete-1")
+        .finalize_bound_runtime(&original, "delete-1")
         .await
         .is_err());
     assert_eq!(fixture.finish().await.len(), 4);
@@ -257,7 +300,7 @@ async fn incomplete_or_inconsistent_owned_pod_inventory_cannot_authorize_finalit
     ] {
         let fixture = serve(vec![
             baseline(),
-            added(),
+            pinned(),
             row(object("original-uid", "15")),
             success(),
             list("BatchSandboxList", "20", vec![], ""),
@@ -268,7 +311,7 @@ async fn incomplete_or_inconsistent_owned_pod_inventory_cannot_authorize_finalit
         let original = fixture.original().await;
         assert!(fixture
             .reclaimer
-            .finalize_original(&original, "delete-1")
+            .finalize_bound_runtime(&original, "delete-1")
             .await
             .is_err());
         assert_eq!(fixture.finish().await.len(), 7);
