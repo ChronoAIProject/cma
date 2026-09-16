@@ -6,8 +6,10 @@ import { IconSendOutline16, IconStopFill16 } from '../ui/icons';
 import type { SandboxInputAvailability } from './sandboxInput';
 import type { TriggerQuickMessage } from '@chronoai/cma-sdk';
 import { QuickMessages } from './QuickMessages';
+import type { AgentDraft } from './draft';
 
 interface ComposerProps {
+  readonly draft?: AgentDraft;
   readonly status: AgentStatus;
   readonly pausedNotice?: string;
   readonly running: boolean;
@@ -43,6 +45,7 @@ function fit(field: HTMLTextAreaElement): void {
 }
 
 export function Composer({
+  draft,
   status,
   pausedNotice,
   running,
@@ -57,8 +60,10 @@ export function Composer({
   onSend,
   onStop,
 }: ComposerProps) {
-  const [content, setContent] = useState('');
-  const [previousAccepted, setPreviousAccepted] = useState(acceptedMessage);
+  const [localContent, setLocalContent] = useState('');
+  const content = draft?.content ?? localContent;
+  const setContent = draft?.setContent ?? setLocalContent;
+  const previousAccepted = useRef(acceptedMessage);
   const [submitting, setSubmitting] = useState(false);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const sending = useRef(false);
@@ -70,10 +75,12 @@ export function Composer({
     starting || notice !== undefined || inputAvailability.savingStartedAt !== undefined;
   const usable = canMessage(status);
 
-  if (acceptedMessage !== previousAccepted) {
-    setPreviousAccepted(acceptedMessage);
-    if (acceptedMessage !== undefined && content.trim() === acceptedMessage) setContent('');
-  }
+  useLayoutEffect(() => {
+    if (acceptedMessage === previousAccepted.current) return;
+    previousAccepted.current = acceptedMessage;
+    if (acceptedMessage !== undefined)
+      setContent((current) => (current.trim() === acceptedMessage ? '' : current));
+  }, [acceptedMessage, setContent]);
 
   useEffect(() => {
     if (usable) inputRef.current?.focus();
