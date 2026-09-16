@@ -106,6 +106,7 @@ impl Fixture {
             Authorization::new([Capability::CreateSandbox, Capability::LaunchTriggers]),
         );
         let identity = CallerContext {
+            credential_source: layer2_core::resource_access::CredentialSource::Retained,
             actor: if api {
                 ResourceActor::Api {
                     subject: caller.subject.clone(),
