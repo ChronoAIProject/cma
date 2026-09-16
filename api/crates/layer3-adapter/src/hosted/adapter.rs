@@ -148,6 +148,33 @@ impl SandboxAdapter for HostedAdapter {
         self.provision_exact(spec, 1).await
     }
 
+    async fn provision_runtime_receipted(
+        &self,
+        request: &RuntimeProvisionRequest,
+        operation_id: &str,
+    ) -> crate::Result<crate::RuntimeProvisionReceipt> {
+        self.provision_receipted_exact(request, operation_id).await
+    }
+
+    async fn finalize_runtime(
+        &self,
+        original: &crate::RuntimeProvisionReceipt,
+        operation_id: &str,
+    ) -> crate::Result<crate::RuntimeFinalityReceipt> {
+        let receipt = self
+            .backend
+            .finalize_runtime(original, operation_id)
+            .await?;
+        receipt.validate()?;
+        if receipt.original() != original || receipt.delete_operation_id() != operation_id {
+            return Err(AdapterError::Rejected(
+                "provider returned another runtime finality receipt".into(),
+            ));
+        }
+        self.states.lock().await.remove(original.handle());
+        Ok(receipt)
+    }
+
     async fn runtime_status(&self, handle: &RuntimeHandle) -> crate::Result<crate::RuntimeStatus> {
         self.inspect_runtime_status(handle).await
     }

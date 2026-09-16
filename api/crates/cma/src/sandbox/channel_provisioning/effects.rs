@@ -23,12 +23,45 @@ impl ChannelProvisioningDriver {
             &snapshot.sandbox,
             &settings.deployment_id,
         );
-        let handle = self
+        let request = RuntimeProvisionRequest::new(generation, spec.clone());
+        let dispatch = self
             .dependencies
-            .adapter
-            .provision_runtime(&RuntimeProvisionRequest::new(generation, spec.clone()))
-            .await
-            .map_err(|_| AllocationError::Unavailable)?;
+            .allocations
+            .begin_channel_runtime_dispatch(authority, lease, &snapshot, &request)
+            .await?;
+        let handle = if let Some(token) = dispatch {
+            match self
+                .dependencies
+                .adapter
+                .provision_runtime_receipted(&request, &token.operation_id)
+                .await
+            {
+                Ok(receipt) => {
+                    self.dependencies
+                        .allocations
+                        .complete_channel_runtime_dispatch(
+                            authority, lease, &snapshot, &token, &receipt,
+                        )
+                        .await?;
+                    receipt.handle().clone()
+                }
+                Err(_) => {
+                    // Recovery preserves availability while the unresolved dispatch
+                    // remains durable. It can never authorize final cleanup.
+                    self.dependencies
+                        .adapter
+                        .provision_runtime(&request)
+                        .await
+                        .map_err(|_| AllocationError::Unavailable)?
+                }
+            }
+        } else {
+            self.dependencies
+                .adapter
+                .provision_runtime(&request)
+                .await
+                .map_err(|_| AllocationError::Unavailable)?
+        };
         let observed = self
             .dependencies
             .adapter

@@ -12,11 +12,13 @@ mod checkpoint;
 mod conversation;
 mod conversation_channel;
 mod error;
+mod home_finality;
 mod home_snapshot;
 mod home_snapshot_export;
 mod home_snapshot_job;
 mod home_snapshot_view;
 mod home_volume;
+mod provider_finality;
 mod runtime;
 mod runtime_status;
 mod workspace;
@@ -53,6 +55,10 @@ pub use conversation::{
     UsageUpdate,
 };
 pub use error::{AdapterError, Result, RuntimeContractMismatch};
+pub use home_finality::{
+    HomeBackingAbsence, HomeBackingIdentity, HomeBackingObserver, HomeBackingReference,
+    HomeFinalityReceipt,
+};
 pub use home_snapshot::{
     HomeSnapshotInventoryEntry, HomeSnapshotObservation, HomeSnapshotReceipt, HomeSnapshotRequest,
     HomeSnapshotStore,
@@ -73,6 +79,10 @@ pub use home_snapshot_view::{
 pub use home_volume::{
     HomeVolumeAttachment, HomeVolumePolicy, HomeVolumeReceipt, HomeVolumeRequest, HomeVolumeScope,
     HomeVolumeStore,
+};
+pub use provider_finality::{
+    provider_request_digest, RuntimeFinalityReceipt, RuntimeProviderIncarnation,
+    RuntimeProvisionReceipt,
 };
 pub use runtime::{
     CommandReceipt, CredentialFrame, InstallReceipt, InstallRequest, RuntimeAdoptionRequest,
