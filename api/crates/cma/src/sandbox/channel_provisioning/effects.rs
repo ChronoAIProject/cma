@@ -7,40 +7,6 @@ use layer2_core::{
 use layer3_adapter::{InstallRequest, RuntimeAdoptionRequest, RuntimeProvisionRequest};
 
 impl ChannelProvisioningDriver {
-    pub(super) async fn home(
-        &self,
-        authority: &AllocationAuthority,
-        lease: &BridgeControlPlaneLease,
-        snapshot: ChannelProvisioningSnapshot,
-    ) -> Result<ChannelProvisioningSnapshot, AllocationError> {
-        self.require_effect(authority, lease, &snapshot).await?;
-        let next = crate::sandbox::home::next_home(
-            self.dependencies.adapter.as_ref(),
-            &snapshot.sandbox.id,
-            snapshot.sandbox.lifecycle.home.as_deref(),
-            snapshot.state.settings.home_policy.as_ref(),
-        )
-        .await
-        .map_err(|_| AllocationError::Unavailable)?;
-        let mut sandbox = snapshot.sandbox.clone();
-        let phase = if let Some(home) = next {
-            sandbox.lifecycle.home = Some(Box::new(home));
-            ChannelProvisioningPhase::Home
-        } else {
-            ChannelProvisioningPhase::Runtime
-        };
-        self.commit(
-            authority,
-            lease,
-            &snapshot,
-            sandbox.clone(),
-            phase,
-            &sandbox.lifecycle.home,
-            None,
-        )
-        .await
-    }
-
     pub(super) async fn runtime(
         &self,
         authority: &AllocationAuthority,

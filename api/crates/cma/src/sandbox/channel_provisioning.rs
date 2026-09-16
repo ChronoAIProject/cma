@@ -1,6 +1,9 @@
 //! Dedicated Channel provisioning. Legacy aggregate workers see no pending work.
 mod credentials;
 mod effects;
+mod home;
+pub(crate) mod home_prepare_evidence;
+pub(crate) mod home_provenance;
 pub(crate) mod state;
 
 use crate::{
@@ -176,6 +179,8 @@ impl ChannelProvisioningDriver {
         if current.sandbox != snapshot.sandbox
             || current.state != snapshot.state
             || current.creation != snapshot.creation
+            || current.home_provenance != snapshot.home_provenance
+            || current.home_prepare_evidence != snapshot.home_prepare_evidence
         {
             return Err(AllocationError::Conflict);
         }
