@@ -12,6 +12,10 @@ pub(crate) struct CreationObservation {
     marker: String,
 }
 
+#[cfg(test)]
+#[path = "runtime_finality_tests.rs"]
+mod tests;
+
 pub(crate) fn dispatch_marker(operation_id: &str) -> crate::Result<String> {
     if !crate::provider_finality::identifier(operation_id) {
         return Err(AdapterError::Rejected(
