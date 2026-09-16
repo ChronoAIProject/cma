@@ -37,6 +37,7 @@ impl AuthState {
             },
         };
         CallerContext {
+            credential_source: resolved.credential_source,
             caller: Caller::new(resolved.subject.clone(), resolved.authorization.clone()),
             credential,
             actor: ResourceActor::Api {

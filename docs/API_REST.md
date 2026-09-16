@@ -25,10 +25,19 @@ must use an explicitly configured CORS origin. Allowed request headers include
 `X-Request-Id`. CORS is not authorization.
 
 Creating a new Sandbox also requires renewable owner delegation already held by
-CMA. A request bearer authenticates that request; CMA does not persist it or
-derive refresh authority from it. Complete the existing `/auth/login` OAuth
+CMA. A request bearer does not establish renewable Sandbox authority.
+Complete the existing `/auth/login` OAuth
 flow with the same account to establish delegation. Bearer SDK calls remain
 supported after this setup; the browser session need not accompany them.
+
+Agent input and deferred controls independently retain the exact ordinary NyxID
+user access token supplied by an API caller, encrypted until its verified expiry.
+This command custody does not replace or refresh the account's saved OAuth login.
+NyxID introspection must confirm an active access token, matching subject, current
+permissions and explicit expiry; restricted machine, delegated, relay, scoped and
+sender-constrained tokens are refused. Existing browser requests continue using
+their original sign-in custody. See [Responses](API_Responses.md) for admission
+and recovery behavior.
 
 `POST /api/v1/sandboxes`, public Launch creation, and Draft Launch start return
 `409 sandbox_credential_setup_required` when a new Sandbox is needed but that

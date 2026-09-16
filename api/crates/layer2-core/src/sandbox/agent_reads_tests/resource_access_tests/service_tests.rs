@@ -27,6 +27,7 @@ struct Authority {
 }
 fn context(subject: &str) -> CallerContext {
     CallerContext {
+        credential_source: crate::resource_access::CredentialSource::Retained,
         caller: caller(subject, true),
         credential: CredentialContext {
             issuer: "https://identity.test".into(),

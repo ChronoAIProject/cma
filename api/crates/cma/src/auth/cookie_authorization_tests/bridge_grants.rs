@@ -14,6 +14,7 @@ fn org() -> ResourceOwner {
 }
 fn context(f: &Fixture, state: &SubjectAuthState) -> CallerContext {
     CallerContext {
+        credential_source: layer2_core::resource_access::CredentialSource::Retained,
         caller: layer2_core::Caller::new(state.subject.clone(), state.authorization.clone()),
         credential: f
             .auth

@@ -7,6 +7,7 @@ use std::time::{Duration, SystemTime};
 
 fn context(subject: &str) -> CallerContext {
     CallerContext {
+        credential_source: crate::resource_access::CredentialSource::Retained,
         caller: Caller::new(
             SubjectId::new(subject),
             Authorization::new([Capability::UseOwnSandboxes]),

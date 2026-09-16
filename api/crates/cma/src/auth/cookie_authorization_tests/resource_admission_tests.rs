@@ -4,6 +4,7 @@ use layer2_core::sandbox::store::PageRequest;
 fn context(fixture: &ResourceFixture, credential: &str) -> CallerContext {
     let subject = SubjectId::new("owner");
     CallerContext {
+        credential_source: layer2_core::resource_access::CredentialSource::Retained,
         caller: Caller::new(
             subject.clone(),
             Authorization::new([Capability::UseOwnSandboxes]),
