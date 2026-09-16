@@ -383,12 +383,17 @@ async fn channel_contention_never_renews_original_authority_or_writes_after_expi
     .await;
     holder.abort_transaction().await.unwrap();
     let result = result.unwrap();
-    assert!(matches!(
-        result,
-        Err(ChannelCommandAdmissionError::Invoke(
-            BridgeInvokeError::Unavailable
-        ))
-    ));
+    assert!(
+        matches!(
+            result,
+            Err(ChannelCommandAdmissionError::Invoke(
+                BridgeInvokeError::Unavailable
+            ))
+        ),
+        "original authority deadline {deadline:?}, now {:?}, conflicts {}: {result:?}",
+        tokio::time::Instant::now(),
+        conflicts.lock().unwrap().1.len(),
+    );
     assert!(tokio::time::Instant::now() >= deadline);
     assert_eq!(request.proof().deadline(), deadline);
     assert_eq!(
