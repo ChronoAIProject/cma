@@ -10,6 +10,8 @@ use tokio::{
     time::MissedTickBehavior,
 };
 
+use super::operations::{elapsed_ms, WorkKind};
+
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum ChannelWorkError {
     Unavailable,
@@ -21,6 +23,7 @@ pub(crate) enum ChannelWorkError {
 
 #[async_trait::async_trait]
 pub(crate) trait ChannelWorkPort: Send + Sync {
+    fn kind(&self) -> WorkKind;
     /// At most 32 ordered raw IDs. Per-row decoding belongs to run_one so one
     /// inconsistent document cannot block discovery of unrelated later work.
     async fn discover(&self, after: Option<&str>) -> Result<Vec<String>, ChannelWorkError>;
@@ -71,7 +74,7 @@ impl ChannelScheduler {
 
 enum Kind {
     Discover,
-    Work(String),
+    Work(String, tokio::time::Instant),
 }
 type ResultValue = Result<Option<Vec<String>>, ChannelWorkError>;
 type Joined = Result<(Id, ResultValue), tokio::task::JoinError>;
@@ -85,6 +88,7 @@ struct Scheduled {
     cursor: Option<String>,
     discovering: bool,
     last_warning: Option<tokio::time::Instant>,
+    last_observation: Option<tokio::time::Instant>,
 }
 impl Scheduled {
     fn new(port: Arc<dyn ChannelWorkPort>) -> Self {
@@ -97,9 +101,24 @@ impl Scheduled {
             cursor: None,
             discovering: false,
             last_warning: None,
+            last_observation: None,
         }
     }
     fn poll(&mut self) {
+        let now = tokio::time::Instant::now();
+        if self
+            .last_observation
+            .is_none_or(|prior| now - prior >= Duration::from_secs(30))
+        {
+            tracing::info!(
+                target: "cma::bridge::operations",
+                operation = "scheduler", worker = self.port.kind().label(),
+                active = self.active.len(), queued = self.queued.len(),
+                discovering = self.discovering,
+                "channel_scheduler"
+            );
+            self.last_observation = Some(now);
+        }
         if self.discovering || !self.queued.is_empty() || self.active.len() >= 4 {
             return;
         }
@@ -141,7 +160,8 @@ impl Scheduled {
                     .map_err(|_| ChannelWorkError::Unavailable)??;
                 Ok(None)
             });
-            self.kinds.insert(handle.id(), Kind::Work(id));
+            self.kinds
+                .insert(handle.id(), Kind::Work(id, tokio::time::Instant::now()));
         }
     }
     fn complete(&mut self, joined: Joined) {
@@ -151,8 +171,25 @@ impl Scheduled {
         };
         match self.kinds.remove(&id) {
             Some(Kind::Discover) => self.discovering = false,
-            Some(Kind::Work(id)) => {
+            Some(Kind::Work(id, started)) => {
                 self.active.remove(&id);
+                let outcome = match &joined {
+                    Ok((_, Ok(_))) => "observed",
+                    Ok((_, Err(ChannelWorkError::Changed))) => "changed",
+                    Ok((_, Err(ChannelWorkError::Unsupported))) => "unsupported",
+                    Ok((_, Err(ChannelWorkError::Suspended))) => "suspended",
+                    Ok((_, Err(ChannelWorkError::Corrupt))) => "inconsistent",
+                    Ok((_, Err(ChannelWorkError::Unavailable))) => "unavailable",
+                    Err(_) => "worker_lost",
+                };
+                use sha2::{Digest, Sha256};
+                let work_id_sha256 = format!("{:x}", Sha256::digest(id.as_bytes()));
+                tracing::info!(
+                    target: "cma::bridge::operations",
+                    operation = "worker", worker = self.port.kind().label(), outcome,
+                    elapsed_ms = elapsed_ms(started.elapsed()), work_id_sha256,
+                    "channel_operation"
+                );
             }
             None => {}
         }

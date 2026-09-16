@@ -65,6 +65,27 @@ impl NyxOutboxDelivery {
 #[async_trait::async_trait]
 impl RelayDeliveryPort for NyxOutboxDelivery {
     async fn deliver(&self, request: RelayDeliveryRequest) -> DeliveryOutcome {
+        let started = std::time::Instant::now();
+        let outbox_id = request.item().id.clone();
+        let age_ms = mongodb::bson::DateTime::now()
+            .timestamp_millis()
+            .saturating_sub(request.item().created_at_ms)
+            .max(0);
+        let outcome = self.deliver_checked(request).await;
+        let (status, reason) = super::operations::delivery_labels(&outcome);
+        tracing::info!(
+            target: "cma::bridge::operations",
+            operation = "outbound", outcome = status, reason,
+            elapsed_ms = super::operations::elapsed_ms(started.elapsed()),
+            age_ms, outbox_id,
+            "channel_operation"
+        );
+        outcome
+    }
+}
+
+impl NyxOutboxDelivery {
+    async fn deliver_checked(&self, request: RelayDeliveryRequest) -> DeliveryOutcome {
         // Local verification errors prove no send. Once the provider call
         // starts, every uncertain result is reported as Unknown by that port.
         let lease = match tokio::time::timeout_at(request.deadline(), self.ready(&request)).await {
