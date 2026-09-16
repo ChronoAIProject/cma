@@ -123,6 +123,14 @@ impl BatchSandboxReclaimer {
         else {
             return Ok(None);
         };
+        self.capture_object(object, handle).map(Some)
+    }
+
+    fn capture_object(
+        &self,
+        object: DynamicObject,
+        handle: &RuntimeHandle,
+    ) -> Result<CapturedSandbox, ProviderError> {
         self.verify(&object, handle)?;
         let uid = required(object.metadata.uid.as_deref(), handle, "Kubernetes UID")?;
         let resource_version = required(
@@ -148,7 +156,7 @@ impl BatchSandboxReclaimer {
             .ok_or_else(|| {
                 ProviderError::Malformed(format!("BatchSandbox {} has no specification", handle.0))
             })?;
-        Ok(Some(CapturedSandbox {
+        Ok(CapturedSandbox {
             handle: handle.clone(),
             resource_version,
             identity: DeletionIdentity {
@@ -158,7 +166,7 @@ impl BatchSandboxReclaimer {
                 owner_references: object.metadata.owner_references.unwrap_or_default(),
                 spec,
             },
-        }))
+        })
     }
 
     pub(crate) async fn delete(&self, mut captured: CapturedSandbox) -> Result<(), ProviderError> {

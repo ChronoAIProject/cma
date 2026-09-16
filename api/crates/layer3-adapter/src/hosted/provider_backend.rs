@@ -147,6 +147,7 @@ impl HostedBackend for ProviderHostedBackend {
             ));
         }
         let marker = crate::provider::dispatch_marker(operation_id)?;
+        let creation_observation = reclaimer.begin_creation_observation(operation_id).await?;
         request
             .metadata
             .insert(crate::provider::DISPATCH_LABEL.to_owned(), marker.clone());
@@ -158,7 +159,7 @@ impl HostedBackend for ProviderHostedBackend {
         }
         let handle = RuntimeHandle(created.id.clone());
         let original = reclaimer
-            .capture_created(&handle, operation_id, request_sha256)
+            .capture_created(&handle, operation_id, request_sha256, creation_observation)
             .await?;
         let handle = self.await_running(&request, created).await?;
         reclaimer.require_original(&original).await?;
