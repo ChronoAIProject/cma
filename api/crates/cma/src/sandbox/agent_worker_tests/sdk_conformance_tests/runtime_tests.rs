@@ -3,11 +3,16 @@ use std::collections::HashMap;
 use layer2_core::now_rfc3339;
 use layer2_core::sandbox::{AgentMessageAssembly, AgentRuntimeConnection, AgentUpdateRecorder};
 use layer3_adapter::{
-    ContentBlock, ContentChunk, MessageId, PromptResponse, SessionUpdate, ToolCall, ToolCallStatus,
-    ToolCallUpdate, ToolCallUpdateFields, ToolKind, TurnStopReason,
+    ContentBlock, ContentChunk, MessageId, PermissionDecision, PermissionLocator, PermissionOption,
+    PermissionOptionKind, PermissionRequest, PromptResponse, RequestPermissionRequest,
+    SessionUpdate, ToolCall, ToolCallStatus, ToolCallUpdate, ToolCallUpdateFields, ToolKind,
+    TurnStopReason,
 };
 
 use super::*;
+
+pub(super) const APPROVAL_ID: &str = "sdk-read-file";
+pub(super) const APPROVAL_LOCATOR: &str = "private-sdk-permission-route";
 
 pub(super) struct SdkRegistry {
     live: Arc<LiveAgentRegistry>,
@@ -29,6 +34,7 @@ enum RuntimeOutcome {
     Completed,
     Failed,
     Interrupted,
+    Approval,
 }
 
 impl RuntimeProbe {
@@ -42,6 +48,10 @@ impl RuntimeProbe {
 
     pub(super) fn interruptible() -> Arc<Self> {
         Self::with_outcome(RuntimeOutcome::Interrupted)
+    }
+
+    pub(super) fn approving() -> Arc<Self> {
+        Self::with_outcome(RuntimeOutcome::Approval)
     }
 
     fn with_outcome(outcome: RuntimeOutcome) -> Arc<Self> {
@@ -104,17 +114,26 @@ impl AgentRuntimeRegistry for SdkRegistry {
                         probe.inputs.lock().unwrap().push((target.clone(), input.clone()));
                     }
                     let outcome = probe.as_ref().map_or(RuntimeOutcome::Completed, |probe| probe.outcome);
+                    let ask_approval = outcome == RuntimeOutcome::Approval && matches!(&input, ConversationInput::Prompt(_));
                     let with_tools = match input {
                         ConversationInput::Prompt(_) if outcome == RuntimeOutcome::Interrupted => return Ok(()),
                         ConversationInput::Prompt(content) => content.iter().any(|block| matches!(block, ContentBlock::Text(text) if text.text == "sdk-raw-with-tools")),
                         ConversationInput::Cancel if outcome == RuntimeOutcome::Interrupted => false,
+                        ConversationInput::PermissionAnswer { id, locator, decision }
+                            if outcome == RuntimeOutcome::Approval && id == APPROVAL_ID
+                                && locator.as_ref().map(PermissionLocator::as_str) == Some(APPROVAL_LOCATOR)
+                                && decision == PermissionDecision::Allow => false,
                         _ => return Err(AdapterError::Unsupported("SDK fixture input is not supported".into())),
                     };
                     tokio::spawn(async move {
                         if let Some(probe) = probe {
                             probe.replies.acquire().await.unwrap().forget();
                         }
-                        emit_reply(recorder, target, with_tools, outcome).await;
+                        if ask_approval {
+                            emit_approval(recorder, target).await;
+                        } else {
+                            emit_reply(recorder, target, with_tools, outcome).await;
+                        }
                     });
                     Ok(())
                 }
@@ -133,6 +152,30 @@ impl AgentRuntimeRegistry for SdkRegistry {
     ) -> Result<(), AgentRuntimeError> {
         AgentRuntimeRegistry::fence(self.live.as_ref(), agent_id, authority_fence).await
     }
+}
+
+async fn emit_approval(recorder: Arc<DurableAgentUpdateRecorder>, target: AgentRuntimeTarget) {
+    recorder
+        .record_update(
+            &target.agent_id,
+            target.runtime_generation,
+            &mut AgentMessageAssembly::default(),
+            ConversationUpdate::Asked(PermissionRequest {
+                id: APPROVAL_ID.into(),
+                locator: Some(PermissionLocator::new(APPROVAL_LOCATOR)),
+                request: RequestPermissionRequest::new(
+                    target.conversation_id,
+                    ToolCallUpdate::new("sdk-read", ToolCallUpdateFields::new().title("Read file")),
+                    vec![
+                        PermissionOption::new("allow", "Allow", PermissionOptionKind::AllowOnce),
+                        PermissionOption::new("deny", "Deny", PermissionOptionKind::RejectOnce),
+                    ],
+                ),
+            }),
+            now_rfc3339(),
+        )
+        .await
+        .unwrap();
 }
 
 async fn emit_reply(
@@ -158,7 +201,7 @@ async fn emit_reply(
         )));
     }
     let text = match outcome {
-        RuntimeOutcome::Completed => ["Hello ", "from CMA"],
+        RuntimeOutcome::Completed | RuntimeOutcome::Approval => ["Hello ", "from CMA"],
         RuntimeOutcome::Failed => ["Partial output ", "before failure"],
         RuntimeOutcome::Interrupted => ["Partial output ", "before cancellation"],
     };
@@ -187,7 +230,7 @@ async fn emit_reply(
             message: "The runtime failed after producing partial output.".into(),
             capability: Some("fixture_turn_failed".into()),
         },
-        RuntimeOutcome::Completed => {
+        RuntimeOutcome::Completed | RuntimeOutcome::Approval => {
             ConversationUpdate::TurnEnded(PromptResponse::new(TurnStopReason::EndTurn))
         }
         RuntimeOutcome::Interrupted => {

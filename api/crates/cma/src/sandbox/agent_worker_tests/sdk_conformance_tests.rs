@@ -22,6 +22,7 @@ use tokio::task::JoinHandle;
 use super::*;
 use crate::projections::{AgentProjectionServices, UnavailableSandboxResources};
 
+mod approval_tests;
 mod cancellation_tests;
 mod cross_interface_tests;
 mod runtime_tests;
