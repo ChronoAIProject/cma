@@ -228,12 +228,20 @@ impl AgentOperationService {
         .await
         .map_err(operation_store_error)?;
 
+        let prompt_id = layer3_adapter::PromptIdentity::new(
+            &target.conversation_id,
+            target.runtime_generation,
+            turn_sequence,
+        );
         Ok(PreparedAgentOperation {
             target,
             operation_sequence,
             turn_sequence,
             required: vec![RuntimeCapability::Conversation],
-            input: ConversationInput::Prompt(vec![ContentBlock::from(content)]),
+            input: ConversationInput::RecoverablePrompt {
+                content: vec![ContentBlock::from(content)],
+                prompt_id,
+            },
             rollback: PreWriteRollback::NewTurn,
             queued_message_sequence: Some(queued_message_sequence),
         })

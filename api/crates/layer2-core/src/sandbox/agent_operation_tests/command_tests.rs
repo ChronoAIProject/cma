@@ -45,7 +45,7 @@ async fn typed_and_legacy_input_use_the_same_fences_logs_and_runtime_bytes() {
     assert_eq!(old.delivery, new.delivery);
     for sent in [&old_inputs, &inputs] {
         assert!(
-            matches!(sent.lock().unwrap().as_slice(), [layer3_adapter::ConversationInput::Prompt(content)] if prompt_text(content) == "Inspect this.")
+            matches!(sent.lock().unwrap().as_slice(), [layer3_adapter::ConversationInput::RecoverablePrompt { content, .. }] if prompt_text(content) == "Inspect this.")
         );
     }
     let old_log = legacy_store.agent_log(&agent.id, 0, 20).await.unwrap();

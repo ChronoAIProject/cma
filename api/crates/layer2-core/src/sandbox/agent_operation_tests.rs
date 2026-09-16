@@ -111,7 +111,13 @@ async fn send_message_fences_before_input_and_moves_ready_to_working() {
     assert_eq!(receipt.delivery, AgentOperationDelivery::WriteConfirmed);
     assert!(matches!(
         inputs.lock().unwrap().as_slice(),
-        [ConversationInput::Prompt(content)] if prompt_text(content) == "Inspect this."
+        [ConversationInput::RecoverablePrompt { content, prompt_id }]
+            if prompt_text(content) == "Inspect this."
+                && prompt_id == &layer3_adapter::PromptIdentity::new(
+                    receipt.agent.conversation.conversation_id.as_deref().unwrap(),
+                    receipt.agent.conversation.runtime_generation.unwrap(),
+                    receipt.turn_sequence,
+                )
     ));
     let logs = store.agent_log(&ready.id, 0, 20).await.unwrap();
     assert!(matches!(

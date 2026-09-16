@@ -57,6 +57,10 @@ pub enum PermissionDecision {
 #[derive(Debug, Clone)]
 pub enum ConversationInput {
     Prompt(Vec<ContentBlock>),
+    RecoverablePrompt {
+        content: Vec<ContentBlock>,
+        prompt_id: crate::PromptIdentity,
+    },
     PermissionAnswer {
         id: String,
         locator: Option<PermissionLocator>,

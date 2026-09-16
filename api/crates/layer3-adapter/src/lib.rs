@@ -18,6 +18,7 @@ mod home_snapshot_export;
 mod home_snapshot_job;
 mod home_snapshot_view;
 mod home_volume;
+mod prompt_identity;
 mod provider_finality;
 mod runtime;
 mod runtime_status;
@@ -79,6 +80,7 @@ pub use home_volume::{
     HomeVolumeAttachment, HomeVolumePolicy, HomeVolumeReceipt, HomeVolumeRequest, HomeVolumeScope,
     HomeVolumeStore,
 };
+pub use prompt_identity::PromptIdentity;
 pub use provider_finality::{
     provider_request_digest, RuntimeFinalityReceipt, RuntimeProviderIncarnation,
     RuntimeProvisionReceipt,

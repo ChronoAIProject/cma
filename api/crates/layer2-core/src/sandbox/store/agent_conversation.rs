@@ -137,6 +137,21 @@ fn admits_input(current: &Agent, mutation: &AgentConversationMutation) -> bool {
 /// Durable agent conversation state and its gap-free semantic log.
 #[async_trait]
 pub trait AgentConversationStore: Send + Sync {
+    async fn agent_message_checkpoint(
+        &self,
+        id: &AgentId,
+    ) -> Result<Option<super::AgentMessageCheckpoint>, SandboxStoreError>;
+
+    /// CAS the private checkpoint and, when present, semantic history in one transaction.
+    /// Repeating the exact update ID/fingerprint returns the original bounded outcome.
+    async fn commit_agent_message_update(
+        &self,
+        current: Agent,
+        previous: Option<super::AgentMessageCheckpoint>,
+        next: super::AgentMessageCheckpoint,
+        mutation: Option<AgentConversationMutation>,
+    ) -> Result<crate::sandbox::AgentUpdateOutcome, SandboxStoreError>;
+
     async fn commit_agent_conversation(
         &self,
         mutation: AgentConversationMutation,

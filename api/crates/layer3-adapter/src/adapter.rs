@@ -215,6 +215,21 @@ pub trait SandboxAdapter: Send + Sync {
         updates: mpsc::Sender<ConversationUpdate>,
     ) -> Result<ConversationChannel>;
 
+    /// Reattach an already admitted native prompt without submitting it again.
+    #[allow(clippy::too_many_arguments)]
+    async fn reconnect_agent_with_prompt(
+        &self,
+        handle: &RuntimeHandle,
+        authority_fence: u64,
+        request: &AgentOpenRequest,
+        conversation_id: &str,
+        _recovered_prompt: Option<crate::PromptIdentity>,
+        updates: mpsc::Sender<ConversationUpdate>,
+    ) -> Result<ConversationChannel> {
+        self.reconnect_agent(handle, authority_fence, request, conversation_id, updates)
+            .await
+    }
+
     async fn close_agent(
         &self,
         handle: &RuntimeHandle,
