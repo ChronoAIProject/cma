@@ -21,6 +21,15 @@ NyxID message identity remains authoritative. The model never selects a bot,
 recipient, route, provider endpoint, or credential, and there is no direct
 Telegram or other platform fallback.
 
+The reply tool is a CMA-hosted HTTP MCP connection. It does not invoke the
+`nyxid` CLI installed in the Sandbox. The CLI uses the Sandbox's scoped NyxID
+credentials for connected-service work; Channel replies use the configured
+Bridge's retained bot/channel authority. The external sender need not be that
+bot's NyxID owner. CMA authorizes each reply against its original Channel input
+and owns the durable outbox and provider delivery. A future CLI interface would
+need to enter this same admission path and preserve its session eligibility,
+destination binding and retry semantics.
+
 ## Runtime contract
 
 `POST /api/v1/channel-tools` implements stateless streamable HTTP MCP with JSON
@@ -208,12 +217,15 @@ required when NyxID returns 404; that response alone does not prove revocation.
 Cleanup never issues a second mint request or turns an uncertain mint into a
 usable credential.
 
-Channel retirement now has a dedicated original-human authority path for a
+Channel retirement has a dedicated original-human authority path for a
 completed, exactly owned resource tree with a proven runtime binding. It records
-Agent stop, credential revocation and runtime teardown progress durably. Paused
-or uncertain initial runtime bindings remain held, as do final home/checkpoint
-cleanup and history purge. Shared-child and owned-Workspace cleanup use their
-own explicit consent and exact allocation ownership paths, while image rotation
+Agent stop, credential revocation and runtime teardown progress durably. Fresh
+allocations with complete runtime and original PVC acknowledgements can finish
+namespaced cleanup and publish Retired with sealed, retained history using
+existing permissions. Missing or ambiguous original receipts remain held;
+history receives no purge deadline, and underlying disk reclamation belongs to
+the storage provider. Shared-child and owned-Workspace cleanup use their own
+explicit consent and exact allocation ownership paths, while image rotation
 remains unfinished. See [Channel lifecycle recovery](CMA_Channel_Lifecycle_Recovery.md)
-for these boundaries. The current milestone work has not been rolled out to
-production.
+for these boundaries. Application deployment alone does not enable Channel
+traffic; the independent rollout selectors still govern admission and effects.
