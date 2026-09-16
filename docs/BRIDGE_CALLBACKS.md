@@ -74,6 +74,11 @@ starts a Message or an Agent control. Authentication, bounds, custody and
 persistence failures keep the failure envelope below. Previously accepted
 Message receipts preserve their original meaning on recovery.
 
+Readers can also recover a retained version-2 `control_accepted` intent receipt,
+as specified in [Channel text controls](CHANNEL_CONTROLS.md#accepted-intent-receipt-reader).
+It acknowledges durable intent acceptance without claiming execution or
+completion. Fresh accepted-control writing remains disabled.
+
 Failures contain a safe `code` and `acceptance` value, with no raw body, token or private platform metadata:
 
 ```json

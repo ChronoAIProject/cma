@@ -10,7 +10,9 @@ mod service;
 mod timestamp;
 
 pub use capabilities::{AuthenticatedCallbackPayload, CallbackCapabilityExtractor};
-pub use control::{CallbackAcceptance, ChannelControlReceipt, ChannelControlRefusal};
+pub use control::{
+    CallbackAcceptance, ChannelControlAcceptedReceipt, ChannelControlReceipt, ChannelControlRefusal,
+};
 pub use jwt::{CallbackKeySet, CallbackTokenPolicy};
 pub use model::*;
 pub use redelivery::{VerifiedPlatformRedelivery, VerifiedRedeliveryParent};
