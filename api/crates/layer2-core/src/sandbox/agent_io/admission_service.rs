@@ -272,7 +272,13 @@ impl AgentCommandService {
             expected_agent_revision: submission.expected_agent_revision.unwrap_or(agent.revision),
             parent: SandboxMutationGuard::capture(&authorized.snapshot.lineage.sandbox),
             policy: authorized.snapshot.fence(),
-            authority_deadline: authorized.decision.revalidation_deadline(capability),
+            authority_deadline: match (
+                authorized.decision.revalidation_deadline(capability),
+                context.credential_deadline(),
+            ) {
+                (Some(left), Some(right)) => Some(left.min(right)),
+                (left, right) => left.or(right),
+            },
             admission_audit: Some(authorized.authorization_audit(
                 &context.actor,
                 &target,

@@ -92,6 +92,7 @@ async fn request_with_timeout(
         tokens.expires_at > SystemTime::now() && !tokens.access_token.expose().trim().is_empty()
     }) else {
         return Ok(RequestAuth {
+            credential_source: layer2_core::resource_access::CredentialSource::Retained,
             subject: state.subject,
             authorization: Authorization::none(),
             profile: state.profile,
@@ -140,6 +141,7 @@ async fn request_with_timeout(
         PermissionEvidence::Inactive => (Authorization::none(), None),
     };
     Ok(RequestAuth {
+        credential_source: layer2_core::resource_access::CredentialSource::Retained,
         subject: verified.subject.clone(),
         authorization,
         profile: verified.profile.clone(),

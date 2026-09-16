@@ -8,6 +8,7 @@ pub(super) struct VerifiedSubject {
     pub subject: layer2_core::SubjectId,
     pub permissions: permissions::PermissionEvidence,
     pub profile: Profile,
+    pub api_expires_at: Option<std::time::SystemTime>,
 }
 
 pub(super) fn verification_failure(stage: &'static str, reason: &'static str, status: Option<u16>) {
@@ -30,13 +31,19 @@ pub(super) async fn request_for_bearer(
             return Ok(None);
         }
     };
-    match resolve_subject(auth, &metadata, &token).await {
-        Ok((subject, permission_names, profile)) => Ok(Some(RequestAuth {
-            subject,
-            authorization: crate::permissions::capabilities_from_permissions(permission_names),
-            profile,
-            delegated_credential: Some(token),
-        })),
+    match verify_subject(auth, &metadata, &token).await {
+        Ok(verified) => match verified.permissions {
+            permissions::PermissionEvidence::Active(permission_names) => Ok(Some(RequestAuth {
+                credential_source: layer2_core::resource_access::CredentialSource::Independent {
+                    expires_at: verified.api_expires_at,
+                },
+                subject: verified.subject,
+                authorization: crate::permissions::capabilities_from_permissions(permission_names),
+                profile: verified.profile,
+                delegated_credential: Some(token),
+            })),
+            permissions::PermissionEvidence::Inactive => Ok(None),
+        },
         Err(error) => {
             tracing::debug!(error = %error, "bearer credential was not accepted");
             Ok(None)
@@ -102,14 +109,18 @@ pub(super) async fn verify_subject(
         .and_then(serde_json::Value::as_str)
         .filter(|subject| !subject.trim().is_empty())
         .ok_or_else(|| "userinfo response has no subject".to_string())?;
-    let permissions =
+    let (permissions, api_expires_at) =
         match permissions::introspect_permissions(auth, metadata, access_token, subject).await? {
-            Some(evidence) => evidence,
-            None => permissions::PermissionEvidence::Active(permissions::permissions_claim(&body)?),
+            Some(evidence) => (evidence.permissions, evidence.api_expires_at),
+            None => (
+                permissions::PermissionEvidence::Active(permissions::permissions_claim(&body)?),
+                None,
+            ),
         };
     Ok(VerifiedSubject {
         subject: layer2_core::SubjectId::new(subject),
         permissions,
         profile: Profile::from_userinfo(&body),
+        api_expires_at,
     })
 }
