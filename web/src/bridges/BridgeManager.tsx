@@ -9,6 +9,8 @@ import { useAuthorizedRead } from '../resources/useAuthorizedRead';
 import { Button } from '../ui/Button';
 import { Picker } from '../ui/Picker';
 import { ConfigurationForm } from './ConfigurationForm';
+import { usePlacementEditor } from './usePlacementEditor';
+import { verifyPlacementForSave } from './placementSave';
 import { BridgeCredential } from './BridgeCredential';
 import { BridgeLifecycle } from './BridgeLifecycle';
 import { BridgeConsent } from './BridgeConsent';
@@ -90,6 +92,12 @@ export function BridgeManager({
     onChanged();
   };
   const config = draft?.config ?? detail?.config;
+  const editor = usePlacementEditor(
+    client,
+    allowed && detail !== undefined ? config : undefined,
+    organization,
+    detail?.config.placement,
+  );
   const stale =
     draft !== undefined && detail !== undefined && draft.revision !== detail.bridge.revision;
   if (!allowed) return null;
@@ -165,11 +173,23 @@ export function BridgeManager({
               !reviewed ||
               stale ||
               choices === undefined ||
-              !configurationComplete(config)
+              !configurationComplete(config) ||
+              !editor.canSave
             )
               return;
             const body = { expected_revision: detail.bridge.revision, config, previous_work: work };
+            let attempted = false;
             command.run('Save settings', async (options) => {
+              if (!attempted) {
+                await verifyPlacementForSave(
+                  client,
+                  config,
+                  organization,
+                  detail.config.placement,
+                  options.signal,
+                );
+                attempted = true;
+              }
               await client.bridges.update(id, body, options);
               options.signal?.throwIfAborted();
               setDraft(undefined);
@@ -180,6 +200,7 @@ export function BridgeManager({
           }}
         >
           <ConfigurationForm
+            editor={editor}
             client={client}
             value={config}
             choices={choices}
@@ -235,7 +256,8 @@ export function BridgeManager({
                 !reviewed ||
                 stale ||
                 draft === undefined ||
-                !configurationComplete(config)
+                !configurationComplete(config) ||
+                !editor.canSave
               }
             >
               Save settings

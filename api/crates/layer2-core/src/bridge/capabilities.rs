@@ -8,6 +8,8 @@ pub struct BridgeCapabilityCatalog {
     pub source_revision: Option<String>,
     pub connection_validation_available: bool,
     pub connectors: Vec<BridgeConnectorCapabilities>,
+    /// Missing modes provide no placement-editing availability guarantee.
+    pub placements: Vec<BridgePlacementCapabilities>,
 }
 impl Default for BridgeCapabilityCatalog {
     fn default() -> Self {
@@ -16,8 +18,31 @@ impl Default for BridgeCapabilityCatalog {
             source_revision: None,
             connection_validation_available: false,
             connectors: vec![],
+            placements: vec![],
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BridgeSharedPlacementKind {
+    WorkspacePerPartition,
+    WorktreeAgentPerPartition,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BridgePlacementAvailability {
+    Available,
+    RuntimeUnavailable,
+    ContinuityUnverified,
+}
+
+/// Deployment evidence for editing a placement. It is never target authority.
+#[derive(Debug, Clone, Serialize)]
+pub struct BridgePlacementCapabilities {
+    pub kind: BridgeSharedPlacementKind,
+    pub availability: BridgePlacementAvailability,
 }
 #[derive(Debug, Clone, Copy, Serialize)]
 #[serde(rename_all = "snake_case")]

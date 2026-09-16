@@ -3,6 +3,7 @@ import type { BridgePlatform } from '@chronoai/cma-sdk';
 import type { BridgeViewsClient } from './client';
 import { useAuthorizedRead } from '../resources/useAuthorizedRead';
 import { Button } from '../ui/Button';
+import type { PlacementEditor } from './usePlacementEditor';
 
 export function BridgeCapabilities({
   client,
@@ -20,6 +21,16 @@ export function BridgeCapabilities({
     [client, organization],
   );
   const current = useAuthorizedRead(read);
+  return <BridgeCapabilityDetails current={current} platform={platform} />;
+}
+
+export function BridgeCapabilityDetails({
+  current,
+  platform,
+}: {
+  readonly current: PlacementEditor['capabilities'];
+  readonly platform: BridgePlatform;
+}) {
   const catalog = current.state.status === 'ready' ? current.state.value : undefined;
   const capability = catalog?.connectors.find((item) => item.platform === platform);
   return (

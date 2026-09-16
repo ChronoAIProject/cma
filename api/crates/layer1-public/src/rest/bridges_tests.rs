@@ -325,7 +325,7 @@ async fn capabilities_require_current_owner_admin_and_old_validators_default_una
         serde_json::from_slice(&to_bytes(response.into_body(), 32768).await.unwrap()).unwrap();
     assert_eq!(
         wire,
-        json!({"version":1,"source_revision":null,"connection_validation_available":false,"connectors":[]})
+        json!({"version":1,"source_revision":null,"connection_validation_available":false,"connectors":[],"placements":[]})
     );
     assert_eq!(ports.calls.load(Ordering::SeqCst), 0);
     ports.role.store(1, Ordering::SeqCst);

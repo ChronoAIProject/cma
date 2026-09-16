@@ -4,6 +4,8 @@ import { useAuthorizedRead } from '../resources/useAuthorizedRead';
 import { ResourceLink } from '../resources/ResourceLink';
 import { Button } from '../ui/Button';
 import { ConfigurationForm } from './ConfigurationForm';
+import { usePlacementEditor } from './usePlacementEditor';
+import { verifyPlacementForSave } from './placementSave';
 import { initialConfiguration, configurationComplete } from './configuration';
 import { useBridgeCommand, bridgeFailure } from './commands';
 
@@ -15,6 +17,7 @@ export function BridgeCreate({
 }: BridgePageProps & { readonly organization?: string }) {
   const [config, setConfig] = useState(initialConfiguration);
   const [reviewed, setReviewed] = useState(false);
+  const editor = usePlacementEditor(client, config, organization);
   const read = useMemo(
     () => async (signal: AbortSignal) => {
       try {
@@ -53,7 +56,7 @@ export function BridgeCreate({
         <form
           onSubmit={(event) => {
             event.preventDefault();
-            if (disabled || !reviewed || !configurationComplete(config)) return;
+            if (disabled || !reviewed || !configurationComplete(config) || !editor.canSave) return;
             const input = {
               config,
               owner:
@@ -61,7 +64,18 @@ export function BridgeCreate({
                   ? { kind: 'person' as const, subject: viewerId }
                   : { kind: 'organization' as const, subject: organization },
             };
+            let attempted = false;
             command.run('Create bridge', async (options) => {
+              if (!attempted) {
+                await verifyPlacementForSave(
+                  client,
+                  config,
+                  organization,
+                  undefined,
+                  options.signal,
+                );
+                attempted = true;
+              }
               const receipt = await client.bridges.create(input, options);
               options.signal?.throwIfAborted();
               onNavigate({ kind: 'bridge', bridgeId: receipt.bridge_id });
@@ -69,6 +83,7 @@ export function BridgeCreate({
           }}
         >
           <ConfigurationForm
+            editor={editor}
             client={client}
             value={config}
             choices={choices}
@@ -95,7 +110,7 @@ export function BridgeCreate({
           <Button
             type="submit"
             variant="primary"
-            disabled={disabled || !reviewed || !configurationComplete(config)}
+            disabled={disabled || !reviewed || !configurationComplete(config) || !editor.canSave}
           >
             {command.busy ? 'Saving bridge' : 'Save disabled bridge'}
           </Button>
