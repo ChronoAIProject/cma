@@ -1,71 +1,59 @@
-# Original home backing verification
+# Provider cleanup with existing permissions
 
-Channel allocation retirement preserves a home until the provider can account
-for its original backing storage. The original record binds the home allocation,
-Kubernetes provider scope, PVC generation, PV name and UID, CSI driver, exact
-volume handle and backing disk generation. Capture happens during original
-allocation. Retirement cannot fill in missing original evidence from the disk
-currently using the same name.
+Channel retirement uses the provider interfaces and namespaced Kubernetes
+permissions CMA already has. It requires no BatchSandbox watch, PersistentVolume
+read, cluster role, or Google Compute disk access. The service-account manifest
+is unchanged by this feature.
 
-The GKE Persistent Disk observer supports the `pd.csi.storage.gke.io` driver and
-exact zonal or regional handles:
+## Runtime authority
 
-```text
-projects/PROJECT/zones/ZONE/disks/DISK
-projects/PROJECT/regions/REGION/disks/DISK
-```
+A fresh runtime dispatch is journaled before the provider POST. A successful
+response identifies the logical provider allocation. Before CMA binds that
+runtime, installs software or delivers credentials, the adapter reads the exact
+namespaced object and pins its UID, generation, specification and ownership
+metadata. It rechecks the same incarnation before binding it.
 
-It reads only that disk through the fixed Google Compute API origin. Original
-capture corroborates the disk name, self link, zone or region, and numeric disk
-ID. Cleanup requires the separately recorded, UID-fenced claim deletion and an
-authoritative absence observation for that original backing. A PVC 404 does not
-prove disk deletion. A present disk or a replacement disk with another numeric
-ID keeps cleanup held.
+This receipt identifies the runtime CMA adopted. It does not claim that a later
+read recovered the first Kubernetes object ever created for the provider handle.
+The provider controls its creation process; CMA does not reconstruct historical
+creation events. A lost POST response remains unresolved and cannot be replaced
+with a synthetic creation acknowledgement from discovery.
 
-The observer uses the existing default workload service account through the
-fixed Google metadata token endpoint. It adds no secret or configuration key,
-changes no IAM policy and issues no disk-list or disk-delete requests. The
-workload must already have permission to read the exact disk. Authorization
-failures and unavailable credentials remain unresolved observations.
+Retirement checks that pinned incarnation, deletes with UID and resource-version
+preconditions, and records the actual deletion acknowledgement. Complete bounded
+inventories must then show that the runtime and its owned Pods are absent.
+Replacement identities, incomplete inventories and uncertain acknowledgements
+remain held. Reused parents and unrelated workloads are outside this authority.
 
-Both origins use bounded request deadlines and response sizes. Redirects and
-HTTP proxy forwarding are disabled. Disk paths reject alternate origins,
-traversal, query strings and unsupported CSI drivers. An absence receipt requires
-the Compute API's structured 404 `notFound` response; a proxy error page or a
-permission error cannot become absence. Receipt correlation IDs identify CMA
-read observations and do not claim a Google deletion operation occurred.
+## Persistent home authority
 
-The provider adapter composes this observer with original-allocation capture,
-runtime shutdown and claim deletion. The standalone observer does not itself
-authorize retirement, release capacity, remove history or mutate storage.
-Legacy allocations without their original backing pin retain an explicit hold.
+The actual successful PVC creation response binds the original home request,
+provider scope and claim UID. Existing claims and reconciliation reads do not
+supply a missing creation acknowledgement. The claim is verified against its
+recorded owner, allocation and request before cleanup.
 
-The control-plane service-account manifest includes the Kubernetes read access
-needed for fresh capture. The existing namespaced cleanup role adds
-`batchsandboxes/watch` so an original creation can be observed from its
-pre-dispatch resource version. The `cma-home-backing-observer` ClusterRole grants
-only `persistentvolumes/get`, bound only to `chrono-bot/chrono-bot-ksa`; the
-adapter reads the exact PV named by the owned PVC. It cannot list or modify PVs.
-These source-controlled RBAC resources enable complete cleanup proof capture;
-they are not prerequisites for Channel messaging or ordinary provisioning. They
-neither restart runtimes nor grant cloud disk permissions. Without these reads,
-provisioning can continue while missing evidence keeps final retirement held.
-Granting access later cannot retroactively establish a missing original identity.
+After runtime teardown and the existing owned-capture cleanup, CMA deletes only
+that original claim with UID and resource-version preconditions. It journals the
+actual response before waiting for the claim to disappear. A delayed deletion
+can be observed again using that acknowledgement; a lost acknowledgement cannot
+be inferred from a subsequent 404.
 
-Fresh Channel provisioning writes a dispatch journal before each physical home
-or runtime creation attempt. A home creation receipt comes only from the actual
-successful PVC POST response. Existing claims and reconciled responses cannot
-acquire this proof. The original PVC UID remains pinned while the first runtime
-starts; after storage binding, the adapter checks the exact claim, PV claimRef,
-PV UID and CSI handle before and after the original disk-generation observation.
-Unavailable storage permissions preserve ordinary provisioning but leave final
-retirement held. Multiple or unresolved dispatches also remain held.
+The final home receipt proves completion of the original namespaced claim's
+lifecycle. Underlying PV and disk reclamation remains the storage provider's
+responsibility under the configured storage policy. CMA does not call a missing
+PVC proof that the physical disk has been erased, and it does not read or delete
+cloud disks directly.
 
-Retirement persists the actual runtime deletion proof and the actual
-UID/resourceVersion-preconditioned claim deletion response in separate fenced
-transactions. Retries use those durable acknowledgements while CSI disk deletion
-is pending. The home can reach finality only after the exact backing observer
-reports authoritative absence. The final transaction retains those provider
-receipts and the original home attachment in permanent recovery records, seals
-retained history, and clears the canonical home while publishing `Retired`.
-The platform does not infer successful deletion from a lost response.
+## Publication and retention
+
+Provider receipts remain bound to the original allocation, generation and
+retirement operation. The final transaction verifies them with the retained
+history inventory, seals material writers, clears the canonical runtime/home
+attachments and publishes `Retired`. Original attachments and receipts remain
+in permanent recovery records.
+
+History, command and reply identities, control outcomes, replay aliases and
+archive cleanup tombstones retain their existing policy. No generic purge
+deadline is introduced. Legacy or ambiguous dispatches without the required
+original acknowledgements remain explicitly held; absence alone does not grant
+new cleanup authority.

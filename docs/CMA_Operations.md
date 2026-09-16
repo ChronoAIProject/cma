@@ -618,10 +618,13 @@ substitutes for missing Channel authority.
 
 Dedicated Channel revival and retirement use their retained original-human,
 allocation, resource and runtime authority. Renewal alone does not authorize
-restore or teardown. Retirement retains home, checkpoint and history data and
-holds final Retired publication and physical cleanup. Image rotation remains
-held. See [Channel lifecycle recovery](CMA_Channel_Lifecycle_Recovery.md) for the
-implemented paths and their remaining verification boundaries.
+restore or teardown. Fresh retirement can remove its exact owned runtime and
+PVC through existing namespaced authority, then publish Retired with sealed,
+retained history. Missing or ambiguous original receipts hold finalization.
+Underlying disk reclamation belongs to the storage provider; CMA requests no
+additional Kubernetes or cloud permissions. Image rotation remains held. See
+[Channel lifecycle recovery](CMA_Channel_Lifecycle_Recovery.md) for the implemented
+paths and their remaining verification boundaries.
 
 ## Platform Settings
 
