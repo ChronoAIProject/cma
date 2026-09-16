@@ -17,27 +17,38 @@ pub(super) struct SdkRegistry {
 }
 
 /// Counts every input at the runtime boundary, without deduplication. Output
-/// waits for the test to disconnect its reader and replace its command worker.
+/// waits for an explicit release after the test replaces its command worker.
 pub(super) struct RuntimeProbe {
     inputs: Mutex<Vec<(AgentRuntimeTarget, ConversationInput)>>,
     replies: tokio::sync::Semaphore,
-    terminal_failure: bool,
+    outcome: RuntimeOutcome,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum RuntimeOutcome {
+    Completed,
+    Failed,
+    Interrupted,
 }
 
 impl RuntimeProbe {
     pub(super) fn gated() -> Arc<Self> {
-        Self::with_failure(false)
+        Self::with_outcome(RuntimeOutcome::Completed)
     }
 
     pub(super) fn failing() -> Arc<Self> {
-        Self::with_failure(true)
+        Self::with_outcome(RuntimeOutcome::Failed)
     }
 
-    fn with_failure(terminal_failure: bool) -> Arc<Self> {
+    pub(super) fn interruptible() -> Arc<Self> {
+        Self::with_outcome(RuntimeOutcome::Interrupted)
+    }
+
+    fn with_outcome(outcome: RuntimeOutcome) -> Arc<Self> {
         Arc::new(Self {
             inputs: Mutex::new(Vec::new()),
             replies: tokio::sync::Semaphore::new(0),
-            terminal_failure,
+            outcome,
         })
     }
 
@@ -92,16 +103,18 @@ impl AgentRuntimeRegistry for SdkRegistry {
                     if let Some(probe) = &probe {
                         probe.inputs.lock().unwrap().push((target.clone(), input.clone()));
                     }
-                    let ConversationInput::Prompt(content) = input else {
-                        return Err(AdapterError::Unsupported("SDK fixture accepts only prompts".into()));
+                    let outcome = probe.as_ref().map_or(RuntimeOutcome::Completed, |probe| probe.outcome);
+                    let with_tools = match input {
+                        ConversationInput::Prompt(_) if outcome == RuntimeOutcome::Interrupted => return Ok(()),
+                        ConversationInput::Prompt(content) => content.iter().any(|block| matches!(block, ContentBlock::Text(text) if text.text == "sdk-raw-with-tools")),
+                        ConversationInput::Cancel if outcome == RuntimeOutcome::Interrupted => false,
+                        _ => return Err(AdapterError::Unsupported("SDK fixture input is not supported".into())),
                     };
-                    let with_tools = content.iter().any(|block| matches!(block, ContentBlock::Text(text) if text.text == "sdk-raw-with-tools"));
-                    let terminal_failure = probe.as_ref().is_some_and(|probe| probe.terminal_failure);
                     tokio::spawn(async move {
                         if let Some(probe) = probe {
                             probe.replies.acquire().await.unwrap().forget();
                         }
-                        emit_reply(recorder, target, with_tools, terminal_failure).await;
+                        emit_reply(recorder, target, with_tools, outcome).await;
                     });
                     Ok(())
                 }
@@ -126,7 +139,7 @@ async fn emit_reply(
     recorder: Arc<DurableAgentUpdateRecorder>,
     target: AgentRuntimeTarget,
     with_tools: bool,
-    terminal_failure: bool,
+    outcome: RuntimeOutcome,
 ) {
     let mut updates = vec![ConversationUpdate::Said(SessionUpdate::AgentThoughtChunk(
         ContentChunk::new(ContentBlock::from("Checking the proof")),
@@ -144,10 +157,10 @@ async fn emit_reply(
             ),
         )));
     }
-    let text = if terminal_failure {
-        ["Partial output ", "before failure"]
-    } else {
-        ["Hello ", "from CMA"]
+    let text = match outcome {
+        RuntimeOutcome::Completed => ["Hello ", "from CMA"],
+        RuntimeOutcome::Failed => ["Partial output ", "before failure"],
+        RuntimeOutcome::Interrupted => ["Partial output ", "before cancellation"],
     };
     for text in text {
         updates.push(ConversationUpdate::Said(SessionUpdate::AgentMessageChunk(
@@ -169,13 +182,17 @@ async fn emit_reply(
             .unwrap();
     }
     tokio::time::sleep(Duration::from_millis(150)).await;
-    let terminal = if terminal_failure {
-        ConversationUpdate::Failed {
+    let terminal = match outcome {
+        RuntimeOutcome::Failed => ConversationUpdate::Failed {
             message: "The runtime failed after producing partial output.".into(),
             capability: Some("fixture_turn_failed".into()),
+        },
+        RuntimeOutcome::Completed => {
+            ConversationUpdate::TurnEnded(PromptResponse::new(TurnStopReason::EndTurn))
         }
-    } else {
-        ConversationUpdate::TurnEnded(PromptResponse::new(TurnStopReason::EndTurn))
+        RuntimeOutcome::Interrupted => {
+            ConversationUpdate::TurnEnded(PromptResponse::new(TurnStopReason::Cancelled))
+        }
     };
     recorder
         .record_update(
