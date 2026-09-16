@@ -5,7 +5,7 @@ use std::time::Duration;
 use axum::extract::{Path, State};
 use axum::http::{header, HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
-use axum::routing::get;
+use axum::routing::{get, post};
 use axum::{Json, Router};
 use layer2_core::resource_access::{
     AccessDecision, AccessPurpose, ResourceCapability, ResourceOwner, ResourceScope,
@@ -13,7 +13,7 @@ use layer2_core::resource_access::{
 };
 use layer2_core::{Authorization, Capability};
 use serde_json::{json, Value};
-use tokio::sync::RwLock;
+use tokio::sync::{RwLock, Semaphore};
 
 use super::*;
 
@@ -22,13 +22,27 @@ struct Control {
     reply: RwLock<(StatusCode, Value)>,
     inventory: RwLock<Value>,
     lookups: AtomicUsize,
+    inventory_calls: AtomicUsize,
     userinfo_calls: AtomicUsize,
+    introspection_calls: AtomicUsize,
+    introspection: RwLock<Value>,
+    verification_gate: RwLock<Option<Arc<Semaphore>>>,
+    verification_arrivals: Semaphore,
     delay: RwLock<Duration>,
 }
 async fn userinfo(State(control): State<Arc<Control>>, headers: HeaderMap) -> Json<Value> {
     assert_eq!(headers[header::AUTHORIZATION], "Bearer fixture-credential");
     control.userinfo_calls.fetch_add(1, Ordering::SeqCst);
     Json(json!({"sub":*control.subject.read().await,"permissions":["cma:sandbox:use"]}))
+}
+async fn introspection(State(control): State<Arc<Control>>) -> Json<Value> {
+    control.introspection_calls.fetch_add(1, Ordering::SeqCst);
+    control.verification_arrivals.add_permits(1);
+    let gate = control.verification_gate.read().await.clone();
+    if let Some(gate) = gate {
+        gate.acquire().await.unwrap().forget();
+    }
+    Json(control.introspection.read().await.clone())
 }
 async fn authorization(
     State(control): State<Arc<Control>>,
@@ -45,6 +59,7 @@ async fn authorization(
     (status, Json(body)).into_response()
 }
 async fn inventory(State(control): State<Arc<Control>>) -> Json<Value> {
+    control.inventory_calls.fetch_add(1, Ordering::SeqCst);
     Json(control.inventory.read().await.clone())
 }
 struct Fixture {
@@ -68,11 +83,19 @@ impl Fixture {
                 json!({"orgs":[{"id":"org-b","your_role":"viewer"},{"id":"org-a","your_role":"admin","display_name":"A"}]}),
             ),
             lookups: AtomicUsize::new(0),
+            inventory_calls: AtomicUsize::new(0),
             userinfo_calls: AtomicUsize::new(0),
+            introspection_calls: AtomicUsize::new(0),
+            introspection: RwLock::new(
+                json!({"active":true,"sub":"human","permissions":["cma:sandbox:use"]}),
+            ),
+            verification_gate: RwLock::new(None),
+            verification_arrivals: Semaphore::new(0),
             delay: RwLock::new(Duration::ZERO),
         });
         let router = Router::new()
             .route("/userinfo", get(userinfo))
+            .route("/introspect", post(introspection))
             .route("/api/v1/orgs/{org}/authorization", get(authorization))
             .route("/api/v1/orgs", get(inventory))
             .with_state(control.clone());
@@ -106,6 +129,8 @@ impl Fixture {
             .await
     }
 }
+
+mod verification;
 fn caller() -> Caller {
     Caller::new(
         SubjectId::new("human"),
