@@ -41,6 +41,9 @@ pub(crate) struct ChannelAllocationWork {
 
 #[async_trait::async_trait]
 impl ChannelWorkPort for ChannelAllocationWork {
+    fn kind(&self) -> super::operations::WorkKind {
+        super::operations::WorkKind::Allocation
+    }
     async fn discover(&self, after: Option<&str>) -> Result<Vec<String>, Error> {
         self.allocations
             .pending_channel_allocations(after)
@@ -120,6 +123,9 @@ pub(crate) struct ChannelInboxWork {
 
 #[async_trait::async_trait]
 impl ChannelWorkPort for ChannelInboxWork {
+    fn kind(&self) -> super::operations::WorkKind {
+        super::operations::WorkKind::Inbox
+    }
     async fn discover(&self, after: Option<&str>) -> Result<Vec<String>, Error> {
         self.inbox
             .pending_channel_inputs(after)

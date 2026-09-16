@@ -63,6 +63,9 @@ pub(crate) struct ChannelCleanupWork {
 
 #[async_trait::async_trait]
 impl ChannelWorkPort for ChannelCleanupWork {
+    fn kind(&self) -> super::operations::WorkKind {
+        super::operations::WorkKind::ChildCleanup
+    }
     async fn discover(&self, after: Option<&str>) -> Result<Vec<String>, Error> {
         self.allocations
             .discover_cleanup_jobs(after)

@@ -23,6 +23,9 @@ pub(crate) struct WorkspaceCleanupWork {
 }
 #[async_trait::async_trait]
 impl ChannelWorkPort for WorkspaceCleanupWork {
+    fn kind(&self) -> super::operations::WorkKind {
+        super::operations::WorkKind::WorkspaceCleanup
+    }
     async fn discover(&self, after: Option<&str>) -> Result<Vec<String>, Error> {
         self.allocations
             .discover_workspace_cleanup_jobs(after)

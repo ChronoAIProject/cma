@@ -11,6 +11,9 @@ struct Port {
 }
 #[async_trait::async_trait]
 impl ChannelWorkPort for Port {
+    fn kind(&self) -> crate::bridge::operations::WorkKind {
+        crate::bridge::operations::WorkKind::Fixture
+    }
     async fn discover(&self, after: Option<&str>) -> Result<Vec<String>, ChannelWorkError> {
         Ok((0..70)
             .map(|n| format!("row{n:03}"))
@@ -63,6 +66,9 @@ async fn failed_first_record_does_not_starve_later_pages_and_concurrency_is_boun
 struct InvalidPage;
 #[async_trait::async_trait]
 impl ChannelWorkPort for InvalidPage {
+    fn kind(&self) -> crate::bridge::operations::WorkKind {
+        crate::bridge::operations::WorkKind::Fixture
+    }
     async fn discover(&self, _: Option<&str>) -> Result<Vec<String>, ChannelWorkError> {
         Ok(vec!["repeated".into(), "repeated".into()])
     }

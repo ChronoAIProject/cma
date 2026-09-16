@@ -21,6 +21,9 @@ pub(crate) struct ChannelRenewalWork {
 }
 #[async_trait::async_trait]
 impl ChannelWorkPort for ChannelRenewalWork {
+    fn kind(&self) -> super::operations::WorkKind {
+        super::operations::WorkKind::Renewal
+    }
     async fn discover(&self, after: Option<&str>) -> Result<Vec<String>, Error> {
         self.allocations
             .due_channel_renewal_sandboxes(after, SystemTime::now())
