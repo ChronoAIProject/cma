@@ -77,6 +77,14 @@ pub(super) fn context(owner: &SubjectId) -> CallerContext {
         memberships: vec![],
     }
 }
+
+pub(super) fn human_context(owner: &SubjectId) -> CallerContext {
+    let mut caller = context(owner);
+    caller.actor = ResourceActor::Human {
+        subject: owner.clone(),
+    };
+    caller
+}
 #[async_trait::async_trait]
 impl OrganizationAuthority for Authority {
     async fn organization_context(
@@ -103,7 +111,7 @@ impl AgentCommandAdmissionAuthority for Authority {
         credential: &str,
         owner: &AgentOwner,
     ) -> Result<AgentAuthorizationRevision, CommandAuthorizationError> {
-        if caller != &context(&self.0)
+        if ![context(&self.0), human_context(&self.0)].contains(caller)
             || credential != "local-sdk-conformance"
             || owner
                 != &(AgentOwner::Person {
@@ -130,7 +138,7 @@ impl AgentCommandAuthorizer for Authority {
                 != (AgentOwner::Person {
                     subject: self.0.clone(),
                 })
-            || command.actor != context(&self.0).actor
+            || ![context(&self.0).actor, human_context(&self.0).actor].contains(&command.actor)
         {
             return Err(CommandAuthorizationError::Revoked);
         }
