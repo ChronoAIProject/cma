@@ -12,6 +12,7 @@ pub struct RuntimeProviderIncarnation {
     pub(crate) name: String,
     pub(crate) uid: String,
     pub(crate) generation: i64,
+    pub(crate) creation_resource_version: String,
     pub(crate) identity_sha256: String,
 }
 
@@ -22,6 +23,7 @@ impl RuntimeProviderIncarnation {
             || !identifier(&self.name)
             || !identifier(&self.uid)
             || self.generation <= 0
+            || !identifier(&self.creation_resource_version)
             || !digest(&self.identity_sha256)
         {
             return Err(invalid());
@@ -37,6 +39,7 @@ pub struct RuntimeProvisionReceipt {
     pub(crate) request_sha256: String,
     pub(crate) handle: RuntimeHandle,
     pub(crate) incarnation: RuntimeProviderIncarnation,
+    pub(crate) creation_observation_version: String,
 }
 
 impl RuntimeProvisionReceipt {
@@ -55,6 +58,7 @@ impl RuntimeProvisionReceipt {
     pub fn validate(&self) -> Result<()> {
         self.incarnation.validate()?;
         if !identifier(&self.operation_id)
+            || !identifier(&self.creation_observation_version)
             || !digest(&self.request_sha256)
             || self.handle.0 != self.incarnation.name
         {
