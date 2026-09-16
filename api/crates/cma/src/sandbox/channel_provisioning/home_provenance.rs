@@ -1,9 +1,11 @@
 //! Original home requests are committed before prepare; observation is not provenance.
-use super::state::{ChannelProvisioningPhase, ChannelProvisioningSnapshot};
+use super::state::{
+    ChannelProvisioningPhase, ChannelProvisioningSettings, ChannelProvisioningSnapshot,
+};
 use layer2_core::{
-    bridge::allocation::AllocationError,
+    bridge::allocation::{AllocationError, AllocationRecord, ChannelSandboxSidecar},
     resource_access::{ResourceActor, ResourceOwner},
-    sandbox::SandboxHome,
+    sandbox::{Sandbox, SandboxHome},
     SandboxId,
 };
 use layer3_adapter::{HomeVolumeReceipt, HomeVolumeRequest, HomeVolumeScope};
@@ -76,27 +78,41 @@ impl ChannelHomeProvenance {
     }
 
     pub fn validate(&self, snapshot: &ChannelProvisioningSnapshot) -> Result<(), AllocationError> {
+        self.validate_retained(
+            &snapshot.allocation,
+            &snapshot.sandbox,
+            &snapshot.creation,
+            &snapshot.state.settings,
+        )
+    }
+
+    pub fn validate_retained(
+        &self,
+        allocation: &AllocationRecord,
+        sandbox: &Sandbox,
+        creation: &ChannelSandboxSidecar,
+        settings: &ChannelProvisioningSettings,
+    ) -> Result<(), AllocationError> {
         self.scope
             .validate()
             .map_err(|_| AllocationError::IdentityMismatch)?;
         self.request
             .validate()
             .map_err(|_| AllocationError::IdentityMismatch)?;
-        let home = snapshot
-            .sandbox
+        let home = sandbox
             .lifecycle
             .home
             .as_ref()
             .ok_or(AllocationError::IdentityMismatch)?;
         if self.schema_version != 1
-            || self.allocation_id != snapshot.allocation.id
-            || self.sandbox_id != snapshot.sandbox.id
-            || self.sandbox_created_at != snapshot.sandbox.created_at
-            || self.owner != snapshot.allocation.owner
-            || self.creation_approver != snapshot.creation.approved_by
+            || self.allocation_id != allocation.id
+            || self.sandbox_id != sandbox.id
+            || self.sandbox_created_at != sandbox.created_at
+            || self.owner != allocation.owner
+            || self.creation_approver != creation.approved_by
             || self.request != home.request
             || home.released
-            || snapshot.state.settings.home_policy.as_ref() != Some(&self.request.policy)
+            || settings.home_policy.as_ref() != Some(&self.request.policy)
         {
             return Err(AllocationError::IdentityMismatch);
         }
