@@ -16,6 +16,9 @@ mod sandbox_admission;
 mod channel_provisioning;
 pub(crate) use channel_provisioning::compatibility;
 
+#[path = "interval_tests.rs"]
+mod interval_tests;
+
 async fn setup() -> (
     Client,
     String,

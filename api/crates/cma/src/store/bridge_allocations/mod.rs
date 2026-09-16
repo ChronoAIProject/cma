@@ -14,6 +14,7 @@ mod channel_reuse_cleanup;
 mod channel_reuse_revival;
 mod channel_startup;
 pub(in crate::store) mod commands;
+mod interval;
 mod records;
 mod reuse;
 mod sandbox_admission;
@@ -117,6 +118,19 @@ impl MongoBridgeAllocationStore {
             .map_err(|_| {
                 layer2_core::StoreError::Unavailable("create partition capacity index".into())
             })?;
+        for field in ["interval_admitted_at_ms", "record.created_at_ms"] {
+            store
+                .records
+                .create_index(
+                    IndexModel::builder()
+                        .keys(doc! {"bridge_id":1_i32, field:1_i32})
+                        .build(),
+                )
+                .await
+                .map_err(|_| {
+                    layer2_core::StoreError::Unavailable("create allocation interval index".into())
+                })?;
+        }
         store.records.create_index(IndexModel::builder()
             .keys(doc! {"record.placement.target.sandbox_id":1_i32,"channel_reuse.phase":1_i32})
             .options(mongodb::options::IndexOptions::builder()
