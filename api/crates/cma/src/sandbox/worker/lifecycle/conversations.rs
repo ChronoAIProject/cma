@@ -6,8 +6,8 @@ use layer2_core::sandbox::store::{
     SandboxLifecycleAgentMutation, SandboxLifecycleAgentScope, SandboxStoreError, WorktreeStore,
 };
 use layer2_core::sandbox::{
-    Agent, AgentLogKind, AgentStatus, AgentWorkStep, FirstMessageDelivery, Sandbox,
-    SandboxEventKind, SandboxWorkStep, Worktree, WorktreeStatus,
+    Agent, AgentLogKind, AgentStatus, AgentWorkReceipt, AgentWorkStep, FirstMessageDelivery,
+    Sandbox, SandboxEventKind, SandboxWorkStep, Worktree, WorktreeStatus,
 };
 use layer3_adapter::AgentOpenRequest;
 use tokio::sync::mpsc;
@@ -71,6 +71,7 @@ impl SandboxWorker {
         };
 
         let mut attachments = Vec::new();
+        let mut receipts = BTreeMap::new();
         for agent in &live {
             let worktree = worktrees
                 .get(&agent.id)
@@ -138,6 +139,15 @@ impl SandboxWorker {
                 }
             };
             attachments.push(attachment);
+            receipts.insert(
+                agent.id.clone(),
+                AgentWorkReceipt {
+                    step: AgentWorkStep::OpenConversation,
+                    operation_id: request.operation_id,
+                    request_sha256: request.request_sha256,
+                    completed_at: rfc3339_at(now),
+                },
+            );
         }
 
         let stamp = rfc3339_at(now);
@@ -155,6 +165,17 @@ impl SandboxWorker {
                 .expect("validated live agents have conversation identities");
             let mut agent = (*current).clone();
             agent.conversation.runtime_generation = Some(generation);
+            // Publish the exact successful reopen request with the new generation.
+            // Another replica must be able to reattach before queue settlement.
+            agent
+                .work
+                .receipts
+                .retain(|receipt| receipt.step != AgentWorkStep::OpenConversation);
+            agent.work.receipts.push(
+                receipts
+                    .remove(&agent.id)
+                    .expect("every reopened agent has a receipt"),
+            );
             agent
                 .transition(AgentStatus::Ready, stamp.clone(), None)
                 .map_err(|error| SandboxStoreError::Corrupt(error.to_string()))?;
