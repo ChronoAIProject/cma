@@ -1,4 +1,4 @@
-//! Seeded retained-v2 reader fixtures. Production accepted admission is disabled.
+//! Legacy retained-v2 receipts without the complete original control intent.
 use super::*;
 use layer2_core::bridge::ingress::ChannelControlAcceptedReceipt;
 
@@ -32,7 +32,7 @@ fn retained(write: &InboxWrite) -> (CallbackAcceptance, Document, Document) {
 
 #[tokio::test]
 #[ignore = "requires the disposable MongoDB replica contract runner"]
-async fn accepted_intent_recovery_preserves_identity_without_creating_message_work() {
+async fn legacy_control_receipt_recovers_but_cannot_admit_alias_without_original_intent() {
     let (client, database, store, inbox, id) = setup().await;
     let text = "CMA-CONTROL/1 cancel ccr_source";
     let (body, token, _) = callback("accepted-original", text);
@@ -54,19 +54,25 @@ async fn accepted_intent_recovery_preserves_identity_without_creating_message_wo
     let write = proven_write(&store, &id, &alias, &alias_token).await;
     // A matching provider record cannot certify an uncommitted alias.
     assert_eq!(inbox.recover_receipt(&write).await.unwrap(), None);
-    assert_eq!(inbox.accept(write).await.unwrap(), expected);
+    // A legacy receipt remains readable, but does not establish the complete
+    // retained authority/history required to admit a new callback alias.
+    assert_eq!(inbox.accept(write).await, Err(CallbackError::Unavailable));
     let reopened =
         MongoCallbackInbox::open(&store, &database, "disposable-callback", &encryption_key())
             .await
             .unwrap();
-    for (body, token) in [(&body, &token), (&alias, &alias_token)] {
-        let write = proven_write(&store, &id, body, token).await;
-        assert_eq!(
-            reopened.recover_receipt(&write).await.unwrap(),
-            Some(expected.clone())
-        );
-        assert_eq!(reopened.accept(write).await.unwrap(), expected);
-    }
+    let write = proven_write(&store, &id, &body, &token).await;
+    assert_eq!(
+        reopened.recover_receipt(&write).await.unwrap(),
+        Some(expected.clone())
+    );
+    assert_eq!(reopened.accept(write).await.unwrap(), expected);
+    let write = proven_write(&store, &id, &alias, &alias_token).await;
+    assert_eq!(reopened.recover_receipt(&write).await.unwrap(), None);
+    assert_eq!(
+        reopened.accept(write).await,
+        Err(CallbackError::Unavailable)
+    );
     let (changed, changed_token, _) = callback("accepted-alias", "ordinary input");
     assert_eq!(
         reopened
@@ -93,7 +99,7 @@ async fn accepted_intent_recovery_preserves_identity_without_creating_message_wo
             .count_documents(doc! {"kind":"callback"})
             .await
             .unwrap(),
-        2
+        1
     );
     assert!(expected.into_message().is_none());
     no_message_effects(&client, &database, &reopened).await;

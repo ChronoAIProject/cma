@@ -20,6 +20,7 @@ pub struct RelayDeliveryRequest {
     item: OutboxItem,
     validation: BridgeValidation,
     deadline: tokio::time::Instant,
+    edit_original: Option<DeliveryReceipt>,
 }
 impl RelayDeliveryRequest {
     pub fn after_sending_commit(
@@ -78,7 +79,16 @@ impl RelayDeliveryRequest {
             item,
             validation,
             deadline,
+            edit_original: None,
         })
+    }
+    pub fn with_edit_original(mut self, original: &OutboxItem) -> Result<Self, OutboxError> {
+        self.edit_original = Some(self.item.require_edit_original(original)?.clone());
+        self.require_current()?;
+        Ok(self)
+    }
+    pub fn edit_original_receipt(&self) -> Option<&DeliveryReceipt> {
+        self.edit_original.as_ref()
     }
     pub fn item(&self) -> &OutboxItem {
         &self.item
@@ -87,6 +97,11 @@ impl RelayDeliveryRequest {
         self.deadline
     }
     pub fn require_current(&self) -> Result<(), OutboxError> {
+        if matches!(self.item.operation, RelayOperation::Edit { .. })
+            && self.edit_original.is_none()
+        {
+            return Err(OutboxError::SourceMismatch);
+        }
         if tokio::time::Instant::now() >= self.deadline {
             return Err(OutboxError::Expired);
         }

@@ -32,6 +32,7 @@ end
 guarded = mode == "release" ? [
   ["ci", "images", "Execute built runtime image contract"],
   ["ci", "images", "Require passing runtime image evidence"],
+  ["ci", "images", "Export tested native image"],
   ["publish", "runtime-image-gate", "Verify exact runtime artifact bytes and source"],
   ["publish", "runtime-image-gate", "Pull verified immutable runtime"],
   ["publish", "runtime-image-gate", "Execute published runtime image contract"],
@@ -69,6 +70,21 @@ if mode == "release"
   end
   reject.call("evidence upload can be empty") do |value|
     value["ci"]["jobs"]["images"]["steps"].find { |row| row["name"] == "Retain runtime image evidence" }["with"]["if-no-files-found"] = "warn"
+  end
+  reject.call("native artifacts uploaded after failed checks") do |value|
+    value["ci"]["jobs"]["images"]["steps"].find { |row| row["name"] == "Retain tested native image" }["if"] = "always()"
+  end
+  reject.call("native export precedes scan") do |value|
+    steps = value["ci"]["jobs"]["images"]["steps"]
+    export = steps.find { |row| row["name"] == "Export tested native image" }
+    steps.delete(export)
+    steps.unshift(export)
+  end
+  reject.call("native artifacts retain too long") do |value|
+    value["ci"]["jobs"]["images"]["steps"].find { |row| row["name"] == "Retain tested native image" }["with"]["retention-days"] = 90
+  end
+  reject.call("native artifacts omit source identity") do |value|
+    value["ci"]["jobs"]["images"]["steps"].find { |row| row["name"] == "Retain tested native image" }["with"]["name"] = "native-image"
   end
   reject.call("publisher mutates live Gateway") { |value| value["publish"]["jobs"]["release"]["steps"] << { "run" => "kubectl apply -f infra" } }
   GatewaySourceContract.expected.each do |path, documents|

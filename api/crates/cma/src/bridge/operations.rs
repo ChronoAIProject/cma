@@ -3,6 +3,8 @@ use std::time::Duration;
 
 use layer2_core::bridge::outbox::{DeliveryFailure, DeliveryOutcome};
 
+pub(crate) mod health;
+
 /// Fixed values only: never use Bridge, sender or resource identifiers as labels.
 #[derive(Clone, Copy)]
 pub(crate) enum WorkKind {

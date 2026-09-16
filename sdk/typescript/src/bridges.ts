@@ -1,3 +1,6 @@
+import { usage } from './bridges/usage-schema.js';
+import { boundedId } from './bridges/invoke-schema.js';
+export type { BridgeUsage, BridgeCapacityReason } from './bridges/usage-schema.js';
 import { capabilities } from './bridges/capabilities-schema.js';
 export type {
   BridgeCapabilityCatalog,
@@ -105,6 +108,21 @@ function receipt(id: string, expected: number, kind: string) {
 }
 /** Current bridge management. Channel callback and reply credentials are not dashboard authentication. */
 export class Bridges extends BridgePartitionCommands {
+  /** Current retained allocations and authorized target counts; admits no work. */
+  usage(id: string, options: OperationOptions = {}) {
+    input(boundedId, id);
+    return read(
+      this.config,
+      `${path(id)}/usage`,
+      (value) => {
+        const result = usage(value);
+        if (result.bridge_id !== id) throw new ProtocolError('usage changed the requested Bridge');
+        return result;
+      },
+      options,
+    );
+  }
+
   list(options: BridgeListOptions = {}) {
     if (options.limit !== undefined && input(positiveInteger, options.limit) > 100)
       throw new ValidationError('bridge limit must be at most 100');

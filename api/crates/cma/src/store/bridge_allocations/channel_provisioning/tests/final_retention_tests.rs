@@ -37,7 +37,8 @@ async fn channel_final_retention_reports_original_debt_and_keeps_exact_storage_a
             Hold::ProviderIncarnationUnproven,
             Hold::BackingStorageAbsenceUnproven,
             Hold::PhysicalHomeCleanupUnavailable,
-            Hold::ChannelHistoryPolicyRequired,
+            Hold::ChannelHistoryRetained,
+            Hold::ChannelHistoryReferencesUnsealed,
             Hold::ReaderJanitorCompatibilityRequired,
         ]
     );
@@ -117,7 +118,8 @@ async fn channel_final_retention_allows_legacy_runtime_cleanup_and_reports_missi
         vec![
             Hold::OriginalHomeProvenanceMissing,
             Hold::HomePrepareEvidenceMissing,
-            Hold::ChannelHistoryPolicyRequired,
+            Hold::ChannelHistoryRetained,
+            Hold::ChannelHistoryReferencesUnsealed,
             Hold::ReaderJanitorCompatibilityRequired,
         ]
     );
@@ -160,6 +162,29 @@ async fn channel_final_retention_distinguishes_missing_prepare_and_late_bound_or
         before.identity.storage_audit
     );
     assert!(unbound.hold_detail().len() <= 256);
+    let allocations = f.db().collection::<Document>("bridge_allocations");
+    let allocation = allocations
+        .find_one(doc! {"_id": &f.f.original.record.id})
+        .await
+        .unwrap()
+        .unwrap();
+    allocations
+        .update_one(
+            doc! {"_id": &f.f.original.record.id},
+            doc! {"$unset":{"channel_history_reference_count":""}},
+        )
+        .await
+        .unwrap();
+    let reference_hold = assessed(&f).await;
+    assert_eq!(
+        reference_hold.history.hold,
+        Some(crate::store::channel_history::HistoryHold::ReferenceAccountingMissing)
+    );
+    assert!(reference_hold
+        .reasons
+        .contains(&Hold::ChannelHistoryReferencesHeld));
+    assert!(reference_hold.hold_detail().len() <= 256);
+    allocations.update_one(doc! {"_id": &f.f.original.record.id}, doc! {"$set":{"channel_history_reference_count":allocation.get("channel_history_reference_count").unwrap().clone()}}).await.unwrap();
     unset(&f, doc! {"channel_home_prepare_evidence":""}).await;
     let missing = assessed(&f).await;
     assert_eq!(
@@ -167,7 +192,8 @@ async fn channel_final_retention_distinguishes_missing_prepare_and_late_bound_or
         vec![
             Hold::OriginalHomeReceiptUnbound,
             Hold::HomePrepareEvidenceMissing,
-            Hold::ChannelHistoryPolicyRequired,
+            Hold::ChannelHistoryRetained,
+            Hold::ChannelHistoryReferencesUnsealed,
             Hold::ReaderJanitorCompatibilityRequired,
         ]
     );
@@ -408,7 +434,8 @@ async fn channel_final_retention_unconfigured_home_still_requires_history_and_re
     assert_eq!(
         assessment.reasons,
         vec![
-            Hold::ChannelHistoryPolicyRequired,
+            Hold::ChannelHistoryRetained,
+            Hold::ChannelHistoryReferencesUnsealed,
             Hold::ReaderJanitorCompatibilityRequired
         ]
     );

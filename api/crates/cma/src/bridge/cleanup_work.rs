@@ -98,6 +98,14 @@ impl ChannelWorkPort for ChannelCleanupWork {
             .observe_cleanup_job(id, claim, progress, &holds)
             .await
             .map_err(error)?;
+        if progress != Progress::Complete {
+            super::operations::health::pending(
+                super::operations::health::PendingStage::ChildCleanup,
+                id,
+                job.admission.receipt.accepted_at_ms,
+                !holds.is_empty(),
+            );
+        }
         Ok(())
     }
 }

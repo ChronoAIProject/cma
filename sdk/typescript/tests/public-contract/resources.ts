@@ -19,6 +19,7 @@ export const resourceDispatch: Record<string, Dispatch> = {
     client.bridges.resetPartition(param('id'), param('allocation'), body, command),
   'POST /api/v1/bridges/{id}/partitions/{allocation}/detach': ({ client, param, body, command }) =>
     client.bridges.detachPartition(param('id'), param('allocation'), body, command),
+  'GET /api/v1/bridges/{id}/usage': ({ client, param }) => client.bridges.usage(param('id')),
   'GET /api/v1/bridges/{id}/partitions': ({ client, param, options }) =>
     client.bridges.listPartitions(param('id'), options),
   'GET /api/v1/bridges/{id}/partitions/{allocation}': ({ client, param }) =>

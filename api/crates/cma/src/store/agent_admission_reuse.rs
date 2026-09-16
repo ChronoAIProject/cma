@@ -171,7 +171,7 @@ pub(super) async fn reuse_profile_agent(
             signed(agent.conversation.last_seq, "Agent log sequence")
                 .map_err(|error| ApplyError::Domain(SandboxStoreError::Corrupt(error)))?,
         );
-        let changed = store.agents.update_one(doc! { "_id": agent.id.as_str(), "revision": signed(prior_revision, "Agent revision").map_err(|error| ApplyError::Domain(SandboxStoreError::Corrupt(error)))? }, doc! { "$set": fields })
+        let changed = store.agents.update_one(doc! { "_id": agent.id.as_str(), "channel_history_seal": {"$exists": false}, "revision": signed(prior_revision, "Agent revision").map_err(|error| ApplyError::Domain(SandboxStoreError::Corrupt(error)))? }, doc! { "$set": fields })
             .session(&mut *session).await.map_err(ApplyError::Driver)?;
         if changed.matched_count != 1 {
             return Err(ApplyError::Domain(SandboxStoreError::Conflict));

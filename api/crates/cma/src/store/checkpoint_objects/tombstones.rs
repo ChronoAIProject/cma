@@ -72,10 +72,18 @@ pub(super) async fn retain(
         .map_err(|_| unavailable("checkpoint cleanup tombstone encoding failed"))?;
     store
         .tombstones
-        .insert_one(document)
+        .insert_one(document.clone())
         .session(&mut session)
         .await
         .map_err(|_| unavailable("checkpoint cleanup tombstone admission failed"))?;
+    crate::store::channel_history::tombstone(
+        &store.client.database(&store.manifests.namespace().db),
+        &manifest.sandbox_id,
+        &document,
+        &mut session,
+    )
+    .await
+    .map_err(|_| unavailable("Channel history tombstone reference admission failed"))?;
     match commit_transaction(&mut session).await {
         CommitOutcome::Committed => return Ok(true),
         CommitOutcome::Unknown(_) => (),

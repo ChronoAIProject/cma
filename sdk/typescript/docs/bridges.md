@@ -393,3 +393,20 @@ if later revisions changed. A changed body or action under the same key
 conflicts. Current owner or organization-admin authority is always required,
 including receipt recovery. The SDK sends each request once and never
 substitutes a new key or retries automatically.
+
+## Current allocation and resource usage
+
+`await cma.bridges.usage(bridgeId)` reads the Bridge usage view without admitting work. It returns
+retained/current allocation counts, retained Sandbox reservations and distinct
+referenced resource counts under fresh management and resource authority.
+Retirement keeps the allocation's Sandbox reservation. Reused parents are counted
+once and are not treated as resources exclusively owned by the Bridge.
+
+`target_resources` is `available`, `redacted` when any target lacks current access,
+or `inventory_limited` when retained generations exceed the fixed limit of 256.
+In the last case `allocations` is null; never treat missing counts as zero.
+Active reflects durable lifecycle state under an Active Sandbox, not provider
+connectivity. Paused and retained deleted records can still contribute to retained
+counts. `capacity_reasons` names known count limits, retained retired reservations,
+shared-parent policy, or unavailable inventory/access. The view does not calculate
+shared-parent spare capacity, owner-wide quota headroom, or promise admission.

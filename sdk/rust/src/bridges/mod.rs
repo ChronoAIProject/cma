@@ -11,6 +11,7 @@ mod partition_commands;
 mod partitions;
 mod source_controls;
 mod types;
+mod usage;
 mod validation;
 mod workspace_cleanup;
 pub use capabilities::*;
@@ -23,6 +24,7 @@ pub use partition_commands::*;
 pub use partitions::*;
 pub use source_controls::*;
 pub use types::*;
+pub use usage::*;
 pub use workspace_cleanup::*;
 
 use crate::{Client, Error, PageOptions, Result, resources::identity};

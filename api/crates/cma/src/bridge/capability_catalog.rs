@@ -1,4 +1,5 @@
 //! CMA contract fixtures at the pinned upstream revision; no live parity claim.
+use crate::config::{bridge_flags::BridgeFlag, BridgeFeatureFlags};
 use layer2_core::bridge::{partition::StableThreadKind, *};
 
 pub(super) fn supported_platform(name: &str) -> Option<BridgePlatform> {
@@ -20,7 +21,7 @@ pub(super) fn catalog(connection_validation_available: bool) -> BridgeCapability
         version: 1,
         source_revision: Some("85607255ee0beadca460a350e0aa6d177edd2fd2".into()),
         connection_validation_available,
-        placements: shared_placements(None),
+        placements: shared_placements(None, BridgeFeatureFlags::default()),
         connectors: [
             "telegram",
             "telegram-new",
@@ -40,6 +41,7 @@ pub(super) fn catalog(connection_validation_available: bool) -> BridgeCapability
 
 pub(super) fn shared_placements(
     runtime: Option<layer3_adapter::AdapterCapabilities>,
+    flags: BridgeFeatureFlags,
 ) -> Vec<BridgePlacementCapabilities> {
     let supported = runtime.is_some_and(|caps| {
         caps.conversation
@@ -49,19 +51,29 @@ pub(super) fn shared_placements(
             && caps.usage
             && caps.resources
     });
-    // Static runtime abilities cannot attest shared-parent upgrade/rollback
-    // continuity. There is no composed production attestation for that contract.
-    let availability = if supported {
-        BridgePlacementAvailability::ContinuityUnverified
-    } else {
-        BridgePlacementAvailability::RuntimeUnavailable
-    };
     [
-        BridgeSharedPlacementKind::WorkspacePerPartition,
-        BridgeSharedPlacementKind::WorktreeAgentPerPartition,
+        (
+            BridgeSharedPlacementKind::WorkspacePerPartition,
+            BridgeFlag::WorkspacePerPartition,
+        ),
+        (
+            BridgeSharedPlacementKind::WorktreeAgentPerPartition,
+            BridgeFlag::WorktreeAgentPerPartition,
+        ),
     ]
     .into_iter()
-    .map(|kind| BridgePlacementCapabilities { kind, availability })
+    .map(|(kind, flag)| BridgePlacementCapabilities {
+        kind,
+        availability: if !supported {
+            BridgePlacementAvailability::RuntimeUnavailable
+        } else if flags.enabled(flag) {
+            BridgePlacementAvailability::Available
+        } else {
+            // Retain the published wire value for an unselected capable runtime.
+            // Operator selection does not attest upgrade/rollback continuity.
+            BridgePlacementAvailability::ContinuityUnverified
+        },
+    })
     .collect()
 }
 
@@ -104,8 +116,8 @@ fn connector(name: &str) -> BridgeConnectorCapabilities {
         },
         attachment_output: false,
         output_text: implemented,
-        // The CMA relay currently permits InitialReply only, even where upstream supports edits.
-        output_edit: false,
+        // Explicit tool edits target only the original confirmed CMA reply.
+        output_edit: matches!(name, "lark" | "feishu"),
         output_progress: implemented,
         output_limit_utf16: implemented.then_some(if matches!(name, "telegram" | "telegram-new") {
             4000
