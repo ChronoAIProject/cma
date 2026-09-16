@@ -15,6 +15,8 @@ pub(crate) use control_execution::compatibility;
 mod control_reference;
 #[path = "channel_reply_delivery_tests.rs"]
 mod delivery;
+#[path = "channel_reply_edit_tests.rs"]
+mod edits;
 #[path = "channel_reply_generation_test.rs"]
 mod generation;
 #[path = "channel_history_tests.rs"]

@@ -72,7 +72,10 @@ fn boundary_only_and_device_connectors_never_claim_text_admission_from_enabled_f
     assert_eq!(catalog.connectors.len(), 9);
     for c in &catalog.connectors {
         assert!(!c.live_verified);
-        assert!(!c.output_edit);
+        assert_eq!(
+            c.output_edit,
+            ["lark", "feishu"].contains(&c.platform.as_str())
+        );
         assert!(!c.attachment_output);
         assert!(!c.bot_mentions);
         if ["telegram", "telegram-new", "discord", "lark", "feishu"].contains(&c.platform.as_str())

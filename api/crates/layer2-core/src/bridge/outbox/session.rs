@@ -151,10 +151,17 @@ pub(super) fn request_identity(
         return Err(OutboxError::Bounds);
     }
     Ok((
-        format!(
-            "brti_{}",
-            super::hash(&("cma.bridge.reply-tool.v1", namespace, &request.request_key))?
-        ),
+        invocation_id(namespace, &request.request_key)?,
         super::hash(&request.text)?,
+    ))
+}
+
+pub(super) fn invocation_id(namespace: &str, request_key: &str) -> Result<String, OutboxError> {
+    if !super::id(request_key) {
+        return Err(OutboxError::Bounds);
+    }
+    Ok(format!(
+        "brti_{}",
+        super::hash(&("cma.bridge.reply-tool.v1", namespace, request_key))?
     ))
 }
