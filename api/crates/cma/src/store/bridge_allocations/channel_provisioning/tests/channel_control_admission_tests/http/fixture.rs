@@ -6,7 +6,6 @@ use crate::bridge::ingress::{
 };
 use crate::config::{bridge_flags::BridgeFlag, BridgeFeatureFlags};
 use futures_util::TryStreamExt;
-use layer2_core::sandbox::{AgentRuntimeRegistry, AgentRuntimeTarget};
 use sha2::{Digest, Sha256};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use tower::ServiceExt;
@@ -32,26 +31,9 @@ impl ChannelControlRuntimeEligibility for Runtime {
         proof: &ChannelControlProof,
     ) -> Result<(), ChannelControlError> {
         self.calls.fetch_add(1, Ordering::SeqCst);
-        proof.require_current()?;
-        let intent = proof.intent();
-        let connection = AgentRuntimeRegistry::resolve(
-            self.registry.as_ref(),
-            &AgentRuntimeTarget {
-                agent_id: intent.reference.binding().source.target().agent_id.clone(),
-                runtime_generation: intent.runtime_generation,
-                conversation_id: intent.runtime_conversation_id.clone(),
-            },
-        )
-        .await
-        .map_err(|_| ChannelControlError::Unavailable)?;
-        let operation = match &intent.request.command {
-            ChannelControlCommand::Cancel => layer2_core::RuntimeCapability::Interrupt,
-            ChannelControlCommand::Steer { .. } => layer2_core::RuntimeCapability::Steer,
-        };
-        if !connection.capabilities.supports(operation) {
-            return Err(ChannelControlError::CapabilityUnsupported);
-        }
-        Ok(())
+        crate::bridge::control_runtime::LocalChannelControlRuntime::new(self.registry.clone())
+            .require_available(proof)
+            .await
     }
 }
 
@@ -126,6 +108,9 @@ async fn app_with_stores(
         store,
         c.f.invokes.clone(),
         flags(enabled),
+        Arc::new(
+            crate::bridge::control_runtime::LocalChannelControlRuntime::new(c.f.registry.clone()),
+        ),
     );
     if let Some(runtime) = runtime {
         controls = controls.with_runtime(runtime);

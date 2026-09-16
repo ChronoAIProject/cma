@@ -57,23 +57,32 @@ authorize a new reply to a later input.
 `read_channel_control_context` also accepts no arguments. It returns a retained,
 random `source_control_reference` only for an eligible current channel-created
 source with separately admitted sender-control consent. The reference is a
-nonsecret lookup identity, never a bearer permission. The result currently has
-this shape:
+nonsecret lookup identity, never a bearer permission. With control admission
+enabled and both operations supported by the exact current local runtime, the
+result has this shape:
 
 ```json
 {
   "source_control_reference": "ccr_0123456789abcdef0123456789abcdef",
-  "operations": [],
+  "operations": ["cancel", "steer"],
   "approval_mode": "dashboard_only",
-  "availability": "execution_unavailable"
+  "availability": "available"
 }
 ```
 
-Cancellation and steering are not executable through this foundation. An empty
-operation list explicitly preserves that limitation. Missing current source or
-consent returns a null reference and `availability: "unavailable"`. The tool
-accepts no source, destination, reference or authority arguments and sends
-nothing. It does not change `read_channel_context` or `reply_to_channel`.
+The operation list is the intersection of current Agent capabilities and the
+exact published runtime attachment's capabilities. Cancel requires Interrupt;
+steer requires Steer, and both require Conversation. Disabled fresh control
+admission, a missing local runtime, stale runtime generation or mismatched native
+conversation yields an empty list and `availability: "execution_unavailable"`
+while retaining an otherwise eligible source reference. A runtime supporting
+only one operation lists only that operation. Missing current source or consent
+returns a null reference and `availability: "unavailable"`. Availability is an
+observation, and every subsequent control request rechecks source authority,
+consent and the runtime before admission and again before execution. There is no
+remote owner proxy. The tool accepts no source, destination, reference or
+authority arguments and sends nothing. It does not change `read_channel_context`
+or `reply_to_channel`.
 
 The mapping retains the exact source command, response and turn, original
 sender/chat/thread, Bridge/bot/platform, Agent creation, allocation generation,

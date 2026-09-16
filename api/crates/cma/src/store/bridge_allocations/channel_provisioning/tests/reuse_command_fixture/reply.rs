@@ -23,6 +23,7 @@ impl ReuseCommandFixture {
             Arc::new(crate::bridge::channel_tools::StoredChannelTools {
                 capabilities: f.tools.clone(),
                 replies: replies.clone(),
+                control_runtime: None,
             }),
             "https://cma.example",
         );

@@ -24,17 +24,6 @@ pub(crate) trait ChannelControlRuntimeEligibility: Send + Sync {
     ) -> Result<(), ChannelControlError>;
 }
 
-struct UnavailableRuntime;
-
-#[async_trait::async_trait]
-impl ChannelControlRuntimeEligibility for UnavailableRuntime {
-    async fn require_available(&self, _: &ChannelControlProof) -> Result<(), ChannelControlError> {
-        // No production implementation yet proves selected-command claim
-        // routing, compatible ownership/handoff or provider control semantics.
-        Err(ChannelControlError::Unavailable)
-    }
-}
-
 pub(crate) struct ChannelControlIngress {
     callbacks: Arc<MongoCallbackInbox>,
     store: Arc<MongoChannelControlStore>,
@@ -49,13 +38,14 @@ impl ChannelControlIngress {
         store: Arc<MongoChannelControlStore>,
         invokes: BridgeInvokeService,
         flags: BridgeFeatureFlags,
+        runtime: Arc<super::super::control_runtime::LocalChannelControlRuntime>,
     ) -> Self {
         Self {
             callbacks,
             store,
             invokes,
             flags,
-            runtime: Arc::new(UnavailableRuntime),
+            runtime,
         }
     }
 

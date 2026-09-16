@@ -23,14 +23,17 @@ pub(crate) mod cleanup;
 pub(crate) mod cleanup_work;
 pub(crate) mod composition;
 pub(crate) mod control_plane;
+pub(crate) mod control_runtime;
 pub(crate) mod custody;
 mod feature_policy;
 #[allow(dead_code)] // #861 awaits a composed route with live selected-key custody.
 pub(crate) mod ingress;
 mod managed_credentials;
+mod operations;
 pub(crate) mod outbox_delivery;
 pub(crate) mod outbox_rate;
 pub(crate) mod outbox_scheduler;
+pub(crate) mod partition_commands;
 mod provider;
 pub(crate) mod provisioning;
 pub(crate) mod setup;

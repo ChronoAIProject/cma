@@ -79,7 +79,7 @@ async fn opening_session_can_negotiate_and_discover_before_publication_but_canno
     assert!(tools[2]["description"]
         .as_str()
         .unwrap()
-        .contains("operations is empty"));
+        .contains("exact current runtime supports"));
     let response=discovery_request(json!({"jsonrpc":"2.0","id":2,"method":"tools/call",
         "params":{"name":"reply_to_channel","arguments":{"reply_context":format!("brctx_{}","a".repeat(64)),"request_key":"ack-1","text":"Starting"}}})).await;
     assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
