@@ -6,12 +6,14 @@
 mod intent;
 mod parser;
 mod proof;
+mod recovery;
 mod reservation;
 mod write;
 
 pub use intent::*;
 pub use parser::*;
 pub use proof::*;
+pub use recovery::*;
 pub use reservation::*;
 pub use write::*;
 

@@ -15,6 +15,10 @@ use fixture::*;
 mod races;
 #[path = "http/recovery.rs"]
 mod recovery;
+#[path = "http/recovery_gates.rs"]
+mod recovery_gates;
+#[path = "http/recovery_race.rs"]
+mod recovery_race;
 
 #[tokio::test]
 #[ignore = "requires the disposable MongoDB replica contract runner"]
