@@ -57,16 +57,13 @@ struct Snapshot {
     original_present: bool,
 }
 
-async fn snapshot(
-    invokes: &MongoBridgeInvokeStore,
+/// Read-only access to the original accepted source. Absence is explicit for
+/// old commands; callers must still validate exact owner/Bridge/partition facts.
+pub(crate) fn archived(
     command: &Document,
     sidecar: &ChannelCommandSidecar,
-    session: &mut ClientSession,
-) -> Result<Snapshot, MutationError> {
-    if command.get_str("_id").ok() != Some(sidecar.command_id.as_str()) {
-        return Err(Error::SourceMismatch.into());
-    }
-    let archived = command
+) -> Result<Option<StoredInbox>, Error> {
+    command
         .get("channel_source")
         .cloned()
         .map(|value| {
@@ -78,7 +75,19 @@ async fn snapshot(
             validate(&source.inbox, sidecar)?;
             Ok(source.inbox)
         })
-        .transpose()?;
+        .transpose()
+}
+
+async fn snapshot(
+    invokes: &MongoBridgeInvokeStore,
+    command: &Document,
+    sidecar: &ChannelCommandSidecar,
+    session: &mut ClientSession,
+) -> Result<Snapshot, MutationError> {
+    if command.get_str("_id").ok() != Some(sidecar.command_id.as_str()) {
+        return Err(Error::SourceMismatch.into());
+    }
+    let archived = archived(command, sidecar)?;
     let original = invokes
         .bridges
         .client
