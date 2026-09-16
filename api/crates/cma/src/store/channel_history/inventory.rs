@@ -19,6 +19,8 @@ pub(crate) struct MaterialInventory {
     pub commands: Vec<InventoryRow>,
     pub outbox: Vec<InventoryRow>,
     pub ancillary: Vec<InventoryRow>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub controls: Vec<InventoryRow>,
 }
 
 pub(super) async fn capture(
@@ -27,29 +29,6 @@ pub(super) async fn capture(
     session: &mut ClientSession,
 ) -> Result<Result<MaterialInventory, HistoryHold>, MutationError> {
     let target = snapshot.allocation.placement.target();
-    for (collection, prefix) in [
-        (
-            "bridge_channel_control_intents",
-            "record.reference.binding.source",
-        ),
-        ("bridge_channel_control_references", "record.binding.source"),
-    ] {
-        let mut allocation = Document::new();
-        allocation.insert(format!("{prefix}.allocation_id"), &snapshot.allocation.id);
-        let mut agent = Document::new();
-        agent.insert(
-            format!("{prefix}.target.agent_id"),
-            target.agent_id.as_str(),
-        );
-        if majority_collection::<Document>(database, collection)
-            .find_one(doc! {"$or": [allocation, agent]})
-            .session(&mut *session)
-            .await?
-            .is_some()
-        {
-            return Ok(Err(HistoryHold::ControlHistoryUnresolved));
-        }
-    }
     let agent_row = majority_collection::<Document>(database, "agents")
         .find_one(doc! {"_id": target.agent_id.as_str()})
         .session(&mut *session)
@@ -59,6 +38,22 @@ pub(super) async fn capture(
         crate::store::agents::read_agent(&agent_row).map_err(|_| AllocationError::Corrupt)?;
     if agent.status.is_live()
         || agent.conversation.active_turn.is_some()
+        || agent
+            .conversation
+            .operation
+            .as_ref()
+            .is_some_and(|operation| {
+                matches!(
+                    operation.state,
+                    layer2_core::sandbox::AgentOperationDelivery::DispatchFenced
+                        | layer2_core::sandbox::AgentOperationDelivery::RecoveryRequired
+                )
+            })
+        || agent
+            .conversation
+            .queued_messages
+            .iter()
+            .any(|message| message.state != layer2_core::sandbox::QueuedMessageState::Delivered)
         || agent.work.lease.is_some()
         || !agent.work.cleanup_debt.is_empty()
         || agent.work.step != layer2_core::sandbox::AgentWorkStep::None
@@ -70,6 +65,10 @@ pub(super) async fn capture(
         Err(hold) => return Ok(Err(hold)),
     };
     let outbox = match material::outbox(database, &snapshot.allocation, session).await? {
+        Ok(rows) => rows,
+        Err(hold) => return Ok(Err(hold)),
+    };
+    let controls = match controls::capture(database, &snapshot.allocation, session).await? {
         Ok(rows) => rows,
         Err(hold) => return Ok(Err(hold)),
     };
@@ -126,6 +125,7 @@ pub(super) async fn capture(
         commands,
         outbox,
         ancillary,
+        controls,
     }))
 }
 
