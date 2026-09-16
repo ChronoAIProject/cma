@@ -15,7 +15,7 @@ use mongodb::bson::Document;
 use std::time::SystemTime;
 
 #[path = "reuse_command_fixture/connections.rs"]
-mod connections;
+pub(super) mod connections;
 #[path = "reuse_command_fixture/reply.rs"]
 mod reply;
 #[path = "reuse_command_fixture/worker.rs"]
