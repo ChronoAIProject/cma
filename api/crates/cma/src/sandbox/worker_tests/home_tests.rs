@@ -13,7 +13,7 @@ fn home_policy() -> HomeVolumePolicy {
     }
 }
 
-struct Homes {
+pub(super) struct Homes {
     authority: Arc<InMemorySandboxStore>,
     backend: InMemoryHostedBackend,
     disks: Mutex<BTreeMap<String, HomeVolumeAttachment>>,
@@ -25,7 +25,7 @@ struct Homes {
 }
 
 impl Homes {
-    fn new(harness: &Harness) -> Arc<Self> {
+    pub(super) fn new(harness: &Harness) -> Arc<Self> {
         Arc::new(Self {
             authority: harness.store.clone(),
             backend: harness.backend.clone(),
@@ -146,14 +146,14 @@ impl HomeVolumeStore for Homes {
     }
 }
 
-fn adapter(harness: &Harness, homes: Arc<Homes>) -> Arc<dyn SandboxAdapter> {
+pub(super) fn adapter(harness: &Harness, homes: Arc<Homes>) -> Arc<dyn SandboxAdapter> {
     Arc::new(
         CodexAdapter::with_backend(harness.backend.clone(), CodexSandboxSpec::default())
             .with_home_volumes(homes),
     )
 }
 
-fn worker(harness: &Harness, homes: Arc<Homes>, holder: &str) -> Arc<SandboxWorker> {
+pub(super) fn worker(harness: &Harness, homes: Arc<Homes>, holder: &str) -> Arc<SandboxWorker> {
     SandboxWorker::new(
         SandboxWorkerDependencies {
             store: harness.store.clone(),
