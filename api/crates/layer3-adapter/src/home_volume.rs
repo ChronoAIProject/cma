@@ -155,6 +155,37 @@ impl HomeVolumeAttachment {
 /// Control-plane storage effects. Runtime teardown alone never releases a home.
 #[async_trait::async_trait]
 pub trait HomeVolumeStore: Send + Sync {
+    async fn delete_original_home(
+        &self,
+        _original: &crate::HomeBackingIdentity,
+        _operation_id: &str,
+        _observer: &dyn crate::HomeBackingObserver,
+    ) -> Result<crate::HomeDeleteReceipt> {
+        Err(AdapterError::Unsupported(
+            "exact original home deletion is unavailable".into(),
+        ))
+    }
+
+    async fn observe_home_finality(
+        &self,
+        _delete: &crate::HomeDeleteReceipt,
+        _observer: &dyn crate::HomeBackingObserver,
+    ) -> Result<crate::HomeFinalityReceipt> {
+        Err(AdapterError::Unsupported(
+            "original home backing absence is unavailable".into(),
+        ))
+    }
+
+    async fn prepare_receipted(
+        &self,
+        _request: &HomeVolumeRequest,
+        _operation_id: &str,
+    ) -> Result<crate::HomeProvisionReceipt> {
+        Err(AdapterError::Unsupported(
+            "original home creation acknowledgement is unavailable".into(),
+        ))
+    }
+
     /// Captured with fresh allocation, before retirement. Existing PVC identity
     /// alone never establishes an original PV/CSI/disk generation.
     async fn original_backing(
