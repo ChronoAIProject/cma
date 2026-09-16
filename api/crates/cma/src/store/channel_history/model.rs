@@ -56,6 +56,7 @@ pub(crate) enum ReferenceKind {
     OutboxItem,
     OutboxInvocation,
     LateUploadTombstone,
+    PartitionCommand,
 }
 impl ReferenceKind {
     pub(super) fn collection(self) -> &'static str {
@@ -66,6 +67,7 @@ impl ReferenceKind {
             Self::OutboxItem => "bridge_outbox_items",
             Self::OutboxInvocation => "bridge_outbox_invocations",
             Self::LateUploadTombstone => "checkpoint_archive_tombstones",
+            Self::PartitionCommand => "bridge_partition_command_receipts",
         }
     }
     pub(super) fn projection(self, document: &Document) -> Result<Bson, AllocationError> {
@@ -110,7 +112,7 @@ impl ReferenceKind {
                 }
                 Bson::Document(value)
             }
-            Self::CallbackReceipt | Self::OutboxInvocation => {
+            Self::CallbackReceipt | Self::OutboxInvocation | Self::PartitionCommand => {
                 document.get("record").cloned().ok_or_else(missing)?
             }
             Self::LateUploadTombstone => {
@@ -172,6 +174,9 @@ pub(crate) enum HistoryHold {
     ReferenceAccountingIncomplete,
     ReferencedRecordMissing,
     InventoryBoundExceeded,
+    AcceptedWorkPending,
+    OutboxUnresolved,
+    ControlHistoryUnresolved,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]

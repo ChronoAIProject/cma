@@ -4,6 +4,8 @@ use crate::store::channel_history::{
 };
 use crate::store::sandbox_mongo::start_transaction;
 use mongodb::bson::Document;
+#[path = "history_outbox_seal_tests.rs"]
+mod outbox_seal;
 
 async fn allocation(f: &ReplyFixture) -> Document {
     f.client

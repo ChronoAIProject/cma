@@ -19,6 +19,9 @@ pub(super) async fn apply(
     now: SystemTime,
     session: &mut ClientSession,
 ) -> Result<ChannelRetirementSnapshot, MutationError> {
+    if matches!(change, RetirementChange::Finalize) {
+        return super::finalization::apply(store, permit, snapshot, document, now, session).await;
+    }
     let previous_revision = snapshot.sandbox.revision;
     let previous_step = snapshot.sandbox.work.step;
     if snapshot.state.is_none() && !matches!(change, RetirementChange::Begin) {

@@ -310,6 +310,7 @@ async fn replace_agent(
                 "revision": expected_revision,
                 "last_seq": expected_last_seq,
                 "record.conversation.last_seq": expected_last_seq,
+                "channel_history_seal": { "$exists": false },
             },
             doc! { "$set": fields },
         )

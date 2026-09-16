@@ -72,6 +72,7 @@ impl MongoBridgeAllocationStore {
                 "channel_mint_orphans",
                 "channel_mint_orphan_audits",
                 "channel_retirement_audits",
+                "channel_retirement_finalizations",
                 "channel_reuse_cleanup_requests",
                 "channel_reuse_cleanup_audits",
                 "channel_reuse_cleanup_admissions",

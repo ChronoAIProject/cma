@@ -162,7 +162,7 @@ pub(super) async fn write(
         .map_err(|_| CommandLedgerError::Conflict)?;
     let mut fields = records::document(command)?;
     fields.remove("_id");
-    let result = store.agent_commands.update_one(doc! { "_id": command.receipt.envelope.command_id.as_str(), "revision": signed(expected_revision, "command revision").map_err(|_| CommandLedgerError::Corrupt)? }, doc! { "$set": fields }).session(&mut *session).await?;
+    let result = store.agent_commands.update_one(doc! { "_id": command.receipt.envelope.command_id.as_str(), "channel_history_seal": {"$exists": false}, "revision": signed(expected_revision, "command revision").map_err(|_| CommandLedgerError::Corrupt)? }, doc! { "$set": fields }).session(&mut *session).await?;
     if result.matched_count != 1 {
         return Err(CommandLedgerError::Conflict.into());
     }
