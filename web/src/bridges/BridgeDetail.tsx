@@ -6,6 +6,7 @@ import { Button } from '../ui/Button';
 import { BridgeManager } from './BridgeManager';
 import { BridgeDeliveries } from './BridgeDeliveries';
 import { BridgeAllocations } from './BridgeAllocations';
+import { BridgePartitions } from './BridgePartitions';
 
 export function BridgeDetail({
   client,
@@ -50,6 +51,18 @@ export function BridgeDetail({
           id={id}
           allowed={bridge?.can_manage === true}
           onChanged={current.reload}
+        />
+        <BridgePartitions
+          onAccessChanged={current.reload}
+          client={client}
+          viewerId={viewerId}
+          id={id}
+          ownerScope={
+            bridge === undefined ? undefined : `${bridge.owner.kind}:${bridge.owner.subject}`
+          }
+          revision={bridge?.revision}
+          allowed={bridge?.can_manage === true}
+          onNavigate={onNavigate}
         />
         <BridgeAllocations
           client={client}
