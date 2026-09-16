@@ -24,6 +24,12 @@ pub(crate) use backend::StoredChannelTools;
 #[cfg(test)]
 mod tests;
 
+#[derive(Default)]
+pub(crate) struct ChannelControlContext {
+    reference: Option<String>,
+    operations: Vec<&'static str>,
+}
+
 const MAX_BODY: usize = 1_100_000;
 const VERSIONS: &[&str] = &["2025-11-25", "2025-06-18", "2025-03-26"];
 
@@ -42,7 +48,7 @@ pub(crate) trait ChannelToolBackend: Send + Sync {
     async fn control_context(
         &self,
         _session: &ChannelReplySessionAuthorization,
-    ) -> Result<Option<String>, OutboxError> {
+    ) -> Result<ChannelControlContext, OutboxError> {
         Err(OutboxError::ToolUnavailable)
     }
     async fn reply(

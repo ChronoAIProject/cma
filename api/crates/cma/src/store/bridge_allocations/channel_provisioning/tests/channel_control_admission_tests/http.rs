@@ -19,12 +19,13 @@ mod recovery;
 mod recovery_gates;
 #[path = "http/recovery_race.rs"]
 mod recovery_race;
+#[path = "http/runtime.rs"]
+mod runtime;
 
 #[tokio::test]
 #[ignore = "requires the disposable MongoDB replica contract runner"]
 async fn channel_control_http_signed_cancel_and_steer_use_original_source_and_no_message_output() {
     let c = ControlFixture::with_callback_route().await;
-    let runtime = Runtime::local(&c);
     let before =
         c.f.resources
             .get_agent(&c.f.command.receipt.envelope.agent_id)
@@ -38,7 +39,7 @@ async fn channel_control_http_signed_cancel_and_steer_use_original_source_and_no
             500 + u64::from(steer),
             steer,
         );
-        let (status, result) = post(app(&c, true, Some(runtime.clone())).await, &c, &value).await;
+        let (status, result) = post(app(&c, true, None).await, &c, &value).await;
         assert_eq!(status, StatusCode::ACCEPTED, "{result}");
         assert_eq!(result["status"], "control_accepted");
         assert_eq!(result["receipt"]["version"], 2);
@@ -46,7 +47,6 @@ async fn channel_control_http_signed_cancel_and_steer_use_original_source_and_no
             assert!(result["receipt"].get(key).is_none());
         }
     }
-    assert_eq!(runtime.calls.load(Ordering::SeqCst), 2);
     assert_eq!(
         c.f.resources.get_agent(&before.id).await.unwrap().unwrap(),
         before
@@ -62,11 +62,15 @@ async fn channel_control_http_signed_cancel_and_steer_use_original_source_and_no
 
 #[tokio::test]
 #[ignore = "requires the disposable MongoDB replica contract runner"]
-async fn channel_control_http_flag_alone_cannot_enable_production_or_create_permanent_refusal() {
+async fn channel_control_http_flag_without_runtime_cannot_admit_or_create_permanent_refusal() {
     let c = ControlFixture::with_callback_route().await;
     let value = body(&c, "http-production-unavailable", 502, false);
     let before_dispositions = rows(&c, "bridge_callback_dispositions").await;
-    let (status, result) = post(app(&c, true, None).await, &c, &value).await;
+    let runtime = Arc::new(Runtime {
+        registry: Arc::new(crate::sandbox::LiveAgentRegistry::default()),
+        calls: AtomicUsize::new(0),
+    });
+    let (status, result) = post(app(&c, true, Some(runtime)).await, &c, &value).await;
     assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{result}");
     assert_eq!(result["acceptance"], "unknown");
     no_message_effects(&c, 0).await;
@@ -74,7 +78,7 @@ async fn channel_control_http_flag_alone_cannot_enable_production_or_create_perm
         rows(&c, "bridge_callback_dispositions").await,
         before_dispositions
     );
-    let (status, result) = post(app(&c, true, Some(Runtime::local(&c))).await, &c, &value).await;
+    let (status, result) = post(app(&c, true, None).await, &c, &value).await;
     assert_eq!(status, StatusCode::ACCEPTED, "{result}");
     assert_eq!(result["status"], "control_accepted");
     c.f.close().await;

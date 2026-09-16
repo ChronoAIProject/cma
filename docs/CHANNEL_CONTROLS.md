@@ -1,15 +1,16 @@
 # Channel text controls: admission and execution foundation
 
-Production Channel control ingress remains disabled for #854, with mixed-version
-acceptance still tracked by #850. Production always constructs the dedicated
-execution adapter so retained accepted controls can drain or reconcile while
-fresh ingress is disabled. The signed callback route now composes a recovery-first
-admission adapter behind `CHRONO_BRIDGE_CONTROL_ADMISSION_ENABLED`, default false.
-Production runtime eligibility remains explicitly unavailable, so changing this
-selector alone cannot enable controls. The context tool advertises no control
-operations. Authenticated CMA dashboard/API
-controls remain the available control path; approval capability and reply-tool
-eligibility are unchanged.
+Production constructs the dedicated retained execution adapter even while fresh
+control admission is disabled. The signed callback route composes recovery-first
+admission behind `CHRONO_BRIDGE_CONTROL_ADMISSION_ENABLED`, default false. When
+enabled, fresh cancel/steer admission requires the exact locally published Agent,
+runtime generation and native conversation, with the operation advertised by both
+current Agent authority and the actual runtime attachment. The context tool lists
+only those available operations. A replica without that local runtime reports
+retryable unavailability; this path does not proxy to another owner or infer
+capabilities from deployment configuration. Mixed-version acceptance remains
+tracked by #850. Approval stays on the authenticated CMA dashboard/API, and
+reply-tool eligibility is unchanged.
 
 After signature verification, trusted raw human/message/text classification and
 the configured source-admission checks, CMA reserves the case-sensitive namespace
@@ -65,13 +66,17 @@ acceptance and retries retain their original identity.
 
 Missing, stale, copied or unavailable source/runtime evidence cannot create a
 Message or a permanent source-denial receipt. The existing disabled and malformed
-request refusal contracts remain unchanged. Fixture runtime eligibility can
-exercise the admission path against an exact local conversation and operation;
-production eligibility remains unavailable until compatible owner routing,
-selected-command claiming, handoff and provider behavior are proved. The selector
-does not establish those capabilities, and process-start configuration is not an
-instantaneous distributed revocation mechanism. Real signed provider callbacks,
-Sent delivery and rolling process/update-tail continuity still need live evidence.
+request refusal contracts remain unchanged. Production admission resolves the
+same live runtime registry used by execution. It requires Conversation plus
+Interrupt for cancel or Steer for steering; resolving the attachment sends no
+input and grants no source authority. Before claiming and dispatching, the retained
+executor independently rechecks the original source, current consent and grants,
+exact selected command claim, runtime identity and capabilities. A runtime that
+moves after admission cannot redirect the retained intent to its replacement.
+The selector does not establish those capabilities, and process-start
+configuration is not an instantaneous distributed revocation mechanism. Real
+signed provider callbacks, Sent delivery and rolling process/update-tail
+continuity still need live evidence.
 
 Malformed reserved text returns `invalid_channel_control_request`; a numeric
 unsupported version returns `channel_control_version_unsupported`; other
@@ -116,8 +121,9 @@ Message, including after its payload expires when permanent evidence exists.
 No text-based reclassification or disposition backfill is performed. Existing
 strict Message receipt and provider-alias schemas remain unchanged. An old
 ingress writer without this guard can still admit newly received reserved text;
-mixed-version and rollback acceptance remains an explicit #850 gate. This
-foundation does not enable source control or claim mixed-writer safety.
+mixed-version and rollback acceptance remains an explicit #850 gate. Fresh
+control admission remains a separate rollout gate; this does not claim
+mixed-writer safety.
 
 ## Accepted-intent receipt reader
 
