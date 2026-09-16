@@ -4,7 +4,22 @@ export type {
   BridgeConnectorCapabilities,
   BridgePlacementCapabilities,
 } from './bridges/capabilities-schema.js';
-import { BridgeSourceControls } from './bridges/source-controls.js';
+import { BridgePartitionCommands } from './bridges/partition-commands.js';
+export type {
+  PartitionCommandAction,
+  PartitionCommandRequest,
+  PartitionCommandResult,
+  PartitionCommandReceipt,
+} from './bridges/partition-commands-schema.js';
+export type {
+  BridgePartition,
+  BridgePartitionTarget,
+  BridgePartitionSource,
+  BridgePartitionPage,
+  BridgePartitionCommand,
+  BridgePartitionActivity,
+  BridgePartitionDetail,
+} from './bridges/partitions-schema.js';
 export type * from './bridges/workspace-cleanup-schema.js';
 export type {
   BridgeSourceControlAction,
@@ -89,7 +104,7 @@ function receipt(id: string, expected: number, kind: string) {
   };
 }
 /** Current bridge management. Channel callback and reply credentials are not dashboard authentication. */
-export class Bridges extends BridgeSourceControls {
+export class Bridges extends BridgePartitionCommands {
   list(options: BridgeListOptions = {}) {
     if (options.limit !== undefined && input(positiveInteger, options.limit) > 100)
       throw new ValidationError('bridge limit must be at most 100');

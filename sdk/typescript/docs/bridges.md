@@ -350,3 +350,46 @@ source-sender, exact-turn, retained-runtime, custody or admission authority, and
 does not enable cancel/steer execution, source-reference tools, channel approvals,
 reply producers or automatic notices. No resource, invoke grant or conversation
 is rewritten by recording this policy.
+
+## Read partition status
+
+`listPartitions(bridgeId, options?)` and `readPartition(bridgeId, allocationId, options?)` inspect exact retained partition generations.
+List pages default to and allow at most 25 rows; pass the opaque scoped cursor
+unchanged. Detail reads expose at most 64 pending Channel commands plus the
+latest correlated response. `pending_truncated` and `source_unavailable` mark
+incomplete observations. Target/source/activity use explicit available,
+unavailable or redacted states; reserved targets identify resources not yet
+present. Source labels describe the first accepted message, and must be rendered
+as text. Durable Agent status does not prove current worker connectivity. These
+GET operations preserve existing conversation continuity and admit no work.
+
+## Additional platform boundaries
+
+Slack (`slack`), WhatsApp (`whatsapp`) and X (`x`) retain distinct platform
+identities in configuration and connector choices. The capability catalog can
+report verified identity fields and Slack `slack_thread` facts while
+`inbound_text` and `output_text` remain false. These boundary fixtures do not
+establish human/loop evidence, Agent admission, media access or live delivery.
+Always inspect the capability and stage values before offering channel work.
+
+## Explicit partition reset and detach
+
+`resetPartition(bridgeId, allocationId, request, { idempotencyKey })` and
+`detachPartition(bridgeId, allocationId, request, { idempotencyKey })` require
+`expected_bridge_revision` and the exact allocation `expected_revision`.
+The manager must choose the action explicitly. HTTP 202 returns a permanent
+`PartitionCommandReceipt` for that original request, including the retired
+original result and, for reset, its successor generation. A reserved successor
+has not yet finished resource creation.
+
+Reset preserves the original configuration and history. For `existing_agent`
+placement the successor keeps the same Agent's native conversation and context.
+Detach stops new partition input while retaining the Agent, resources and
+history. Cleanup uses separate explicit operations.
+
+After an uncertain reply, retain the complete action, allocation, request and
+key. Explicitly replay those same values to recover the original receipt even
+if later revisions changed. A changed body or action under the same key
+conflicts. Current owner or organization-admin authority is always required,
+including receipt recovery. The SDK sends each request once and never
+substitutes a new key or retries automatically.
