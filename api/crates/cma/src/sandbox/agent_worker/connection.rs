@@ -139,17 +139,18 @@ fn restored_connection_is_ready(sandbox: &Sandbox, agent: &Agent) -> bool {
                 generation > 0 && agent.conversation.runtime_generation == Some(generation)
             })
         })
-        && sandbox
-            .lifecycle
-            .checkpoints
-            .latest
-            .as_ref()
-            .is_some_and(|checkpoint| {
-                operation.checkpoint_epoch() == Some(checkpoint.epoch)
-                    && checkpoint.conversations.iter().any(|conversation| {
-                        conversation.agent_id == agent.id
-                            && agent.conversation.conversation_id.as_deref()
-                                == Some(conversation.conversation_id.as_str())
-                    })
-            })
+        && ((sandbox.retained_home_recovery().is_some() && sandbox.restores_agent(agent))
+            || sandbox
+                .lifecycle
+                .checkpoints
+                .latest
+                .as_ref()
+                .is_some_and(|checkpoint| {
+                    operation.checkpoint_epoch() == Some(checkpoint.epoch)
+                        && checkpoint.conversations.iter().any(|conversation| {
+                            conversation.agent_id == agent.id
+                                && agent.conversation.conversation_id.as_deref()
+                                    == Some(conversation.conversation_id.as_str())
+                        })
+                }))
 }

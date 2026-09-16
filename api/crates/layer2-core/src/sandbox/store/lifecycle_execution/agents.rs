@@ -1,4 +1,5 @@
 use super::*;
+use crate::sandbox::{AgentStatus, AgentWorkStep, FirstMessageDelivery};
 
 pub(super) fn validate_checkpoint_agents(
     sandbox: &Sandbox,
@@ -75,18 +76,31 @@ pub(super) fn validate_agent_change(
     let status_transition = current.status == next.status
         || current.status.transition(next.status).ok() == Some(next.status);
     let mut expected_work = current.work.clone();
-    if current.status == crate::sandbox::AgentStatus::Paused
-        && next.status == crate::sandbox::AgentStatus::Ready
-        && current
+    if current.status == AgentStatus::Paused && next.status == AgentStatus::Ready {
+        let receipt = next
+            .work
+            .receipts
+            .iter()
+            .find(|receipt| receipt.step == AgentWorkStep::OpenConversation)
+            .filter(|receipt| receipt.completed_at == appended_at)
+            .ok_or(SandboxStoreError::Conflict)?;
+        super::super::agent_work_evidence_validation::validate_histories(
+            current,
+            next,
+            appended_at,
+        )?;
+        expected_work
+            .receipts
+            .retain(|receipt| receipt.step != AgentWorkStep::OpenConversation);
+        expected_work.receipts.push(receipt.clone());
+        if current
             .conversation
             .first_message
             .as_ref()
-            .is_some_and(|message| message.state == crate::sandbox::FirstMessageDelivery::Queued)
-    {
-        expected_work.schedule(
-            crate::sandbox::AgentWorkStep::DispatchFirstMessage,
-            appended_at.into(),
-        );
+            .is_some_and(|message| message.state == FirstMessageDelivery::Queued)
+        {
+            expected_work.schedule(AgentWorkStep::DispatchFirstMessage, appended_at.into());
+        }
     }
     if change.logs.len() > MAX_AGENT_LOG_BATCH_SIZE
         || actual_last_seq != current.conversation.last_seq
