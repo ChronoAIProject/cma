@@ -1,0 +1,66 @@
+use super::*;
+use crate::auth::persistence::ApiBearerCustody;
+
+pub(super) enum CommandCustody {
+    Personal(SubjectAuthState),
+    Api(ApiBearerCustody),
+}
+
+impl AuthState {
+    pub(super) async fn command_actor_custody(
+        &self,
+        actor: &AgentActor,
+        authority: &AgentAuthorizationRevision,
+    ) -> Result<CommandCustody, CommandAuthorizationError> {
+        let subject = match actor {
+            AgentActor::Api {
+                subject,
+                delegation_id: None,
+            }
+            | AgentActor::Human { subject } => subject,
+            _ => return Err(CommandAuthorizationError::Revoked),
+        };
+        if authority.authority_id.starts_with("api:") {
+            if !matches!(
+                actor,
+                AgentActor::Api {
+                    delegation_id: None,
+                    ..
+                }
+            ) {
+                return Err(CommandAuthorizationError::Revoked);
+            }
+            self.retained_api_custody(subject, authority)
+                .await
+                .map(CommandCustody::Api)
+        } else {
+            self.retained_actor_state(subject, authority)
+                .await
+                .map(CommandCustody::Personal)
+        }
+    }
+
+    pub(super) async fn verify_command_custody(
+        &self,
+        custody: &CommandCustody,
+    ) -> Result<RequestAuth, CommandAuthorizationError> {
+        match custody {
+            CommandCustody::Personal(state) => self.verify_human_state(state.clone()).await,
+            CommandCustody::Api(record) => self.verify_api_custody(record).await,
+        }
+    }
+
+    pub(super) async fn require_command_custody(
+        &self,
+        custody: &CommandCustody,
+    ) -> Result<(), CommandAuthorizationError> {
+        match custody {
+            CommandCustody::Personal(state) => {
+                cookie_authorization::require_current_custody(self, state)
+                    .await
+                    .map_err(|_| CommandAuthorizationError::Unavailable)
+            }
+            CommandCustody::Api(record) => self.require_api_custody(record).await,
+        }
+    }
+}

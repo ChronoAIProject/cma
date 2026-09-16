@@ -253,6 +253,7 @@ async fn command_admission_binds_exact_request_context_and_keeps_owner_independe
     fixture.seed().await;
     let credential = "must-not-leak-access-token";
     let context = CallerContext {
+        credential_source: layer2_core::resource_access::CredentialSource::Retained,
         caller: caller(),
         actor: AgentActor::Api {
             subject: caller().subject,
