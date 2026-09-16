@@ -41,7 +41,7 @@ pub(super) fn assert_inputs(probe: &runtime_tests::RuntimeProbe, agent: &Agent, 
             agent.conversation.runtime_generation
         );
         assert!(
-            matches!(input, ConversationInput::Prompt(blocks)
+            matches!(input, ConversationInput::RecoverablePrompt { content: blocks, .. }
             if blocks.len() == 1 && matches!(&blocks[0], layer3_adapter::ContentBlock::Text(text)
                 if text.text == INPUTS[index].2)),
             "runtime input {index} preserves public FIFO"

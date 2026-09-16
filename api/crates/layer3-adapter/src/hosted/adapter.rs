@@ -346,12 +346,25 @@ impl SandboxAdapter for HostedAdapter {
         conversation_id: &str,
         updates: mpsc::Sender<ConversationUpdate>,
     ) -> crate::Result<ConversationChannel> {
+        let recovery = (conversation_id, None);
+        agent::reconnect_agent(self, handle, authority_fence, request, recovery, updates).await
+    }
+
+    async fn reconnect_agent_with_prompt(
+        &self,
+        handle: &RuntimeHandle,
+        authority_fence: u64,
+        request: &AgentOpenRequest,
+        conversation_id: &str,
+        recovered_prompt: Option<crate::PromptIdentity>,
+        updates: mpsc::Sender<ConversationUpdate>,
+    ) -> crate::Result<ConversationChannel> {
         agent::reconnect_agent(
             self,
             handle,
             authority_fence,
             request,
-            conversation_id,
+            (conversation_id, recovered_prompt),
             updates,
         )
         .await
