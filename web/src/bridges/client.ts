@@ -6,6 +6,8 @@ export type BridgeViewsClient = Pick<
   | 'bridges'
   | 'resourceAccess'
   | 'agents'
+  | 'sandboxes'
+  | 'workspaces'
   | 'agentProfiles'
   | 'workspaceProfiles'
   | 'sandboxProfiles'

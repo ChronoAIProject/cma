@@ -30,6 +30,25 @@ pub(crate) struct BridgeCapabilityCatalogShape {
     source_revision: Option<String>,
     connection_validation_available: bool,
     connectors: Vec<BridgeConnectorCapabilitiesShape>,
+    placements: Vec<BridgePlacementCapabilitiesShape>,
+}
+#[derive(ToSchema)]
+struct BridgePlacementCapabilitiesShape {
+    kind: BridgeSharedPlacementKindShape,
+    availability: BridgePlacementAvailabilityShape,
+}
+#[derive(ToSchema)]
+#[serde(rename_all = "snake_case")]
+enum BridgeSharedPlacementKindShape {
+    WorkspacePerPartition,
+    WorktreeAgentPerPartition,
+}
+#[derive(ToSchema)]
+#[serde(rename_all = "snake_case")]
+enum BridgePlacementAvailabilityShape {
+    Available,
+    RuntimeUnavailable,
+    ContinuityUnverified,
 }
 #[derive(ToSchema)]
 #[serde(rename_all = "snake_case")]

@@ -10,12 +10,14 @@ export function ProfileSelection({
   kind,
   value,
   disabled,
+  organization,
   onChange,
 }: {
   readonly client: BridgeViewsClient;
   readonly kind: ProfileKind;
   readonly value: ProfileReference;
   readonly disabled: boolean;
+  readonly organization?: string;
   readonly onChange: (value: ProfileReference) => void;
 }) {
   const [cursors, setCursors] = useState<readonly (string | undefined)[]>([undefined]);
@@ -42,7 +44,10 @@ export function ProfileSelection({
   const page = choices.state.status === 'ready' ? choices.state.value : undefined;
   const available =
     page?.items.filter(
-      (item) => item.latest_revision !== undefined && item.retired_at === undefined,
+      (item) =>
+        item.latest_revision !== undefined &&
+        item.retired_at === undefined &&
+        (organization === undefined || item.owner === organization || item.visibility === 'public'),
     ) ?? [];
   const selected = available.find(
     (item) => item.id === value.id && item.latest_revision?.revision === value.revision,
@@ -57,7 +62,7 @@ export function ProfileSelection({
   if (value.id !== '' && selected === undefined)
     options.push({
       value: value.id,
-      label: `Selected ${kind} profile · Revision ${value.revision}`,
+      label: `Selected ${kind} profile · ${value.id} · Revision ${value.revision}`,
     });
   return (
     <div className="bridges__profile">
