@@ -98,10 +98,9 @@ pub(in crate::store) async fn check(
         .await
         .unwrap()
         .unwrap();
-    let assessment =
-        crate::store::channel_history::assess(db, allocation, &document, &mut session)
-            .await
-            .unwrap();
+    let assessment = crate::store::channel_history::assess(db, allocation, &document, &mut session)
+        .await
+        .unwrap();
     assert_eq!(assessment.hold, None);
     assert_eq!(assessment.reference_count, 2);
     assert!(!assessment.inventory_sealed);
