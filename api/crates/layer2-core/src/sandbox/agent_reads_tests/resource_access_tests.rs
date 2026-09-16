@@ -60,6 +60,7 @@ fn org_admin() -> CallerContext {
     };
     let now = std::time::SystemTime::now();
     CallerContext {
+        credential_source: crate::resource_access::CredentialSource::Retained,
         caller: caller("admin", true),
         credential: credential.clone(),
         actor: ResourceActor::Human {

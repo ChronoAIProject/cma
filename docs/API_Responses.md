@@ -14,13 +14,20 @@ v2 rules in this section.
 
 All v2 endpoints belong to the control plane. No Responses server runs inside
 an Agent Sandbox. Creation requires a current authenticated credential in CMA's
-durable custody, bound to the requesting sign-in incarnation. Current history
+durable custody. Browser requests retain their existing sign-in incarnation.
+For external API requests, CMA independently encrypts the exact NyxID access
+token presented by the caller until its provider-verified expiry. The token must
+be an ordinary, unrestricted user access token with active introspection, a
+matching subject, current permissions and an explicit expiry. Agent keys,
+service-account, delegated, relay, resource-scoped and sender-constrained tokens
+cannot use this path. API custody neither replaces a browser login nor borrows
+its refresh token; callers obtain a new API token when theirs expires. Current history
 authorization is sufficient for reads, even when the command's original execution
 credential has been revoked. Personal owners and currently authorized human
 administrators can admit commands to shared or organization-owned Agents using
 their own retained credentials. View grants and member/viewer roles permit
 history without interaction. Before deferred execution the worker checks current
-membership, resource policy and the original sign-in custody again. Sandbox
+membership, resource policy and the exact admitted credential custody again. Sandbox
 revival additionally requires independent `manage_sandbox` authority and uses
 the resource owner's connections. Organization resource creation and credential
 provisioning remain separate capabilities under development.

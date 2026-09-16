@@ -1,6 +1,12 @@
 //! Complete provider permission evidence, preferring advertised introspection.
 
 use super::{AuthMode, AuthState, ProviderMetadata};
+use std::time::{Duration, SystemTime};
+
+pub(super) struct PermissionObservation {
+    pub permissions: PermissionEvidence,
+    pub api_expires_at: Option<SystemTime>,
+}
 
 #[derive(Debug, PartialEq, Eq)]
 pub(super) enum PermissionEvidence {
@@ -55,7 +61,7 @@ pub(super) async fn introspect_permissions(
     meta: &ProviderMetadata,
     access_token: &str,
     expected_subject: &str,
-) -> Result<Option<PermissionEvidence>, String> {
+) -> Result<Option<PermissionObservation>, String> {
     let Some(endpoint) = meta.introspection_endpoint.as_ref() else {
         return Ok(None);
     };
@@ -98,7 +104,23 @@ pub(super) async fn introspect_permissions(
         format!("introspection body not usable: {e}")
     })?;
     introspection_claim(&body, expected_subject)
-        .map(Some)
+        .map(|permissions| {
+            let api_expires_at = (body.get("active").and_then(serde_json::Value::as_bool)
+                == Some(true)
+                && body.get("sub").and_then(serde_json::Value::as_str) == Some(expected_subject)
+                && body.get("token_type").and_then(serde_json::Value::as_str) == Some("access")
+                && body.get("resource").is_none_or(|value| {
+                    value.is_null() || value.as_array().is_some_and(Vec::is_empty)
+                }))
+            .then(|| body.get("exp").and_then(serde_json::Value::as_u64))
+            .flatten()
+            .and_then(|seconds| SystemTime::UNIX_EPOCH.checked_add(Duration::from_secs(seconds)))
+            .filter(|expiry| *expiry > SystemTime::now());
+            Some(PermissionObservation {
+                permissions,
+                api_expires_at,
+            })
+        })
         .inspect_err(|_| {
             super::identity::verification_failure("introspection", "invalid_evidence", None);
         })

@@ -83,6 +83,43 @@ pub(super) fn permits_personal_authority(token: &str) -> bool {
     body.get("act").is_none_or(serde_json::Value::is_null)
 }
 
+/// Negative restriction for independently retained API authority. NyxID agent
+/// keys and opaque tokens cannot prove an ordinary access-token shape. JWT
+/// content only restricts eligibility; provider introspection authenticates
+/// the exact token, current permissions, subject and expiry separately.
+pub(super) fn permits_independent_commands(token: &str) -> bool {
+    if !permits_personal_authority(token) {
+        return false;
+    }
+    let pieces: Vec<_> = token.split('.').collect();
+    if pieces.len() != 3 {
+        return false;
+    }
+    let Ok(bytes) = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(pieces[1])
+        .or_else(|_| base64::engine::general_purpose::URL_SAFE.decode(pieces[1]))
+    else {
+        return false;
+    };
+    let Ok(serde_json::Value::Object(claims)) = serde_json::from_slice(&bytes) else {
+        return false;
+    };
+    claims.get("token_type").and_then(serde_json::Value::as_str) == Some("access")
+        && ![
+            "cnf",
+            "resources",
+            "resource",
+            "allowed_service_ids",
+            "allowed_node_ids",
+            "allow_all_services",
+            "allow_all_nodes",
+            "api_key_id",
+            "assistant_forward",
+        ]
+        .iter()
+        .any(|field| claims.get(*field).is_some_and(|value| !value.is_null()))
+}
+
 pub(super) fn bearer_token(headers: &HeaderMap) -> Option<String> {
     let mut values = headers.get_all(header::AUTHORIZATION).iter();
     let value = values.next()?.to_str().ok()?;

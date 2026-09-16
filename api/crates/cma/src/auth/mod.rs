@@ -97,6 +97,7 @@ pub struct AuthState {
 }
 
 pub(super) struct RequestAuth {
+    pub credential_source: layer2_core::resource_access::CredentialSource,
     pub subject: SubjectId,
     pub authorization: Authorization,
     pub profile: Profile,
@@ -201,6 +202,7 @@ impl AuthState {
     ) -> Result<Option<RequestAuth>, StoreError> {
         match &self.mode {
             AuthMode::Trusted { subject } => Ok(Some(RequestAuth {
+                credential_source: layer2_core::resource_access::CredentialSource::Retained,
                 subject: SubjectId::new(subject),
                 authorization: Self::trusted_authorization(),
                 profile: Profile::default(),
@@ -216,6 +218,8 @@ impl AuthState {
                         }
                         let Some(mut state) = self.store.subject(&login.subject).await? else {
                             return Ok(Some(RequestAuth {
+                                credential_source:
+                                    layer2_core::resource_access::CredentialSource::Retained,
                                 subject: login.subject,
                                 authorization: Authorization::none(),
                                 profile: Profile::default(),

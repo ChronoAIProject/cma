@@ -16,6 +16,8 @@ use super::{
     cookie_authorization, persistence::SubjectAuthState, AuthMode, AuthState, RequestAuth,
 };
 
+mod api_bearer;
+mod custody;
 mod resource;
 mod sandbox_controls;
 
@@ -45,6 +47,17 @@ impl AgentCommandAdmissionAuthority for AuthState {
             )
         {
             return Err(CommandAuthorizationError::Revoked);
+        }
+        if matches!(
+            context.credential_source,
+            layer2_core::resource_access::CredentialSource::Independent { .. }
+        ) {
+            return tokio::time::timeout(
+                VERIFICATION_TIMEOUT,
+                self.independent_command_authority(context, credential),
+            )
+            .await
+            .map_err(|_| CommandAuthorizationError::Unavailable)?;
         }
         // Resource policy was independently checked by AgentCommandService.
         // Capture only this actual human's custody; the owner supplies no login.
@@ -158,7 +171,8 @@ impl AgentCommandAuthorizer for AuthState {
                 return Err(CommandAuthorizationError::Revoked);
             }
             let state = self.retained_command_state(envelope).await?;
-            let request = self.verify_human_state(state).await?;
+            let request = self.verify_command_custody(&state).await?;
+            self.require_command_custody(&state).await?;
             Ok(Caller::new(request.subject, request.authorization))
         })
         .await
