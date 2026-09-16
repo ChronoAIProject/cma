@@ -19,6 +19,8 @@ mod delivery;
 mod generation;
 #[path = "channel_reply_reset_tests.rs"]
 mod reset;
+#[path = "wildcard_chat_tests.rs"]
+mod wildcard_chat;
 
 #[tokio::test]
 #[ignore = "requires the disposable MongoDB replica contract runner"]

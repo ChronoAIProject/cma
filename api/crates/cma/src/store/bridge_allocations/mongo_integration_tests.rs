@@ -104,10 +104,6 @@ async fn proposal_with_owner_limit(
     BridgeManagementLease,
 ) {
     let bridge = bridges.bridge(id).await.unwrap().unwrap();
-    let management = svc
-        .management_lease(&caller(), None, id, bridge.revision)
-        .await
-        .unwrap();
     let config = &bridge.current().unwrap().config;
     let inbox = StoredInbox {
         id: "a".repeat(64),
@@ -157,6 +153,24 @@ async fn proposal_with_owner_limit(
     if let Some(previous) = previous {
         admission = admission.after_reset(previous).unwrap();
     }
+    let (authority, management) =
+        authority_for_admission(svc, bridge, &admission, owner_live_sandbox_limit).await;
+    (admission, authority, management)
+}
+
+/// Profile preparation accepts the already checked admission; it does not
+/// manufacture callback identity or pre-create the allocation's target rows.
+async fn authority_for_admission(
+    svc: &BridgeService,
+    bridge: BridgeRecord,
+    admission: &AllocationAdmission,
+    owner_live_sandbox_limit: u16,
+) -> (AllocationAuthority, BridgeManagementLease) {
+    let management = svc
+        .management_lease(&caller(), None, &bridge.id, bridge.revision)
+        .await
+        .unwrap();
+    let config = &bridge.current().unwrap().config;
     let sandbox_content: SandboxProfileContent = serde_json::from_value(serde_json::json!({
         "cpu_millis":1000,"memory_mib":1024,"agent_provider":"codex",
         "model_access":"chronoai_managed","max_workspaces":1,"max_agents_per_workspace":1
@@ -219,7 +233,7 @@ async fn proposal_with_owner_limit(
     let authority = AllocationAuthority::Provisioning(Box::new(
         AllocationProvisioningProof::new(bridge, admission.identity(), plan, connection).unwrap(),
     ));
-    (admission, authority, management)
+    (authority, management)
 }
 
 fn now() -> i64 {
