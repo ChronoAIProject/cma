@@ -7,8 +7,8 @@ use crate::{
 };
 use layer2_core::bridge::{
     channel_control::{
-        ChannelControlError, ChannelControlProof, ChannelControlRequest, ChannelControlReservation,
-        ChannelControlWrite,
+        ChannelControlError, ChannelControlProof, ChannelControlRecovery, ChannelControlRequest,
+        ChannelControlReservation, ChannelControlWrite,
     },
     ingress::{ChannelControlRefusal, InboxAdmission, InboxWrite},
     invoke::BridgeInvokeService,
@@ -71,37 +71,57 @@ impl ChannelControlIngress {
     pub(crate) async fn accept(
         &self,
         write: InboxWrite,
+        lookup_error: Option<CallbackError>,
     ) -> Result<CallbackAcceptance, CallbackError> {
-        if write.control_refusal() != Some(ChannelControlRefusal::ChannelControlsDisabled)
-            || write.record().admission != InboxAdmission::Accepted
-            || write.record().envelope.content_type != "text"
-            || !write.record().envelope.attachments.is_empty()
-            || write.platform_redelivery().is_none()
-            || write
+        let candidate = write.record().envelope.content_type == "text"
+            && write.record().envelope.attachments.is_empty()
+            && write.platform_redelivery().is_some()
+            && write
                 .record()
                 .envelope
                 .text
                 .as_deref()
-                .is_none_or(|text| ChannelControlRequest::parse(text).is_err())
-        {
-            return self.callbacks.accept(write).await;
-        }
+                .is_some_and(|text| ChannelControlRequest::parse(text).is_ok());
         let deadline = write.deadline();
         tokio::time::timeout_at(deadline, async {
-            let write = ChannelControlWrite::from_verified(write).map_err(callback_error)?;
             // Old Message/refusal dispositions and accepted-v2 provider aliases
-            // win before fresh configuration, source or runtime observations.
-            if let Some(existing) = self
-                .store
-                .recover_acceptance(&write)
-                .await
-                .map_err(callback_error)?
+            // retain their complete graph even when reply lookup failed or
+            // current group admission differs from original acceptance.
+            if candidate {
+                let recovery =
+                    ChannelControlRecovery::from_authenticated(&write).map_err(callback_error)?;
+                if let Some(existing) = self
+                    .store
+                    .recover_authenticated_acceptance(&recovery)
+                    .await
+                    .map_err(callback_error)?
+                {
+                    return Ok(existing.acceptance);
+                }
+            }
+            if let Some(error) = lookup_error {
+                if candidate {
+                    return Err(error);
+                }
+                return self.callbacks.recover_receipt(&write).await?.ok_or(error);
+            }
+            if !candidate {
+                return self.callbacks.accept(write).await;
+            }
+            if write.control_refusal() != Some(ChannelControlRefusal::ChannelControlsDisabled)
+                || write.record().admission != InboxAdmission::Accepted
+                || !self.flags.enabled(BridgeFlag::ControlAdmission)
             {
-                return Ok(existing.acceptance);
+                let recovery =
+                    ChannelControlRecovery::from_authenticated(&write).map_err(callback_error)?;
+                return self
+                    .store
+                    .refuse_fresh_or_recover(&recovery)
+                    .await
+                    .map(|result| result.acceptance)
+                    .map_err(callback_error);
             }
-            if !self.flags.enabled(BridgeFlag::ControlAdmission) {
-                return self.callbacks.accept(write.into_inbox()).await;
-            }
+            let write = ChannelControlWrite::from_verified(write).map_err(callback_error)?;
             let proof = self
                 .store
                 .admission_proof(write, &self.invokes)

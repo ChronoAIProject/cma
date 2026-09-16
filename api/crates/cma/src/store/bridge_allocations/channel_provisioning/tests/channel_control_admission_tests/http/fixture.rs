@@ -67,11 +67,48 @@ pub(super) async fn app(
     enabled: bool,
     runtime: Option<Arc<dyn ChannelControlRuntimeEligibility>>,
 ) -> axum::Router {
+    app_with_stores(c, enabled, runtime, c.f.bridges.clone(), c.invokes.clone()).await
+}
+
+pub(super) async fn disabled_app_with_client(
+    c: &ControlFixture,
+    client: &mongodb::Client,
+) -> axum::Router {
+    let resources = Arc::new(
+        crate::store::MongoSandboxStore::open(client, &c.f.database)
+            .await
+            .unwrap(),
+    );
+    let bridges = Arc::new(
+        crate::store::MongoBridgeStore::open(
+            client,
+            &c.f.database,
+            "fixture-deployment",
+            &custody_key(),
+        )
+        .await
+        .unwrap(),
+    );
+    let invokes = Arc::new(
+        crate::store::MongoBridgeInvokeStore::open(bridges.clone(), resources, &c.f.database)
+            .await
+            .unwrap(),
+    );
+    app_with_stores(c, false, None, bridges, invokes).await
+}
+
+async fn app_with_stores(
+    c: &ControlFixture,
+    enabled: bool,
+    runtime: Option<Arc<dyn ChannelControlRuntimeEligibility>>,
+    bridges: Arc<crate::store::MongoBridgeStore>,
+    invokes: Arc<crate::store::MongoBridgeInvokeStore>,
+) -> axum::Router {
     // Reopen both production stores for every router, exercising persistence
     // independently from the fixture's direct admission convenience methods.
     let callbacks = Arc::new(
         crate::store::MongoCallbackInbox::open(
-            &c.f.bridges,
+            &bridges,
             &c.f.database,
             "fixture-deployment",
             &custody_key(),
@@ -80,7 +117,7 @@ pub(super) async fn app(
         .unwrap(),
     );
     let store = Arc::new(
-        crate::store::MongoChannelControlStore::open(c.invokes.clone(), callbacks.clone())
+        crate::store::MongoChannelControlStore::open(invokes, callbacks.clone())
             .await
             .unwrap(),
     );
@@ -94,7 +131,7 @@ pub(super) async fn app(
         controls = controls.with_runtime(runtime);
     }
     let ingress = CallbackIngress::new(
-        c.f.bridges.clone(),
+        bridges,
         Arc::new(Authority),
         callbacks,
         PinnedCallbackKeys::fixture(),

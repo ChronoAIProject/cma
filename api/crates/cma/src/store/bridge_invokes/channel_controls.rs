@@ -81,15 +81,18 @@ impl MongoChannelControlStore {
 
     async fn recover_transaction(
         &self,
-        write: &ChannelControlWrite,
+        write: &ChannelControlRecovery<'_>,
         session: &mut ClientSession,
+        allow_fresh_refusal: bool,
     ) -> Result<Option<ChannelControlAcceptance>, MutationError> {
-        let Some(receipt) = self
+        let receipt = if let Some(receipt) = self
             .callbacks
             .recover_control_disposition(write.inbox(), session)
             .await?
-        else {
-            let callback = ChannelControlCallback::capture(write)?;
+        {
+            receipt
+        } else {
+            let callback = write.callback();
             if self
                 .intents
                 .find_one(doc! {"_id":callback.intent_id()?})
@@ -99,7 +102,12 @@ impl MongoChannelControlStore {
             {
                 return Err(Error::Corrupt.into());
             }
-            return Ok(None);
+            if !allow_fresh_refusal {
+                return Ok(None);
+            }
+            self.callbacks
+                .refuse_fresh_control(write.inbox(), session)
+                .await?
         };
         self.resolve_acceptance(write, receipt, session)
             .await
@@ -118,9 +126,8 @@ impl MongoChannelControlStore {
             .prepare_control(proof.write().inbox(), session)
             .await?
         {
-            return self
-                .resolve_acceptance(proof.write(), receipt, session)
-                .await;
+            let recovery = ChannelControlRecovery::from_authenticated(proof.write().inbox())?;
+            return self.resolve_acceptance(&recovery, receipt, session).await;
         }
         self.require_unclaimed_callback(proof.write(), session)
             .await?;
@@ -175,7 +182,7 @@ impl MongoChannelControlStore {
 
     async fn resolve_acceptance(
         &self,
-        write: &ChannelControlWrite,
+        write: &ChannelControlRecovery<'_>,
         acceptance: layer2_core::bridge::ingress::CallbackAcceptance,
         session: &mut ClientSession,
     ) -> Result<ChannelControlAcceptance, MutationError> {
@@ -196,8 +203,8 @@ impl MongoChannelControlStore {
         if intent.expected_acceptance()? != *receipt || intent.request != *write.request() {
             return Err(Error::Conflict.into());
         }
-        let callback = ChannelControlCallback::capture(write)?;
-        intent.callback.require_alias(&callback)?;
+        let callback = write.callback();
+        intent.callback.require_alias(callback)?;
         let result = self.read_result(&intent, session).await?;
         let database = self
             .invokes
@@ -209,7 +216,7 @@ impl MongoChannelControlStore {
         self.invokes
             .fence_bridge(write.inbox().bridge(), session)
             .await?;
-        self.retain_alias(&callback, &intent, session).await?;
+        self.retain_alias(callback, &intent, session).await?;
         Ok(ChannelControlAcceptance {
             acceptance,
             admitted: Some(result),
