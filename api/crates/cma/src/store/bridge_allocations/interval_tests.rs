@@ -128,14 +128,8 @@ async fn allocation_interval_reset_retries_preserve_budget_until_actual_admissio
         proposal_with_owner_limit(&svc, &bridges, &id, "sender-0", Some(&first), 20).await;
     let reset = allocations
         .reserve(
-            AllocationReservation::reset(
-                admission,
-                authority,
-                first.clone(),
-                management,
-                now(),
-            )
-            .unwrap(),
+            AllocationReservation::reset(admission, authority, first.clone(), management, now())
+                .unwrap(),
         )
         .await
         .unwrap();
