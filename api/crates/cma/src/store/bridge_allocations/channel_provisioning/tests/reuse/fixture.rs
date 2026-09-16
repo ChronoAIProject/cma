@@ -172,13 +172,16 @@ impl ReuseFixture {
         }
     }
     pub async fn proposal(&self, sender: &str) -> (AllocationAdmission, AllocationAuthority) {
-        let f = &self.original;
-        let bridge = f
-            .bridges
-            .bridge(&f.record.identity.bridge_id)
+        self.proposal_on(&self.original.record.identity.bridge_id, sender)
             .await
-            .unwrap()
-            .unwrap();
+    }
+    pub(super) async fn proposal_on(
+        &self,
+        bridge_id: &BridgeId,
+        sender: &str,
+    ) -> (AllocationAdmission, AllocationAuthority) {
+        let f = &self.original;
+        let bridge = f.bridges.bridge(bridge_id).await.unwrap().unwrap();
         let config = &bridge.current().unwrap().config;
         let now = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
