@@ -133,6 +133,13 @@ async fn recovery_scenario(retained: bool, interrupt_revival: bool) {
         let reopened = harness.stored(&active.id).await;
         let handle = RuntimeHandle(reopened.runtime.as_ref().unwrap().runtime_id.clone());
         // The lifecycle worker sees loss before the reconciler gets its next turn.
+        crate::sandbox::runtime_attachment::adopt_bound_runtime(
+            adapter.as_ref(),
+            &reopened,
+            "test",
+        )
+        .await
+        .unwrap();
         adapter.teardown(&handle).await.unwrap();
         worker.run_one(&active.id, recovery_at).await.unwrap();
         let waiting = harness.stored(&active.id).await;
