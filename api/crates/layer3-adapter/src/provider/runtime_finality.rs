@@ -2,8 +2,15 @@ use super::*;
 use crate::{
     AdapterError, RuntimeFinalityReceipt, RuntimeProviderIncarnation, RuntimeProvisionReceipt,
 };
+use futures_util::TryStreamExt;
+use kube::api::{WatchEvent, WatchParams};
 
 pub(crate) const DISPATCH_LABEL: &str = "cma/provider-dispatch";
+
+pub(crate) struct CreationObservation {
+    resource_version: String,
+    marker: String,
+}
 
 pub(crate) fn dispatch_marker(operation_id: &str) -> crate::Result<String> {
     if !crate::provider_finality::identifier(operation_id) {
@@ -18,6 +25,44 @@ pub(crate) fn dispatch_marker(operation_id: &str) -> crate::Result<String> {
 }
 
 impl BatchSandboxReclaimer {
+    pub(crate) async fn begin_creation_observation(
+        &self,
+        operation_id: &str,
+    ) -> crate::Result<CreationObservation> {
+        self.require_finality_scope()?;
+        let marker = dispatch_marker(operation_id)?;
+        let rows = self
+            .api
+            .list(
+                &ListParams::default()
+                    .labels(&format!("{DISPATCH_LABEL}={marker}"))
+                    .limit(2),
+            )
+            .await
+            .map_err(|error| kube_error("fence original runtime creation observation", error))?;
+        if !rows.items.is_empty()
+            || rows
+                .metadata
+                .continue_
+                .as_ref()
+                .is_some_and(|v| !v.is_empty())
+        {
+            return Err(AdapterError::Rejected(
+                "provider dispatch already has physical history".into(),
+            ));
+        }
+        let resource_version = rows
+            .metadata
+            .resource_version
+            .filter(|v| !v.is_empty())
+            .ok_or_else(|| {
+                AdapterError::Unavailable("original creation observation has no version".into())
+            })?;
+        Ok(CreationObservation {
+            resource_version,
+            marker,
+        })
+    }
     pub(crate) fn require_finality_scope(&self) -> crate::Result<()> {
         self.scope
             .as_ref()
@@ -46,6 +91,7 @@ impl BatchSandboxReclaimer {
             name: captured.handle.0.clone(),
             uid: captured.identity.uid.clone(),
             generation: captured.identity.generation,
+            creation_resource_version: captured.resource_version.clone(),
             identity_sha256: crate::provider_request_digest(&captured.identity)?,
         })
     }
@@ -55,10 +101,53 @@ impl BatchSandboxReclaimer {
         handle: &RuntimeHandle,
         operation_id: &str,
         request_sha256: &str,
+        observation: CreationObservation,
     ) -> crate::Result<RuntimeProvisionReceipt> {
-        let captured = self.capture(handle).await?.ok_or_else(|| {
-            AdapterError::Unavailable("original created runtime disappeared".into())
-        })?;
+        if observation.marker != dispatch_marker(operation_id)? {
+            return Err(AdapterError::Rejected(
+                "creation watch belongs to another dispatch".into(),
+            ));
+        }
+        // Name is immutable: an ADDED event here proves creation, unlike a
+        // label-filter watch where adding a label can synthesize ADDED.
+        let watched = self
+            .api
+            .watch(
+                &WatchParams::default()
+                    .fields(&format!("metadata.name={}", handle.as_str()))
+                    .timeout(10),
+                &observation.resource_version,
+            )
+            .await
+            .map_err(|error| kube_error("read original creation event", error))?;
+        let captured =
+            tokio::time::timeout(Duration::from_secs(15), async {
+                futures_util::pin_mut!(watched);
+                for _ in 0..64 {
+                    match watched.try_next().await.map_err(|error| {
+                        kube_error("read original provider creation stream", error)
+                    })? {
+                        Some(WatchEvent::Added(object)) => {
+                            return self
+                                .capture_object(object, handle)
+                                .map_err(AdapterError::from)
+                        }
+                        Some(WatchEvent::Bookmark(_)) => continue,
+                        _ => {
+                            return Err(AdapterError::Unavailable(
+                                "complete original creation event is unavailable".into(),
+                            ))
+                        }
+                    }
+                }
+                Err(AdapterError::Unavailable(
+                    "creation event stream exceeded finality bound".into(),
+                ))
+            })
+            .await
+            .map_err(|_| {
+                AdapterError::Unavailable("original creation event observation timed out".into())
+            })??;
         if captured.identity.labels.get(DISPATCH_LABEL) != Some(&dispatch_marker(operation_id)?) {
             return Err(AdapterError::Rejected(
                 "runtime object does not belong to this original dispatch".into(),
@@ -69,6 +158,7 @@ impl BatchSandboxReclaimer {
             request_sha256: request_sha256.to_owned(),
             handle: handle.clone(),
             incarnation: self.incarnation(&captured)?,
+            creation_observation_version: observation.resource_version,
         };
         receipt.validate()?;
         Ok(receipt)
@@ -83,7 +173,9 @@ impl BatchSandboxReclaimer {
             .capture(original.handle())
             .await?
             .ok_or_else(|| AdapterError::Unavailable("original runtime no longer exists".into()))?;
-        if self.incarnation(&current)? != original.incarnation {
+        let mut identity = self.incarnation(&current)?;
+        identity.creation_resource_version = original.incarnation.creation_resource_version.clone();
+        if identity != original.incarnation {
             return Err(AdapterError::Rejected(
                 "original provider runtime incarnation changed".into(),
             ));
@@ -103,7 +195,9 @@ impl BatchSandboxReclaimer {
         let captured = self.capture(original.handle()).await?.ok_or_else(|| {
             AdapterError::Unavailable("no original provider delete receipt is available".into())
         })?;
-        if self.incarnation(&captured)? != original.incarnation {
+        let mut identity = self.incarnation(&captured)?;
+        identity.creation_resource_version = original.incarnation.creation_resource_version.clone();
+        if identity != original.incarnation {
             return Err(AdapterError::Rejected(
                 "provider finality target was replaced".into(),
             ));
