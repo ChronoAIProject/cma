@@ -2,6 +2,7 @@
 //! delivery state. CMA supplies the durable store and pinned NyxID-only sender.
 mod control_reference;
 mod delivery;
+mod edit;
 mod machine;
 pub mod management;
 mod model;
@@ -12,6 +13,7 @@ mod tool;
 
 pub use control_reference::*;
 pub use delivery::*;
+pub use edit::*;
 pub use machine::*;
 pub use management::BridgeOutboxService;
 pub use model::*;
