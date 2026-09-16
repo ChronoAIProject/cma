@@ -1,4 +1,6 @@
 import { usage } from './bridges/usage-schema.js';
+import { creationTarget } from './bridges/creation-schema.js';
+export type { BridgeCreationTarget } from './bridges/creation-schema.js';
 import { boundedId } from './bridges/invoke-schema.js';
 export type { BridgeUsage, BridgeCapacityReason } from './bridges/usage-schema.js';
 import { capabilities } from './bridges/capabilities-schema.js';
@@ -108,6 +110,28 @@ function receipt(id: string, expected: number, kind: string) {
 }
 /** Current bridge management. Channel callback and reply credentials are not dashboard authentication. */
 export class Bridges extends BridgePartitionCommands {
+  /** Read the real callback before selecting routes; reuse this key when creating the Bridge. */
+  creationTarget(options: BridgeOwnerOptions & CommandOptions) {
+    if (options.organization !== undefined) input(boundedId, options.organization);
+    return read(
+      this.config,
+      query('/api/v1/bridge-creation-target', { organization: options.organization }),
+      (value) => {
+        const result = creationTarget(value);
+        if (
+          options.organization === undefined
+            ? result.owner.kind !== 'person'
+            : result.owner.kind !== 'organization' || result.owner.subject !== options.organization
+        )
+          throw new ProtocolError(
+            'bridge creation target owner does not match the requested scope',
+          );
+        return result;
+      },
+      management(options),
+    );
+  }
+
   /** Current retained allocations and authorized target counts; admits no work. */
   usage(id: string, options: OperationOptions = {}) {
     input(boundedId, id);

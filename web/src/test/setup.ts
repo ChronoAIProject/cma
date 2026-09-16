@@ -69,6 +69,7 @@ if (hasDom) {
 afterEach(() => {
   if (hasDom) {
     cleanup();
+    sessionStorage.clear();
   }
   stored.clear();
 });

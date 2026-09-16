@@ -114,8 +114,8 @@ export function ConnectionFields({
         )}
       </div>
       <p>
-        Choose an existing matching bot, key and route. After saving, CMA shows the callback to
-        configure on that key in NyxID.
+        Choose the matching bot, key and route after configuring this bridge’s callback on the
+        dedicated key in NyxID.
       </p>
     </fieldset>
   );

@@ -3,6 +3,11 @@ import type { AgentProvenanceInventoryOptions } from '../../src/agents.js';
 import type { AccessibleSandboxListOptions } from '../../src/sandboxes.js';
 
 export const resourceDispatch: Record<string, Dispatch> = {
+  'GET /api/v1/bridge-creation-target': ({ client, query, command }) =>
+    client.bridges.creationTarget({
+      organization: query.get('organization') ?? undefined,
+      ...command,
+    }),
   'GET /api/v1/bridges/{id}/allocations/{allocation}/workspace-cleanup': ({ client, param }) =>
     client.bridges.readWorkspaceCleanup(param('id'), param('allocation')),
   'POST /api/v1/bridges/{id}/allocations/{allocation}/workspace-cleanup': ({
