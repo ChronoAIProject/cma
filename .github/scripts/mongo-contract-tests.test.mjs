@@ -23,6 +23,7 @@ const requiredPrefixes = [
   'store::bridge_invokes::outbox::snapshot::grant::tests::',
   'store::bridge_allocations::mongo_integration_tests::',
   'store::sandbox_reconciliation::mongo_integration_tests::channel_home_retention::',
+  'sandbox::agent_worker_tests::sdk_conformance_tests::mongo_tests::',
 ];
 
 function fixture(scenario) {
@@ -115,7 +116,9 @@ if (command === 'cargo') {
   } else if (args[0] === 'rm') {
     if (scenario === 'cleanup-error') process.exit(1);
     const files = fs.readdirSync(path.dirname(log)).filter(name => name.startsWith('calls.ndjson.container-'));
-    const selected = files.find(name => JSON.parse(fs.readFileSync(path.join(path.dirname(log),name))).id.startsWith(args[2]));
+    // Match immutable mock identity without reading another concurrently removed file.
+    const selected = files.find(name => require('node:crypto').createHash('sha256')
+      .update(name.slice('calls.ndjson.container-'.length)).digest('hex').startsWith(args[2]));
     if (!selected) process.exit(10);
     fs.unlinkSync(path.join(path.dirname(log),selected));
   } else process.exit(11);

@@ -255,7 +255,9 @@ jobs:
           supervisor::mutation_tests::workspace_reconciliation_tests::real_linux_writer_boundary_reconciles_target_and_resumes_live_sibling
           -- --ignored --exact --test-threads=1
       - name: Disposable real Mongo persistence contracts
-        timeout-minutes: 20
+        # The complete 567-contract run took 19m24s on the hosted runner.
+        # Leave room for the added partition/control contracts and fixture setup.
+        timeout-minutes: 25
         run: bash ../.github/scripts/mongo-contract-tests.sh
       - name: Doctests
         run: cargo test --doc --workspace --locked
