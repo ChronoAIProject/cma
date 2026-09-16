@@ -39,10 +39,16 @@ impl ChannelCommandReservation {
         let grant = proof.grant();
         let retained_execution =
             matches!(proof.effect(), BridgeInvokeEffect::ExecuteCommand { .. })
-                && grant
-                    .channel
-                    .as_ref()
-                    .is_some_and(|basis| basis.require_retained_allocation(&allocation).is_ok());
+                && match &grant.channel {
+                    Some(basis) => basis.require_retained_execution_shape(&allocation).is_ok(),
+                    None => {
+                        matches!(
+                            allocation.placement,
+                            AllocationPlacement::ExistingAgent { .. }
+                        ) && allocation.state == AllocationState::Retired
+                            && allocation.receipt.is_some()
+                    }
+                };
         if inbox.admission != InboxAdmission::Accepted
             || inbox.pin != grant.pin
             || inbox.owner != grant.owner

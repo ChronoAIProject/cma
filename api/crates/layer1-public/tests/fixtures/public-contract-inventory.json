@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "openapi_operations": 177,
+  "openapi_operations": 181,
   "operations": {
     "GET /api/v1/organizations": {
       "classification": "openapi",
@@ -2549,6 +2549,32 @@
         "missing_idempotency_key",
         "not_authenticated"
       ]
+    },
+    "GET /api/v1/bridges/{id}/partitions": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/bridge_partitions/mod.rs# Current Bridge management and exact resource access authorize bounded read-only partition status.",
+      "required_problems": [
+        "bridge_not_found",
+        "bridge_partition_unavailable"
+      ]
+    },
+    "GET /api/v1/bridges/{id}/partitions/{allocation}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/bridge_partitions/mod.rs# Current Bridge management and exact resource access authorize bounded read-only partition status.",
+      "required_problems": [
+        "bridge_not_found",
+        "bridge_partition_unavailable"
+      ]
+    },
+    "POST /api/v1/bridges/{id}/partitions/{allocation}/reset": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/bridge_partition_commands/mod.rs# Current owner/admin authorization recovers a permanent original partition command receipt before new effects.",
+      "required_problems": []
+    },
+    "POST /api/v1/bridges/{id}/partitions/{allocation}/detach": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/bridge_partition_commands/mod.rs# Current owner/admin authorization recovers a permanent original partition command receipt before new effects.",
+      "required_problems": []
     }
   }
 }
