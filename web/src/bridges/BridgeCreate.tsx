@@ -7,7 +7,9 @@ import { ConfigurationForm } from './ConfigurationForm';
 import { usePlacementEditor } from './usePlacementEditor';
 import { verifyPlacementForSave } from './placementSave';
 import { initialConfiguration, configurationComplete } from './configuration';
-import { useBridgeCommand, bridgeFailure } from './commands';
+import { bridgeFailure } from './commands';
+import { useBridgeCreation } from './useBridgeCreation';
+import { BridgeCreationCallback } from './BridgeCreationCallback';
 
 export function BridgeCreate({
   client,
@@ -30,8 +32,11 @@ export function BridgeCreate({
   );
   const connectors = useAuthorizedRead(read);
   const choices = connectors.state.status === 'ready' ? connectors.state.value : undefined;
-  const command = useBridgeCommand(choices !== undefined);
-  const disabled = choices === undefined || command.locked;
+  const creation = useBridgeCreation(client, viewerId, organization);
+  const disabled = choices === undefined || creation.busy || creation.pending || !creation.ready;
+  const navigateToReceipt = (receipt: Awaited<ReturnType<typeof creation.submit>>) => {
+    if (receipt !== undefined) onNavigate({ kind: 'bridge', bridgeId: receipt.bridge_id });
+  };
   return (
     <section aria-labelledby="bridge-create-title">
       <header className="bridges__header">
@@ -44,6 +49,10 @@ export function BridgeCreate({
         </p>
       </header>
       <div className="bridges__body">
+        <BridgeCreationCallback creation={creation} />
+        <Button onClick={connectors.reload} disabled={creation.busy}>
+          Refresh connection choices
+        </Button>
         {connectors.state.status === 'loading' ? (
           <p role="status">Checking connection choices and management access</p>
         ) : null}
@@ -64,22 +73,11 @@ export function BridgeCreate({
                   ? { kind: 'person' as const, subject: viewerId }
                   : { kind: 'organization' as const, subject: organization },
             };
-            let attempted = false;
-            command.run('Create bridge', async (options) => {
-              if (!attempted) {
-                await verifyPlacementForSave(
-                  client,
-                  config,
-                  organization,
-                  undefined,
-                  options.signal,
-                );
-                attempted = true;
-              }
-              const receipt = await client.bridges.create(input, options);
-              options.signal?.throwIfAborted();
-              onNavigate({ kind: 'bridge', bridgeId: receipt.bridge_id });
-            });
+            void creation
+              .submit(input, (signal) =>
+                verifyPlacementForSave(client, config, organization, undefined, signal),
+              )
+              .then(navigateToReceipt);
           }}
         >
           <ConfigurationForm
@@ -112,14 +110,22 @@ export function BridgeCreate({
             variant="primary"
             disabled={disabled || !reviewed || !configurationComplete(config) || !editor.canSave}
           >
-            {command.busy ? 'Saving bridge' : 'Save disabled bridge'}
+            {creation.busy ? 'Saving bridge' : 'Save disabled bridge'}
           </Button>
         </form>
-        {command.error === undefined ? null : <p role="alert">{command.error}</p>}
-        {command.retryLabel === undefined || command.busy ? null : (
-          <Button disabled={choices === undefined} onClick={command.retry}>
-            Retry {command.retryLabel.toLowerCase()}
-          </Button>
+        {creation.error === undefined ? null : <p role="alert">{creation.error}</p>}
+        {!creation.pending || creation.busy ? null : (
+          <div>
+            <p>A save may already have completed. Recover its result before changing this setup.</p>
+            <Button
+              disabled={!creation.ready}
+              onClick={() => {
+                void creation.submit().then(navigateToReceipt);
+              }}
+            >
+              Recover saved bridge
+            </Button>
+          </div>
         )}
       </div>
     </section>

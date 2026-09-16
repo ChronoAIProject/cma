@@ -14,8 +14,11 @@ export async function placementBoundary(page: Page, baseURL: string) {
     available: true,
     authorized: true,
     loseFirstSave: false,
+    connected: true,
+    previewKeys: [] as (string | undefined)[],
     writes: [] as { body: Record<string, unknown>; key: string | undefined }[],
   };
+  const creationId = `brg_${'a'.repeat(64)}`;
   await page.route('**/api/v1/**', async (route) => {
     const request = route.request();
     const url = new URL(request.url());
@@ -24,6 +27,16 @@ export async function placementBoundary(page: Page, baseURL: string) {
       return reply({
         items: [{ id: 'org-one', role: 'admin', display_name: 'Research organization' }],
       });
+    if (url.pathname === '/api/v1/bridge-creation-target') {
+      state.previewKeys.push(request.headers()['idempotency-key']);
+      return reply({
+        bridge_id: creationId,
+        owner: { kind: 'organization', subject: 'org-one' },
+        callback_url: `https://cma.example/api/v1/bridge-callbacks/${creationId}`,
+      });
+    }
+    if (url.pathname === '/api/v1/bridge-connectors' && !state.connected)
+      return reply({ bots: [], keys: [], routes: [] });
     if (url.pathname === '/api/v1/bridge-connectors')
       return reply({
         bots: [{ id: 'bot-one', platform: 'telegram', active: true }],
@@ -89,7 +102,7 @@ export async function placementBoundary(page: Page, baseURL: string) {
       if (state.loseFirstSave && state.writes.length === 1) return route.abort('connectionfailed');
       return reply(
         {
-          bridge_id: 'brg_created',
+          bridge_id: creationId,
           owner: { kind: 'organization', subject: 'org-one' },
           actor: { kind: 'human', subject: 'local-owner' },
           revision: 1,
@@ -100,7 +113,7 @@ export async function placementBoundary(page: Page, baseURL: string) {
         201,
       );
     }
-    if (url.pathname === '/api/v1/bridges/brg_created') return reply({ code: 'not_found' }, 404);
+    if (url.pathname === `/api/v1/bridges/${creationId}`) return reply({ code: 'not_found' }, 404);
     const resource = organizationResponse(url);
     if (resource !== undefined) return reply(resource);
     const profile = /^\/api\/v1\/(sandbox|workspace|agent)-profiles$/.exec(url.pathname);

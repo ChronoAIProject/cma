@@ -1,4 +1,4 @@
-import { bridgeTransport, bridgeDetail } from './fixtures.test-support';
+import { bridgeTransport, bridgeDetail, bridgeCreationTarget } from './fixtures.test-support';
 import {
   NOW,
   WIRE_SANDBOX_DETAIL,
@@ -78,7 +78,7 @@ export function placementTransport(
       writes.push(init);
       return Response.json(
         {
-          bridge_id: 'brg_created',
+          bridge_id: bridgeCreationTarget.bridge_id,
           owner:
             organization === undefined
               ? { kind: 'person', subject: 'owner' }

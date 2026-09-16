@@ -19,6 +19,8 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 mod capabilities;
 pub(crate) use capabilities::*;
+mod creation_target;
+pub(crate) use creation_target::*;
 mod mutations;
 pub(super) mod problem;
 pub(crate) mod shapes;
@@ -28,6 +30,7 @@ use shapes::*;
 
 pub fn bridge_router(service: Option<Arc<BridgeSetupService>>) -> Router {
     Router::new()
+        .route("/api/v1/bridge-creation-target", get(creation_target))
         .route("/api/v1/bridge-connectors", get(choices))
         .route("/api/v1/bridge-connectors/capabilities", get(capabilities))
         .route("/api/v1/bridges", get(list).post(create))
