@@ -2,7 +2,7 @@ use super::*;
 use layer2_core::resource_access::{ResourceAccessStore, ResourceOwner};
 
 /// Provider availability is a fixture; target lineage is read from real Mongo.
-pub(super) struct Connections(pub Arc<crate::store::MongoSandboxStore>);
+pub(in super::super) struct Connections(pub Arc<crate::store::MongoSandboxStore>);
 
 #[async_trait::async_trait]
 impl BridgeConnectionValidator for Connections {

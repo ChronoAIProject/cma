@@ -287,16 +287,12 @@ async fn apply_admission(
         return Err(ApplyError::Domain(SandboxStoreError::SandboxNotReady));
     }
 
-    let live = store
-        .agents
-        .count_documents(doc! {
-            "workspace_id": workspace.id.as_str(),
-            "status": { "$in": LIVE_STATUSES },
-            "record.deleted_at": { "$exists": false },
-        })
-        .session(&mut *session)
+    let live = super::shared_child_capacity::agents(store, &sandbox.id, &workspace.id, session)
         .await
-        .map_err(ApplyError::Driver)?;
+        .map_err(|error| match error {
+            super::shared_child_capacity::CapacityError::Domain(error) => ApplyError::Domain(error),
+            super::shared_child_capacity::CapacityError::Driver(error) => ApplyError::Driver(error),
+        })?;
     if live >= u64::from(sandbox.limits.max_agents_per_workspace) {
         return Err(ApplyError::Domain(SandboxStoreError::AgentLimitReached {
             limit: sandbox.limits.max_agents_per_workspace,
