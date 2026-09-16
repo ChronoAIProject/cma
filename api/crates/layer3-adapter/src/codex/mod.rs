@@ -61,6 +61,7 @@ impl HostedAgentRuntime for CodexRuntime {
             permission_mode: Some(permission_mode.into()),
             own_credential: request.options.own_credential,
             channel_tool: None,
+            recovered_prompt: None,
         })
     }
 }
@@ -309,6 +310,27 @@ impl SandboxAdapter for CodexAdapter {
     ) -> crate::Result<ConversationChannel> {
         self.hosted
             .reconnect_agent(handle, authority_fence, request, conversation_id, updates)
+            .await
+    }
+
+    async fn reconnect_agent_with_prompt(
+        &self,
+        handle: &RuntimeHandle,
+        authority_fence: u64,
+        request: &AgentOpenRequest,
+        conversation_id: &str,
+        recovered_prompt: Option<crate::PromptIdentity>,
+        updates: mpsc::Sender<ConversationUpdate>,
+    ) -> crate::Result<ConversationChannel> {
+        self.hosted
+            .reconnect_agent_with_prompt(
+                handle,
+                authority_fence,
+                request,
+                conversation_id,
+                recovered_prompt,
+                updates,
+            )
             .await
     }
 

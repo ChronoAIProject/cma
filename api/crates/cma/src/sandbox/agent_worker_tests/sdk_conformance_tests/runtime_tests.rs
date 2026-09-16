@@ -114,10 +114,10 @@ impl AgentRuntimeRegistry for SdkRegistry {
                         probe.inputs.lock().unwrap().push((target.clone(), input.clone()));
                     }
                     let outcome = probe.as_ref().map_or(RuntimeOutcome::Completed, |probe| probe.outcome);
-                    let ask_approval = outcome == RuntimeOutcome::Approval && matches!(&input, ConversationInput::Prompt(_));
+                    let ask_approval = outcome == RuntimeOutcome::Approval && matches!(&input, ConversationInput::Prompt(_) | ConversationInput::RecoverablePrompt { .. });
                     let with_tools = match input {
-                        ConversationInput::Prompt(_) if outcome == RuntimeOutcome::Interrupted => return Ok(()),
-                        ConversationInput::Prompt(content) => content.iter().any(|block| matches!(block, ContentBlock::Text(text) if text.text == "sdk-raw-with-tools")),
+                        ConversationInput::Prompt(_) | ConversationInput::RecoverablePrompt { .. } if outcome == RuntimeOutcome::Interrupted => return Ok(()),
+                        ConversationInput::Prompt(content) | ConversationInput::RecoverablePrompt { content, .. } => content.iter().any(|block| matches!(block, ContentBlock::Text(text) if text.text == "sdk-raw-with-tools")),
                         ConversationInput::Cancel if outcome == RuntimeOutcome::Interrupted => false,
                         ConversationInput::PermissionAnswer { id, locator, decision }
                             if outcome == RuntimeOutcome::Approval && id == APPROVAL_ID

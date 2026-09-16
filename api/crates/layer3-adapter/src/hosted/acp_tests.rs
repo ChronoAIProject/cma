@@ -15,6 +15,9 @@ type ServerSocket = tokio_tungstenite::WebSocketStream<tokio::net::TcpStream>;
 #[path = "acp_channel_tool_tests.rs"]
 mod channel_tool_tests;
 
+#[path = "acp_reconnect_turn_tests.rs"]
+mod reconnect_turn_tests;
+
 async fn socket_pair() -> (Socket, ServerSocket) {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
@@ -101,6 +104,7 @@ fn settings(permission_mode: Option<&str>, own_credential: bool) -> HostedAgentO
         permission_mode: permission_mode.map(str::to_string),
         own_credential,
         channel_tool: None,
+        recovered_prompt: None,
     }
 }
 

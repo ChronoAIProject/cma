@@ -19,9 +19,12 @@ impl Bridge {
             return;
         };
 
-        if let Some(id) = frame.get("id").and_then(serde_json::Value::as_i64) {
+        if let Some(id) = frame.get("id") {
             if frame.get("method").is_none() {
-                let waiting = self.pending.lock().await.remove(&id);
+                let waiting = match id.as_str() {
+                    Some(id) => self.pending.lock().await.remove(id),
+                    None => None,
+                };
                 if let Some(waiting) = waiting {
                     if waiting.prompt {
                         updates.send(super::acp_turn::scoped_turn_outcome(
@@ -32,9 +35,18 @@ impl Bridge {
                     let _ = waiting.answer.send(frame);
                     return;
                 }
-                if self
-                    .orphaned_prompt_response
-                    .swap(false, std::sync::atomic::Ordering::SeqCst)
+                if let Some(id) = id.as_str() {
+                    if self.recover_prompt_result(id, frame.clone(), updates).await {
+                        self.orphaned_prompt_response
+                            .store(false, std::sync::atomic::Ordering::SeqCst);
+                        self.answered.lock().await.clear();
+                        return;
+                    }
+                }
+                if id.as_i64().is_some()
+                    && self
+                        .orphaned_prompt_response
+                        .swap(false, std::sync::atomic::Ordering::SeqCst)
                 {
                     self.answered.lock().await.clear();
                     updates.send(super::acp_turn::turn_outcome(frame).into_update());
