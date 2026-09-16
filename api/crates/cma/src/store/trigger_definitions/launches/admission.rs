@@ -165,6 +165,9 @@ async fn admit_once(
         .session(&mut *session)
         .await
         .map_err(AttemptError::Driver)?;
+    super::input_protocol::insert(store, launch, session)
+        .await
+        .map_err(AttemptError::from)?;
     if !events.is_empty() {
         let documents = events
             .iter()

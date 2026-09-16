@@ -42,6 +42,7 @@ use super::worker::{
 };
 
 mod background_checkpoint_tests;
+mod channel_lifecycle_guard_tests;
 mod checkpoint_consistency_tests;
 mod checkpoint_lease_tests;
 mod checkpoint_maintenance_tests;
@@ -239,7 +240,7 @@ impl SandboxCredentialController for MemoryCredentials {
 
     async fn revoke(
         &self,
-        _owner: &SubjectId,
+        _sandbox: &Sandbox,
         provider_key_id: &str,
     ) -> Result<(), CredentialError> {
         self.actions.push(format!("revoke:{provider_key_id}"));
@@ -313,10 +314,10 @@ impl SandboxCredentialController for BlockingCredentials {
 
     async fn revoke(
         &self,
-        owner: &SubjectId,
+        sandbox: &Sandbox,
         provider_key_id: &str,
     ) -> Result<(), CredentialError> {
-        self.inner.revoke(owner, provider_key_id).await
+        self.inner.revoke(sandbox, provider_key_id).await
     }
 }
 
@@ -585,6 +586,15 @@ impl Harness {
         holder: &str,
         adapter: Arc<dyn SandboxAdapter>,
     ) -> Arc<SandboxWorker> {
+        self.worker_with_runtime_image(holder, adapter, &runtime_image())
+    }
+
+    fn worker_with_runtime_image(
+        &self,
+        holder: &str,
+        adapter: Arc<dyn SandboxAdapter>,
+        image: &str,
+    ) -> Arc<SandboxWorker> {
         let dependencies = SandboxWorkerDependencies {
             store: self.store.clone(),
             adapter,
@@ -603,8 +613,7 @@ impl Harness {
             updates: DurableAgentUpdateRecorder::new(self.store.clone()),
             operations: AgentOperationService::new(self.store.clone(), self.registry.clone()),
         };
-        let mut config =
-            SandboxWorkerConfig::new(holder, "test", runtime_image(), self.policy.clone());
+        let mut config = SandboxWorkerConfig::new(holder, "test", image, self.policy.clone());
         config.lease_duration = Duration::from_secs(60);
         config.retry_delay = Duration::from_secs(5);
         SandboxWorker::new(dependencies, config)
@@ -976,7 +985,6 @@ async fn restarted_worker_reattaches_before_install_with_a_fence_independent_ide
         restarted.clone(),
         Arc::new(harness.policy.clone()),
         "test".into(),
-        "runtime-v2".into(),
     )
     .initialize(now)
     .await

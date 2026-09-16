@@ -65,6 +65,9 @@ pub(super) fn immutable_launch(current: &Launch, changed: &Launch) -> Result<(),
         || current.trigger_id != changed.trigger_id
         || current.revision_digest != changed.revision_digest
         || current.public_id != changed.public_id
+        || current.initiation != changed.initiation
+        || current.input_protocol != changed.input_protocol
+        || current.input_binding_sha256 != changed.input_binding_sha256
         || current.owner != changed.owner
         || current.authority != changed.authority
         || current.placement_id != changed.placement_id

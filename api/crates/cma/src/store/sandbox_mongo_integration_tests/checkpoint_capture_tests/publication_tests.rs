@@ -111,6 +111,7 @@ async fn retirement_transfers_held_lifecycle_writer_authority_without_unblocking
         if transactional {
             store
                 .commit(SandboxTransaction::SaveSandboxAndAppend {
+                    command_revival: None,
                     expected_revision: pausing.revision,
                     sandbox: Box::new(retiring.clone()),
                     event_at: NOW.into(),

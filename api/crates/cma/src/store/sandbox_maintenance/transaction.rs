@@ -129,6 +129,17 @@ pub(super) async fn apply(
             event,
         } => (expected_revision, *sandbox, event),
     };
+    if store
+        .channel_reuse_blocks_quiescence(&current, &sandbox, session)
+        .await
+        .map_err(ApplyError::Driver)?
+    {
+        return Ok(MaintenanceReceipt {
+            sandbox: current,
+            event: None,
+            outcome: SandboxMaintenanceOutcome::NotEligible,
+        });
+    }
     validate_in_transaction(store, &current.id, last_seq, session).await?;
     // Snapshot isolation needs actual writes to prevent a concurrent Agent turn
     // from committing after the evidence read without conflicting with admission.
@@ -139,6 +150,7 @@ pub(super) async fn apply(
             doc! {
                 "_id": current.id.as_str(),
                 "document_schema_version": DOCUMENT_SCHEMA_VERSION,
+                "channel_reuse_cleanup_execution": { "$exists": false },
                 "revision": signed(expected_revision, "sandbox maintenance revision")
                     .map_err(|_| ApplyError::Domain(SandboxStoreError::Conflict))?,
                 "last_seq": signed(last_seq, "sandbox maintenance event sequence")

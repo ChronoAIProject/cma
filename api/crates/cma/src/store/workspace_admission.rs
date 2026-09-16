@@ -218,6 +218,13 @@ async fn apply_admission(
         ));
     }
 
+    if store.workspaces.find_one(doc! {
+        "owned_workspace_cleanup_admission_v1":{"$exists":true},
+        "$and":[{"$or":[{"sandbox_id":candidate.sandbox_id.as_str()},{"record.sandbox_id":candidate.sandbox_id.as_str()}]},
+            {"$or":[{"name":&candidate.name},{"record.name":&candidate.name},{"path":&candidate.path},{"record.path":&candidate.path}]}]
+    }).session(&mut *session).await.map_err(ApplyError::Driver)?.is_some() {
+        return Err(ApplyError::Domain(SandboxStoreError::WorkspaceNameConflict));
+    }
     if admission.kind != WorkspaceAdmissionKind::Manual {
         let origin_filter = match &candidate.origin {
             WorkspaceOrigin::SandboxProfile { index } => doc! {
@@ -268,15 +275,12 @@ async fn apply_admission(
     {
         return Err(ApplyError::Domain(SandboxStoreError::WorkspaceNameConflict));
     }
-    let live = store
-        .workspaces
-        .count_documents(doc! {
-            "sandbox_id": candidate.sandbox_id.as_str(),
-            "removed_at": Bson::Null,
-        })
-        .session(&mut *session)
+    let live = super::shared_child_capacity::workspaces(store, &sandbox.id, session)
         .await
-        .map_err(ApplyError::Driver)?;
+        .map_err(|error| match error {
+            super::shared_child_capacity::CapacityError::Domain(error) => ApplyError::Domain(error),
+            super::shared_child_capacity::CapacityError::Driver(error) => ApplyError::Driver(error),
+        })?;
     if live >= u64::from(sandbox.limits.max_workspaces) {
         return Err(ApplyError::Domain(
             SandboxStoreError::WorkspaceLimitReached {
@@ -306,6 +310,7 @@ async fn apply_admission(
             let updated = store.sandboxes.update_one(doc! {
             "_id": sandbox.id.as_str(),
             "document_schema_version": DOCUMENT_SCHEMA_VERSION,
+            "channel_reuse_cleanup_execution": { "$exists": false },
             "revision": signed(sandbox.revision, "sandbox revision")
                 .map_err(|error| ApplyError::Domain(SandboxStoreError::Corrupt(error)))?,
         }, doc! { "$set": sandbox_replacement_fields(&next).map_err(ApplyError::Domain)? })
@@ -362,6 +367,7 @@ pub(super) async fn lock_sandbox(
             doc! {
                 "_id": sandbox_id,
                 "document_schema_version": DOCUMENT_SCHEMA_VERSION,
+                "channel_reuse_cleanup_execution": { "$exists": false },
             },
             doc! { "$inc": { "workspace_admission_fence": 1_i64 } },
         )

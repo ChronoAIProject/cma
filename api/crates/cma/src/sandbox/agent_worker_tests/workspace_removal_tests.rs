@@ -142,6 +142,7 @@ async fn removing_workspace_fences_new_agent_admission_without_requiring_an_owne
     let result = harness
         .store
         .admit_agent(AgentAdmission {
+            created_by: None,
             owner: harness.workspace.owner.clone(),
             workspace_id: harness.workspace.id.clone(),
             agent_id: AgentId::generate(),

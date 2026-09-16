@@ -29,6 +29,7 @@ impl AgentWorkAuthority {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FirstMessageDispatchOutcome {
     NotConfigured,
+    CommonCommand(FirstMessageRecord),
     Accepted(FirstMessageRecord),
     Retryable(FirstMessageRecord),
     InProgress(FirstMessageRecord),
@@ -54,6 +55,16 @@ impl AgentOperationService {
             let Some(record) = current.conversation.first_message.as_ref() else {
                 return Ok(FirstMessageDispatchOutcome::NotConfigured);
             };
+            if let Some(binding) = &record.common_binding {
+                binding
+                    .require_agent(&current)
+                    .map_err(|_| AgentOperationError::Conflict)?;
+                return Ok(FirstMessageDispatchOutcome::CommonCommand(record.clone()));
+            }
+            self.store
+                .require_legacy_first_message(&current)
+                .await
+                .map_err(operation_store_error)?;
             match record.state {
                 FirstMessageDelivery::DispatchFenced
                     if record.dispatch_generation == authority.fence =>
@@ -110,6 +121,10 @@ impl AgentOperationService {
                 .map_err(operation_store_error)?
                 .filter(|agent| agent.id == *id && agent.owner == caller.subject)
                 .ok_or(AgentOperationError::NotFound)?;
+            self.store
+                .require_legacy_first_message(&current)
+                .await
+                .map_err(operation_store_error)?;
             let previous_turn = current
                 .conversation
                 .first_message

@@ -1,11 +1,11 @@
 use axum::{
     extract::State,
-    http::StatusCode,
+    http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
     Json,
 };
 use layer2_core::{
-    sandbox::{AgentApprovalDecision, AgentMessageOutcome, AgentStatus},
+    sandbox::{agent_io::AgentCommand, AgentApprovalDecision},
     AgentId,
 };
 use serde::Deserialize;
@@ -13,9 +13,9 @@ use serde_json::Value;
 use utoipa::ToSchema;
 
 use crate::{
-    conversation::{context_failure, failure, read_failure},
-    rest::{instance_problem::InstanceProblem, BodyProblem},
-    AgentConversationState, AuthenticatedCaller,
+    conversation::{commands, failure, read_failure},
+    rest::BodyProblem,
+    AgentConversationState, AuthenticatedCaller, AuthenticatedResourceCaller,
 };
 
 #[derive(Deserialize, ToSchema)]
@@ -50,12 +50,15 @@ struct ResumePayload {
 }
 
 #[utoipa::path(post, path = "/api/v1/agui/run", tag = "ag-ui", request_body = RunRequest,
+    params(("Idempotency-Key" = Option<String>, Header)),
     responses((status = 200, body = String, content_type = "text/event-stream"),
     (status = 404, body = crate::rest::ProblemDocument), (status = 409, body = crate::rest::ProblemDocument),
     (status = 422, body = crate::rest::ProblemDocument)))]
 pub(super) async fn run(
     State(state): State<AgentConversationState>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
+    resource: Option<AuthenticatedResourceCaller>,
+    headers: HeaderMap,
     body: Result<Json<RunRequest>, axum::extract::rejection::JsonRejection>,
 ) -> Response {
     let Json(body) = match body {
@@ -92,67 +95,46 @@ pub(super) async fn run(
         );
     }
     let id = AgentId(body.thread_id);
+    let command = if let Some(resume) = body.resume.into_iter().next() {
+        let decision = if resume.status.as_deref() != Some("resolved") {
+            AgentApprovalDecision::Deny
+        } else {
+            match resume
+                .payload
+                .and_then(|payload| payload.decision)
+                .as_deref()
+            {
+                Some("allow") => AgentApprovalDecision::Allow,
+                Some("abort") => AgentApprovalDecision::Abort,
+                _ => AgentApprovalDecision::Deny,
+            }
+        };
+        AgentCommand::AnswerApproval {
+            approval_id: resume.interrupt_id,
+            decision,
+        }
+    } else {
+        AgentCommand::message(prompt.unwrap())
+    };
+    let is_message = matches!(command, AgentCommand::Message { .. });
+    let submission = match commands::submission(id.clone(), command, &headers) {
+        Ok(value) => value,
+        Err(response) => return *response,
+    };
     if let Err(error) = state.reads.read(&caller, &id).await {
         return read_failure(error, "thread_not_found");
     }
-    let task_state = state.clone();
     let watching = state.watch(&id);
-    let task_caller = caller.clone();
-    let task_id = id.clone();
-    let admission = tokio::spawn(async move {
-        let agent = task_state
-            .context
-            .await_input_ready(&task_caller, &task_id)
-            .await
-            .map_err(context_failure)?;
-        let before = agent.conversation.last_seq;
-        let receipt = if let Some(resume) = body.resume.into_iter().next() {
-            let decision = if resume.status.as_deref() != Some("resolved") {
-                AgentApprovalDecision::Deny
-            } else {
-                match resume
-                    .payload
-                    .and_then(|payload| payload.decision)
-                    .as_deref()
-                {
-                    Some("allow") => AgentApprovalDecision::Allow,
-                    Some("abort") => AgentApprovalDecision::Abort,
-                    _ => AgentApprovalDecision::Deny,
-                }
-            };
-            task_state
-                .operations
-                .answer_approval(&task_caller, &task_id, resume.interrupt_id, decision)
-                .await
-        } else if agent.status == AgentStatus::Working {
-            task_state
-                .operations
-                .steer(&task_caller, &task_id, prompt.unwrap())
-                .await
-        } else {
-            match task_state
-                .operations
-                .send_message(&task_caller, &task_id, prompt.unwrap())
-                .await
-            {
-                Ok(AgentMessageOutcome::Dispatched(receipt)) => Ok(receipt),
-                Ok(AgentMessageOutcome::Queued { .. }) => {
-                    return Err(InstanceProblem::AgentNotReady.into_response())
-                }
-                Err(error) => Err(error),
-            }
-        }
-        .map_err(|error| InstanceProblem::from(error).into_response())?;
-        Ok::<_, Response>((receipt.turn_sequence, before))
-    });
-    match admission.await {
-        Ok(Ok((turn, before))) => {
-            super::replay::open(state, caller, id, before, true, Some(turn), watching).await
-        }
-        Ok(Err(response)) => response,
-        Err(error) => {
-            tracing::error!(%error, "AG-UI admission task failed");
-            InstanceProblem::Unavailable.into_response()
-        }
-    }
+    let bound = match commands::admit_and_wait(&state, resource, submission).await {
+        Ok(value) => value,
+        Err(response) => return *response,
+    };
+    let after = if is_message {
+        bound.turn.saturating_sub(1)
+    } else {
+        bound.operation_sequence
+    };
+    let response =
+        super::replay::open_run(state, bound.resource, id, after, bound.turn, watching).await;
+    commands::receipt_headers(response, &bound.receipt)
 }

@@ -1,0 +1,1 @@
+Disposable test-only RSA key for signed NyxID callback adversarial fixtures. It is public test data, has no deployed counterpart, and must never be used by a service. Contract: NyxID 85607255ee0beadca460a350e0aa6d177edd2fd2.

@@ -9,7 +9,7 @@ use crate::{AgentId, Caller, RuntimeCapability};
 
 impl AgentOperationService {
     /// Start a turn only while the exact predecessor still owns the conversation.
-    pub async fn send_linear_message(
+    pub(in crate::sandbox) async fn execute_linear_message(
         &self,
         caller: &Caller,
         id: &AgentId,

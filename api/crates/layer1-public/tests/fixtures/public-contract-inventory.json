@@ -1,26 +1,56 @@
 {
   "version": 1,
-  "openapi_operations": 119,
+  "openapi_operations": 181,
   "operations": {
+    "GET /api/v1/organizations": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/organizations.rs# Authenticated current organization choices contain presentation roles and no reusable resource evidence.",
+      "required_problems": [
+        "not_authenticated",
+        "resource_forbidden",
+        "organization_authority_unavailable"
+      ]
+    },
     "GET /api/v1/profile-authoring/bounds": {
       "classification": "openapi",
       "source": "api/crates/layer1-public/src/rest/profile_authoring.rs# Fixed deployment bounds require profile management authority and perform no upstream read.",
-      "required_problems": ["forbidden", "not_authenticated"]
+      "required_problems": [
+        "forbidden",
+        "not_authenticated"
+      ]
     },
     "GET /api/v1/profile-authoring/services": {
       "classification": "openapi",
       "source": "api/crates/layer1-public/src/rest/profile_authoring.rs# Owner-visible service catalog projects Core validated source data and typed refusal.",
-      "required_problems": ["forbidden", "not_authenticated", "profile_services_unavailable"]
+      "required_problems": [
+        "forbidden",
+        "not_authenticated",
+        "profile_services_unavailable"
+      ]
     },
     "GET /api/v1/profile-authoring/skills": {
       "classification": "openapi",
       "source": "api/crates/layer1-public/src/rest/profile_authoring.rs# Skill query validation and owner-scoped source failures are projected through Core.",
-      "required_problems": ["forbidden", "invalid_profile_authoring_query", "not_authenticated", "profile_skills_unavailable"]
+      "required_problems": [
+        "forbidden",
+        "invalid_profile_authoring_query",
+        "not_authenticated",
+        "profile_skills_unavailable"
+      ]
     },
     "POST /api/v1/profile-authoring/repositories/resolve": {
       "classification": "openapi",
       "source": "api/crates/layer1-public/src/rest/profile_authoring.rs# Read-only repository verification has typed body and Core repository refusals without idempotency or admission.",
-      "required_problems": ["forbidden", "invalid_json", "invalid_repository", "invalid_repository_reference", "not_authenticated", "repository_not_found", "repository_reference_not_found", "repository_unavailable"]
+      "required_problems": [
+        "forbidden",
+        "invalid_json",
+        "invalid_repository",
+        "invalid_repository_reference",
+        "not_authenticated",
+        "repository_not_found",
+        "repository_reference_not_found",
+        "repository_unavailable"
+      ]
     },
     "DELETE /api/v1/agents/{id}": {
       "classification": "openapi",
@@ -230,10 +260,15 @@
       "classification": "openapi",
       "source": "api/crates/layer1-public/src/rest/agents.rs# Public handler and typed error projection define the operation contract.",
       "required_problems": [
+        "agent_not_found",
         "forbidden",
         "instance_service_unavailable",
         "invalid_instance_query",
-        "not_authenticated"
+        "not_authenticated",
+        "organization_authority_unavailable",
+        "resource_access_changed",
+        "resource_access_unavailable",
+        "resource_forbidden"
       ]
     },
     "GET /api/v1/agents/{id}": {
@@ -243,7 +278,8 @@
         "agent_not_found",
         "forbidden",
         "instance_service_unavailable",
-        "not_authenticated"
+        "not_authenticated",
+        "organization_authority_unavailable"
       ]
     },
     "GET /api/v1/agents/{id}/events": {
@@ -254,7 +290,8 @@
         "forbidden",
         "instance_service_unavailable",
         "invalid_instance_query",
-        "not_authenticated"
+        "not_authenticated",
+        "organization_authority_unavailable"
       ]
     },
     "GET /api/v1/agents/{id}/resources": {
@@ -266,17 +303,21 @@
         "agent_resources_unsupported",
         "forbidden",
         "instance_service_unavailable",
-        "not_authenticated"
+        "not_authenticated",
+        "organization_authority_unavailable"
       ]
     },
     "GET /api/v1/agents/{id}/source": {
       "classification": "openapi",
-      "source": "api/crates/layer1-public/src/rest/agent_source.rs# Owner-scoped provenance and published shortcut projection, independent of conversation reads.",
+      "source": "api/crates/layer1-public/src/rest/agent_source.rs# Current-authority personal provenance and safe shared creation categories, fenced after IO.",
       "required_problems": [
         "agent_not_found",
         "forbidden",
         "instance_service_unavailable",
         "not_authenticated",
+        "organization_authority_unavailable",
+        "resource_access_changed",
+        "resource_access_unavailable",
         "trigger_service_unavailable"
       ]
     },
@@ -300,7 +341,8 @@
         "agent_not_found",
         "forbidden",
         "instance_service_unavailable",
-        "not_authenticated"
+        "not_authenticated",
+        "organization_authority_unavailable"
       ]
     },
     "GET /api/v1/agents/{id}/usage": {
@@ -311,7 +353,8 @@
         "agent_not_found",
         "forbidden",
         "instance_service_unavailable",
-        "not_authenticated"
+        "not_authenticated",
+        "organization_authority_unavailable"
       ]
     },
     "GET /api/v1/agui/agents/{id}/sandbox": {
@@ -338,6 +381,7 @@
         "instance_service_unavailable",
         "invalid_replay_query",
         "not_authenticated",
+        "organization_authority_unavailable",
         "thread_not_found"
       ],
       "required_protocol_failures": [
@@ -542,7 +586,11 @@
         "hierarchy_service_unavailable",
         "invalid_page",
         "invalid_query",
-        "not_authenticated"
+        "not_authenticated",
+        "organization_authority_unavailable",
+        "resource_access_changed",
+        "resource_access_unavailable",
+        "resource_forbidden"
       ]
     },
     "GET /api/v1/sandboxes/{id}": {
@@ -552,6 +600,9 @@
         "forbidden",
         "hierarchy_service_unavailable",
         "not_authenticated",
+        "organization_authority_unavailable",
+        "resource_access_changed",
+        "resource_access_unavailable",
         "sandbox_not_found"
       ]
     },
@@ -583,6 +634,9 @@
         "forbidden",
         "hierarchy_service_unavailable",
         "not_authenticated",
+        "organization_authority_unavailable",
+        "resource_access_changed",
+        "resource_access_unavailable",
         "sandbox_not_found"
       ]
     },
@@ -727,6 +781,9 @@
         "forbidden",
         "hierarchy_service_unavailable",
         "not_authenticated",
+        "organization_authority_unavailable",
+        "resource_access_changed",
+        "resource_access_unavailable",
         "workspace_not_found"
       ]
     },
@@ -737,6 +794,9 @@
         "forbidden",
         "hierarchy_service_unavailable",
         "not_authenticated",
+        "organization_authority_unavailable",
+        "resource_access_changed",
+        "resource_access_unavailable",
         "workspace_not_found"
       ]
     },
@@ -747,6 +807,9 @@
         "forbidden",
         "hierarchy_service_unavailable",
         "not_authenticated",
+        "organization_authority_unavailable",
+        "resource_access_changed",
+        "resource_access_unavailable",
         "worktree_not_found"
       ]
     },
@@ -1047,8 +1110,7 @@
       "source": "api/crates/layer1-public/src/agui/mod.rs# Public handler and typed error projection define the operation contract.",
       "required_problems": [
         "agent_approval_not_pending",
-        "agent_capability_unsupported",
-        "agent_delivery_ambiguous",
+        "agent_command_observation_timeout",
         "agent_not_ready",
         "agent_operation_in_flight",
         "forbidden",
@@ -1057,13 +1119,12 @@
         "invalid_json",
         "invalid_run_request",
         "not_authenticated",
-        "provisioning_timeout",
-        "sandbox_checkpoint_in_progress",
         "thread_not_found"
       ],
       "required_protocol_failures": [
         "agent_turn_failed",
         "failed",
+        "input_not_written",
         "operator",
         "owner",
         "runtime_lost",
@@ -1072,9 +1133,14 @@
       "opaque_protocol_failures": "api/crates/layer1-public/src/agui/events.rs# RUN_ERROR propagates arbitrary persisted TurnFailed.failure.class values. Stopped.reason is restricted by Core AgentStopReason to owner, operator, runtime_lost, sandbox_retired, and failed. Opaque external failure classes are not a finite catalog.",
       "unreachable_protocol_failures": {
         "agent_deleted": "api/crates/layer1-public/src/agui/replay.rs# Following::queue ends an admitted run at its first terminal turn or Stopped event. Core deletion requires Stopped or Failed, and startup failure cannot follow run admission, so a later Deleted event cannot be the admitted run's terminal outcome.",
-        "input_not_written": "api/crates/layer2-core/src/sandbox/agent_operation_settlement.rs# Pre-write rejection persists input_not_written but returns RuntimeUnavailable before POST opens its stream; later GET replay can project the durable TurnFailed.",
-        "provisioning_timeout": "api/crates/layer1-public/src/agui/run.rs# Readiness timeout is a typed HTTP refusal before POST opens its stream, not an AG-UI RUN_ERROR.",
-        "response_unavailable": "api/crates/layer1-public/src/agui/replay.rs# A failed following read ends AG-UI silently; fixed response_unavailable is emitted only by the Responses stream projection."
+        "provisioning_timeout": "api/crates/layer1-public/src/conversation/commands.rs# Unbound readiness observation timeout is HTTP agent_command_observation_timeout and cannot invent a failed turn.",
+        "response_unavailable": "api/crates/layer1-public/src/responses/stream.rs# Loss of current read or authorization evidence closes the stream without fabricating a durable outcome."
+      },
+      "unreachable_problems": {
+        "agent_capability_unsupported": "api/crates/layer1-public/src/conversation/commands/errors.rs# Common admission rejects an Agent without Conversation as agent_not_ready; later worker capability refusal is a committed agent_command_execution_failed.",
+        "agent_delivery_ambiguous": "api/crates/layer1-public/src/conversation/commands.rs# A retained dispatch binding opens the original turn stream while the common command stays unresolved; ambiguous runtime delivery is not fabricated as an HTTP failure.",
+        "sandbox_checkpoint_in_progress": "api/crates/layer1-public/src/conversation/commands.rs# Ordinary input reserves queued work during checkpoint; the observer can return agent_command_observation_timeout while the receipt remains retained.",
+        "provisioning_timeout": "api/crates/layer1-public/src/conversation/commands.rs# The common worker owns readiness; HTTP observation reports agent_command_observation_timeout with its retained receipt."
       }
     },
     "POST /api/v1/conversations": {
@@ -1163,9 +1229,9 @@
       "classification": "openapi",
       "source": "api/crates/layer1-public/src/responses/mod.rs# Public handler and typed error projection define the operation contract.",
       "required_problems": [
-        "agent_capability_unsupported",
-        "agent_delivery_ambiguous",
+        "agent_command_observation_timeout",
         "agent_not_ready",
+        "agent_operation_in_flight",
         "conversation_not_found",
         "forbidden",
         "instance_service_unavailable",
@@ -1173,24 +1239,28 @@
         "invalid_json",
         "not_authenticated",
         "previous_response_id_conflict",
-        "response_in_progress",
-        "responses_field_unsupported",
-        "sandbox_checkpoint_in_progress"
+        "responses_field_unsupported"
       ],
       "required_protocol_failures": [
         "agent_turn_failed",
-        "provisioning_timeout",
-        "response_unavailable"
+        "input_not_written"
       ],
-      "opaque_protocol_failures": "api/crates/layer1-public/src/responses/stream.rs# Admitted streams project arbitrary persisted TurnFailed.failure.class through retrieve::project and emit fixed provisioning_timeout or response_unavailable for readiness and following-read failures. Opaque external failure classes are not a finite catalog.",
+      "opaque_protocol_failures": "api/crates/layer1-public/src/responses/stream.rs# Admitted streams project arbitrary persisted TurnFailed.failure.class through retrieve::project; read loss closes the connection without inventing failure.",
       "unreachable_protocol_failures": {
         "agent_deleted": "api/crates/layer1-public/src/responses/retrieve.rs# Response errors project TurnFailed only; Deleted is not converted into a ResponseError.",
         "failed": "api/crates/layer1-public/src/responses/retrieve.rs# Response errors project TurnFailed only; Stopped with AgentStopReason::Failed is not converted into a ResponseError.",
-        "input_not_written": "api/crates/layer2-core/src/sandbox/agent_operation_settlement.rs# Pre-write rejection persists input_not_written but returns RuntimeUnavailable before POST opens its stream; later GET retrieval can project the durable TurnFailed.",
         "operator": "api/crates/layer1-public/src/responses/retrieve.rs# Response errors project TurnFailed only; Stopped with AgentStopReason::Operator is not converted into a ResponseError.",
         "owner": "api/crates/layer1-public/src/responses/retrieve.rs# Response errors project TurnFailed only; Stopped with AgentStopReason::Owner is not converted into a ResponseError.",
         "runtime_lost": "api/crates/layer1-public/src/responses/retrieve.rs# Response errors project TurnFailed only; Stopped with AgentStopReason::RuntimeLost is not converted into a ResponseError.",
-        "sandbox_retired": "api/crates/layer1-public/src/responses/retrieve.rs# Response errors project TurnFailed only; Stopped with AgentStopReason::SandboxRetired is not converted into a ResponseError."
+        "sandbox_retired": "api/crates/layer1-public/src/responses/retrieve.rs# Response errors project TurnFailed only; Stopped with AgentStopReason::SandboxRetired is not converted into a ResponseError.",
+        "provisioning_timeout": "api/crates/layer1-public/src/conversation/commands.rs# Unbound readiness observation timeout is HTTP agent_command_observation_timeout and cannot invent a failed turn.",
+        "response_unavailable": "api/crates/layer1-public/src/responses/stream.rs# Loss of current read or authorization evidence closes the stream without fabricating a durable outcome."
+      },
+      "unreachable_problems": {
+        "agent_capability_unsupported": "api/crates/layer1-public/src/conversation/commands/errors.rs# Common admission rejects an Agent without Conversation as agent_not_ready; later worker capability refusal is a committed agent_command_execution_failed.",
+        "agent_delivery_ambiguous": "api/crates/layer1-public/src/conversation/commands.rs# A retained dispatch binding opens the original turn stream while the common command stays unresolved; ambiguous runtime delivery is not fabricated as an HTTP failure.",
+        "sandbox_checkpoint_in_progress": "api/crates/layer1-public/src/conversation/commands.rs# Ordinary input reserves queued work during checkpoint; the observer can return agent_command_observation_timeout while the receipt remains retained.",
+        "response_in_progress": "api/crates/layer1-public/src/responses/create.rs# Legacy AfterTurn input reserves a queued command; its predecessor is checked when its own execution lane is acquired."
       }
     },
     "POST /api/v1/responses/{response_id}/cancel": {
@@ -1341,11 +1411,20 @@
       "classification": "openapi",
       "source": "api/crates/layer1-public/src/rest/sandbox_service_access.rs# Owner-only service access uses the shared durable command admission and typed refusals.",
       "required_problems": [
-        "forbidden", "hierarchy_service_unavailable", "idempotency_in_flight",
-        "idempotency_key_reused", "idempotency_recovery_required", "invalid_idempotency_key",
-        "invalid_json", "invalid_sandbox_service_access", "json_content_type_required",
-        "missing_idempotency_key", "not_authenticated",
-        "sandbox_not_found", "sandbox_service_access_requires_pause", "store_failed"
+        "forbidden",
+        "hierarchy_service_unavailable",
+        "idempotency_in_flight",
+        "idempotency_key_reused",
+        "idempotency_recovery_required",
+        "invalid_idempotency_key",
+        "invalid_json",
+        "invalid_sandbox_service_access",
+        "json_content_type_required",
+        "missing_idempotency_key",
+        "not_authenticated",
+        "sandbox_not_found",
+        "sandbox_service_access_requires_pause",
+        "store_failed"
       ]
     },
     "POST /api/v1/sandboxes/{id}/workspaces": {
@@ -1797,6 +1876,705 @@
         "profile_secret_scanner_unavailable": "api/crates/layer2-core/src/profiles/store/marketplace_memory.rs# Public-value scanning applies to Sandbox environment variables; Agent and Workspace publication and visibility do not invoke the scanner.",
         "profile_reference_invalid": "api/crates/layer1-public/src/rest/profiles_problem.rs# Visibility dependency refusals are projected through from_marketplace as profile_public_refused, not the draft reference-validation problem."
       }
+    },
+    "GET /api/v1/resource-access/{kind}/{id}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/resource_access.rs# Authenticated service checks current ancestry, ownership and fresh organization evidence; permanent share receipts preserve CAS and retry outcomes.",
+      "required_problems": [
+        "invalid_share_command",
+        "not_authenticated",
+        "organization_authority_unavailable",
+        "resource_access_unavailable",
+        "resource_not_found"
+      ]
+    },
+    "GET /api/v1/resource-shares/{kind}/{id}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/resource_access.rs# Authenticated service checks current ancestry, ownership and fresh organization evidence; permanent share receipts preserve CAS and retry outcomes.",
+      "required_problems": [
+        "invalid_share_command",
+        "not_authenticated",
+        "resource_access_unavailable",
+        "resource_forbidden",
+        "resource_not_found"
+      ]
+    },
+    "GET /api/v1/resource-shares/{kind}/{id}/{share_id}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/resource_access.rs# Authenticated service checks current ancestry, ownership and fresh organization evidence; permanent share receipts preserve CAS and retry outcomes.",
+      "required_problems": [
+        "invalid_share_command",
+        "not_authenticated",
+        "resource_access_unavailable",
+        "resource_forbidden",
+        "resource_not_found"
+      ]
+    },
+    "POST /api/v1/resource-shares/{kind}/{id}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/resource_access.rs# Authenticated service checks current ancestry, ownership and fresh organization evidence; permanent share receipts preserve CAS and retry outcomes.",
+      "required_problems": [
+        "idempotency_key_reused",
+        "invalid_share_command",
+        "not_authenticated",
+        "organization_authority_unavailable",
+        "resource_access_unavailable",
+        "resource_forbidden",
+        "resource_not_found",
+        "share_capacity",
+        "unsafe_interactive_share"
+      ]
+    },
+    "PATCH /api/v1/resource-shares/{kind}/{id}/{share_id}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/resource_access.rs# Authenticated service checks current ancestry, ownership and fresh organization evidence; permanent share receipts preserve CAS and retry outcomes.",
+      "required_problems": [
+        "invalid_share_command",
+        "not_authenticated",
+        "resource_access_changed",
+        "resource_access_unavailable",
+        "resource_forbidden",
+        "resource_not_found"
+      ]
+    },
+    "DELETE /api/v1/resource-shares/{kind}/{id}/{share_id}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/resource_access.rs# Authenticated service checks current ancestry, ownership and fresh organization evidence; permanent share receipts preserve CAS and retry outcomes.",
+      "required_problems": [
+        "invalid_share_command",
+        "not_authenticated",
+        "resource_access_unavailable",
+        "resource_forbidden",
+        "resource_not_found"
+      ]
+    },
+    "GET /api/v2": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/responses/v2/mod.rs# Versioned Responses routes use durable command admission and current history access.",
+      "required_problems": [
+        "authentication_required"
+      ]
+    },
+    "POST /api/v2/responses": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/responses/v2/mod.rs# Versioned Responses routes use durable command admission and current history access.",
+      "required_problems": [
+        "stream_required",
+        "conversation_previous_response_conflict",
+        "model_mismatch",
+        "responses_field_unsupported",
+        "store_required",
+        "invalid_metadata",
+        "invalid_response_input",
+        "invalid_conversation",
+        "agent_command_key_conflict",
+        "authentication_required",
+        "response_not_found"
+      ],
+      "required_protocol_failures": [
+        "agent_command_authority_revoked"
+      ]
+    },
+    "POST /api/v2/agents/{agent_id}/responses": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/responses/v2/mod.rs# Versioned Responses routes use durable command admission and current history access.",
+      "required_problems": [
+        "conversation_alias_mismatch",
+        "authentication_required",
+        "response_not_found"
+      ],
+      "required_protocol_failures": [
+        "agent_command_authority_revoked"
+      ]
+    },
+    "GET /api/v2/responses/{response_id}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/responses/v2/mod.rs# Versioned Responses routes use durable command admission and current history access.",
+      "required_problems": [
+        "authentication_required",
+        "response_not_found",
+        "responses_field_unsupported"
+      ],
+      "required_protocol_failures": [
+        "agent_command_authority_revoked"
+      ]
+    },
+    "GET /api/v2/responses/{response_id}/events": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/responses/v2/mod.rs# Versioned Responses routes use durable command admission and current history access.",
+      "required_problems": [
+        "authentication_required",
+        "response_not_found",
+        "invalid_replay_cursor"
+      ],
+      "required_protocol_failures": [
+        "agent_command_authority_revoked"
+      ]
+    },
+    "GET /api/v2/conversations/{conversation_id}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/responses/v2/mod.rs# Versioned Responses routes use durable command admission and current history access.",
+      "required_problems": [
+        "authentication_required",
+        "response_not_found"
+      ]
+    },
+    "GET /api/v2/conversations/{conversation_id}/items": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/responses/v2/mod.rs# Versioned Responses routes use durable command admission and current history access.",
+      "required_problems": [
+        "authentication_required",
+        "response_not_found",
+        "invalid_items_limit",
+        "invalid_items_order",
+        "invalid_items_cursor"
+      ]
+    },
+    "GET /api/v1/agents/{id}/provenance": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/agent_provenance.rs# Immutable creation categories and authorized attribution, fenced after IO.",
+      "required_problems": [
+        "not_authenticated",
+        "organization_authority_unavailable",
+        "resource_access_changed",
+        "resource_access_unavailable",
+        "resource_not_found"
+      ]
+    },
+    "GET /api/v1/agents/provenance": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/agent_provenance_inventory.rs# Bounded retained creation inventory with fresh scope authorization and category filtering.",
+      "required_problems": [
+        "invalid_instance_query",
+        "not_authenticated",
+        "organization_authority_unavailable",
+        "resource_access_changed",
+        "resource_access_unavailable",
+        "resource_forbidden",
+        "resource_not_found"
+      ]
+    },
+    "GET /api/v1/sandbox-commands/{id}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/sandbox_commands.rs# Public lifecycle receipts and typed errors, with current actor authorization.",
+      "required_problems": [
+        "command_authority_required",
+        "not_authenticated",
+        "sandbox_command_not_found"
+      ]
+    },
+    "POST /api/v1/sandboxes/{id}/commands": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/sandbox_commands.rs# Public lifecycle receipts and typed errors, with current actor authorization.",
+      "required_problems": [
+        "command_authority_required",
+        "idempotency_key_reused",
+        "invalid_idempotency_key",
+        "invalid_json",
+        "invalid_sandbox_command",
+        "missing_idempotency_key",
+        "not_authenticated",
+        "organization_authority_unavailable",
+        "resource_forbidden",
+        "resource_not_found",
+        "sandbox_command_busy",
+        "sandbox_command_conflict",
+        "sandbox_command_unavailable"
+      ]
+    },
+    "GET /api/v1/agents/{id}/artifacts": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/agent_artifacts.rs# Explicit approved artifacts preserve current publication and viewing authority across durable storage and downloads.",
+      "required_problems": [
+        "invalid_artifact_request",
+        "not_authenticated",
+        "organization_authority_unavailable",
+        "resource_not_found"
+      ]
+    },
+    "GET /api/v1/agents/{id}/artifacts/{artifact_id}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/agent_artifacts.rs# Explicit approved artifacts preserve current publication and viewing authority across durable storage and downloads.",
+      "required_problems": [
+        "not_authenticated",
+        "organization_authority_unavailable",
+        "resource_not_found"
+      ]
+    },
+    "GET /api/v1/agents/{id}/artifacts/{artifact_id}/download": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/agent_artifacts.rs# Explicit approved artifacts preserve current publication and viewing authority across durable storage and downloads.",
+      "required_problems": [
+        "not_authenticated",
+        "organization_authority_unavailable",
+        "resource_not_found"
+      ]
+    },
+    "GET /api/v1/agents/{id}/channel-usage": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/agent_channel_usage.rs# Current resource authority fences explicit channel facts; private binding history requires management authority.",
+      "required_problems": [
+        "not_authenticated",
+        "organization_authority_unavailable",
+        "resource_access_changed",
+        "resource_access_unavailable",
+        "resource_not_found"
+      ]
+    },
+    "GET /api/v1/agents/{id}/channel-usage/history": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/agent_channel_usage.rs# Current resource authority fences explicit channel facts; private binding history requires management authority.",
+      "required_problems": [
+        "invalid_query",
+        "not_authenticated",
+        "organization_authority_unavailable",
+        "resource_access_changed",
+        "resource_access_unavailable",
+        "resource_forbidden",
+        "resource_not_found"
+      ]
+    },
+    "POST /api/v1/agents/{id}/artifacts": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/agent_artifacts.rs# Explicit approved artifacts preserve current publication and viewing authority across durable storage and downloads.",
+      "required_problems": [
+        "artifact_capacity",
+        "idempotency_key_reused",
+        "invalid_artifact_request",
+        "missing_idempotency_key",
+        "not_authenticated",
+        "organization_authority_unavailable",
+        "resource_forbidden",
+        "resource_not_found"
+      ]
+    },
+    "GET /api/v1/bridge-connectors": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/bridges/mod.rs# Deployment-pinned bridge setup uses current owner/admin authority, safe projections and durable revision/idempotency receipts.",
+      "required_problems": [
+        "bridge_management_required",
+        "bridge_setup_unavailable",
+        "not_authenticated"
+      ]
+    },
+    "GET /api/v1/bridges": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/bridges/mod.rs# Deployment-pinned bridge setup uses current owner/admin authority, safe projections and durable revision/idempotency receipts.",
+      "required_problems": [
+        "bridge_setup_unavailable",
+        "invalid_bridge_configuration",
+        "invalid_query",
+        "not_authenticated"
+      ]
+    },
+    "GET /api/v1/bridges/{id}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/bridges/mod.rs# Deployment-pinned bridge setup uses current owner/admin authority, safe projections and durable revision/idempotency receipts.",
+      "required_problems": [
+        "bridge_authority_unavailable",
+        "bridge_not_found",
+        "bridge_setup_unavailable",
+        "not_authenticated"
+      ]
+    },
+    "GET /api/v1/bridges/{id}/configuration": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/bridges/mod.rs# Deployment-pinned bridge setup uses current owner/admin authority, safe projections and durable revision/idempotency receipts.",
+      "required_problems": [
+        "bridge_management_required",
+        "bridge_setup_unavailable",
+        "not_authenticated"
+      ]
+    },
+    "POST /api/v1/bridges": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/bridges/mod.rs# Deployment-pinned bridge setup uses current owner/admin authority, safe projections and durable revision/idempotency receipts.",
+      "required_problems": [
+        "bridge_management_required",
+        "bridge_setup_unavailable",
+        "idempotency_key_reused",
+        "invalid_bridge_configuration",
+        "invalid_json",
+        "missing_idempotency_key",
+        "not_authenticated"
+      ]
+    },
+    "POST /api/v1/bridges/{id}/commands": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/bridges/mod.rs# Deployment-pinned bridge setup uses current owner/admin authority, safe projections and durable revision/idempotency receipts.",
+      "required_problems": [
+        "bridge_invoke_consent_required",
+        "bridge_management_required",
+        "bridge_renewable_authority_required",
+        "bridge_revision_conflict",
+        "bridge_setup_unavailable",
+        "missing_idempotency_key",
+        "not_authenticated"
+      ]
+    },
+    "POST /api/v1/bridges/{id}/credential/revoke": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/bridges/mod.rs# Deployment-pinned bridge setup uses current owner/admin authority, safe projections and durable revision/idempotency receipts.",
+      "required_problems": [
+        "bridge_management_required",
+        "bridge_revision_conflict",
+        "bridge_setup_unavailable",
+        "missing_idempotency_key",
+        "not_authenticated"
+      ]
+    },
+    "POST /api/v1/bridges/{id}/validate": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/bridges/mod.rs# Deployment-pinned bridge setup uses current owner/admin authority, safe projections and durable revision/idempotency receipts.",
+      "required_problems": [
+        "bridge_management_required",
+        "bridge_renewable_authority_required",
+        "bridge_revision_conflict",
+        "bridge_setup_unavailable",
+        "not_authenticated"
+      ]
+    },
+    "PUT /api/v1/bridges/{id}/configuration": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/bridges/mod.rs# Deployment-pinned bridge setup uses current owner/admin authority, safe projections and durable revision/idempotency receipts.",
+      "required_problems": [
+        "bridge_identity_immutable",
+        "bridge_management_required",
+        "bridge_revision_conflict",
+        "bridge_setup_unavailable",
+        "missing_idempotency_key",
+        "not_authenticated"
+      ]
+    },
+    "PUT /api/v1/bridges/{id}/credential": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/bridges/mod.rs# Deployment-pinned bridge setup uses current owner/admin authority, safe projections and durable revision/idempotency receipts.",
+      "required_problems": [
+        "bridge_binding_mismatch",
+        "bridge_management_required",
+        "bridge_revision_conflict",
+        "bridge_setup_unavailable",
+        "not_authenticated"
+      ]
+    },
+    "POST /api/v1/bridges/{id}/invoke-grants": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/bridge_invokes/mod.rs# Explicit grant consent is required and actual owner/admin management remains independent from narrow execution proofs.",
+      "required_problems": [
+        "bridge_invoke_revision_conflict",
+        "bridge_invoke_target_mismatch",
+        "bridge_invoke_unavailable",
+        "bridge_not_found",
+        "idempotency_key_reused",
+        "invalid_json",
+        "missing_idempotency_key",
+        "not_authenticated"
+      ]
+    },
+    "GET /api/v1/bridges/{id}/invoke-grants": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/bridge_invokes/mod.rs# Explicit grant consent is required and actual owner/admin management remains independent from narrow execution proofs.",
+      "required_problems": [
+        "bridge_invoke_unavailable",
+        "bridge_not_found",
+        "invalid_bridge_invoke_request",
+        "not_authenticated"
+      ]
+    },
+    "GET /api/v1/bridges/{id}/invoke-readiness": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/bridge_invokes/mod.rs# Explicit grant consent is required and actual owner/admin management remains independent from narrow execution proofs.",
+      "required_problems": [
+        "bridge_invoke_unavailable",
+        "bridge_not_found",
+        "not_authenticated"
+      ]
+    },
+    "GET /api/v1/bridge-invoke-grants/{id}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/bridge_invokes/mod.rs# Explicit grant consent is required and actual owner/admin management remains independent from narrow execution proofs.",
+      "required_problems": [
+        "bridge_invoke_not_found",
+        "bridge_invoke_unavailable",
+        "invalid_bridge_invoke_request",
+        "not_authenticated"
+      ]
+    },
+    "POST /api/v1/bridge-invoke-grants/{id}/revoke": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/bridge_invokes/mod.rs# Explicit grant consent is required and actual owner/admin management remains independent from narrow execution proofs.",
+      "required_problems": [
+        "bridge_invoke_not_found",
+        "bridge_invoke_revision_conflict",
+        "bridge_invoke_unavailable",
+        "invalid_json",
+        "missing_idempotency_key",
+        "not_authenticated"
+      ]
+    },
+    "GET /api/v1/bridges/{id}/deliveries": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/bridge_outbox/mod.rs# Current owner/admin delivery inspection and explicit original-item recovery.",
+      "required_problems": [
+        "bridge_delivery_unavailable",
+        "bridge_not_found",
+        "invalid_bridge_delivery_request",
+        "not_authenticated"
+      ]
+    },
+    "GET /api/v1/bridges/{id}/deliveries/{item}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/bridge_outbox/mod.rs# Current owner/admin delivery inspection and explicit original-item recovery.",
+      "required_problems": [
+        "bridge_delivery_not_found",
+        "bridge_delivery_unavailable",
+        "bridge_not_found",
+        "not_authenticated"
+      ]
+    },
+    "POST /api/v1/bridges/{id}/delivery-recovery": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/bridge_outbox/mod.rs# Current owner/admin delivery inspection and explicit original-item recovery.",
+      "required_problems": [
+        "bridge_delivery_duplicate_risk_required",
+        "bridge_delivery_not_found",
+        "bridge_delivery_revision_conflict",
+        "bridge_delivery_unavailable",
+        "bridge_not_found",
+        "idempotency_key_reused",
+        "invalid_json",
+        "missing_idempotency_key",
+        "not_authenticated"
+      ]
+    },
+    "GET /api/v1/bridge-connectors/capabilities": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/bridges/capabilities.rs# Capability diagnostics require fresh owner or organization administrator authority and remain available with rollout switches disabled.",
+      "required_problems": [
+        "bridge_authority_unavailable",
+        "bridge_management_required",
+        "bridge_not_found",
+        "bridge_setup_unavailable",
+        "invalid_query",
+        "not_authenticated"
+      ]
+    },
+    "GET /api/v2/agents/{agent_id}/responses/{response_id}/controls": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/responses/v2/controls.rs# Additive response controls and safe command polling use core authorization and exact retained intent.",
+      "required_problems": [
+        "authentication_required",
+        "response_not_found",
+        "controls_field_unsupported"
+      ]
+    },
+    "POST /api/v2/agents/{agent_id}/responses/{response_id}/controls": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/responses/v2/controls.rs# Additive response controls and safe command polling use core authorization and exact retained intent.",
+      "required_problems": [
+        "authentication_required",
+        "response_not_found",
+        "agent_command_key_conflict",
+        "response_control_conflict",
+        "response_control_not_admitted",
+        "capability_unsupported",
+        "invalid_control_request",
+        "invalid_control_observation",
+        "invalid_idempotency_key",
+        "invalid_json"
+      ]
+    },
+    "GET /api/v2/commands/{command_id}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/responses/v2/controls.rs# Additive response controls and safe command polling use core authorization and exact retained intent.",
+      "required_problems": [
+        "authentication_required",
+        "response_not_found",
+        "controls_field_unsupported"
+      ]
+    },
+    "GET /api/v2/agents/{agent_id}/events/snapshot": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/agent_v2/snapshot.rs# Authenticated bounded immutable Agent replay uses current-policy frame fences and distinct incarnation-bound cursors.",
+      "required_problems": [
+        "not_authenticated",
+        "agent_not_found",
+        "invalid_agent_events_query",
+        "invalid_agent_cursor",
+        "agent_cursor_beyond_head",
+        "agent_incarnation_changed",
+        "agent_history_unavailable",
+        "agent_read_unavailable"
+      ]
+    },
+    "GET /api/v2/agents/{agent_id}/events": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/agent_v2/stream.rs# Authenticated bounded immutable Agent replay uses current-policy frame fences and distinct incarnation-bound cursors.",
+      "required_problems": [
+        "not_authenticated",
+        "agent_not_found",
+        "invalid_agent_events_query",
+        "invalid_agent_cursor",
+        "agent_cursor_beyond_head",
+        "agent_incarnation_changed",
+        "agent_history_unavailable",
+        "agent_read_unavailable"
+      ]
+    },
+    "GET /api/v2/ui/transport": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/agent_v2/eligibility.rs# Current process flag and complete composition select new tabs only; authenticated no-store discovery is not command authority.",
+      "required_problems": [
+        "not_authenticated"
+      ]
+    },
+    "GET /api/v2/agents/{agent_id}/responses/{response_id}/queued-cancellation": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/responses/v2/queued_cancellation.rs# Exact unbound source cancellation uses current human/API authority and committed effect receipts.",
+      "required_problems": [
+        "authentication_required",
+        "invalid_queued_cancellation_request",
+        "response_not_found"
+      ]
+    },
+    "POST /api/v2/agents/{agent_id}/responses/{response_id}/queued-cancellation": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/responses/v2/queued_cancellation.rs# Exact unbound source cancellation uses current human/API authority and committed effect receipts.",
+      "required_problems": [
+        "agent_command_key_conflict",
+        "authentication_required",
+        "invalid_idempotency_key",
+        "invalid_json",
+        "invalid_queued_cancellation_request",
+        "queued_response_cancellation_conflict",
+        "queued_response_cancellation_not_admitted",
+        "response_not_found"
+      ]
+    },
+    "GET /api/v1/bridges/{id}/allocations": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/bridge_cleanup/mod.rs# Current Bridge and whole-parent management exposes explicit retained child cleanup and exact keyed recovery.",
+      "required_problems": [
+        "bridge_child_cleanup_conflict",
+        "bridge_child_cleanup_evidence_inconsistent",
+        "bridge_child_cleanup_unavailable",
+        "bridge_not_found",
+        "invalid_bridge_child_cleanup",
+        "not_authenticated"
+      ]
+    },
+    "GET /api/v1/bridges/{id}/allocations/{allocation}/child-cleanup": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/bridge_cleanup/mod.rs# Current Bridge and whole-parent management exposes explicit retained child cleanup and exact keyed recovery.",
+      "required_problems": [
+        "bridge_child_cleanup_conflict",
+        "bridge_child_cleanup_evidence_inconsistent",
+        "bridge_child_cleanup_not_found",
+        "bridge_child_cleanup_unavailable",
+        "bridge_not_found",
+        "invalid_bridge_child_cleanup",
+        "not_authenticated"
+      ]
+    },
+    "POST /api/v1/bridges/{id}/allocations/{allocation}/child-cleanup": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/bridge_cleanup/mod.rs# Current Bridge and whole-parent management exposes explicit retained child cleanup and exact keyed recovery.",
+      "required_problems": [
+        "bridge_child_cleanup_conflict",
+        "bridge_child_cleanup_evidence_inconsistent",
+        "bridge_child_cleanup_not_found",
+        "bridge_child_cleanup_original_actor_required",
+        "bridge_child_cleanup_unavailable",
+        "bridge_not_found",
+        "invalid_bridge_child_cleanup",
+        "invalid_json",
+        "missing_idempotency_key",
+        "not_authenticated"
+      ]
+    },
+    "GET /api/v1/bridges/{id}/allocations/{allocation}/workspace-cleanup": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/bridge_cleanup/workspace.rs# Current Bridge and whole-parent management exposes separate allocation-owned Workspace cleanup and exact keyed recovery.",
+      "required_problems": [
+        "bridge_workspace_cleanup_conflict",
+        "bridge_workspace_cleanup_evidence_inconsistent",
+        "bridge_workspace_cleanup_not_found",
+        "bridge_workspace_cleanup_unavailable",
+        "bridge_not_found",
+        "invalid_bridge_workspace_cleanup",
+        "not_authenticated"
+      ]
+    },
+    "POST /api/v1/bridges/{id}/allocations/{allocation}/workspace-cleanup": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/bridge_cleanup/workspace.rs# Current Bridge and whole-parent management exposes separate allocation-owned Workspace cleanup and exact keyed recovery.",
+      "required_problems": [
+        "bridge_workspace_cleanup_conflict",
+        "bridge_workspace_cleanup_evidence_inconsistent",
+        "bridge_workspace_cleanup_not_found",
+        "bridge_workspace_cleanup_original_actor_required",
+        "bridge_workspace_cleanup_unavailable",
+        "bridge_not_found",
+        "invalid_bridge_workspace_cleanup",
+        "invalid_json",
+        "missing_idempotency_key",
+        "not_authenticated"
+      ]
+    },
+    "GET /api/v1/bridge-invoke-grants/{id}/source-controls": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/bridge_source_controls/mod.rs# Separate per-invoke-grant consent is observed and explicitly admitted with exact revisions; consent does not execute channel controls.",
+      "required_problems": [
+        "bridge_invoke_not_found",
+        "bridge_not_found",
+        "bridge_source_control_unavailable",
+        "invalid_bridge_source_control_request",
+        "not_authenticated"
+      ]
+    },
+    "PUT /api/v1/bridge-invoke-grants/{id}/source-controls": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/bridge_source_controls/mod.rs# Separate per-invoke-grant consent is observed and explicitly admitted with exact revisions; consent does not execute channel controls.",
+      "required_problems": [
+        "bridge_invoke_not_found",
+        "bridge_invoke_revoked",
+        "bridge_not_found",
+        "bridge_source_control_revision_conflict",
+        "bridge_source_control_unavailable",
+        "idempotency_key_reused",
+        "invalid_bridge_source_control_request",
+        "invalid_idempotency_key",
+        "invalid_json",
+        "json_content_type_required",
+        "missing_idempotency_key",
+        "not_authenticated"
+      ]
+    },
+    "GET /api/v1/bridges/{id}/partitions": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/bridge_partitions/mod.rs# Current Bridge management and exact resource access authorize bounded read-only partition status.",
+      "required_problems": [
+        "bridge_not_found",
+        "bridge_partition_unavailable"
+      ]
+    },
+    "GET /api/v1/bridges/{id}/partitions/{allocation}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/bridge_partitions/mod.rs# Current Bridge management and exact resource access authorize bounded read-only partition status.",
+      "required_problems": [
+        "bridge_not_found",
+        "bridge_partition_unavailable"
+      ]
+    },
+    "POST /api/v1/bridges/{id}/partitions/{allocation}/reset": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/bridge_partition_commands/mod.rs# Current owner/admin authorization recovers a permanent original partition command receipt before new effects.",
+      "required_problems": []
+    },
+    "POST /api/v1/bridges/{id}/partitions/{allocation}/detach": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/bridge_partition_commands/mod.rs# Current owner/admin authorization recovers a permanent original partition command receipt before new effects.",
+      "required_problems": []
     }
   }
 }

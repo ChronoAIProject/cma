@@ -8,15 +8,19 @@ import { isPendingTool } from './toolStatus';
 interface MessageStreamProps {
   readonly conversation: ConversationState;
   readonly approvalBusy?: boolean;
+  readonly approvalReadOnly?: boolean;
   readonly onApproval: (id: string, decision: ApprovalDecision) => void;
   readonly children?: ReactNode;
+  readonly emptyMessage?: string;
 }
 
 export function MessageStream({
   conversation,
   approvalBusy = false,
+  approvalReadOnly = false,
   onApproval,
   children,
+  emptyMessage = 'Start the conversation.',
 }: MessageStreamProps) {
   const endRef = useRef<HTMLDivElement>(null);
   const pinned = useRef(true);
@@ -72,13 +76,14 @@ export function MessageStream({
   return (
     <div className="message-stream" aria-live="polite">
       {entries.length === 0 && conversation.activeRunId === undefined ? (
-        <p className="message-stream__empty">Start the conversation.</p>
+        <p className="message-stream__empty">{emptyMessage}</p>
       ) : null}
       {entries.map((entry) => (
         <StreamEntry
           key={`${entry.kind}:${entry.item.id}`}
           entry={entry}
           approvalBusy={approvalBusy}
+          approvalReadOnly={approvalReadOnly}
           onApproval={onApproval}
         />
       ))}

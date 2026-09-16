@@ -294,6 +294,10 @@ impl HostedBackend for InMemoryHostedBackend {
             }
             RequestFrame::Resources => checkpoint::resources(runtime),
             RequestFrame::RuntimeStatus(request) => status::inspect(runtime, request),
+            RequestFrame::WorkspaceRemovalSupport(_)
+            | RequestFrame::ReconcileWorkspaceRemoval(_) => Err(AdapterError::Unsupported(
+                "guarded Workspace removal is unavailable in this runtime".into(),
+            )),
             RequestFrame::OpenAgent(_) => Err(AdapterError::Rejected(
                 "open_agent must use the hosted conversation path".into(),
             )),

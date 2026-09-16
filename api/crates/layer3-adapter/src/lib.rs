@@ -20,6 +20,7 @@ mod home_volume;
 mod runtime;
 mod runtime_status;
 mod workspace;
+mod workspace_removal;
 
 pub mod codex;
 pub mod hosted;
@@ -44,9 +45,9 @@ pub use checkpoint::{
 };
 pub use conversation::{
     AvailableCommand, AvailableCommandsUpdate, ContentBlock, ContentChunk, ConversationChannel,
-    ConversationId, ConversationInput, ConversationInputSender, ConversationSendOutcome,
-    ConversationUpdate, MessageId, PermissionDecision, PermissionLocator, PermissionOption,
-    PermissionOptionId, PermissionOptionKind, PermissionRequest, PromptResponse,
+    ConversationId, ConversationInput, ConversationInputGuard, ConversationInputSender,
+    ConversationSendOutcome, ConversationUpdate, MessageId, PermissionDecision, PermissionLocator,
+    PermissionOption, PermissionOptionId, PermissionOptionKind, PermissionRequest, PromptResponse,
     RequestPermissionRequest, SessionUpdate, ToolCall, ToolCallId, ToolCallStatus, ToolCallUpdate,
     ToolCallUpdateFields, ToolKind, TurnEvidence, TurnScopedEvidence, TurnStopReason, TurnUsage,
     UsageUpdate,
@@ -70,7 +71,8 @@ pub use home_snapshot_view::{
     HomeSnapshotViewStore,
 };
 pub use home_volume::{
-    HomeVolumeAttachment, HomeVolumePolicy, HomeVolumeReceipt, HomeVolumeRequest, HomeVolumeStore,
+    HomeVolumeAttachment, HomeVolumePolicy, HomeVolumeReceipt, HomeVolumeRequest, HomeVolumeScope,
+    HomeVolumeStore,
 };
 pub use runtime::{
     CommandReceipt, CredentialFrame, InstallReceipt, InstallRequest, RuntimeAdoptionRequest,
@@ -84,4 +86,8 @@ pub use workspace::{
     SetupReceipt, WorkspaceReceipt, WorkspaceRemoveReceipt, WorkspaceRemoveRequest,
     WorkspaceRequest, WorkspaceSetupRequest, WorkspaceSource, WorktreeReceipt, WorktreeRef,
     WorktreeRemoveReceipt, WorktreeRequest,
+};
+pub use workspace_removal::{
+    same_runtime_writer, WorkspaceRemovalObservation, WorkspaceRemovalOutcome,
+    WorkspaceRemovalRequest, WorkspaceRemovalSupport, WORKSPACE_REMOVAL_PROTOCOL,
 };

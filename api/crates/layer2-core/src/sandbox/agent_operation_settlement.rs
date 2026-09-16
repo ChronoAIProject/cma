@@ -27,19 +27,75 @@ impl AgentOperationService {
                 .capabilities
                 .require(prepared.required.iter().copied())
             {
-                Ok(()) => match connection
-                    .input
-                    .send_classified(prepared.input.clone())
-                    .await
-                {
-                    ConversationSendOutcome::PreWriteFailure(error) => {
-                        SendClassification::PreWrite(error.to_string())
+                Ok(()) => {
+                    let outcome = if let Some(authority) = &self.execution_authority {
+                        connection
+                            .input
+                            .send_guarded(
+                                prepared.input.clone(),
+                                std::sync::Arc::new(
+                                    super::agent_io::execution_dispatch::CommandDispatchGuard {
+                                        authority: authority.clone(),
+                                        target: prepared.target.clone(),
+                                        operation_sequence: prepared.operation_sequence,
+                                        turn_sequence: prepared.turn_sequence,
+                                    },
+                                ),
+                            )
+                            .await
+                    } else if let Some(authority) = &self.channel_control_authority {
+                        connection.input.send_guarded(prepared.input.clone(), std::sync::Arc::new(
+                            super::agent_io::channel_control::dispatch::ChannelControlDispatchGuard {
+                                authority: authority.clone(), target: prepared.target.clone(),
+                                operation_sequence: prepared.operation_sequence, turn_sequence: prepared.turn_sequence,
+                            },
+                        )).await
+                    } else if let Some(authority) = &self.channel_authority {
+                        connection
+                            .input
+                            .send_guarded(
+                                prepared.input.clone(),
+                                std::sync::Arc::new(
+                                    super::agent_io::execution_dispatch::ChannelDispatchGuard {
+                                        authority: authority.clone(),
+                                        target: prepared.target.clone(),
+                                        operation_sequence: prepared.operation_sequence,
+                                        turn_sequence: prepared.turn_sequence,
+                                    },
+                                ),
+                            )
+                            .await
+                    } else if let Some(authority) = &self.trigger_authority {
+                        connection
+                            .input
+                            .send_guarded(
+                                prepared.input.clone(),
+                                std::sync::Arc::new(
+                                    super::agent_io::execution_dispatch::TriggerDispatchGuard {
+                                        authority: authority.clone(),
+                                        target: prepared.target.clone(),
+                                        operation_sequence: prepared.operation_sequence,
+                                        turn_sequence: prepared.turn_sequence,
+                                    },
+                                ),
+                            )
+                            .await
+                    } else {
+                        connection
+                            .input
+                            .send_classified(prepared.input.clone())
+                            .await
+                    };
+                    match outcome {
+                        ConversationSendOutcome::PreWriteFailure(error) => {
+                            SendClassification::PreWrite(error.to_string())
+                        }
+                        ConversationSendOutcome::WriteConfirmed => SendClassification::Confirmed,
+                        ConversationSendOutcome::Ambiguous(error) => {
+                            SendClassification::Ambiguous(error.to_string())
+                        }
                     }
-                    ConversationSendOutcome::WriteConfirmed => SendClassification::Confirmed,
-                    ConversationSendOutcome::Ambiguous(error) => {
-                        SendClassification::Ambiguous(error.to_string())
-                    }
-                },
+                }
                 Err(capability) => SendClassification::PreWrite(format!(
                     "runtime capability changed before dispatch: {capability:?}"
                 )),
@@ -126,6 +182,12 @@ impl AgentOperationService {
             if matches!(&classification, SendClassification::PreWrite(_)) {
                 append_pre_write_rollback(&current, &mut next, &prepared, &at, &mut logs)?;
             }
+            super::agent_io::trigger::project_delivery(
+                &mut next,
+                prepared.operation_sequence,
+                &at,
+                &mut logs,
+            )?;
             match self.commit_change(&current, next, logs, at).await {
                 Ok((agent, _)) => {
                     return match &classification {
@@ -202,6 +264,23 @@ impl AgentOperationService {
         next.validate_conversation()
             .map_err(|error| AgentOperationError::Corrupt(error.to_string()))?;
         let mutation = AgentConversationMutation {
+            command_claim: admission_guard.as_ref().and(self.command_claim.clone()),
+            execution_fence: admission_guard
+                .as_ref()
+                .and(self.execution_authority.as_ref())
+                .map(|authority| authority.fence()),
+            channel_control_execution_fence: admission_guard
+                .as_ref()
+                .and(self.channel_control_authority.as_ref())
+                .map(|authority| authority.fence()),
+            channel_execution_fence: admission_guard
+                .as_ref()
+                .and(self.channel_authority.as_ref())
+                .map(|authority| authority.fence()),
+            trigger_execution_fence: admission_guard
+                .as_ref()
+                .and(self.trigger_authority.as_ref())
+                .map(|authority| authority.fence()),
             admission_guard,
             expected_agent_revision: current.revision,
             expected_last_seq: current.conversation.last_seq,

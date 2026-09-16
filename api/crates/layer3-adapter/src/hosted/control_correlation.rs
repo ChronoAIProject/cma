@@ -11,6 +11,14 @@ pub(super) fn validate(request: &RequestFrame, response: &ResponseFrame) -> crat
         (RequestFrame::RuntimeStatus(request), ResponseFrame::RuntimeStatus(receipt)) => {
             receipt.validate_for(request).is_ok()
         }
+        (
+            RequestFrame::WorkspaceRemovalSupport(request),
+            ResponseFrame::WorkspaceRemovalSupport(receipt),
+        ) => receipt.validate_for(request).is_ok(),
+        (
+            RequestFrame::ReconcileWorkspaceRemoval(request),
+            ResponseFrame::ReconcileWorkspaceRemoval(receipt),
+        ) => receipt.validate_for(request).is_ok(),
         (RequestFrame::Install(request), ResponseFrame::Install(receipt)) => {
             receipt.operation_id == request.operation_id
                 && receipt.request_sha256 == request.request_sha256

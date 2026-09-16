@@ -23,6 +23,8 @@ pub(super) fn response_operation(response: &ResponseFrame) -> WireOperation {
     match response {
         ResponseFrame::CacheSkillArchive { .. } => WireOperation::CacheSkillArchive,
         ResponseFrame::RuntimeStatus(_) => WireOperation::RuntimeStatus,
+        ResponseFrame::WorkspaceRemovalSupport(_) => WireOperation::WorkspaceRemovalSupport,
+        ResponseFrame::ReconcileWorkspaceRemoval(_) => WireOperation::ReconcileWorkspaceRemoval,
         ResponseFrame::Install(_) => WireOperation::Install,
         ResponseFrame::BootstrapRestore(_) => WireOperation::BootstrapRestore,
         ResponseFrame::PrepareWorkspace(_) => WireOperation::PrepareWorkspace,
@@ -60,6 +62,8 @@ pub(super) const fn operation_name(operation: WireOperation) -> &'static str {
     match operation {
         WireOperation::CacheSkillArchive => "cache skill archive",
         WireOperation::RuntimeStatus => "runtime status",
+        WireOperation::WorkspaceRemovalSupport => "Workspace removal support",
+        WireOperation::ReconcileWorkspaceRemoval => "Workspace removal observation",
         WireOperation::Install => "install",
         WireOperation::BootstrapRestore => "restore bootstrap",
         WireOperation::PrepareWorkspace => "prepare workspace",

@@ -17,7 +17,10 @@ import type {
   SandboxProfileSettings,
   WorkspaceDetail,
 } from './types';
-import type { AgentResources, AgentSource } from '@chronoai/cma-sdk';
+import type { AccessibleAgentSource, AgentProvenance, AgentResources } from '@chronoai/cma-sdk';
+import type { ResourceViewsClient } from '../resources/client';
+import type { BridgeViewsClient } from '../bridges/client';
+import type { createAgentTransport } from '../agent/transport/client';
 
 export interface ReadOptions {
   readonly signal?: AbortSignal;
@@ -38,6 +41,9 @@ export interface AgentStreamOptions extends ReadOptions {
 
 /** A transport-free view of the public CMA operations consumed by the web app. */
 export interface CmaWebClient {
+  readonly agentTransport?: ReturnType<typeof createAgentTransport>;
+  readonly resourceViews?: ResourceViewsClient;
+  readonly bridgeViews?: BridgeViewsClient;
   listSandboxes(options?: PageOptions): Promise<ResourcePage<SandboxSummary>>;
   readSandbox(id: string, options?: ReadOptions): Promise<SandboxDetail>;
   readWorkspace(id: string, options?: ReadOptions): Promise<WorkspaceDetail>;
@@ -49,7 +55,8 @@ export interface CmaWebClient {
   readAgentTranscript(id: string, options?: ReadOptions): Promise<AgentTranscript>;
   readAgentUsage(id: string, options?: ReadOptions): Promise<AgentUsage>;
   readAgentResources(id: string, options?: ReadOptions): Promise<AgentResources>;
-  readAgentSource(id: string, options?: ReadOptions): Promise<AgentSource>;
+  readAgentSource(id: string, options?: ReadOptions): Promise<AccessibleAgentSource>;
+  readAgentProvenance(id: string, options?: ReadOptions): Promise<AgentProvenance>;
   readSandboxProfileCapacity(
     reference: ProfileReference,
     options?: ReadOptions,
@@ -103,6 +110,7 @@ export const unavailableClient: CmaWebClient = {
   readAgentUsage: unavailable,
   readAgentResources: unavailable,
   readAgentSource: unavailable,
+  readAgentProvenance: unavailable,
   readSandboxProfileCapacity: unavailable,
   readSandboxProfileSettings: unavailable,
   readSandboxEvents: unavailable,

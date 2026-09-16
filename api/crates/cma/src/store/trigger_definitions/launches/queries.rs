@@ -1,6 +1,5 @@
 use std::collections::BTreeMap;
 
-use futures_util::TryStreamExt;
 use layer2_core::ids::{
     LaunchId, PlacementId, PublicTriggerId, ServiceHandoffId, SubjectId, TriggerId,
 };
@@ -13,8 +12,8 @@ use mongodb::options::ReadConcern;
 use mongodb::ClientSession;
 
 use super::documents::{read_handoff, read_launch, StoredLaunch};
-use super::event_log;
 use super::{corrupt, unavailable, MongoTriggerDefinitionStore};
+use super::{event_log, input_protocol};
 
 mod snapshots;
 pub(super) use snapshots::{snapshot_handoff, snapshot_launch, snapshot_owned_launch};
@@ -39,8 +38,9 @@ pub(super) async fn by_command(
         .session(&mut session)
         .await
         .map_err(unavailable)?;
-    let launch = decode_command(document.as_ref(), owner, public_id, command_key_hash)?;
-    if let Some(launch) = &launch {
+    let mut launch = decode_command(document.as_ref(), owner, public_id, command_key_hash)?;
+    if let Some(launch) = &mut launch {
+        input_protocol::verify_snapshot(store, launch, &mut session).await?;
         event_log::verify_snapshot(store, launch, &mut session).await?;
     }
     Ok(launch)
@@ -51,20 +51,13 @@ pub(super) async fn owned(
     id: &LaunchId,
     owner: &SubjectId,
 ) -> Result<Option<Launch>, LaunchStoreError> {
-    let document = store
-        .launch_data
-        .launches
-        .find_one(doc! { "_id": id.as_str(), "owner": owner.as_str() })
+    let mut session = store
+        .client
+        .start_session()
+        .snapshot(true)
         .await
         .map_err(unavailable)?;
-    let Some(document) = document else {
-        return Ok(None);
-    };
-    let launch = read_launch(&document)?.launch;
-    if &launch.id != id || &launch.owner != owner {
-        return Err(corrupt("owned Launch query crossed its boundary"));
-    }
-    Ok(Some(launch))
+    snapshot_owned_launch(store, id, owner, &mut session).await
 }
 
 pub(super) async fn list_owner(
@@ -94,17 +87,27 @@ pub(super) async fn list_owner(
             ],
         });
     }
+    let mut session = store
+        .client
+        .start_session()
+        .snapshot(true)
+        .await
+        .map_err(unavailable)?;
     let mut cursor = store
         .launch_data
         .launches
         .find(doc! { "$and": clauses })
         .sort(doc! { "created_at": -1_i32, "_id": -1_i32 })
         .limit(i64::from(page.limit.saturating_add(1)))
+        .read_concern(ReadConcern::snapshot())
+        .session(&mut session)
         .await
         .map_err(unavailable)?;
     let mut launches = Vec::new();
-    while let Some(document) = cursor.try_next().await.map_err(unavailable)? {
-        let launch = read_launch(&document)?.launch;
+    while let Some(document) = cursor.next(&mut session).await {
+        let document = document.map_err(unavailable)?;
+        let mut launch = read_launch(&document)?.launch;
+        input_protocol::verify_snapshot(store, &mut launch, &mut session).await?;
         validate_listed(&launch, owner, page, boundary.as_ref(), launches.last())?;
         launches.push(launch);
     }
@@ -137,17 +140,26 @@ pub(super) async fn source_launch(
     if let Some(trigger) = trigger {
         query.insert("trigger_id", trigger.as_str());
     }
+    let mut session = store
+        .client
+        .start_session()
+        .snapshot(true)
+        .await
+        .map_err(unavailable)?;
     let document = store
         .launch_data
         .launches
         .find_one(query)
         .sort(doc! { "created_at": 1, "_id": 1 })
+        .read_concern(ReadConcern::snapshot())
+        .session(&mut session)
         .await
         .map_err(unavailable)?;
     let Some(document) = document else {
         return Ok(None);
     };
-    let launch = read_launch(&document)?.launch;
+    let mut launch = read_launch(&document)?.launch;
+    input_protocol::verify_snapshot(store, &mut launch, &mut session).await?;
     if launch.owner != *owner
         || launch.resolution.agent.id() != Some(agent_id)
         || trigger.is_some_and(|id| *id != launch.trigger_id)
@@ -163,16 +175,26 @@ pub(super) async fn placement_stats(
     store: &MongoTriggerDefinitionStore,
     trigger_id: &TriggerId,
 ) -> Result<Vec<LaunchPlacementStats>, LaunchStoreError> {
+    let mut session = store
+        .client
+        .start_session()
+        .snapshot(true)
+        .await
+        .map_err(unavailable)?;
     let mut cursor = store
         .launch_data
         .launches
         .find(doc! { "trigger_id": trigger_id.as_str() })
         .sort(doc! { "_id": 1_i32 })
+        .read_concern(ReadConcern::snapshot())
+        .session(&mut session)
         .await
         .map_err(unavailable)?;
     let mut stats = BTreeMap::<Option<PlacementId>, (u64, u64)>::new();
-    while let Some(document) = cursor.try_next().await.map_err(unavailable)? {
-        let launch = read_launch(&document)?.launch;
+    while let Some(document) = cursor.next(&mut session).await {
+        let document = document.map_err(unavailable)?;
+        let mut launch = read_launch(&document)?.launch;
+        input_protocol::verify_snapshot(store, &mut launch, &mut session).await?;
         if &launch.trigger_id != trigger_id {
             return Err(corrupt("placement stats crossed their Trigger boundary"));
         }
@@ -228,15 +250,13 @@ pub(super) async fn by_id(
     store: &MongoTriggerDefinitionStore,
     id: &LaunchId,
 ) -> Result<Option<StoredLaunch>, LaunchStoreError> {
-    store
-        .launch_data
-        .launches
-        .find_one(doc! { "_id": id.as_str() })
+    let mut session = store
+        .client
+        .start_session()
+        .snapshot(true)
         .await
-        .map_err(unavailable)?
-        .as_ref()
-        .map(read_launch)
-        .transpose()
+        .map_err(unavailable)?;
+    snapshot_launch(store, id, &mut session).await
 }
 
 pub(super) async fn handoff_by_intent(
@@ -266,6 +286,12 @@ pub(super) async fn due(
     if limit == 0 || limit > layer2_core::trigger_domain::MAX_LAUNCH_EVENT_LIMIT {
         return Err(LaunchStoreError::InvalidCursor);
     }
+    let mut session = store
+        .client
+        .start_session()
+        .snapshot(true)
+        .await
+        .map_err(unavailable)?;
     let mut cursor = store
         .launch_data
         .launches
@@ -297,11 +323,15 @@ pub(super) async fn due(
         })
         .sort(doc! { "work_ready_at": 1_i32, "_id": 1_i32 })
         .limit(i64::from(limit))
+        .read_concern(ReadConcern::snapshot())
+        .session(&mut session)
         .await
         .map_err(unavailable)?;
     let mut launches = Vec::new();
-    while let Some(document) = cursor.try_next().await.map_err(unavailable)? {
-        let launch = read_launch(&document)?.launch;
+    while let Some(document) = cursor.next(&mut session).await {
+        let document = document.map_err(unavailable)?;
+        let mut launch = read_launch(&document)?.launch;
+        input_protocol::verify_snapshot(store, &mut launch, &mut session).await?;
         if !launch.is_worker_due(now) {
             return Err(corrupt("due-work query returned a Launch that is not due"));
         }
@@ -320,17 +350,21 @@ pub(super) async fn launch_in_session(
     id: &LaunchId,
     session: &mut ClientSession,
 ) -> Result<Option<StoredLaunch>, ReadError> {
-    store
+    let mut result = store
         .launch_data
         .launches
         .find_one(doc! { "_id": id.as_str() })
-        .session(session)
+        .session(&mut *session)
         .await
         .map_err(ReadError::Driver)?
         .as_ref()
         .map(read_launch)
         .transpose()
-        .map_err(ReadError::Domain)
+        .map_err(ReadError::Domain)?;
+    if let Some(stored) = &mut result {
+        input_protocol::verify_in_session(store, &mut stored.launch, session).await?;
+    }
+    Ok(result)
 }
 
 pub(super) async fn command_in_session(
@@ -347,9 +381,10 @@ pub(super) async fn command_in_session(
         .session(&mut *session)
         .await
         .map_err(ReadError::Driver)?;
-    let launch = decode_command(document.as_ref(), owner, public_id, command_key_hash)
+    let mut launch = decode_command(document.as_ref(), owner, public_id, command_key_hash)
         .map_err(ReadError::Domain)?;
-    if let Some(launch) = &launch {
+    if let Some(launch) = &mut launch {
+        input_protocol::verify_in_session(store, launch, session).await?;
         event_log::verify_in_session(store, launch, session).await?;
     }
     Ok(launch)

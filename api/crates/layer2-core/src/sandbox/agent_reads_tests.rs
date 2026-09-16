@@ -1,3 +1,10 @@
+#[path = "agent_reads_tests/command_admission_tests.rs"]
+mod command_admission_tests;
+#[path = "agent_reads_tests/resource_access_tests.rs"]
+mod resource_access_tests;
+#[path = "agent_reads_tests/unpublished_identity_tests.rs"]
+mod unpublished_identity_tests;
+
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;

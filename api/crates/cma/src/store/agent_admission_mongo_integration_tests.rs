@@ -107,6 +107,14 @@ async fn trigger_profile_reuse_is_atomic_and_replays_the_same_agent_after_newer_
     );
     let agent_id = ids.pop_first().unwrap();
     let first = store.get_agent(&agent_id).await.unwrap().unwrap();
+    use layer2_core::sandbox::store::AgentProvenanceStore;
+    let provenance = store
+        .agent_provenance_snapshot(&agent_id)
+        .await
+        .unwrap()
+        .creation_provenance(&agent_id)
+        .unwrap();
+    assert_eq!(provenance.provisioning_origin, first.origin);
     assert_eq!(
         first.conversation.first_message.as_ref().unwrap().text,
         "Introduce the repository."
@@ -125,6 +133,15 @@ async fn trigger_profile_reuse_is_atomic_and_replays_the_same_agent_after_newer_
         .await
         .unwrap();
     assert_eq!(replay.creation().agent.id, agent_id);
+    assert_eq!(
+        reopened
+            .agent_provenance_snapshot(&agent_id)
+            .await
+            .unwrap()
+            .creation
+            .unwrap(),
+        provenance
+    );
     assert_eq!(
         replay.creation().agent.conversation.first_message,
         first.conversation.first_message
@@ -326,6 +343,7 @@ fn workspace(sandbox: &Sandbox, suffix: &str) -> Workspace {
 
 fn admission(workspace: &Workspace, suffix: &str) -> AgentAdmission {
     AgentAdmission {
+        created_by: None,
         owner: workspace.owner.clone(),
         workspace_id: workspace.id.clone(),
         agent_id: AgentId(format!("agt_admission_{suffix}")),
@@ -442,11 +460,12 @@ async fn admission_reconciliation_rejects_an_above_high_water_orphan() {
     let (client, database, store, _, _, admission) = fixture("reconcile_orphan").await;
     let mut transaction = store.client.start_session().await.unwrap();
     start_transaction(&mut transaction).await.unwrap();
-    let receipt = match super::apply_admission(&store, &admission, false, &mut transaction).await {
-        Ok(AdmissionReceipt::Created(receipt)) => receipt,
-        Ok(AdmissionReceipt::Existing(_)) => panic!("fresh admission unexpectedly replayed"),
-        Err(_) => panic!("fresh admission transaction failed"),
-    };
+    let receipt =
+        match super::apply_admission(&store, &admission, false, None, &mut transaction).await {
+            Ok(AdmissionReceipt::Created(receipt)) => receipt,
+            Ok(AdmissionReceipt::Existing(_)) => panic!("fresh admission unexpectedly replayed"),
+            Err(_) => panic!("fresh admission transaction failed"),
+        };
     transaction.commit_transaction().await.unwrap();
 
     let mut anchor_session = store.client.start_session().await.unwrap();
@@ -627,6 +646,8 @@ async fn admission_reconciles_every_artifact_at_the_ambiguous_commit_time() {
             "sandboxes",
             "worktrees",
             "agents",
+            "trigger_first_message_bindings",
+            "agent_creation_provenance",
             "agent_log",
             "sandbox_events",
             "sandbox_events",
@@ -657,3 +678,16 @@ async fn admission_reconciles_every_artifact_at_the_ambiguous_commit_time() {
 
     client.database(&database).drop().await.unwrap();
 }
+
+#[path = "agent_admission_mongo_integration_tests/channel_usage.rs"]
+mod channel_usage;
+#[path = "agent_admission_mongo_integration_tests/provenance.rs"]
+mod provenance;
+
+#[path = "agent_admission_mongo_integration_tests/provenance_backfill.rs"]
+mod provenance_backfill;
+#[path = "agent_admission_mongo_integration_tests/provenance_inventory.rs"]
+mod provenance_inventory;
+
+#[path = "agent_admission_mongo_integration_tests/contention.rs"]
+mod contention;

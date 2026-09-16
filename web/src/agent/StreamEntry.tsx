@@ -28,10 +28,12 @@ export type Entry =
 export function StreamEntry({
   entry,
   approvalBusy,
+  approvalReadOnly = false,
   onApproval,
 }: {
   readonly entry: Entry;
   readonly approvalBusy: boolean;
+  readonly approvalReadOnly?: boolean;
   readonly onApproval: (id: string, decision: ApprovalDecision) => void;
 }) {
   if (entry.kind === 'message') {
@@ -119,7 +121,9 @@ export function StreamEntry({
         <h2 id={`approval-${approval.id}`}>{approval.reason}</h2>
         {approval.message === undefined ? null : <p>{approval.message}</p>}
       </div>
-      {approval.decision === undefined ? (
+      {approval.decision === undefined && approvalReadOnly ? (
+        <p>Waiting for an authorized participant to answer this approval.</p>
+      ) : approval.decision === undefined ? (
         <div className="approval__actions">
           <Button size="sm" disabled={approvalBusy} onClick={() => onApproval(approval.id, 'deny')}>
             Deny

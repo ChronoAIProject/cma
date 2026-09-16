@@ -22,13 +22,22 @@ use tokio::task::JoinHandle;
 use super::*;
 use crate::projections::{AgentProjectionServices, UnavailableSandboxResources};
 
+mod approval_tests;
+mod cancellation_tests;
+mod cross_interface_tests;
+mod mongo_tests;
 mod runtime_tests;
+mod terminal_failure_tests;
+mod v2_tests;
 
 const TEST_BEARER: &str = "Bearer local-sdk-conformance";
 
 #[tokio::test]
 #[ignore = "runs a loopback-only fixture for the official Responses SDK scripts"]
 async fn official_responses_sdk_server() {
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter("layer1_public::responses::v2=debug")
+        .try_init();
     let port = std::env::var("CMA_SDK_SERVER_PORT")
         .map(|value| value.parse::<u16>().expect("CMA_SDK_SERVER_PORT is a port"))
         .unwrap_or(0);
@@ -140,7 +149,7 @@ impl TestServer {
 
 async fn start_server(port: u16) -> TestServer {
     let harness = Arc::new(Harness::new(Arc::new(EmptyAgentSkillResolver)).await);
-    let router = conversation_router(&harness).await;
+    let (router, command_worker) = conversation_router(&harness).await;
     let (shutdown, receiver) = oneshot::channel();
     let shutdown = Arc::new(Mutex::new(Some(shutdown)));
     let router = router
@@ -166,6 +175,9 @@ async fn start_server(port: u16) -> TestServer {
     let base_url = format!("http://{}/api/v1", listener.local_addr().unwrap());
     let task = tokio::spawn(async move {
         let mut driver = tokio::spawn(drive_agent_readiness(harness));
+        let (command_shutdown, command_receiver) = tokio::sync::watch::channel(false);
+        let commands =
+            crate::commands::CommandScheduler::new(command_worker).spawn(command_receiver);
         let server = axum::serve(listener, router).with_graceful_shutdown(async {
             let _ = receiver.await;
         });
@@ -174,6 +186,8 @@ async fn start_server(port: u16) -> TestServer {
             result = &mut driver => panic!("SDK fixture worker stopped: {result:?}"),
             _ = tokio::time::sleep(Duration::from_secs(600)) => {},
         }
+        let _ = command_shutdown.send(true);
+        commands.await.unwrap();
         driver.abort();
         let _ = driver.await;
     });
@@ -195,14 +209,36 @@ async fn authenticate(
     }
     request
         .extensions_mut()
-        .insert(layer1_public::AuthenticatedSubject(owner));
+        .insert(layer1_public::AuthenticatedSubject(owner.clone()));
+    request.extensions_mut().insert(v2_tests::context(&owner));
+    request
+        .extensions_mut()
+        .insert(layer1_public::DelegatedCredential::new(
+            "local-sdk-conformance".into(),
+        ));
     request
         .extensions_mut()
         .insert(Authorization::new([Capability::UseOwnSandboxes]));
     Ok(next.run(request).await)
 }
 
-async fn conversation_router(harness: &Harness) -> Router {
+async fn conversation_router(
+    harness: &Harness,
+) -> (
+    Router,
+    Arc<layer2_core::sandbox::agent_io::AgentCommandWorker>,
+) {
+    conversation_router_with_probe(harness, None, "official-sdk-command-worker").await
+}
+
+async fn conversation_router_with_probe<S: FixtureStore>(
+    harness: &Harness<S>,
+    probe: Option<Arc<runtime_tests::RuntimeProbe>>,
+    worker_holder: &str,
+) -> (
+    Router,
+    Arc<layer2_core::sandbox::agent_io::AgentCommandWorker>,
+) {
     let profiles = Arc::new(InMemoryProfileStore::default());
     let snapshot = agent_profile(Vec::new());
     let stamp = rfc3339_at(harness.now);
@@ -241,10 +277,18 @@ async fn conversation_router(harness: &Harness) -> Router {
         ),
         agent_profile: AgentProfileRef::new(snapshot.id, 1),
     };
+    let registry = match probe {
+        Some(probe) => runtime_tests::SdkRegistry::with_probe(
+            harness.registry.clone(),
+            harness.updates.clone(),
+            Some(probe),
+        ),
+        None => runtime_tests::SdkRegistry::new(harness.registry.clone(), harness.updates.clone()),
+    };
     let services = AgentProjectionServices::new(
         harness.store.clone(),
         profiles.clone(),
-        runtime_tests::SdkRegistry::new(harness.registry.clone(), harness.updates.clone()),
+        registry,
         Arc::new(UnavailableSandboxResources),
         RuntimeCapabilities::new([RuntimeCapability::Conversation]),
     );
@@ -260,7 +304,7 @@ async fn conversation_router(harness: &Harness) -> Router {
         profiles,
         Arc::new(defaults),
     );
-    services.conversation_router(context, harness.updates.clone())
+    v2_tests::compose(harness, services, context, worker_holder)
 }
 
 async fn drive_agent_readiness(harness: Arc<Harness>) {

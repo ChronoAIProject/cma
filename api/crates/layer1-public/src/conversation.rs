@@ -7,8 +7,8 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use layer2_core::sandbox::{
-    AgentContextError, AgentContextService, AgentLiveSubscription, AgentOperationService,
-    AgentReadError, AgentReadService, AgentUpdateRecorder,
+    agent_io::AgentCommandService, AgentContextError, AgentContextService, AgentLiveSubscription,
+    AgentOperationService, AgentReadError, AgentReadService, AgentUpdateRecorder,
 };
 
 use crate::rest::instance_problem::InstanceProblem;
@@ -18,26 +18,44 @@ use crate::rest::{problem_document, problem_response};
 #[path = "conversation_checkpoint_tests.rs"]
 mod checkpoint_tests;
 
+pub(crate) mod commands;
+
+#[cfg(test)]
+pub(crate) mod command_test_support;
+
+#[cfg(test)]
+#[path = "conversation/commands_tests.rs"]
+mod commands_tests;
+
 #[derive(Clone)]
 pub struct AgentConversationState {
     pub(crate) reads: Arc<AgentReadService>,
+    #[cfg(test)]
     pub(crate) operations: Arc<AgentOperationService>,
     pub(crate) context: Arc<AgentContextService>,
+    pub(crate) commands: Option<Arc<AgentCommandService>>,
     updates: Option<Arc<dyn AgentUpdateRecorder>>,
 }
 
 impl AgentConversationState {
     pub fn new(
         reads: Arc<AgentReadService>,
-        operations: Arc<AgentOperationService>,
+        _operations: Arc<AgentOperationService>,
         context: Arc<AgentContextService>,
     ) -> Self {
         Self {
             reads,
-            operations,
+            #[cfg(test)]
+            operations: _operations,
             context,
             updates: None,
+            commands: None,
         }
+    }
+
+    pub fn with_commands(mut self, commands: Arc<AgentCommandService>) -> Self {
+        self.commands = Some(commands);
+        self
     }
 
     pub fn with_updates(mut self, updates: Arc<dyn AgentUpdateRecorder>) -> Self {

@@ -1,0 +1,488 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "shared-creation-inventory-shared",
+      "operation": "GET /api/v1/agents/provenance",
+      "scenario": "creation_inventory_member",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/provenance?shared=true&status=ready&creation_origin=manual",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "items": [
+            {
+              "agent_id": "agt_shared_read",
+              "title": "Agent agt_shared_read",
+              "status": "ready",
+              "created_at": "2026-09-05T00:00:00Z",
+              "updated_at": "2026-09-05T00:00:00Z",
+              "creation_origin": "manual",
+              "channel_usage": {
+                "active": false,
+                "has_history": false,
+                "first_used_at": null,
+                "last_used_at": null
+              }
+            }
+          ]
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "shared-creation-inventory-parent-refused",
+      "operation": "GET /api/v1/agents/provenance",
+      "scenario": "creation_inventory_member",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/provenance?shared=true&sandbox=sbx_route",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource_not_found",
+          "title": "resource_not_found",
+          "status": 404,
+          "detail": "Resource not found.",
+          "code": "resource_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "shared-creation-inventory-workspace-refused",
+      "operation": "GET /api/v1/agents/provenance",
+      "scenario": "creation_inventory_member",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/provenance?shared=true&workspace=wks_route",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource_not_found",
+          "title": "resource_not_found",
+          "status": 404,
+          "detail": "Resource not found.",
+          "code": "resource_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "shared-creation-inventory-overlap",
+      "operation": "GET /api/v1/agents/provenance",
+      "scenario": "creation_inventory_overlap",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/provenance?shared=true&sandbox=sbx_route&workspace=wks_route&limit=1",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "items": [
+            {
+              "agent_id": "agt_shared_read",
+              "title": "Agent agt_shared_read",
+              "status": "ready",
+              "created_at": "2026-09-05T00:00:00Z",
+              "updated_at": "2026-09-05T00:00:00Z",
+              "creation_origin": "manual",
+              "channel_usage": {
+                "active": false,
+                "has_history": false,
+                "first_used_at": null,
+                "last_used_at": null
+              }
+            }
+          ],
+          "next": "agt_shared_read"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "shared-creation-inventory-overlap-next",
+      "operation": "GET /api/v1/agents/provenance",
+      "scenario": "creation_inventory_overlap",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/provenance?shared=true&cursor=agt_shared_read&limit=1",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "items": [
+            {
+              "agent_id": "agt_sibling",
+              "title": "Agent agt_sibling",
+              "status": "ready",
+              "created_at": "2026-09-05T00:00:00Z",
+              "updated_at": "2026-09-05T00:00:00Z",
+              "creation_origin": "manual",
+              "channel_usage": {
+                "active": false,
+                "has_history": false,
+                "first_used_at": null,
+                "last_used_at": null
+              }
+            }
+          ]
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "shared-creation-inventory-deleted",
+      "operation": "GET /api/v1/agents/provenance",
+      "scenario": "creation_inventory_deleted",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/provenance?shared=true&status=deleted",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "items": [
+            {
+              "agent_id": "agt_shared_read",
+              "title": "Agent agt_shared_read",
+              "status": "deleted",
+              "created_at": "2026-09-05T00:00:00Z",
+              "updated_at": "2026-09-05T00:00:00Z",
+              "creation_origin": "manual",
+              "channel_usage": {
+                "active": false,
+                "has_history": false,
+                "first_used_at": null,
+                "last_used_at": null
+              }
+            }
+          ]
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "shared-creation-inventory-revoked-empty",
+      "operation": "GET /api/v1/agents/provenance",
+      "scenario": "creation_inventory_revoked",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/provenance?shared=true",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "items": []
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "shared-creation-inventory-no_credential",
+      "operation": "GET /api/v1/agents/provenance",
+      "scenario": "creation_inventory_no_credential",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/provenance?shared=true",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/organization_authority_unavailable",
+          "title": "organization_authority_unavailable",
+          "status": 503,
+          "detail": "Current organization authorization is unavailable. Retry after the identity provider recovers.",
+          "code": "organization_authority_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "shared-creation-inventory-anonymous",
+      "operation": "GET /api/v1/agents/provenance",
+      "scenario": "creation_inventory_anonymous",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/provenance?shared=true",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "shared-creation-inventory-outage",
+      "operation": "GET /api/v1/agents/provenance",
+      "scenario": "creation_inventory_outage",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/provenance?shared=true",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/organization_authority_unavailable",
+          "title": "organization_authority_unavailable",
+          "status": 503,
+          "detail": "Current organization authorization is unavailable. Retry after the identity provider recovers.",
+          "code": "organization_authority_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "shared-creation-inventory-missing",
+      "operation": "GET /api/v1/agents/provenance",
+      "scenario": "creation_inventory_missing",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/provenance?shared=true",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "items": []
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "shared-creation-inventory-forbidden",
+      "operation": "GET /api/v1/agents/provenance",
+      "scenario": "creation_inventory_forbidden",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/provenance?shared=true",
+        "headers": {}
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource_forbidden",
+          "title": "resource_forbidden",
+          "status": 403,
+          "detail": "Current authority does not permit this operation.",
+          "code": "resource_forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "shared-creation-inventory-invalid_context",
+      "operation": "GET /api/v1/agents/provenance",
+      "scenario": "creation_inventory_invalid_context",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/provenance?shared=true",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "shared-creation-inventory-changed",
+      "operation": "GET /api/v1/agents/provenance",
+      "scenario": "creation_inventory_changed",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/provenance?shared=true",
+        "headers": {}
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource_access_changed",
+          "title": "resource_access_changed",
+          "status": 409,
+          "detail": "Resource access changed. Read current access and retry with the current revision.",
+          "code": "resource_access_changed"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "shared-creation-inventory-unavailable",
+      "operation": "GET /api/v1/agents/provenance",
+      "scenario": "creation_inventory_unavailable",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/provenance?shared=true",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource_access_unavailable",
+          "title": "resource_access_unavailable",
+          "status": 503,
+          "detail": "Resource access is temporarily unavailable. Retry the same command key to recover an unacknowledged result.",
+          "code": "resource_access_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "shared-creation-inventory-corrupt",
+      "operation": "GET /api/v1/agents/provenance",
+      "scenario": "creation_inventory_corrupt",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/provenance?shared=true",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource_access_unavailable",
+          "title": "resource_access_unavailable",
+          "status": 503,
+          "detail": "Resource access is temporarily unavailable. Retry the same command key to recover an unacknowledged result.",
+          "code": "resource_access_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "shared-creation-inventory-exclude-owner",
+      "operation": "GET /api/v1/agents/provenance",
+      "scenario": "creation_inventory_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/provenance?shared=true",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "items": []
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "shared-creation-inventory-scope-conflict",
+      "operation": "GET /api/v1/agents/provenance",
+      "scenario": "creation_inventory_member",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/provenance?shared=true&organization=org",
+        "headers": {}
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-instance-query",
+          "title": "invalid instance query",
+          "status": 400,
+          "detail": "The instance query parameters are not valid.",
+          "code": "invalid_instance_query"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    }
+  ]
+}

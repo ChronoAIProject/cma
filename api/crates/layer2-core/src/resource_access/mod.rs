@@ -1,0 +1,47 @@
+//! Resource policy separates retained ownership, authenticated authority and
+//! actual attribution. Evidence is supplied by trusted adapters, never by DTOs
+//! or historical command receipts. Legacy aggregates remain personally owned.
+
+mod audit;
+mod authority;
+mod context;
+mod identity;
+mod inventory;
+mod inventory_memberships;
+pub(crate) use inventory_memberships::InventoryMemberships;
+mod lineage;
+mod personal;
+mod policy;
+mod sandbox_inventory;
+mod service;
+mod share;
+mod share_command;
+mod sharing_service;
+mod store;
+
+pub use audit::{
+    ResourceAuthorityObservation, ResourceAuthorizationAudit, ResourceAuthorizationBasis,
+    ResourceGrantObservation,
+};
+pub use authority::{OrganizationAuthority, OrganizationChoice};
+pub use context::{
+    CallerContext, CredentialContext, MembershipError, OrganizationMembership, OrganizationRole,
+    MAX_MEMBERSHIP_AGE,
+};
+pub use identity::{ResourceActor, ResourceOwner};
+pub use lineage::ResourceLineage;
+pub use policy::{AccessDecision, AccessError, AccessPurpose, ResourceCapability, ResourceScope};
+pub use service::{AuthorizedResource, ResourceAccessError, ResourceAccessService};
+pub use share::{ResourceSelector, ResourceShare, ShareMode, SharingIsolation};
+pub use share_command::{
+    plan_share_mutation, ResourceShareStore, ShareChange, ShareMutation, ShareMutationPlan,
+    ShareMutationReceipt, MAX_ACTIVE_RESOURCE_SHARES,
+};
+pub use sharing_service::ShareCommand;
+pub use store::{
+    OrganizationOwnershipEvidence, ResourceAccessSnapshot, ResourceAccessStore,
+    ResourceAccessStoreError, ResourcePolicyFence, ResourcePolicyRecord, ResourceTarget,
+};
+
+#[cfg(test)]
+mod tests;

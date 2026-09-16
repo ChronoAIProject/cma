@@ -1,5 +1,6 @@
 import { Presence } from './ui/Presence';
-import { lazy, Suspense, useCallback, useEffect, useState } from 'react';
+import { BridgeEntry } from './bridges/BridgeEntry';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from 'react';
 import { LandingCharacter } from './landing/LandingCharacter';
 import {
   useCmaClient,
@@ -25,6 +26,17 @@ import { Button } from './ui/Button';
 import { IconNewChatOutline16 } from './ui/icons';
 import './Console.css';
 import type { ProfileUse } from './profiles/marketplace/client';
+import { useAgentAccess } from './resources/agentAccess';
+import { SharedAgent } from './resources/SharedAgent';
+import { AgentInventory } from './resources/AgentInventory';
+import { SharingButton } from './resources/SharingButton';
+import { ArtifactButton } from './resources/ArtifactButton';
+import { ArtifactPublicationScope } from './resources/artifactRecovery';
+import { ChannelUsage } from './resources/ChannelUsage';
+import { SandboxAccessPage } from './resources/SandboxAccessPage';
+import { WorkspaceContents } from './resources/WorkspaceContents';
+import { scopeValue } from './resources/scope';
+import { ScopedNavigation } from './resources/ScopedNavigation';
 
 const ProfileViews = lazy(() =>
   import('./profiles/ProfileViews').then((module) => ({ default: module.ProfileViews })),
@@ -32,6 +44,7 @@ const ProfileViews = lazy(() =>
 const Operations = lazy(() =>
   import('./operator/Operations').then((module) => ({ default: module.Operations })),
 );
+
 const TriggerPublisherPage = lazy(() =>
   import('./trigger-publisher/TriggerPublisherPage').then((module) => ({
     default: module.TriggerPublisherPage,
@@ -58,9 +71,30 @@ export function Console({
   hierarchyRevision = 0,
 }: ConsoleProps) {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [navigationScope, setNavigationScope] = useState(
+    route.kind === 'inventory'
+      ? scopeValue(route.organization, route.shared)
+      : route.kind === 'bridges' || route.kind === 'bridge_new'
+        ? scopeValue(route.organization)
+        : '',
+  );
   const [detailsOpen, setDetailsOpen] = useState(false);
+  const [artifactPublicationScope] = useState(() => new ArtifactPublicationScope());
   const [revision, setRevision] = useState(0);
   const client = useCmaClient();
+  const sandboxCommandScope = useMemo(() => ({ client, viewerId: user.id }), [client, user.id]);
+  const agentAccess = useAgentAccess(
+    client.resourceViews,
+    route.kind === 'agent' ? route.agentId : undefined,
+  );
+  const shared =
+    agentAccess.state.status === 'ready' && agentAccess.state.value.detail.access === 'shared'
+      ? agentAccess.state.value.detail
+      : undefined;
+  const personalAgentId =
+    route.kind === 'agent' && (client.resourceViews === undefined || agentAccess.personalReady)
+      ? route.agentId
+      : undefined;
   const profiles = useProfileViewsClient();
   const operator = useOperatorClient();
   const publisher = usePublisherClient();
@@ -73,7 +107,7 @@ export function Console({
     refreshNavigation();
     setRevision((value) => value + 1);
   }, [refreshNavigation]);
-  const agent = useAgentController(client, route.kind === 'agent' ? route.agentId : undefined, {
+  const agent = useAgentController(client, personalAgentId, {
     summary:
       route.kind === 'agent' && navigation.status === 'ready'
         ? navigation.items
@@ -106,7 +140,60 @@ export function Console({
   };
   const ready = agent.state.status === 'ready' ? agent.state : undefined;
   const content =
-    route.kind === 'agent' ? (
+    route.kind === 'bridges' || route.kind === 'bridge' || route.kind === 'bridge_new' ? (
+      <BridgeEntry
+        client={user.visitor ? undefined : client.bridgeViews}
+        viewerId={user.id}
+        route={route}
+        onNavigate={(next) => {
+          if (next.kind === 'bridges' || next.kind === 'bridge_new')
+            setNavigationScope(scopeValue(next.organization));
+          onNavigate(next);
+        }}
+      />
+    ) : route.kind === 'inventory' ? (
+      client.resourceViews === undefined ? (
+        <section className="console__empty">
+          <h1>Agent inventory unavailable</h1>
+        </section>
+      ) : (
+        <AgentInventory
+          client={client.resourceViews}
+          organization={route.organization}
+          shared={route.shared}
+          onNavigate={(next) => {
+            if (next.kind === 'inventory')
+              setNavigationScope(scopeValue(next.organization, next.shared));
+            onNavigate(next);
+          }}
+        />
+      )
+    ) : route.kind === 'agent' && shared !== undefined && client.resourceViews !== undefined ? (
+      <SharedAgent
+        publicationScope={artifactPublicationScope}
+        key={shared.id}
+        client={client.resourceViews}
+        web={client}
+        detail={shared}
+        onAccessChanged={agentAccess.reload}
+      />
+    ) : route.kind === 'agent' &&
+      client.resourceViews !== undefined &&
+      personalAgentId === undefined &&
+      agentAccess.state.status !== 'ready' ? (
+      <section
+        className="console__empty"
+        role={agentAccess.state.status === 'error' ? 'alert' : 'status'}
+      >
+        <h1>{agentAccess.state.status === 'error' ? 'Agent unavailable' : 'Opening Agent'}</h1>
+        {agentAccess.state.status === 'error' ? (
+          <>
+            <p>{agentAccess.state.message}</p>
+            <Button onClick={agentAccess.reload}>Check access again</Button>
+          </>
+        ) : null}
+      </section>
+    ) : route.kind === 'agent' ? (
       <AgentSurface
         key={route.agentId}
         agentId={route.agentId}
@@ -117,17 +204,44 @@ export function Console({
         onNavigate={onNavigate}
       />
     ) : route.kind === 'sandbox' ? (
-      <SandboxPage
+      <SandboxAccessPage
         key={route.sandboxId}
-        client={client}
-        sandboxId={route.sandboxId}
-        viewerId={user.id}
-        revision={revision}
-        permissions={permissions}
-        busy={actions.pending}
-        onAction={actions.select}
+        client={client.resourceViews}
+        id={route.sandboxId}
+        commandScope={sandboxCommandScope}
         onNavigate={onNavigate}
+        personal={
+          <SandboxPage
+            key={route.sandboxId}
+            client={client}
+            sandboxId={route.sandboxId}
+            viewerId={user.id}
+            revision={revision}
+            permissions={permissions}
+            busy={actions.pending}
+            onAction={actions.select}
+            onNavigate={onNavigate}
+          />
+        }
       />
+    ) : route.kind === 'workspace' ? (
+      <section className="shared-hierarchy">
+        <header>
+          <h1>Workspace</h1>
+        </header>
+        <div className="shared-hierarchy__body">
+          {client.resourceViews === undefined ? (
+            <p>Workspace unavailable</p>
+          ) : (
+            <WorkspaceContents
+              key={route.workspaceId}
+              client={client.resourceViews}
+              id={route.workspaceId}
+              onNavigate={onNavigate}
+            />
+          )}
+        </div>
+      </section>
     ) : route.kind === 'profiles' ||
       route.kind === 'profile' ||
       route.kind === 'marketplace' ||
@@ -232,10 +346,10 @@ export function Console({
 
   return (
     <AppFrame
-      detailsOpen={route.kind === 'agent' && detailsOpen}
+      detailsOpen={personalAgentId !== undefined && detailsOpen}
       compactDetailsOverlay
       details={
-        route.kind === 'agent' ? (
+        route.kind === 'agent' && personalAgentId !== undefined ? (
           <AgentDetails
             key={route.agentId}
             open={detailsOpen}
@@ -248,6 +362,42 @@ export function Console({
             onNavigate={onNavigate}
             onStop={agent.stop}
             onDelete={agent.delete}
+            channelUsage={
+              detailsOpen && ready !== undefined && client.resourceViews !== undefined ? (
+                <ChannelUsage
+                  key={ready.detail.id}
+                  client={client.resourceViews}
+                  id={ready.detail.id}
+                />
+              ) : undefined
+            }
+            artifacts={
+              detailsOpen && ready !== undefined && client.resourceViews !== undefined ? (
+                <ArtifactButton
+                  publicationScope={artifactPublicationScope}
+                  key={ready.detail.id}
+                  client={client.resourceViews}
+                  id={ready.detail.id}
+                />
+              ) : undefined
+            }
+            sharing={
+              detailsOpen && ready !== undefined && client.resourceViews !== undefined ? (
+                <SharingButton
+                  client={client.resourceViews}
+                  target={{
+                    kind: 'agent',
+                    id: ready.detail.id,
+                    name: ready.detail.title?.trim() || 'Untitled agent',
+                  }}
+                  sandbox={{
+                    kind: 'sandbox',
+                    id: ready.detail.sandbox.id,
+                    name: ready.detail.sandbox.name,
+                  }}
+                />
+              ) : undefined
+            }
           />
         ) : undefined
       }
@@ -266,44 +416,57 @@ export function Console({
             onNavigate({ kind: 'home' });
           }}
           navigation={
-            navigation.status === 'ready' ? (
-              <Tree
-                key={user.id}
-                viewerId={user.id}
-                items={navigation.items.map((item) => ({
-                  ...item,
-                  workspaces: item.workspaces.map((workspace) => ({
-                    ...workspace,
-                    agents: workspace.agents.map((summary) =>
-                      route.kind === 'agent' &&
-                      agent.state.status === 'ready' &&
-                      agent.state.detail.id === route.agentId &&
-                      sameAgent(agent.state.detail, summary)
-                        ? { ...summary, status: agent.state.detail.status }
-                        : summary,
-                    ),
-                  })),
-                }))}
-                refreshError={navigation.refreshError}
-                lifecycleBusy={actions.pending}
-                route={route}
-                permissions={permissions}
-                onNavigate={(next) => {
-                  onSidebarNavigate();
-                  onNavigate(next);
-                }}
-                onAction={actions.select}
-              />
-            ) : navigation.status === 'loading' ? (
-              <p className="console__navigation-status" role="status">
-                Loading Sandboxes
-              </p>
-            ) : (
-              <div className="console__navigation-status" role="alert">
-                <p>{navigation.message}</p>
-                <Button onClick={navigation.refresh}>Try again</Button>
-              </div>
-            )
+            <ScopedNavigation
+              client={user.visitor ? undefined : client.resourceViews}
+              bridges={!user.visitor && client.bridgeViews !== undefined}
+              scope={navigationScope}
+              onScopeChange={setNavigationScope}
+              onNavigate={(next) => {
+                onSidebarNavigate();
+                onNavigate(next);
+              }}
+              personal={
+                navigation.status === 'ready' ? (
+                  <Tree
+                    resourceClient={user.visitor ? undefined : client.resourceViews}
+                    key={user.id}
+                    viewerId={user.id}
+                    items={navigation.items.map((item) => ({
+                      ...item,
+                      workspaces: item.workspaces.map((workspace) => ({
+                        ...workspace,
+                        agents: workspace.agents.map((summary) =>
+                          route.kind === 'agent' &&
+                          agent.state.status === 'ready' &&
+                          agent.state.detail.id === route.agentId &&
+                          sameAgent(agent.state.detail, summary)
+                            ? { ...summary, status: agent.state.detail.status }
+                            : summary,
+                        ),
+                      })),
+                    }))}
+                    refreshError={navigation.refreshError}
+                    lifecycleBusy={actions.pending}
+                    route={route}
+                    permissions={permissions}
+                    onNavigate={(next) => {
+                      onSidebarNavigate();
+                      onNavigate(next);
+                    }}
+                    onAction={actions.select}
+                  />
+                ) : navigation.status === 'loading' ? (
+                  <p className="console__navigation-status" role="status">
+                    Loading Sandboxes
+                  </p>
+                ) : (
+                  <div className="console__navigation-status" role="alert">
+                    <p>{navigation.message}</p>
+                    <Button onClick={navigation.refresh}>Try again</Button>
+                  </div>
+                )
+              }
+            />
           }
           account={
             <ProfileMenu

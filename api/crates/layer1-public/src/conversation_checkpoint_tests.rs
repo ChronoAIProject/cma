@@ -1,4 +1,8 @@
-use axum::http::{Method, StatusCode};
+use axum::http::Method;
+use layer2_core::sandbox::agent_io::{
+    AgentCommandStore, AgentCommandWorkerStore, AgentResponseStatus,
+};
+use layer2_core::sandbox::store::PageRequest;
 use layer2_core::sandbox::store::{
     AgentLogStore, AgentStore, InMemorySandboxStore, SandboxLifecycleAgentScope,
     SandboxLifecycleExecutionStore, SandboxLifecycleMutation, SandboxMutationGuard, SandboxStore,
@@ -7,10 +11,9 @@ use layer2_core::sandbox::{
     AgentStatus, Sandbox, SandboxEventKind, SandboxWorkStep, AGENT_CONTEXT_ADMISSION_BOUND,
 };
 use serde_json::json;
+use tower::ServiceExt;
 
-use crate::rest::agents_tests::{
-    conversation_fixture, insert_agent, json_response, request, seeded_agent,
-};
+use crate::rest::agents_tests::{conversation_fixture, insert_agent, request, seeded_agent};
 
 // Seeded Agent logs precede this periodic capture by the required 120 seconds.
 const NOW: &str = "2026-09-05T00:02:00Z";
@@ -51,15 +54,11 @@ async fn context_creation_keeps_waiting_until_checkpoint_writers_resume() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn checkpoint_input_is_refused_immediately_and_never_admitted_after_resume() {
+async fn checkpoint_input_keeps_its_durable_receipt_without_dispatching_from_the_handler() {
     for (path, body) in [
         (
             "/api/v1/agui/run",
             json!({"threadId": "agt_checkpoint_input", "messages": [{"role": "user", "content": "Not accepted"}]}),
-        ),
-        (
-            "/api/v1/agui/run",
-            json!({"threadId": "agt_checkpoint_input", "resume": [{"interruptId": "approval-one", "status": "resolved", "payload": {"decision": "allow"}}]}),
         ),
         (
             "/api/v1/responses",
@@ -75,21 +74,37 @@ async fn checkpoint_input_is_refused_immediately_and_never_admitted_after_resume
         let mut next = sandbox.clone();
         next.begin_checkpoint_capture(NOW.into()).unwrap();
         advance_capture(&store, &mut sandbox, next).await;
+        let state = super::command_test_support::compose(state, store.clone());
         let router = crate::agui::router(state.clone()).merge(crate::responses::router(state));
 
-        let before = tokio::time::Instant::now();
-        let result = tokio::time::timeout(
-            std::time::Duration::from_millis(100),
-            json_response(
-                &router,
-                request(Method::POST, path, "owner-a", None, Some(body)),
-            ),
-        )
-        .await
-        .expect("checkpoint input must return before the request could become a waiter");
-        assert_eq!(before.elapsed(), std::time::Duration::ZERO);
-        assert_eq!(result.0, StatusCode::CONFLICT, "{path}: {:?}", result.1);
-        assert_eq!(result.1["code"], "sandbox_checkpoint_in_progress");
+        let mut request = request(
+            Method::POST,
+            path,
+            "owner-a",
+            Some("during-checkpoint"),
+            Some(body),
+        );
+        super::command_test_support::authenticate(&mut request);
+        let task = tokio::spawn(router.oneshot(request));
+        let accepted = loop {
+            let records = store
+                .command_work_page(&PageRequest::default())
+                .await
+                .unwrap()
+                .items;
+            if let Some(record) = records.first() {
+                break record.clone();
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+            assert!(
+                !task.is_finished(),
+                "checkpoint input must remain admitted and awaiting a binding"
+            );
+        };
+        assert_eq!(accepted.status, AgentResponseStatus::Queued);
+        assert!(accepted.work.dispatch.is_none());
+        assert!(!task.is_finished());
+        task.abort();
         assert_eq!(store.get_agent(&agent.id).await.unwrap(), baseline);
         assert_eq!(store.agent_log(&agent.id, 0, 100).await.unwrap(), logs);
 
@@ -99,6 +114,13 @@ async fn checkpoint_input_is_refused_immediately_and_never_admitted_after_resume
         assert!(sandbox.lifecycle.checkpoint_capture.is_none());
         assert_eq!(store.get_agent(&agent.id).await.unwrap(), baseline);
         assert_eq!(store.agent_log(&agent.id, 0, 100).await.unwrap(), logs);
+        assert_eq!(
+            store
+                .get_command(&accepted.receipt.envelope.command_id)
+                .await
+                .unwrap(),
+            Some(accepted)
+        );
     }
 }
 

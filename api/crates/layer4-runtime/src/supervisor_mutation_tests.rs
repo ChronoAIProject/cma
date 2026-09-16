@@ -21,6 +21,11 @@ use crate::mutation_journal::{self, Begin, Operation};
 #[path = "supervisor_warmup_tests.rs"]
 mod warmup_tests;
 
+#[path = "supervisor_workspace_reconciliation_tests.rs"]
+mod workspace_reconciliation_tests;
+#[path = "supervisor_workspace_removal_tests.rs"]
+mod workspace_removal_tests;
+
 fn add_worktree_request(request: WorktreeRequest) -> RequestFrame {
     RequestFrame::AddWorktree(FencedRequest::new(1, request))
 }

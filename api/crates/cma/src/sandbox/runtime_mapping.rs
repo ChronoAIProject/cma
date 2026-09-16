@@ -7,7 +7,7 @@ use layer3_adapter::{
     AdapterCapabilities, AgentSlot, RuntimeOptions, SandboxCapacity, SandboxSpec,
 };
 
-pub(super) fn runtime_options(
+pub(crate) fn runtime_options(
     agent: &Agent,
     sandbox: &Sandbox,
     worktree: &Worktree,

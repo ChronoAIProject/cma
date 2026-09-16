@@ -10,6 +10,7 @@ use layer2_core::RuntimeCapability;
 use super::{problem_document, problem_response};
 
 pub(crate) enum InstanceProblem {
+    ResourceAccess(layer2_core::resource_access::ResourceAccessError),
     Connection(layer2_core::sandbox::SandboxCredentialPrerequisiteError),
     Forbidden,
     AgentNotFound,
@@ -24,6 +25,7 @@ pub(crate) enum InstanceProblem {
     MessageQueueFull { limit: usize },
     ApprovalNotPending { approval_id: String },
     CapabilityUnsupported { capability: RuntimeCapability },
+    ContentUnsupported,
     OperationInFlight,
     CheckpointInProgress,
     DeliveryAmbiguous,
@@ -88,6 +90,7 @@ impl InstanceProblem {
 impl From<AgentReadError> for InstanceProblem {
     fn from(error: AgentReadError) -> Self {
         match error {
+            AgentReadError::Access(error) => Self::ResourceAccess(error),
             AgentReadError::Forbidden => Self::Forbidden,
             AgentReadError::NotFound => Self::AgentNotFound,
             AgentReadError::InvalidPage => Self::InvalidQuery,
@@ -116,6 +119,7 @@ impl From<AgentOperationError> for InstanceProblem {
             AgentOperationError::CapabilityUnsupported { capability } => {
                 Self::CapabilityUnsupported { capability }
             }
+            AgentOperationError::ContentUnsupported => Self::ContentUnsupported,
             AgentOperationError::QueueCapacityExceeded { limit } => {
                 Self::MessageQueueFull { limit }
             }
@@ -138,6 +142,7 @@ impl From<AgentOperationError> for InstanceProblem {
 impl IntoResponse for InstanceProblem {
     fn into_response(self) -> Response {
         let (status, slug, detail, code) = match &self {
+            Self::ResourceAccess(error) => return super::resource_access_problem::ResourceProblem(error.clone()).into_response(),
             Self::Connection(error) => return super::instances_problem::HierarchyProblem::connection(error.clone()).into_response(),
             Self::Forbidden => (
                 StatusCode::FORBIDDEN,
@@ -174,6 +179,12 @@ impl IntoResponse for InstanceProblem {
                 "invalid-agent-request",
                 "The agent request does not satisfy its validation contract.",
                 "invalid_agent_request",
+            ),
+            Self::ContentUnsupported => (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "agent-content-unsupported",
+                "This Agent interface accepts text content only.",
+                "agent_content_unsupported",
             ),
             Self::WorkspaceNotReady => (
                 StatusCode::CONFLICT,

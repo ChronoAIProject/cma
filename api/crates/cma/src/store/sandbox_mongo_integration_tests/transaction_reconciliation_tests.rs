@@ -55,6 +55,7 @@ async fn generic_transaction_receipts_reconcile_from_one_commit_time_snapshot() 
             },
         },
         SandboxTransaction::SaveSandboxAndAppend {
+            command_revival: None,
             expected_revision: 1,
             sandbox: Box::new(parent.clone()),
             event_at: MINUTE.into(),

@@ -31,7 +31,7 @@ export interface LocalEvent {
 
 // Models only the public boundary; no provider or backend execution is claimed.
 export class LocalStartup {
-  sandbox = recorded<SandboxDetail>('instances.json', 'sandbox-read');
+  sandbox = { ...recorded<SandboxDetail>('instances.json', 'sandbox-read'), owner: 'local-owner' };
   workspace = recorded<WorkspaceDetail>('instances.json', 'workspace-read');
   agent = recorded<Agent>('agents.json', 'agent-read');
   events: LocalEvent[] = [];
@@ -60,7 +60,19 @@ export class LocalStartup {
           display_name: 'Local owner',
           capabilities: ['use_own_sandboxes', 'create_sandbox', 'delete_own_sandbox'],
         });
+      if (url.pathname === '/auth/connections/check')
+        return reply({ owner: 'local-owner', ready: true, checked_at: localTime, services: [] });
       if (!url.pathname.startsWith('/api/')) return route.continue();
+      if (url.pathname === `/api/v1/agents/${this.agent.id}/channel-usage`)
+        return reply({
+          agent_id: this.agent.id,
+          channel_usage: {
+            active: false,
+            has_history: false,
+            first_used_at: null,
+            last_used_at: null,
+          },
+        });
       if (request.method() === 'POST') {
         this.writes.push({
           path: url.pathname,
@@ -138,6 +150,18 @@ export class LocalStartup {
         );
       }
       switch (url.pathname) {
+        case '/api/v2/ui/transport':
+          // This legacy boundary intentionally models a server without v2 selection.
+          return reply({ code: 'not_found', detail: 'Unknown optional endpoint.' }, 404);
+        case '/api/v1/organizations':
+          return reply({ items: [] });
+        case '/api/v1/resource-access/agent/agt_contract':
+        case '/api/v1/resource-access/sandbox/sbx_route':
+          return reply({
+            capabilities: ['view_details', 'view_history', 'manage_sharing'],
+            revalidate_at: null,
+            policy_revision: 1,
+          });
         case '/api/v1/profile-authoring/services':
           return reply([{ id: 'api-github', catalog_id: 'catalog-github', name: 'GitHub' }]);
         case '/api/v1/profile-authoring/skills':
@@ -179,6 +203,23 @@ export class LocalStartup {
           return reply({ items: this.workspace.agents });
         case '/api/v1/agents/agt_contract':
           return reply(this.agent);
+        case '/api/v1/agents/agt_contract/provenance':
+          return reply({
+            agent_id: this.agent.id,
+            created_at: this.agent.created_at,
+            creation_origin: 'legacy_unknown',
+          });
+        case '/api/v1/agents/agt_contract/source':
+          return reply({ agent_id: this.agent.id, origin: { type: 'manual' } });
+        case '/api/v1/agents/agt_contract/resources':
+          return reply(
+            {
+              code: 'unavailable',
+              detail: 'Runtime resources are unavailable in this local fixture.',
+              status: 503,
+            },
+            503,
+          );
         case '/api/v1/agents/agt_contract/transcript':
           return reply({
             agent_id: this.agent.id,

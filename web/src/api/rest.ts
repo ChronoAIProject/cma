@@ -2,6 +2,7 @@ import { ProtocolError, type Cma } from '@chronoai/cma-sdk';
 import type { CmaWebClient, ReadOptions } from './client';
 import type { ProfileReference } from './types';
 import { agentDetail, sandboxDetail, sandboxSummary, workspaceDetail } from './rest/hierarchy';
+import { createAgentTransport, type AgentTransportOptions } from '../agent/transport/client';
 
 /** The write succeeded; a failed detail read must not release its command key. */
 export class CreatedResourceReadError extends Error {
@@ -31,7 +32,7 @@ async function createdDetail<Value>(
 }
 
 /** One public SDK transport, with explicit wire-to-view conversion at the boundary. */
-export function createRestWebClient(sdk: Cma): CmaWebClient {
+export function createRestWebClient(sdk: Cma, transport?: AgentTransportOptions): CmaWebClient {
   const pinnedSandboxProfile = async (reference: ProfileReference, options?: ReadOptions) => {
     const profile = await sdk.sandboxProfiles.readRevision(
       reference.id,
@@ -47,6 +48,9 @@ export function createRestWebClient(sdk: Cma): CmaWebClient {
     return profile.content;
   };
   return {
+    agentTransport: transport === undefined ? undefined : createAgentTransport(sdk, transport),
+    resourceViews: sdk,
+    bridgeViews: sdk,
     listSandboxes: async (options) => {
       const page = await sdk.sandboxes.list(options);
       return { items: page.items.map(sandboxSummary), next: page.next };
@@ -55,7 +59,8 @@ export function createRestWebClient(sdk: Cma): CmaWebClient {
     readWorkspace: async (id, options) => workspaceDetail(await sdk.workspaces.read(id, options)),
     readAgent: async (id, options) => agentDetail(await sdk.agents.read(id, options)),
     readAgentResources: (id, options) => sdk.agents.resources(id, options),
-    readAgentSource: (id, options) => sdk.agents.source(id, options),
+    readAgentSource: (id, options) => sdk.agents.sourceAccessible(id, options),
+    readAgentProvenance: (id, options) => sdk.agents.provenance(id, options),
     readSandboxProfileCapacity: async (reference, options) => {
       const content = await pinnedSandboxProfile(reference, options);
       const cpuMillis = content.cpu_millis;
