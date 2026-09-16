@@ -33,6 +33,25 @@ pub trait HostedAgentRuntime: Send + Sync {
 #[async_trait::async_trait]
 pub trait HostedBackend: Send + Sync {
     async fn provision(&self, request: ProviderSandboxRequest) -> Result<RuntimeHandle>;
+    async fn provision_receipted(
+        &self,
+        _request: ProviderSandboxRequest,
+        _operation_id: &str,
+        _request_sha256: &str,
+    ) -> Result<crate::RuntimeProvisionReceipt> {
+        Err(crate::AdapterError::Unsupported(
+            "original hosted provider receipts are unavailable".into(),
+        ))
+    }
+    async fn finalize_runtime(
+        &self,
+        _original: &crate::RuntimeProvisionReceipt,
+        _operation_id: &str,
+    ) -> Result<crate::RuntimeFinalityReceipt> {
+        Err(crate::AdapterError::Unsupported(
+            "hosted provider finality is unavailable".into(),
+        ))
+    }
 
     async fn inventory(&self) -> Result<Vec<RuntimeObservation>> {
         Err(crate::AdapterError::Unsupported(
