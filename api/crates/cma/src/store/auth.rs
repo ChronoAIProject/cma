@@ -12,8 +12,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::auth::{
     persistence::{
-        AuthStore, BrowserLogin, DurableSubjectTokens, LoginAttempt, SecretDigest, SecretValue,
-        SubjectAuthState, SubjectRefreshLease,
+        ApiBearerCustody, AuthStore, BrowserLogin, DurableSubjectTokens, LoginAttempt,
+        SecretDigest, SecretValue, SubjectAuthState, SubjectRefreshLease,
     },
     profile::Profile,
 };
@@ -27,10 +27,15 @@ use super::{
 pub(super) const BROWSER_LOGINS: &str = "auth_browser_logins";
 pub(super) const LOGIN_ATTEMPTS: &str = "auth_login_attempts";
 pub(super) const SUBJECTS: &str = "auth_subjects";
-pub(super) const AUTH_COLLECTIONS: &[&str] = &[BROWSER_LOGINS, LOGIN_ATTEMPTS, SUBJECTS];
+pub(super) const API_BEARERS: &str = "auth_api_bearers";
+pub(super) const AUTH_COLLECTIONS: &[&str] =
+    &[BROWSER_LOGINS, LOGIN_ATTEMPTS, SUBJECTS, API_BEARERS];
 const EXPIRY_INDEX: &str = "expires_at_ttl";
 const LOGIN_KIND: &str = "login-attempt";
 const SUBJECT_KIND: &str = "subject-auth";
+
+#[path = "auth_api_bearers.rs"]
+mod api_bearers;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct BrowserLoginDoc {
@@ -88,6 +93,7 @@ pub struct MongoAuthStore {
     browser_logins: Collection<BrowserLoginDoc>,
     login_attempts: Collection<LoginAttemptDoc>,
     subjects: Collection<SubjectDoc>,
+    api_bearers: Collection<api_bearers::ApiBearerDoc>,
     cipher: AuthCipher,
 }
 
@@ -104,6 +110,7 @@ impl MongoAuthStore {
             browser_logins: majority_collection(&database, BROWSER_LOGINS),
             login_attempts: majority_collection(&database, LOGIN_ATTEMPTS),
             subjects: majority_collection(&database, SUBJECTS),
+            api_bearers: majority_collection(&database, API_BEARERS),
             cipher: AuthCipher::new(deployment, encryption_key)?,
         };
         let expiry = || {
@@ -127,6 +134,11 @@ impl MongoAuthStore {
             .create_index(expiry())
             .await
             .map_err(|error| StoreError::Unavailable(format!("login attempt index: {error}")))?;
+        store
+            .api_bearers
+            .create_index(expiry())
+            .await
+            .map_err(|_| StoreError::Unavailable("API bearer custody expiry index".into()))?;
         Ok(store)
     }
 
@@ -258,6 +270,14 @@ impl MongoAuthStore {
 
 #[async_trait::async_trait]
 impl AuthStore for MongoAuthStore {
+    async fn insert_api_bearer(&self, custody: ApiBearerCustody) -> Result<bool, StoreError> {
+        self.insert_api_bearer_record(custody).await
+    }
+
+    async fn api_bearer(&self, id: &SecretDigest) -> Result<Option<ApiBearerCustody>, StoreError> {
+        self.read_api_bearer_record(id).await
+    }
+
     async fn put_login_attempt(&self, attempt: LoginAttempt) -> Result<(), StoreError> {
         self.login_attempts
             .insert_one(self.login_to_doc(attempt)?)
@@ -425,3 +445,7 @@ mod tests;
 #[cfg(test)]
 #[path = "auth_refresh_tests.rs"]
 mod refresh_tests;
+
+#[cfg(test)]
+#[path = "auth_api_bearer_tests.rs"]
+mod api_bearer_tests;
