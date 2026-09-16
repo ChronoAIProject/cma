@@ -16,7 +16,7 @@ pub(super) fn observe(
     .into_iter()
     .filter_map(|kind| raw.get(kind).map(|value| (kind, value)))
     .collect();
-    if events.len() > 1 {
+    if events.len() > 1 || (!events.is_empty() && raw.get("callback_query").is_some()) {
         return Err(CallbackError::Payload);
     }
     let Some((kind, message)) = events.first() else {
@@ -63,6 +63,21 @@ pub(super) fn observe(
     .any(|field| message.get(*field).is_some())
     {
         ChannelEventKind::SystemEvent
+    } else if [
+        "contact",
+        "location",
+        "venue",
+        "poll",
+        "dice",
+        "game",
+        "invoice",
+        "successful_payment",
+    ]
+    .iter()
+    .any(|field| message.get(*field).is_some())
+    {
+        // A normalized text field cannot turn unsupported content into a prompt.
+        ChannelEventKind::UnsupportedContent
     } else {
         message_event(
             inbox,

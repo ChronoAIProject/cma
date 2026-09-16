@@ -161,7 +161,10 @@ pub(super) struct HttpFixture {
 
 impl HttpFixture {
     pub fn new(organization: bool) -> Self {
-        let mut protocol = Fixture::new(BridgePlatform::Telegram);
+        Self::for_platform(organization, BridgePlatform::Telegram)
+    }
+    pub fn for_platform(organization: bool, platform: BridgePlatform) -> Self {
+        let mut protocol = Fixture::new(platform);
         protocol.config_mut().connector.callback_url =
             "https://cma.example/api/v1/bridge-callbacks/brg_fixture".into();
         if organization {

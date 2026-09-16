@@ -6,6 +6,8 @@ use layer2_core::bridge::*;
 use serde_json::json;
 
 mod controls;
+pub(crate) mod event_cases;
+mod event_matrix;
 pub(in crate::bridge::ingress) mod fixtures;
 mod normalization;
 mod persistence;

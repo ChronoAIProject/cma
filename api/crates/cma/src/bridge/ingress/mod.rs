@@ -12,6 +12,8 @@ use tokio::sync::Semaphore;
 
 mod capabilities;
 #[cfg(test)]
+pub(crate) use capabilities::tests::{event_cases, fixtures::Fixture as CallbackFixture};
+#[cfg(test)]
 pub(crate) use capabilities::NyxidCapabilities;
 mod configured;
 pub(crate) mod http;

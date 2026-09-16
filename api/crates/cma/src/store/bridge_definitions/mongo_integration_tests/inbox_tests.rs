@@ -14,6 +14,8 @@ use super::*;
 use crate::store::AuthEncryptionKey;
 #[path = "inbox_controls.rs"]
 mod controls;
+#[path = "inbox_event_matrix.rs"]
+mod event_matrix;
 #[path = "inbox_receipts.rs"]
 mod receipts;
 #[path = "inbox_redelivery.rs"]
