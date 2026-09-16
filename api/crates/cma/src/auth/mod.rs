@@ -10,6 +10,7 @@ use layer2_core::{Authorization, Capability, StoreError, SubjectId};
 use tokio::sync::RwLock;
 
 pub mod bearer;
+mod bearer_authorization;
 pub(crate) mod bridge_control_plane;
 mod cookie_authorization;
 pub mod deferred_commands;
@@ -32,6 +33,7 @@ mod session_routes;
 mod signup_options;
 mod token;
 mod tokens;
+mod verification_error;
 
 pub use flow::router;
 pub use middleware::attach_subject;
@@ -91,6 +93,7 @@ pub struct AuthState {
     pub(super) http: reqwest::Client,
     pub(super) metadata: RwLock<Option<ProviderMetadata>>,
     cookie_verifications: cookie_authorization::VerificationFlights,
+    bearer_verifications: bearer_authorization::VerificationFlights,
     pub(in crate::auth) signup_options_cache: signup_options::SignupOptionsCache,
     pub(super) store: Arc<dyn AuthStore>,
     pub(super) records: Option<SignInRecords>,
@@ -149,6 +152,7 @@ impl AuthState {
                 .expect("the rustls HTTP client builds"),
             metadata: RwLock::new(None),
             cookie_verifications: cookie_authorization::VerificationFlights::default(),
+            bearer_verifications: bearer_authorization::VerificationFlights::default(),
             signup_options_cache: signup_options::SignupOptionsCache::default(),
         })
     }

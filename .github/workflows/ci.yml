@@ -42,7 +42,7 @@ jobs:
       - name: Provider contract mutation regressions
         run: ruby .github/scripts/ci-contract-tests.rb provider
       - name: Staging authority and evidence regressions
-        run: node --test .github/scripts/staging-authority.test.mjs .github/scripts/deployment-observer.test.mjs .github/scripts/cma-bridge-continuity-observer.test.mjs .github/scripts/cma-bridge-continuity-transport.test.mjs .github/scripts/cma-bridge-continuity-watch.test.mjs .github/scripts/cma-bridge-continuity-owned.test.mjs .github/scripts/cma-bridge-continuity-active.test.mjs .github/scripts/cma-bridge-continuity-browser.test.mjs .github/scripts/mongo-contract-tests.test.mjs
+        run: node --test .github/scripts/staging-authority.test.mjs .github/scripts/deployment-observer.test.mjs .github/scripts/cma-bridge-continuity-observer.test.mjs .github/scripts/cma-bridge-continuity-transport.test.mjs .github/scripts/cma-bridge-continuity-watch.test.mjs .github/scripts/cma-bridge-continuity-owned.test.mjs .github/scripts/cma-bridge-continuity-recovery.test.mjs .github/scripts/cma-bridge-continuity-successor.test.mjs .github/scripts/cma-bridge-continuity-active.test.mjs .github/scripts/cma-bridge-continuity-browser.test.mjs .github/scripts/mongo-contract-tests.test.mjs
       - name: Install continuity fixture tooling
         run: python3 -m pip install -r .github/tools/cma-bridge-continuity/requirements.txt
       - name: Continuity fixture ownership and isolation regressions
@@ -255,9 +255,9 @@ jobs:
           supervisor::mutation_tests::workspace_reconciliation_tests::real_linux_writer_boundary_reconciles_target_and_resumes_live_sibling
           -- --ignored --exact --test-threads=1
       - name: Disposable real Mongo persistence contracts
-        # The complete 608-contract run took 24m42s on the hosted runner.
-        # Retain every contract and bounded fixture concurrency as the corpus grows.
-        timeout-minutes: 35
+        # A 622-contract run hit the 35-minute limit while tests still passed.
+        # Retain the complete corpus and two bounded fixtures on slower runners.
+        timeout-minutes: 75
         run: bash ../.github/scripts/mongo-contract-tests.sh
       - name: Doctests
         run: cargo test --doc --workspace --locked

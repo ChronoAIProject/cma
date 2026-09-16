@@ -1,7 +1,7 @@
 // One separate owned-Agent browser page. No prompts, reloads, focus repair,
 // clicks, transport changes, or writes to the active continuation's evidence.
 import { createRequire } from 'node:module';
-import { loadOwnedConfig } from './cma-bridge-continuity-owned-config.mjs';
+import { loadOwnedConfig, loadOwnedFixture } from './cma-bridge-continuity-owned-config.mjs';
 import { constants } from 'node:fs';
 import { open, readFile, writeFile, mkdir, chmod } from 'node:fs/promises';
 import { randomBytes } from 'node:crypto';
@@ -16,8 +16,8 @@ const json = async (path) => JSON.parse(await readFile(path, 'utf8'));
 check(/^[a-z0-9][a-z0-9-]{0,47}$/.test(change ?? '') && /^[a-f0-9]{40}$/.test(beforeCommit ?? ''), 'explicit_change_and_full_commit_required');
 const config = await loadOwnedConfig(configPath);
 const root = config.outputDirectory;
-const [original, originalResult] = await Promise.all([json(config.fixtureJournal), json(config.fixtureResult)]);
-const owned = scope(config, original, originalResult, change);
+const fixture = await loadOwnedFixture(config);
+const owned = scope(config, fixture.journal, fixture.result, change, fixture.recovery);
 const { chromium } = createRequire(new URL('../../web/package.json', import.meta.url))('playwright');
 const here = join(root, 'browser');
 await mkdir(here, { mode: 0o700, recursive: true });
