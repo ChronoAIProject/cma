@@ -981,6 +981,7 @@ SDKs expose this scope through their accessible Sandbox list method.
 | `POST /api/v1/bridges/{id}/partitions/{allocation}/reset` | Exact Bridge/allocation revisions and retained Idempotency-Key; 202 reserves the next binding generation. |
 | `POST /api/v1/bridges/{id}/partitions/{allocation}/detach` | Exact Bridge/allocation revisions and retained Idempotency-Key; 202 blocks future partition input until explicit reset. |
 | `GET /api/v1/bridges/{id}/allocations` | Current Bridge and whole-parent management inventory; opaque cursor, limit 1–100. |
+| `GET /api/v1/bridges/{id}/usage` | Current Bridge management; bounded retained allocation totals and authorized distinct target-resource counts. |
 | `GET /api/v1/bridges/{id}/partitions` | Current Bridge management and per-target access; scoped cursor, limit 1–25. |
 | `GET /api/v1/bridges/{id}/partitions/{allocation}` | Exact retained partition generation, bounded pending commands and latest correlated response. |
 | `GET /api/v1/bridges/{id}/allocations/{allocation}/child-cleanup` | Retained child cleanup acceptance, proved progress and observed holds. |
@@ -1218,3 +1219,42 @@ retained under their original live authority. Reset and detach neither request
 cleanup nor release resource capacity; cleanup requires its separate explicit
 operation. Missing or inconsistent original source evidence refuses a new
 mutation, while an exact committed receipt remains recoverable.
+
+
+### Bridge allocation and resource usage
+
+`GET /api/v1/bridges/{id}/usage` requires fresh Bridge management authority and
+returns `bridge_revision`, `observed_at_ms`, current configured `limits`,
+`allocations`, `target_resources` and typed `capacity_reasons`. This read admits
+no work and performs no cleanup, delivery retry, capacity release or quota change.
+
+A complete observation contains at most 256 retained allocation generations.
+`allocations.retained` includes predecessor generations; `current` counts retained
+partition heads; `ready` and `retired` describe allocation lifecycle state.
+`sandbox_reservations` counts all retained allocations that create a Sandbox,
+including retired generations, matching count-based admission. Retirement alone
+does not release this reservation. The two returned limits are `max_partitions`
+and `max_sandbox_reservations` from the current Bridge configuration.
+
+`target_resources.status = available` supplies distinct retained and active counts
+for Sandboxes, Workspaces, Worktrees and Agents referenced by these allocations.
+Reused parents count once. Retained means a resource model record still exists,
+including retained tombstones; it does not establish exclusive Bridge ownership
+or a live provider resource. Active means an Active Sandbox, a Ready Workspace or
+Worktree under an Active Sandbox, or a Ready/Working/WaitingApproval Agent under
+an Active Sandbox. Paused resources remain retained and are inactive.
+
+Every present target requires current resource access. Any denied target makes
+all target counts `redacted` with `resource_access_required`; allocation counts
+remain available under Bridge management authority. If the inventory exceeds
+256 generations, `allocations` is null, target status is `inventory_limited`, and
+`inventory_limit` is present. The view never returns partial totals as complete.
+Concurrent changes can return 409; unavailable or corrupt authority returns 503.
+
+Capacity reasons are `partition_limit_reached`,
+`sandbox_reservation_limit_reached`, `retired_sandbox_reservations_retained`,
+`shared_parent_policy_applies`, `resource_access_required`, and `inventory_limit`.
+These are diagnostic facts, not admission promises. Shared-parent policy applies
+independently; this view does not compute parent spare capacity or owner-wide
+resource quotas. No message, source label, resource identifier, credential or
+runtime identity appears in this response. Responses use `private, no-store`.
