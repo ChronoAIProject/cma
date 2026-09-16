@@ -38,13 +38,10 @@ impl ChannelRetirementDriver {
                 .adapter
                 .home_volumes()
                 .ok_or(AllocationError::AuthorityUnavailable)?;
-            let observer = homes
-                .backing_observer()
-                .ok_or(AllocationError::AuthorityUnavailable)?;
             let Some(delete) = ready.home_delete else {
                 self.read(permit, now).await?;
                 homes
-                    .remove_captures(&original.reference.home)
+                    .remove_captures(original.home())
                     .await
                     .map_err(|_| AllocationError::AuthorityUnavailable)?;
                 self.read(permit, now).await?;
@@ -52,7 +49,6 @@ impl ChannelRetirementDriver {
                     .delete_original_home(
                         original,
                         &provider_finality::home_delete_operation_id(snapshot),
-                        observer,
                     )
                     .await
                     .map_err(|_| AllocationError::AuthorityUnavailable)?;
@@ -62,7 +58,7 @@ impl ChannelRetirementDriver {
             };
             self.read(permit, now).await?;
             let receipt = homes
-                .observe_home_finality(&delete, observer)
+                .observe_home_finality(&delete)
                 .await
                 .map_err(|_| AllocationError::AuthorityUnavailable)?;
             ProviderHomeFinality::Removed {

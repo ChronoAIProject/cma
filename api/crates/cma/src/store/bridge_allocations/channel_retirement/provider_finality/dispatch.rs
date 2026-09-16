@@ -58,9 +58,6 @@ pub(super) enum Change<'a> {
         operation_id: &'a str,
         receipt: &'a layer3_adapter::HomeProvisionReceipt,
     },
-    HomeBacking {
-        backing: &'a layer3_adapter::HomeBackingIdentity,
-    },
 }
 
 impl MongoBridgeAllocationStore {
@@ -154,7 +151,7 @@ impl MongoBridgeAllocationStore {
                             || receipt.request_sha256() != row.request_sha256 { return Err(AllocationError::IdentityMismatch.into()); }
                         row.receipt = Some((*receipt).clone());
                     }
-                    Change::HomeBegin { .. } | Change::HomeComplete { .. } | Change::HomeBacking { .. } => {
+                    Change::HomeBegin { .. } | Change::HomeComplete { .. } => {
                         super::home_dispatch::apply(&mut journal, snapshot, &change)?;
                     }
                 }

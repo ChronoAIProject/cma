@@ -1,7 +1,6 @@
 //! Hosted sandbox provider lifecycle client.
 
 mod client;
-mod gke_pd_finality;
 mod home_volumes;
 mod metadata;
 mod model;
@@ -9,7 +8,6 @@ mod reclaimer;
 mod volumes;
 
 pub use client::SandboxClient;
-pub use gke_pd_finality::GkePdBackingObserver;
 pub use home_volumes::PersistentHomeVolumes;
 pub use model::{
     Pagination, ProviderEndpoint, ProviderError, ProviderImage, ProviderSandbox,

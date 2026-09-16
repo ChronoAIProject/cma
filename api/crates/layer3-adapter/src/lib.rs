@@ -56,8 +56,7 @@ pub use conversation::{
 };
 pub use error::{AdapterError, Result, RuntimeContractMismatch};
 pub use home_finality::{
-    HomeBackingAbsence, HomeBackingIdentity, HomeBackingObserver, HomeBackingReference,
-    HomeDeleteReceipt, HomeFinalityReceipt, HomeProvisionReceipt,
+    HomeCleanupScope, HomeDeleteReceipt, HomeFinalityReceipt, HomeProvisionReceipt,
 };
 pub use home_snapshot::{
     HomeSnapshotInventoryEntry, HomeSnapshotObservation, HomeSnapshotReceipt, HomeSnapshotRequest,
