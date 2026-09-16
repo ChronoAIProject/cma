@@ -2,9 +2,10 @@
 
 use super::*;
 use crate::auth::{
-    identity,
+    bearer_authorization,
     permissions::PermissionEvidence,
     persistence::{ApiBearerCustody, SecretDigest, SecretValue},
+    verification_error::ProviderVerificationError,
 };
 use layer2_core::resource_access::{CallerContext, CredentialSource};
 
@@ -129,17 +130,18 @@ impl AuthState {
             .metadata()
             .await
             .map_err(|_| CommandAuthorizationError::Unavailable)?;
-        let verified = identity::verify_subject(self, &metadata, credential)
+        let verified = bearer_authorization::verify_subject(self, &metadata, credential)
             .await
-            .map_err(super::super::verification_error::ProviderVerificationError::command_error)?;
-        let PermissionEvidence::Active(permissions) = verified.permissions else {
+            .map_err(ProviderVerificationError::command_error)?;
+        let PermissionEvidence::Active(permissions) = &verified.permissions else {
             return Err(CommandAuthorizationError::Revoked);
         };
         let expires_at = verified
             .api_expires_at
             .filter(|expiry| *expiry > SystemTime::now())
             .ok_or(CommandAuthorizationError::Revoked)?;
-        let authorization = crate::permissions::capabilities_from_permissions(permissions);
+        let authorization =
+            crate::permissions::capabilities_from_permissions(permissions.iter().cloned());
         if verified.subject != *subject || !authorization.allows(Capability::UseOwnSandboxes) {
             return Err(CommandAuthorizationError::Revoked);
         }
@@ -147,9 +149,9 @@ impl AuthState {
             credential_source: CredentialSource::Independent {
                 expires_at: Some(expires_at),
             },
-            subject: verified.subject,
+            subject: verified.subject.clone(),
             authorization,
-            profile: verified.profile,
+            profile: verified.profile.clone(),
             delegated_credential: Some(credential.to_owned()),
         })
     }

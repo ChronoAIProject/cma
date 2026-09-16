@@ -2,8 +2,8 @@
 
 use layer2_core::StoreError;
 
-use super::{permissions, profile::Profile, AuthState, ProviderMetadata, RequestAuth};
 use super::verification_error::ProviderVerificationError;
+use super::{permissions, profile::Profile, AuthState, ProviderMetadata, RequestAuth};
 
 pub(super) struct VerifiedSubject {
     pub subject: layer2_core::SubjectId,
@@ -29,18 +29,22 @@ pub(super) async fn request_for_bearer(
         Ok(metadata) => metadata,
         Err(error) => {
             tracing::warn!(error = %error, "could not discover identity provider for bearer verification");
-            return Err(StoreError::Unavailable("identity provider discovery is unavailable".into()));
+            return Err(StoreError::Unavailable(
+                "identity provider discovery is unavailable".into(),
+            ));
         }
     };
-    match verify_subject(auth, &metadata, &token).await {
-        Ok(verified) => match verified.permissions {
+    match super::bearer_authorization::verify_subject(auth, &metadata, &token).await {
+        Ok(verified) => match &verified.permissions {
             permissions::PermissionEvidence::Active(permission_names) => Ok(Some(RequestAuth {
                 credential_source: layer2_core::resource_access::CredentialSource::Independent {
                     expires_at: verified.api_expires_at,
                 },
-                subject: verified.subject,
-                authorization: crate::permissions::capabilities_from_permissions(permission_names),
-                profile: verified.profile,
+                subject: verified.subject.clone(),
+                authorization: crate::permissions::capabilities_from_permissions(
+                    permission_names.iter().cloned(),
+                ),
+                profile: verified.profile.clone(),
                 delegated_credential: Some(token),
             })),
             permissions::PermissionEvidence::Inactive => Ok(None),
@@ -81,7 +85,9 @@ pub(super) async fn verify_subject(
     use ProviderVerificationError::{Rejected, Unavailable};
     if !super::bearer::permits_ambient_auth(access_token) {
         verification_failure("userinfo", "restricted_credential", None);
-        return Err(Rejected("credential is restricted to its dedicated channel interface".into()));
+        return Err(Rejected(
+            "credential is restricted to its dedicated channel interface".into(),
+        ));
     }
     let endpoint = metadata
         .userinfo_endpoint
@@ -99,10 +105,7 @@ pub(super) async fn verify_subject(
         })?;
     if !response.status().is_success() {
         verification_failure("userinfo", "http_status", Some(response.status().as_u16()));
-        let message = format!(
-            "userinfo returned HTTP {}",
-            response.status().as_u16()
-        );
+        let message = format!("userinfo returned HTTP {}", response.status().as_u16());
         return Err(if matches!(response.status().as_u16(), 401 | 403) {
             Rejected(message)
         } else {
