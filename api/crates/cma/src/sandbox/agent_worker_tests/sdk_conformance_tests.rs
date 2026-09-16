@@ -24,6 +24,7 @@ use crate::projections::{AgentProjectionServices, UnavailableSandboxResources};
 
 mod cross_interface_tests;
 mod runtime_tests;
+mod terminal_failure_tests;
 mod v2_tests;
 
 const TEST_BEARER: &str = "Bearer local-sdk-conformance";
