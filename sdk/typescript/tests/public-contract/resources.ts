@@ -15,6 +15,14 @@ export const resourceDispatch: Record<string, Dispatch> = {
     client.bridges.readSourceControls(param('id')),
   'PUT /api/v1/bridge-invoke-grants/{id}/source-controls': ({ client, param, body, command }) =>
     client.bridges.setSourceControls(param('id'), body, command),
+  'POST /api/v1/bridges/{id}/partitions/{allocation}/reset': ({ client, param, body, command }) =>
+    client.bridges.resetPartition(param('id'), param('allocation'), body, command),
+  'POST /api/v1/bridges/{id}/partitions/{allocation}/detach': ({ client, param, body, command }) =>
+    client.bridges.detachPartition(param('id'), param('allocation'), body, command),
+  'GET /api/v1/bridges/{id}/partitions': ({ client, param, options }) =>
+    client.bridges.listPartitions(param('id'), options),
+  'GET /api/v1/bridges/{id}/partitions/{allocation}': ({ client, param }) =>
+    client.bridges.readPartition(param('id'), param('allocation')),
   'GET /api/v1/bridges/{id}/allocations': ({ client, param, options }) =>
     client.bridges.listAllocations(param('id'), options),
   'GET /api/v1/bridges/{id}/allocations/{allocation}/child-cleanup': ({ client, param }) =>
