@@ -11,7 +11,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use super::*;
 
 #[derive(Clone)]
-pub(in crate::bridge::ingress) struct Fixture {
+pub(crate) struct Fixture {
     pub bridge: BridgeRecord,
     pub body: Value,
 }

@@ -15,6 +15,7 @@ use crate::bridge::ingress::capabilities::tests::fixtures::Fixture;
 
 mod boundaries;
 mod controls;
+mod event_matrix;
 mod fixture;
 mod reply_addressing;
 
