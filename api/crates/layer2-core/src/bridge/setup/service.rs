@@ -124,6 +124,9 @@ impl BridgeSetupService {
             BridgePlatform::Discord,
             BridgePlatform::Lark,
             BridgePlatform::Feishu,
+            BridgePlatform::Slack,
+            BridgePlatform::Whatsapp,
+            BridgePlatform::X,
         ];
         if !platforms.iter().any(|platform| {
             self.definitions
@@ -152,6 +155,9 @@ impl BridgeSetupService {
                 "discord" => BridgePlatform::Discord,
                 "lark" => BridgePlatform::Lark,
                 "feishu" => BridgePlatform::Feishu,
+                "slack" => BridgePlatform::Slack,
+                "whatsapp" => BridgePlatform::Whatsapp,
+                "x" => BridgePlatform::X,
                 _ => return false,
             };
             self.definitions

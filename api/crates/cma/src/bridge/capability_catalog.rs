@@ -8,6 +8,9 @@ pub(super) fn supported_platform(name: &str) -> Option<BridgePlatform> {
         "discord" => Some(BridgePlatform::Discord),
         "lark" => Some(BridgePlatform::Lark),
         "feishu" => Some(BridgePlatform::Feishu),
+        "slack" => Some(BridgePlatform::Slack),
+        "whatsapp" => Some(BridgePlatform::Whatsapp),
+        "x" => Some(BridgePlatform::X),
         _ => None,
     }
 }
@@ -63,10 +66,14 @@ pub(super) fn shared_placements(
 }
 
 fn connector(name: &str) -> BridgeConnectorCapabilities {
-    let implemented = supported_platform(name).is_some();
+    let boundary_tested = supported_platform(name).is_some();
+    let implemented = matches!(
+        name,
+        "telegram" | "telegram-new" | "discord" | "lark" | "feishu"
+    );
     BridgeConnectorCapabilities {
         platform: name.into(),
-        evidence: if implemented {
+        evidence: if boundary_tested {
             BridgeCapabilityEvidence::ContractTested
         } else if name == "device" {
             BridgeCapabilityEvidence::IngestOnly
@@ -75,12 +82,13 @@ fn connector(name: &str) -> BridgeConnectorCapabilities {
         },
         live_verified: false,
         inbound_text: implemented,
-        stable_sender_chat: implemented,
+        stable_sender_chat: boundary_tested,
         stable_thread: match name {
             "telegram" | "telegram-new" => Some(StableThreadKind::TelegramForumTopic),
             "discord" => Some(StableThreadKind::DiscordChannelThread),
             "lark" => Some(StableThreadKind::LarkThread),
             "feishu" => Some(StableThreadKind::FeishuThread),
+            "slack" => Some(StableThreadKind::SlackThread),
             _ => None,
         },
         // Signed raw parent identity AND an exact permanent CMA Sent receipt.

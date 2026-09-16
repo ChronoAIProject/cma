@@ -21,7 +21,12 @@ fn interval(source: &OutboxSource) -> i64 {
     // shared by every Bridge/key using this actual bot, including old pins.
     match source.config().connector.platform {
         BridgePlatform::Telegram | BridgePlatform::TelegramNew => 3_000,
-        BridgePlatform::Discord | BridgePlatform::Lark | BridgePlatform::Feishu => 1_000,
+        BridgePlatform::Discord
+        | BridgePlatform::Lark
+        | BridgePlatform::Feishu
+        | BridgePlatform::Slack
+        | BridgePlatform::Whatsapp
+        | BridgePlatform::X => 1_000,
     }
 }
 

@@ -17,6 +17,9 @@ fn control_classification_requires_original_verified_human_text_on_each_supporte
                 fixture.raw_mut()["event"]["message"]["content"] =
                     json!(json!({"text":text}).to_string());
             }
+            BridgePlatform::Slack | BridgePlatform::Whatsapp | BridgePlatform::X => {
+                unreachable!("separate boundary fixtures")
+            }
         }
         let write = fixture.write().unwrap();
         assert_eq!(

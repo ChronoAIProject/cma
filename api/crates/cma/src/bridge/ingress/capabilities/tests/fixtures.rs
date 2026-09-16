@@ -87,6 +87,22 @@ impl Fixture {
                     "channel_id":"discord-chat","guild_id":"guild-one",
                     "author":{"id":"discord-sender","bot":false},"content":"hello"}}),
             ),
+            BridgePlatform::Slack => (
+                "C123",
+                "U123",
+                json!({"type":"event_callback","event":{
+                    "type":"message","channel":"C123","user":"U123","ts":"1700000000.000001","text":"hello"}}),
+            ),
+            BridgePlatform::Whatsapp => (
+                "15550001234",
+                "15550001234",
+                json!({"id":"wamid.fixture","from":"15550001234","type":"text","text":{"body":"hello"}}),
+            ),
+            BridgePlatform::X => (
+                "10-20",
+                "20",
+                json!({"id":"100","event_type":"MessageCreate","sender_id":"20","dm_conversation_id":"10-20","text":"hello"}),
+            ),
         };
         let body = json!({"message_id":"nyx-message","correlation_id":"signed-callback",
             "platform":name,"agent":{"api_key_id":"selected-key","name":"Fixture"},

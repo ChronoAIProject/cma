@@ -74,6 +74,9 @@ fn bot_unknown_sender_and_callback_loops_cannot_override_explicit_open_admission
                     .unwrap()
                     .remove("bot");
             }
+            BridgePlatform::Slack | BridgePlatform::Whatsapp | BridgePlatform::X => {
+                unreachable!("separate boundary fixtures")
+            }
         }
         deny(&bot, PartitionRefusal::BotSender);
         deny(&unknown, PartitionRefusal::UnknownSender);

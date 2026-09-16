@@ -5,6 +5,7 @@ use layer2_core::bridge::ingress::*;
 use layer2_core::bridge::*;
 use serde_json::json;
 
+mod additional_platforms;
 mod controls;
 pub(crate) mod event_cases;
 mod event_matrix;

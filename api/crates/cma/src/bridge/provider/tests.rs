@@ -362,13 +362,13 @@ async fn upstream_only_inventory_rows_do_not_block_supported_bots_or_alias_bindi
     let mut rows = replies("person-one", json!({"type":"personal"}));
     let bots = &mut rows.get_mut("/api/v1/channel-bots").unwrap().1;
     bots["bots"].as_array_mut().unwrap().push(
-        json!({"id":"upstream-bot","user_id":"person-one","platform":"slack","is_active":true}),
+        json!({"id":"upstream-bot","user_id":"person-one","platform":"device","is_active":true}),
     );
     bots["total"] = json!(2);
     let keys = &mut rows.get_mut("/api/v1/api-keys").unwrap().1["keys"];
     let mut extra = keys[0].clone();
     extra["id"] = json!("slack-key");
-    extra["platform"] = json!("slack");
+    extra["platform"] = json!("device");
     keys.as_array_mut().unwrap().push(extra);
     let f = fixture(rows.clone()).await;
     inspect(&f, &personal(), "person-one").await.unwrap();

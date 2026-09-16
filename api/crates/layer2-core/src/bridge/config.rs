@@ -17,6 +17,9 @@ pub enum BridgePlatform {
     Discord,
     Lark,
     Feishu,
+    Slack,
+    Whatsapp,
+    X,
 }
 
 /// Opaque custody locator, never the selected agent key value. Only the custody
