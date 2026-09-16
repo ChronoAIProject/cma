@@ -1,73 +1,103 @@
 # Attachment retrieval boundary
 
-Attachment input remains unavailable. CMA refuses the entire attachment-bearing
-message; it does not discard media and execute the caption. No retrieval worker,
-connector grant issuer, persistent custody, attachment read grant or Agent media
-consumer is composed by this foundation. The capability catalog is unchanged.
+CMA composes one opt-in attachment path: a single original Discord `text/plain`
+`.txt` attachment of 1–16,384 bytes, converted into bounded UTF-8 user text for
+the existing Agent command pipeline. `CMA_DISCORD_TEXT_ATTACHMENTS=true` enables
+new admissions; the default is false. It does not enable images, PDFs, audio,
+OCR, arbitrary URLs, generic Agent attachment references, or outbound files.
+Unsupported, multiple, normalized-only and out-of-policy files retain the typed
+whole-message `attachment_download_required` refusal, including private Telegram
+files. Captions are never executed on their own when a file is refused.
 
-## Retained connector evidence
+## Source and authorization
 
-NyxID commit `0ac096837c7436b05b71b374207a42320776715d` forwards references without
-downloading their bodies. Its Telegram adapter places an opaque `file_id` in the
-attachment `url` field. This requires a separate provider-authorized resource
-lookup; an opaque handle is not an HTTPS destination. Lark and Feishu construct
-message-resource URLs on `open.larksuite.com` and `open.feishu.cn`, with original
-message and file/image handles. The adapter explicitly requires a bot tenant
-token to fetch that resource. The retained channel relay handlers and service
-catalogs expose no scoped attachment fetch-grant operation.
+The pinned NyxID implementation is `0ac096837c7436b05b71b374207a42320776715d`.
+Its selected Discord adapter verifies the platform webhook signature, retains
+raw platform data, and the relay signs the exact callback body SHA-256. The
+normalized Discord attachment array is empty in that revision. CMA therefore
+reads only the exact original `MESSAGE_CREATE` attachment object in authenticated
+`raw_platform_data`; user text, generic callback URLs, proxy URLs and normalized
+attachment references cannot issue a fetch grant. Existing explicit human,
+original-event, sender/chat correlation, group, loop and selected-binding gates
+still apply. This is source/fixture evidence; it does not establish a deployed
+Discord Gateway delivery path or a successful live provider download.
 
-A selected NyxID key is not a provider bot/tenant token and must never be sent to
-those resource hosts. A signed callback reference does not authorize fetching
-its URL. No provider host or credential has been enabled by this change.
+Discord's official attachment and signed-CDN contracts are pinned at
+`discord/discord-api-docs` commit `52ecc8a1908cc3a8dadb55671aef696bb1ed270e`,
+`developers/resources/message.mdx` and `developers/reference.mdx` (Signed
+Attachment CDN URLs). CMA requires `https://cdn.discordapp.com/attachments/`
+with exact source channel and attachment snowflakes, a safe ASCII `.txt` filename,
+and exactly one each of `ex`, `is`, and `hm`. It bounds the documented signed
+expiry and rejects ambiguous query fields, encoded paths, wrong IDs, alternate
+hosts, credentials, fragments and ports. Discord verifies its own MAC; CMA does
+not manufacture or claim independent validation of that MAC.
 
-## Private adapter contract
+The deferred worker obtains current authority for the original owner, Bridge
+revision, selected bot/key, exact inbox and target. Opening private URL custody
+uses the existing live invoke transaction fence, including current credential,
+grant and resource checks. Each download authorization/revalidation refreshes
+the same exact authority without extending the original attempt. No NyxID key,
+provider bearer, cookie or arbitrary callback header is sent to the CDN.
 
-The private CMA adapter requires a trusted connector authority to issue a grant
-with an independently approved exact HTTPS host and resource URL. The grant
-binds the owner, Bridge and revision, bot, platform, source and complete inert
-attachment reference. It has one nonrenewing deadline. Its authorized URL may
-differ from an opaque provider handle; the callback cannot issue this grant.
-The only production authority currently returns `Authorization` unavailable.
+## Capture and Agent representation
 
-The prepared reqwest transport resolves once and pins a fresh connection pool to
-the vetted addresses, retaining the original TLS hostname and certificate checks.
-It rejects mixed safe/unsafe DNS answers, private and special ranges, mapped IPv4,
-alternate ports, IP-literal hosts, userinfo and fragments. It disables inherited
-proxies, redirects and automatic decompression. It accepts only HTTP 200 with no
-content encoding. The interface accepts no arbitrary headers, cookies or NyxID
-keys. A response peer must match an approved address and port.
+Callback acceptance remains within its five-second path and performs no CDN IO.
+It atomically stores original receipt/source metadata and the encrypted URL in
+private `bridge_text_attachments` custody. URL custody expires at the earliest
+of the CDN expiry, callback retention, or fifteen minutes from admission. Reads
+check logical expiry before decryption even when Mongo TTL cleanup lags. There
+is no public URL/object endpoint or automatically granted sharing permission.
 
-Each attempt has a hard 15-second deadline including authorization, resolution,
-connection, streaming, scanning and final authority revalidation. Grants can
-shorten that deadline. The transport retains the attempt's capped deadline,
-which is checked again after DNS immediately before initiating a connection.
-Streaming is limited to at most 1 MiB, even with absent or
-incorrect `Content-Length`; truncation, excess bytes and stream failures discard
-the buffered result. Each transport chunk is checked against the remaining
-budget before copying, and the accumulator reserves only the grant's limit.
-This is transient private memory, with no publication or
-durable custody operation.
+Retrieval runs in the existing bounded Channel inbox worker. It resolves once,
+rejects unsafe or mixed DNS answers, pins a fresh connection pool to approved
+public addresses, retains TLS hostname/certificate checks, and checks the actual
+peer. Proxies, redirects and decompression are disabled. Only HTTP 200 with no
+content encoding and exact `text/plain` is accepted. Streaming is limited by the
+signed original byte count, including absent/incorrect Content-Length, with a
+single nonrenewing fifteen-second deadline covering authority and network IO.
+The complete result must match the original size and be valid UTF-8 with no
+control characters except tab, CR and LF.
 
-PNG, JPEG and PDF are the only MIME candidates for a hypothetical grant. The
-response must have exactly the authorized MIME and a matching byte signature.
-Signature corroboration does not establish format validity or malware safety.
-A separate trusted scanner must approve the complete bounded bytes, then the
-original connector authority must revalidate the same grant before bytes return.
-Missing, unavailable, rejected or timed-out scan/authority results release no
-content. The only production scanner currently reports unavailable.
+Text uses CMA's ordinary untrusted user-input policy; there is no malware-clean
+claim. The first committed text and SHA-256 become immutable under the same
+current invoke transaction fence. Concurrent or uncertain retries recover that
+capture and cannot change the command's content. The original callback ID,
+attestation, caption and deterministic command/response identity are preserved.
+The Agent receives canonical JSON text containing the caption, file name, MIME,
+size, digest and `untrusted_text`. It is ordinary user input and cannot be
+interpreted as a reserved Channel control. The signed CDN URL is excluded.
 
-## Evidence and enablement limits
+New command admission requires unexpired custody. Once admitted, that user text
+and its exact source follow the Agent's retained-history policy, so later file
+expiry or callback TTL deletion does not erase or change an existing turn.
+Normal Agent access policy governs retained text; this path never fabricates
+human authorization, ManageSharing authority, or a general artifact read grant.
+Retrieval failure and expiry remain explicit durable worker states
+`text_attachment_unavailable` and `text_attachment_expired`, with no caption-only
+fallback. The original transport receipt remains an acceptance receipt, not a
+claim that downloading or Agent execution succeeded.
 
-Injected authority, DNS, transport and scanner fixtures cover scope substitution,
-mixed/private/mapped DNS, rebinding, redirect/status refusal, streaming bounds,
-truncation, MIME mismatch, scanner refusal, revocation and elapsed deadlines.
-Local TCP fixtures exercise the real HTTPS transport's address override, original
-TLS name, invalid-TLS refusal and inherited-proxy suppression. They do not claim
-successful provider downloads, valid media decoding or a working malware scanner.
+## Other media and rollback
 
-Production retrieval requires a real connector grant and credential contract,
-applicable scanning, expiring owner/source custody and narrowly scoped read
-grants, plus an Agent implementation that supports the resulting attachment
-reference. The existing approved Agent artifact publication registry has a
-different sharing authority and is not used to expose inbound media. These
-remaining requirements and live provider evidence keep issue #867 open.
+The existing PNG/JPEG/PDF foundation still requires an independent connector
+grant and trusted scanner. Signature checks are not malware scanning, and its
+only production scanner remains unavailable. Telegram's opaque `file_id` needs
+a provider-authorized lookup; Lark/Feishu resource URLs need a bot tenant token.
+Selected NyxID keys cannot substitute for those credentials. Those paths stay
+unavailable.
+
+Deploy supporting readers and workers everywhere before enabling the new switch.
+The new persisted `discord_text_attachment` event fails closed on old readers;
+older per-row workers cannot execute only its caption and continue discovering
+unrelated rows. Disable new admissions before rollback. Already admitted text
+commands require a supporting reader for their retained source; rolling back to
+an older binary suspends those rows rather than rewriting their receipts or
+prompts. Keep a supporting worker until accepted attachment work is drained, or
+explicitly retain the suspension until forward recovery. The switch does not
+reclassify an already retained refusal on exact replay. This boundary requires
+live coexistence/rollback acceptance; it is not a claim that those drills passed.
+
+Focused signed-source, network, expiry, custody, immutable-capture and retained
+command fixtures exercise the composed text path. Injected CDN transport is
+identified as synthetic evidence. Real platform delivery, general media, scanner
+policy, and live personal/org provider acceptance keep issue #867 open.

@@ -133,6 +133,16 @@ impl NormalizedPartitionSource {
             return Err(PartitionError::SourceMismatch);
         }
         let facts = retained.observation()?;
+        if (facts.event_kind == ChannelEventKind::DiscordTextAttachment)
+            != inbox.text_attachment.is_some()
+        {
+            return Err(PartitionError::SourceMismatch);
+        }
+        if let Some(attachment) = &inbox.text_attachment {
+            attachment
+                .validate(inbox)
+                .map_err(|_| PartitionError::SourceMismatch)?;
+        }
         Self::from_observation(inbox, bridge, facts)
     }
 }

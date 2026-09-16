@@ -22,6 +22,7 @@ pub(crate) use configured::configured;
 mod keys;
 mod redelivery;
 pub(crate) mod reply_addressing;
+pub(in crate::bridge) mod text_admission;
 pub(crate) use keys::PinnedCallbackKeys;
 
 pub(crate) struct CallbackIngress {
@@ -31,6 +32,7 @@ pub(crate) struct CallbackIngress {
     keys: PinnedCallbackKeys,
     verifier: CallbackVerifier,
     callback_root: String,
+    text_attachments: bool,
     workers: Semaphore,
     reply_addressing: Option<Arc<dyn reply_addressing::ReplyAddressingStore>>,
     controls: Option<Arc<controls::ChannelControlIngress>>,
@@ -64,6 +66,7 @@ impl CallbackIngress {
             keys,
             verifier: CallbackVerifier::new(policy)?,
             callback_root,
+            text_attachments: false,
             workers: Semaphore::new(16),
             reply_addressing: None,
             controls: None,
@@ -191,8 +194,14 @@ impl CallbackIngress {
             Ok(reply) => (reply, None),
             Err(error) => (None, Some(error)),
         };
-        let signed =
-            signed.classify_capabilities(body, &reply_addressing::ReplyCapabilities(reply))?;
+        let extractor = reply_addressing::ReplyCapabilities(reply);
+        let signed = signed.classify_capabilities(
+            body,
+            &text_admission::TextAdmission {
+                inner: &extractor,
+                enabled: self.text_attachments,
+            },
+        )?;
         // Only cryptographically authenticated and bounded callbacks may cause
         // selected-key custody or owner/provider inventory IO. The signed
         // snapshot alone still cannot authorize durable acceptance.

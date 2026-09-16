@@ -32,14 +32,20 @@ pub(crate) fn configured(
         }),
         flags,
     );
-    Ok(Some(CallbackIngress::new(
+    let mut ingress = CallbackIngress::new(
         bridges,
         connections,
         inbox,
         deployment.keys,
         deployment.policy,
         deployment.callback_root,
-    )?))
+    )?;
+    ingress.text_attachments = text_admission::enabled(
+        std::env::var("CMA_DISCORD_TEXT_ATTACHMENTS")
+            .ok()
+            .as_deref(),
+    )?;
+    Ok(Some(ingress))
 }
 
 struct Deployment {
