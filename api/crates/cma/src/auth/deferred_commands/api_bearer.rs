@@ -131,7 +131,7 @@ impl AuthState {
             .map_err(|_| CommandAuthorizationError::Unavailable)?;
         let verified = identity::verify_subject(self, &metadata, credential)
             .await
-            .map_err(|_| CommandAuthorizationError::Unavailable)?;
+            .map_err(super::super::verification_error::ProviderVerificationError::command_error)?;
         let PermissionEvidence::Active(permissions) = verified.permissions else {
             return Err(CommandAuthorizationError::Revoked);
         };
