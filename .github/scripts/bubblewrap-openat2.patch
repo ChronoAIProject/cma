@@ -1,0 +1,59 @@
+Description: Use upstream contained descriptor resolution when openat2 is absent
+ gVisor currently returns ENOSYS for openat2 despite the 5.10 kernel baseline.
+ Enable the upstream fallback only for that error and existing O_PATH or
+ O_DIRECTORY descriptors rooted under /oldroot or /newroot. Writable opens,
+ creation, truncation, EINVAL and EPERM must never enter the fallback.
+ The upstream fallback checks the resolved descriptor stays under its root;
+ it does not promise atomic equivalence to every openat2 resolve flag.
+Bug: https://github.com/google/gvisor/issues/14451
+--- a/safe_openat.c
++++ b/safe_openat.c
+@@ -30,7 +30,7 @@
+ 
+ bool opt_force_openat_fallback = false;
+ 
+-#if ASSUMED_KERNEL < BWRAP_KERNEL_VERSION (5, 6, 0)
++#if ASSUMED_KERNEL < BWRAP_KERNEL_VERSION (5, 6, 0) || defined(BWRAP_GVISOR_OPENAT_COMPAT)
+ #  define USE_OPENAT_FALLBACK 1
+ #else
+ #  define USE_OPENAT_FALLBACK 0
+@@ -202,6 +202,22 @@
+   size_t rootfs_len = is_empty_string (rootfs) ? 0 : strlen (rootfs);
+   int ret;
+ 
++#if ASSUMED_KERNEL >= BWRAP_KERNEL_VERSION (5, 6, 0)
++  /* The compatibility path only resolves existing descriptors below an
++   * explicit root. Creation and writable opens must never precede the
++   * descriptor containment check. */
++  if (rootfs == NULL ||
++      (strcmp (rootfs, "/oldroot") != 0 && strcmp (rootfs, "/newroot") != 0) ||
++      ((flags & O_PATH) == 0 && (flags & O_DIRECTORY) == 0) || mode != 0 ||
++      (flags & O_ACCMODE) != O_RDONLY ||
++      (flags & (O_CREAT | O_EXCL | O_TRUNC | O_APPEND)) != 0 ||
++      (flags & O_TMPFILE) == O_TMPFILE)
++    {
++      errno = EOPNOTSUPP;
++      return -1;
++    }
++#endif
++
+   /* chroot_realpath resolves the last component as well, so when O_NOFOLLOW
+      is requested resolve only the parent directory and let openat(2) deal
+      with the last component, otherwise a symlink would be followed even
+@@ -318,9 +334,14 @@
+           if (errno == EINTR || errno == EAGAIN)
+             goto repeat;
+           if (errno == ENOSYS)
+-            openat2_supported = false;
+-          if (errno == ENOSYS || errno == EINVAL || errno == EPERM)
++            {
++              openat2_supported = false;
++              return safe_openat_fallback (dirfd, rootfs, path, flags, mode);
++            }
++#if ASSUMED_KERNEL < BWRAP_KERNEL_VERSION (5, 6, 0)
++          if (errno == EINVAL || errno == EPERM)
+             return safe_openat_fallback (dirfd, rootfs, path, flags, mode);
++#endif
+ 
+           return -1;
+         }
