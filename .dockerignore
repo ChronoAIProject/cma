@@ -29,7 +29,11 @@ sdk/typescript/coverage/
 
 # History, not source. Nothing in any image reads it.
 .git/
-.github/
+.github/*
+!.github/scripts/
+.github/scripts/*
+!.github/scripts/bubblewrap-loopback.patch
+!.github/scripts/bubblewrap-loopback-test.c
 
 # Editor and platform leavings.
 .DS_Store
