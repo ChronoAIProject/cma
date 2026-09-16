@@ -1,3 +1,4 @@
+use super::channel_control_execution::is_channel_control;
 use super::channel_execution::is_channel;
 use std::sync::Arc;
 
@@ -11,6 +12,7 @@ use layer2_core::sandbox::{
 };
 
 pub(crate) struct ResourceCommandExecution {
+    pub channel_controls: Option<Arc<ChannelControlExecutionService>>,
     pub channel_revival: Option<Arc<super::ChannelCommandRevival>>,
     pub channel: Option<Arc<ChannelAgentCommandService>>,
     pub invokes: Option<Arc<layer2_core::bridge::invoke::BridgeInvokeService>>,
@@ -75,6 +77,12 @@ impl ResourceCommandExecution {
 #[async_trait::async_trait]
 impl AgentCommandExecution for ResourceCommandExecution {
     async fn release_held(&self, command: &AdmittedAgentCommand) {
+        if is_channel_control(command) {
+            if let Some(service) = &self.channel_controls {
+                let _ = service.release_held(command).await;
+            }
+            return;
+        }
         if !is_channel(command) {
             return;
         }
@@ -119,6 +127,9 @@ impl AgentCommandExecution for ResourceCommandExecution {
     }
 
     async fn check_queued(&self, command: &AdmittedAgentCommand) -> CommandReadiness {
+        if is_channel_control(command) {
+            return self.check_channel_control(command).await;
+        }
         if super::trigger_execution::is_trigger(command) {
             return self
                 .operations
@@ -144,6 +155,9 @@ impl AgentCommandExecution for ResourceCommandExecution {
     }
 
     async fn prepare_queued(&self, command: &AdmittedAgentCommand) {
+        if is_channel_control(command) {
+            return;
+        }
         if super::trigger_execution::is_trigger(command) {
             return;
         }
@@ -191,6 +205,9 @@ impl AgentCommandExecution for ResourceCommandExecution {
     }
 
     async fn execute(&self, command: &AdmittedAgentCommand) -> CommandAttempt {
+        if is_channel_control(command) {
+            return self.execute_channel_control(command).await;
+        }
         if super::trigger_execution::is_trigger(command) {
             return match self.operations.execute_trigger_claim(command).await {
                 Ok(_) => CommandAttempt::Finished,

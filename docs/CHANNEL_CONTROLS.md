@@ -1,9 +1,11 @@
-# Channel text controls: disabled foundation
+# Channel text controls: admission and execution foundation
 
-This is the disabled ingress foundation for #854, with mixed-version acceptance
-still tracked by #850. It introduces no source-control grant, target lookup,
-runtime control, approval capability or new runtime tool. Authenticated CMA
-dashboard/API controls remain the available control path.
+Production Channel control ingress remains disabled for #854, with mixed-version
+acceptance still tracked by #850. The implementation includes durable admission
+and execution adapters, exercised with disposable fixtures. Production does not
+construct those adapters or advertise their operations. Authenticated CMA
+dashboard/API controls remain the available control path; approval capability
+and reply-tool eligibility are unchanged.
 
 After signature verification, trusted raw human/message/text classification and
 the configured source-admission checks, CMA reserves the case-sensitive namespace
@@ -31,9 +33,8 @@ The header uses single ASCII spaces. A reference has a nonempty suffix of at
 most 128 ASCII letters, digits, underscores or hyphens. Cancel has no payload or
 trailing newline; steer has one nonblank payload after a newline, validated with
 the ordinary Agent text-input rules. The entire reserved text is capped at
-65,536 UTF-8 bytes. No reference lookup or source-control authority is implemented
-by this foundation. Every otherwise valid cancel/steer request returns the
-durable refusal `channel_controls_disabled`.
+65,536 UTF-8 bytes. The production ingress returns the durable refusal
+`channel_controls_disabled` for every otherwise valid cancel/steer request.
 
 Malformed reserved text returns `invalid_channel_control_request`; a numeric
 unsupported version returns `channel_control_version_unsupported`; other
@@ -112,14 +113,33 @@ provider identity and record digest. Exact and verified provider-alias recovery
 return the original receipt without selecting Message work. Cross-version or
 malformed retained records fail closed instead of admitting new work.
 
-Fresh accepted-control writing is not enabled by this reader foundation. The
-existing writer still emits only version-1 Message/refusal dispositions, and a
-permanent refusal can never become an accepted intent on retry or re-enablement.
-A future accepted writer must bind the matching retained intent and commit its
-canonical/provider dispositions atomically with admission. Enablement also
-requires a selected rollback baseline that understands version-2 receipts and
-accounts for held controls in queue capacity. An older reader refusing an
-unknown receipt is not proof of uninterrupted rollback compatibility.
+The accepted-control admission adapter commits the immutable intent, held common
+command, original callback/provider acceptance records, and exact aliases in one
+majority transaction. It shares the existing callback custody, replay, reply and
+rate checks. A permanent version-1 refusal can never become an accepted intent
+on retry or re-enablement. A retained intent without its original canonical
+acceptance cannot be repaired by silently manufacturing new acceptance records.
+The original authorization deadline is checked before each successful commit.
+
+Execution requires fresh authority for the original human, source command,
+consent, allocation, runtime and operation. Both canonical acceptance records
+must agree with the complete immutable intent before releasing the hold, in the
+conversation transaction, and immediately before the ordered runtime write.
+That transaction also conditionally fences both canonical records against
+concurrent mutation. An accepted control stays bound to its original turn and
+does not start another response. An uncertain runtime write retains its recovery
+state without automatic replay. Admission and execution create no outgoing chat
+message.
+
+Enablement requires a selected rollback baseline that understands version-2
+receipts, counts held controls in queue capacity, and can execute or reconcile
+already accepted controls with fresh admission disabled. The published reader
+baseline alone lacks the held-control capacity accounting and dedicated executor.
+Refusing an unknown receipt or merely preserving a held command does not establish
+uninterrupted rollback. Cross-process fixtures exercise the earlier reader and
+the combined compatible executor against the same actual persisted records;
+production enablement remains gated on their completed validation and deployment
+compatibility evidence.
 
 NyxID ignores callback response bodies, so this response does not send a chat
 message. External messages require an actual `reply_to_channel` tool invocation;

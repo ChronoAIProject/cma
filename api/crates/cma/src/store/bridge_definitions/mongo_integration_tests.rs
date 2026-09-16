@@ -366,3 +366,4 @@ mod inbox;
 
 #[path = "../bridge_allocations/mongo_integration_tests.rs"]
 mod allocations;
+pub(crate) use allocations::compatibility;

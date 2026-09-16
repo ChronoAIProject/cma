@@ -14,6 +14,7 @@ mod sandbox_admission;
 
 #[path = "channel_provisioning/tests.rs"]
 mod channel_provisioning;
+pub(crate) use channel_provisioning::compatibility;
 
 async fn setup() -> (
     Client,

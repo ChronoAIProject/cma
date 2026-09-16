@@ -71,6 +71,7 @@ async fn approval_uses_complete_pending_snapshot_and_replay_survives_resolution(
         .commit_agent_conversation(AgentConversationMutation {
             command_claim: None,
             execution_fence: None,
+            channel_control_execution_fence: None,
             channel_execution_fence: None,
             trigger_execution_fence: None,
             admission_guard: None,

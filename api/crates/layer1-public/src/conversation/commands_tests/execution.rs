@@ -51,6 +51,7 @@ pub(super) async fn commit(f: &Fixture, mut agent: Agent, logs: Vec<AgentLogKind
         .commit_agent_conversation(AgentConversationMutation {
             command_claim: None,
             execution_fence: None,
+            channel_control_execution_fence: None,
             channel_execution_fence: None,
             trigger_execution_fence: None,
             admission_guard: None,

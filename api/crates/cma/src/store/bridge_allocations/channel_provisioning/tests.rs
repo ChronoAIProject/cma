@@ -21,6 +21,7 @@ use crate::{
 use fixture::Fixture;
 #[path = "tests/channel_reply_tests.rs"]
 mod channel_reply;
+pub(crate) use channel_reply::compatibility;
 #[path = "tests/command_reset_tests.rs"]
 mod command_reset_tests;
 #[path = "tests/command_revival_tests.rs"]

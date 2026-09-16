@@ -22,7 +22,11 @@ use crate::store::{
 };
 
 use super::{decode_bridge, MongoBridgeStore};
+mod admission;
+#[allow(dead_code)] // Isolated signed-intent foundation; production ingress stays disabled.
+mod control_intents;
 mod disposition;
+mod prior;
 pub(in crate::store) mod receipts;
 mod redelivery;
 mod reply_addressing;
@@ -58,6 +62,8 @@ impl MongoCallbackInbox {
                 "bridge_callback_receipts",
                 "bridge_callback_platform_messages",
                 "bridge_callback_dispositions",
+                "bridge_refused_control_intents",
+                "bridge_refused_control_aliases",
             ],
         )
         .await?;
@@ -123,111 +129,12 @@ impl MongoCallbackInbox {
         write: &InboxWrite,
         session: &mut ClientSession,
     ) -> Result<CallbackAcceptance, MutationError> {
-        write.require_current(write.bridge())?;
-        let current = self
-            .bridges
-            .definitions
-            .find_one(doc! {"_id":write.bridge().id.as_str()})
-            .session(&mut *session)
-            .await?
-            .ok_or(CallbackError::BindingUnavailable)?;
-        let current = decode_bridge(&current).map_err(|_| CallbackError::BindingUnavailable)?;
-        write.require_current(&current)?;
-        self.bridges
-            .credentials
-            .require_binding(&current, write.custody_pin(), &mut *session)
-            .await
-            .map_err(|_| CallbackError::BindingUnavailable)?;
-        if let Some(document) = self
-            .receipts
-            .find_one(doc! {"_id": &write.record().id})
-            .session(&mut *session)
-            .await?
-        {
-            return Ok(CallbackAcceptance::Message(
-                receipts::model::AcceptedCallbackReceipt::read(&document)?.replay(write)?,
-            ));
-        }
-        if let Some(document) = self
-            .inbox
-            .find_one(doc! {"_id": &write.record().id})
-            .session(&mut *session)
-            .await?
-        {
-            let source = decode(&document)?;
-            let receipt = write.match_replay(&source)?;
-            self.retain_acceptance(
-                &source,
-                receipts::model::command_correlation(&document)?,
-                session,
-            )
-            .await?;
-            return Ok(CallbackAcceptance::Message(receipt));
-        }
-        if let Some(receipt) = self
-            .resolve_platform_redelivery(write, session, true)
-            .await?
-        {
-            return Ok(CallbackAcceptance::Message(receipt));
-        }
-        if let Some(receipt) = self.resolve_disposition(write, session, true).await? {
+        let current = self.require_callback_binding(write, session).await?;
+        if let Some(receipt) = self.prior_acceptance(write, session).await? {
             return Ok(receipt);
         }
+        self.prepare_fresh(write, &current, session).await?;
         let record = write.record();
-        // A transport-only verifier can construct InboxWrite before trusted raw
-        // identity/text classification. It may recover history above, but cannot
-        // bypass the reserved-control guard to create fresh Message work.
-        if record.capabilities.is_none() {
-            return Err(CallbackError::Payload.into());
-        }
-        self.require_confirmed_reply(record, session).await?;
-        let config = &current
-            .current()
-            .map_err(|_| CallbackError::BindingUnavailable)?
-            .config;
-        if record.admission == InboxAdmission::Accepted && write.control_refusal().is_none() {
-            let queued = self
-                .inbox
-                .count_documents(
-                    doc! {"bridge_id":current.id.as_str(),"admission":"accepted", "command_correlation":{"$exists":false},
-                    "expires_at":{"$gt":DateTime::from_millis(record.accepted_at * 1000)}},
-                )
-                .session(&mut *session)
-                .await?;
-            if queued >= u64::from(config.limits.max_queued_messages) {
-                return Err(CallbackError::Capacity.into());
-            }
-        }
-        let minute = record.accepted_at / 60;
-        let rate_id = format!("{}:{minute}", current.id.as_str());
-        let used = self
-            .rates
-            .find_one(doc! {"_id":&rate_id})
-            .session(&mut *session)
-            .await?
-            .map(|d| d.get_i64("count").map_err(|_| CallbackError::Unavailable))
-            .transpose()?
-            .unwrap_or(0);
-        if used < 0 || used >= i64::from(config.limits.max_messages_per_minute) {
-            return Err(CallbackError::Capacity.into());
-        }
-        // A real write to the definition document serializes concurrent admissions
-        // and races with disable, emergency stop, rotation or retirement. This
-        // internal fence does not alter the user-visible configuration revision.
-        let changed = self
-            .bridges
-            .definitions
-            .update_one(
-                doc! {"_id":current.id.as_str(),"revision":current.revision as i64},
-                doc! {"$inc":{"inbox_fence":1_i64}},
-            )
-            .session(&mut *session)
-            .await?;
-        if changed.matched_count != 1 {
-            return Err(CallbackError::BindingUnavailable.into());
-        }
-        self.rates.update_one(doc!{"_id":&rate_id},doc!{"$inc":{"count":1_i64},"$setOnInsert":{"document_schema_version":DOCUMENT_SCHEMA_VERSION,"expires_at":DateTime::from_millis((minute+2)*60000)}})
-            .upsert(true).session(&mut *session).await?;
         if let Some(refusal) = disposition::refusal(write) {
             let receipt = self.retain_disposition(write, refusal, session).await?;
             write.require_current(&current)?;

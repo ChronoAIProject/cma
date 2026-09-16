@@ -17,6 +17,9 @@ use super::sandbox_mongo::{
 use super::{bridge_definitions::decode_bridge, MongoBridgeStore};
 mod channel;
 pub(crate) use channel::MongoChannelCommandStore;
+pub(crate) mod channel_control_execution;
+#[allow(dead_code)] // Isolated admission foundation; no production ingress caller.
+pub(crate) mod channel_controls;
 mod channel_grants;
 mod channel_replay;
 mod channel_retained;

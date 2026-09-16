@@ -86,7 +86,8 @@ pub(in crate::store) async fn apply(
         .agent_commands
         .count_documents(doc! { "agent_id": agent.id.as_str(), "$or": [
             {"status": "queued"},
-            {"status": "waiting_action", "channel_admission.execution_hold": "worker_unavailable"}
+            {"status": "waiting_action", "channel_admission.execution_hold": "worker_unavailable"},
+            {"status": "waiting_action", "channel_control_admission.execution_hold": "worker_unavailable"}
         ] })
         .session(&mut *session)
         .await?;

@@ -15,6 +15,9 @@ pub struct AgentConversationMutation {
     /// Exact Channel invoke authority, independently fenced with original source.
     pub channel_execution_fence:
         Option<std::sync::Arc<crate::sandbox::agent_io::ChannelExecutionFence>>,
+    /// Exact original-source control authority, mutually exclusive with Message authority.
+    pub channel_control_execution_fence:
+        Option<std::sync::Arc<crate::sandbox::agent_io::ChannelControlExecutionFence>>,
     /// Exact immutable Trigger first-message binding and current store proof.
     pub trigger_execution_fence:
         Option<std::sync::Arc<crate::sandbox::agent_io::TriggerExecutionFence>>,
@@ -40,6 +43,7 @@ pub fn validate_agent_conversation_admission(
     if [
         mutation.execution_fence.is_some(),
         mutation.channel_execution_fence.is_some(),
+        mutation.channel_control_execution_fence.is_some(),
         mutation.trigger_execution_fence.is_some(),
     ]
     .into_iter()
@@ -51,6 +55,7 @@ pub fn validate_agent_conversation_admission(
     }
     if (mutation.execution_fence.is_some()
         || mutation.channel_execution_fence.is_some()
+        || mutation.channel_control_execution_fence.is_some()
         || mutation.trigger_execution_fence.is_some())
         && (mutation.command_claim.is_none() || mutation.admission_guard.is_none() || !admission)
     {
