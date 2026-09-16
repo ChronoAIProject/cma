@@ -141,6 +141,7 @@ pub(super) fn compose(
     harness: &Harness,
     services: AgentProjectionServices,
     context: Arc<AgentContextService>,
+    worker_holder: &str,
 ) -> (Router, Arc<AgentCommandWorker>) {
     let authority = Arc::new(Authority(harness.workspace.owner.clone()));
     let access = Arc::new(ResourceAccessService::new(
@@ -164,11 +165,12 @@ pub(super) fn compose(
             operations: services.operations(),
             context: context.clone(),
         }),
-        "official-sdk-command-worker".into(),
+        worker_holder.into(),
     )
     .unwrap();
     let router = services
         .conversation_router(context, harness.updates.clone())
+        .merge(services.agent_events_router(Default::default(), harness.updates.clone()))
         .merge(layer1_public::responses::v2::router(
             layer1_public::responses::v2::ResponsesV2State::new(commands, services.reads()),
         ));

@@ -13,6 +13,31 @@ pub(super) struct SdkRegistry {
     live: Arc<LiveAgentRegistry>,
     recorder: Arc<DurableAgentUpdateRecorder>,
     inputs: Mutex<HashMap<(AgentId, u64), ConversationInputSender>>,
+    probe: Option<Arc<RuntimeProbe>>,
+}
+
+/// Counts every input at the runtime boundary, without deduplication. Output
+/// waits for the test to disconnect its reader and replace its command worker.
+pub(super) struct RuntimeProbe {
+    inputs: Mutex<Vec<(AgentRuntimeTarget, ConversationInput)>>,
+    replies: tokio::sync::Semaphore,
+}
+
+impl RuntimeProbe {
+    pub(super) fn gated() -> Arc<Self> {
+        Arc::new(Self {
+            inputs: Mutex::new(Vec::new()),
+            replies: tokio::sync::Semaphore::new(0),
+        })
+    }
+
+    pub(super) fn inputs(&self) -> Vec<(AgentRuntimeTarget, ConversationInput)> {
+        self.inputs.lock().unwrap().clone()
+    }
+
+    pub(super) fn release_reply(&self) {
+        self.replies.add_permits(1);
+    }
 }
 
 impl SdkRegistry {
@@ -20,10 +45,19 @@ impl SdkRegistry {
         live: Arc<LiveAgentRegistry>,
         recorder: Arc<DurableAgentUpdateRecorder>,
     ) -> Arc<Self> {
+        Self::with_probe(live, recorder, None)
+    }
+
+    pub(super) fn with_probe(
+        live: Arc<LiveAgentRegistry>,
+        recorder: Arc<DurableAgentUpdateRecorder>,
+        probe: Option<Arc<RuntimeProbe>>,
+    ) -> Arc<Self> {
         Arc::new(Self {
             live,
             recorder,
             inputs: Mutex::new(HashMap::new()),
+            probe,
         })
     }
 }
@@ -39,15 +73,25 @@ impl AgentRuntimeRegistry for SdkRegistry {
         let input = inputs.entry((target.agent_id.clone(), target.runtime_generation)).or_insert_with(|| {
             let target = target.clone();
             let recorder = self.recorder.clone();
+            let probe = self.probe.clone();
             ConversationInputSender::spawn(4, move |input| {
                 let target = target.clone();
                 let recorder = recorder.clone();
+                let probe = probe.clone();
                 async move {
+                    if let Some(probe) = &probe {
+                        probe.inputs.lock().unwrap().push((target.clone(), input.clone()));
+                    }
                     let ConversationInput::Prompt(content) = input else {
                         return Err(AdapterError::Unsupported("SDK fixture accepts only prompts".into()));
                     };
                     let with_tools = content.iter().any(|block| matches!(block, ContentBlock::Text(text) if text.text == "sdk-raw-with-tools"));
-                    tokio::spawn(emit_reply(recorder, target, with_tools));
+                    tokio::spawn(async move {
+                        if let Some(probe) = probe {
+                            probe.replies.acquire().await.unwrap().forget();
+                        }
+                        emit_reply(recorder, target, with_tools).await;
+                    });
                     Ok(())
                 }
             })
