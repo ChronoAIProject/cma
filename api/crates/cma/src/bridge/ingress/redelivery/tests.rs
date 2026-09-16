@@ -178,6 +178,9 @@ fn provider_parent_fields_require_exact_signed_corroboration_across_platforms() 
                 reply.raw_mut()["event"]["message"]["parent_id"] = json!("om_parent");
                 "om_parent"
             }
+            BridgePlatform::Slack | BridgePlatform::Whatsapp | BridgePlatform::X => {
+                unreachable!("separate boundary fixtures")
+            }
         };
         reply.body["reply_to_platform_message_id"] = json!(parent);
         let proven = projection(&reply).unwrap();

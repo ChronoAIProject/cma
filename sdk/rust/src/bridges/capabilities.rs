@@ -159,6 +159,8 @@ pub enum BridgeStableThread {
     LarkThread,
     /// A verified Feishu thread ID.
     FeishuThread,
+    /// A verified Slack thread timestamp.
+    SlackThread,
 }
 
 impl super::Bridges<'_> {

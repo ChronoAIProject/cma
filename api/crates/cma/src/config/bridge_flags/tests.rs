@@ -1,12 +1,15 @@
 use super::*;
 use std::collections::BTreeMap;
 
-const PLATFORMS: [BridgePlatformFlag; 5] = [
+const PLATFORMS: [BridgePlatformFlag; 8] = [
     BridgePlatformFlag::Telegram,
     BridgePlatformFlag::TelegramNew,
     BridgePlatformFlag::Discord,
     BridgePlatformFlag::Lark,
     BridgePlatformFlag::Feishu,
+    BridgePlatformFlag::Slack,
+    BridgePlatformFlag::Whatsapp,
+    BridgePlatformFlag::X,
 ];
 const STAGES: [BridgeStage; 5] = [
     BridgeStage::Management,

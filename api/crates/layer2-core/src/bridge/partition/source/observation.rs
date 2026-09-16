@@ -79,6 +79,7 @@ pub enum StableThreadKind {
     DiscordChannelThread,
     LarkThread,
     FeishuThread,
+    SlackThread,
 }
 
 /// The connector must obtain this from a documented stable platform field.
@@ -115,6 +116,7 @@ impl StableThreadReference {
                 BridgePlatform::Discord
             ) | (StableThreadKind::LarkThread, BridgePlatform::Lark)
                 | (StableThreadKind::FeishuThread, BridgePlatform::Feishu)
+                | (StableThreadKind::SlackThread, BridgePlatform::Slack)
         ) {
             return Err(PartitionError::InvalidSource("stable_thread_platform"));
         }

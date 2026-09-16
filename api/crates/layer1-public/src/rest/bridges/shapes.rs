@@ -82,6 +82,9 @@ pub(crate) enum BridgePlatformValue {
     Discord,
     Lark,
     Feishu,
+    Slack,
+    Whatsapp,
+    X,
 }
 #[derive(ToSchema)]
 #[serde(rename_all = "snake_case")]

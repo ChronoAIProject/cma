@@ -19,6 +19,9 @@ data:
   CHRONO_BRIDGE_DISCORD_ENABLED: "false"
   CHRONO_BRIDGE_LARK_ENABLED: "false"
   CHRONO_BRIDGE_FEISHU_ENABLED: "false"
+  CHRONO_BRIDGE_SLACK_ENABLED: "false"
+  CHRONO_BRIDGE_WHATSAPP_ENABLED: "false"
+  CHRONO_BRIDGE_X_ENABLED: "false"
   CHRONO_BRIDGE_V2_UI_TRANSPORT_ENABLED: "false"
   # Admission-only protocol selector. Requires a compatible worker/rollback floor.
   CHRONO_TRIGGER_COMMAND_ADMISSION_ENABLED: "false"

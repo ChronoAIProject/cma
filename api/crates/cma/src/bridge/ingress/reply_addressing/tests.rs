@@ -23,6 +23,9 @@ fn callback(platform: BridgePlatform) -> Fixture {
         BridgePlatform::Lark | BridgePlatform::Feishu => {
             fixture.raw_mut()["event"]["message"]["parent_id"] = json!(parent)
         }
+        BridgePlatform::Slack | BridgePlatform::Whatsapp | BridgePlatform::X => {
+            unreachable!("separate boundary fixtures")
+        }
     }
     fixture
 }

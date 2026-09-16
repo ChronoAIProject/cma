@@ -9,7 +9,10 @@ use serde_json::Value;
 
 mod discord;
 mod lark;
+mod slack;
 mod telegram;
+mod whatsapp;
+mod x;
 
 pub(crate) struct NyxidCapabilities;
 
@@ -40,8 +43,23 @@ impl CallbackCapabilityExtractor for NyxidCapabilities {
                 lark::observe(raw, payload.record(), &mut facts)?
             }
             BridgePlatform::Discord => discord::observe(raw, payload.record(), &mut facts)?,
+            BridgePlatform::Slack => slack::observe(raw, payload.record(), &mut facts)?,
+            BridgePlatform::Whatsapp => whatsapp::observe(raw, payload.record(), &mut facts)?,
+            BridgePlatform::X => x::observe(raw, payload.record(), &mut facts)?,
         }
         Ok(facts)
+    }
+}
+
+pub(super) fn provider_parent(
+    platform: &BridgePlatform,
+    raw: &Value,
+) -> Result<Option<String>, CallbackError> {
+    match platform {
+        BridgePlatform::Slack => slack::parent(raw),
+        BridgePlatform::Whatsapp => whatsapp::parent(raw),
+        BridgePlatform::X => x::parent(raw),
+        _ => Ok(None),
     }
 }
 
