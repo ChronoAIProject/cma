@@ -17,6 +17,10 @@ mod control_reference;
 mod delivery;
 #[path = "channel_reply_generation_test.rs"]
 mod generation;
+#[path = "partition_command_tests.rs"]
+mod partition_commands;
+#[path = "partition_status_tests.rs"]
+mod partition_status;
 #[path = "channel_reply_reset_tests.rs"]
 mod reset;
 #[path = "wildcard_chat_tests.rs"]

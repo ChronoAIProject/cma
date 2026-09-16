@@ -13,9 +13,11 @@ pub(crate) mod channel_retirement;
 mod channel_reuse_cleanup;
 mod channel_reuse_revival;
 mod channel_startup;
+pub(in crate::store) mod commands;
 mod records;
 mod reuse;
 mod sandbox_admission;
+mod status;
 mod transaction;
 
 use std::sync::Arc;
@@ -64,6 +66,7 @@ impl MongoBridgeAllocationStore {
             &[
                 "bridge_allocation_heads",
                 "bridge_allocations",
+                "bridge_partition_command_receipts",
                 "channel_credential_renewal_audits",
                 "channel_lifecycle_credential_audits",
                 "channel_mint_orphans",
@@ -152,6 +155,7 @@ impl MongoBridgeAllocationStore {
         store.initialize_workspace_cleanup().await.map_err(|_| {
             layer2_core::StoreError::Unavailable("create owned Workspace cleanup indexes".into())
         })?;
+        store.initialize_partition_status().await?;
         Ok(store)
     }
 

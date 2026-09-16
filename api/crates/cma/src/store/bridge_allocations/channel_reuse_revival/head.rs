@@ -21,6 +21,10 @@ pub(super) async fn fence(
         i64::try_from(allocation.identity.generation).map_err(|_| AllocationError::Corrupt)?;
     let valid = match allocation.state {
         AllocationState::Ready => generation == original && current_id == allocation.id,
+        AllocationState::Retired if generation == original && current_id == allocation.id => {
+            store.require_detached_head(allocation, session).await?;
+            true
+        }
         AllocationState::Retired => generation > original && current_id != allocation.id,
         _ => false,
     };

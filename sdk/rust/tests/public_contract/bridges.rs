@@ -7,6 +7,24 @@ use cma_sdk::{
 pub async fn dispatch(c: &Context<'_>) -> Result<()> {
     let bridges = c.client.bridges();
     match c.case.operation.as_str() {
+        "POST /api/v1/bridges/{id}/partitions/{allocation}/reset" => c.check(
+            bridges
+                .reset_partition(c.param("id"), c.param("allocation"), &c.body()?, &c.key()?)
+                .await,
+        ),
+        "POST /api/v1/bridges/{id}/partitions/{allocation}/detach" => c.check(
+            bridges
+                .detach_partition(c.param("id"), c.param("allocation"), &c.body()?, &c.key()?)
+                .await,
+        ),
+        "GET /api/v1/bridges/{id}/partitions" => {
+            c.check(bridges.list_partitions(c.param("id"), &c.page()?).await)
+        }
+        "GET /api/v1/bridges/{id}/partitions/{allocation}" => c.check(
+            bridges
+                .read_partition(c.param("id"), c.param("allocation"))
+                .await,
+        ),
         "GET /api/v1/bridges/{id}/allocations/{allocation}/workspace-cleanup" => c.check(
             bridges
                 .read_workspace_cleanup(c.param("id"), c.param("allocation"))
