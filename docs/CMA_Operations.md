@@ -8,8 +8,10 @@ public routes are in [REST](API_REST.md).
 ## Delivery Authority
 
 For this milestone, the maintainer's explicit instructions override the release
-step in #832: finish all development and local gates first, then deliver reviewed
-changes to `develop`, build images and deploy directly to production. **Never
+step in #832: deliver changes to `develop`, build images and deploy directly to
+production. The 2026-09-16 delivery direction prioritizes parallel feature
+implementation and consolidated required build checks, followed by production
+deployment and broader live verification and fixes. **Never
 merge or push `main`, invoke the release workflow or change NyxID configuration
 or administration.** A direct
 deployment is not a GitHub release and creates no release tag by implication.
@@ -20,12 +22,14 @@ cleanup, forced pause or image-driven replacement of existing live Sandboxes is
 permitted. Existing user resources receive read-only verification. Faults and
 cleanup use exact run-owned disposable resources with owner and lineage checks.
 Changing an image default does not authorize rotation of retained runtimes.
-An evidence failure requires a local fix and an isolated rerun before rollout;
-unproved compatibility keeps the new feature disabled.
+A failed required build check requires a fix and an affected rerun. Live
+verification follows the initial control-plane rollout; unproved capabilities
+remain disabled while those checks establish their enablement conditions.
 
-Current local checks are not production approval. The Release Evidence section
-below records incomplete final gates explicitly. Do not advertise public
-readiness or call the milestone complete while any required gate is unproved.
+The maintainer has authorized production deployment under this delivery plan.
+The Release Evidence section below records incomplete verification explicitly.
+Do not advertise public readiness or call the milestone complete while required
+implementation or verification remains outstanding.
 Controlled test enablement for the final journeys is distinct from public
 publication and must be withdrawn if verification fails.
 
@@ -103,8 +107,10 @@ preservation, exactly one runtime input, old-tab drafts, stream reconnect or saf
 cleanup. The result names these unproved properties explicitly. Complete them
 with the disposable previous-version live Agent upgrade/rollback campaign in
 #850/#873, including approval waits, sibling Agents, paused history and Trigger
-origin, before deploying or enabling bridge changes. Keep accepted work and
-existing runtime cohorts intact through both feature disable and rollback.
+origin. Under the current delivery plan, broader live acceptance follows the
+initial production deployment. Keep accepted work and existing runtime cohorts
+intact through both feature disable and rollback; enable individual capabilities
+only within their demonstrated runtime and authority contracts.
 
 The shared IO admission ledger adds `agent_commands` and
 `agent_command_orders` collections without changing the retained Agent or log
@@ -324,6 +330,11 @@ apply to the resulting immutable image on every delivery.
 
 ### Lifecycle Scheduling
 
+Bridge ingress, worker occupancy/results and outbound attempts emit bounded
+operational log fields through the existing sink. See
+[Bridge operational signals](BRIDGE_OPERATIONAL_SIGNALS.md) for dimensions,
+latency/age semantics, safe correlation and suggested log-based monitors.
+
 Sandbox lifecycle scheduling permits at most four concurrent sweeps, with
 one new sweep offered per second while capacity remains. Durable per-Sandbox
 claims and revision fences, not the scheduler's task list, grant authority.
@@ -454,7 +465,7 @@ are referenced in `infra/api/secret.yaml`, never stored in ConfigMaps.
 | `CHRONO_AUTH_MODE` | `provider` in production; `trusted` is local fixed-subject development only |
 | `CHRONO_BRIDGE_MANAGEMENT_ENABLED` | Fresh Bridge setup/configuration/enable/grant/import/retry authority; false by default; retained reads, exact receipts and safe reductions stay available |
 | `CHRONO_BRIDGE_INGRESS_ENABLED` | Fresh signed callback acceptance; false by default; accepted input can drain through independently enabled stages |
-| `CHRONO_BRIDGE_CONTROL_ADMISSION_ENABLED` | Fresh signed cancel/steer admission selector; false by default; existing Message/refusal/control receipts recover first. Production runtime eligibility remains unavailable, so this selector alone cannot enable controls or advertise operations. |
+| `CHRONO_BRIDGE_CONTROL_ADMISSION_ENABLED` | Fresh signed cancel/steer admission selector; false by default; existing Message/refusal/control receipts recover first. Fresh admission and advertised operations additionally require current source consent/grants and the exact locally published runtime with Conversation plus Interrupt/Steer. Missing local ownership remains retryably unavailable; no remote owner proxy is composed. |
 | `CHRONO_BRIDGE_ALLOCATION_ENABLED` | New Channel allocation/provisioning/child/start effects; false by default; preserve current phases and in-flight outcomes |
 | `CHRONO_BRIDGE_EXECUTION_ENABLED` | New Channel command admission and held-command release; false by default; already Released commands drain in shared FIFO order |
 | `CHRONO_BRIDGE_OUTBOUND_ENABLED` | Fresh explicit reply-tool admission and provider send attempts; false by default; recover retained receipts/outcomes and never auto-retry Unknown |
@@ -463,6 +474,9 @@ are referenced in `infra/api/secret.yaml`, never stored in ConfigMaps.
 | `CHRONO_BRIDGE_DISCORD_ENABLED` | Discord fresh-effect gate; false by default |
 | `CHRONO_BRIDGE_LARK_ENABLED` | Lark fresh-effect gate, independent of Feishu; false by default |
 | `CHRONO_BRIDGE_FEISHU_ENABLED` | Feishu fresh-effect gate, independent of Lark; false by default |
+| `CHRONO_BRIDGE_SLACK_ENABLED` | Slack boundary gate; false by default; missing human/loop evidence still refuses admission |
+| `CHRONO_BRIDGE_WHATSAPP_ENABLED` | WhatsApp boundary gate; false by default; missing human/loop evidence still refuses admission |
+| `CHRONO_BRIDGE_X_ENABLED` | X DM boundary gate; false by default; missing human/loop evidence still refuses admission |
 | `CHRONO_BRIDGE_V2_UI_TRANSPORT_ENABLED` | Eligibility for the separately integrated v2 browser transport; false by default; does not disable existing public v2 API routes or change an accepted request protocol |
 | `CHRONO_TRIGGER_COMMAND_ADMISSION_ENABLED` | New authenticated Launch admission selects common first-message commands under retained personal ownership; false by default. Proven pre-write failure is terminal for new common prompts; ambiguous writes retain the same command/response and refuse legacy recovery. Accepted protocol is immutable; disabling the selector retains accepted common commands and legacy launches retain their original delivery/recovery behavior. Keep false until every worker and permitted rollback version recognizes and transactionally excludes common/legacy dispatch; older workers ignore additive sidecars. |
 | `CHRONO_TRUSTED_SUBJECT` | Local trusted-mode subject; default `local-developer`, irrelevant in provider mode |
