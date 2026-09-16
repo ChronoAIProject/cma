@@ -13,7 +13,7 @@ fn scope() -> serde_json::Value {
     json!({"authority":"nyxid","contract_version":"1","policy_version":"api-key-scope-v1",
         "authenticated_actor":{"type":"personal","id":"admin-one"},"intended_key_owner":{"type":"organization","id":"org-one"},
         "services":[{"user_service_id":"service-one","resource_owner":{"type":"organization","id":"org-one"},"node_grant":{"type":"required","node_ids":["node-one"]}}],
-        "allowed_service_ids":["service-one"],"allowed_node_ids":["node-one"],"normalized_grant_digest":"a".repeat(64),
+        "allowed_service_ids":["service-one"],"allowed_node_ids":["node-one"],"allow_auto_connected_services":false,"normalized_grant_digest":format!("sha256:{}", "a".repeat(64)),
         "completeness":{"list_complete":true,"no_duplicates":true,"route_candidate_basis":"active_configured_routes","transient_node_state_excluded":true},
         "freshness":{"mode":"mutation_revalidated_snapshot","precondition_field":"scope_plan_digest","post_creation_drift":"fail_closed"},"key_purpose":"general"})
 }
@@ -83,6 +83,42 @@ fn scope_plan_requires_exact_actor_owner_service_node_union_and_mutation_precond
     assert!(plan
         .require(&owner(), &actor(), &["service-one".into()])
         .is_err());
+    let mut value = scope();
+    value["allow_auto_connected_services"] = json!(true);
+    let plan: ScopePlan = serde_json::from_value(value).unwrap();
+    assert!(plan
+        .require(&owner(), &actor(), &["service-one".into()])
+        .is_err());
+    let mut value = scope();
+    value
+        .as_object_mut()
+        .unwrap()
+        .remove("allow_auto_connected_services");
+    assert!(serde_json::from_value::<ScopePlan>(value).is_err());
+}
+
+#[test]
+fn scope_plan_requires_provider_sha256_digest_without_normalizing_it() {
+    for digest in [
+        "a".repeat(64),
+        format!("sha512:{}", "a".repeat(64)),
+        format!("SHA256:{}", "a".repeat(64)),
+        format!("sha256:{}", "A".repeat(64)),
+        format!("sha256:{}", "a".repeat(63)),
+        format!("sha256:{}", "a".repeat(65)),
+        format!("sha256:{}", "g".repeat(64)),
+        format!(" sha256:{}", "a".repeat(64)),
+        format!("sha256:{}\n", "a".repeat(64)),
+    ] {
+        let mut value = scope();
+        value["normalized_grant_digest"] = json!(digest);
+        let plan: ScopePlan = serde_json::from_value(value).unwrap();
+        assert!(
+            plan.require(&owner(), &actor(), &["service-one".into()])
+                .is_err(),
+            "{digest:?}"
+        );
+    }
 }
 
 #[test]
@@ -91,13 +127,40 @@ fn minted_key_needs_exact_owner_expiry_and_scope_metadata_before_delivery() {
     let expires_at = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_800_000_000);
     let returned: MintedKeyResponse = serde_json::from_value(json!({"id":"key-created","full_key":"disposable-fixture-secret","scopes":"proxy read","state_version":1,"allowed_service_ids":["service-one"],"allowed_node_ids":["node-one"],"allow_all_services":false,"allow_all_nodes":false})).unwrap();
     let material = material(returned, &plan, expires_at).unwrap();
-    let metadata = json!({"id":"key-created","name":"cma:test:sbx-one","scopes":"proxy read","state_version":1,"allowed_service_ids":["service-one"],"allowed_node_ids":["node-one"],"allow_all_services":false,"allow_all_nodes":false,
+    let metadata = json!({"id":"key-created","name":"cma:test:sbx-one","scopes":"proxy read","state_version":1,"allowed_service_ids":["service-one"],"allowed_node_ids":["node-one"],"allow_all_services":false,"allow_all_nodes":false,"allow_auto_connected_services":false,
         "is_active":true,"expires_at":layer2_core::rfc3339_at(expires_at),"purpose":"general","scheduled_write_enabled":false,
         "credential_source":{"type":"org","org_id":"org-one","role":"admin","allowed":true}});
     serde_json::from_value::<KeyMetadata>(metadata.clone())
         .unwrap()
         .require(&owner(), &actor(), "cma:test:sbx-one", &material, &plan)
         .unwrap();
+    let mut value = metadata.clone();
+    value["allow_auto_connected_services"] = json!(true);
+    assert!(serde_json::from_value::<KeyMetadata>(value)
+        .unwrap()
+        .require(&owner(), &actor(), "cma:test:sbx-one", &material, &plan)
+        .is_err());
+    let mut value = metadata.clone();
+    value
+        .as_object_mut()
+        .unwrap()
+        .remove("allow_auto_connected_services");
+    assert!(serde_json::from_value::<KeyMetadata>(value).is_err());
+    for (field, added) in [
+        ("platform", json!("telegram")),
+        ("callback_url", json!("https://callback.example")),
+        ("bindings_count", json!(1)),
+    ] {
+        let mut value = metadata.clone();
+        value[field] = added;
+        assert!(
+            serde_json::from_value::<KeyMetadata>(value)
+                .unwrap()
+                .require(&owner(), &actor(), "cma:test:sbx-one", &material, &plan)
+                .is_err(),
+            "{field}"
+        );
+    }
     for pointer in [
         "/credential_source/org_id",
         "/credential_source/role",

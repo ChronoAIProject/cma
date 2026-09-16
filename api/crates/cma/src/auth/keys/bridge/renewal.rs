@@ -71,10 +71,15 @@ pub(super) struct PriorKeyMetadata {
     allowed_service_ids: Vec<String>,
     allowed_node_ids: Vec<String>,
     allow_all_services: bool,
+    allow_auto_connected_services: bool,
     allow_all_nodes: bool,
     credential_source: PriorSource,
     purpose: String,
     scheduled_write_enabled: bool,
+    platform: Option<String>,
+    callback_url: Option<String>,
+    #[serde(default)]
+    bindings_count: u64,
 }
 #[derive(Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -87,6 +92,13 @@ enum PriorSource {
     },
 }
 impl PriorKeyMetadata {
+    pub(super) fn require_initial_version(&self) -> Result<(), KeyIssuerError> {
+        if self.state_version != 1 {
+            return Err(KeyIssuerError::UnexpectedAuthority);
+        }
+        Ok(())
+    }
+
     pub(super) fn require(
         &self,
         lease: &BridgeControlPlaneLease,
@@ -124,13 +136,20 @@ impl PriorKeyMetadata {
             || self.id != previous.provider_key_id
             || self.name != name
             || !self.is_active
-            || self.state_version != previous.provider_state_version
+            // Provider use advances this observation counter. The retained
+            // scope fingerprint and explicit authority checks remain exact.
+            || previous.provider_state_version <= 0
+            || self.state_version < previous.provider_state_version
             || retained_expiry.is_none()
             || observed_expiry != retained_expiry
             || self.scopes != super::super::KEY_SCOPES
             || self.purpose != "general"
             || self.scheduled_write_enabled
+            || self.platform.is_some()
+            || self.callback_url.is_some()
+            || self.bindings_count != 0
             || self.allow_all_services
+            || self.allow_auto_connected_services
             || self.allow_all_nodes
             || fingerprint.as_deref() != Some(previous.grant_fingerprint.as_str())
         {
