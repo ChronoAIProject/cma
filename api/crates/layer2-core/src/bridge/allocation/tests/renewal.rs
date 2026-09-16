@@ -49,6 +49,7 @@ impl BridgeConnectionValidator for Connections {
 pub(super) fn context(subject: &str) -> CallerContext {
     let subject = crate::SubjectId::new(subject);
     CallerContext {
+        credential_source: crate::resource_access::CredentialSource::Retained,
         caller: crate::Caller::new(
             subject.clone(),
             crate::Authorization::new([crate::Capability::UseOwnSandboxes]),
