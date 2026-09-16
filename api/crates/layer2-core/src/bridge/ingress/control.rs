@@ -19,13 +19,14 @@ const MAX_CONTROL_BYTES: usize = 65_536;
 pub enum CallbackAcceptance {
     Message(InboxReceipt),
     ControlRefused(ChannelControlReceipt),
+    ControlAccepted(ChannelControlAcceptedReceipt),
 }
 
 impl CallbackAcceptance {
     pub fn into_message(self) -> Option<InboxReceipt> {
         match self {
             Self::Message(receipt) => Some(receipt),
-            Self::ControlRefused(_) => None,
+            Self::ControlRefused(_) | Self::ControlAccepted(_) => None,
         }
     }
 
@@ -33,8 +34,22 @@ impl CallbackAcceptance {
         match self {
             Self::Message(receipt) => &receipt.inbox_id,
             Self::ControlRefused(receipt) => &receipt.callback_id,
+            Self::ControlAccepted(receipt) => &receipt.callback_id,
         }
     }
+}
+
+/// Version-two acknowledgement of a durably retained control intent. This is
+/// not evidence that a command was dispatched or that its operation completed.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ChannelControlAcceptedReceipt {
+    pub version: u16,
+    pub callback_id: String,
+    pub bridge_id: BridgeId,
+    pub message_id: String,
+    pub intent_id: String,
+    pub persisted_at: i64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

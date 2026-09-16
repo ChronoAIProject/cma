@@ -46,6 +46,11 @@ async fn callback(
             Json(serde_json::json!({"status":"control_refused", "receipt":receipt})),
         )
             .into_response(),
+        Ok(CallbackAcceptance::ControlAccepted(receipt)) => (
+            StatusCode::ACCEPTED,
+            Json(serde_json::json!({"status":"control_accepted", "receipt":receipt})),
+        )
+            .into_response(),
         Err(error) => error.response(),
     };
     response
