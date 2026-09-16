@@ -19,7 +19,7 @@ NATIVE = {
 }
 
 CHILD = r'''
-import errno, json, os, socket, sys
+import ctypes, errno, json, os, socket, sys
 from pathlib import Path
 fixture = Path(sys.argv[1])
 mode, parent_net = sys.argv[2:4]
@@ -28,7 +28,11 @@ assert net != parent_net, 'network namespace was shared'
 interfaces = [line.split(':')[0].strip() for line in Path('/proc/net/dev').read_text().splitlines()[2:]]
 assert interfaces == ['lo'], 'isolated namespace has an external interface'
 status = dict(line.split(':', 1) for line in Path('/proc/self/status').read_text().splitlines() if ':' in line)
-assert status['NoNewPrivs'].strip() == '1'
+# gVisor omits NoNewPrivs from /proc even when prctl exposes the state.
+libc = ctypes.CDLL(None, use_errno=True)
+assert libc.prctl(39, 0, 0, 0, 0) == 1, 'PR_GET_NO_NEW_PRIVS was not set'
+if 'NoNewPrivs' in status:
+    assert status['NoNewPrivs'].strip() == '1'
 for family in (socket.AF_INET, socket.AF_INET6, socket.AF_NETLINK):
     try:
         candidate = socket.socket(family, socket.SOCK_STREAM if family != socket.AF_NETLINK else socket.SOCK_RAW)

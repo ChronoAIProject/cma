@@ -62,8 +62,9 @@ RUN --mount=type=cache,id=cma-gh-modules,target=/root/go/pkg/mod,sharing=locked 
         -o /out/gh ./cmd/gh
 
 # Preserve the installed Debian security release, its quilt patches, kernel
-# baseline and hardening. The sole compatibility change makes loopback address
-# creation idempotent in gVisor's already-configured fresh network namespace.
+# baseline and hardening. Configure the already-present gVisor loopback
+# idempotently and use upstream contained descriptor resolution only when
+# openat2 is absent; guarded filesystem and network policies remain enforced.
 FROM debian:trixie-slim@sha256:d7e12182ce18b85b93007c1dedf31f2d29e01ccf3182cc4017c709b6259bc132 AS bubblewrap-build
 ARG BUBBLEWRAP_VERSION=0.12.0
 ARG BUBBLEWRAP_DEBIAN_VERSION=0.12.0-1~deb13u1
@@ -76,7 +77,8 @@ RUN apt-get update \
         meson ninja-build patch pkgconf \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /build
-COPY .github/scripts/bubblewrap-loopback.patch .github/scripts/bubblewrap-loopback-test.c /build/
+COPY .github/scripts/bubblewrap-loopback.patch .github/scripts/bubblewrap-loopback-test.c \
+    .github/scripts/bubblewrap-openat2.patch .github/scripts/bubblewrap-openat2-test.c /build/
 RUN set -eux; \
     base=https://security.debian.org/debian-security/pool/updates/main/b/bubblewrap; \
     curl -fsSL -o source.tar.xz "${base}/bubblewrap_${BUBBLEWRAP_VERSION}.orig.tar.xz"; \
@@ -93,6 +95,7 @@ RUN set -eux; \
     export DEB_BUILD_MAINT_OPTIONS=hardening=+pie,+bindnow; \
     dpkg-buildflags --export=sh > /build/compiler-flags; \
     . /build/compiler-flags; \
+    export CFLAGS="$CFLAGS -DBWRAP_GVISOR_OPENAT_COMPAT=1"; \
     meson setup _build --prefix=/usr --buildtype=plain \
         -Dassume_kernel=5.10.0 -Dselinux=enabled -Dman=disabled \
         -Dbash_completion=disabled -Dzsh_completion=disabled -Dtests=false; \
@@ -106,6 +109,14 @@ RUN set -eux; \
     cc -O2 -Wall -Wextra -Werror -Wno-missing-field-initializers \
         -I. -I_build /build/bubblewrap-loopback-test.c -o /build/loopback-test; \
     /build/loopback-test; \
+    patch --batch --fuzz=0 -p1 < /build/bubblewrap-openat2.patch; \
+    cc -O2 -Wall -Wextra -Werror -D_GNU_SOURCE -DBWRAP_GVISOR_OPENAT_COMPAT=1 \
+        -Dsyscall=probe_syscall -I. -I_build -c safe_openat.c -o /build/safe_openat.o; \
+    cc -O2 -Wall -Wextra -Werror -D_GNU_SOURCE -I. -I_build \
+        /build/bubblewrap-openat2-test.c chroot_realpath.c /build/safe_openat.o \
+        -o /build/openat2-test; \
+    mkdir /newroot; \
+    /build/openat2-test; \
     meson compile -C _build; \
     mkdir /out; \
     install -m 0755 _build/bwrap /out/bwrap; \
