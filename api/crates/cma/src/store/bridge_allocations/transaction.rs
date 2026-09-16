@@ -132,10 +132,7 @@ impl MongoBridgeAllocationStore {
                 retired.updated_at_ms = record.created_at_ms;
                 self.replace(&current, &retired, &mut *session).await?;
                 self.records
-                    .insert_one(crate::store::channel_history::new_document(
-                        record,
-                        record_document(record)?,
-                    )?)
+                    .insert_one(self.interval_document(record, session).await?)
                     .session(&mut *session)
                     .await?;
                 crate::store::channel_history::seed(
@@ -165,10 +162,7 @@ impl MongoBridgeAllocationStore {
         }
         self.require_capacity(write, true, &mut *session).await?;
         self.records
-            .insert_one(crate::store::channel_history::new_document(
-                record,
-                record_document(record)?,
-            )?)
+            .insert_one(self.interval_document(record, session).await?)
             .session(&mut *session)
             .await?;
         crate::store::channel_history::seed(
