@@ -263,7 +263,24 @@ impl MongoBridgeCredentialStore {
                     // Explicit new consent may come from another current org
                     // admin; its subject is recorded in the separate grant.
                     comparable.created_by = current.metadata.created_by.clone();
-                    if current.metadata != comparable || current.value != material.value {
+                    let upgrade = current.metadata.key_authority_v1.is_none()
+                        && comparable.key_authority_v1.is_some();
+                    if comparable.key_authority_v1.is_some() {
+                        if comparable.key_state_version < current.metadata.key_state_version {
+                            return Err(BridgeError::IdempotencyConflict.into());
+                        }
+                        // Usage observations cannot replace the local custody
+                        // epoch already retained by callbacks and outbox work.
+                        comparable.key_state_version = current.metadata.key_state_version;
+                    }
+                    let mut retained_metadata = current.metadata.clone();
+                    if upgrade {
+                        // Only this explicit, disabled-owner import may add a
+                        // missing snapshot. Every prior permission, identity,
+                        // revocation field and the secret must still match.
+                        retained_metadata.key_authority_v1 = comparable.key_authority_v1.clone();
+                    }
+                    if retained_metadata != comparable || current.value != material.value {
                         return Err(BridgeError::IdempotencyConflict.into());
                     }
                     management.require_current()?;
@@ -280,13 +297,19 @@ impl MongoBridgeCredentialStore {
                                         )
                             })
                     });
-                    if !renew {
+                    if !renew && !upgrade {
                         return Ok(current.metadata);
                     }
                     StoredBridgeCredential {
-                        metadata: current.metadata,
+                        metadata: retained_metadata,
                         value: current.value,
-                        control_plane: material.control_plane.clone(),
+                        // Adding the snapshot changes authenticated metadata;
+                        // encode reseals the key and any existing grant together.
+                        control_plane: if renew {
+                            material.control_plane.clone()
+                        } else {
+                            current.control_plane
+                        },
                     }
                 } else {
                     StoredBridgeCredential {

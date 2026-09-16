@@ -41,6 +41,7 @@ async fn sibling_channel(c: &ChannelFixture) -> ChannelFixture {
                     connector: config.connector,
                     revision: 1,
                     key_state_version: 3,
+                    key_authority_v1: None,
                     scopes: "proxy read write".into(),
                     allowed_service_ids: vec![],
                     allow_all_services: false,
