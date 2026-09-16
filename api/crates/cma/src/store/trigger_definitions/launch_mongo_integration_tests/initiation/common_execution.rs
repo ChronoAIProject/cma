@@ -7,6 +7,8 @@ mod admission;
 mod association;
 mod fixtures;
 mod guards;
+mod readiness;
+mod reclaim;
 mod reuse;
 mod unknown_commit;
 mod worker;

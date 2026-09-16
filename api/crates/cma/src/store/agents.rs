@@ -239,6 +239,13 @@ async fn classify_miss(
 
 #[async_trait::async_trait]
 impl AgentStore for MongoSandboxStore {
+    async fn trigger_ready_for_claim(
+        &self,
+        command: &layer2_core::sandbox::agent_io::AdmittedAgentCommand,
+    ) -> Result<(), SandboxStoreError> {
+        super::trigger_first_messages::ready_for_claim(self, command).await
+    }
+
     async fn trigger_execution_proof(
         &self,
         command: &layer2_core::sandbox::agent_io::AdmittedAgentCommand,

@@ -2,13 +2,10 @@
 use std::sync::Arc;
 mod adapter;
 mod bridge;
-use crate::config::bridge_flags::BridgeFlag::TriggerCommandAdmission;
 use adapter::production_adapter;
 
 use axum::{extract::DefaultBodyLimit, Router};
-use layer1_public::rest::{
-    hierarchy_router, profile_authoring_router, profiles_router, HierarchyState, ProfilesState,
-};
+use layer1_public::rest::{self, HierarchyState, ProfilesState};
 use layer2_core::{
     profiles::authoring::ProfileAuthoringService,
     sandbox::{
@@ -21,7 +18,7 @@ use layer2_core::{
 use crate::{
     activity::ActivityRecorder,
     auth::{AuthMode, AuthState, SignInRecords},
-    config::Config,
+    config::{bridge_flags::BridgeFlag::TriggerCommandAdmission, Config},
     profile_authoring::CmaProfileAuthoringSource,
     profile_policy::profile_route_policy,
     projections::{AdapterSandboxResources, AgentProjectionServices},
@@ -345,21 +342,24 @@ impl ControlPlaneComposition {
         );
         let command_worker = layer2_core::sandbox::agent_io::AgentCommandWorker::new(
             stores.sandbox_model.clone(),
-            Arc::new(crate::commands::ResourceCommandExecution {
-                channel_controls: None,
-                channel_revival: crate::commands::ChannelCommandRevival::configured(
-                    &bridge,
-                    &bridge_definitions,
-                    bridge_credentials.clone(),
-                ),
-                authority: auth.clone(),
-                access: resource_access.clone(),
-                store: stores.sandbox_model.clone(),
-                operations: projections.operations(),
-                context: context.clone(),
-                channel: Some(bridge.channel.clone()),
-                invokes: Some(Arc::new(bridge.invokes.clone())),
-            }),
+            crate::commands::ResourceCommandExecution::production(
+                crate::commands::ProductionCommandDependencies {
+                    channel_revival: crate::commands::ChannelCommandRevival::configured(
+                        &bridge,
+                        &bridge_definitions,
+                        bridge_credentials.clone(),
+                    ),
+                    authority: auth.clone(),
+                    access: resource_access.clone(),
+                    store: stores.sandbox_model.clone(),
+                    operations: projections.operations(),
+                    context: context.clone(),
+                    channel: bridge.channel.clone(),
+                },
+                bridge.invoke_store.clone(),
+                bridge.invokes.clone(),
+                bridge_definitions.connection_validator(),
+            ),
             worker_holder,
         )
         .map_err(|error| format!("Agent command worker is not usable: {error}"))?;
@@ -403,7 +403,7 @@ impl ControlPlaneComposition {
             live_agents.clone(),
         )
         .await?;
-        let resource_routes = profiles_router(profiles)
+        let resource_routes = rest::profiles_router(profiles)
             .merge(bridge.management)
             .merge(layer1_public::rest::agent_artifacts_router(
                 layer2_core::sandbox::agent_artifacts::AgentArtifactService::new(
@@ -428,8 +428,8 @@ impl ControlPlaneComposition {
             ))
             .merge(layer1_public::rest::agent_provenance_router(provenance))
             .merge(layer1_public::rest::resource_access_router(resource_access))
-            .merge(profile_authoring_router(profile_authoring))
-            .merge(hierarchy_router(hierarchy))
+            .merge(rest::profile_authoring_router(profile_authoring))
+            .merge(rest::hierarchy_router(hierarchy))
             .merge(projections.router(Arc::clone(&operations)))
             .merge(projections.conversation_router(context, sandbox_lifecycle.updates()))
             .merge(responses_v2)

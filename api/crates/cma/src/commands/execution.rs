@@ -133,7 +133,7 @@ impl AgentCommandExecution for ResourceCommandExecution {
         if super::trigger_execution::is_trigger(command) {
             return self
                 .operations
-                .authorize_trigger_claim(command)
+                .trigger_ready_for_claim(command)
                 .await
                 .map(|_| CommandReadiness::Ready)
                 .unwrap_or_else(|error| match classify(error) {

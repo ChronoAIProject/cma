@@ -13,6 +13,14 @@ mod accepted_race;
 mod boundaries;
 #[path = "channel_control_execution_tests/compatibility.rs"]
 pub(crate) mod compatibility;
+#[path = "channel_control_execution_tests/denial.rs"]
+mod denial;
+#[path = "channel_control_execution_tests/denial_faults.rs"]
+mod denial_faults;
+#[path = "channel_control_execution_tests/denial_races.rs"]
+mod denial_races;
+#[path = "channel_control_execution_tests/production.rs"]
+mod production;
 #[path = "channel_control_execution_tests/races.rs"]
 mod races;
 #[path = "channel_control_execution_tests/reclaim.rs"]
