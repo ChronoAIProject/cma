@@ -11,7 +11,10 @@ use super::ApplyError;
 
 pub(super) enum Change {
     Reconcile(layer2_core::ids::AgentCommandId),
-    Claim(CommandClaimRequest),
+    Claim {
+        request: CommandClaimRequest,
+        observed: Option<(layer2_core::ids::AgentCommandId, u64)>,
+    },
     Renew {
         claim: CommandClaim,
         now: String,
@@ -123,7 +126,31 @@ impl AgentCommandWorkerStore for MongoSandboxStore {
         request: CommandClaimRequest,
     ) -> Result<Option<AdmittedAgentCommand>, CommandLedgerError> {
         request.validate()?;
-        transaction(self, Change::Claim(request)).await
+        transaction(
+            self,
+            Change::Claim {
+                request,
+                observed: None,
+            },
+        )
+        .await
+    }
+
+    async fn claim_observed_command(
+        &self,
+        request: CommandClaimRequest,
+        command_id: &layer2_core::ids::AgentCommandId,
+        expected_revision: u64,
+    ) -> Result<Option<AdmittedAgentCommand>, CommandLedgerError> {
+        request.validate()?;
+        transaction(
+            self,
+            Change::Claim {
+                request,
+                observed: Some((command_id.clone(), expected_revision)),
+            },
+        )
+        .await
     }
 
     async fn renew_command_claim(

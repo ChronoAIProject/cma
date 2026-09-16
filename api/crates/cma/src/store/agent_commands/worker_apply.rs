@@ -19,7 +19,9 @@ pub(super) async fn apply(
         Change::Reconcile(id) => {
             return super::reconcile::apply(store, id, session).await.map(Some)
         }
-        Change::Claim(request) => return claim_next(store, request, session).await,
+        Change::Claim { request, observed } => {
+            return claim_next(store, request, observed.as_ref(), session).await
+        }
         Change::Renew { claim, now, .. }
         | Change::Release { claim, now }
         | Change::Reject { claim, now, .. } => (claim, now),
@@ -45,7 +47,7 @@ pub(super) async fn apply(
             command.reject_before_dispatch(claim, *code, now.clone())?;
             lane.lease = None;
         }
-        Change::Claim(_) | Change::Reconcile(_) => unreachable!(),
+        Change::Claim { .. } | Change::Reconcile(_) => unreachable!(),
     }
     command.revision = revision.checked_add(1).ok_or(CommandLedgerError::Corrupt)?;
     write(store, &command, revision, &lane, session).await?;
@@ -83,6 +85,7 @@ pub(super) async fn load_claim(
 async fn claim_next(
     store: &MongoSandboxStore,
     request: &CommandClaimRequest,
+    observed: Option<&(layer2_core::ids::AgentCommandId, u64)>,
     session: &mut ClientSession,
 ) -> Result<Option<AdmittedAgentCommand>, ApplyError> {
     let Some(lane) = store
@@ -131,6 +134,11 @@ async fn claim_next(
         }
         if !command_ready_for_claim(&command, agent.as_ref(), &request.now) {
             continue;
+        }
+        if observed.is_some_and(|(id, revision)| {
+            id != &command.receipt.envelope.command_id || *revision != command.revision
+        }) {
+            return Ok(None);
         }
         let revision = command.revision;
         if !lane.claim(&mut command, request)? {

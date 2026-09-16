@@ -39,6 +39,17 @@ pub trait AgentCommandWorkerStore: AgentCommandStore {
         request: CommandClaimRequest,
     ) -> Result<Option<AdmittedAgentCommand>, CommandLedgerError>;
 
+    /// Claim the authoritative next command only if its identity and revision
+    /// still match the record whose readiness was checked. Compare inside the
+    /// same transaction/lock as FIFO selection, before changing either record.
+    /// A mismatch returns no claim; it must never skip earlier eligible work.
+    async fn claim_observed_command(
+        &self,
+        request: CommandClaimRequest,
+        command_id: &crate::ids::AgentCommandId,
+        expected_revision: u64,
+    ) -> Result<Option<AdmittedAgentCommand>, CommandLedgerError>;
+
     async fn renew_command_claim(
         &self,
         claim: &CommandClaim,
