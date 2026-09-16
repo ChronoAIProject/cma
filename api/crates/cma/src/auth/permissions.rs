@@ -1,7 +1,7 @@
 //! Complete provider permission evidence, preferring advertised introspection.
 
-use super::{AuthMode, AuthState, ProviderMetadata};
 use super::verification_error::ProviderVerificationError;
+use super::{AuthMode, AuthState, ProviderMetadata};
 use std::time::{Duration, SystemTime};
 
 pub(super) struct PermissionObservation {
@@ -39,10 +39,14 @@ fn introspection_claim(
     let active = body
         .get("active")
         .and_then(serde_json::Value::as_bool)
-        .ok_or_else(|| Unavailable("introspection response has no boolean active disposition".into()))?;
+        .ok_or_else(|| {
+            Unavailable("introspection response has no boolean active disposition".into())
+        })?;
     if let Some(subject) = body.get("sub") {
         if subject.as_str() != Some(expected_subject) {
-            return Err(Rejected("introspection subject does not match userinfo".into()));
+            return Err(Rejected(
+                "introspection subject does not match userinfo".into(),
+            ));
         }
     }
     if !active {
@@ -76,7 +80,9 @@ pub(super) async fn introspect_permissions(
         ..
     } = &auth.mode
     else {
-        return Err(Unavailable("introspection requires provider client credentials".into()));
+        return Err(Unavailable(
+            "introspection requires provider client credentials".into(),
+        ));
     };
 
     let form = [
@@ -104,7 +110,10 @@ pub(super) async fn introspect_permissions(
         );
         // This endpoint authenticates CMA's client, not the inspected token.
         // Only successful inactive evidence establishes token revocation.
-        return Err(Unavailable(format!("introspection returned {}", resp.status())));
+        return Err(Unavailable(format!(
+            "introspection returned {}",
+            resp.status()
+        )));
     }
     let body: serde_json::Value = resp.json().await.map_err(|e| {
         super::identity::verification_failure("introspection", "invalid_json", None);
