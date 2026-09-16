@@ -81,6 +81,50 @@ async fn uncertain_mint_observation_uses_exact_persisted_scope_and_original_pers
 }
 
 #[tokio::test]
+async fn undelivered_mint_candidate_requires_initial_counter_even_with_unchanged_grant() {
+    for owner in [
+        ResourceOwner::Person {
+            subject: SubjectId::new("fixture-person"),
+        },
+        ResourceOwner::Organization {
+            subject: SubjectId::new("fixture-org"),
+        },
+    ] {
+        let human = human(owner);
+        let server = Server::new(&human, "reconciliation-test").await;
+        let plan = server
+            .issuer
+            .plan_bridge_sandbox_key(&human, "sbx_channel_1", &[service()])
+            .await
+            .unwrap();
+        let intent = plan.mint_intent().unwrap();
+        server.state.mint_unavailable.store(true, Ordering::SeqCst);
+        assert!(server
+            .issuer
+            .mint_bridge_sandbox_key(&human, plan)
+            .await
+            .is_err());
+        server.state.metadata_version.store(2, Ordering::SeqCst);
+        assert!(matches!(
+            server
+                .issuer
+                .observe_bridge_sandbox_mint(&human, &intent, 1)
+                .await,
+            Err(KeyIssuerError::UnexpectedAuthority)
+        ));
+        server.state.metadata_version.store(1, Ordering::SeqCst);
+        assert!(server
+            .issuer
+            .observe_bridge_sandbox_mint(&human, &intent, 1)
+            .await
+            .unwrap()
+            .is_some());
+        assert_eq!(server.state.mint_count.load(Ordering::SeqCst), 1);
+        assert_eq!(server.state.revoke_count.load(Ordering::SeqCst), 0);
+    }
+}
+
+#[tokio::test]
 async fn orphan_observation_refuses_ambiguous_listing_changed_owner_scope_and_expiry() {
     let human = human(ResourceOwner::Organization {
         subject: SubjectId::new("fixture-org"),
