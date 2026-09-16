@@ -1,4 +1,4 @@
-use k8s_openapi::api::core::v1::{PersistentVolumeClaim, Pod};
+use k8s_openapi::api::core::v1::{PersistentVolume, PersistentVolumeClaim, Pod};
 use kube::api::{Api, DeleteParams, DynamicObject, ListParams, PostParams, Preconditions};
 use kube::core::{ApiResource, GroupVersionKind};
 
@@ -9,6 +9,12 @@ use crate::{
 
 #[path = "home_volume_identity.rs"]
 mod identity;
+
+#[path = "home_original_backing.rs"]
+mod original_backing;
+
+#[path = "home_finality_receipts.rs"]
+mod finality_receipts;
 
 #[path = "home_snapshots.rs"]
 mod snapshots;
@@ -23,6 +29,7 @@ mod snapshot_jobs;
 #[derive(Clone)]
 pub struct PersistentHomeVolumes {
     claims: Api<PersistentVolumeClaim>,
+    volumes: Api<PersistentVolume>,
     templates: Api<DynamicObject>,
     export_pods: Api<Pod>,
     namespace: String,
@@ -63,6 +70,7 @@ impl PersistentHomeVolumes {
             "volumesnapshots",
         );
         Ok(Self {
+            volumes: Api::all(client.clone()),
             claims: Api::namespaced(client.clone(), &namespace),
             export_pods: Api::namespaced(client.clone(), &namespace),
             templates: Api::namespaced_with(client, &namespace, &resource),
@@ -129,6 +137,40 @@ impl PersistentHomeVolumes {
 
 #[async_trait::async_trait]
 impl HomeVolumeStore for PersistentHomeVolumes {
+    async fn delete_original_home(
+        &self,
+        original: &crate::HomeBackingIdentity,
+        operation_id: &str,
+        observer: &dyn crate::HomeBackingObserver,
+    ) -> Result<crate::HomeDeleteReceipt> {
+        self.delete_home_acknowledged(original, operation_id, observer)
+            .await
+    }
+
+    async fn observe_home_finality(
+        &self,
+        delete: &crate::HomeDeleteReceipt,
+        observer: &dyn crate::HomeBackingObserver,
+    ) -> Result<crate::HomeFinalityReceipt> {
+        self.observe_home_backing_absence(delete, observer).await
+    }
+
+    async fn prepare_receipted(
+        &self,
+        request: &HomeVolumeRequest,
+        operation_id: &str,
+    ) -> Result<crate::HomeProvisionReceipt> {
+        self.prepare_original(request, operation_id).await
+    }
+
+    async fn original_backing(
+        &self,
+        attachment: &HomeVolumeAttachment,
+        observer: &dyn crate::HomeBackingObserver,
+    ) -> Result<crate::HomeBackingIdentity> {
+        self.capture_original_backing(attachment, observer).await
+    }
+
     fn allocation_scope(&self) -> Option<HomeVolumeScope> {
         Some(self.scope.clone())
     }
