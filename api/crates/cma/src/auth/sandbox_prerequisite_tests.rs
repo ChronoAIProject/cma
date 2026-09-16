@@ -267,6 +267,19 @@ struct WrongSubjectStore;
 
 #[async_trait::async_trait]
 impl AuthStore for WrongSubjectStore {
+    async fn insert_api_bearer(
+        &self,
+        _custody: super::persistence::ApiBearerCustody,
+    ) -> Result<bool, StoreError> {
+        unreachable!("sandbox prerequisites do not retain API credentials")
+    }
+
+    async fn api_bearer(
+        &self,
+        _id: &super::persistence::SecretDigest,
+    ) -> Result<Option<super::persistence::ApiBearerCustody>, StoreError> {
+        unreachable!("sandbox prerequisites do not use API command custody")
+    }
     async fn subject(&self, _subject: &SubjectId) -> Result<Option<SubjectAuthState>, StoreError> {
         let mut state = authority(Some("fixture-refresh"), 3600);
         state.subject = SubjectId::new("wrong-stored-owner");
