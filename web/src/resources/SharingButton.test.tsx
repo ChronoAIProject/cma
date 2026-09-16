@@ -145,6 +145,33 @@ it('does not expose sharing controls or request grants for a recipient', async (
   );
 });
 
+it.each(['selected option', 'trigger'] as const)(
+  'closes the Share scope menu before its dialog on Escape from the %s',
+  async (focused) => {
+    const test = fixture();
+    await test.open();
+    const user = userEvent.setup();
+    const scope = screen.getByRole('button', { name: 'Share scope' });
+    await user.click(scope);
+    expect(screen.getByRole('menuitemradio', { name: 'This Agent' })).toHaveFocus();
+    if (focused === 'trigger') scope.focus();
+
+    await user.keyboard('{Escape}');
+
+    expect(screen.queryByRole('menu', { name: 'Share scope' })).not.toBeInTheDocument();
+    expect(screen.getByRole('dialog', { name: 'Resource sharing' })).toBeInTheDocument();
+    expect(scope).toHaveFocus();
+    expect(scope).toHaveTextContent('This Agent');
+    expect(scope).toHaveAttribute('aria-expanded', 'false');
+
+    await user.keyboard('{Escape}');
+
+    expect(screen.queryByRole('dialog', { name: 'Resource sharing' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Sharing' })).toHaveFocus();
+    expect(test.writes).toHaveLength(0);
+  },
+);
+
 it('creates view access, refuses unsafe Agent interaction, and requires explicit whole-Sandbox selection', async () => {
   const test = fixture();
   await test.open();
