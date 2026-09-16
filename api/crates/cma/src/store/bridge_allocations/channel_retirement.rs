@@ -2,6 +2,7 @@
 mod audit;
 mod authority;
 mod lineage;
+pub(crate) mod provider_finality;
 mod save;
 use super::{MongoBridgeAllocationStore, MutationError};
 use crate::{
@@ -108,7 +109,7 @@ impl MongoBridgeAllocationStore {
                 CommitOutcome::Committed => return Ok(snapshot),
                 CommitOutcome::Retry(_) => continue,
                 CommitOutcome::Unknown(_) | CommitOutcome::Failed(_) => {
-                    return Err(AllocationError::Unavailable)
+                    return Err(AllocationError::Unavailable);
                 }
             }
         }

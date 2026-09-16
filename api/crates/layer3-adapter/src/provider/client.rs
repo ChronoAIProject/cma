@@ -45,6 +45,11 @@ pub struct SandboxClient {
 }
 
 impl SandboxClient {
+    pub(crate) fn finality_reclaimer(&self) -> crate::Result<&BatchSandboxReclaimer> {
+        self.reclaimer.as_ref().ok_or_else(|| {
+            crate::AdapterError::Unsupported("fenced provider finality is not configured".into())
+        })
+    }
     pub fn new(base_url: impl Into<String>, api_key: impl Into<String>) -> Self {
         Self {
             base_url: base_url.into().trim_end_matches('/').to_string(),
