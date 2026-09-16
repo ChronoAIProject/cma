@@ -164,6 +164,12 @@ impl ChannelSandboxReservation {
     pub fn live_limit(&self) -> u16 {
         self.live_limit
     }
+    /// Fresh Channel admission must leave one owner slot available for ordinary
+    /// creation. All live Sandboxes consume this budget, across all Bridges.
+    /// Existing exact admissions recover before applying this limit.
+    pub fn fresh_channel_live_limit(&self) -> u16 {
+        self.live_limit.saturating_sub(1)
+    }
     pub fn requires_existing(&self) -> bool {
         self.previous.effect_started
     }
