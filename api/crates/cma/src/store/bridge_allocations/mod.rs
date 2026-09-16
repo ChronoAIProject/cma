@@ -121,13 +121,27 @@ impl MongoBridgeAllocationStore {
         store.initialize_cleanup_jobs().await.map_err(|_| {
             layer2_core::StoreError::Unavailable("create explicit cleanup job indexes".into())
         })?;
-        for field in [
-            "sandbox_admission.sandbox_id",
-            "record.placement.target.sandbox_id",
+        // Renewal already owns the first index name. Reuse it so either
+        // initialization order and existing databases keep the same index.
+        for (field, name) in [
+            ("sandbox_admission.sandbox_id", "channel_sandbox_origin"),
+            (
+                "record.placement.target.sandbox_id",
+                "record.placement.target.sandbox_id_1",
+            ),
         ] {
             store
                 .records
-                .create_index(IndexModel::builder().keys(doc! {field:1_i32}).build())
+                .create_index(
+                    IndexModel::builder()
+                        .keys(doc! {field:1_i32})
+                        .options(
+                            mongodb::options::IndexOptions::builder()
+                                .name(name.to_owned())
+                                .build(),
+                        )
+                        .build(),
+                )
                 .await
                 .map_err(|_| {
                     layer2_core::StoreError::Unavailable(
