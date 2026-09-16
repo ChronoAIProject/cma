@@ -255,7 +255,10 @@ fn select_adoption(
         return Err(identity_mismatch());
     }
     if !observation.lifecycle.is_running() {
-        return Err(AdapterError::Rejected(format!(
+        // Exact identity is proven above. Readiness can change while a pod is
+        // replaced; leave durable recovery to reconciliation instead of failing
+        // the lifecycle operation permanently.
+        return Err(AdapterError::Unavailable(format!(
             "provider runtime {} is not running",
             handle.0
         )));
