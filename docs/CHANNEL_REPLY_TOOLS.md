@@ -172,6 +172,35 @@ The edit path is covered by controlled NyxID HTTP fixtures and disposable Mongo
 Channel-session tests. All platform `live_verified` values remain false until
 separate real-provider canaries establish them.
 
+## Pending reply backlog
+
+Each Bridge can retain at most 256 outstanding prepared messages across all
+inputs, Agents, runtime incarnations and configuration generations. Every chunk
+and explicit edit occupies one slot. Pending, claimed, sending, retry-wait and
+unknown deliveries count toward the same cap. Sent, rejected and explicitly
+abandoned outcomes release their slots while retaining their original history.
+This fixed deployment bound adds no Bridge setting or new provider permission.
+
+New reply/edit admission reserves all needed slots atomically under the existing
+Bridge fence. A message requiring more free slots is refused in full with MCP
+code `reply_backlog_full`; it creates no invocation, chunk or response-head
+progress. Exact retries recover their existing receipts before capacity checks,
+including when the queue is full or the original turn has finished. A capacity
+refusal confirms that this call admitted no output; it is distinct from an
+uncertain commit that must be recovered with the same key and content.
+
+Explicit management retry of a rejected delivery reacquires one slot and returns
+HTTP 409 `bridge_delivery_capacity` when full. Retrying an unknown delivery still
+requires duplicate-risk acceptance and keeps its existing occupied slot. The
+management command's exact replay recovers its prior receipt at capacity.
+Automatic delivery retries retain their existing slots. Configuration changes,
+key rotation and allocation reset do not reset the outstanding count.
+
+Existing backlogs above the cap remain retained and recoverable; new admissions
+wait for sufficient terminal outcomes. The cap requires every admission writer
+to run this implementation. Older mixed-version writers do not enforce it, so
+this remains part of the existing continuity deployment gate.
+
 ## Send pacing and provider cooldowns
 
 The durable outbox shares one active send slot per NyxID provider, platform,

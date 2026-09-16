@@ -2,6 +2,7 @@ use super::super::tests::fixtures::Fixture;
 use super::*;
 use layer2_core::resource_access::ResourceAccessStore;
 use serde_json::json;
+mod backlog_tests;
 mod feature_gates_tests;
 mod management;
 mod reply_addressing;
