@@ -203,7 +203,8 @@ Channel retirement now has a dedicated original-human authority path for a
 completed, exactly owned resource tree with a proven runtime binding. It records
 Agent stop, credential revocation and runtime teardown progress durably. Paused
 or uncertain initial runtime bindings remain held, as do final home/checkpoint
-cleanup and history purge. Shared-child cleanup and image rotation remain
-unfinished. See [Channel lifecycle recovery](CMA_Channel_Lifecycle_Recovery.md)
+cleanup and history purge. Shared-child and owned-Workspace cleanup use their
+own explicit consent and exact allocation ownership paths, while image rotation
+remains unfinished. See [Channel lifecycle recovery](CMA_Channel_Lifecycle_Recovery.md)
 for these boundaries. The current milestone work has not been rolled out to
 production.

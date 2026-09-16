@@ -66,11 +66,14 @@ channel-created children can resume and reply through the original accepted
 commands under the authority described in
 [Shared parent Bridge placement](CMA_Bridge_Shared_Placement.md).
 
-Allocation-owned child deletion remains separate unfinished work. It must retain
-unrelated siblings and shared storage, seal ownership before whole-Workspace
-removal, reconcile deleted paths before old checkpoints reopen conversations,
-and release capacity only after those exact effects are durable. Binding reset
-retains old resources and does not imply cleanup or capacity release.
+Allocation-owned children have a separate explicit cleanup path that retains
+the parent, unrelated siblings and history. Whole-Workspace removal requires
+separate consent and proof that CMA created that exact Workspace for the
+allocation. Durable removal receipts fence each effect, restore reconciles
+retired paths before reopening conversations, and reserved capacity is released
+only after complete removal proof. See [Child cleanup](BRIDGE_CHILD_CLEANUP.md)
+and [Workspace cleanup](BRIDGE_WORKSPACE_CLEANUP.md). Binding reset retains old
+resources and does not imply cleanup or capacity release.
 
 Local provider fixtures and disposable persistence/runtime tests establish only
 the behavior exercised by their recorded source. They do not establish live

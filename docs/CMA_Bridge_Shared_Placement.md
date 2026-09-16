@@ -104,5 +104,10 @@ Disposable Mongo tests cover both placements under manual and Trigger parents,
 concurrent revival, queue order, revoked authority, failed audit rollback, and
 reply-tool invocation before turn completion. Their runtime uses the in-memory
 hosted backend. Real runtime-process, live platform and upgrade/rollback evidence
-remain pending. Exact allocation-child cleanup, restore-aware deletion and
-capacity release remain unfinished.
+remain pending for those revival cases. Separate disposable runtime tests establish
+exact allocation-child cleanup, reconciliation of deleted paths before restore,
+and capacity release after complete removal proof. Whole-Workspace removal
+requires its own consent and exact creation ownership. See
+[Child cleanup](BRIDGE_CHILD_CLEANUP.md) and
+[Workspace cleanup](BRIDGE_WORKSPACE_CLEANUP.md) for their contracts and validation
+limits. Live platform and production upgrade/rollback acceptance remain pending.
