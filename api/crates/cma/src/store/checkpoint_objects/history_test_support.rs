@@ -99,7 +99,7 @@ pub(in crate::store) async fn check(
         .unwrap()
         .unwrap();
     let assessment =
-        crate::store::channel_history::assess(&db, &allocation, &document, &mut session)
+        crate::store::channel_history::assess(db, allocation, &document, &mut session)
             .await
             .unwrap();
     assert_eq!(assessment.hold, None);
