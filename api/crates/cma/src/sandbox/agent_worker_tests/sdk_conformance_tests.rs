@@ -22,6 +22,7 @@ use tokio::task::JoinHandle;
 use super::*;
 use crate::projections::{AgentProjectionServices, UnavailableSandboxResources};
 
+mod cross_interface_tests;
 mod runtime_tests;
 mod v2_tests;
 
@@ -223,6 +224,17 @@ async fn conversation_router(
     Router,
     Arc<layer2_core::sandbox::agent_io::AgentCommandWorker>,
 ) {
+    conversation_router_with_probe(harness, None, "official-sdk-command-worker").await
+}
+
+async fn conversation_router_with_probe(
+    harness: &Harness,
+    probe: Option<Arc<runtime_tests::RuntimeProbe>>,
+    worker_holder: &str,
+) -> (
+    Router,
+    Arc<layer2_core::sandbox::agent_io::AgentCommandWorker>,
+) {
     let profiles = Arc::new(InMemoryProfileStore::default());
     let snapshot = agent_profile(Vec::new());
     let stamp = rfc3339_at(harness.now);
@@ -261,10 +273,18 @@ async fn conversation_router(
         ),
         agent_profile: AgentProfileRef::new(snapshot.id, 1),
     };
+    let registry = match probe {
+        Some(probe) => runtime_tests::SdkRegistry::with_probe(
+            harness.registry.clone(),
+            harness.updates.clone(),
+            Some(probe),
+        ),
+        None => runtime_tests::SdkRegistry::new(harness.registry.clone(), harness.updates.clone()),
+    };
     let services = AgentProjectionServices::new(
         harness.store.clone(),
         profiles.clone(),
-        runtime_tests::SdkRegistry::new(harness.registry.clone(), harness.updates.clone()),
+        registry,
         Arc::new(UnavailableSandboxResources),
         RuntimeCapabilities::new([RuntimeCapability::Conversation]),
     );
@@ -280,7 +300,7 @@ async fn conversation_router(
         profiles,
         Arc::new(defaults),
     );
-    v2_tests::compose(harness, services, context)
+    v2_tests::compose(harness, services, context, worker_holder)
 }
 
 async fn drive_agent_readiness(harness: Arc<Harness>) {
