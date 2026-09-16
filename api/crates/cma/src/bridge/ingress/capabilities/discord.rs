@@ -67,8 +67,16 @@ pub(super) fn observe(
     } else {
         ChannelEventKind::Unknown
     };
+    if facts.event_kind == ChannelEventKind::AttachmentMessage
+        && crate::bridge::attachments::discord::original(raw, inbox).is_some()
+    {
+        facts.event_kind = ChannelEventKind::DiscordTextAttachment;
+    }
     if facts.sender_kind == ChannelSenderKind::Human
-        && facts.event_kind == ChannelEventKind::UserMessage
+        && matches!(
+            facts.event_kind,
+            ChannelEventKind::UserMessage | ChannelEventKind::DiscordTextAttachment
+        )
     {
         facts.loop_evidence = LoopEvidence::NotLoop;
     }

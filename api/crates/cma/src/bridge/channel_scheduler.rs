@@ -19,6 +19,8 @@ pub(crate) enum ChannelWorkError {
     Unsupported,
     Suspended,
     Corrupt,
+    AttachmentExpired,
+    AttachmentUnavailable,
 }
 
 #[async_trait::async_trait]
@@ -180,6 +182,10 @@ impl Scheduled {
                     Ok((_, Err(ChannelWorkError::Suspended))) => "suspended",
                     Ok((_, Err(ChannelWorkError::Corrupt))) => "inconsistent",
                     Ok((_, Err(ChannelWorkError::Unavailable))) => "unavailable",
+                    Ok((_, Err(ChannelWorkError::AttachmentExpired))) => "text_attachment_expired",
+                    Ok((_, Err(ChannelWorkError::AttachmentUnavailable))) => {
+                        "text_attachment_unavailable"
+                    }
                     Err(_) => "worker_lost",
                 };
                 use sha2::{Digest, Sha256};

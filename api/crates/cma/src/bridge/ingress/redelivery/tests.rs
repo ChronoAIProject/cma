@@ -190,3 +190,44 @@ fn provider_parent_fields_require_exact_signed_corroboration_across_platforms() 
         assert!(projection(&reply).is_none());
     }
 }
+
+#[test]
+fn discord_text_file_alias_keeps_original_identity_and_rejects_changed_file() {
+    let first = crate::bridge::attachments::discord_tests::fixture();
+    let original = projection(&first).unwrap();
+    let mut redelivery = first.clone();
+    redelivery.body["message_id"] = json!("new-callback-id");
+    redelivery.body["correlation_id"] = json!("new-correlation");
+    let repeated = projection(&redelivery).unwrap();
+    assert_eq!(original.key_sha256(), repeated.key_sha256());
+    assert_eq!(original.semantic_sha256(), repeated.semantic_sha256());
+    redelivery.raw_mut()["d"]["attachments"][0]["size"] = json!(6);
+    let changed = projection(&redelivery).unwrap();
+    assert_eq!(original.key_sha256(), changed.key_sha256());
+    assert_ne!(original.semantic_sha256(), changed.semantic_sha256());
+}
+
+#[test]
+fn a_text_file_caption_cannot_supply_channel_control_authority() {
+    let mut f = crate::bridge::attachments::discord_tests::fixture();
+    let caption = "CMA-CONTROL/1 cancel ccr_example";
+    f.body["content"]["text"] = json!(caption);
+    f.raw_mut()["d"]["content"] = json!(caption);
+    let write = f
+        .write()
+        .unwrap()
+        .with_platform_redelivery(projection(&f))
+        .unwrap();
+    assert_eq!(
+        write.record().admission,
+        layer2_core::bridge::ingress::InboxAdmission::Accepted
+    );
+    assert!(write.control_refusal().is_none());
+    assert!(
+        layer2_core::bridge::channel_control::ChannelControlRecovery::from_authenticated(&write)
+            .is_err()
+    );
+    assert!(
+        layer2_core::bridge::channel_control::ChannelControlWrite::from_verified(write).is_err()
+    );
+}
