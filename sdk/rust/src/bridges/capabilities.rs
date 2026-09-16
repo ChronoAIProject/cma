@@ -12,6 +12,9 @@ pub struct BridgeCapabilityCatalog {
     pub connection_validation_available: bool,
     /// Bounded connector inventory, including entries that cannot be selected.
     pub connectors: Vec<BridgeConnectorCapabilities>,
+    /// Placement editing evidence. Absent legacy catalogs provide no availability.
+    #[serde(default)]
+    pub placements: Vec<BridgePlacementCapabilities>,
 }
 impl Default for BridgeCapabilityCatalog {
     fn default() -> Self {
@@ -20,8 +23,40 @@ impl Default for BridgeCapabilityCatalog {
             source_revision: None,
             connection_validation_available: false,
             connectors: vec![],
+            placements: vec![],
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Deserialize)]
+#[serde(rename_all = "snake_case")]
+/// Shared-parent placement kind; separate conversations do not imply isolation.
+pub enum BridgeSharedPlacementKind {
+    /// Create a Workspace for each partition in the chosen Sandbox.
+    WorkspacePerPartition,
+    /// Create a Worktree and Agent in the chosen Workspace for each partition.
+    WorktreeAgentPerPartition,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+/// Evidence for placement editing, independent of current target authorization.
+pub enum BridgePlacementAvailability {
+    /// Required runtime and continuity evidence is available; target checks still apply.
+    Available,
+    /// Required runtime abilities are absent or unknown.
+    RuntimeUnavailable,
+    /// Runtime abilities do not establish shared-parent upgrade/rollback continuity.
+    ContinuityUnverified,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+/// One shared placement's evidence-backed availability.
+pub struct BridgePlacementCapabilities {
+    /// Exact supported placement kind.
+    pub kind: BridgeSharedPlacementKind,
+    /// Typed availability, never a resource or execution grant.
+    pub availability: BridgePlacementAvailability,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -148,8 +183,11 @@ impl super::Bridges<'_> {
 impl BridgeCapabilityCatalog {
     fn check(&self) -> crate::Result<()> {
         let mut platforms = std::collections::BTreeSet::new();
+        let mut placements = std::collections::BTreeSet::new();
         if self.version != 1
             || self.connectors.len() > 32
+            || self.placements.len() > 2
+            || self.placements.iter().any(|p| !placements.insert(p.kind))
             || self.source_revision.as_ref().is_some_and(|s| {
                 s.len() != 40
                     || !s

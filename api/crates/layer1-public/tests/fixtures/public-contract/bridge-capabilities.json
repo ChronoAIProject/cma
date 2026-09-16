@@ -21,7 +21,8 @@
           "version": 1,
           "source_revision": null,
           "connection_validation_available": false,
-          "connectors": []
+          "connectors": [],
+          "placements": []
         },
         "bodyKind": "json"
       },
@@ -128,7 +129,8 @@
           "version": 1,
           "source_revision": null,
           "connection_validation_available": false,
-          "connectors": []
+          "connectors": [],
+          "placements": []
         },
         "bodyKind": "json"
       },

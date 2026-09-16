@@ -17,6 +17,7 @@ pub(super) fn catalog(connection_validation_available: bool) -> BridgeCapability
         version: 1,
         source_revision: Some("85607255ee0beadca460a350e0aa6d177edd2fd2".into()),
         connection_validation_available,
+        placements: shared_placements(None),
         connectors: [
             "telegram",
             "telegram-new",
@@ -32,6 +33,33 @@ pub(super) fn catalog(connection_validation_available: bool) -> BridgeCapability
         .map(connector)
         .collect(),
     }
+}
+
+pub(super) fn shared_placements(
+    runtime: Option<layer3_adapter::AdapterCapabilities>,
+) -> Vec<BridgePlacementCapabilities> {
+    let supported = runtime.is_some_and(|caps| {
+        caps.conversation
+            && caps.per_agent_home
+            && caps.steer
+            && caps.interrupt
+            && caps.usage
+            && caps.resources
+    });
+    // Static runtime abilities cannot attest shared-parent upgrade/rollback
+    // continuity. There is no composed production attestation for that contract.
+    let availability = if supported {
+        BridgePlacementAvailability::ContinuityUnverified
+    } else {
+        BridgePlacementAvailability::RuntimeUnavailable
+    };
+    [
+        BridgeSharedPlacementKind::WorkspacePerPartition,
+        BridgeSharedPlacementKind::WorktreeAgentPerPartition,
+    ]
+    .into_iter()
+    .map(|kind| BridgePlacementCapabilities { kind, availability })
+    .collect()
 }
 
 fn connector(name: &str) -> BridgeConnectorCapabilities {

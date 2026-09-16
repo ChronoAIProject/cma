@@ -1,4 +1,5 @@
 import type { BridgeConfiguration, BridgePartitionPolicy } from '@chronoai/cma-sdk';
+import { isShared, type SharedPlacement } from './placementAccess';
 
 export const partitions: readonly {
   value: BridgePartitionPolicy;
@@ -71,16 +72,41 @@ export function initialConfiguration(): BridgeConfiguration {
 
 export function configurationComplete(config: BridgeConfiguration): boolean {
   const p = config.placement;
+  const pin = (value: { id: string; revision: number }) =>
+    value.id.trim() !== '' && Number.isSafeInteger(value.revision) && value.revision > 0;
+  const reserve = (value: number) => Number.isInteger(value) && value >= 1 && value <= 15;
+  const placementComplete = isShared(p)
+    ? p.sandbox_id.trim() !== '' &&
+      (p.kind === 'workspace_per_partition'
+        ? pin(p.workspace_profile)
+        : p.workspace_id.trim() !== '') &&
+      pin(p.agent_profile) &&
+      p.shared_trust === 'all_participants_share_filesystem_processes_and_credentials' &&
+      reserve(p.capacity.keep_other_workspaces) &&
+      reserve(p.capacity.keep_other_agents_per_workspace) &&
+      config.partition !== 'fixed_shared_agent'
+    : p.kind === 'existing_agent'
+      ? Object.values(p.target).every((id) => id.trim() !== '')
+      : pin(p.agent_profile) && pin(p.workspace_profile) && pin(p.sandbox_profile);
   return (
     config.display_name.trim() !== '' &&
     config.binding.bot_id !== '' &&
     config.binding.key_id !== '' &&
     config.binding.route_ids.length > 0 &&
-    (p.kind === 'existing_agent'
-      ? Object.values(p.target).every(Boolean)
-      : p.kind === 'new_sandbox' &&
-        p.agent_profile.id !== '' &&
-        p.workspace_profile.id !== '' &&
-        p.sandbox_profile.id !== '')
+    placementComplete
   );
+}
+
+export function initialSharedPlacement(kind: SharedPlacement['kind']): SharedPlacement {
+  const fields = {
+    sandbox_id: '',
+    agent_profile: { id: '', revision: 1 },
+    shared_trust: 'all_participants_share_filesystem_processes_and_credentials' as const,
+    capacity: { keep_other_workspaces: 1, keep_other_agents_per_workspace: 1 },
+  };
+  // The editor keeps a separate unchecked acknowledgment and cannot submit this
+  // draft until the user explicitly consents to its exact selected placement.
+  return kind === 'workspace_per_partition'
+    ? { kind, ...fields, workspace_profile: { id: '', revision: 1 } }
+    : { kind, ...fields, workspace_id: '' };
 }

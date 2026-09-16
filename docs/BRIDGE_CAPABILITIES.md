@@ -9,16 +9,54 @@ chat approvals or automatic channel sends.
 
 TypeScript callers use `client.bridges.capabilities({ organization })`. Rust callers use `client.bridges().capabilities(Some("organization-id")).await`. Existing validator implementations default to an empty version 1 catalog with `connection_validation_available: false`; SDKs reject an unknown catalog version. A missing platform or unknown capability provides no support guarantee.
 
+The additive `placements` array describes `workspace_per_partition` and
+`worktree_agent_per_partition` independently of connector stages. Each entry has
+an exact `kind` and a typed `availability`:
+
+| Availability            | Meaning                                                                                                                       |
+| ----------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| `runtime_unavailable`   | The configured adapter is absent or lacks an existing shared-parent runtime requirement.                                      |
+| `continuity_unverified` | The configured adapter meets the static requirements, but composed shared-parent upgrade and rollback continuity is unproved. |
+| `available`             | Reserved for demonstrated placement availability; the current production composition never emits this state.                  |
+
+The runtime requirements match existing reuse preflight: conversation support,
+per-Agent homes, steer, interrupt, usage and resource observations. Meeting them
+does not attest to retained live conversations, dirty work, concurrent siblings,
+approvals or admitted turns surviving a control-plane upgrade and rollback.
+There is no continuity override or new configuration switch. Enabling every
+connector stage cannot change either unavailable placement state. Older servers
+may omit `placements`; TypeScript preserves that absence and Rust defaults it to
+an empty vector. Missing entries provide no shared-placement support. SDKs reject
+unknown states or kinds, duplicate kinds, null and oversized placement arrays.
+
+The dashboard can edit both placement shapes using existing public inventory,
+effective-access and profile methods when the catalog permits the mode and its
+connector. A new selection requires the exact Sandbox and, when applicable,
+Workspace, current whole-parent management authority in the Bridge's owner
+scope, published profile pins, explicit shared-filesystem/process/credential
+consent, and both reserved-capacity values from 1 through 15. Inventory visibility
+alone provides no management authority. New placement saves recheck current
+catalog and target authority before sending the mutation; server admission
+remains authoritative for profiles, limits and runtime compatibility.
+
+Retained placement IDs, revisions, consent and reserves remain visible when
+availability is missing. An unchanged placement can accompany unrelated settings
+edits, and existing lifecycle controls remain usable. Once a mutation may have
+been sent, its explicit retry preserves the original body and idempotency key to
+recover that result even if the current catalog changes. Positive editor tests
+use a scripted `available` catalog; they do not establish production availability
+or close #864, #870 or #850.
+
 `source_revision` identifies NyxID `85607255ee0beadca460a350e0aa6d177edd2fd2`. `evidence` distinguishes CMA protocol fixtures from upstream adapter source and the separate device ingest channel. `live_verified` is false for every current entry. Source review and protocol fixtures do not establish live delivery.
 
-| Platform | CMA text and identity fixtures | Stable thread field | Current CMA text chunk limit | CMA reply format |
-| --- | --- | --- | --- | --- |
-| Telegram / Telegram-new | Yes | Forum topic with verified topic/group metadata | 4,000 UTF-16 units | Escaped Markdown |
-| Discord | Yes | Matching channel identity and thread channel type | 1,900 UTF-16 units | Escaped Markdown |
-| Lark | Yes | Message `thread_id` | 1,900 UTF-16 units | Plain text |
-| Feishu | Yes | Message `thread_id` | 1,900 UTF-16 units | Plain text |
-| Slack, WhatsApp, X | Upstream source only; CMA bot setup unavailable | Unavailable | Unavailable | Unavailable |
-| Device | Separate ingest channel; CMA bidirectional bot setup unavailable | Unavailable | Unavailable | Unavailable |
+| Platform                | CMA text and identity fixtures                                   | Stable thread field                               | Current CMA text chunk limit | CMA reply format |
+| ----------------------- | ---------------------------------------------------------------- | ------------------------------------------------- | ---------------------------- | ---------------- |
+| Telegram / Telegram-new | Yes                                                              | Forum topic with verified topic/group metadata    | 4,000 UTF-16 units           | Escaped Markdown |
+| Discord                 | Yes                                                              | Matching channel identity and thread channel type | 1,900 UTF-16 units           | Escaped Markdown |
+| Lark                    | Yes                                                              | Message `thread_id`                               | 1,900 UTF-16 units           | Plain text       |
+| Feishu                  | Yes                                                              | Message `thread_id`                               | 1,900 UTF-16 units           | Plain text       |
+| Slack, WhatsApp, X      | Upstream source only; CMA bot setup unavailable                  | Unavailable                                       | Unavailable                  | Unavailable      |
+| Device                  | Separate ingest channel; CMA bidirectional bot setup unavailable | Unavailable                                       | Unavailable                  | Unavailable      |
 
 Telegram-new has its own upstream platform identity and is never normalized to Telegram for ownership or selected-binding validation. Telegram-new delegates the pinned Telegram boundary contract, has separate signed platform and partition identity, and uses its own default-off `CHRONO_BRIDGE_TELEGRAM_NEW_ENABLED` switch. Complete provider inventory can contain upstream-only bots and keys without blocking supported choices. Their rows still participate in ownership and shared-key conflict checks before selection is filtered.
 
