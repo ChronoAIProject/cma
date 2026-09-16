@@ -135,6 +135,7 @@ const protectedQueries = new Map([
   ['response-controls-v2-observe-query', ['unexpected']],
   ['response-controls-v2-status-query', ['unexpected']],
   ['bridge-setup-list-unknown-query', ['unexpected']],
+  ['bridge-creation-target-invalid-query', ['callback_url']],
   ['bridge-setup-capabilities-invalid-query', ['unexpected']],
   ['creation-inventory-invalid-creator', ['created_by']],
   ['responses-v2-retrieve-query', ['stream']],

@@ -7,6 +7,15 @@ Use the current human/API dashboard bearer credential. A channel sender, callbac
 attestation, bot key or reply token does not grant dashboard management access.
 Current organization membership is checked by CMA for every request.
 
+For first-time setup, call `creation_target(organization, &original_key)` before
+selecting routes. This authenticated read returns the real `bridge_id`, authorized
+`owner`, and `callback_url` without creating a Bridge, reserving state, or changing
+NyxID. Configure that URL on the selected NyxID Agent API key, create its route,
+then refresh `choices`. Pass the returned owner and the **same idempotency key** to
+`create`. Keep that key through refreshes, retries and uncertain responses; changing
+the key or signed-in human changes the callback identity. A preview does not grant
+future management authority, and creation still validates the complete configuration.
+
 `choices(organization)` lists existing bots, key metadata and routes for the
 selected owner scope. `list(&BridgeListOptions)` returns a `BridgePage` with an
 exclusive `next_cursor`; its default page size is 50 and maximum is 100. `read`

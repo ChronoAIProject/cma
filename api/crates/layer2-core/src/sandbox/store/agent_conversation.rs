@@ -80,6 +80,17 @@ pub fn validate_agent_conversation_admission(
     if parent.lifecycle.checkpoint_capture.is_some() {
         return Err(SandboxStoreError::CheckpointInProgress);
     }
+    // Recheck inside the dispatch transaction, even if a caller observed an
+    // active parent before lifecycle work started. Legacy lifecycle queues do
+    // not carry a common command claim and retain their existing admission.
+    if mutation.command_claim.is_some()
+        && !matches!(
+            parent.status,
+            SandboxStatus::Active | SandboxStatus::CredentialRotating
+        )
+    {
+        return Err(SandboxStoreError::Conflict);
+    }
     if *guard != SandboxMutationGuard::capture(parent)
         || !matches!(
             parent.status,

@@ -112,7 +112,7 @@ it('refuses a new save if current target authority changes after selection', asy
   await test.user.click(screen.getByRole('button', { name: 'Save disabled bridge' }));
   await screen.findByRole('alert');
   expect(test.writes).toHaveLength(0);
-  expect(screen.queryByRole('button', { name: 'Retry create bridge' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Recover saved bridge' })).not.toBeInTheDocument();
 });
 
 it('recovers an uncertain organization save with the exact original body and key after access changes', async () => {
@@ -129,7 +129,7 @@ it('recovers an uncertain organization save with the exact original body and key
   });
   await chooseAgent(test);
   await test.user.click(screen.getByRole('button', { name: 'Save disabled bridge' }));
-  const retry = await screen.findByRole('button', { name: 'Retry create bridge' });
+  const retry = await screen.findByRole('button', { name: 'Recover saved bridge' });
   revoked = true;
   const reads = test.fetch.mock.calls.filter(([url]) =>
     String(url).includes('/resource-access/agent/'),

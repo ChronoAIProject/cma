@@ -9,6 +9,9 @@ mod revival;
 #[path = "command_audit_tests.rs"]
 mod audit;
 
+#[path = "command_lifecycle_dispatch_tests.rs"]
+mod lifecycle_dispatch;
+
 async fn grant(store: &InMemorySandboxStore, mode: ShareMode) -> ResourceShare {
     let snapshot = store
         .resource_access_snapshot(&ResourceTarget::Sandbox {

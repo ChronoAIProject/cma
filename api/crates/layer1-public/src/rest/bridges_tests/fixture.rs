@@ -19,6 +19,7 @@ use std::{
 };
 
 pub(in crate::rest) struct Ports {
+    pub management: std::sync::atomic::AtomicBool,
     pub role: AtomicUsize,
     pub calls: AtomicUsize,
     pub validation: AtomicUsize,
@@ -58,6 +59,13 @@ impl OrganizationAuthority for Ports {
 }
 #[async_trait::async_trait]
 impl BridgeConnectionValidator for Ports {
+    fn check_feature(&self, feature: BridgeFeature, _: &BridgePlatform) -> Result<(), BridgeError> {
+        if feature == BridgeFeature::Management && !self.management.load(Ordering::SeqCst) {
+            return Err(BridgeError::Unavailable);
+        }
+        Ok(())
+    }
+
     async fn validate_connection(
         &self,
         owner: &ResourceOwner,
@@ -168,6 +176,7 @@ impl BridgeSetupCredentials for Ports {
 pub(in crate::rest) fn fixture() -> (Router, Arc<MemoryBridgeStore>, Arc<Ports>) {
     let store = Arc::new(MemoryBridgeStore::default());
     let ports = Arc::new(Ports {
+        management: std::sync::atomic::AtomicBool::new(true),
         role: AtomicUsize::new(2),
         calls: AtomicUsize::new(0),
         validation: AtomicUsize::new(0),
