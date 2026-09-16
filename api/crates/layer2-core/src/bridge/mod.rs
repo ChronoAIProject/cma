@@ -14,8 +14,10 @@ mod memory;
 mod model;
 pub mod outbox;
 pub mod partition;
+pub mod partition_commands;
 mod service;
 pub mod setup;
+pub mod status;
 mod store;
 mod validation;
 

@@ -1,5 +1,4 @@
 //! OpenAPI generation for the currently composed REST boundary.
-
 use utoipa::openapi::security::SecurityRequirement;
 use utoipa::{openapi, OpenApi};
 
@@ -47,6 +46,10 @@ use super::trigger_openapi_shapes::*;
         super::bridge_source_controls::detail,
         super::bridge_source_controls::submit,
         super::bridge_cleanup::list,
+        super::bridge_partitions::list,
+        super::bridge_partitions::detail,
+        super::bridge_partition_commands::reset,
+        super::bridge_partition_commands::detach,
         super::bridge_cleanup::detail,
         super::bridge_cleanup::submit,
         super::bridge_cleanup::workspace::detail,

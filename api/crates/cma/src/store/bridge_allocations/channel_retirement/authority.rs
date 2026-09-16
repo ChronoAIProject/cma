@@ -57,6 +57,12 @@ pub(super) async fn read_fenced(
     // exact root; the current head still fences its retained configuration.
     let retained = match allocation.state {
         AllocationState::Ready => head_generation == original_generation,
+        AllocationState::Retired
+            if head_generation == original_generation && current_head == allocation.id =>
+        {
+            store.require_detached_head(allocation, session).await?;
+            true
+        }
         AllocationState::Retired => head_generation > original_generation,
         _ => false,
     };
@@ -99,15 +105,18 @@ pub(super) async fn read_fenced(
         return Err(AllocationError::IdentityMismatch.into());
     }
     let tree = super::lineage::require(&database, allocation, &sandbox, session).await?;
-    let snapshot = ChannelRetirementSnapshot {
+    let mut snapshot = ChannelRetirementSnapshot {
         allocation: allocation.clone(),
         sandbox,
         creation: decode(&document, "channel_creation")?,
         provisioning: decode(&document, "channel_provisioning")?,
+        home_provenance: optional(&document, "channel_home_provenance")?,
+        home_prepare_evidence: optional(&document, "channel_home_prepare_evidence")?,
         lifecycle: optional(&document, "channel_lifecycle_credential")?,
         renewal: optional(&document, "channel_renewal")?,
         state: optional(&document, "channel_retirement")?,
         retention: optional(&document, "channel_storage_retention")?,
+        retention_audit: None,
         tree,
     };
     snapshot.validate()?;
@@ -115,6 +124,7 @@ pub(super) async fn read_fenced(
         retention.require_human(permit.human())?;
         crate::store::checkpoint_objects::verify_channel_retention(&database, retention, session)
             .await?;
+        snapshot.retention_audit = Some(super::audit::verify(&database, &snapshot, session).await?);
     }
     if &snapshot.sandbox != permit.sandbox() {
         return Err(AllocationError::Conflict.into());

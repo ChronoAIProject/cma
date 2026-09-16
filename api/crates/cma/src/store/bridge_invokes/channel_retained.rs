@@ -13,6 +13,33 @@ use crate::store::{
 };
 
 impl MongoBridgeInvokeStore {
+    pub(super) async fn require_retained_fixed(
+        &self,
+        allocation: &AllocationRecord,
+        write_fence: bool,
+        session: &mut ClientSession,
+    ) -> Result<AllocationRecord, MutationError> {
+        let database = self.bridges.client.database(&self.grants.namespace().db);
+        let source = crate::store::bridge_allocations::commands::retained_fixed_source(
+            &database,
+            allocation,
+            write_fence,
+            session,
+        )
+        .await
+        .map_err(|error| match error {
+            crate::store::bridge_allocations::MutationError::Core(_) => {
+                MutationError::Invoke(BridgeInvokeError::TargetMismatch)
+            }
+            crate::store::bridge_allocations::MutationError::Mongo(error) => {
+                MutationError::Mongo(error)
+            }
+        })?;
+        self.require_reset_lineage(allocation, write_fence, session)
+            .await?;
+        Ok(source)
+    }
+
     pub(super) async fn require_retained_channel_grant(
         &self,
         basis: &ChannelInvokeBasis,
@@ -24,7 +51,26 @@ impl MongoBridgeInvokeStore {
         if &current.basis.allocation != observed || current.basis.creation != basis.creation {
             return Err(BridgeInvokeError::TargetMismatch.into());
         }
-        basis.require_retained_allocation(observed)?;
+        if basis.require_retained_allocation(observed).is_err() {
+            basis.require_retained_execution_shape(observed)?;
+            let database = self.bridges.client.database(&self.grants.namespace().db);
+            crate::store::bridge_allocations::commands::require_detached_then_reset(
+                &database,
+                &basis.allocation,
+                observed,
+                write_fence,
+                session,
+            )
+            .await
+            .map_err(|error| match error {
+                crate::store::bridge_allocations::MutationError::Core(_) => {
+                    MutationError::Invoke(BridgeInvokeError::TargetMismatch)
+                }
+                crate::store::bridge_allocations::MutationError::Mongo(error) => {
+                    MutationError::Mongo(error)
+                }
+            })?;
+        }
         if observed.state == AllocationState::Retired {
             self.require_reset_lineage(observed, write_fence, session)
                 .await?;
@@ -52,7 +98,7 @@ impl MongoBridgeInvokeStore {
         Ok(())
     }
 
-    async fn require_reset_lineage(
+    pub(super) async fn require_reset_lineage(
         &self,
         original: &AllocationRecord,
         write_fence: bool,
@@ -74,7 +120,7 @@ impl MongoBridgeInvokeStore {
             .map_err(|_| BridgeInvokeError::Corrupt)?;
         let generation = u64::try_from(generation).map_err(|_| BridgeInvokeError::Corrupt)?;
         // AllocationIdentity::id/decode_head bounds this complete walk to 256 records.
-        if generation <= original.identity.generation || head_id == original.id {
+        if generation < original.identity.generation {
             return Err(BridgeInvokeError::TargetMismatch.into());
         }
         let allocations = self.channel_allocations();
@@ -113,8 +159,25 @@ impl MongoBridgeInvokeStore {
             }
             previous = next;
         }
-        if previous.id != head_id || previous.state == AllocationState::Retired {
+        if previous.id != head_id {
             return Err(BridgeInvokeError::TargetMismatch.into());
+        }
+        if previous.state == AllocationState::Retired {
+            crate::store::bridge_allocations::commands::require_detached(
+                &database,
+                &previous,
+                write_fence,
+                session,
+            )
+            .await
+            .map_err(|error| match error {
+                crate::store::bridge_allocations::MutationError::Core(_) => {
+                    MutationError::Invoke(BridgeInvokeError::TargetMismatch)
+                }
+                crate::store::bridge_allocations::MutationError::Mongo(error) => {
+                    MutationError::Mongo(error)
+                }
+            })?;
         }
         if write_fence {
             let changed = heads

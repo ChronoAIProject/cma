@@ -30,6 +30,36 @@ pub struct ChannelInvokeSnapshot {
 }
 
 impl ChannelInvokeBasis {
+    /// Structural preparation only. A detach followed by reset advances the
+    /// old row twice; the effect store must prove both permanent command journals.
+    /// This method does not establish the existence of either journal.
+    pub fn require_retained_execution_shape(
+        &self,
+        current: &AllocationRecord,
+    ) -> Result<(), BridgeInvokeError> {
+        if self.require_retained_allocation(current).is_ok() {
+            return Ok(());
+        }
+        current.validate().map_err(|_| BridgeInvokeError::Corrupt)?;
+        let mut retired = self.allocation.clone();
+        if retired.state != AllocationState::Ready
+            || current.state != AllocationState::Retired
+            || current.updated_at_ms < retired.updated_at_ms
+        {
+            return Err(BridgeInvokeError::TargetMismatch);
+        }
+        retired.state = AllocationState::Retired;
+        retired.lease = None;
+        retired.revision = retired
+            .revision
+            .checked_add(2)
+            .ok_or(BridgeInvokeError::Corrupt)?;
+        retired.updated_at_ms = current.updated_at_ms;
+        if retired != *current {
+            return Err(BridgeInvokeError::TargetMismatch);
+        }
+        Ok(())
+    }
     pub fn validate(&self, grant: &BridgeInvokeGrant) -> Result<(), BridgeInvokeError> {
         let allocation = &self.allocation;
         allocation
