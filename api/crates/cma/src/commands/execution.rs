@@ -291,7 +291,7 @@ fn authority_readiness(error: ResourceCommandAuthorizationError) -> CommandReadi
             CommandReadiness::Reject(CommandFailureCode::AuthorityRevoked)
         }
         ResourceCommandAuthorizationError::Custody(CommandAuthorizationError::Unavailable) => {
-            CommandReadiness::Reject(CommandFailureCode::AuthorityUnavailable)
+            CommandReadiness::Retry
         }
         ResourceCommandAuthorizationError::Resource(ResourceAccessError::Store(
             ResourceAccessStoreError::NotFound,

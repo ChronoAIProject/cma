@@ -107,9 +107,10 @@ async fn request_with_timeout(
         timeout,
         flight.get_or_init(|| async {
             async {
-                let metadata = auth.metadata().await.map_err(
-                    super::verification_error::ProviderVerificationError::Unavailable,
-                )?;
+                let metadata = auth
+                    .metadata()
+                    .await
+                    .map_err(super::verification_error::ProviderVerificationError::Unavailable)?;
                 identity::verify_subject(auth, &metadata, tokens.access_token.expose()).await
             }
             .await
