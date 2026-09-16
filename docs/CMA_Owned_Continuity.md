@@ -17,6 +17,25 @@ entries contain `conversationSha256`, `runtimeGeneration`, and `openings`.
 The separate result file comes from that same completed fixture. Do not invent
 receipts or substitute Agent IDs to make another resource fit this contract.
 
+A fixture completed through a separately recorded nonadmission recovery keeps
+its original journal and failed command unchanged. Set `fixtureRecoveryDirectory`
+to the absolute directory containing that recovery's `directive.json`,
+`journal.json`, `result.json`, `after.json`, `fresh-preflight.json`, and linked
+deployment/reconciliation evidence. Keep `fixtureJournal` pointing to the original
+journal and `fixtureResult` to the published successful result. Recorded pause
+resumption also requires `resumption-lifecycle.json`. The loader verifies raw
+original/directive/evidence hashes, matching resource and command scope, the
+three owned Agents including an untouched zero-turn bootstrap, and the original
+native conversation identities. `recovery.finalEvidenceSha256` must bind the
+exact saved `after.json` and, when present, `resumption-lifecycle.json` bytes.
+
+An accepted pause resumption establishes an explicit event-history boundary for
+later checks. Every earlier native opening must retain the original conversation
+identity. Later retirements or generation changes still fail, and subsequent
+rollout comparisons still require the same runtime, native generation, transcript
+and event prefix. The original failed runtime comparison remains failed; recovery
+does not establish same-runtime continuity through that earlier rollout.
+
 The runners recheck the saved token's owner/mode, the public signed-in subject,
 exact resource lineage and manual/Trigger provenance, original transcript,
 native identity and runtime attachment. Any original cleanup intent prevents
