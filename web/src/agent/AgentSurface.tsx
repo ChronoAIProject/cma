@@ -11,6 +11,7 @@ import { StateDot, type StateDotState } from '../ui/StateDot';
 import { IconCloseOutline16, IconInspectOutline12 } from '../ui/icons';
 import type { AgentController, AgentResourceState } from './controller';
 import { Composer } from './Composer';
+import type { AgentDraft } from './draft';
 import { MessageStream } from './MessageStream';
 import { ActiveThinking } from './ActiveThinking';
 import './Agent.css';
@@ -25,6 +26,7 @@ import { useAgentProvenance } from './provenance';
 import { QueuedMessageNotice } from './QueuedMessageNotice';
 
 interface AgentSurfaceProps {
+  readonly draft?: AgentDraft;
   readonly viewerId?: string;
   readonly agentId: string;
   readonly controller: AgentController;
@@ -66,6 +68,7 @@ function SandboxLink({
 }
 
 export function AgentSurface({
+  draft,
   agentId,
   controller,
   detailsOpen,
@@ -269,6 +272,7 @@ export function AgentSurface({
       <div className="agent-surface__input">
         <ActiveThinking key={agentId} conversation={conversation} />
         <Composer
+          draft={draft}
           key={`composer:${agentId}`}
           quickMessages={
             source.status === 'ready' && source.value.access !== 'shared'
