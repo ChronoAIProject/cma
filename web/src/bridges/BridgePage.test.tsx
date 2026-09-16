@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { BridgePage } from './BridgePage';
 import { BridgeCredential } from './BridgeCredential';
 import { BridgeManager } from './BridgeManager';
-import { bridgeDetail, bridgeTransport } from './fixtures.test-support';
+import { bridgeCreationTarget, bridgeDetail, bridgeTransport } from './fixtures.test-support';
 import { chooseOption } from '../test/select';
 import { NOW } from '../test/rest';
 
@@ -176,7 +176,7 @@ describe('bridge management UI', () => {
         body = JSON.parse(String(init.body)) as Record<string, unknown>;
         return Response.json(
           {
-            bridge_id: 'brg_created',
+            bridge_id: bridgeCreationTarget.bridge_id,
             owner: { kind: 'person', subject: 'owner' },
             actor: { kind: 'human', subject: 'owner' },
             revision: 1,
@@ -218,7 +218,10 @@ describe('bridge management UI', () => {
     await user.click(screen.getByRole('checkbox', { name: /I reviewed who owns/ }));
     await user.click(screen.getByRole('button', { name: 'Save disabled bridge' }));
     await waitFor(() =>
-      expect(navigate).toHaveBeenCalledWith({ kind: 'bridge', bridgeId: 'brg_created' }),
+      expect(navigate).toHaveBeenCalledWith({
+        kind: 'bridge',
+        bridgeId: bridgeCreationTarget.bridge_id,
+      }),
     );
     expect(body).toMatchObject({
       owner: { kind: 'person', subject: 'owner' },
