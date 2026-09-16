@@ -3,8 +3,11 @@
 Production Channel control ingress remains disabled for #854, with mixed-version
 acceptance still tracked by #850. Production always constructs the dedicated
 execution adapter so retained accepted controls can drain or reconcile while
-fresh ingress is disabled. The admission adapter remains unconfigured and the
-context tool advertises no control operations. Authenticated CMA dashboard/API
+fresh ingress is disabled. The signed callback route now composes a recovery-first
+admission adapter behind `CHRONO_BRIDGE_CONTROL_ADMISSION_ENABLED`, default false.
+Production runtime eligibility remains explicitly unavailable, so changing this
+selector alone cannot enable controls. The context tool advertises no control
+operations. Authenticated CMA dashboard/API
 controls remain the available control path; approval capability and reply-tool
 eligibility are unchanged.
 
@@ -34,8 +37,31 @@ The header uses single ASCII spaces. A reference has a nonempty suffix of at
 most 128 ASCII letters, digits, underscores or hyphens. Cancel has no payload or
 trailing newline; steer has one nonblank payload after a newline, validated with
 the ordinary Agent text-input rules. The entire reserved text is capped at
-65,536 UTF-8 bytes. The production ingress returns the durable refusal
-`channel_controls_disabled` for every otherwise valid cancel/steer request.
+65,536 UTF-8 bytes. With fresh control admission disabled, the production ingress
+returns the durable refusal `channel_controls_disabled` for otherwise valid new
+cancel/steer requests. Previously accepted Message, refusal and version-2 control
+receipts recover before that selector or a new source/runtime observation.
+
+Fresh executable admission additionally requires an issued reference with a
+32-character lowercase hexadecimal suffix. A trusted Mongo observation reads the
+exact reference, permanent original Message source, allocation, complete current
+consent and confirmed Sent reply. Group controls require that exact source reply
+even when the Bridge permits all ordinary group messages. A separate fresh invoke
+proof supplies current source authority. The atomic admission transaction then
+rereads and fences these records while retaining one version-2 callback/provider
+acceptance, immutable control intent and held shared command. It preserves the
+original callback deadline; an HTTP timeout or unknown commit reports uncertain
+acceptance and retries retain their original identity.
+
+Missing, stale, copied or unavailable source/runtime evidence cannot create a
+Message or a permanent source-denial receipt. The existing disabled and malformed
+request refusal contracts remain unchanged. Fixture runtime eligibility can
+exercise the admission path against an exact local conversation and operation;
+production eligibility remains unavailable until compatible owner routing,
+selected-command claiming, handoff and provider behavior are proved. The selector
+does not establish those capabilities, and process-start configuration is not an
+instantaneous distributed revocation mechanism. Real signed provider callbacks,
+Sent delivery and rolling process/update-tail continuity still need live evidence.
 
 Malformed reserved text returns `invalid_channel_control_request`; a numeric
 unsupported version returns `channel_control_version_unsupported`; other

@@ -6,6 +6,8 @@ use mongodb::bson::Document;
 
 #[path = "channel_control_admission_tests/fixture.rs"]
 pub(super) mod fixture;
+#[path = "channel_control_admission_tests/http.rs"]
+mod http;
 #[path = "channel_control_admission_tests/v2_tests.rs"]
 mod v2;
 #[path = "channel_control_admission_tests/worker.rs"]

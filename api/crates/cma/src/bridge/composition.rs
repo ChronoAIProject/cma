@@ -127,7 +127,18 @@ impl BridgeComposition {
             config.bridge_flags,
         )
         .map_err(|error| format!("bridge callback verifier is not usable: {error}"))?
-        .map(|ingress| Arc::new(ingress.with_reply_addressing(replies.clone())));
+        .map(|ingress| ingress.with_reply_addressing(replies.clone()));
+        let controls = Arc::new(super::ingress::controls::ChannelControlIngress::production(
+            inbox.clone(),
+            Arc::new(
+                crate::store::MongoChannelControlStore::open(invoke_store.clone(), inbox.clone())
+                    .await
+                    .map_err(|error| format!("bridge control storage is not usable: {error}"))?,
+            ),
+            invokes.clone(),
+            config.bridge_flags,
+        ));
+        let ingress = ingress.map(|ingress| Arc::new(ingress.with_channel_controls(controls)));
         Ok(Self {
             management,
             callbacks: super::ingress::http::router(ingress),

@@ -34,13 +34,20 @@ pub(super) struct ReplyFixture {
 
 impl ReplyFixture {
     pub async fn new() -> Self {
-        Self::build(false).await
+        Self::build(false, false).await
+    }
+    pub async fn with_callback_route() -> Self {
+        Self::build(false, true).await
     }
     pub async fn with_newer_inbound() -> Self {
-        Self::build(true).await
+        Self::build(true, false).await
     }
-    async fn build(newer: bool) -> Self {
-        let mut f = Fixture::new().await;
+    async fn build(newer: bool, callback_route: bool) -> Self {
+        let mut f = if callback_route {
+            Fixture::with_callback_route().await
+        } else {
+            Fixture::new().await
+        };
         f.record = f.ready().await;
         if newer {
             inbound::update(&mut f).await;

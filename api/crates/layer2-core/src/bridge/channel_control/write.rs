@@ -54,6 +54,11 @@ impl ChannelControlWrite {
     pub fn inbox(&self) -> &InboxWrite {
         &self.inbox
     }
+    /// Returns the original authenticated write for the existing durable
+    /// disabled-refusal path; neither identity nor deadline is refreshed.
+    pub fn into_inbox(self) -> InboxWrite {
+        self.inbox
+    }
     pub fn request(&self) -> &ChannelControlRequest {
         &self.request
     }

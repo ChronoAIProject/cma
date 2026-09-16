@@ -43,6 +43,7 @@ fn existing_deployment_defaults_close_every_new_channel_effect() {
     }
     assert!(!flags.enabled(BridgeFlag::V2UiTransport));
     assert!(!flags.enabled(BridgeFlag::TriggerCommandAdmission));
+    assert!(!flags.enabled(BridgeFlag::ControlAdmission));
 }
 
 #[test]

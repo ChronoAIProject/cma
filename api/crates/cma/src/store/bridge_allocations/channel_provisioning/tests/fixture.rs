@@ -53,7 +53,14 @@ pub(crate) struct Fixture {
 
 impl Fixture {
     pub async fn new() -> Self {
-        let (client, database, bridges, svc, id, allocations) = setup().await;
+        Self::build(false).await
+    }
+    pub async fn with_callback_route() -> Self {
+        Self::build(true).await
+    }
+    async fn build(callback_route: bool) -> Self {
+        let (client, database, bridges, svc, id, allocations) =
+            setup_with_callback_route(callback_route).await;
         svc.mutate(
             &caller(),
             None,
