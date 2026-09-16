@@ -13,6 +13,8 @@ fn encryption(byte: u8) -> AuthEncryptionKey {
 
 #[path = "custody_grants_tests.rs"]
 mod grants;
+#[path = "custody_upgrade_tests.rs"]
+mod upgrade;
 
 pub(super) fn material(
     management: &layer2_core::bridge::BridgeManagementLease,
@@ -30,6 +32,7 @@ pub(super) fn material(
                 .clone(),
             revision: 1,
             key_state_version: 3,
+            key_authority_v1: None,
             scopes: "proxy read write".into(),
             allowed_service_ids: vec!["service-one".into()],
             allow_all_services: false,

@@ -1,9 +1,9 @@
 use layer2_core::bridge::{BridgeError, BridgeSetupBlock};
 use layer2_core::resource_access::ResourceOwner;
 use layer2_core::SubjectId;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
-/// Minimal projections of NyxID 85607255ee0beadca460a350e0aa6d177edd2fd2.
+/// Metadata projections of NyxID 9a3938364a11ab65f3b341e69e2b8c124aefba81.
 /// Unknown row fields are discarded; lists must use the complete, unpaginated
 /// envelope documented at that revision. Extra pagination metadata fails closed.
 #[derive(Deserialize)]
@@ -26,18 +26,36 @@ pub(super) struct Keys {
 }
 #[derive(Deserialize)]
 pub(super) struct Key {
+    pub state_version: i64,
+    #[serde(flatten)]
+    pub authority: KeyAuthority,
+}
+
+/// Version-one custody projection. Usage timestamps and the provider's mutable
+/// row counter are observations, not part of the retained permission snapshot.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct KeyAuthority {
     pub id: String,
     pub is_active: bool,
     pub expires_at: Option<String>,
-    pub state_version: i64,
+    pub rotation_predecessor_id: Option<String>,
     pub scopes: String,
     pub allowed_service_ids: Vec<String>,
     pub allow_all_services: bool,
+    pub allow_auto_connected_services: bool,
     pub allowed_node_ids: Vec<String>,
     pub allow_all_nodes: bool,
+    pub rate_limit_per_second: Option<u32>,
+    pub rate_limit_burst: Option<u32>,
     pub platform: Option<String>,
     pub callback_url: Option<String>,
     pub credential_source: CredentialSource,
+    pub purpose: String,
+    pub scheduled_write_enabled: bool,
+    // NyxID omits this field exactly when there are zero bindings. Nonzero
+    // binding contents are not exposed in key metadata and cannot be pinned.
+    #[serde(default)]
+    pub bindings_count: u64,
 }
 
 #[derive(Deserialize)]
@@ -54,9 +72,9 @@ pub(super) struct BindingProbe {
     pub page: u64,
     pub per_page: u64,
 }
-#[derive(Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
-pub(super) enum CredentialSource {
+pub(crate) enum CredentialSource {
     Personal,
     Org {
         org_id: String,
@@ -64,9 +82,9 @@ pub(super) enum CredentialSource {
         allowed: bool,
     },
 }
-#[derive(Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub(super) enum Role {
+pub(crate) enum Role {
     Admin,
     Member,
     Viewer,

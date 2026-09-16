@@ -27,6 +27,7 @@ pub(crate) struct NyxBridgeProvider {
 pub(crate) struct VerifiedProviderBinding {
     pub routes: Vec<BridgeRouteObservation>,
     pub key_state_version: i64,
+    pub key_authority: KeyAuthority,
     pub deadline: tokio::time::Instant,
     pub scopes: String,
     pub allowed_service_ids: Vec<String>,
@@ -52,7 +53,7 @@ impl NyxBridgeProvider {
         tokio::time::timeout(DEADLINE, async {
             let start = tokio::time::Instant::now();
             self.verify_human(human_subject, human_credential).await?;
-            let mut binding = self
+            let binding = self
                 .read_binding(
                     owner,
                     human_subject,
@@ -78,8 +79,27 @@ impl NyxBridgeProvider {
             {
                 return Err(binding_mismatch());
             }
-            binding.deadline = binding.deadline.min(start + Duration::from_secs(60));
-            Ok(binding)
+            // Possession reads update NyxID's last_used_at and row version.
+            // Recheck all current authority after that IO, within this same
+            // timeout; a counter increase alone cannot identify its cause.
+            let mut current = self
+                .read_binding(
+                    owner,
+                    human_subject,
+                    &SecretValue::new(human_credential.to_owned()),
+                    connector,
+                )
+                .await?;
+            if current.key_state_version < binding.key_state_version
+                || current.key_authority != binding.key_authority
+            {
+                return Err(binding_mismatch());
+            }
+            current.deadline = current
+                .deadline
+                .min(binding.deadline)
+                .min(start + Duration::from_secs(60));
+            Ok(current)
         })
         .await
         .map_err(|_| BridgeError::AuthorityUnavailable)?
@@ -193,7 +213,7 @@ impl NyxBridgeProvider {
         require_complete(
             keys.keys.len(),
             None,
-            keys.keys.iter().map(|k| k.id.as_str()),
+            keys.keys.iter().map(|k| k.authority.id.as_str()),
         )?;
         require_complete(
             routes.conversations.len(),
@@ -210,7 +230,8 @@ impl NyxBridgeProvider {
             return Err(binding_mismatch());
         }
         for key in &keys.keys {
-            key.credential_source
+            key.authority
+                .credential_source
                 .require_owner(owner, credential_subject)?;
         }
         let bot = bots
@@ -221,13 +242,16 @@ impl NyxBridgeProvider {
         let key = keys
             .keys
             .iter()
-            .find(|key| key.id == connector.key_id)
+            .find(|key| key.authority.id == connector.key_id)
             .ok_or_else(binding_mismatch)?;
+        let key_state_version = key.state_version;
+        let key = &key.authority;
         if !bot.is_active
             || super::capability_catalog::supported_platform(&bot.platform).as_ref()
                 != Some(&connector.platform)
             || !key.is_active
-            || key.state_version <= 0
+            || key_state_version <= 0
+            || key.bindings_count != 0
             || key.platform.as_ref().is_some_and(|platform| {
                 super::capability_catalog::supported_platform(platform).as_ref()
                     != Some(&connector.platform)
@@ -291,7 +315,8 @@ impl NyxBridgeProvider {
         }
         Ok(VerifiedProviderBinding {
             routes: verified,
-            key_state_version: key.state_version,
+            key_state_version,
+            key_authority: key.clone(),
             deadline,
             scopes: key.scopes.clone(),
             allowed_service_ids: key.allowed_service_ids.clone(),
