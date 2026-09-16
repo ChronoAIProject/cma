@@ -16,6 +16,7 @@ impl IntoResponse for OutboxProblem {
                 OutboxError::Conflict => (StatusCode::CONFLICT,"bridge_delivery_revision_conflict","Delivery or Bridge state changed. Read current revisions before a new command."),
                 OutboxError::Suspended => (StatusCode::CONFLICT,"bridge_delivery_suspended","Outbound delivery is suspended for the original Bridge configuration."),
                 OutboxError::Expired => (StatusCode::CONFLICT,"bridge_delivery_expired","The original reply audience has expired and cannot be retargeted."),
+                OutboxError::Capacity => (StatusCode::CONFLICT,"bridge_delivery_capacity","The Bridge reply backlog is full. Recover or finish outstanding deliveries before reactivating a terminal delivery."),
                 OutboxError::Bounds => (StatusCode::CONFLICT,"bridge_delivery_attempt_limit","This delivery reached its supported attempt limit."),
                 OutboxError::SourceMismatch | OutboxError::RetainedKeyRequired | OutboxError::CapabilityUnavailable => (StatusCode::CONFLICT,"bridge_delivery_authority_required","A currently verified retained key for the original binding and audience is required."),
                 OutboxError::RequestConflict => (StatusCode::CONFLICT,"idempotency_key_reused","This request key already identifies different recovery input."),

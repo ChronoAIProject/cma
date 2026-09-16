@@ -6,6 +6,8 @@ use layer2_core::sandbox::store::*;
 use mongodb::bson::Document;
 use serde_json::{json, Value};
 
+#[path = "wildcard_chat_tests/backlog_tests.rs"]
+mod backlog;
 #[path = "wildcard_chat_tests/execution.rs"]
 mod execution;
 #[path = "wildcard_chat_tests/fixture.rs"]
