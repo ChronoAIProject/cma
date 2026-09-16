@@ -2,6 +2,7 @@
 pub(crate) mod assessment;
 mod driver;
 pub(crate) mod model;
+pub(crate) mod provider_finality;
 pub(crate) mod retention;
 use crate::{
     bridge::provisioning::retirement::ChannelRetirementAuthoritySource,
