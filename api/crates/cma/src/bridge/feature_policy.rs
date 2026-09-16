@@ -44,6 +44,9 @@ impl BridgeConnectionValidator for ConfiguredBridgeConnections {
             BridgePlatform::Discord => BridgePlatformFlag::Discord,
             BridgePlatform::Lark => BridgePlatformFlag::Lark,
             BridgePlatform::Feishu => BridgePlatformFlag::Feishu,
+            BridgePlatform::Slack => BridgePlatformFlag::Slack,
+            BridgePlatform::Whatsapp => BridgePlatformFlag::Whatsapp,
+            BridgePlatform::X => BridgePlatformFlag::X,
         };
         let result = if stage == BridgeStage::Execution {
             self.flags.check_command_release(Some(platform))

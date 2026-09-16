@@ -2,7 +2,7 @@
 use serde::{Deserialize, Serialize};
 
 string_enum! { /// Platform of the selected existing bot.
-    pub enum BridgePlatform { Telegram => "telegram", TelegramNew => "telegram-new", Discord => "discord", Lark => "lark", Feishu => "feishu" }
+    pub enum BridgePlatform { Telegram => "telegram", TelegramNew => "telegram-new", Discord => "discord", Lark => "lark", Feishu => "feishu", Slack => "slack", Whatsapp => "whatsapp", X => "x" }
 }
 string_enum! { /// Explicit model-context partition policy.
     pub enum BridgePartitionPolicy {

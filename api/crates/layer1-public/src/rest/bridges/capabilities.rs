@@ -77,6 +77,7 @@ enum BridgeStableThreadShape {
     DiscordChannelThread,
     LarkThread,
     FeishuThread,
+    SlackThread,
 }
 #[derive(ToSchema)]
 struct BridgeConnectorCapabilitiesShape {

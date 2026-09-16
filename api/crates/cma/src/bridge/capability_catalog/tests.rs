@@ -24,7 +24,7 @@ fn shared_placement_runtime_abilities_never_invent_continuity_evidence() {
 }
 
 #[test]
-fn upstream_only_and_device_connectors_never_gain_cma_admission_from_enabled_flags() {
+fn boundary_only_and_device_connectors_never_claim_text_admission_from_enabled_flags() {
     let flags = BridgeFeatureFlags::from_lookup(&mut |_| Ok(Some("true".into()))).unwrap();
     let configured = crate::bridge::feature_policy::configured(
         Arc::new(crate::bridge::UnavailableConnections),
@@ -50,6 +50,20 @@ fn upstream_only_and_device_connectors_never_gain_cma_admission_from_enabled_fla
                     && c.reply_to_bot
                     && c.output_text
                     && c.output_progress
+            );
+            assert!(
+                c.stages.management
+                    && c.stages.ingress
+                    && c.stages.allocation
+                    && c.stages.execution
+                    && c.stages.outbound
+            );
+        } else if ["slack", "whatsapp", "x"].contains(&c.platform.as_str()) {
+            assert!(!c.inbound_text && !c.output_text && !c.reply_to_bot && !c.output_progress);
+            assert!(c.stable_sender_chat);
+            assert_eq!(
+                c.stable_thread,
+                (c.platform == "slack").then_some(StableThreadKind::SlackThread)
             );
             assert!(
                 c.stages.management

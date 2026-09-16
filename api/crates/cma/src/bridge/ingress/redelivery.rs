@@ -75,6 +75,9 @@ pub(super) fn observe(
                 }
             }
         }
+        BridgePlatform::Slack | BridgePlatform::Whatsapp | BridgePlatform::X => {
+            super::capabilities::provider_parent(&facts.platform, raw)?
+        }
     };
     if parent.as_deref()
         != payload

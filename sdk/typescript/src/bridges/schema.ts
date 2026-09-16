@@ -14,7 +14,16 @@ import {
   type Output,
 } from '../schema.js';
 
-export const platform = enumeration('telegram', 'telegram-new', 'discord', 'lark', 'feishu');
+export const platform = enumeration(
+  'telegram',
+  'telegram-new',
+  'discord',
+  'lark',
+  'feishu',
+  'slack',
+  'whatsapp',
+  'x',
+);
 export const partition = enumeration(
   'conversation_sender',
   'conversation',

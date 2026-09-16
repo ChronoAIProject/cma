@@ -196,6 +196,9 @@ fn platform(value: &str) -> Result<BridgePlatform, PartitionError> {
         "discord" => Ok(BridgePlatform::Discord),
         "lark" => Ok(BridgePlatform::Lark),
         "feishu" => Ok(BridgePlatform::Feishu),
+        "slack" => Ok(BridgePlatform::Slack),
+        "whatsapp" => Ok(BridgePlatform::Whatsapp),
+        "x" => Ok(BridgePlatform::X),
         _ => Err(PartitionError::InvalidSource("platform")),
     }
 }

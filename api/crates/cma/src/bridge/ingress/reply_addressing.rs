@@ -91,6 +91,9 @@ impl ReplyLookup {
                 .pointer("/event/message/parent_id")
                 .and_then(Value::as_str)
                 .map(str::to_owned),
+            BridgePlatform::Slack | BridgePlatform::Whatsapp | BridgePlatform::X => {
+                super::capabilities::provider_parent(&facts.platform, raw)?
+            }
         };
         if provider_parent.as_ref() != Some(parent) {
             return Ok(None);

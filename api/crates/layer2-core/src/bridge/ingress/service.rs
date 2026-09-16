@@ -121,6 +121,9 @@ impl CallbackVerifier {
             BridgePlatform::Discord => "discord",
             BridgePlatform::Lark => "lark",
             BridgePlatform::Feishu => "feishu",
+            BridgePlatform::Slack => "slack",
+            BridgePlatform::Whatsapp => "whatsapp",
+            BridgePlatform::X => "x",
         };
         let (claims, kid): (CallbackClaims, _) =
             keys.verify(headers.callback_token, &self.policy.issuer)?;

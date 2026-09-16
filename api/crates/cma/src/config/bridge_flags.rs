@@ -19,10 +19,13 @@ pub(crate) enum BridgeFlag {
     TelegramNew,
     TriggerCommandAdmission,
     ControlAdmission,
+    Slack,
+    Whatsapp,
+    X,
 }
 
 impl BridgeFlag {
-    pub(crate) const ALL: [Self; 13] = [
+    pub(crate) const ALL: [Self; 16] = [
         Self::Management,
         Self::Ingress,
         Self::Allocation,
@@ -36,6 +39,9 @@ impl BridgeFlag {
         Self::TelegramNew,
         Self::TriggerCommandAdmission,
         Self::ControlAdmission,
+        Self::Slack,
+        Self::Whatsapp,
+        Self::X,
     ];
 
     pub(crate) const fn key(self) -> &'static str {
@@ -50,6 +56,9 @@ impl BridgeFlag {
             Self::Discord => "CHRONO_BRIDGE_DISCORD_ENABLED",
             Self::Lark => "CHRONO_BRIDGE_LARK_ENABLED",
             Self::Feishu => "CHRONO_BRIDGE_FEISHU_ENABLED",
+            Self::Slack => "CHRONO_BRIDGE_SLACK_ENABLED",
+            Self::Whatsapp => "CHRONO_BRIDGE_WHATSAPP_ENABLED",
+            Self::X => "CHRONO_BRIDGE_X_ENABLED",
             Self::V2UiTransport => "CHRONO_BRIDGE_V2_UI_TRANSPORT_ENABLED",
             Self::TriggerCommandAdmission => "CHRONO_TRIGGER_COMMAND_ADMISSION_ENABLED",
             Self::ControlAdmission => "CHRONO_BRIDGE_CONTROL_ADMISSION_ENABLED",
@@ -66,6 +75,9 @@ pub(crate) enum BridgePlatformFlag {
     Discord,
     Lark,
     Feishu,
+    Slack,
+    Whatsapp,
+    X,
 }
 
 impl BridgePlatformFlag {
@@ -76,6 +88,9 @@ impl BridgePlatformFlag {
             Self::Discord => BridgeFlag::Discord,
             Self::Lark => BridgeFlag::Lark,
             Self::Feishu => BridgeFlag::Feishu,
+            Self::Slack => BridgeFlag::Slack,
+            Self::Whatsapp => BridgeFlag::Whatsapp,
+            Self::X => BridgeFlag::X,
         }
     }
 }
@@ -142,7 +157,7 @@ pub(crate) enum AcceptedWorkDecision {
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct BridgeFeatureFlags {
-    enabled: [bool; 13],
+    enabled: [bool; 16],
 }
 
 impl BridgeFeatureFlags {

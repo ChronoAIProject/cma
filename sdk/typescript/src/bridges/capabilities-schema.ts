@@ -19,7 +19,13 @@ const connector = object({
   inbound_text: boolean,
   stable_sender_chat: boolean,
   stable_thread: nullable(
-    enumeration('telegram_forum_topic', 'discord_channel_thread', 'lark_thread', 'feishu_thread'),
+    enumeration(
+      'telegram_forum_topic',
+      'discord_channel_thread',
+      'lark_thread',
+      'feishu_thread',
+      'slack_thread',
+    ),
   ),
   reply_to_bot: boolean,
   bot_mentions: boolean,

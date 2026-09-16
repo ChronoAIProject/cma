@@ -47,6 +47,26 @@ recover that result even if the current catalog changes. Positive editor tests
 use a scripted `available` catalog; they do not establish production availability
 or close #864, #870 or #850.
 
+Organization Bridges can also select one retained Agent through the existing
+public Sandbox and Workspace hierarchy. The dashboard checks current owner and
+whole-parent management access before exposing children, then verifies the exact
+Sandbox/Workspace/Worktree/Agent tuple and the selected Agent's current
+`manage_bridge`, `interact` and detail visibility before a fresh save. Model and
+connected-service facts remain unavailable when the public shared view omits
+them. Existing channel usage is shown as a current/history category; private
+binding records are not displayed by the picker. Saving a disabled Bridge does
+not grant permission to invoke its retained Agent: the existing separate consent
+step still applies. Saved unavailable target IDs remain readable and unchanged
+targets can accompany unrelated settings edits. Uncertain saves retain their
+original request and key for explicit recovery after access changes.
+
+Both personal and organization retained-Agent previews read the public immutable
+creation category separately from channel usage. Manual, Trigger and legacy
+Agents keep their output in CMA; attaching them does not grant channel reply
+tools. Channel-created provenance alone does not establish current tool or
+delivery availability, and final output is never sent automatically. Unavailable
+provenance stays unverified; private creation details are not rendered.
+
 `source_revision` identifies NyxID `85607255ee0beadca460a350e0aa6d177edd2fd2`. `evidence` distinguishes CMA protocol fixtures from upstream adapter source and the separate device ingest channel. `live_verified` is false for every current entry. Source review and protocol fixtures do not establish live delivery.
 
 | Platform                | CMA text and identity fixtures                                   | Stable thread field                               | Current CMA text chunk limit | CMA reply format |
@@ -59,6 +79,31 @@ or close #864, #870 or #850.
 | Device                  | Separate ingest channel; CMA bidirectional bot setup unavailable | Unavailable                                       | Unavailable                  | Unavailable      |
 
 Telegram-new has its own upstream platform identity and is never normalized to Telegram for ownership or selected-binding validation. Telegram-new delegates the pinned Telegram boundary contract, has separate signed platform and partition identity, and uses its own default-off `CHRONO_BRIDGE_TELEGRAM_NEW_ENABLED` switch. Complete provider inventory can contain upstream-only bots and keys without blocking supported choices. Their rows still participate in ownership and shared-key conflict checks before selection is filtered.
+
+Slack, WhatsApp and X retain their distinct platform identities in the public API
+and both SDKs. Their signed boundary fixtures correlate raw provider message,
+chat and sender fields with the callback envelope. Slack distinguishes direct,
+group and channel IDs and obtains thread identity from `event.thread_ts`;
+WhatsApp uses the sender's private conversation; X distinguishes numeric group
+IDs from pairs of user IDs. Slack thread roots are not replies to themselves,
+WhatsApp parents come from `context.id`, and X `referenced_tweets` never becomes
+a DM reply parent. Only a `referenced_events` reply can supply that parent.
+
+These entries now report `contract_tested` evidence and stable identity facts,
+but `inbound_text`, `reply_to_bot`, `output_text` and `output_progress` remain
+false. The pinned signed raw data does not explicitly establish a human sender
+and a non-loop message under CMA's existing admission policy. An otherwise valid
+text callback therefore receives the existing typed `unknown_sender` refusal,
+without reply credentials, control admission or Agent work. A user ID, the
+absence of `bot_id`, and generic callback fields cannot supply missing evidence.
+Recognized Slack bot and edit events retain their named refusals; WhatsApp
+interactive/button events remain actions, and media remains unavailable.
+No platform credential, authenticated media lookup or download is implemented.
+
+`CHRONO_BRIDGE_SLACK_ENABLED`, `CHRONO_BRIDGE_WHATSAPP_ENABLED` and
+`CHRONO_BRIDGE_X_ENABLED` are separate default-off switches. Each combines only
+with its requested stage; even enabling every switch cannot create missing
+sender/loop evidence. Device remains a separate ingest-only channel.
 
 Each `stages` value reports the current deployment switch combined with that platform's switch. `connection_validation_available` reports whether CMA has its connection verifier configured. These facts do not establish a particular Bridge's enabled state, active bot/key/routes, current owner/resource access, renewable authority, Agent readiness or required shared-context consent. Actual admission and effects continue to check those independently.
 
