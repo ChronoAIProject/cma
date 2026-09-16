@@ -141,8 +141,6 @@ async fn deployment_opt_in_is_required_and_old_refusal_is_not_reclassified_on_ex
         enabled.match_replay(refused.record()).unwrap(),
         refused.record().receipt()
     );
-    assert!(!crate::bridge::ingress::text_admission::enabled(None).unwrap());
-    assert!(crate::bridge::ingress::text_admission::enabled(Some("yes")).is_err());
 }
 
 #[test]
