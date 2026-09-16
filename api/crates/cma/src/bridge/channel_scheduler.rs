@@ -223,6 +223,8 @@ impl Scheduled {
                     .is_none_or(|prior| now - prior >= Duration::from_secs(30))
                 {
                     tracing::warn!(
+                        target: "cma::bridge::operations",
+                        operation = "scheduler_failure", worker = self.port.kind().label(),
                         "Channel work could not advance; durable identity retained for retry"
                     );
                     self.last_warning = Some(now);
