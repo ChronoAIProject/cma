@@ -309,6 +309,7 @@ impl AgentStore for MongoSandboxStore {
                     "last_seq": signed(agent.conversation.last_seq, "agent log sequence")
                         .map_err(SandboxStoreError::Corrupt)?,
                     "channel_reuse_cleanup_execution": { "$exists": false },
+                "channel_history_seal": { "$exists": false },
                     "record.title": record_title_value(&agent),
                     "owner": agent.owner.as_str(),
                     "record.owner": agent.owner.as_str(),

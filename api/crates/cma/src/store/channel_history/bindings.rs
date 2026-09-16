@@ -1,5 +1,21 @@
 use super::*;
 
+pub(crate) async fn partition_command(
+    database: &Database,
+    allocation: &AllocationRecord,
+    journal: &Document,
+    session: &mut ClientSession,
+) -> Result<(), MutationError> {
+    append(
+        database,
+        allocation,
+        ReferenceKind::PartitionCommand,
+        journal,
+        session,
+    )
+    .await
+}
+
 pub(crate) async fn accepted_command(
     database: &Database,
     allocation: &AllocationRecord,

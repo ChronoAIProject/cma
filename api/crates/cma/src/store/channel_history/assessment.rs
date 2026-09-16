@@ -72,6 +72,45 @@ pub(crate) async fn assess(
             return Err(AllocationError::IdentityMismatch.into());
         }
     }
+    for field in ["partition_command_source", "partition_detachment"] {
+        if let Some(value) = document.get(field) {
+            let marker = value.as_document().ok_or(AllocationError::Corrupt)?;
+            let receipt_id = marker
+                .get_str("receipt_id")
+                .map_err(|_| AllocationError::Corrupt)?;
+            if !references.iter().any(|reference| {
+                reference.kind == ReferenceKind::PartitionCommand
+                    && reference.target_id == receipt_id
+            }) {
+                result
+                    .hold
+                    .get_or_insert(HistoryHold::ReferenceAccountingIncomplete);
+            }
+        }
+    }
     result.reference_sha256 = Some(digest(&references)?);
+    if let Some(value) = document.get("channel_history_seal") {
+        let seal: HistorySeal = mongodb::bson::deserialize_from_bson(value.clone())
+            .map_err(|_| AllocationError::Corrupt)?;
+        let ids = seal
+            .reference_ids_at_seal
+            .iter()
+            .collect::<std::collections::BTreeSet<_>>();
+        let retained = references
+            .iter()
+            .filter(|reference| reference.id().is_ok_and(|id| ids.contains(&id)))
+            .collect::<Vec<_>>();
+        if seal.schema_version != 1
+            || Some(&seal.policy) != result.policy.as_ref()
+            || seal.sandbox_id != allocation.placement.target().sandbox_id.as_str()
+            || seal.reference_count_at_seal != retained.len() as u64
+            || retained.len() != ids.len()
+            || ids.len() != seal.reference_ids_at_seal.len()
+            || seal.references_sha256_at_seal != digest(&retained)?
+        {
+            return Err(AllocationError::IdentityMismatch.into());
+        }
+        result.inventory_sealed = true;
+    }
     Ok(result)
 }
