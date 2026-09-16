@@ -32,6 +32,7 @@ mod session_routes;
 mod signup_options;
 mod token;
 mod tokens;
+mod verification_error;
 
 pub use flow::router;
 pub use middleware::attach_subject;
