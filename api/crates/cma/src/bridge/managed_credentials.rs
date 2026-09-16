@@ -83,6 +83,7 @@ impl ManagedBridgeCredentials {
             connector: config.connector.clone(),
             revision: 1,
             key_state_version: verified.key_state_version,
+            key_authority_v1: Some(verified.key_authority),
             scopes: verified.scopes,
             allowed_service_ids: verified.allowed_service_ids,
             allow_all_services: verified.allow_all_services,
@@ -172,6 +173,7 @@ impl BridgeCredentialResolver for ManagedBridgeCredentials {
         if metadata.owner != *owner
             || metadata.connector != config.connector
             || metadata.revoked_at.is_some()
+            || metadata.key_authority_v1.is_none()
         {
             return Err(unavailable());
         }
@@ -204,7 +206,8 @@ impl BridgeCredentialResolver for ManagedBridgeCredentials {
                     super::operations::health::AuthorityFailure::CredentialVerificationFailed,
                 );
             })?;
-        if verified.key_state_version != metadata.key_state_version
+        if verified.key_state_version < metadata.key_state_version
+            || metadata.key_authority_v1.as_ref() != Some(&verified.key_authority)
             || verified.scopes != metadata.scopes
             || verified.allowed_service_ids != metadata.allowed_service_ids
             || verified.allow_all_services != metadata.allow_all_services

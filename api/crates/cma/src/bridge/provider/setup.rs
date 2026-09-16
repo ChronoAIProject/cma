@@ -31,7 +31,7 @@ impl NyxBridgeProvider {
             require_complete(
                 keys.keys.len(),
                 None,
-                keys.keys.iter().map(|k| k.id.as_str()),
+                keys.keys.iter().map(|k| k.authority.id.as_str()),
             )?;
             require_complete(
                 routes.conversations.len(),
@@ -46,7 +46,9 @@ impl NyxBridgeProvider {
                 return Err(binding_mismatch());
             }
             for key in &keys.keys {
-                key.credential_source.require_owner(owner, subject)?;
+                key.authority
+                    .credential_source
+                    .require_owner(owner, subject)?;
             }
             Ok(BridgeConnectorChoices {
                 bots: bots
@@ -65,6 +67,7 @@ impl NyxBridgeProvider {
                 keys: keys
                     .keys
                     .into_iter()
+                    .map(|k| k.authority)
                     .map(|k| BridgeKeyChoice {
                         id: k.id,
                         active: k.is_active,
