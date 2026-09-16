@@ -53,11 +53,27 @@ runtime handle. Unavailable, duplicate, oversized or contradictory inventory
 does not complete cleanup. The runtime binding is cleared only with the matching
 durable receipt and audit.
 
-Final home cleanup, checkpoint disposition, publication of `Retired`, and history
-purge remain held. Ordinary `Retired` publication can allow the checkpoint
-janitor to delete archives, and ordinary purge removes rows needed by accepted
-command and reply recovery. These effects need their own retained ownership and
-history contracts before they can be enabled for Channel roots.
+After runtime teardown, the dedicated path records a storage disposition under
+the same original-human, allocation, tree and runtime proofs. It retains the
+observed home identity, canonical checkpoint references and a bounded inventory
+of published archives. The archive writer gate closes in the same transaction;
+previously published bytes remain readable. In-flight unpublished uploads keep
+their existing cleanup stages and permanent late-upload tombstones.
+
+The disposition retains home data, published archives, checkpoint metadata,
+resource rows, accepted command/control/source/reply identities, idempotency
+tombstones and history. It is not permission to delete physical storage.
+Generic checkpoint and row purge refuse Channel markers or retained Channel-root
+allocation evidence, including malformed markers or stripped root sidecars.
+Ordinary parents and unrelated storage keep their existing cleanup policy.
+
+The root remains `Retiring` at `MarkRetired`, without a purge deadline or capacity
+release. Final home cleanup, archive-body deletion, publication of `Retired`, and
+history purge remain held. An older checkpoint janitor discovers `Retired`
+roots without understanding this new disposition, so final publication also
+requires compatible reader/janitor evidence. Physical cleanup needs a separate
+immutable original-home intent, exact ownership/absence receipts and an explicit
+archive retention policy before it can be enabled.
 
 ## Shared parents and remaining work
 

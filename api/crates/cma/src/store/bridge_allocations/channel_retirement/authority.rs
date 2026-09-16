@@ -107,9 +107,15 @@ pub(super) async fn read_fenced(
         lifecycle: optional(&document, "channel_lifecycle_credential")?,
         renewal: optional(&document, "channel_renewal")?,
         state: optional(&document, "channel_retirement")?,
+        retention: optional(&document, "channel_storage_retention")?,
         tree,
     };
     snapshot.validate()?;
+    if let Some(retention) = &snapshot.retention {
+        retention.require_human(permit.human())?;
+        crate::store::checkpoint_objects::verify_channel_retention(&database, retention, session)
+            .await?;
+    }
     if &snapshot.sandbox != permit.sandbox() {
         return Err(AllocationError::Conflict.into());
     }

@@ -135,6 +135,65 @@ async fn channel_retirement_lost_async_close_replays_exact_intent_before_key_cle
     );
     assert!(support::log(&f).await.starts_with(&original_log));
     f.retry().await;
+    assert_eq!(
+        f.receipt().await.unwrap().phase,
+        RetirementPhase::StopIntent
+    );
+    assert_eq!(f.f.state.revoke_count.load(Ordering::SeqCst), 0);
+    // The request-local allocation proof expires after 15 seconds. A process
+    // restart must revalidate the same retained generation before more effects.
+    for _ in 0..20 {
+        if f.f.original.authority.require_current().is_err() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_secs(1)).await;
+    }
+    assert!(f.f.original.authority.require_current().is_err());
+    let retained = f.receipt().await.unwrap();
+    f.step().await;
+    assert_eq!(f.f.state.revoke_count.load(Ordering::SeqCst), 0);
+    assert_eq!(f.receipt().await, Some(retained));
+    let permit = crate::bridge::provisioning::retirement::ChannelRetirementAuthority::fixture(
+        f.f.original.record.clone(),
+        f.f.original.authority.clone(),
+        f.f.original.lease.clone(),
+        f.sandbox().await,
+    );
+    let result =
+        f.f.original
+            .allocations
+            .change_channel_retirement(
+                &permit,
+                &f.f.original.custody,
+                crate::store::bridge_allocations::channel_retirement::RetirementChange::Read,
+                SystemTime::now(),
+            )
+            .await;
+    assert!(matches!(
+        result,
+        Err(layer2_core::bridge::allocation::AllocationError::AuthorityUnavailable)
+    ));
+    eprintln!("expired original allocation proof: AuthorityUnavailable; revoke_count=0; exact StopIntent retained");
+    assert_eq!(f.adapter.teardowns.load(Ordering::SeqCst), 0);
+    assert_eq!(f.stops.calls.load(Ordering::SeqCst), 0);
+    let mut renewal = f.f;
+    renewal.original.authority =
+        crate::store::bridge_definitions::mongo_integration_tests::allocations::renew_retained(
+            &renewal.original.svc,
+            &renewal.original.bridges,
+            &renewal.original.record,
+        )
+        .await
+        .unwrap();
+    let registry = Arc::new(crate::sandbox::LiveAgentRegistry::default());
+    let (stopper, _) = retirement_workers(
+        renewal.original.resources.clone(),
+        renewal.original.adapter.clone(),
+        registry.clone(),
+        "retirement-after-authority-revalidation",
+    );
+    let f = RetirementFixture::with_agents(renewal, registry, Some(stopper));
+    f.retry().await;
     f.step().await;
     assert_eq!(f.receipt().await.unwrap().phase, RetirementPhase::Revoke);
     assert_eq!(f.f.state.revoke_count.load(Ordering::SeqCst), 0);

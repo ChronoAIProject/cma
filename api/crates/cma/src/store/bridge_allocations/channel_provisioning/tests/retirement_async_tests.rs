@@ -92,6 +92,18 @@ async fn channel_retirement_real_async_stop_reconciles_original_turn_without_red
         assert_eq!(stopped.profile, original_agent.profile);
         assert!(!worker.run_one(&id, SystemTime::now()).await.unwrap());
         assert_eq!(support::close_requests(&f).await.len(), 1);
+        f.retry().await;
+        for _ in 0..5 {
+            f.step().await;
+        }
+        assert!(f
+            .db()
+            .collection::<Document>("sandboxes")
+            .find_one(doc! {"_id":before.id.as_str()})
+            .await
+            .unwrap()
+            .unwrap()
+            .contains_key("channel_storage_retention"));
         let reopened = Arc::new(
             crate::store::MongoSandboxStore::open(&f.f.original.client, &f.f.original.database)
                 .await
@@ -138,10 +150,6 @@ async fn channel_retirement_real_async_stop_reconciles_original_turn_without_red
             .await
             .unwrap()
             .is_none());
-        f.retry().await;
-        for _ in 0..4 {
-            f.step().await;
-        }
         let after = f.sandbox().await;
         assert_eq!(after.work.step, SandboxWorkStep::MarkRetired);
         assert_eq!(after.status, SandboxStatus::Retiring);

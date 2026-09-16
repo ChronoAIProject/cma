@@ -44,7 +44,9 @@ pub(crate) struct HttpState {
 }
 impl RenewalFixture {
     pub async fn new() -> Self {
-        let mut original = Fixture::new().await;
+        Self::from_original(Fixture::new().await).await
+    }
+    pub async fn from_original(mut original: Fixture) -> Self {
         original.ready().await;
         let material = original
             .custody

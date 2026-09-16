@@ -88,6 +88,11 @@ impl ChannelRetirementDriver {
                 self.teardown(&permit, &snapshot, now).await?;
                 self.commit(&permit, Change::RuntimeGone, now).await
             }
+            (SandboxWorkStep::MarkRetired, RetirementPhase::RuntimeGone)
+                if snapshot.retention.is_none() =>
+            {
+                self.commit(&permit, Change::RetainStorage, now).await
+            }
             // Home, checkpoint and history retention require their own exact
             // ownership gates. Never fall through to the generic root purger.
             _ => Err(AllocationError::AuthorityUnavailable),

@@ -26,6 +26,7 @@ pub(crate) enum RetirementChange<'a> {
     Revoke(&'a RetirementKey),
     RuntimeIntent,
     RuntimeGone,
+    RetainStorage,
 }
 impl MongoBridgeAllocationStore {
     pub(crate) async fn change_channel_retirement(
