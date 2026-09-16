@@ -57,6 +57,11 @@ pub(crate) enum ReferenceKind {
     OutboxInvocation,
     LateUploadTombstone,
     PartitionCommand,
+    ControlReference,
+    ControlIntent,
+    ControlCommand,
+    ControlAlias,
+    ControlDisposition,
 }
 impl ReferenceKind {
     pub(super) fn collection(self) -> &'static str {
@@ -68,6 +73,11 @@ impl ReferenceKind {
             Self::OutboxInvocation => "bridge_outbox_invocations",
             Self::LateUploadTombstone => "checkpoint_archive_tombstones",
             Self::PartitionCommand => "bridge_partition_command_receipts",
+            Self::ControlReference => "bridge_channel_control_references",
+            Self::ControlIntent => "bridge_channel_control_intents",
+            Self::ControlCommand => "agent_commands",
+            Self::ControlAlias => "bridge_channel_control_aliases",
+            Self::ControlDisposition => "bridge_callback_dispositions",
         }
     }
     pub(super) fn projection(self, document: &Document) -> Result<Bson, AllocationError> {
@@ -83,9 +93,13 @@ impl ReferenceKind {
                 .get("channel_source")
                 .cloned()
                 .ok_or_else(missing)?,
-            Self::AcceptedCommand => {
+            Self::AcceptedCommand | Self::ControlCommand => {
                 let mut value = document
-                    .get_document("channel_admission")
+                    .get_document(if self == Self::ControlCommand {
+                        "channel_control_admission"
+                    } else {
+                        "channel_admission"
+                    })
                     .map_err(|_| missing())?
                     .clone();
                 value.remove("execution_hold");
@@ -112,9 +126,13 @@ impl ReferenceKind {
                 }
                 Bson::Document(value)
             }
-            Self::CallbackReceipt | Self::OutboxInvocation | Self::PartitionCommand => {
-                document.get("record").cloned().ok_or_else(missing)?
-            }
+            Self::CallbackReceipt
+            | Self::OutboxInvocation
+            | Self::PartitionCommand
+            | Self::ControlReference
+            | Self::ControlIntent
+            | Self::ControlAlias
+            | Self::ControlDisposition => document.get("record").cloned().ok_or_else(missing)?,
             Self::LateUploadTombstone => {
                 let mut value = Document::new();
                 for field in ["_id", "document_schema_version", "object_key"] {
