@@ -31,6 +31,33 @@ struct DispatchJournal {
     runtime: Vec<RuntimeDispatch>,
 }
 
+impl crate::store::MongoBridgeAllocationStore {
+    /// The driver already fenced this retiring snapshot, and revalidates it
+    /// again immediately before the provider effect. Dispatch admission is
+    /// forbidden once the allocation leaves provisioning.
+    pub(crate) async fn channel_provider_runtime(
+        &self,
+        snapshot: &ChannelRetirementSnapshot,
+    ) -> Result<Option<ReadyRuntimeJournal>, AllocationError> {
+        let database = self.bridges.client.database(&self.records.namespace().db);
+        let mut session = self
+            .bridges
+            .client
+            .start_session()
+            .await
+            .map_err(|_| AllocationError::Unavailable)?;
+        crate::store::sandbox_mongo::start_transaction(&mut session)
+            .await
+            .map_err(|_| AllocationError::Unavailable)?;
+        let result = read_ready_runtime(&database, snapshot, &mut session).await;
+        let _ = session.abort_transaction().await;
+        result.map_err(|error| match error {
+            MutationError::Core(error) => error,
+            MutationError::Mongo(_) => AllocationError::Unavailable,
+        })
+    }
+}
+
 pub(crate) struct ReadyRuntimeJournal {
     pub origin: ProviderDispatchOrigin,
     pub original: RuntimeProvisionReceipt,
