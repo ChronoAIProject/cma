@@ -30,9 +30,15 @@ pub struct ChannelControlCallback {
 impl ChannelControlCallback {
     pub fn capture(write: &ChannelControlWrite) -> Result<Self, Error> {
         write.require_current()?;
-        let inbox = write.inbox().record();
+        Self::capture_inbox(write.inbox())
+    }
+
+    pub(super) fn capture_inbox(write: &InboxWrite) -> Result<Self, Error> {
+        write
+            .require_current(write.bridge())
+            .map_err(|_| Error::AuthorityUnavailable)?;
+        let inbox = write.record();
         let provider = write
-            .inbox()
             .platform_redelivery()
             .ok_or(Error::CapabilityUnsupported)?;
         let value = Self {

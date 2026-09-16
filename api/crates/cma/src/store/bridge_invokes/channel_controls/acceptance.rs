@@ -67,6 +67,35 @@ impl MongoChannelControlStore {
         &self,
         write: &ChannelControlWrite,
     ) -> Result<Option<ChannelControlAcceptance>, Error> {
+        let recovery = ChannelControlRecovery::from_authenticated(write.inbox())?;
+        self.recover_authenticated_acceptance(&recovery).await
+    }
+
+    /// Recovery is independent of current reply/group admission. This input
+    /// can only return a complete prior receipt and retain its exact alias.
+    pub(crate) async fn recover_authenticated_acceptance(
+        &self,
+        write: &ChannelControlRecovery<'_>,
+    ) -> Result<Option<ChannelControlAcceptance>, Error> {
+        self.resolve_callback(write, false).await
+    }
+
+    /// Current disabled/partition refusal and any raced prior v2 recovery must
+    /// share one transaction, including the complete canonical intent graph.
+    pub(crate) async fn refuse_fresh_or_recover(
+        &self,
+        write: &ChannelControlRecovery<'_>,
+    ) -> Result<ChannelControlAcceptance, Error> {
+        self.resolve_callback(write, true)
+            .await?
+            .ok_or(Error::Unavailable)
+    }
+
+    async fn resolve_callback(
+        &self,
+        write: &ChannelControlRecovery<'_>,
+        allow_fresh_refusal: bool,
+    ) -> Result<Option<ChannelControlAcceptance>, Error> {
         for attempt in 0..8 {
             write.require_current()?;
             let mut session = self
@@ -79,7 +108,10 @@ impl MongoChannelControlStore {
             start_transaction(&mut session)
                 .await
                 .map_err(|_| Error::Unavailable)?;
-            let result = match self.recover_transaction(write, &mut session).await {
+            let result = match self
+                .recover_transaction(write, &mut session, allow_fresh_refusal)
+                .await
+            {
                 Ok(result) => result,
                 Err(error) => {
                     let _ = session.abort_transaction().await;
