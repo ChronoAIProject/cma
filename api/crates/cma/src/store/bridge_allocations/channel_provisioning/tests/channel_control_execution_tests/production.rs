@@ -12,6 +12,15 @@ fn execution(
     Arc<crate::commands::ResourceCommandExecution>,
     Arc<Mutex<Vec<ConversationInput>>>,
 ) {
+    let (dependencies, writes) = worker::dependencies(c, None, 1, ambiguous);
+    (with_dependencies(c, enabled, dependencies), writes)
+}
+
+pub(super) fn with_dependencies(
+    c: &ControlFixture,
+    enabled: &[BridgeFlag],
+    dependencies: crate::commands::ProductionCommandDependencies,
+) -> Arc<crate::commands::ResourceCommandExecution> {
     let flags = BridgeFeatureFlags::from_lookup(&mut |key| {
         Ok(enabled
             .iter()
@@ -35,7 +44,6 @@ fn execution(
     )
     .unwrap();
     assert!(credentials.is_none());
-    let (dependencies, writes) = worker::dependencies(c, None, 1, ambiguous);
     let execution = crate::commands::ResourceCommandExecution::production(
         dependencies,
         c.invokes.clone(),
@@ -43,7 +51,7 @@ fn execution(
         definitions.connection_validator(),
     );
     assert!(execution.channel_controls.is_some());
-    (execution, writes)
+    execution
 }
 
 async fn command(c: &ControlFixture, held: &AdmittedChannelControl) -> AdmittedAgentCommand {
@@ -97,7 +105,9 @@ async fn channel_control_execution_production_gates_hold_release_by_execution_an
         let service = execution.channel_controls.as_ref().unwrap();
         assert!(service.authorize(&held.command).await.is_ok());
         assert_eq!(
-            service.release_held(&held.command).await,
+            service
+                .release_held(&held.command, &execution.operations)
+                .await,
             Err(ChannelControlError::Unavailable)
         );
         worker::run(&c, &held, execution).await;
@@ -128,7 +138,7 @@ async fn channel_control_execution_production_disabled_gates_drain_released_and_
             .channel_controls
             .as_ref()
             .unwrap()
-            .release_held(&held.command)
+            .release_held(&held.command, &enabled.operations)
             .await
             .unwrap();
         let (disabled, writes) = execution(&c, &[], false);
@@ -181,7 +191,7 @@ async fn channel_control_execution_production_disabled_gates_preserve_unknown_di
         .channel_controls
         .as_ref()
         .unwrap()
-        .release_held(&held.command)
+        .release_held(&held.command, &enabled.operations)
         .await
         .unwrap();
     let (disabled, writes) = execution(&c, &[], true);
@@ -219,7 +229,7 @@ async fn channel_control_execution_production_disabled_gates_still_require_curre
         .channel_controls
         .as_ref()
         .unwrap()
-        .release_held(&held.command)
+        .release_held(&held.command, &enabled.operations)
         .await
         .unwrap();
     let bridge =

@@ -79,7 +79,7 @@ impl AgentCommandExecution for ResourceCommandExecution {
     async fn release_held(&self, command: &AdmittedAgentCommand) {
         if is_channel_control(command) {
             if let Some(service) = &self.channel_controls {
-                let _ = service.release_held(command).await;
+                let _ = service.release_held(command, &self.operations).await;
             }
             return;
         }

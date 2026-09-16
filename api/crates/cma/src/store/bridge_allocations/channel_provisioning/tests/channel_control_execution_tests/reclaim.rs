@@ -6,7 +6,10 @@ async fn channel_control_execution_replaces_expired_claim_without_authorizing_th
     let c = ControlFixture::new().await;
     let held = worker::admit(&c, false, "expired-owner-control").await;
     let service = worker::service(&c);
-    service.release_held(&held.command).await.unwrap();
+    service
+        .release_held(&held.command, &worker::operations(&c))
+        .await
+        .unwrap();
     let stamp = std::time::SystemTime::now();
     let claimed =
         c.f.resources
@@ -20,12 +23,18 @@ async fn channel_control_execution_replaces_expired_claim_without_authorizing_th
             .unwrap()
             .unwrap();
     let stale = claimed.work.lease.as_ref().unwrap().claim.clone();
-    assert!(service.ready_for_claim(&claimed).await.is_err());
+    assert!(service
+        .ready_for_claim(&claimed, &worker::operations(&c))
+        .await
+        .is_err());
     let original_authority = service.authorize(&claimed).await.unwrap();
     tokio::time::sleep(Duration::from_secs(3)).await;
     assert!(original_authority.refreshed().await.is_err());
     assert!(service.authorize(&claimed).await.is_err());
-    service.ready_for_claim(&claimed).await.unwrap();
+    service
+        .ready_for_claim(&claimed, &worker::operations(&c))
+        .await
+        .unwrap();
     let (execution, inputs) = worker::execution(&c, None, false);
     assert!(!matches!(
         execution.execute(&claimed).await,

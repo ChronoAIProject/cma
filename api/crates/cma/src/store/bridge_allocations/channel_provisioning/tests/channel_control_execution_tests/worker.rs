@@ -123,9 +123,18 @@ pub(super) fn dependencies(
     let runtime = Arc::new(Runtime {
         sender,
         resolves: AtomicUsize::new(0),
-        hook_at,
+        // These fixtures start held. Keep hooks at their original dispatch
+        // boundary after the new hold-release and claim-readiness lookups.
+        hook_at: hook_at + 2,
         hook: Mutex::new(hook),
     });
+    (dependencies_with_runtime(c, runtime), writes)
+}
+
+pub(super) fn dependencies_with_runtime<R: AgentRuntimeRegistry + 'static>(
+    c: &ControlFixture,
+    runtime: Arc<R>,
+) -> crate::commands::ProductionCommandDependencies {
     let profiles = Arc::new(InMemoryProfileStore::default());
     let context = AgentContextService::new(
         SandboxService::new(
@@ -144,24 +153,25 @@ pub(super) fn dependencies(
         profiles,
         Arc::new(PlatformDefaults::default()),
     );
-    (
-        crate::commands::ProductionCommandDependencies {
-            channel_revival: None,
-            channel: Arc::new(ChannelAgentCommandService::new(Arc::new(
-                crate::store::MongoChannelCommandStore::new(c.invokes.clone()),
-            ))),
-            authority: Arc::new(NoHuman),
-            access: Arc::new(ResourceAccessService::new(
-                c.f.resources.clone(),
-                Arc::new(Authority),
-            )),
-            store: c.f.resources.clone(),
-            operations: AgentOperationService::new(c.f.resources.clone(), runtime),
-            context,
-        },
-        writes,
-    )
+    crate::commands::ProductionCommandDependencies {
+        channel_revival: None,
+        channel: Arc::new(ChannelAgentCommandService::new(Arc::new(
+            crate::store::MongoChannelCommandStore::new(c.invokes.clone()),
+        ))),
+        authority: Arc::new(NoHuman),
+        access: Arc::new(ResourceAccessService::new(
+            c.f.resources.clone(),
+            Arc::new(Authority),
+        )),
+        store: c.f.resources.clone(),
+        operations: AgentOperationService::new(c.f.resources.clone(), runtime),
+        context,
+    }
 }
+pub(super) fn operations(c: &ControlFixture) -> Arc<AgentOperationService> {
+    dependencies(c, None, 0, false).0.operations
+}
+
 pub(super) async fn admit(c: &ControlFixture, steer: bool, suffix: &str) -> AdmittedChannelControl {
     c.f.resources
         .reconcile_command(&c.f.command.receipt.envelope.command_id)
@@ -176,7 +186,10 @@ pub(super) async fn claim(
     c: &ControlFixture,
     held: &AdmittedChannelControl,
 ) -> AdmittedAgentCommand {
-    service(c).release_held(&held.command).await.unwrap();
+    service(c)
+        .release_held(&held.command, &operations(c))
+        .await
+        .unwrap();
     let now = std::time::SystemTime::now();
     c.f.resources
         .claim_next_command(CommandClaimRequest {
