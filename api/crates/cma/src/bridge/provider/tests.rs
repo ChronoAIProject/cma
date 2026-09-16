@@ -16,9 +16,11 @@ use serde_json::{json, Value};
 use super::*;
 
 const SECRET: &str = "fixture-selected-agent-key";
+type ProviderReplies = BTreeMap<String, (StatusCode, Value)>;
 #[derive(Clone)]
 struct FixtureState {
-    replies: Arc<BTreeMap<String, (StatusCode, Value)>>,
+    replies: Arc<Mutex<ProviderReplies>>,
+    key_patch_on_probe: Arc<Mutex<Option<Value>>>,
     requests: Arc<Mutex<Vec<(String, String, String)>>>,
 }
 
@@ -43,11 +45,20 @@ async fn respond(
     {
         return StatusCode::FORBIDDEN.into_response();
     }
-    let (status, body) = state
-        .replies
+    let mut replies = state.replies.lock().unwrap();
+    let (status, body) = replies
         .get(&path)
         .cloned()
         .unwrap_or((StatusCode::NOT_FOUND, json!({})));
+    if path.starts_with("/api/v1/channel-relay/messages/") && status == StatusCode::OK {
+        let key = &mut replies.get_mut("/api/v1/api-keys").unwrap().1["keys"][0];
+        key["state_version"] = json!(key["state_version"].as_i64().unwrap() + 1);
+        if let Some(patch) = state.key_patch_on_probe.lock().unwrap().take() {
+            for (field, value) in patch.as_object().unwrap() {
+                key[field] = value.clone();
+            }
+        }
+    }
     let mut response = (status, Json(body.clone())).into_response();
     for (field, header) in [("fixture_location", "location"), ("fixture_link", "link")] {
         if let Some(value) = body.get(field).and_then(Value::as_str) {
@@ -85,7 +96,7 @@ fn replies(owner: &str, source: Value) -> BTreeMap<String, (StatusCode, Value)> 
             "/api/v1/api-keys".into(),
             (
                 StatusCode::OK,
-                json!({"keys":[{"id":"key-one","is_active":true,"state_version":3,"scopes":"proxy read write","allowed_service_ids":["service-one"],"allow_all_services":false,"allowed_node_ids":[],"allow_all_nodes":false,"platform":"telegram","callback_url":"https://cma.example/callback","credential_source":source}]}),
+                json!({"keys":[{"id":"key-one","is_active":true,"state_version":3,"scopes":"proxy read write","allowed_service_ids":["service-one"],"allow_all_services":false,"allow_auto_connected_services":false,"allowed_node_ids":[],"allow_all_nodes":false,"platform":"telegram","callback_url":"https://cma.example/callback","credential_source":source,"purpose":"general","scheduled_write_enabled":false}]}),
             ),
         ),
         (
@@ -99,7 +110,8 @@ fn replies(owner: &str, source: Value) -> BTreeMap<String, (StatusCode, Value)> 
 }
 async fn fixture(replies: BTreeMap<String, (StatusCode, Value)>) -> Fixture {
     let state = FixtureState {
-        replies: Arc::new(replies),
+        replies: Arc::new(Mutex::new(replies)),
+        key_patch_on_probe: Arc::new(Mutex::new(None)),
         requests: Arc::new(Mutex::new(vec![])),
     };
     let app = Router::new()
@@ -356,6 +368,7 @@ async fn provider_fractional_and_offset_expirations_bound_the_original_observati
 }
 
 mod custody;
+mod custody_semantics;
 
 #[tokio::test]
 async fn upstream_only_inventory_rows_do_not_block_supported_bots_or_alias_binding_authority() {
