@@ -67,6 +67,7 @@ pub(crate) fn service(
             custody: credentials.clone(),
             resources,
             provisioning,
+            flags,
         });
         Ok((
             BridgeService::new(
@@ -109,6 +110,7 @@ struct NyxBridgeValidator {
     custody: Arc<dyn BridgeCredentialResolver>,
     resources: Arc<dyn ResourceShareStore>,
     provisioning: Option<Arc<provisioning::BridgeProvisioningDependencies>>,
+    flags: crate::config::BridgeFeatureFlags,
 }
 
 #[async_trait::async_trait]
@@ -119,6 +121,7 @@ impl BridgeConnectionValidator for NyxBridgeValidator {
             self.provisioning
                 .as_ref()
                 .map(|deps| deps.adapter.capabilities()),
+            self.flags,
         );
         catalog
     }

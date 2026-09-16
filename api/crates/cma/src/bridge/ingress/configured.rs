@@ -28,6 +28,7 @@ pub(crate) fn configured(
             provisioning: credentials.provisioning.clone(),
             custody: credentials,
             resources,
+            flags,
         }),
         flags,
     );

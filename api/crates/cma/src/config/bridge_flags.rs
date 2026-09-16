@@ -22,10 +22,12 @@ pub(crate) enum BridgeFlag {
     Slack,
     Whatsapp,
     X,
+    WorkspacePerPartition,
+    WorktreeAgentPerPartition,
 }
 
 impl BridgeFlag {
-    pub(crate) const ALL: [Self; 16] = [
+    pub(crate) const ALL: [Self; 18] = [
         Self::Management,
         Self::Ingress,
         Self::Allocation,
@@ -42,6 +44,8 @@ impl BridgeFlag {
         Self::Slack,
         Self::Whatsapp,
         Self::X,
+        Self::WorkspacePerPartition,
+        Self::WorktreeAgentPerPartition,
     ];
 
     pub(crate) const fn key(self) -> &'static str {
@@ -62,6 +66,8 @@ impl BridgeFlag {
             Self::V2UiTransport => "CHRONO_BRIDGE_V2_UI_TRANSPORT_ENABLED",
             Self::TriggerCommandAdmission => "CHRONO_TRIGGER_COMMAND_ADMISSION_ENABLED",
             Self::ControlAdmission => "CHRONO_BRIDGE_CONTROL_ADMISSION_ENABLED",
+            Self::WorkspacePerPartition => "CHRONO_BRIDGE_WORKSPACE_PER_PARTITION_ENABLED",
+            Self::WorktreeAgentPerPartition => "CHRONO_BRIDGE_WORKTREE_AGENT_PER_PARTITION_ENABLED",
         }
     }
 }
@@ -157,7 +163,7 @@ pub(crate) enum AcceptedWorkDecision {
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct BridgeFeatureFlags {
-    enabled: [bool; 16],
+    enabled: [bool; 18],
 }
 
 impl BridgeFeatureFlags {

@@ -16,18 +16,27 @@ an exact `kind` and a typed `availability`:
 | Availability            | Meaning                                                                                                                       |
 | ----------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
 | `runtime_unavailable`   | The configured adapter is absent or lacks an existing shared-parent runtime requirement.                                      |
-| `continuity_unverified` | The configured adapter meets the static requirements, but composed shared-parent upgrade and rollback continuity is unproved. |
-| `available`             | Reserved for demonstrated placement availability; the current production composition never emits this state.                  |
+| `continuity_unverified` | The configured adapter meets static requirements, but the operator has not selected this placement mode for rollout.          |
+| `available`             | The operator selected this mode and the configured adapter meets its static requirements; current authority checks still apply. |
 
 The runtime requirements match existing reuse preflight: conversation support,
-per-Agent homes, steer, interrupt, usage and resource observations. Meeting them
-does not attest to retained live conversations, dirty work, concurrent siblings,
-approvals or admitted turns surviving a control-plane upgrade and rollback.
-There is no continuity override or new configuration switch. Enabling every
-connector stage cannot change either unavailable placement state. Older servers
-may omit `placements`; TypeScript preserves that absence and Rust defaults it to
-an empty vector. Missing entries provide no shared-placement support. SDKs reject
-unknown states or kinds, duplicate kinds, null and oversized placement arrays.
+per-Agent homes, steer, interrupt, usage and resource observations. The independent
+`CHRONO_BRIDGE_WORKSPACE_PER_PARTITION_ENABLED` and
+`CHRONO_BRIDGE_WORKTREE_AGENT_PER_PARTITION_ENABLED` selectors both default to
+false. Operators select each mode after its canary; neither a selector nor an
+`available` catalog entry attests to upgrade/rollback continuity, retained live
+conversations, dirty work, concurrent siblings, approvals or admitted turns.
+The `continuity_unverified` wire value is retained for compatibility.
+
+Fresh shared placement creation, changes, enable and allocation preparation also
+require the connector's management, allocation and execution gates. Disabling a
+placement selector does not block exact receipt recovery, unchanged placement
+settings edits, or retained allocation execution, reconciliation and cleanup.
+Current custody, target authority, profiles, trust consent and capacity checks
+remain mandatory. Older servers may omit `placements`; TypeScript preserves that
+absence and Rust defaults it to an empty vector. Missing entries provide no
+shared-placement support. SDKs reject unknown states or kinds, duplicate kinds,
+null and oversized placement arrays.
 
 The dashboard can edit both placement shapes using existing public inventory,
 effective-access and profile methods when the catalog permits the mode and its
@@ -44,8 +53,8 @@ availability is missing. An unchanged placement can accompany unrelated settings
 edits, and existing lifecycle controls remain usable. Once a mutation may have
 been sent, its explicit retry preserves the original body and idempotency key to
 recover that result even if the current catalog changes. Positive editor tests
-use a scripted `available` catalog; they do not establish production availability
-or close #864, #870 or #850.
+use a scripted `available` catalog; operator selection and those fixtures do not
+establish live continuity or close #864, #870 or #850.
 
 Organization Bridges can also select one retained Agent through the existing
 public Sandbox and Workspace hierarchy. The dashboard checks current owner and
