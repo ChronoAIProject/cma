@@ -118,6 +118,30 @@ Generic checkpoint and row purge refuse Channel markers or retained Channel-root
 allocation evidence, including malformed markers or stripped root sidecars.
 Ordinary parents and unrelated storage keep their existing cleanup policy.
 
+At this retained boundary, CMA validates any original home-provenance and
+prepare-evidence sidecars against the exact root and retained storage. It also
+requires one permanent `storage_retained` audit matching the original root,
+tree, operation, human, retirement receipt and storage inventory. Missing,
+duplicate or mismatched audits and corrupt or swapped sidecars keep the boundary
+held. Missing legacy sidecars do not prevent the earlier credential and runtime
+retirement steps that already have their own authority.
+
+The resulting assessment is derived in memory and records exact evidence
+digests. Worker retry events use the `channel_retention_held` class with fixed
+reason codes. They distinguish missing original provenance or prepare evidence,
+an unbound first receipt, unresolved dispatch and generation history, unproven
+provider incarnation or backing-storage absence, and unavailable physical
+cleanup. A later successful prepare or currently absent PVC does not clear any
+original debt. A root with no configured home still retains archive/history
+policy and reader/janitor compatibility requirements.
+
+An immutable Channel history disposition and compatible supported/rollback
+readers and janitors are separate outstanding requirements. Generic Sandbox
+grace and inbox/reply-secret retention do not supply that policy. The assessment
+adds no operator approval flag, retention deadline or physical-cleanup authority;
+canonical retirement state, original home evidence and storage disposition keep
+their existing formats.
+
 The root remains `Retiring` at `MarkRetired`, without a purge deadline or capacity
 release. Final home cleanup, archive-body deletion, publication of `Retired`, and
 history purge remain held. An older checkpoint janitor discovers `Retired`

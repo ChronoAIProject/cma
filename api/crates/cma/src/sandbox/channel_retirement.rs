@@ -1,4 +1,5 @@
 //! Scoped retirement stops only an entirely owned original Channel tree.
+pub(crate) mod assessment;
 mod driver;
 pub(crate) mod model;
 pub(crate) mod retention;
@@ -35,9 +36,13 @@ impl ChannelRetirement for ChannelRetirementDriver {
         agents: &dyn super::worker::LiveAgentStopper,
         now: SystemTime,
     ) -> Result<(), CredentialError> {
-        self.run_step(sandbox, agents, now)
-            .await
-            .map_err(|_| held())
+        match self.run_step(sandbox, agents, now).await {
+            Ok(driver::RetirementStep::Advanced) => Ok(()),
+            Ok(driver::RetirementStep::Retained(assessment)) => {
+                Err(CredentialError::ChannelRetentionHeld(assessment))
+            }
+            Err(_) => Err(held()),
+        }
     }
 }
 fn held() -> CredentialError {
