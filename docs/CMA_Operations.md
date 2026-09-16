@@ -564,6 +564,11 @@ are not a live rewrite mechanism for published profiles or existing settings.
 
 ## Bridge rollout switches
 
+See [Channel operational signals and alert definitions](CMA_Channel_Observability.md)
+for the existing text log format, durable queue/cleanup/authority observations,
+and disabled alert policy definitions. Health observations never authorize replay
+or replace retained recovery evidence.
+
 The registered feature switches are independent process-start booleans. Missing values
 mean false; only the exact strings `true` and `false` are accepted. A stage also
 requires its pinned platform switch. Enabling management does not enable ingress
