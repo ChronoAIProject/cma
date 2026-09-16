@@ -112,6 +112,15 @@ impl MongoBridgeAllocationStore {
             .insert_one(journal.document()?)
             .session(&mut *session)
             .await?;
+        for allocation in std::iter::once(&journal.result).chain(journal.successor.iter()) {
+            crate::store::channel_history::partition_command(
+                &self.command_database(),
+                allocation,
+                &journal.document()?,
+                session,
+            )
+            .await?;
+        }
         write.require_current()?;
         Ok(receipt)
     }

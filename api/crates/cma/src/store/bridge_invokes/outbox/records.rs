@@ -165,7 +165,7 @@ impl MongoBridgeReplyToolStore {
         let changed = self
             .items
             .replace_one(
-                doc! {"_id":&item.id,"revision":previous_revision as i64},
+                doc! {"_id":&item.id,"revision":previous_revision as i64, "channel_history_seal": {"$exists": false}},
                 item_document(item)?,
             )
             .session(&mut *session)
