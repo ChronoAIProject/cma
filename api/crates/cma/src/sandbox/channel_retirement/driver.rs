@@ -7,6 +7,11 @@ use crate::{
 use layer2_core::{bridge::allocation::AllocationError, sandbox::SandboxWorkStep};
 use layer3_adapter::RuntimeHandle;
 
+pub(super) enum RetirementStep {
+    Advanced,
+    Retained(Box<super::assessment::FinalRetentionAssessment>),
+}
+
 impl ChannelRetirementDriver {
     async fn read(
         &self,
@@ -26,7 +31,7 @@ impl ChannelRetirementDriver {
         permit: &ChannelRetirementAuthority,
         change: Change<'_>,
         now: SystemTime,
-    ) -> Result<(), AllocationError> {
+    ) -> Result<RetirementStep, AllocationError> {
         self.credentials
             .revalidate_control_plane(permit.human())
             .await
@@ -34,14 +39,14 @@ impl ChannelRetirementDriver {
         self.allocations
             .change_channel_retirement(permit, &self.custody, change, now)
             .await
-            .map(|_| ())
+            .map(|_| RetirementStep::Advanced)
     }
     pub(super) async fn run_step(
         &self,
         sandbox: &Sandbox,
         agents: &dyn super::super::worker::LiveAgentStopper,
         now: SystemTime,
-    ) -> Result<(), AllocationError> {
+    ) -> Result<RetirementStep, AllocationError> {
         let permit = self
             .authority
             .resolve(sandbox)
@@ -92,6 +97,11 @@ impl ChannelRetirementDriver {
                 if snapshot.retention.is_none() =>
             {
                 self.commit(&permit, Change::RetainStorage, now).await
+            }
+            (SandboxWorkStep::MarkRetired, RetirementPhase::RuntimeGone) => {
+                Ok(RetirementStep::Retained(Box::new(
+                    super::assessment::FinalRetentionAssessment::capture(&snapshot)?,
+                )))
             }
             // Home, checkpoint and history retention require their own exact
             // ownership gates. Never fall through to the generic root purger.

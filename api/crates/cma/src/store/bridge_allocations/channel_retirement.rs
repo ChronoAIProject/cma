@@ -1,4 +1,5 @@
 //! Exact tree, human authority, cleanup receipt and canonical work share a fence.
+mod audit;
 mod authority;
 mod lineage;
 mod save;

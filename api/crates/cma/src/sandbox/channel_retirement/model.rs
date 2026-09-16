@@ -1,6 +1,10 @@
 use crate::sandbox::{
     channel_lifecycle_credentials::model::ChannelLifecycleCredentialState,
-    channel_provisioning::state::{ChannelProvisioningPhase, ChannelProvisioningState},
+    channel_provisioning::{
+        home_prepare_evidence::ChannelHomePrepareEvidence,
+        home_provenance::ChannelHomeProvenance,
+        state::{ChannelProvisioningPhase, ChannelProvisioningState},
+    },
     channel_renewal::model::ChannelRenewalState,
 };
 use layer2_core::{
@@ -50,10 +54,13 @@ pub(crate) struct ChannelRetirementSnapshot {
     pub sandbox: Sandbox,
     pub creation: ChannelSandboxSidecar,
     pub provisioning: ChannelProvisioningState,
+    pub home_provenance: Option<ChannelHomeProvenance>,
+    pub home_prepare_evidence: Option<ChannelHomePrepareEvidence>,
     pub renewal: Option<ChannelRenewalState>,
     pub lifecycle: Option<ChannelLifecycleCredentialState>,
     pub state: Option<ChannelRetirementState>,
     pub retention: Option<super::retention::ChannelStorageRetention>,
+    pub retention_audit: Option<super::assessment::RetentionAuditIdentity>,
     pub tree: OwnedTree,
 }
 impl ChannelRetirementSnapshot {
@@ -61,6 +68,23 @@ impl ChannelRetirementSnapshot {
         self.creation
             .require_creation(&self.allocation, &self.sandbox)?;
         self.provisioning.settings.validate()?;
+        // Missing legacy evidence is assessed only at the final retained
+        // boundary. Present but contradictory evidence is never accepted.
+        if let Some(original) = &self.home_provenance {
+            original.validate_retained(
+                &self.allocation,
+                &self.sandbox,
+                &self.creation,
+                &self.provisioning.settings,
+            )?;
+        }
+        if let Some(evidence) = &self.home_prepare_evidence {
+            evidence.validate_original(
+                self.home_provenance
+                    .as_ref()
+                    .ok_or(AllocationError::IdentityMismatch)?,
+            )?;
+        }
         if self.provisioning.schema_version != 1
             || self.provisioning.revision == 0
             || self.provisioning.allocation_id != self.allocation.id
@@ -187,10 +211,13 @@ impl ChannelRetirementSnapshot {
             sandbox,
             creation: self.creation.clone(),
             provisioning: self.provisioning.clone(),
+            home_provenance: self.home_provenance.clone(),
+            home_prepare_evidence: self.home_prepare_evidence.clone(),
             renewal: self.renewal.clone(),
             lifecycle: self.lifecycle.clone(),
             state: None,
             retention: None,
+            retention_audit: None,
             tree: OwnedTree {
                 fingerprint: self.tree.fingerprint.clone(),
                 agent_live: self.tree.agent_live,
