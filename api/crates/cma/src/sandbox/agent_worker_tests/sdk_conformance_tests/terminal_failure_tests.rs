@@ -90,8 +90,10 @@ async fn exercise(route: Route) -> Vec<Value> {
     let writes = probe.inputs();
     assert_eq!(writes.len(), 1, "{route:?}");
     assert_eq!(writes[0].0.agent_id, agent.id);
-    assert!(matches!(&writes[0].1, ConversationInput::Prompt(blocks)
-        if blocks.len() == 1 && matches!(&blocks[0], layer3_adapter::ContentBlock::Text(text) if text.text == INPUT)));
+    assert!(
+        matches!(&writes[0].1, ConversationInput::RecoverablePrompt { content: blocks, .. }
+        if blocks.len() == 1 && matches!(&blocks[0], layer3_adapter::ContentBlock::Text(text) if text.text == INPUT))
+    );
 
     let response_path = format!("/api/v2/responses/{response_id}");
     let retrieved: Value = serde_json::from_str(&read(&reopened, &response_path).await).unwrap();

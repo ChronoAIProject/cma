@@ -172,7 +172,7 @@ pub(super) async fn reconnect_agent(
     handle: &RuntimeHandle,
     authority_fence: u64,
     request: &AgentOpenRequest,
-    conversation_id: &str,
+    (conversation_id, recovered_prompt): (&str, Option<crate::PromptIdentity>),
     updates: mpsc::Sender<ConversationUpdate>,
 ) -> crate::Result<ConversationChannel> {
     let result = open_agent(
@@ -180,7 +180,7 @@ pub(super) async fn reconnect_agent(
         handle,
         authority_fence,
         request,
-        Some(conversation_id),
+        Some((conversation_id, recovered_prompt.clone())),
         updates.clone(),
     )
     .await;
@@ -200,7 +200,7 @@ pub(super) async fn reconnect_agent(
                 handle,
                 authority_fence,
                 &resumed,
-                Some(conversation_id),
+                Some((conversation_id, recovered_prompt)),
                 updates,
             )
             .await
@@ -214,9 +214,13 @@ pub(super) async fn open_agent(
     handle: &RuntimeHandle,
     authority_fence: u64,
     request: &AgentOpenRequest,
-    held_conversation: Option<&str>,
+    held: Option<(&str, Option<crate::PromptIdentity>)>,
     updates: mpsc::Sender<ConversationUpdate>,
 ) -> crate::Result<ConversationChannel> {
+    let (held_conversation, recovered_prompt) = match held {
+        Some((conversation, prompt)) => (Some(conversation), prompt),
+        None => (None, None),
+    };
     if held_conversation.is_some_and(|id| {
         id.is_empty()
             || id.len() > 512
@@ -239,6 +243,12 @@ pub(super) async fn open_agent(
     validate_fence(authority_fence)?;
     let launch = adapter.runtime.launch(request)?;
     let mut settings = adapter.runtime.open_settings(request)?;
+    if settings.recovered_prompt.is_some() {
+        return Err(AdapterError::Rejected(
+            "runtime supplied prompt recovery authority".into(),
+        ));
+    }
+    settings.recovered_prompt = recovered_prompt;
     // Provider rendering has no authority to add channel tools. Only the
     // configured control-plane source can prove an eligible creation record.
     if settings.channel_tool.is_some() {

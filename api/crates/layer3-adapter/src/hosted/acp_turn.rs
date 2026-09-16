@@ -15,59 +15,11 @@ impl Bridge {
         let session = self.session().await?;
         match input {
             ConversationInput::Prompt(content) => {
-                self.answered.lock().await.clear();
-                self.owned_prompt_waiters.fetch_add(1, Ordering::SeqCst);
-                let params = serde_json::json!({
-                    "sessionId": session,
-                    "prompt": content,
-                });
-                match self.begin_prompt(params).await {
-                    Ok(waiting) => {
-                        let answered_permissions = Arc::clone(&self.answered);
-                        let owned_prompt_waiters = Arc::clone(&self.owned_prompt_waiters);
-                        let updates = updates.clone();
-                        tokio::spawn(async move {
-                            let answered = tokio::time::timeout(TURN_DEADLINE, waiting).await;
-                            let previous = owned_prompt_waiters.fetch_sub(1, Ordering::SeqCst);
-                            debug_assert!(previous > 0, "prompt waiter is released once");
-                            answered_permissions.lock().await.clear();
-                            let update = match answered {
-                                Err(_) => Some(scoped_turn_outcome(
-                                    Outcome::Failed {
-                                        message: "agent did not answer this turn".into(),
-                                        capability: None,
-                                    },
-                                    false,
-                                )),
-                                Ok(Ok(_)) => None,
-                                Ok(Err(_)) => Some(scoped_turn_outcome(
-                                    Outcome::Failed {
-                                        message: "agent stopped answering before the turn finished"
-                                            .into(),
-                                        capability: None,
-                                    },
-                                    false,
-                                )),
-                            };
-                            if let Some(update) = update {
-                                updates.send(update);
-                            }
-                        });
-                        Ok(())
-                    }
-                    Err(error) => {
-                        let previous = self.owned_prompt_waiters.fetch_sub(1, Ordering::SeqCst);
-                        debug_assert!(previous > 0, "failed prompt releases its waiter");
-                        updates.send(scoped_turn_outcome(
-                            Outcome::Failed {
-                                message: format!("prompt could not be sent to the agent: {error}"),
-                                capability: None,
-                            },
-                            false,
-                        ));
-                        Err(error)
-                    }
-                }
+                self.drive_prompt(session, content, None, updates).await
+            }
+            ConversationInput::RecoverablePrompt { content, prompt_id } => {
+                self.drive_prompt(session, content, Some(prompt_id), updates)
+                    .await
             }
             ConversationInput::PermissionAnswer {
                 id,
@@ -120,6 +72,72 @@ impl Bridge {
                     "params": { "sessionId": session },
                 }))
                 .await
+            }
+        }
+    }
+
+    async fn drive_prompt(
+        &self,
+        session: String,
+        content: Vec<crate::ContentBlock>,
+        prompt_id: Option<crate::PromptIdentity>,
+        updates: &UpdateRelay,
+    ) -> crate::Result<()> {
+        self.answered.lock().await.clear();
+        self.owned_prompt_waiters.fetch_add(1, Ordering::SeqCst);
+        let params = serde_json::json!({
+            "sessionId": session,
+            "prompt": content,
+        });
+        let recoverable = prompt_id.is_some();
+        match self.begin_prompt(params, prompt_id).await {
+            Ok(waiting) => {
+                let answered_permissions = Arc::clone(&self.answered);
+                let owned_prompt_waiters = Arc::clone(&self.owned_prompt_waiters);
+                let updates = updates.clone();
+                tokio::spawn(async move {
+                    let answered = tokio::time::timeout(TURN_DEADLINE, waiting).await;
+                    let previous = owned_prompt_waiters.fetch_sub(1, Ordering::SeqCst);
+                    debug_assert!(previous > 0, "prompt waiter is released once");
+                    answered_permissions.lock().await.clear();
+                    let update = match answered {
+                        Err(_) => Some(scoped_turn_outcome(
+                            Outcome::Failed {
+                                message: "agent did not answer this turn".into(),
+                                capability: None,
+                            },
+                            false,
+                        )),
+                        Ok(Ok(_)) => None,
+                        // The runtime still owns this identified prompt when
+                        // its API attachment closes. Connection recovery must
+                        // observe its original result, never invent a failure.
+                        Ok(Err(_)) if recoverable => None,
+                        Ok(Err(_)) => Some(scoped_turn_outcome(
+                            Outcome::Failed {
+                                message: "agent stopped answering before the turn finished".into(),
+                                capability: None,
+                            },
+                            false,
+                        )),
+                    };
+                    if let Some(update) = update {
+                        updates.send(update);
+                    }
+                });
+                Ok(())
+            }
+            Err(error) => {
+                let previous = self.owned_prompt_waiters.fetch_sub(1, Ordering::SeqCst);
+                debug_assert!(previous > 0, "failed prompt releases its waiter");
+                updates.send(scoped_turn_outcome(
+                    Outcome::Failed {
+                        message: format!("prompt could not be sent to the agent: {error}"),
+                        capability: None,
+                    },
+                    false,
+                ));
+                Err(error)
             }
         }
     }

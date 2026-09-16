@@ -49,7 +49,7 @@ async fn lifecycle_queue_fences_exactly_once_without_relogging_owner_input() {
     );
     assert!(matches!(
         inputs.lock().unwrap().as_slice(),
-        [ConversationInput::Prompt(content)] if prompt_text(content) == "first queued message"
+        [ConversationInput::RecoverablePrompt { content, .. }] if prompt_text(content) == "first queued message"
     ));
     let owner_messages = store
         .agent_log(&agent.id, 0, 20)

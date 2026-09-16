@@ -40,8 +40,20 @@ impl AgentWorker {
                 "the durable conversation-open receipt does not match replay",
             ));
         }
+        let recovered_prompt = agent.conversation.active_turn.map(|turn| {
+            layer3_adapter::PromptIdentity::new(
+                &target.conversation_id,
+                target.runtime_generation,
+                turn,
+            )
+        });
         let (channel, updates) = self
-            .reconnect(context, connection_fence, &request, &target.conversation_id)
+            .reconnect(
+                context,
+                connection_fence,
+                &request,
+                (&target.conversation_id, recovered_prompt),
+            )
             .await?;
         let conversation_id = valid_conversation_id(channel.conversation_id)?;
         if conversation_id != target.conversation_id {
@@ -64,7 +76,7 @@ impl AgentWorker {
         context: &AgentContext,
         authority_fence: u64,
         request: &AgentOpenRequest,
-        conversation_id: &str,
+        (conversation_id, recovered_prompt): (&str, Option<layer3_adapter::PromptIdentity>),
     ) -> Result<
         (
             ConversationChannel,
@@ -75,11 +87,12 @@ impl AgentWorker {
         let (updates, receiver) = mpsc::channel(UPDATE_BUFFER);
         match tokio::time::timeout(
             self.config.open_timeout,
-            self.dependencies.adapter.reconnect_agent(
+            self.dependencies.adapter.reconnect_agent_with_prompt(
                 &context.runtime,
                 authority_fence,
                 request,
                 conversation_id,
+                recovered_prompt,
                 updates,
             ),
         )

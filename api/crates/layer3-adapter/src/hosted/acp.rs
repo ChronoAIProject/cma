@@ -12,7 +12,8 @@ use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
 use super::update_relay::UpdateRelay;
 use super::HostedAgentOpenSettings;
 use crate::{
-    AdapterError, ConversationChannel, ConversationInputSender, ConversationUpdate, PromptResponse,
+    AdapterError, ConversationChannel, ConversationInputSender, ConversationUpdate, PromptIdentity,
+    PromptResponse,
 };
 
 pub(super) const PROTOCOL_VERSION: u32 = 1;
@@ -28,7 +29,10 @@ pub(super) const LANE_CONVERSATION_GAP: u8 = 0x03;
 
 type Socket = WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>;
 type Sink = SplitSink<Socket, Message>;
-type Pending = Arc<Mutex<HashMap<i64, PendingCall>>>;
+type Pending = Arc<Mutex<HashMap<String, PendingCall>>>;
+
+#[path = "acp_recovery.rs"]
+mod recovery;
 
 pub(super) struct PendingCall {
     pub(super) answer: tokio::sync::oneshot::Sender<serde_json::Value>,
@@ -52,7 +56,9 @@ pub(super) struct Bridge {
     pub(super) subscription: Option<super::subscriptions::HostedSubscriptionBinding>,
     sink: Arc<Mutex<Sink>>,
     pub(super) pending: Pending,
+    request_namespace: String,
     next_id: AtomicI64,
+    recovery: Mutex<recovery::PromptRecovery>,
     conversation: Mutex<ConversationState>,
     pub(super) blocked: Mutex<HashMap<String, Blocked>>,
     pub(super) answered: Arc<Mutex<HashMap<String, serde_json::Value>>>,
@@ -99,6 +105,7 @@ impl Bridge {
         .await
     }
 
+    #[cfg(test)]
     pub(super) async fn open_with_subscription(
         stream: Socket,
         expected_agent: &str,
@@ -110,6 +117,36 @@ impl Bridge {
         resume_conversation: Option<String>,
         updates_tx: mpsc::Sender<ConversationUpdate>,
     ) -> crate::Result<OpenedBridge> {
+        Self::open_with_subscription_and_prompt(
+            stream,
+            expected_agent,
+            cwd,
+            (settings, subscription),
+            resume_conversation,
+            None,
+            updates_tx,
+        )
+        .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(super) async fn open_with_subscription_and_prompt(
+        stream: Socket,
+        expected_agent: &str,
+        cwd: String,
+        (settings, subscription): (
+            HostedAgentOpenSettings,
+            Option<super::subscriptions::HostedSubscriptionBinding>,
+        ),
+        resume_conversation: Option<String>,
+        recovered_prompt: Option<PromptIdentity>,
+        updates_tx: mpsc::Sender<ConversationUpdate>,
+    ) -> crate::Result<OpenedBridge> {
+        if recovered_prompt.is_some() && resume_conversation.is_none() {
+            return Err(AdapterError::Rejected(
+                "prompt recovery requires a held conversation".into(),
+            ));
+        }
         let (sink, mut source) = stream.split();
         let declaration = tokio::time::timeout(DECLARATION_DEADLINE, source.next())
             .await
@@ -122,7 +159,9 @@ impl Bridge {
             subscription,
             sink: Arc::new(Mutex::new(sink)),
             pending: Arc::new(Mutex::new(HashMap::new())),
+            request_namespace: uuid::Uuid::new_v4().to_string(),
             next_id: AtomicI64::new(1),
+            recovery: Mutex::new(recovery::PromptRecovery::new(recovered_prompt)),
             conversation: Mutex::new(ConversationState::default()),
             blocked: Mutex::new(HashMap::new()),
             answered: Arc::new(Mutex::new(HashMap::new())),
@@ -190,6 +229,7 @@ impl Bridge {
             ));
         }
         let conversation_id = bridge.session().await?;
+        bridge.release_recovered_prompt(&updates).await;
         Ok(OpenedBridge {
             channel: ConversationChannel {
                 input,
@@ -309,8 +349,10 @@ impl Bridge {
     pub(super) async fn begin_prompt(
         &self,
         params: serde_json::Value,
+        prompt_id: Option<PromptIdentity>,
     ) -> crate::Result<tokio::sync::oneshot::Receiver<serde_json::Value>> {
-        self.begin_inner("session/prompt", params, true).await
+        self.begin_with_id("session/prompt", params, true, prompt_id)
+            .await
     }
 
     async fn begin_inner(
@@ -319,12 +361,31 @@ impl Bridge {
         params: serde_json::Value,
         prompt: bool,
     ) -> crate::Result<tokio::sync::oneshot::Receiver<serde_json::Value>> {
+        self.begin_with_id(method, params, prompt, None).await
+    }
+
+    async fn begin_with_id(
+        &self,
+        method: &str,
+        params: serde_json::Value,
+        prompt: bool,
+        prompt_id: Option<PromptIdentity>,
+    ) -> crate::Result<tokio::sync::oneshot::Receiver<serde_json::Value>> {
         if self.retired.load(Ordering::SeqCst) {
             return Err(AdapterError::Unavailable(
                 "conversation link has retired".into(),
             ));
         }
-        let id = self.next_id.fetch_add(1, Ordering::SeqCst);
+        let id = prompt_id.map_or_else(
+            || {
+                format!(
+                    "cma-rpc-{}-{}",
+                    self.request_namespace,
+                    self.next_id.fetch_add(1, Ordering::SeqCst)
+                )
+            },
+            |identity| identity.as_str().to_owned(),
+        );
         let (answer, waiting) = tokio::sync::oneshot::channel();
         let frame = serde_json::json!({
             "jsonrpc": "2.0",
@@ -335,7 +396,7 @@ impl Bridge {
         self.pending
             .lock()
             .await
-            .insert(id, PendingCall { answer, prompt });
+            .insert(id.clone(), PendingCall { answer, prompt });
         if let Err(error) = self.send(&frame).await {
             self.pending.lock().await.remove(&id);
             return Err(error);

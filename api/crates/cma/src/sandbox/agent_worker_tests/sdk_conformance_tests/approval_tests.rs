@@ -194,7 +194,7 @@ async fn exercise(route: Route) -> Vec<Value> {
     let writes = probe.inputs();
     assert_eq!(writes.len(), 2);
     assert!(
-        matches!(&writes[0].1, ConversationInput::Prompt(blocks) if blocks.len() == 1 && matches!(&blocks[0], layer3_adapter::ContentBlock::Text(text) if text.text == INPUT))
+        matches!(&writes[0].1, ConversationInput::RecoverablePrompt { content: blocks, .. } if blocks.len() == 1 && matches!(&blocks[0], layer3_adapter::ContentBlock::Text(text) if text.text == INPUT))
     );
     assert!(
         matches!(&writes[1].1, ConversationInput::PermissionAnswer { id, locator:Some(locator), decision:PermissionDecision::Allow } if id == APPROVAL_ID && locator.as_str() == APPROVAL_LOCATOR)
