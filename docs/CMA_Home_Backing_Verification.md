@@ -39,3 +39,13 @@ The provider adapter composes this observer with original-allocation capture,
 runtime shutdown and claim deletion. The standalone observer does not itself
 authorize retirement, release capacity, remove history or mutate storage.
 Legacy allocations without their original backing pin retain an explicit hold.
+
+The control-plane service-account manifest includes the Kubernetes read access
+needed for fresh capture. The existing namespaced cleanup role adds
+`batchsandboxes/watch` so an original creation can be observed from its
+pre-dispatch resource version. The `cma-home-backing-observer` ClusterRole grants
+only `persistentvolumes/get`, bound only to `chrono-bot/chrono-bot-ksa`; the
+adapter reads the exact PV named by the owned PVC. It cannot list or modify PVs.
+Apply these source-controlled RBAC resources before enabling fresh Channel
+allocation with provider capture. They neither restart runtimes nor grant cloud
+disk permissions; unavailable Kubernetes or cloud reads keep finality held.
