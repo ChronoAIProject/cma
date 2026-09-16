@@ -58,11 +58,20 @@ impl ReuseFixture {
             doc! {"_id":parent.id.as_str()},
             doc! {"$set":crate::store::sandboxes::sandbox_replacement_fields(&parent).unwrap(),
             "$unset":{"channel_creation":"","channel_provisioning":"",
+                "channel_home_provenance":"","channel_home_prepare_evidence":"",
                 "channel_renewal":"","channel_lifecycle_credential":"",
                 "channel_mint_reconciliation":"","channel_retirement":"","channel_cleanup":""}},
         )
         .await
         .unwrap();
+        let ordinary = rows
+            .find_one(doc! {"_id":parent.id.as_str()})
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(!crate::store::channel_storage_retention::has_marker(
+            &ordinary
+        ));
         let row = database
             .collection::<Document>("agent_creation_provenance")
             .find_one(doc! {"_id":sibling.id.as_str()})
