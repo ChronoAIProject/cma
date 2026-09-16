@@ -88,6 +88,21 @@ async fn proposal(
     AllocationAuthority,
     BridgeManagementLease,
 ) {
+    proposal_with_owner_limit(svc, bridges, id, sender, previous, 3).await
+}
+
+async fn proposal_with_owner_limit(
+    svc: &BridgeService,
+    bridges: &MongoBridgeStore,
+    id: &BridgeId,
+    sender: &str,
+    previous: Option<&AllocationRecord>,
+    owner_live_sandbox_limit: u16,
+) -> (
+    AllocationAdmission,
+    AllocationAuthority,
+    BridgeManagementLease,
+) {
     let bridge = bridges.bridge(id).await.unwrap().unwrap();
     let management = svc
         .management_lease(&caller(), None, id, bridge.revision)
@@ -181,7 +196,7 @@ async fn proposal(
         agent,
         &digest,
         AllocationCapabilityObservation {
-            owner_live_sandbox_limit: 3,
+            owner_live_sandbox_limit,
             baseline_services: Vec::new(),
             owner: owner(),
             profiles_digest: digest.clone(),
@@ -448,6 +463,15 @@ async fn renew_retained(
     bridges: &MongoBridgeStore,
     record: &AllocationRecord,
 ) -> Result<AllocationAuthority, AllocationError> {
+    renew_retained_with_owner_limit(svc, bridges, record, 3).await
+}
+
+async fn renew_retained_with_owner_limit(
+    svc: &BridgeService,
+    bridges: &MongoBridgeStore,
+    record: &AllocationRecord,
+    owner_live_sandbox_limit: u16,
+) -> Result<AllocationAuthority, AllocationError> {
     let bridge = bridges
         .bridge(&record.pin.bridge_id)
         .await
@@ -468,7 +492,7 @@ async fn renew_retained(
         profiles.agent.clone(),
         &profiles.trust_digest,
         AllocationCapabilityObservation {
-            owner_live_sandbox_limit: 3,
+            owner_live_sandbox_limit,
             baseline_services: Vec::new(),
             owner: owner(),
             profiles_digest: profiles.trust_digest.clone(),
