@@ -5,6 +5,8 @@ mod asynchronous;
 mod finalization;
 #[path = "retirement_fixture.rs"]
 mod fixture;
+#[path = "home_finality_tests.rs"]
+mod home_finality;
 #[path = "retirement_recovery_tests.rs"]
 mod recovery;
 #[path = "retention_tests.rs"]

@@ -35,6 +35,7 @@ pub struct PersistentHomeVolumes {
     namespace: String,
     controller: String,
     scope: HomeVolumeScope,
+    backing_observer: Option<std::sync::Arc<dyn crate::HomeBackingObserver>>,
 }
 
 impl PersistentHomeVolumes {
@@ -77,7 +78,16 @@ impl PersistentHomeVolumes {
             namespace,
             controller,
             scope,
+            backing_observer: None,
         })
+    }
+
+    pub fn with_backing_observer(
+        mut self,
+        observer: std::sync::Arc<dyn crate::HomeBackingObserver>,
+    ) -> Self {
+        self.backing_observer = Some(observer);
+        self
     }
 
     pub async fn preflight(&self, policy: &HomeVolumePolicy) -> Result<()> {
@@ -137,6 +147,10 @@ impl PersistentHomeVolumes {
 
 #[async_trait::async_trait]
 impl HomeVolumeStore for PersistentHomeVolumes {
+    fn backing_observer(&self) -> Option<&dyn crate::HomeBackingObserver> {
+        self.backing_observer.as_deref()
+    }
+
     async fn delete_original_home(
         &self,
         original: &crate::HomeBackingIdentity,
