@@ -29,6 +29,25 @@ three owned Agents including an untouched zero-turn bootstrap, and the original
 native conversation identities. `recovery.finalEvidenceSha256` must bind the
 exact saved `after.json` and, when present, `resumption-lifecycle.json` bytes.
 
+The loader also accepts a separately reconciled successor after an admitted
+command terminally failed before dispatch. That successor retains the original
+failed journal, the admitted predecessor's journal and directive, its terminal
+command capture, and a fresh observation of the same owned resources. The
+coordinator must establish nondispatch from the actual terminal record and the
+exact deployed source path; missing projected dispatch fields alone do not prove
+it. Neither earlier key is resubmitted. One explicitly authorized fresh key may
+complete the Trigger continuation before the original unsent manual continuation.
+Select this successor's directory through `fixtureRecoveryDirectory` only after
+its separate result passes the shared loader. Preserve the previous selection
+and all failed receipts when changing the configuration.
+
+This successor validates complete recorded pause/revival history, including
+generation advances larger than one and retryable lifecycle failures that later
+settled. Every reopened native conversation must retain its original identity.
+Its final counts remain two completed turns on each tested Agent and zero on the
+bootstrap Agent. This proves completion after the documented recovery; it does
+not turn either failed request or the earlier rollout comparison into a success.
+
 An accepted pause resumption establishes an explicit event-history boundary for
 later checks. Every earlier native opening must retain the original conversation
 identity. Later retirements or generation changes still fail, and subsequent
@@ -175,6 +194,13 @@ Outputs preserve the original fixture files and record new observations under
 hashes, Node/browser versions, exact application images, runtime contract and
 coordinator rollout times alongside those receipts. SHA arguments are recorded
 assertions, not independent deployment attestation. Failed attempts remain failed.
+
+When deployment uses an image built from a CI merge commit, retain its actual
+build revision for application and turn attribution. Record the merged delivery
+commit separately and prove that both commits have the same source tree. Bind
+the API and web image receipts to that build, source tree, CI run and actual
+deployment. A delivery commit must not replace the original OCI revision merely
+because the two commits contain the same files.
 
 These tools do not prove approval-wait survival, dirty-file or pause/revive
 behavior, provider delivery, cookie/OAuth renewal, continuous availability between
