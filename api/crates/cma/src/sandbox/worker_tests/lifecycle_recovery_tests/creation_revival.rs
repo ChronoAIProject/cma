@@ -214,7 +214,7 @@ async fn paused_create_scenario() {
     );
 }
 
-fn workspace_for(agent: &Agent, now: SystemTime) -> Workspace {
+pub(super) fn workspace_for(agent: &Agent, now: SystemTime) -> Workspace {
     let content = WorkspaceProfileContent {
         location: WorkspaceLocation::Directory {
             name: "project-1".into(),

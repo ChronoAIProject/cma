@@ -231,10 +231,22 @@ fn exact_adoption_distinguishes_absence_identity_mismatch_and_non_running_state(
         Err(AdapterError::Rejected(_))
     ));
 
-    let mut stopped = sandbox(handle.as_str(), "sbx", 2, &expected_fingerprint);
-    stopped.status.as_mut().unwrap().state = "Stopped".into();
-    assert!(matches!(
-        select_adoption(&handle, &expected, provider_inventory(vec![stopped]).unwrap()),
-        Err(AdapterError::Rejected(detail)) if detail.contains("not running")
-    ));
+    for state in ["Pending", "Stopped", "Failed"] {
+        let mut unavailable = sandbox(handle.as_str(), "sbx", 2, &expected_fingerprint);
+        unavailable.status.as_mut().unwrap().state = state.into();
+        assert!(matches!(
+            select_adoption(&handle, &expected, provider_inventory(vec![unavailable]).unwrap()),
+            Err(AdapterError::Unavailable(detail)) if detail.contains("not running")
+        ));
+        let mut mismatched = sandbox(handle.as_str(), "sbx", 3, &expected_fingerprint);
+        mismatched.status.as_mut().unwrap().state = state.into();
+        assert!(matches!(
+            select_adoption(
+                &handle,
+                &expected,
+                provider_inventory(vec![mismatched]).unwrap()
+            ),
+            Err(AdapterError::Rejected(_))
+        ));
+    }
 }

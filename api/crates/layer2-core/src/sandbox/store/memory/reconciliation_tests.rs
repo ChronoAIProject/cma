@@ -312,6 +312,15 @@ async fn covered_queued_first_message_reopen_requires_exact_fresh_dispatch_work(
     let mut reopened = parked.clone();
     reopened.conversation.runtime_generation = Some(6);
     reopened
+        .work
+        .receipts
+        .push(crate::sandbox::AgentWorkReceipt {
+            step: AgentWorkStep::OpenConversation,
+            operation_id: format!("agent:{}:open:v1", reopened.id),
+            request_sha256: "a".repeat(64),
+            completed_at: NOW.into(),
+        });
+    reopened
         .transition(AgentStatus::Ready, NOW.into(), None)
         .unwrap();
     reopened.conversation.last_seq += 2;
