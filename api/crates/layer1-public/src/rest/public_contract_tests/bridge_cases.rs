@@ -40,6 +40,9 @@ pub(super) async fn scenario(name: &str) -> Option<Scenario> {
     if name.contains("_outage_") {
         ports.role.store(3, Ordering::SeqCst);
     }
+    if name.contains("_disabled_") {
+        ports.management.store(false, Ordering::SeqCst);
+    }
     if name.contains("_verified_") {
         ports.validation.store(1, Ordering::SeqCst);
     }
