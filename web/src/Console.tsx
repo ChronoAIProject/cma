@@ -10,6 +10,7 @@ import {
 } from './api/context';
 import { canOpenOperations } from './operator/capabilities';
 import { AgentSurface } from './agent/AgentSurface';
+import { useAgentDraft } from './agent/draft';
 import { AgentDetails } from './agent/Details';
 import { useAgentController } from './agent/controller';
 import { sameAgent } from './agent/status';
@@ -82,6 +83,7 @@ export function Console({
   const [artifactPublicationScope] = useState(() => new ArtifactPublicationScope());
   const [revision, setRevision] = useState(0);
   const client = useCmaClient();
+  const draft = useAgentDraft(client, user.id, route.kind === 'agent' ? route.agentId : undefined);
   const sandboxCommandScope = useMemo(() => ({ client, viewerId: user.id }), [client, user.id]);
   const agentAccess = useAgentAccess(
     client.resourceViews,
@@ -196,6 +198,7 @@ export function Console({
     ) : route.kind === 'agent' ? (
       <AgentSurface
         key={route.agentId}
+        draft={draft}
         agentId={route.agentId}
         viewerId={user.id}
         controller={agent}

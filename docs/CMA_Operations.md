@@ -35,6 +35,11 @@ publication and must be withdrawn if verification fails.
 
 ## Bridge Continuity Observation
 
+The [owned continuity runners](CMA_Owned_Continuity.md) preserve the prepared
+active-turn, native-history and passive browser-reconnect checks as committed,
+parameterized tooling. They require successful disposable fixture receipts and
+never select ordinary user resources or perform a deployment.
+
 Issue #850 is a prerequisite for enabling milestone 17. Use
 `.github/scripts/cma-bridge-continuity-observer.mjs` to capture read-only public
 Agent and Kubernetes evidence for exact selected Agents. The observer issues no
