@@ -91,6 +91,7 @@ impl KeyIssuer {
                 lease,
             )
             .await?;
+        metadata.require_initial_version()?;
         metadata.require(lease, &expected_name, &observed)?;
         intent.require_binding(lease, &self.deployment, &intent.credential_id)?;
         Ok(Some(observed))
