@@ -73,6 +73,26 @@ impl MongoChannelCommandStore {
         };
         request.require_result(&record)?;
         self.bind_sidecar(request, created, session).await?;
+        crate::store::channel_history::accepted_command(
+            &self
+                .invokes
+                .bridges
+                .client
+                .database(&self.allocations.namespace().db),
+            request.allocation(),
+            record.receipt.envelope.command_id.as_str(),
+            &request.inbox().id,
+            session,
+        )
+        .await
+        .map_err(|error| match error {
+            crate::store::bridge_allocations::MutationError::Mongo(error) => {
+                MutationError::Driver(error)
+            }
+            crate::store::bridge_allocations::MutationError::Core(_) => {
+                MutationError::Core(ChannelCommandAdmissionError::SourceMismatch)
+            }
+        })?;
         self.invokes
             .record_accepted_usage(request, &record, created, session)
             .await?;
