@@ -1,11 +1,14 @@
-//! Uncomposed bounded download adapter. No production connector grants exist.
-//! This does not change whole-message refusal or Agent attachment capability.
+//! Bounded connector retrieval. Discord text is composed behind explicit opt-in;
+//! binary media still needs independent provider authority and a trusted scanner.
 use std::net::{IpAddr, SocketAddr};
 
 use sha2::{Digest, Sha256};
 use tokio::time::{timeout_at, Instant};
 use zeroize::Zeroizing;
 
+pub(crate) mod discord;
+mod worker;
+pub(crate) use worker::capture;
 mod network;
 mod types;
 use network::{PinnedTarget, Resolver, Transport};
@@ -18,7 +21,7 @@ trait ConnectorAuthority: Send + Sync {
     async fn revalidate(&self, grant: &FetchGrant) -> Result<(), Unavailable>;
 }
 
-/// The only production authority. A provider-scoped grant contract is missing.
+/// Fail-closed authority for connectors without a provider-scoped grant.
 struct UnavailableAuthority;
 
 #[async_trait::async_trait]
@@ -115,7 +118,12 @@ async fn retrieve(
             if !grant.mime.corroborates(&bytes) {
                 return Err(Unavailable::Mime);
             }
-            if !matches!(scanner.scan(&bytes, grant.mime).await, ScanOutcome::Clean) {
+            // Strict UTF-8 text uses the ordinary untrusted text-input policy;
+            // this is not a malware-clean attestation. Binary files still need
+            // an independently supplied scanner and remain unavailable.
+            if grant.mime != Mime::Text
+                && !matches!(scanner.scan(&bytes, grant.mime).await, ScanOutcome::Clean)
+            {
                 return Err(Unavailable::Scan);
             }
             current(deadline)?;
@@ -181,5 +189,9 @@ fn public_address(address: IpAddr) -> bool {
     })
 }
 
+#[cfg(test)]
+pub(crate) mod capture_test_io;
+#[cfg(test)]
+pub(crate) mod discord_tests;
 #[cfg(test)]
 mod tests;

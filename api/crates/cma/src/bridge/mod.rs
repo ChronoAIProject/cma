@@ -12,8 +12,8 @@ use layer2_core::resource_access::{ResourceOwner, ResourceShareStore, ResourceTa
 use crate::auth::AuthMode;
 use crate::store::MongoBridgeStore;
 
-#[allow(dead_code)] // No connector fetch grants, expiring custody or Agent media consumer yet.
-mod attachments;
+#[allow(dead_code)] // Binary media candidates still require an unavailable scanner.
+pub(crate) mod attachments;
 mod capability_catalog;
 pub(crate) mod channel_renewal_work;
 pub(crate) mod channel_scheduler;
@@ -29,7 +29,7 @@ mod feature_policy;
 #[allow(dead_code)] // #861 awaits a composed route with live selected-key custody.
 pub(crate) mod ingress;
 mod managed_credentials;
-mod operations;
+pub(crate) mod operations;
 pub(crate) mod outbox_delivery;
 pub(crate) mod outbox_rate;
 pub(crate) mod outbox_scheduler;
@@ -67,6 +67,7 @@ pub(crate) fn service(
             custody: credentials.clone(),
             resources,
             provisioning,
+            flags,
         });
         Ok((
             BridgeService::new(
@@ -109,6 +110,7 @@ struct NyxBridgeValidator {
     custody: Arc<dyn BridgeCredentialResolver>,
     resources: Arc<dyn ResourceShareStore>,
     provisioning: Option<Arc<provisioning::BridgeProvisioningDependencies>>,
+    flags: crate::config::BridgeFeatureFlags,
 }
 
 #[async_trait::async_trait]
@@ -119,6 +121,7 @@ impl BridgeConnectionValidator for NyxBridgeValidator {
             self.provisioning
                 .as_ref()
                 .map(|deps| deps.adapter.capabilities()),
+            self.flags,
         );
         catalog
     }

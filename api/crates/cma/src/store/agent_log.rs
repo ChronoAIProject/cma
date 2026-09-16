@@ -224,6 +224,7 @@ async fn append_in_transaction(
                 "document_schema_version": DOCUMENT_SCHEMA_VERSION,
                 "last_seq": previous,
                 "record.conversation.last_seq": previous,
+                "channel_history_seal": { "$exists": false },
             },
             doc! {
                 "$set": {

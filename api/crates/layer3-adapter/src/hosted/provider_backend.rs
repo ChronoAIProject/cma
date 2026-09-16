@@ -132,6 +132,65 @@ impl ProviderHostedBackend {
 
 #[async_trait::async_trait]
 impl HostedBackend for ProviderHostedBackend {
+    async fn provision_receipted(
+        &self,
+        mut request: ProviderSandboxRequest,
+        operation_id: &str,
+        request_sha256: &str,
+    ) -> crate::Result<crate::RuntimeProvisionReceipt> {
+        let reclaimer = self.client.finality_reclaimer()?;
+        reclaimer.require_finality_scope()?;
+        let sandbox_id = provider_request_identity(&request)?.sandbox_id;
+        if self.reconcile(&request).await?.is_some() {
+            return Err(AdapterError::Unavailable(
+                "existing runtime cannot acquire a receipt for this dispatch".into(),
+            ));
+        }
+        let marker = crate::provider::dispatch_marker(operation_id)?;
+        let pre_dispatch = reclaimer.observe_before_dispatch(operation_id).await?;
+        request
+            .metadata
+            .insert(crate::provider::DISPATCH_LABEL.to_owned(), marker.clone());
+        // Exactly one POST. A failed or lost response cannot authorize a receipt.
+        let (created, response_sha256) = self.client.create_receipted(&request).await?;
+        let created = validate_sandbox_identity(&request, created)?;
+        if request
+            .metadata
+            .iter()
+            .any(|(key, value)| created.metadata.get(key) != Some(value))
+        {
+            return Err(identity_mismatch());
+        }
+        let handle = RuntimeHandle(created.id.clone());
+        let original = reclaimer
+            .capture_for_binding(
+                &handle,
+                operation_id,
+                request_sha256,
+                &response_sha256,
+                &request.metadata,
+                pre_dispatch,
+            )
+            .await?;
+        let handle = self.await_running(&request, created).await?;
+        reclaimer.require_bound_runtime(&original).await?;
+        self.transport.bind_runtime(&handle, &sandbox_id).await?;
+        Ok(original)
+    }
+
+    async fn finalize_runtime(
+        &self,
+        original: &crate::RuntimeProvisionReceipt,
+        operation_id: &str,
+    ) -> crate::Result<crate::RuntimeFinalityReceipt> {
+        let reclaimer = self.client.finality_reclaimer()?;
+        reclaimer.require_bound_runtime(original).await?;
+        self.transport.retire(original.handle()).await?;
+        reclaimer
+            .finalize_bound_runtime(original, operation_id)
+            .await
+    }
+
     async fn provision(&self, request: ProviderSandboxRequest) -> crate::Result<RuntimeHandle> {
         let sandbox_id = provider_request_identity(&request)?.sandbox_id;
         let sandbox = match self.reconcile(&request).await? {
@@ -336,7 +395,7 @@ fn provider_inventory(sandboxes: Vec<ProviderSandbox>) -> crate::Result<Vec<Runt
             Some(_) => {
                 return Err(AdapterError::Rejected(
                     "provider sandbox has an invalid lifecycle status".into(),
-                ))
+                ));
             }
         };
         observations.push(RuntimeObservation {

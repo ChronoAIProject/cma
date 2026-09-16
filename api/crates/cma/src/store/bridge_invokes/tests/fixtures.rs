@@ -125,12 +125,15 @@ pub(in crate::store::bridge_invokes) struct Fixture {
 }
 impl Fixture {
     pub async fn new() -> Self {
-        Self::build(false).await
+        Self::build(false, BridgePlatform::Telegram).await
     }
     pub async fn organization() -> Self {
-        Self::build(true).await
+        Self::build(true, BridgePlatform::Telegram).await
     }
-    async fn build(organization: bool) -> Self {
+    pub async fn discord_text() -> Self {
+        Self::build(false, BridgePlatform::Discord).await
+    }
+    async fn build(organization: bool, platform: BridgePlatform) -> Self {
         let mut context = caller();
         if organization {
             context.caller.subject = SubjectId::new("admin");
@@ -197,7 +200,7 @@ impl Fixture {
                 issuer: "https://nyx.example".into(),
                 base_url: "https://nyx.example".into(),
                 bot_id: "bot".into(),
-                platform: BridgePlatform::Telegram,
+                platform,
                 route_ids: vec!["route".into()],
                 key_id: "key".into(),
                 custody: BridgeSecretRef::new("brsec_00000000000000000000000000000001".into())

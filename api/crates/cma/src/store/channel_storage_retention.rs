@@ -14,6 +14,8 @@ pub(super) fn has_marker(document: &Document) -> bool {
         "channel_home_prepare_evidence",
         "channel_retirement",
         "channel_storage_retention",
+        "channel_history_seal",
+        "channel_retirement_finalization",
     ]
     .iter()
     .any(|field| document.contains_key(field))

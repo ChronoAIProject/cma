@@ -148,6 +148,7 @@ impl BridgeProvisioningAuthority {
             .ok_or(BridgeError::NotFound)?;
         let config = &bridge.pinned(pin)?.config;
         if config.placement.reused_parent().is_some() {
+            definitions.check_new_placement(config)?;
             return self.prepare_reuse(definitions, identity, pin, None).await;
         }
         let key = self.credentials.resolve(&bridge.owner, config).await?;

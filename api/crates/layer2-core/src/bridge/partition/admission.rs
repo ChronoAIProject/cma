@@ -106,7 +106,7 @@ impl NormalizedPartitionSource {
             ChannelEventKind::UnsupportedContent => return Some(R::ContentUnsupported),
             ChannelEventKind::SystemEvent => return Some(R::SystemEvent),
             ChannelEventKind::CallbackEcho => return Some(R::CallbackLoop),
-            ChannelEventKind::UserMessage => {}
+            ChannelEventKind::UserMessage | ChannelEventKind::DiscordTextAttachment => {}
         }
         match facts.loop_evidence {
             LoopEvidence::Unknown => return Some(R::UnknownLoopEvidence),

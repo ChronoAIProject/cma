@@ -28,6 +28,12 @@ impl AuthenticatedCallbackPayload<'_> {
 /// normalized envelope and leave absent/unsupported capability facts Unknown.
 pub trait CallbackCapabilityExtractor {
     fn contract(&self) -> CapabilityContract;
+    fn text_attachment(
+        &self,
+        _payload: &AuthenticatedCallbackPayload<'_>,
+    ) -> Result<Option<super::VerifiedTextAttachment>, CallbackError> {
+        Ok(None)
+    }
     fn observe(
         &self,
         payload: &AuthenticatedCallbackPayload<'_>,
@@ -60,7 +66,18 @@ impl SignedCallback {
         body: &[u8],
         extractor: &dyn CallbackCapabilityExtractor,
     ) -> Result<Self, CallbackError> {
-        let facts = extractor.observe(&self.authenticated_payload(body)?)?;
+        let payload = self.authenticated_payload(body)?;
+        let facts = extractor.observe(&payload)?;
+        let attachment = extractor.text_attachment(&payload)?;
+        if (facts.event_kind == crate::bridge::partition::ChannelEventKind::DiscordTextAttachment)
+            != attachment.is_some()
+        {
+            return Err(CallbackError::Payload);
+        }
+        if let Some(attachment) = attachment {
+            self.record.text_attachment = Some(attachment.metadata);
+            self.attachment_url = Some(attachment.url);
+        }
         // NyxID's route-level conversation type can describe a wildcard route.
         // The trusted extractor uses actual authenticated platform chat facts.
         self.record.envelope.conversation_type = facts.conversation.as_wire().into();
@@ -90,7 +107,9 @@ impl SignedCallback {
             &facts,
             extractor.contract(),
         ));
-        if self.record.admission == InboxAdmission::Accepted {
+        if self.record.admission == InboxAdmission::Accepted
+            && self.record.text_attachment.is_none()
+        {
             self.classify_reserved_control();
         }
         if tokio::time::Instant::now() >= self.deadline {

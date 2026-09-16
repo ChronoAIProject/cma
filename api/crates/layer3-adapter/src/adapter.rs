@@ -26,6 +26,28 @@ pub trait SandboxAdapter: Send + Sync {
 
     async fn provision(&self, spec: &SandboxSpec) -> Result<RuntimeHandle>;
 
+    /// Exactly one creation dispatch; failures cannot be upgraded by name-only recovery.
+    async fn provision_runtime_receipted(
+        &self,
+        _request: &RuntimeProvisionRequest,
+        _operation_id: &str,
+    ) -> Result<crate::RuntimeProvisionReceipt> {
+        Err(crate::AdapterError::Unsupported(
+            "original provider incarnation receipts are unavailable".into(),
+        ))
+    }
+
+    /// Delete only the original incarnation and return actual provider effect receipts.
+    async fn finalize_runtime(
+        &self,
+        _original: &crate::RuntimeProvisionReceipt,
+        _operation_id: &str,
+    ) -> Result<crate::RuntimeFinalityReceipt> {
+        Err(crate::AdapterError::Unsupported(
+            "exact provider finality is unavailable".into(),
+        ))
+    }
+
     /// Read the current process incarnation only for a verified persistent home.
     async fn runtime_status(&self, _handle: &RuntimeHandle) -> Result<crate::RuntimeStatus> {
         Err(crate::AdapterError::Unsupported(

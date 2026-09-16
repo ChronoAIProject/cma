@@ -126,7 +126,7 @@ pub(super) async fn write_transition(
         record_bson(&next.sidecar).map_err(|_| Error::Corrupt)?,
     );
     let changed = invokes.resources.agent_commands.update_one(
-        doc! {"_id":previous.receipt.envelope.command_id.as_str(),"revision":previous.revision as i64,"status":"waiting_action"},
+        doc! {"_id":previous.receipt.envelope.command_id.as_str(),"revision":previous.revision as i64,"status":"waiting_action","channel_history_seal":{"$exists":false}},
         doc! {"$set":fields},
     ).session(session).await?;
     if changed.matched_count != 1 {
