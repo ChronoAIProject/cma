@@ -61,6 +61,7 @@ async fn response_admission_reads_durable_open_before_ready_publication_without_
 struct Authority(SubjectId);
 pub(super) fn context(owner: &SubjectId) -> CallerContext {
     CallerContext {
+        credential_source: layer2_core::resource_access::CredentialSource::Retained,
         caller: Caller::new(
             owner.clone(),
             Authorization::new([Capability::UseOwnSandboxes]),

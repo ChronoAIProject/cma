@@ -17,13 +17,13 @@ impl SandboxControlAuthorizer for AuthState {
                 .validate()
                 .map_err(|_| CommandAuthorizationError::Revoked)?;
             let envelope = &record.envelope;
-            let subject = envelope
+            envelope
                 .actor_subject()
                 .map_err(|_| CommandAuthorizationError::Revoked)?;
             let state = self
-                .retained_actor_state(subject, &envelope.authorization)
+                .command_actor_custody(&envelope.actor, &envelope.authorization)
                 .await?;
-            let request = self.verify_human_state(state.clone()).await?;
+            let request = self.verify_command_custody(&state).await?;
             let mut context = self.resource_request_context(&request);
             context.actor = envelope.actor.clone();
             let credential = request
@@ -33,9 +33,7 @@ impl SandboxControlAuthorizer for AuthState {
             let proof = access
                 .authorize_sandbox_control(&context, credential, record)
                 .await?;
-            cookie_authorization::require_current_custody(self, &state)
-                .await
-                .map_err(|_| CommandAuthorizationError::Unavailable)?;
+            self.require_command_custody(&state).await?;
             proof.require_current()?;
             Ok(proof)
         })

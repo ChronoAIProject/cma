@@ -5,6 +5,7 @@ use std::time::SystemTime;
 
 fn context(subject: &str) -> CallerContext {
     CallerContext {
+        credential_source: layer2_core::resource_access::CredentialSource::Retained,
         caller: Caller::new(
             SubjectId::new(subject),
             Authorization::new([Capability::UseOwnSandboxes]),
