@@ -23,6 +23,9 @@ data:
   CHRONO_BRIDGE_WHATSAPP_ENABLED: "false"
   CHRONO_BRIDGE_X_ENABLED: "false"
   CHRONO_BRIDGE_V2_UI_TRANSPORT_ENABLED: "false"
+  # Independent placement rollout selections; these do not attest continuity.
+  CHRONO_BRIDGE_WORKSPACE_PER_PARTITION_ENABLED: "false"
+  CHRONO_BRIDGE_WORKTREE_AGENT_PER_PARTITION_ENABLED: "false"
   # Admission-only protocol selector. Requires a compatible worker/rollback floor.
   CHRONO_TRIGGER_COMMAND_ADMISSION_ENABLED: "false"
   # Bounded policy pinned before each Sandbox/Workspace provisioning effect.
