@@ -78,7 +78,7 @@ impl Fixture {
             metadata: Mutex::new(json!({"id":"key-prior",
             "name":crate::auth::keys::key_name("renewal-test", "sbx_channel_1").unwrap(),"is_active":true,"expires_at":expires_at,
             "state_version":4,"scopes":"proxy read","allowed_service_ids":["service-old"],"allowed_node_ids":["node-old"],
-            "allow_all_services":false,"allow_all_nodes":false,"credential_source":source,"purpose":"general","scheduled_write_enabled":false})),
+            "allow_all_services":false,"allow_auto_connected_services":false,"allow_all_nodes":false,"credential_source":source,"purpose":"general","scheduled_write_enabled":false})),
             status: Mutex::new(StatusCode::OK),
             deletes: AtomicUsize::new(0),
             delete_response: Mutex::new(StatusCode::NO_CONTENT),
@@ -174,7 +174,36 @@ async fn scoped_prior_key_revoke_uses_human_lease_for_person_or_org_and_replays_
 }
 
 #[tokio::test]
-async fn scoped_prior_key_delete_refuses_owner_scope_identity_or_state_changes() {
+async fn scoped_prior_key_revoke_accepts_usage_counter_advance_with_unchanged_authority() {
+    for owner in [
+        ResourceOwner::Person {
+            subject: SubjectId::new("fixture-person"),
+        },
+        ResourceOwner::Organization {
+            subject: SubjectId::new("fixture-org"),
+        },
+    ] {
+        for observed in [5, 91] {
+            let f = Fixture::new(owner.clone()).await;
+            {
+                let mut metadata = f.state.metadata.lock().unwrap();
+                metadata["state_version"] = json!(observed);
+                if observed == 91 {
+                    metadata["bindings_count"] = json!(0);
+                    metadata["platform"] = Value::Null;
+                    metadata["callback_url"] = Value::Null;
+                }
+            }
+            f.revoke().await.unwrap();
+            f.revoke().await.unwrap();
+            assert_eq!(f.state.deletes.load(Ordering::SeqCst), 1);
+            assert_eq!(f.previous.provider_state_version, 4);
+        }
+    }
+}
+
+#[tokio::test]
+async fn scoped_prior_key_delete_refuses_authority_changes_even_with_advanced_usage_counter() {
     let f = Fixture::new(ResourceOwner::Organization {
         subject: SubjectId::new("fixture-org"),
     })
@@ -183,8 +212,11 @@ async fn scoped_prior_key_delete_refuses_owner_scope_identity_or_state_changes()
     for (field, value) in [
         ("id", json!("another-key")),
         ("name", json!("another-sandbox")),
-        ("state_version", json!(5)),
+        ("state_version", json!(3)),
+        ("state_version", json!(0)),
+        ("state_version", json!(-1)),
         ("expires_at", json!("2099-01-02T00:00:00Z")),
+        ("scopes", json!("read")),
         ("allowed_service_ids", json!(["service-new"])),
         ("allowed_node_ids", json!(["node-new"])),
         ("credential_source", json!({"type":"personal"})),
@@ -192,13 +224,48 @@ async fn scoped_prior_key_delete_refuses_owner_scope_identity_or_state_changes()
             "credential_source",
             json!({"type":"org","org_id":"fixture-org","role":"admin","allowed":false}),
         ),
+        (
+            "credential_source",
+            json!({"type":"org","org_id":"another-org","role":"admin","allowed":true}),
+        ),
+        (
+            "credential_source",
+            json!({"type":"org","org_id":"fixture-org","role":"member","allowed":true}),
+        ),
+        ("purpose", json!("scheduled_invocation")),
         ("scheduled_write_enabled", json!(true)),
+        ("platform", json!("telegram")),
+        ("callback_url", json!("https://other.example/callback")),
+        ("bindings_count", json!(1)),
         ("allow_all_services", json!(true)),
+        ("allow_auto_connected_services", json!(true)),
+        ("allow_all_nodes", json!(true)),
     ] {
         let mut changed = original.clone();
+        changed["state_version"] = json!(91);
         changed[field] = value;
         *f.state.metadata.lock().unwrap() = changed;
         assert!(f.revoke().await.is_err(), "accepted changed {field}");
+    }
+    let mut missing = original;
+    missing
+        .as_object_mut()
+        .unwrap()
+        .remove("allow_auto_connected_services");
+    *f.state.metadata.lock().unwrap() = missing;
+    assert!(f.revoke().await.is_err());
+    assert_eq!(f.state.deletes.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn scoped_prior_key_delete_requires_positive_retained_counter() {
+    let mut f = Fixture::new(ResourceOwner::Person {
+        subject: SubjectId::new("fixture-person"),
+    })
+    .await;
+    for retained in [0, -1] {
+        f.previous.provider_state_version = retained;
+        assert!(f.revoke().await.is_err());
     }
     assert_eq!(f.state.deletes.load(Ordering::SeqCst), 0);
 }
