@@ -4,6 +4,7 @@ import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { compareSnapshots, digest } from './cma-bridge-continuity-observer.mjs';
 import { stableNative } from './cma-bridge-continuity-native.mjs';
+import { predecessorNames, resolveSuccessorFixture } from './cma-bridge-continuity-successor.mjs';
 
 const check = (condition, code) => { if (!condition) throw new Error(code); };
 const same = (a, b) => digest(a) === digest(b);
@@ -14,7 +15,11 @@ const evidenceNames = ['api-receipt.json', 'web-receipt.json', 'after-rollout.js
 export async function readRecoveryEvidence(directory, originalBytes) {
   const names = ['directive.json', 'journal.json', 'result.json', 'after.json', 'fresh-preflight.json', ...evidenceNames];
   const files = Object.fromEntries(await Promise.all(names.map(async name => [name, await readFile(join(directory, name))])));
-  if (JSON.parse(files['result.json']).runtimeMode === 'recorded_pause_resumption') {
+  const mode = JSON.parse(files['result.json']).runtimeMode;
+  if (mode === 'recorded_lifecycle_successor') {
+    for (const name of predecessorNames) files[name] = await readFile(join(directory, name));
+  }
+  if (['recorded_pause_resumption', 'recorded_lifecycle_successor'].includes(mode)) {
     files['resumption-lifecycle.json'] = await readFile(join(directory, 'resumption-lifecycle.json'));
   }
   return { originalBytes, files };
@@ -23,6 +28,7 @@ export async function readRecoveryEvidence(directory, originalBytes) {
 export function resolveRecoveryFixture(original, result, evidence) {
   check(evidence?.originalBytes && evidence.files, 'linked_recovery_evidence_required');
   const { files } = evidence;
+  if (result.runtimeMode === 'recorded_lifecycle_successor') return resolveSuccessorFixture(original, result, evidence);
   const json = name => JSON.parse(files[name]);
   const recovery = result.recovery;
   check(recovery && same(JSON.parse(evidence.originalBytes), original)
