@@ -8,6 +8,7 @@ import type {
 import type { BridgeViewsClient } from './client';
 import { useAuthorizedRead } from '../resources/useAuthorizedRead';
 import { isShared, loadPlacementAccess, type SharedPlacement } from './placementAccess';
+import { loadRetainedTarget, retainedTargetComplete } from './retainedTargetAccess';
 
 export function placementUnavailable(
   catalog: BridgeCapabilityCatalog | undefined,
@@ -74,6 +75,17 @@ export function usePlacementEditor(
   const access = useAuthorizedRead(accessRead);
   const key = JSON.stringify(placement ?? null);
   const retained = original !== undefined && key === JSON.stringify(original);
+  const retainedTarget = placement?.kind === 'existing_agent' ? placement.target : undefined;
+  const targetRead = useMemo(
+    () =>
+      organization === undefined ||
+      retainedTarget === undefined ||
+      !retainedTargetComplete(retainedTarget)
+        ? undefined
+        : (signal: AbortSignal) => loadRetainedTarget(client, retainedTarget, organization, signal),
+    [client, organization, retainedTarget],
+  );
+  const retainedAccess = useAuthorizedRead(targetRead);
   const [trust, setTrust] = useState<{ key: string; checked: boolean }>();
   const trustChecked = trust !== undefined && trust.key === key ? trust.checked : retained;
   return {
@@ -82,11 +94,16 @@ export function usePlacementEditor(
     access,
     reason,
     trustChecked,
+    retainedAccess,
     setTrust: (checked: boolean) => setTrust({ key, checked }),
     // An unchanged retained placement can accompany unrelated settings edits.
     // New placement intent requires fresh evidence, resource access and consent.
     canSave:
-      shared === undefined ||
+      (shared === undefined &&
+        (organization === undefined ||
+          retainedTarget === undefined ||
+          retained ||
+          retainedAccess.state.status === 'ready')) ||
       (retained && trustChecked) ||
       (reason === undefined && access.state.status === 'ready' && trustChecked),
   };

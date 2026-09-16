@@ -13,7 +13,12 @@ export function isShared(placement: BridgePlacement): placement is SharedPlaceme
   );
 }
 
-function expires(access: EffectiveAccess, organization: string | undefined, started: number) {
+export function accessDeadline(
+  access: EffectiveAccess,
+  organization: string | undefined,
+  started: number,
+  capabilities: readonly string[] = ['manage_sandbox'],
+) {
   const owner = access.owner;
   const sameOwner =
     organization === undefined
@@ -25,7 +30,7 @@ function expires(access: EffectiveAccess, organization: string | undefined, star
   );
   if (
     !sameOwner ||
-    !access.capabilities.includes('manage_sandbox') ||
+    capabilities.some((capability) => !access.capabilities.includes(capability)) ||
     !Number.isFinite(until) ||
     until <= Date.now()
   )
@@ -36,7 +41,7 @@ function expires(access: EffectiveAccess, organization: string | undefined, star
 }
 
 /** Existing public reads verify exact ancestry and current effective authority. */
-export async function loadPlacementAccess(
+export async function loadPlacementHierarchy(
   client: BridgeViewsClient,
   sandboxId: string,
   workspaceId: string | undefined,
@@ -46,12 +51,15 @@ export async function loadPlacementAccess(
   const started = Date.now();
   const target = workspaceId === undefined ? ['sandbox', sandboxId] : ['workspace', workspaceId];
   const initial = await client.resourceAccess.effective(target[0]!, target[1]!, { signal });
-  let until = expires(initial, organization, started);
+  let until = accessDeadline(initial, organization, started);
   const sandbox = await client.sandboxes.readAccessible(sandboxId, { signal });
   if (sandbox.id !== sandboxId || !['active', 'paused'].includes(sandbox.status))
     throw new Error('Choose an active or paused Sandbox.');
-  if (workspaceId !== undefined) {
-    const workspace = await client.workspaces.readAccessible(workspaceId, { signal });
+  const workspace =
+    workspaceId === undefined
+      ? undefined
+      : await client.workspaces.readAccessible(workspaceId, { signal });
+  if (workspace !== undefined) {
     if (
       workspace.id !== workspaceId ||
       workspace.sandbox_id !== sandboxId ||
@@ -60,9 +68,14 @@ export async function loadPlacementAccess(
       throw new Error('The selected Workspace must be ready and belong to this Sandbox.');
   }
   const current = await client.resourceAccess.effective(target[0]!, target[1]!, { signal });
-  until = Math.min(until, expires(current, organization, started));
+  until = Math.min(until, accessDeadline(current, organization, started));
   signal.throwIfAborted();
   if (initial.policy_revision !== current.policy_revision || until <= Date.now())
     throw new Error('Resource access changed. Check the selected resource again.');
-  return { value: true, revalidateAt: new Date(until).toISOString() };
+  return { value: { sandbox, workspace }, revalidateAt: new Date(until).toISOString() };
+}
+
+export async function loadPlacementAccess(...args: Parameters<typeof loadPlacementHierarchy>) {
+  const hierarchy = await loadPlacementHierarchy(...args);
+  return { value: true, revalidateAt: hierarchy.revalidateAt };
 }
