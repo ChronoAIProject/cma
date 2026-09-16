@@ -56,10 +56,6 @@ pub(super) async fn production_adapter(
         )
         .await
         .map_err(|error| format!("durable home authority is not usable: {error}"))?;
-        let homes = match layer3_adapter::provider::GkePdBackingObserver::new() {
-            Ok(observer) => homes.with_backing_observer(Arc::new(observer)),
-            Err(_) => homes,
-        };
         homes
             .preflight(policy)
             .await

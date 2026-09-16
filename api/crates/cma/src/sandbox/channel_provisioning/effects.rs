@@ -79,29 +79,6 @@ impl ChannelProvisioningDriver {
         {
             return Err(AllocationError::IdentityMismatch);
         }
-        // WaitForFirstConsumer storage binds after the first runtime starts.
-        // Capture the original exact disk now, never from a retirement read.
-        if let (Some(homes), Some(home)) = (
-            self.dependencies.adapter.home_volumes(),
-            snapshot
-                .sandbox
-                .lifecycle
-                .home
-                .as_ref()
-                .and_then(|home| home.attachment()),
-        ) {
-            if let Some(observer) = homes.backing_observer() {
-                if let Ok(backing) = homes.original_backing(&home, observer).await {
-                    // Failed capture/journal admission preserves provisioning;
-                    // the missing complete proof holds only final retirement.
-                    let _ = self
-                        .dependencies
-                        .allocations
-                        .record_channel_home_backing(authority, lease, &snapshot, &backing)
-                        .await;
-                }
-            }
-        }
         let status = crate::sandbox::runtime_attachment::provisioned_runtime_status(
             self.dependencies.adapter.as_ref(),
             &spec,

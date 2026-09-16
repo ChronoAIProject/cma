@@ -11,37 +11,13 @@ struct Homes {
     pending: AtomicBool,
     lose_create: AtomicBool,
     deletes: AtomicUsize,
-}
-#[async_trait::async_trait]
-impl HomeBackingObserver for Homes {
-    async fn capture_original(
-        &self,
-        reference: &HomeBackingReference,
-    ) -> layer3_adapter::Result<HomeBackingIdentity> {
-        Ok(HomeBackingIdentity {
-            reference: reference.clone(),
-            backing_generation: "original-disk-123".into(),
-        })
-    }
-    async fn observe_original_absence(
-        &self,
-        original: &HomeBackingIdentity,
-    ) -> layer3_adapter::Result<HomeBackingAbsence> {
-        if self.pending.load(Ordering::SeqCst) {
-            return Err(AdapterError::Unavailable(
-                "provider disk deletion remains pending".into(),
-            ));
-        }
-        Ok(serde_json::from_value(json!({"original":original,"request_id":"actual-disk-observation","response_sha256":"b".repeat(64)})).unwrap())
-    }
+    lose_delete: AtomicBool,
+    captures: AtomicUsize,
 }
 #[async_trait::async_trait]
 impl HomeVolumeStore for Homes {
     fn allocation_scope(&self) -> Option<HomeVolumeScope> {
         Some(HomeVolumeScope::from_authority("home-finality-fixture", &["original"]).unwrap())
-    }
-    fn backing_observer(&self) -> Option<&dyn HomeBackingObserver> {
-        Some(self)
     }
     async fn inventory(&self) -> layer3_adapter::Result<Vec<HomeVolumeAttachment>> {
         Ok(self.stored.lock().await.values().cloned().collect())
@@ -93,7 +69,7 @@ impl HomeVolumeStore for Homes {
                 "lost original create reply".into(),
             ));
         }
-        Ok(serde_json::from_value(json!({"home":home,"operation_id":operation_id,"creation_resource_version":"10","creation_response_sha256":provider_request_digest(&home)?})).unwrap())
+        Ok(serde_json::from_value(json!({"provider_scope":self.allocation_scope().unwrap(),"home":home,"operation_id":operation_id,"creation_resource_version":"10","creation_response_sha256":provider_request_digest(&home)?})).unwrap())
     }
     async fn verify(&self, home: &HomeVolumeAttachment) -> layer3_adapter::Result<()> {
         if self.stored.lock().await.get(&home.request.volume_id) != Some(home) {
@@ -101,51 +77,50 @@ impl HomeVolumeStore for Homes {
         }
         Ok(())
     }
-    async fn original_backing(
-        &self,
-        home: &HomeVolumeAttachment,
-        observer: &dyn HomeBackingObserver,
-    ) -> layer3_adapter::Result<HomeBackingIdentity> {
+    async fn remove_captures(&self, home: &HomeVolumeAttachment) -> layer3_adapter::Result<()> {
         self.verify(home).await?;
-        observer
-            .capture_original(&HomeBackingReference {
-                provider_scope: self.allocation_scope().unwrap(),
-                home: home.clone(),
-                pv_name: "original-pv".into(),
-                pv_uid: "original-pv-uid".into(),
-                csi_driver: "pd.csi.storage.gke.io".into(),
-                volume_handle: "projects/original/zones/original/disks/original".into(),
-            })
-            .await
+        self.captures.fetch_add(1, Ordering::SeqCst);
+        Ok(())
     }
     async fn delete_original_home(
         &self,
-        original: &HomeBackingIdentity,
+        original: &HomeProvisionReceipt,
         operation_id: &str,
-        observer: &dyn HomeBackingObserver,
     ) -> layer3_adapter::Result<HomeDeleteReceipt> {
-        assert_eq!(
-            &self
-                .original_backing(&original.reference.home, observer)
-                .await?,
-            original
+        self.verify(original.home()).await?;
+        assert!(
+            self.captures.load(Ordering::SeqCst) > 0,
+            "owned captures must be cleaned before the home claim"
         );
-        self.stored
-            .lock()
-            .await
-            .remove(&original.reference.home.request.volume_id);
         self.deletes.fetch_add(1, Ordering::SeqCst);
+        if self.lose_delete.swap(false, Ordering::SeqCst) {
+            self.stored
+                .lock()
+                .await
+                .remove(&original.home().request.volume_id);
+            return Err(AdapterError::Unavailable(
+                "lost original claim delete acknowledgement".into(),
+            ));
+        }
         Ok(serde_json::from_value(json!({"original":original,"operation_id":operation_id,"resource_version":"20","response_sha256":provider_request_digest(original)?})).unwrap())
     }
     async fn observe_home_finality(
         &self,
         delete: &HomeDeleteReceipt,
-        observer: &dyn HomeBackingObserver,
     ) -> layer3_adapter::Result<HomeFinalityReceipt> {
-        assert!(self.stored.lock().await.is_empty());
-        let ack = serde_json::to_value(delete).unwrap();
-        let absence = observer.observe_original_absence(delete.original()).await?;
-        Ok(serde_json::from_value(json!({"original":delete.original(),"claim_delete_operation_id":delete.operation_id(),"claim_delete_resource_version":ack["resource_version"],"claim_delete_response_sha256":ack["response_sha256"],"backing_absence":absence})).unwrap())
+        self.verify(delete.original().home()).await?;
+        if self.pending.load(Ordering::SeqCst) {
+            return Err(AdapterError::Unavailable(
+                "original home claim deletion remains pending".into(),
+            ));
+        }
+        self.stored
+            .lock()
+            .await
+            .remove(&delete.original().home().request.volume_id);
+        let absence =
+            provider_request_digest(&("cma.namespaced-home-claim-absence.v1", delete, 404_u16))?;
+        Ok(serde_json::from_value(json!({"delete":delete,"claim_absence_observation_sha256":absence,"cleanup_scope":"namespaced_claim"})).unwrap())
     }
     async fn remove(
         &self,
@@ -164,6 +139,8 @@ async fn fresh(lost_create: bool) -> (RetirementFixture, Arc<Homes>) {
         pending: AtomicBool::new(true),
         lose_create: AtomicBool::new(lost_create),
         deletes: AtomicUsize::new(0),
+        lose_delete: AtomicBool::new(false),
+        captures: AtomicUsize::new(0),
     });
     let hosted = CodexAdapter::with_backend(original.backend.clone(), CodexSandboxSpec::default())
         .with_channel_tools(original.tools.clone())
@@ -195,7 +172,7 @@ async fn fresh(lost_create: bool) -> (RetirementFixture, Arc<Homes>) {
 
 #[tokio::test]
 #[ignore = "requires the disposable MongoDB replica contract runner"]
-async fn channel_home_finality_resumes_from_persisted_delete_ack_and_retires_after_disk_absence() {
+async fn channel_home_finality_resumes_from_persisted_delete_ack_and_retires_after_claim_absence() {
     let (f, homes) = fresh(false).await;
     for _ in 0..6 {
         f.step().await;
@@ -227,6 +204,26 @@ async fn channel_home_finality_resumes_from_persisted_delete_ack_and_retires_aft
     }
     let sandbox = f.sandbox().await;
     assert_eq!(sandbox.status, SandboxStatus::Retired);
+    assert!(sandbox.purge_after.is_none());
+    let finality = f
+        .db()
+        .collection::<Document>("channel_provider_finality_receipts")
+        .find_one(doc! {"_id": &f.f.original.record.id})
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        finality
+            .get_document("record")
+            .unwrap()
+            .get_document("home")
+            .unwrap()
+            .get_document("receipt")
+            .unwrap()
+            .get_str("cleanup_scope")
+            .unwrap(),
+        "namespaced_claim"
+    );
     assert!(sandbox.lifecycle.home.is_none() && sandbox.runtime.is_none());
     assert_eq!(homes.deletes.load(Ordering::SeqCst), 1);
     assert_eq!(f.adapter.teardowns.load(Ordering::SeqCst), 1);
@@ -261,4 +258,53 @@ async fn channel_home_finality_lost_original_creation_reply_never_authorizes_hom
         0
     );
     f.close().await;
+}
+
+#[tokio::test]
+#[ignore = "requires the disposable MongoDB replica contract runner"]
+async fn channel_home_finality_foreign_uid_or_lost_delete_ack_never_publishes_retired() {
+    for lost_ack in [false, true] {
+        let (f, homes) = fresh(false).await;
+        for _ in 0..5 {
+            f.step().await;
+        }
+        if lost_ack {
+            homes.lose_delete.store(true, Ordering::SeqCst);
+        } else {
+            for home in homes.stored.lock().await.values_mut() {
+                home.receipt.storage_generation = "foreign-claim-uid".into();
+            }
+        }
+        f.step().await;
+        assert_eq!(f.sandbox().await.status, SandboxStatus::Retiring);
+        assert_eq!(
+            f.sandbox().await.work.step,
+            SandboxWorkStep::TeardownRuntime
+        );
+        let deletes = homes.deletes.load(Ordering::SeqCst);
+        assert_eq!(deletes, usize::from(lost_ack));
+        f.retry().await;
+        f.step().await;
+        assert_eq!(homes.deletes.load(Ordering::SeqCst), deletes);
+        assert_eq!(
+            f.db()
+                .collection::<Document>("channel_retirement_finalizations")
+                .count_documents(doc! {})
+                .await
+                .unwrap(),
+            0
+        );
+        let effects = f
+            .db()
+            .collection::<Document>("channel_provider_teardown_receipts")
+            .find_one(doc! {"_id": &f.f.original.record.id})
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            effects.get_document("record").unwrap().get("home_delete"),
+            Some(&mongodb::bson::Bson::Null)
+        );
+        f.close().await;
+    }
 }
