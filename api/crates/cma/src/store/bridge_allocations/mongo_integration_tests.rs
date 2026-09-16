@@ -24,11 +24,30 @@ async fn setup() -> (
     BridgeId,
     MongoBridgeAllocationStore,
 ) {
+    setup_with_callback_route(false).await
+}
+
+async fn setup_with_callback_route(
+    callback_route: bool,
+) -> (
+    Client,
+    String,
+    Arc<MongoBridgeStore>,
+    BridgeService,
+    BridgeId,
+    MongoBridgeAllocationStore,
+) {
     let (client, database, bridges) = fixture().await;
     let svc = service(bridges.clone());
     let id = BridgeService::creation_id(&caller(), "create").unwrap();
     let mut configured = config();
     configured.partition = BridgePartitionPolicy::ConversationSender;
+    if callback_route {
+        configured.connector.callback_url = format!(
+            "https://cma.example/api/v1/bridge-callbacks/{}",
+            id.as_str()
+        );
+    }
     svc.mutate(
         &caller(),
         None,

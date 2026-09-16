@@ -237,6 +237,10 @@ impl SignedCallback {
 }
 
 impl InboxWrite {
+    pub fn deadline(&self) -> tokio::time::Instant {
+        self.deadline
+    }
+
     pub fn control_refusal(&self) -> Option<super::ChannelControlRefusal> {
         self.control_refusal
     }
