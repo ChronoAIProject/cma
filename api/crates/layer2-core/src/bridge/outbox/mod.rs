@@ -53,6 +53,8 @@ pub enum OutboxError {
     Unavailable,
     #[error("outbox output exceeds supported bounds")]
     Bounds,
+    #[error("the Bridge reply backlog is full")]
+    Capacity,
     #[error("outbox record is invalid")]
     Corrupt,
     #[error("outbox state or worker claim changed")]

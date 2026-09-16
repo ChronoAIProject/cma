@@ -22,6 +22,7 @@ use super::MongoBridgeInvokeStore;
 
 pub(in crate::store) mod control_context;
 pub(super) use control_context::read_reference as read_control_reference;
+mod backlog;
 mod edit;
 mod enqueue;
 mod management;
@@ -90,6 +91,10 @@ impl MongoBridgeReplyToolStore {
         store
             .items
             .create_indexes([
+                IndexModel::builder()
+                    .keys(doc! {"record.source.pin.bridge_id":1,"state":1})
+                    .options(mongodb::options::IndexOptions::builder().name("bridge_outbox_backlog_v1".to_owned()).build())
+                    .build(),
                 // Existing permanent Sent rows already contain these exact
                 // derived source/receipt fields; no payload backfill is needed.
                 IndexModel::builder()
