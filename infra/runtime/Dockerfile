@@ -61,6 +61,57 @@ RUN --mount=type=cache,id=cma-gh-modules,target=/root/go/pkg/mod,sharing=locked 
         -ldflags="-s -w -X github.com/cli/cli/v2/internal/build.Version=${GH_VERSION} -X github.com/cli/cli/v2/internal/build.Date=2026-09-09" \
         -o /out/gh ./cmd/gh
 
+# Preserve the installed Debian security release, its quilt patches, kernel
+# baseline and hardening. The sole compatibility change makes loopback address
+# creation idempotent in gVisor's already-configured fresh network namespace.
+FROM debian:trixie-slim@sha256:d7e12182ce18b85b93007c1dedf31f2d29e01ccf3182cc4017c709b6259bc132 AS bubblewrap-build
+ARG BUBBLEWRAP_VERSION=0.12.0
+ARG BUBBLEWRAP_DEBIAN_VERSION=0.12.0-1~deb13u1
+ARG BUBBLEWRAP_SOURCE_SHA256=9760d007363e3abba7c747489910f9f82d9fca53ba3bd3282e396fa3c97a3314
+ARG BUBBLEWRAP_DEBIAN_SHA256=7b54f121aebf5d4b38360ea728274c26fa471582bc3e6658379b679ecd8b5a2f
+ARG BUBBLEWRAP_DSC_SHA256=1abef77e6c35ce6c48c8969d31bffcc7a589bfd8e8fea9284fd8d77750f01d39
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        build-essential ca-certificates curl dpkg-dev libcap-dev libselinux1-dev \
+        meson ninja-build patch pkgconf \
+    && rm -rf /var/lib/apt/lists/*
+WORKDIR /build
+COPY .github/scripts/bubblewrap-loopback.patch .github/scripts/bubblewrap-loopback-test.c /build/
+RUN set -eux; \
+    base=https://security.debian.org/debian-security/pool/updates/main/b/bubblewrap; \
+    curl -fsSL -o source.tar.xz "${base}/bubblewrap_${BUBBLEWRAP_VERSION}.orig.tar.xz"; \
+    curl -fsSL -o debian.tar.xz "${base}/bubblewrap_${BUBBLEWRAP_DEBIAN_VERSION}.debian.tar.xz"; \
+    curl -fsSL -o source.dsc "${base}/bubblewrap_${BUBBLEWRAP_DEBIAN_VERSION}.dsc"; \
+    echo "${BUBBLEWRAP_SOURCE_SHA256}  source.tar.xz" | sha256sum -c -; \
+    echo "${BUBBLEWRAP_DEBIAN_SHA256}  debian.tar.xz" | sha256sum -c -; \
+    echo "${BUBBLEWRAP_DSC_SHA256}  source.dsc" | sha256sum -c -; \
+    mv source.tar.xz "bubblewrap_${BUBBLEWRAP_VERSION}.orig.tar.xz"; \
+    mv debian.tar.xz "bubblewrap_${BUBBLEWRAP_DEBIAN_VERSION}.debian.tar.xz"; \
+    dpkg-source --no-check -x source.dsc /source
+WORKDIR /source
+RUN set -eux; \
+    export DEB_BUILD_MAINT_OPTIONS=hardening=+pie,+bindnow; \
+    dpkg-buildflags --export=sh > /build/compiler-flags; \
+    . /build/compiler-flags; \
+    meson setup _build --prefix=/usr --buildtype=plain \
+        -Dassume_kernel=5.10.0 -Dselinux=enabled -Dman=disabled \
+        -Dbash_completion=disabled -Dzsh_completion=disabled -Dtests=false; \
+    cc -O2 -Wall -Wextra -Werror -Wno-missing-field-initializers \
+        -I. -I_build /build/bubblewrap-loopback-test.c -o /build/loopback-test; \
+    if /build/loopback-test > /build/unpatched-test.log 2>&1; then \
+        echo 'unpatched bubblewrap unexpectedly passed the regression test' >&2; exit 1; \
+    fi; \
+    grep -Fx 'FAIL preconfigured loopback reaches link setup: success=0, link requests=0' /build/unpatched-test.log; \
+    patch --batch --fuzz=0 -p1 < /build/bubblewrap-loopback.patch; \
+    cc -O2 -Wall -Wextra -Werror -Wno-missing-field-initializers \
+        -I. -I_build /build/bubblewrap-loopback-test.c -o /build/loopback-test; \
+    /build/loopback-test; \
+    meson compile -C _build; \
+    mkdir /out; \
+    install -m 0755 _build/bwrap /out/bwrap; \
+    printf '%s\n' "${BUBBLEWRAP_DEBIAN_VERSION}" > /out/debian-version; \
+    test "$(/out/bwrap --version)" = "bubblewrap ${BUBBLEWRAP_VERSION}"
+
 # The NyxID CLI is published as a *-unknown-linux-gnu binary.
 FROM debian:trixie-slim@sha256:d7e12182ce18b85b93007c1dedf31f2d29e01ccf3182cc4017c709b6259bc132 AS runtime
 
@@ -245,6 +296,15 @@ RUN test -n "${OS_SECURITY_REFRESH}" \
     && apt-get update \
     && apt-get upgrade -y \
     && rm -rf /var/lib/apt/lists/*
+
+# Apply after the last security refresh so apt cannot overwrite the fix. A
+# newer Debian package requires reviewing and repinning its source first.
+# Preserve Debian's runtime dependencies and documentation. Codex resolves
+# this system bwrap without changing the provider or permission profile.
+RUN --mount=type=bind,from=bubblewrap-build,source=/out,target=/tmp/cma-bwrap,readonly \
+    test "$(dpkg-query -W -f='${Version}' bubblewrap)" = "$(cat /tmp/cma-bwrap/debian-version)" \
+    && install -m 0755 /tmp/cma-bwrap/bwrap /usr/bin/bwrap \
+    && /usr/bin/bwrap --version
 
 # Login shells keep the Sandbox Profile PATH even with a distinct Agent home.
 # Match the pinned Debian stanza exactly so base-file drift fails the build.
