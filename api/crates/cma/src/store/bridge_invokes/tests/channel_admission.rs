@@ -3,6 +3,7 @@ use super::*;
 use layer2_core::sandbox::agent_io::*;
 use layer2_core::sandbox::store::AgentStore;
 
+mod contention;
 mod execution_tests;
 mod feature_gates;
 pub(in crate::store) mod fixtures;
