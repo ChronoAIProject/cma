@@ -3,6 +3,69 @@ use futures_util::TryStreamExt;
 
 #[tokio::test]
 #[ignore = "requires the disposable MongoDB replica contract runner"]
+async fn retained_named_renewal_index_survives_allocation_open_and_discovery_reopen() {
+    let (client, database, bridges) =
+        crate::store::bridge_definitions::mongo_integration_tests::fixture().await;
+    let rows = client
+        .database(&database)
+        .collection::<Document>("bridge_allocations");
+    // This exact index name/key is written by the earlier renewal initializer.
+    // Seed it before the new allocation store has initialized retention lookups.
+    rows.create_index(
+        mongodb::IndexModel::builder()
+            .keys(doc! {"sandbox_admission.sandbox_id":1})
+            .options(
+                mongodb::options::IndexOptions::builder()
+                    .name("channel_sandbox_origin".to_owned())
+                    .build(),
+            )
+            .build(),
+    )
+    .await
+    .unwrap();
+    let existing = rows
+        .list_indexes()
+        .await
+        .unwrap()
+        .try_collect::<Vec<_>>()
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|index| {
+            index
+                .options
+                .as_ref()
+                .and_then(|options| options.name.as_deref())
+                == Some("channel_sandbox_origin")
+        })
+        .unwrap();
+    for _ in 0..2 {
+        let store =
+            crate::store::MongoBridgeAllocationStore::open(bridges.clone(), None, &database)
+                .await
+                .unwrap();
+        store.initialize_channel_renewal_discovery().await.unwrap();
+        let matches = rows
+            .list_indexes()
+            .await
+            .unwrap()
+            .try_collect::<Vec<_>>()
+            .await
+            .unwrap()
+            .into_iter()
+            .filter(|index| index.keys == existing.keys)
+            .collect::<Vec<_>>();
+        assert_eq!(matches.len(), 1);
+        assert_eq!(
+            mongodb::bson::serialize_to_document(&matches[0]).unwrap(),
+            mongodb::bson::serialize_to_document(&existing).unwrap()
+        );
+    }
+    client.database(&database).drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires the disposable MongoDB replica contract runner"]
 async fn renewal_discovery_is_due_bounded_and_advances_past_corrupt_rows_without_manual_work() {
     let f = RenewalFixture::new().await;
     f.original
