@@ -988,6 +988,7 @@ SDKs expose this scope through their accessible Sandbox list method.
 | `GET /api/v1/worktrees/{id}` | - | - | 200 AccessibleWorktreeView |
 
 | `GET /api/v1/bridge-connectors` | Bridge setup and management with current owner or organization authority. |
+| `GET /api/v1/bridge-creation-target` | Owner/admin callback preview using the required future create Idempotency-Key; no resource or reservation is created. |
 | `GET /api/v1/bridge-connectors/capabilities` | Owner/admin source capabilities and current deployment switches, including disabled connectors. |
 | `GET /api/v1/bridge-invoke-grants/{id}` | Read a retained-Agent invocation grant under current bridge management authority. |
 | `POST /api/v1/bridge-invoke-grants/{id}/revoke` | Revoke an exact invocation-grant revision with retained idempotent attribution. |
@@ -1076,9 +1077,21 @@ checked after count IO, before releasing either rows or `next`.
 
 Bridge management uses `/api/v1/bridges`; `/api/v1/bridge-connectors?organization={id}` lists complete bounded existing NyxID bot/key/route choices only for the personal owner or current organization administrator. CMA performs read-only discovery. A deployment without a NyxID provider and HTTPS CMA public origin returns `503 bridge_setup_unavailable`.
 
+Before selecting a route, read `GET /api/v1/bridge-creation-target?organization={id}`
+with the `Idempotency-Key` that will be used for `POST /api/v1/bridges`. Omit
+`organization` for a personal Bridge. The required response fields are
+`bridge_id`, `owner`, and the deployment-owned HTTPS `callback_url`; responses
+are private and non-cacheable. Configure this exact callback on the dedicated
+NyxID Agent key, add its route, then refresh connection choices. The same human
+and creation key produce the same Bridge ID. Retain that key through setup,
+reloads and uncertain create recovery, and verify the create receipt matches
+the preview. Preview requires current management authority and available setup
+but performs no database write, provider request, reservation, or enablement.
+Creation still requires the complete valid configuration and starts disabled.
+
 Read `/api/v1/bridge-connectors/capabilities?organization={id}` for the versioned [connector capability matrix](BRIDGE_CAPABILITIES.md), source revision and current deployment switches. This owner/admin diagnostic remains available when switches are off, performs no provider requests and grants no execution or reply authority. Telegram-new retains a distinct signed platform identity and an independent default-off deployment gate. Live platform verification and attachment retrieval remain unavailable.
 
-Creation starts disabled. The caller selects an owner, existing bot/key/routes, partition and placement, sender/chat/group policy, reply policy, and bounded limits. CMA derives the issuer, provider endpoint, callback URL, and internal custody locator; these fields are rejected in client configuration. Read `/bridges/{id}/configuration` as a manager to obtain the callback URL and selected configuration. Configure that exact callback on a dedicated matching NyxID key manually while preserving unrelated routes, then PUT the exact selected key to `/bridges/{id}/credential` with `expected_revision`. The key is write-only and its response contains only custody revision/presence/revocation. Identical selected-key import is idempotent; different material under the retained selected custody identity conflicts. A replacement key selection creates distinct custody.
+Creation starts disabled. The caller selects an owner, existing bot/key/routes, partition and placement, sender/chat/group policy, reply policy, and bounded limits. CMA derives the issuer, provider endpoint, callback URL, and internal custody locator; these fields are rejected in client configuration. After creation, read `/bridges/{id}/configuration` as a manager to verify the prepared callback URL and selected configuration. Preserve unrelated NyxID routes, then PUT the exact selected key to `/bridges/{id}/credential` with `expected_revision`. The key is write-only and its response contains only custody revision/presence/revocation. Identical selected-key import is idempotent; different material under the retained selected custody identity conflicts. A replacement key selection creates distinct custody.
 
 Background metadata and provisioning require explicit `retain_control_plane_authority: true` on key import. This additive boolean defaults to false. Consent authorizes only this Bridge, its exact owner and selected connector for 30 days, using the actual human's existing encrypted OAuth sign-in and refresh custody. The grant continues after browser logout; current account activity and exact organization admin access are checked for each operation. A new sign-in, removed provider authority, grant expiry or local key revocation stops this authority. Disable and reconnect the Bridge explicitly to attach or renew a grant; an unchanged retry preserves its original expiry. Historical key-only custody never borrows the importing actor's current login automatically.
 

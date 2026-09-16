@@ -2,10 +2,17 @@ import {
   createClient,
   type BridgeConfigurationDetail,
   type BridgeConnectorChoices,
+  type BridgeCreationTarget,
 } from '@chronoai/cma-sdk';
 import { vi } from 'vitest';
 import { initialConfiguration } from './configuration';
 import { NOW, WIRE_AGENT } from '../test/rest';
+
+export const bridgeCreationTarget: BridgeCreationTarget = {
+  bridge_id: `brg_${'a'.repeat(64)}`,
+  owner: { kind: 'person', subject: 'owner' },
+  callback_url: `https://cma.example/api/v1/bridge-callbacks/brg_${'a'.repeat(64)}`,
+};
 
 export const bridgeConfig = {
   ...initialConfiguration(),
@@ -60,6 +67,16 @@ export function bridgeTransport(
     const url = new URL(String(input));
     const overridden = answer?.(url, init);
     if (overridden !== undefined) return overridden;
+    if (url.pathname.endsWith('/bridge-creation-target')) {
+      const organization = url.searchParams.get('organization');
+      return Response.json({
+        ...bridgeCreationTarget,
+        owner:
+          organization === null
+            ? bridgeCreationTarget.owner
+            : { kind: 'organization', subject: organization },
+      });
+    }
     if (url.pathname.endsWith('/invoke-readiness'))
       return Response.json({
         bridge_id: bridgeDetail.bridge.id,

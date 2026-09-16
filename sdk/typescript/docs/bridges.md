@@ -17,6 +17,24 @@ existing encrypted refresh custody and never places a personal token in an
 organization Sandbox. New-Sandbox provisioning still requires a supported,
 distinct key with the exact selected service scope.
 
+Start with `creationTarget({ organization, idempotencyKey })` to read the real
+callback before a bot/key/route is complete. Omit `organization` for a personal
+Bridge. `BridgeCreationTarget` contains the required `bridge_id`, `owner` and
+`callback_url`. Configure that exact HTTPS callback on a dedicated NyxID Agent
+key, add the key to the bot’s route, and refresh `choices({ organization })`.
+The preview performs no write, provider call or reservation and grants no
+enablement authority. The public callback origin may differ from the SDK API
+origin. The SDK rejects malformed callbacks and inconsistent owner/ID fields.
+
+Retain the same visible ASCII `idempotencyKey` (1–200 characters) for preview,
+`create`, and every retry, including after returning from NyxID or reloading.
+The same authenticated human and key determine the Bridge ID. Compare the
+create receipt’s ID and owner with the preview before proceeding. After an
+uncertain create, preserve its exact body and key and explicitly recover the
+result; do not build a replacement create request. The CMA setup screen retains
+these nonsecret references in browser session storage and provides an explicit
+recovery action. Imported credentials are never stored there.
+
 Use `choices({ organization })` to select existing connector bots, keys and
 routes. `list`, `read` and `configuration` inspect current definitions and their
 safe setup projections. `create` creates a disabled draft; `update`, `control`,
