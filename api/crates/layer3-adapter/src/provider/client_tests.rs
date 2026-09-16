@@ -191,7 +191,7 @@ async fn provider_create_sends_exact_existing_mounts_and_refuses_implicit_alloca
 async fn provider_hash_label_encoding_is_reversible_on_create_get_and_list() {
     let original = format!("-{}", "a".repeat(42));
     let wire = format!("h.{original}");
-    let row = serde_json::json!({ "id": "runtime-label", "metadata": { "cma/spec-sha256": wire } });
+    let row = serde_json::json!({ "id": "runtime-label", "metadata": { "cma/spec-sha256": wire, "cma/home-identity": wire } });
     for operation in ["create", "get", "list"] {
         let body = if operation == "list" {
             serde_json::json!({"items":[row]}).to_string()
@@ -204,6 +204,9 @@ async fn provider_hash_label_encoding_is_reversible_on_create_get_and_list() {
         request
             .metadata
             .insert("cma/spec-sha256".into(), original.clone());
+        request
+            .metadata
+            .insert("cma/home-identity".into(), original.clone());
         let received = match operation {
             "create" => client.create(&request).await.unwrap(),
             "get" => client.get("runtime-label").await.unwrap(),
@@ -211,11 +214,14 @@ async fn provider_hash_label_encoding_is_reversible_on_create_get_and_list() {
         };
         assert_eq!(received.metadata["cma/spec-sha256"], original);
         assert_eq!(request.metadata["cma/spec-sha256"], original);
+        assert_eq!(received.metadata["cma/home-identity"], original);
+        assert_eq!(request.metadata["cma/home-identity"], original);
         let observed = task.await.unwrap();
         if operation == "create" {
             let (_, body) = observed.split_once("\r\n\r\n").unwrap();
             let sent: serde_json::Value = serde_json::from_str(body).unwrap();
             assert_eq!(sent["metadata"]["cma/spec-sha256"], wire);
+            assert_eq!(sent["metadata"]["cma/home-identity"], wire);
         }
     }
 }

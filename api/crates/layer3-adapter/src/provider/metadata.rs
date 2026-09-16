@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-const HASH_KEYS: [&str; 2] = ["cma/image-sha256", "cma/spec-sha256"];
+const HASH_KEYS: [&str; 3] = ["cma/image-sha256", "cma/spec-sha256", "cma/home-identity"];
 const LABEL_PREFIX: &str = "h.";
 
 fn is_hash(value: &str) -> bool {
@@ -44,6 +44,7 @@ mod tests {
             let original = BTreeMap::from([
                 (HASH_KEYS[0].into(), hash.clone()),
                 (HASH_KEYS[1].into(), hash.clone()),
+                (HASH_KEYS[2].into(), hash.clone()),
                 ("cma/sandbox".into(), "sbx_example".into()),
             ]);
             let mut wire = original.clone();
@@ -61,5 +62,17 @@ mod tests {
             decode(&mut wire);
             assert_eq!(wire, original);
         }
+    }
+
+    #[test]
+    fn original_home_identity_remains_stable_across_provider_label_encoding() {
+        // The production canary's original home hash was rejected as a label.
+        let identity = "-Unm6TY9hp2g63W90nzM978QwSNBSowv0CK2bVf3GxM";
+        let original = BTreeMap::from([("cma/home-identity".into(), identity.into())]);
+        let mut wire = original.clone();
+        encode(&mut wire);
+        assert_eq!(wire["cma/home-identity"], format!("h.{identity}"));
+        decode(&mut wire);
+        assert_eq!(wire, original);
     }
 }
