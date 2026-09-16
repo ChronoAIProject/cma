@@ -257,7 +257,7 @@ jobs:
       - name: Disposable real Mongo persistence contracts
         # A 622-contract run hit the 35-minute limit while tests still passed.
         # Retain the complete corpus and two bounded fixtures on slower runners.
-        timeout-minutes: 60
+        timeout-minutes: 75
         run: bash ../.github/scripts/mongo-contract-tests.sh
       - name: Doctests
         run: cargo test --doc --workspace --locked
