@@ -6,6 +6,8 @@ use super::authority::{authorize, BridgeAuthority};
 use super::store::digest;
 use super::*;
 
+mod placement;
+
 #[derive(Clone)]
 pub struct BridgeMutation {
     pub id: BridgeId,
@@ -310,6 +312,7 @@ impl BridgeService {
         {
             self.check_feature(BridgeFeature::Management, &connector.platform)?;
         }
+        self.check_placement_change(original.as_ref(), &mutation.change)?;
         let mut record = plan(original, &mutation, &context.actor)?;
         if matches!(mutation.change, BridgeChange::Enable)
             && matches!(

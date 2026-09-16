@@ -34,19 +34,22 @@ pub(super) struct ReplyFixture {
 
 impl ReplyFixture {
     pub async fn new() -> Self {
-        Self::build(false, false).await
+        Self::build(false, false, BridgePlatform::Telegram).await
     }
     pub async fn with_callback_route() -> Self {
-        Self::build(false, true).await
+        Self::build(false, true, BridgePlatform::Telegram).await
     }
     pub async fn with_newer_inbound() -> Self {
-        Self::build(true, false).await
+        Self::build(true, false, BridgePlatform::Telegram).await
     }
-    async fn build(newer: bool, callback_route: bool) -> Self {
+    pub async fn with_platform(platform: BridgePlatform) -> Self {
+        Self::build(false, false, platform).await
+    }
+    async fn build(newer: bool, callback_route: bool, platform: BridgePlatform) -> Self {
         let mut f = if callback_route {
             Fixture::with_callback_route().await
         } else {
-            Fixture::new().await
+            Fixture::with_platform(platform.clone()).await
         };
         f.record = f.ready().await;
         if newer {
@@ -88,8 +91,12 @@ impl ReplyFixture {
             .issue_channel(f.lease.clone(), &f.record.id, &inbound, f.authority)
             .await
             .unwrap();
-        let callback = crate::store::bridge_definitions::mongo_integration_tests::inbox::callback;
-        let (body, token, _) = callback("reply-client-input", "Work on this and keep me updated.");
+        use crate::store::bridge_definitions::mongo_integration_tests::inbox;
+        let (body, token, _) = inbox::callback_for_platform(
+            "reply-client-input",
+            "Work on this and keep me updated.",
+            &platform,
+        );
         let write = crate::store::bridge_definitions::mongo_integration_tests::inbox::write(
             &f.bridges,
             &f.record.pin.bridge_id,

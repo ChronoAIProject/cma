@@ -5,6 +5,32 @@ use crate::hosted::deployment::{provider_request_identity, ProviderIdentity};
 use crate::{AdapterError, RuntimeAdoptionRequest, RuntimeHandle, RuntimeObservation, SandboxSpec};
 
 impl HostedAdapter {
+    pub(super) async fn provision_receipted_exact(
+        &self,
+        request: &crate::RuntimeProvisionRequest,
+        operation_id: &str,
+    ) -> crate::Result<crate::RuntimeProvisionReceipt> {
+        let rendered = self
+            .deployment
+            .render_runtime(&request.spec, request.generation)?;
+        self.verify_spec_home(&request.spec).await?;
+        let identity = provider_request_identity(&rendered)?;
+        let request_sha256 = crate::provider_request_digest(request)?;
+        let receipt = self
+            .backend
+            .provision_receipted(rendered, operation_id, &request_sha256)
+            .await?;
+        receipt.validate()?;
+        if receipt.operation_id() != operation_id || receipt.request_sha256() != request_sha256 {
+            return Err(AdapterError::Rejected(
+                "provider returned another original dispatch receipt".into(),
+            ));
+        }
+        self.verify_spec_home(&request.spec).await?;
+        self.attach_state(receipt.handle().clone(), &request.spec, identity)
+            .await?;
+        Ok(receipt)
+    }
     pub(super) async fn inspect_runtime_status(
         &self,
         handle: &RuntimeHandle,

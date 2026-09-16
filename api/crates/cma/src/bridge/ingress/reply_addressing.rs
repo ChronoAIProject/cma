@@ -29,7 +29,10 @@ impl ReplyLookup {
     ) -> Result<Option<Self>, CallbackError> {
         let facts = super::capabilities::NyxidCapabilities.observe(payload)?;
         if facts.sender_kind != ChannelSenderKind::Human
-            || facts.event_kind != ChannelEventKind::UserMessage
+            || !matches!(
+                facts.event_kind,
+                ChannelEventKind::UserMessage | ChannelEventKind::DiscordTextAttachment
+            )
             || facts.loop_evidence != LoopEvidence::NotLoop
         {
             return Ok(None);
@@ -180,9 +183,16 @@ pub(crate) trait ReplyAddressingStore: Send + Sync {
 }
 
 pub(crate) struct ReplyCapabilities(pub Option<ConfirmedReply>);
+
 impl CallbackCapabilityExtractor for ReplyCapabilities {
     fn contract(&self) -> CapabilityContract {
         CapabilityContract::NyxidPlatformV1
+    }
+    fn text_attachment(
+        &self,
+        payload: &AuthenticatedCallbackPayload<'_>,
+    ) -> Result<Option<layer2_core::bridge::ingress::VerifiedTextAttachment>, CallbackError> {
+        super::capabilities::NyxidCapabilities.text_attachment(payload)
     }
     fn observe(
         &self,

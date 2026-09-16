@@ -67,11 +67,46 @@ impl MongoCallbackInbox {
         if changed.matched_count != 1 {
             return Err(CallbackError::BindingUnavailable.into());
         }
+        let document = alias.document()?;
         self.dispositions
-            .insert_one(alias.document()?)
+            .insert_one(document.clone())
             .session(&mut *session)
             .await?;
-        Ok(Some(alias.require_exact(write)?))
+        let acceptance = alias.require_exact(write)?;
+        if let CallbackAcceptance::ControlAccepted(receipt) = &acceptance {
+            let database = self
+                .bridges
+                .client
+                .database(&self.dispositions.namespace().db);
+            let row = crate::store::durability::majority_collection::<mongodb::bson::Document>(
+                &database,
+                "bridge_channel_control_intents",
+            )
+            .find_one(doc! {"_id": &receipt.intent_id})
+            .session(&mut *session)
+            .await?
+            .ok_or(CallbackError::Unavailable)?;
+            let intent = crate::store::bridge_invokes::channel_controls::records::read_intent(&row)
+                .map_err(|_| CallbackError::Unavailable)?;
+            alias.require_retained_control(&intent)?;
+            crate::store::channel_history::control_record(
+                &database,
+                &intent.reference,
+                crate::store::channel_history::ReferenceKind::ControlDisposition,
+                &document,
+                session,
+            )
+            .await
+            .map_err(|error| match error {
+                crate::store::bridge_allocations::MutationError::Mongo(error) => {
+                    MutationError::Mongo(error)
+                }
+                crate::store::bridge_allocations::MutationError::Core(_) => {
+                    MutationError::Core(CallbackError::Unavailable)
+                }
+            })?;
+        }
+        Ok(Some(acceptance))
     }
 
     pub(super) async fn retain_disposition(

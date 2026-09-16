@@ -54,6 +54,8 @@ const X_REQUEST_ID: HeaderName = HeaderName::from_static("x-request-id");
 #[tokio::main]
 async fn main() {
     tracing_subscriber::fmt()
+        // Keep container text fields stable for the existing log sink's queries.
+        .with_ansi(false)
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_env("RUST_LOG")
                 .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new(DEFAULT_LOG_FILTER)),

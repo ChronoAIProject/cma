@@ -9,6 +9,8 @@ use layer2_core::resource_access::{
 };
 use layer2_core::{Caller, Capability, SubjectId};
 
+use crate::bridge::operations::health::{authority_failure, AuthorityFailure};
+
 use super::{cookie_authorization, persistence::SubjectAuthState, refresh, AuthState};
 
 const IO_TIMEOUT: Duration = Duration::from_secs(15);
@@ -110,7 +112,10 @@ impl AuthState {
             }
             refresh::refresh_if_needed(self, &mut state)
                 .await
-                .map_err(|_| BridgeError::AuthorityUnavailable)?;
+                .map_err(|_| {
+                    authority_failure(AuthorityFailure::HumanRefreshFailed);
+                    BridgeError::AuthorityUnavailable
+                })?;
             if state.incarnation != incarnation {
                 return Err(reconnect());
             }
@@ -157,10 +162,10 @@ impl AuthState {
         {
             return Err(reconnect());
         }
-        let remaining = tokens
-            .expires_at
-            .duration_since(now)
-            .map_err(|_| reconnect())?;
+        let remaining = tokens.expires_at.duration_since(now).map_err(|_| {
+            authority_failure(AuthorityFailure::HumanTokenExpired);
+            reconnect()
+        })?;
         let mut deadline = started + remaining.min(Duration::from_secs(60));
         let request = cookie_authorization::request_for_cookie(self, &state.subject, state.clone())
             .await
@@ -180,9 +185,13 @@ impl AuthState {
                     .await
                     .map_err(|error| match error {
                         layer2_core::resource_access::MembershipError::Unavailable => {
+                            authority_failure(AuthorityFailure::MembershipUnavailable);
                             BridgeError::AuthorityUnavailable
                         }
-                        _ => reconnect(),
+                        _ => {
+                            authority_failure(AuthorityFailure::MembershipDenied);
+                            reconnect()
+                        }
                     })?;
                 let evidence = context
                     .memberships
@@ -193,7 +202,10 @@ impl AuthState {
                             && evidence.role == OrganizationRole::Admin
                             && evidence.is_current(&context.credential, SystemTime::now())
                     })
-                    .ok_or_else(reconnect)?;
+                    .ok_or_else(|| {
+                        authority_failure(AuthorityFailure::MembershipAdminRequired);
+                        reconnect()
+                    })?;
                 deadline = deadline.min(evidence.monotonic_deadline());
             }
             _ => return Err(reconnect()),
