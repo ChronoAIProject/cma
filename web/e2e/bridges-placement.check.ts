@@ -20,8 +20,21 @@ for (const mode of modes)
     baseURL,
   }, info) => {
     const { state, boundary } = await placementBoundary(page, baseURL!);
+    state.connected = false;
     await page.emulateMedia({ reducedMotion: 'reduce' });
     await page.goto('/organizations/org-one/bridges/new');
+    const callback = page.getByText(
+      `https://cma.example/api/v1/bridge-callbacks/brg_${'a'.repeat(64)}`,
+      { exact: true },
+    );
+    await expect(callback).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Save disabled bridge' })).toBeDisabled();
+    await page.reload();
+    await expect(callback).toBeVisible();
+    expect(state.previewKeys.length).toBeGreaterThanOrEqual(2);
+    expect(new Set(state.previewKeys).size).toBe(1);
+    state.connected = true;
+    await page.getByRole('button', { name: 'Refresh connection choices' }).click();
     await page.getByLabel('Bridge name', { exact: true }).fill('Organization research');
     await choose(page, 'Existing channel bot', 'telegram · bot-one');
     await choose(page, 'Existing channel key', 'key-one');
@@ -79,6 +92,14 @@ for (const mode of modes)
       );
       for (const width of [1440, 390, 320]) {
         await page.setViewportSize({ width, height: 1000 });
+        await expect
+          .poll(() =>
+            callback.evaluate((element) => {
+              const rect = element.getBoundingClientRect();
+              return rect.left >= 0 && rect.right <= innerWidth + 1;
+            }),
+          )
+          .toBe(true);
         const fields = page.getByRole('group', { name: 'Conversation and resources', exact: true });
         await fields.scrollIntoViewIfNeeded();
         await expect
@@ -100,7 +121,7 @@ for (const mode of modes)
     if (shared || retained) state.loseFirstSave = true;
     await save.click();
     if (shared || retained) {
-      const retry = page.getByRole('button', { name: 'Retry create bridge' });
+      const retry = page.getByRole('button', { name: 'Recover saved bridge' });
       await expect(retry).toBeVisible();
       state.available = false;
       state.authorized = false;
@@ -108,6 +129,7 @@ for (const mode of modes)
       await expect.poll(() => state.writes.length).toBe(2);
       expect(state.writes[1]).toEqual(state.writes[0]);
     } else await expect.poll(() => state.writes.length).toBe(1);
+    expect(state.writes[0]?.key).toBe(state.previewKeys[0]);
     const config = state.writes[0]!.body.config as { placement: Record<string, unknown> };
     expect(config.placement.kind).toBe(mode.kind);
     if (retained) expect(config.placement.target).toEqual(organizationTarget);

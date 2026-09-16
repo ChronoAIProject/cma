@@ -270,6 +270,19 @@ impl AgentOperationService {
         if sandbox.lifecycle.checkpoint_capture.is_some() {
             return Err(AgentOperationError::CheckpointInProgress);
         }
+        // A common command remains in its durable queue until the parent has
+        // published Active. PublishActive is still a lifecycle phase; fencing
+        // here would make the ordered writer refuse the same pending command.
+        if self.command_claim.is_some()
+            && !matches!(
+                sandbox.status,
+                SandboxStatus::Active | SandboxStatus::CredentialRotating
+            )
+        {
+            return Err(AgentOperationError::StatusConflict {
+                status: agent.status,
+            });
+        }
         let queues = match sandbox.status {
             SandboxStatus::Pausing | SandboxStatus::Paused => Ok(true),
             SandboxStatus::Reviving => match sandbox.lifecycle.operation.as_ref() {

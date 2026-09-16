@@ -49,6 +49,7 @@ pub(super) async fn scenario(name: &str) -> Option<Scenario> {
     let base = fixture::fixture().await;
     let record = &base.memory.records[0];
     let ports = Arc::new(Ports {
+        management: std::sync::atomic::AtomicBool::new(true),
         role: AtomicUsize::new(2),
         calls: AtomicUsize::new(0),
         validation: AtomicUsize::new(1),

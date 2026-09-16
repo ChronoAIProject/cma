@@ -46,6 +46,14 @@ pub struct BridgeValidationView {
     pub valid: bool,
 }
 
+/// A deterministic setup address, not a reservation or effect authority.
+#[derive(Debug, Clone, Serialize)]
+pub struct BridgeCreationTarget {
+    pub bridge_id: BridgeId,
+    pub owner: ResourceOwner,
+    pub callback_url: String,
+}
+
 #[derive(Clone)]
 pub struct BridgeSetupService {
     pub(super) definitions: BridgeService,
@@ -118,23 +126,7 @@ impl BridgeSetupService {
             .definitions
             .authority(context, credential, owner, true)
             .await?;
-        let platforms = [
-            BridgePlatform::Telegram,
-            BridgePlatform::TelegramNew,
-            BridgePlatform::Discord,
-            BridgePlatform::Lark,
-            BridgePlatform::Feishu,
-            BridgePlatform::Slack,
-            BridgePlatform::Whatsapp,
-            BridgePlatform::X,
-        ];
-        if !platforms.iter().any(|platform| {
-            self.definitions
-                .check_feature(BridgeFeature::Management, platform)
-                .is_ok()
-        }) {
-            return Err(BridgeError::Unavailable);
-        }
+        self.require_management_enabled()?;
         let credential = credential.ok_or(BridgeError::AuthorityUnavailable)?;
         let mut choices = tokio::time::timeout(
             Duration::from_secs(5),
@@ -171,6 +163,51 @@ impl BridgeSetupService {
             .collect();
         choices.keys.retain(|key| keys.contains(&key.id));
         Ok(choices)
+    }
+
+    /// Read-only setup discovery. Creation still independently checks the owner,
+    /// selected platform, configuration and routes using the same creation key.
+    pub async fn creation_target(
+        &self,
+        context: &CallerContext,
+        credential: Option<&str>,
+        owner: &ResourceOwner,
+        key: &str,
+    ) -> Result<BridgeCreationTarget, BridgeError> {
+        let authority = self
+            .definitions
+            .authority(context, credential, owner, true)
+            .await?;
+        self.require_management_enabled()?;
+        let bridge_id = BridgeService::creation_id(context, key)?;
+        let callback_url = self.policy.callback_url(&bridge_id);
+        authority.require(true)?;
+        Ok(BridgeCreationTarget {
+            bridge_id,
+            owner: owner.clone(),
+            callback_url,
+        })
+    }
+
+    fn require_management_enabled(&self) -> Result<(), BridgeError> {
+        let platforms = [
+            BridgePlatform::Telegram,
+            BridgePlatform::TelegramNew,
+            BridgePlatform::Discord,
+            BridgePlatform::Lark,
+            BridgePlatform::Feishu,
+            BridgePlatform::Slack,
+            BridgePlatform::Whatsapp,
+            BridgePlatform::X,
+        ];
+        if !platforms.iter().any(|platform| {
+            self.definitions
+                .check_feature(BridgeFeature::Management, platform)
+                .is_ok()
+        }) {
+            return Err(BridgeError::Unavailable);
+        }
+        Ok(())
     }
     pub async fn create(
         &self,

@@ -150,7 +150,7 @@ it('recovers an uncertain shared save with its original request despite later un
   const save = screen.getByRole('button', { name: 'Save disabled bridge' });
   await waitFor(() => expect(save).toBeEnabled());
   await test.user.click(save);
-  const retry = await screen.findByRole('button', { name: 'Retry create bridge' });
+  const retry = await screen.findByRole('button', { name: 'Recover saved bridge' });
   const reads = test.fetch.mock.calls.filter(([url]) =>
     String(url).includes('/capabilities'),
   ).length;
@@ -166,7 +166,7 @@ it('recovers an uncertain shared save with its original request despite later un
     test.fetch.mock.calls.filter(([url]) => String(url).includes('/capabilities')),
   ).toHaveLength(reads);
   await waitFor(() =>
-    expect(screen.queryByRole('button', { name: 'Retry create bridge' })).not.toBeInTheDocument(),
+    expect(screen.queryByRole('button', { name: 'Recover saved bridge' })).not.toBeInTheDocument(),
   );
 });
 

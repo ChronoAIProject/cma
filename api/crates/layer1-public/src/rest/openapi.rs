@@ -3,8 +3,6 @@ use utoipa::openapi::security::SecurityRequirement;
 use utoipa::{openapi, OpenApi};
 mod identity;
 mod projections;
-use identity::{anonymous_path, operation_id};
-
 use self::projections::{
     EmbedContentSecurityPolicy, EmbedDescriptor, EmbedSnippets, SignupOptions,
 };
@@ -33,6 +31,7 @@ use super::problems::ProblemDocument;
 use super::profile_authoring::shapes::*;
 use super::profiles_openapi_shapes::*;
 use super::trigger_openapi_shapes::*;
+use identity::{anonymous_path, operation_id};
 
 #[derive(OpenApi)]
 #[openapi(
@@ -58,6 +57,7 @@ use super::trigger_openapi_shapes::*;
         super::bridge_outbox::detail,
         super::bridge_outbox::recover,
         super::bridges::choices,
+        super::bridges::creation_target,
         super::bridges::capabilities,
         super::bridges::list,
         super::bridges::read,
