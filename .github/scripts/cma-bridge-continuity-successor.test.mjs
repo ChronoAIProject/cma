@@ -21,8 +21,8 @@ function fixture(paused = false, precedingCycles = 1, retirementEvents = false) 
   const before = { schema: 'cma-bridge-continuity-observation-v1', status: 'observed', observedAt: time(0), scope: { agentIds: resources.agentIds },
     agents: resources.agentIds.map((id,index) => ({ id, sandboxId: resources.sandboxId, workspaceId: resources.workspaceId, worktreeId: `wkt_${index}`, profileHash: 'a'.repeat(64), createdAt: time(0), status: 'ready', events: eventPrefix(baseEvents) })),
     runtimes: [{ name: 'runtime1', uid: 'uid1', sandboxId: resources.sandboxId, generation: '1', contract: '3', containers: [{name:'runtime',image:'fixture',id:'container',restarts:0}] }] };
-  const original = { schema: 'cma-public-canary-journal-v1', run: 'successor-fixture', owner: 'subject', origin: 'https://fixture.invalid', commit: '1'.repeat(40), resources, bootstrapAgentId: ids[2],
-    commands: { 'continue-0': { path: `/api/v1/agents/${ids[0]}/input`, body: JSON.stringify({ text: 'repeat marker' }), key: 'successor-fixture-continue-0', state: 'unsettled', attempts: 1, safeCode: 'public_http_403_forbidden' } }, // gitleaks:allow -- synthetic idempotency key, no credential
+  const original = { schema: 'cma-public-canary-journal-v1', run: 'test', owner: 'subject', origin: 'https://fixture.invalid', commit: '1'.repeat(40), resources, bootstrapAgentId: ids[2],
+    commands: { 'continue-0': { path: `/api/v1/agents/${ids[0]}/input`, body: JSON.stringify({ text: 'repeat marker' }), key: 'test-continue-0', state: 'unsettled', attempts: 1, safeCode: 'public_http_403_forbidden' } },
     baseline: { before, firstTurns: [first,first], nativeBefore: [nativeIdentity(baseEvents),nativeIdentity(baseEvents)] } };
   const originalBytes = bytes(original); const files = {};
   const state = (cycles, isPaused, counts) => {
