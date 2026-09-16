@@ -23,7 +23,7 @@ use layer2_core::{
 use serde_json::{json, Value};
 use std::{
     sync::{
-        atomic::{AtomicBool, AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicI64, AtomicUsize, Ordering},
         Arc, Mutex,
     },
     time::{Duration, SystemTime},
@@ -91,6 +91,7 @@ pub(crate) struct HttpState {
     pub owner: ResourceOwner,
     pub actor: SubjectId,
     pub mint_count: AtomicUsize,
+    pub metadata_version: AtomicI64,
     pub wrong_metadata_owner: AtomicBool,
     pub mint_unavailable: AtomicBool,
     pub create_body: Mutex<Option<Value>>,
@@ -132,6 +133,7 @@ impl Server {
             owner: lease.owner().clone(),
             actor: lease.actor_subject().clone(),
             mint_count: AtomicUsize::new(0),
+            metadata_version: AtomicI64::new(1),
             wrong_metadata_owner: AtomicBool::new(false),
             mint_unavailable: AtomicBool::new(false),
             create_body: Mutex::new(None),
@@ -202,6 +204,7 @@ async fn scope(
 ) -> Result<Json<Value>, StatusCode> {
     authorized(&headers)?;
     assert_eq!(body["selected_service_ids"], json!(["service-models"]));
+    assert_eq!(body["allow_auto_connected_services"], false);
     match &state.owner {
         ResourceOwner::Person { .. } => assert!(body.get("target_org_id").is_none()),
         ResourceOwner::Organization { subject } => {
@@ -212,7 +215,7 @@ async fn scope(
         json!({"authority":"nyxid","contract_version":"1","policy_version":"api-key-scope-v1",
         "authenticated_actor":{"type":"personal","id":state.actor.as_str()},"intended_key_owner":state.owner(),
         "services":[{"user_service_id":"service-models","resource_owner":state.owner(),"node_grant":{"type":"required","node_ids":["node-models"]}}],
-        "allowed_service_ids":["service-models"],"allowed_node_ids":["node-models"],"normalized_grant_digest":"a".repeat(64),
+        "allowed_service_ids":["service-models"],"allowed_node_ids":["node-models"],"allow_auto_connected_services":false,"normalized_grant_digest":format!("sha256:{}", "a".repeat(64)),
         "completeness":{"list_complete":true,"no_duplicates":true,"route_candidate_basis":"active_configured_routes","transient_node_state_excluded":true},
         "freshness":{"mode":"mutation_revalidated_snapshot","precondition_field":"scope_plan_digest","post_creation_drift":"fail_closed"},"key_purpose":"general"}),
     ))
@@ -226,9 +229,13 @@ async fn mint(
     state.mint_count.fetch_add(1, Ordering::SeqCst);
     assert_eq!(body["allowed_service_ids"], json!(["service-models"]));
     assert_eq!(body["allowed_node_ids"], json!(["node-models"]));
+    assert_eq!(body["allow_auto_connected_services"], false);
     assert_eq!(body["allow_all_services"], false);
     assert_eq!(body["allow_all_nodes"], false);
-    assert_eq!(body["scope_plan_digest"], "a".repeat(64));
+    assert_eq!(
+        body["scope_plan_digest"],
+        format!("sha256:{}", "a".repeat(64))
+    );
     match &state.owner {
         ResourceOwner::Person { .. } => assert!(body.get("target_org_id").is_none()),
         ResourceOwner::Organization { subject } => {
@@ -260,7 +267,7 @@ async fn metadata(
         .ok_or(StatusCode::NOT_FOUND)?;
     Ok(Json(
         json!({"id":"key-created","name":body["name"],"expires_at":body["expires_at"],"is_active":true,
-        "scopes":"proxy read","state_version":1,"allowed_service_ids":["service-models"],"allowed_node_ids":["node-models"],
-        "allow_all_services":false,"allow_all_nodes":false,"credential_source":state.source(),"purpose":"general","scheduled_write_enabled":false}),
+        "scopes":"proxy read","state_version":state.metadata_version.load(Ordering::SeqCst),"allowed_service_ids":["service-models"],"allowed_node_ids":["node-models"],
+        "allow_all_services":false,"allow_all_nodes":false,"allow_auto_connected_services":false,"credential_source":state.source(),"purpose":"general","scheduled_write_enabled":false}),
     ))
 }
