@@ -296,7 +296,19 @@ export function Menu({
   );
 
   return (
-    <span ref={rootRef} className={['menu-root', placement ?? ''].filter(Boolean).join(' ')}>
+    <span
+      ref={rootRef}
+      className={['menu-root', placement ?? ''].filter(Boolean).join(' ')}
+      onKeyDown={(event) => {
+        // Portalled rows bubble here too. Dismiss this menu before Escape
+        // reaches an enclosing dialog, including when its trigger has focus.
+        if (open && event.key === 'Escape') {
+          event.preventDefault();
+          event.stopPropagation();
+          onClose();
+        }
+      }}
+    >
       {anchor}
       {list === null ? null : createPortal(list, document.body)}
     </span>

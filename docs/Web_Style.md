@@ -602,6 +602,9 @@ Closing returns focus to the trigger when it was still inside the list. Otherwis
 again at the top of the document, which is as far from where somebody was working as it is possible
 to put them.
 
+Escape from an open list or its trigger closes the list without changing its value. An enclosing
+dialog stays open; a second Escape from the trigger can dismiss it.
+
 A list may be held to **its trigger's width** where the trigger is a row rather than a glyph, so its
 edges are the row's edges. The list is on the body and cannot take this from the trigger in CSS, so
 the width is measured with the position.
@@ -1941,6 +1944,7 @@ Append-only. Never edit or delete an entry.
 | 2026-09-16 | Add explicit cancellation and exact recovery for the latest locally accepted queued message using the existing Agent status band and Button. Preserve active-response controls, pending input, account isolation and editable drafts. |
 | 2026-09-16 | Offer ordinary queued input beside Stop response in Responses v2 tabs, with distinct accessible labels, existing composer controls and draft-preserving admission recovery. |
 | 2026-09-16 | Keep Queue message and Stop response aligned beside the input at every supported viewport, using explicit composer grid columns and existing control sizes and gaps. |
+| 2026-09-17 | Dismiss an open menu before its enclosing dialog on Escape from a row or trigger, preserving the selected value and returning focus to the trigger. |
 
 ### Approved Agent artifacts
 
