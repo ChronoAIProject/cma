@@ -1,10 +1,28 @@
 use super::*;
+use layer2_core::{sandbox::AgentRuntimeTarget, RuntimeCapabilities};
+
+pub(crate) struct ChannelControlContextObservation {
+    pub reference: String,
+    pub target: AgentRuntimeTarget,
+    pub capabilities: RuntimeCapabilities,
+}
 
 impl MongoBridgeReplyToolStore {
+    #[cfg(test)]
     pub(crate) async fn control_context(
         &self,
         capability: &ChannelReplySessionAuthorization,
     ) -> Result<Option<String>, OutboxError> {
+        Ok(self
+            .control_context_observation(capability)
+            .await?
+            .map(|context| context.reference))
+    }
+
+    pub(crate) async fn control_context_observation(
+        &self,
+        capability: &ChannelReplySessionAuthorization,
+    ) -> Result<Option<ChannelControlContextObservation>, OutboxError> {
         let scope = match self.read_current(capability, None).await {
             Ok(scope) => scope,
             Err(OutboxError::ToolUnavailable) => return Ok(None),
@@ -75,7 +93,7 @@ impl MongoBridgeReplyToolStore {
         reference: &str,
         candidate: &mut Option<ChannelControlReferenceRecord>,
         session: &mut ClientSession,
-    ) -> Result<Option<String>, MutationError> {
+    ) -> Result<Option<ChannelControlContextObservation>, MutationError> {
         self.fence_turn(scope, validation, session).await?;
         let snapshot = self
             .turn_snapshot(
@@ -110,6 +128,20 @@ impl MongoBridgeReplyToolStore {
         };
         let authorization =
             snapshot.control_reference_authorization(scope, &grant, &consent, &receipt)?;
+        // Take routing facts from the same fenced, authorized turn snapshot as
+        // the reference. A reference supplied by a caller never selects a runtime.
+        let turn = snapshot.observation(scope.capability_incarnation(), scope.deadline())?;
+        let target = AgentRuntimeTarget {
+            agent_id: turn.agent.id.clone(),
+            runtime_generation: scope.runtime_generation(),
+            conversation_id: turn
+                .agent
+                .conversation
+                .conversation_id
+                .clone()
+                .ok_or(OutboxError::ToolUnavailable)?,
+        };
+        let capabilities = turn.agent.capabilities.clone();
         if let Some(record) = candidate.as_ref() {
             authorization.require_record(record)?;
         } else {
@@ -124,13 +156,21 @@ impl MongoBridgeReplyToolStore {
         {
             let existing = read_reference(&document)?;
             authorization.require_record(&existing)?;
-            return Ok(Some(existing.reference));
+            return Ok(Some(ChannelControlContextObservation {
+                reference: existing.reference,
+                target,
+                capabilities,
+            }));
         }
         self.control_references
             .insert_one(reference_document(retained)?)
             .session(&mut *session)
             .await?;
-        Ok(Some(retained.reference.clone()))
+        Ok(Some(ChannelControlContextObservation {
+            reference: retained.reference.clone(),
+            target,
+            capabilities,
+        }))
     }
 }
 

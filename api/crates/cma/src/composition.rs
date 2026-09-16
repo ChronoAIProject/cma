@@ -253,6 +253,7 @@ impl ControlPlaneComposition {
             bridge_definitions.clone(),
             bridge_credentials.clone(),
             resource_access.clone(),
+            live_agents.clone(),
         )
         .await?;
         let sandbox_credentials = bridge::sandbox_credentials(
@@ -403,6 +404,7 @@ impl ControlPlaneComposition {
             live_agents.clone(),
         )
         .await?;
+        let channel_tools = bridge.channel_tools_router(channel_tools, &config.public_url);
         let resource_routes = rest::profiles_router(profiles)
             .merge(bridge.management)
             .merge(layer1_public::rest::agent_artifacts_router(
@@ -468,13 +470,7 @@ impl ControlPlaneComposition {
         let router = Router::new()
             .merge(public)
             .merge(bridge.callbacks)
-            .merge(crate::bridge::channel_tools::router(
-                Arc::new(crate::bridge::channel_tools::StoredChannelTools {
-                    capabilities: channel_tools,
-                    replies: bridge.replies.clone(),
-                }),
-                &config.public_url,
-            ))
+            .merge(channel_tools)
             .merge(crate::health::router(stores))
             .layer(axum::middleware::from_fn_with_state(
                 limits,

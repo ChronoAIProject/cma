@@ -18,19 +18,39 @@ pub(crate) struct BridgeComposition {
     pub invokes: BridgeInvokeService,
     pub allocations: Arc<MongoBridgeAllocationStore>,
     pub replies: Arc<crate::store::MongoBridgeReplyToolStore>,
+    control_runtime: Option<Arc<super::control_runtime::LocalChannelControlRuntime>>,
     pub invoke_store: Arc<MongoBridgeInvokeStore>,
     pub inbox: Arc<MongoCallbackInbox>,
     pub channel: Arc<layer2_core::sandbox::agent_io::ChannelAgentCommandService>,
 }
 
 impl BridgeComposition {
+    pub(crate) fn channel_tools_router(
+        &self,
+        capabilities: Arc<crate::store::MongoChannelToolStore>,
+        public_origin: &str,
+    ) -> Router {
+        super::channel_tools::router(
+            Arc::new(super::channel_tools::StoredChannelTools {
+                capabilities,
+                replies: self.replies.clone(),
+                control_runtime: self.control_runtime.clone(),
+            }),
+            public_origin,
+        )
+    }
+
     pub(crate) async fn build(
         config: &Config,
         stores: &MongoStores,
         definitions: BridgeService,
         credentials: Option<Arc<super::ManagedBridgeCredentials>>,
         access: Arc<ResourceAccessService>,
+        runtimes: Arc<dyn layer2_core::sandbox::AgentRuntimeRegistry>,
     ) -> Result<Self, String> {
+        let control_runtime = Arc::new(super::control_runtime::LocalChannelControlRuntime::new(
+            runtimes,
+        ));
         let invoke_store = Arc::new(
             MongoBridgeInvokeStore::open(
                 stores.bridge_definitions.clone(),
@@ -81,7 +101,7 @@ impl BridgeComposition {
         ));
         let cleanup = Arc::new(layer2_core::bridge::cleanup::BridgeCleanupService::new(
             definitions.clone(),
-            access,
+            access.clone(),
             Arc::new(super::cleanup::ManagedBridgeCleanup::new(
                 definitions.clone(),
                 allocations.clone(),
@@ -89,6 +109,22 @@ impl BridgeComposition {
                 config.deployment_id.clone(),
             )),
         ));
+        let partitions = Arc::new(layer2_core::bridge::status::BridgePartitionService::new(
+            definitions.clone(),
+            access,
+            allocations.clone(),
+        ));
+        let partition_commands = Arc::new(
+            layer2_core::bridge::partition_commands::BridgePartitionCommandService::new(
+                definitions.clone(),
+                Arc::new(super::partition_commands::ManagedPartitionCommands::new(
+                    definitions.clone(),
+                    allocations.clone(),
+                    invokes.clone(),
+                    credentials.clone(),
+                )),
+            ),
+        );
         let setup = super::setup::service(&config.auth_mode, definitions, credentials.clone())
             .map_err(|error| format!("bridge setup is not usable: {error}"))?
             .map(|setup| {
@@ -106,7 +142,13 @@ impl BridgeComposition {
             .merge(layer1_public::rest::bridge_source_control_router(Some(
                 source_controls,
             )))
-            .merge(layer1_public::rest::bridge_cleanup_router(Some(cleanup)));
+            .merge(layer1_public::rest::bridge_cleanup_router(Some(cleanup)))
+            .merge(layer1_public::rest::bridge_partitions_router(Some(
+                partitions,
+            )))
+            .merge(layer1_public::rest::bridge_partition_commands_router(Some(
+                partition_commands,
+            )));
         let inbox = Arc::new(
             MongoCallbackInbox::open(
                 &stores.bridge_definitions,
@@ -137,6 +179,7 @@ impl BridgeComposition {
             ),
             invokes.clone(),
             config.bridge_flags,
+            control_runtime.clone(),
         ));
         let ingress = ingress.map(|ingress| Arc::new(ingress.with_channel_controls(controls)));
         Ok(Self {
@@ -145,6 +188,10 @@ impl BridgeComposition {
             invokes,
             allocations,
             replies,
+            control_runtime: config
+                .bridge_flags
+                .enabled(crate::config::bridge_flags::BridgeFlag::ControlAdmission)
+                .then_some(control_runtime),
             invoke_store,
             inbox,
             channel,

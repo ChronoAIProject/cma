@@ -54,7 +54,7 @@ fn tools() -> Value {
         "annotations":{"readOnlyHint":false,"destructiveHint":false,"idempotentHint":true,"openWorldHint":true}
     },{
         "name":"read_channel_control_context",
-        "description":"Read this active channel source's retained control reference when its sender has separate control consent. Cancellation and steering are currently unavailable: operations is empty. This reference grants no authority. This tool does not send a message or control work.",
+        "description":"Read this active channel source's retained control reference when its sender has separate control consent. Operations lists cancellation and steering only when the exact current runtime supports them and control admission is enabled. Availability is advisory and rechecked for each request. This reference grants no authority. This tool does not send a message or control work.",
         "inputSchema":{"type":"object","properties":{},"additionalProperties":false},
         "annotations":{"readOnlyHint":true,"destructiveHint":false,"idempotentHint":true,"openWorldHint":false}
     }]})
@@ -103,7 +103,7 @@ async fn call(
                     | OutboxError::AuthorityUnavailable
                     | OutboxError::Suspended
                     | OutboxError::Expired,
-                ) => control_context(None),
+                ) => control_context(ChannelControlContext::default()),
                 Err(_) => result(json!({"code":"channel_control_context_unavailable"}), true),
             })
         }
@@ -165,14 +165,16 @@ async fn call(
     }
 }
 
-fn control_context(reference: Option<String>) -> Value {
-    let availability = if reference.is_some() {
+fn control_context(context: ChannelControlContext) -> Value {
+    let availability = if !context.operations.is_empty() {
+        "available"
+    } else if context.reference.is_some() {
         "execution_unavailable"
     } else {
         "unavailable"
     };
     result(
-        json!({"source_control_reference":reference,"operations":[],
+        json!({"source_control_reference":context.reference,"operations":context.operations,
         "approval_mode":"dashboard_only","availability":availability}),
         false,
     )
