@@ -32,7 +32,21 @@ async fn callback(
     Path(id): Path<String>,
     request: Request,
 ) -> Response {
+    let started = std::time::Instant::now();
     let result = accept(state, id, request).await;
+    let outcome = match &result {
+        Ok(CallbackAcceptance::Message(_)) => "message_persisted",
+        Ok(CallbackAcceptance::ControlAccepted(_)) => "control_persisted",
+        Ok(CallbackAcceptance::ControlRefused(_)) => "control_refused",
+        Err(error) => error.telemetry_code(),
+    };
+    // Unauthenticated request IDs, routes, headers and bodies never enter logs.
+    tracing::info!(
+        target: "cma::bridge::operations",
+        operation = "ingress", outcome,
+        elapsed_ms = crate::bridge::operations::elapsed_ms(started.elapsed()),
+        "channel_operation"
+    );
     let mut response = match result {
         Ok(CallbackAcceptance::Message(receipt)) => (
             StatusCode::ACCEPTED,
@@ -130,6 +144,21 @@ impl From<CallbackError> for HttpFailure {
 }
 
 impl HttpFailure {
+    fn telemetry_code(&self) -> &'static str {
+        match self {
+            Self::Core(CallbackError::Authentication) => "authentication_failed",
+            Self::Core(CallbackError::Bounds) => "bounds_exceeded",
+            Self::Core(CallbackError::Payload) => "payload_invalid",
+            Self::Core(CallbackError::ReplayConflict) => "replay_conflict",
+            Self::Core(CallbackError::Capacity) => "capacity_exceeded",
+            Self::Core(CallbackError::KeysUnavailable) => "keys_unavailable",
+            Self::Core(CallbackError::BindingUnavailable) => "binding_unavailable",
+            Self::Core(CallbackError::Unavailable) => "acceptance_unknown",
+            Self::NotConfigured => "ingress_disabled",
+            Self::ContentType => "content_type_invalid",
+            Self::BodyTimeout => "body_timeout",
+        }
+    }
     fn response(self) -> Response {
         use CallbackError as E;
         let (status, code, acceptance) = match self {
