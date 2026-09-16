@@ -87,6 +87,15 @@ pub(super) async fn apply(
             snapshot.sandbox.runtime = None;
             ("runtime_gone", SandboxWorkStep::MarkRetired)
         }
+        RetirementChange::ProviderFinality(receipt)
+            if state.phase == RetirementPhase::RuntimeIntent =>
+        {
+            super::provider_finality::write_verified(&database, &snapshot, receipt, session)
+                .await?;
+            state.phase = RetirementPhase::RuntimeGone;
+            snapshot.sandbox.runtime = None;
+            ("runtime_gone", SandboxWorkStep::MarkRetired)
+        }
         RetirementChange::RetainStorage
             if state.phase == RetirementPhase::RuntimeGone && snapshot.retention.is_none() =>
         {
