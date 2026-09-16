@@ -99,35 +99,8 @@ impl MongoChannelCommandStore {
         request.require_current()?;
         Ok(*record)
     }
-}
 
-#[async_trait::async_trait]
-impl ChannelCommandStore for MongoChannelCommandStore {
-    async fn refuse_channel_hold(
-        &self,
-        refusal: Arc<layer2_core::sandbox::agent_io::ChannelHoldRefusal>,
-    ) -> Result<(), ChannelCommandAdmissionError> {
-        self.refuse_held(refusal).await
-    }
-    async fn channel_execution_source(
-        &self,
-        command: &AdmittedAgentCommand,
-    ) -> Result<
-        layer2_core::sandbox::agent_io::ChannelCommandExecutionSource,
-        ChannelCommandAdmissionError,
-    > {
-        self.read_execution_source(command).await
-    }
-
-    async fn release_channel_command(
-        &self,
-        fence: Arc<layer2_core::sandbox::agent_io::ChannelExecutionFence>,
-        command: &AdmittedAgentCommand,
-    ) -> Result<(), ChannelCommandAdmissionError> {
-        self.release_held(fence, command).await
-    }
-
-    async fn reserve_channel_command(
+    async fn reserve_current(
         &self,
         request: ChannelCommandReservation,
     ) -> Result<AdmittedAgentCommand, ChannelCommandAdmissionError> {
@@ -179,6 +152,43 @@ impl ChannelCommandStore for MongoChannelCommandStore {
         // elapsed transient contention itself is not a semantic ledger conflict.
         request.require_current()?;
         Err(ChannelCommandAdmissionError::Unavailable)
+    }
+}
+
+#[async_trait::async_trait]
+impl ChannelCommandStore for MongoChannelCommandStore {
+    async fn refuse_channel_hold(
+        &self,
+        refusal: Arc<layer2_core::sandbox::agent_io::ChannelHoldRefusal>,
+    ) -> Result<(), ChannelCommandAdmissionError> {
+        self.refuse_held(refusal).await
+    }
+    async fn channel_execution_source(
+        &self,
+        command: &AdmittedAgentCommand,
+    ) -> Result<
+        layer2_core::sandbox::agent_io::ChannelCommandExecutionSource,
+        ChannelCommandAdmissionError,
+    > {
+        self.read_execution_source(command).await
+    }
+
+    async fn release_channel_command(
+        &self,
+        fence: Arc<layer2_core::sandbox::agent_io::ChannelExecutionFence>,
+        command: &AdmittedAgentCommand,
+    ) -> Result<(), ChannelCommandAdmissionError> {
+        self.release_held(fence, command).await
+    }
+
+    async fn reserve_channel_command(
+        &self,
+        request: ChannelCommandReservation,
+    ) -> Result<AdmittedAgentCommand, ChannelCommandAdmissionError> {
+        let authority_deadline = request.proof().deadline();
+        self.reserve_current(request)
+            .await
+            .map_err(|error| retry::normalize_expiry_error(authority_deadline, error))
     }
 }
 
