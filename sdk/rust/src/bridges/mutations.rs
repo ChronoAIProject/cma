@@ -3,7 +3,7 @@ use crate::{Error, IdempotencyKey, Result};
 use reqwest::{Method, StatusCode};
 use serde::Serialize;
 
-fn management(key: &IdempotencyKey) -> Result<()> {
+pub(super) fn management(key: &IdempotencyKey) -> Result<()> {
     if key.as_str().len() > 200 {
         return Err(Error::validation(
             "bridge idempotency key exceeds 200 bytes",
