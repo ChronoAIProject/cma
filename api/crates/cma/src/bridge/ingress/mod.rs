@@ -204,11 +204,10 @@ impl CallbackIngress {
         let write = signed
             .bind(CallbackBinding::new(bridge, proof)?)?
             .with_platform_redelivery(redelivery)?;
-        if let Some(error) = lookup_error {
-            return self.inbox.recover_receipt(&write).await?.ok_or(error);
-        }
         if let Some(controls) = &self.controls {
-            controls.accept(write).await
+            controls.accept(write, lookup_error).await
+        } else if let Some(error) = lookup_error {
+            self.inbox.recover_receipt(&write).await?.ok_or(error)
         } else {
             self.inbox.accept(write).await
         }

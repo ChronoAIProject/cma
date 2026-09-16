@@ -42,6 +42,16 @@ returns the durable refusal `channel_controls_disabled` for otherwise valid new
 cancel/steer requests. Previously accepted Message, refusal and version-2 control
 receipts recover before that selector or a new source/runtime observation.
 
+Recovery uses the authenticated callback identity and original deadline without
+granting fresh control authority. An accepted control can recover its original
+receipt and complete provider alias when current reply lookup fails or group
+admission has changed. The same transaction validates the retained intent,
+command and canonical callback/provider records; missing or conflicting evidence
+cannot be acknowledged as complete acceptance. A disabled or partition-refused
+request that races an enabled writer must recover that same complete graph before
+committing its result. When reply lookup fails and no prior acceptance exists,
+CMA reports uncertain availability without creating Message work or a refusal.
+
 Fresh executable admission additionally requires an issued reference with a
 32-character lowercase hexadecimal suffix. A trusted Mongo observation reads the
 exact reference, permanent original Message source, allocation, complete current

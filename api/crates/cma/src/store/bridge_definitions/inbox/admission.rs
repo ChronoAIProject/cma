@@ -4,6 +4,25 @@ use crate::store::bridge_credentials::callback::CallbackBindingError;
 use layer2_core::bridge::BridgeRecord;
 
 impl MongoCallbackInbox {
+    /// The dedicated control store owns recovery through this transaction.
+    /// Fresh fallback may retain only an existing disabled/partition refusal;
+    /// it cannot create accepted ordinary Message or control work.
+    pub(in crate::store) async fn refuse_fresh_control(
+        &self,
+        write: &InboxWrite,
+        session: &mut ClientSession,
+    ) -> Result<CallbackAcceptance, MutationError> {
+        if write.record().admission == InboxAdmission::Accepted
+            && write.control_refusal()
+                != Some(
+                    layer2_core::bridge::ingress::ChannelControlRefusal::ChannelControlsDisabled,
+                )
+        {
+            return Err(CallbackError::Payload.into());
+        }
+        self.transaction(write, session).await
+    }
+
     pub(in crate::store) fn require_control_store(
         &self,
         bridges: &MongoBridgeStore,
