@@ -340,13 +340,28 @@ cannot authorize any of them.
 
 `AgentCommandAdmissionAuthority` checks the actual request issuer, subject,
 credential identity and Human/API attribution, then binds the exact selected
-credential to CMA's durable encrypted subject custody. Resource policy is checked
+credential to durable encrypted custody. A trusted request-source discriminator
+keeps existing browser sign-in custody separate from independently presented API
+credentials. A failed browser custody check never falls back to API retention.
+Resource policy is checked
 independently by `AgentCommandService` before reservation. A current human admin
 can therefore act on a shared or organization-owned Agent without borrowing its
 owner's login. View grants and member/viewer roles do not grant interaction.
 Personal owner behavior and the existing `personal:` custody hash are preserved.
 The hash binds configured issuer, actual human subject and sign-in incarnation;
 it does not encode resource ownership or resource-policy revision.
+
+Independent API custody uses an `api:` authority bound to configured issuer,
+actual subject, exact credential identity and the provider-verified expiry.
+Authenticated NyxID introspection must confirm `active=true`, `token_type=access`,
+the exact subject, current permissions and a future `exp`. Locally decoded claims
+only exclude restricted token types; they never authenticate the credential or
+establish expiry. Opaque Agent keys, service accounts, delegation, relay,
+resource restrictions and sender constraints are not eligible. Admission stores
+the exact access token independently and immutably with encrypted metadata
+binding and an expiry index. It does not modify `auth_subjects`, capture refresh
+tokens or use an owner's saved credential. Repeated admission retains the same
+authority and command idempotency scope.
 
 The production `ResourceCommandExecution` adapter obtains fresh resource authority
 from `AuthState` using the exact retained human credential. Refresh stays within
@@ -355,6 +370,18 @@ roles are verified before each effect, followed by an exact subject, sign-in,
 token-generation, token-identity and expiry recheck after resource IO. A different
 sign-in cannot inherit admitted commands. Relay, service-account, delegated and
 channel credentials cannot use this human path.
+
+For independent API commands, execution and revival re-read the same custody,
+verify the exact token with NyxID and recheck current resource/membership policy.
+The resulting transaction proof expires no later than the credential. Provider
+revocation, lost permissions, changed identity, missing custody or expiry prevents
+dispatch. Reads of existing history retain their independent authorization.
+Sandbox runtime credential renewal continues to use its separate owner delegation.
+
+After admitting `api:` commands, an application rollback must retain support for
+this authority and its additive custody collection. Older authorizers cannot
+execute these queued commands. Browser `personal:` records and their existing
+sign-in-incarnation protections remain compatible.
 
 Execution proof binds the exact command, actual actor, independent resource owner,
 current policy, ancestry, pinned profile and a nonrenewing lifetime of at most
