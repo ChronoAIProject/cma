@@ -136,3 +136,10 @@ or production platform behavior.
 Accepted-inbox work selection, renewable autonomous creation, truthful
 ChannelBridge resource-creation admission, ordered Agent command correlation,
 outbox/reply delivery and rollout remain subsequent work.
+
+## Public partition observations
+
+[Bridge partition status](BRIDGE_PARTITIONS.md) documents the authorized list and
+detail GET routes, exact retained targets, first-source labels and bounded
+Channel response correlation. These observations preserve native conversation
+continuity and do not grant authority for allocation or cleanup effects.

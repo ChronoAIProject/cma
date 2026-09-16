@@ -411,3 +411,24 @@ source-sender, exact-turn, retained-runtime, custody or admission authority, and
 does not enable cancel/steer execution, source-reference tools, channel approvals,
 reply producers or automatic notices. No resource, invoke grant or conversation
 is rewritten by recording this policy.
+
+## Read partition status
+
+`list_partitions(bridge_id, &PageOptions)` and `read_partition(bridge_id, allocation_id)` inspect exact retained partition generations.
+List pages default to and allow at most 25 rows; pass the opaque scoped cursor
+unchanged. Detail reads expose at most 64 pending Channel commands plus the
+latest correlated response. `pending_truncated` and `source_unavailable` mark
+incomplete observations. Target/source/activity use explicit available,
+unavailable or redacted states; reserved targets identify resources not yet
+present. Source labels describe the first accepted message, and must be rendered
+as text. Durable Agent status does not prove current worker connectivity. These
+GET operations preserve existing conversation continuity and admit no work.
+
+## Additional platform boundaries
+
+Slack (`slack`), WhatsApp (`whatsapp`) and X (`x`) retain distinct platform
+identities in configuration and connector choices. The capability catalog can
+report verified identity fields and Slack `slack_thread` facts while
+`inbound_text` and `output_text` remain false. These boundary fixtures do not
+establish human/loop evidence, Agent admission, media access or live delivery.
+Always inspect the capability and stage values before offering channel work.
