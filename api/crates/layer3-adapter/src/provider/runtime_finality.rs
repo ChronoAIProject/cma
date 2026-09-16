@@ -2,12 +2,10 @@ use super::*;
 use crate::{
     AdapterError, RuntimeFinalityReceipt, RuntimeProviderIncarnation, RuntimeProvisionReceipt,
 };
-use futures_util::TryStreamExt;
-use kube::api::{WatchEvent, WatchParams};
 
 pub(crate) const DISPATCH_LABEL: &str = "cma/provider-dispatch";
 
-pub(crate) struct CreationObservation {
+pub(crate) struct PreDispatchObservation {
     resource_version: String,
     marker: String,
 }
@@ -29,10 +27,10 @@ pub(crate) fn dispatch_marker(operation_id: &str) -> crate::Result<String> {
 }
 
 impl BatchSandboxReclaimer {
-    pub(crate) async fn begin_creation_observation(
+    pub(crate) async fn observe_before_dispatch(
         &self,
         operation_id: &str,
-    ) -> crate::Result<CreationObservation> {
+    ) -> crate::Result<PreDispatchObservation> {
         self.require_finality_scope()?;
         let marker = dispatch_marker(operation_id)?;
         let rows = self
@@ -43,7 +41,7 @@ impl BatchSandboxReclaimer {
                     .limit(2),
             )
             .await
-            .map_err(|error| kube_error("fence original runtime creation observation", error))?;
+            .map_err(|error| kube_error("observe runtime dispatch marker before POST", error))?;
         if !rows.items.is_empty()
             || rows
                 .metadata
@@ -52,7 +50,7 @@ impl BatchSandboxReclaimer {
                 .is_some_and(|v| !v.is_empty())
         {
             return Err(AdapterError::Rejected(
-                "provider dispatch already has physical history".into(),
+                "provider dispatch marker already exists or its inventory is incomplete".into(),
             ));
         }
         let resource_version = rows
@@ -60,9 +58,9 @@ impl BatchSandboxReclaimer {
             .resource_version
             .filter(|v| !v.is_empty())
             .ok_or_else(|| {
-                AdapterError::Unavailable("original creation observation has no version".into())
+                AdapterError::Unavailable("pre-dispatch observation has no version".into())
             })?;
-        Ok(CreationObservation {
+        Ok(PreDispatchObservation {
             resource_version,
             marker,
         })
@@ -71,7 +69,7 @@ impl BatchSandboxReclaimer {
         self.scope
             .as_ref()
             .ok_or_else(|| {
-                AdapterError::Unsupported("original provider scope is unavailable".into())
+                AdapterError::Unsupported("runtime provider scope is unavailable".into())
             })?
             .validate()
     }
@@ -89,86 +87,63 @@ impl BatchSandboxReclaimer {
     fn incarnation(&self, captured: &CapturedSandbox) -> crate::Result<RuntimeProviderIncarnation> {
         Ok(RuntimeProviderIncarnation {
             scope: self.scope.clone().ok_or_else(|| {
-                AdapterError::Unsupported("original runtime provider scope is unavailable".into())
+                AdapterError::Unsupported("runtime provider scope is unavailable".into())
             })?,
             namespace: self.namespace.clone(),
             name: captured.handle.0.clone(),
             uid: captured.identity.uid.clone(),
             generation: captured.identity.generation,
-            creation_resource_version: captured.resource_version.clone(),
+            binding_resource_version: captured.resource_version.clone(),
             identity_sha256: crate::provider_request_digest(&captured.identity)?,
         })
     }
 
-    pub(crate) async fn capture_created(
+    pub(crate) async fn capture_for_binding(
         &self,
         handle: &RuntimeHandle,
         operation_id: &str,
         request_sha256: &str,
-        observation: CreationObservation,
+        provider_response_sha256: &str,
+        expected_metadata: &BTreeMap<String, String>,
+        observation: PreDispatchObservation,
     ) -> crate::Result<RuntimeProvisionReceipt> {
-        if observation.marker != dispatch_marker(operation_id)? {
+        if observation.marker != dispatch_marker(operation_id)?
+            || expected_metadata.get(DISPATCH_LABEL) != Some(&observation.marker)
+        {
             return Err(AdapterError::Rejected(
-                "creation watch belongs to another dispatch".into(),
+                "pre-dispatch observation belongs to another request".into(),
             ));
         }
-        // Name is immutable: an ADDED event here proves creation, unlike a
-        // label-filter watch where adding a label can synthesize ADDED.
-        let watched = self
-            .api
-            .watch(
-                &WatchParams::default()
-                    .fields(&format!("metadata.name={}", handle.as_str()))
-                    .timeout(10),
-                &observation.resource_version,
-            )
-            .await
-            .map_err(|error| kube_error("read original creation event", error))?;
-        let captured =
-            tokio::time::timeout(Duration::from_secs(15), async {
-                futures_util::pin_mut!(watched);
-                for _ in 0..64 {
-                    match watched.try_next().await.map_err(|error| {
-                        kube_error("read original provider creation stream", error)
-                    })? {
-                        Some(WatchEvent::Added(object)) => {
-                            return self
-                                .capture_object(object, handle)
-                                .map_err(AdapterError::from)
-                        }
-                        Some(WatchEvent::Bookmark(_)) => continue,
-                        _ => {
-                            return Err(AdapterError::Unavailable(
-                                "complete original creation event is unavailable".into(),
-                            ))
-                        }
-                    }
-                }
-                Err(AdapterError::Unavailable(
-                    "creation event stream exceeded finality bound".into(),
-                ))
-            })
-            .await
-            .map_err(|_| {
-                AdapterError::Unavailable("original creation event observation timed out".into())
-            })??;
-        if captured.identity.labels.get(DISPATCH_LABEL) != Some(&dispatch_marker(operation_id)?) {
+        // The successful POST authorizes the logical handle. This namespaced
+        // GET pins the incarnation CMA will adopt before binding or installation;
+        // it makes no claim about the first-ever object behind that name.
+        let captured = self
+            .capture(handle)
+            .await?
+            .ok_or_else(|| AdapterError::Unavailable("runtime is absent before binding".into()))?;
+        let mut actual_metadata = captured.identity.labels.clone();
+        crate::provider::metadata::decode(&mut actual_metadata);
+        if expected_metadata
+            .iter()
+            .any(|(key, value)| actual_metadata.get(key) != Some(value))
+        {
             return Err(AdapterError::Rejected(
-                "runtime object does not belong to this original dispatch".into(),
+                "runtime metadata does not match the dispatched request".into(),
             ));
         }
         let receipt = RuntimeProvisionReceipt {
             operation_id: operation_id.to_owned(),
             request_sha256: request_sha256.to_owned(),
+            provider_response_sha256: provider_response_sha256.to_owned(),
             handle: handle.clone(),
             incarnation: self.incarnation(&captured)?,
-            creation_observation_version: observation.resource_version,
+            pre_dispatch_list_version: observation.resource_version,
         };
         receipt.validate()?;
         Ok(receipt)
     }
 
-    pub(crate) async fn require_original(
+    pub(crate) async fn require_bound_runtime(
         &self,
         original: &RuntimeProvisionReceipt,
     ) -> crate::Result<()> {
@@ -176,18 +151,18 @@ impl BatchSandboxReclaimer {
         let current = self
             .capture(original.handle())
             .await?
-            .ok_or_else(|| AdapterError::Unavailable("original runtime no longer exists".into()))?;
+            .ok_or_else(|| AdapterError::Unavailable("bound runtime no longer exists".into()))?;
         let mut identity = self.incarnation(&current)?;
-        identity.creation_resource_version = original.incarnation.creation_resource_version.clone();
+        identity.binding_resource_version = original.incarnation.binding_resource_version.clone();
         if identity != original.incarnation {
             return Err(AdapterError::Rejected(
-                "original provider runtime incarnation changed".into(),
+                "bound provider runtime incarnation changed".into(),
             ));
         }
         Ok(())
     }
 
-    pub(crate) async fn finalize_original(
+    pub(crate) async fn finalize_bound_runtime(
         &self,
         original: &RuntimeProvisionReceipt,
         operation_id: &str,
@@ -197,10 +172,12 @@ impl BatchSandboxReclaimer {
             return Err(AdapterError::Rejected("delete operation is invalid".into()));
         }
         let captured = self.capture(original.handle()).await?.ok_or_else(|| {
-            AdapterError::Unavailable("no original provider delete receipt is available".into())
+            AdapterError::Unavailable(
+                "no bound provider runtime is available for receipted deletion".into(),
+            )
         })?;
         let mut identity = self.incarnation(&captured)?;
-        identity.creation_resource_version = original.incarnation.creation_resource_version.clone();
+        identity.binding_resource_version = original.incarnation.binding_resource_version.clone();
         if identity != original.incarnation {
             return Err(AdapterError::Rejected(
                 "provider finality target was replaced".into(),
@@ -220,7 +197,7 @@ impl BatchSandboxReclaimer {
             .api
             .delete(original.handle().as_str(), &params)
             .await
-            .map_err(|error| kube_error("delete original provider runtime", error))?;
+            .map_err(|error| kube_error("delete bound provider runtime", error))?;
         let response_sha256 = response.either(
             |value| crate::provider_request_digest(&value),
             |value| crate::provider_request_digest(&value),
@@ -234,7 +211,7 @@ impl BatchSandboxReclaimer {
                             .fields(&format!("metadata.name={}", original.handle().as_str())),
                     )
                     .await
-                    .map_err(|error| kube_error("observe original runtime absence", error))?;
+                    .map_err(|error| kube_error("observe bound runtime absence", error))?;
                 if rows
                     .metadata
                     .continue_
@@ -270,7 +247,7 @@ impl BatchSandboxReclaimer {
         })
         .await
         .map_err(|_| {
-            AdapterError::Unavailable("original provider finality is still pending".into())
+            AdapterError::Unavailable("bound provider runtime finality is still pending".into())
         })??;
         let receipt = RuntimeFinalityReceipt {
             original: original.clone(),
@@ -294,7 +271,7 @@ impl BatchSandboxReclaimer {
                 .pods
                 .list(&params)
                 .await
-                .map_err(|error| kube_error("observe original runtime backing pods", error))?;
+                .map_err(|error| kube_error("observe bound runtime owned pods", error))?;
             let current = page
                 .metadata
                 .resource_version

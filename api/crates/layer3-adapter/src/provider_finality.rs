@@ -1,4 +1,4 @@
-//! Provider receipts bind physical effects to the original dispatched creation.
+//! Provider receipts bind cleanup to the runtime incarnation adopted before transport binding.
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -12,7 +12,7 @@ pub struct RuntimeProviderIncarnation {
     pub(crate) name: String,
     pub(crate) uid: String,
     pub(crate) generation: i64,
-    pub(crate) creation_resource_version: String,
+    pub(crate) binding_resource_version: String,
     pub(crate) identity_sha256: String,
 }
 
@@ -23,7 +23,7 @@ impl RuntimeProviderIncarnation {
             || !identifier(&self.name)
             || !identifier(&self.uid)
             || self.generation <= 0
-            || !identifier(&self.creation_resource_version)
+            || !identifier(&self.binding_resource_version)
             || !digest(&self.identity_sha256)
         {
             return Err(invalid());
@@ -37,9 +37,10 @@ impl RuntimeProviderIncarnation {
 pub struct RuntimeProvisionReceipt {
     pub(crate) operation_id: String,
     pub(crate) request_sha256: String,
+    pub(crate) provider_response_sha256: String,
     pub(crate) handle: RuntimeHandle,
     pub(crate) incarnation: RuntimeProviderIncarnation,
-    pub(crate) creation_observation_version: String,
+    pub(crate) pre_dispatch_list_version: String,
 }
 
 impl RuntimeProvisionReceipt {
@@ -58,8 +59,9 @@ impl RuntimeProvisionReceipt {
     pub fn validate(&self) -> Result<()> {
         self.incarnation.validate()?;
         if !identifier(&self.operation_id)
-            || !identifier(&self.creation_observation_version)
+            || !identifier(&self.pre_dispatch_list_version)
             || !digest(&self.request_sha256)
+            || !digest(&self.provider_response_sha256)
             || self.handle.0 != self.incarnation.name
         {
             return Err(invalid());
@@ -120,5 +122,5 @@ pub(crate) fn digest(value: &str) -> bool {
             .all(|v| v.is_ascii_digit() || (b'a'..=b'f').contains(&v))
 }
 fn invalid() -> AdapterError {
-    AdapterError::Rejected("provider finality receipt has invalid original identity".into())
+    AdapterError::Rejected("provider finality receipt has invalid bound identity".into())
 }
