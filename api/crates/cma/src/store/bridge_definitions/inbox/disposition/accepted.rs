@@ -4,6 +4,42 @@ use layer2_core::bridge::channel_control::ChannelControlIntent;
 use mongodb::{bson::Document, Database};
 
 impl MongoCallbackInbox {
+    pub(in crate::store) fn validate_control_history_disposition(
+        document: &Document,
+        intent: &ChannelControlIntent,
+    ) -> Result<(), CallbackError> {
+        let value = if document.get_str("kind").ok() == Some("provider") {
+            CallbackDisposition::read_provider(document, &intent.callback.provider_key_sha256)?
+        } else {
+            CallbackDisposition::read(document)?
+        };
+        value.require_retained_control(intent)
+    }
+
+    pub(in crate::store) async fn control_history_documents(
+        database: &Database,
+        intent: &ChannelControlIntent,
+        callback: &layer2_core::bridge::channel_control::ChannelControlCallback,
+        session: &mut ClientSession,
+    ) -> Result<Vec<Document>, MutationError> {
+        let mut result = accepted_control_documents(database, intent, session)
+            .await?
+            .to_vec();
+        if callback != &intent.callback {
+            let row = crate::store::durability::majority_collection::<Document>(
+                database,
+                "bridge_callback_dispositions",
+            )
+            .find_one(doc! {"_id": callback_id(&callback.callback_id)})
+            .session(&mut *session)
+            .await?
+            .ok_or(CallbackError::Unavailable)?;
+            CallbackDisposition::read(&row)?.require_control_alias(intent, callback)?;
+            result.push(row);
+        }
+        Ok(result)
+    }
+
     /// Read-only counterpart used by fresh execution authority and the final
     /// ordered-writer check. Retained intent alone cannot establish acceptance.
     pub(in crate::store) async fn require_accepted_control(

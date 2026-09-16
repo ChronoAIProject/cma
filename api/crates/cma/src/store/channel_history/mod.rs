@@ -2,6 +2,11 @@
 //! Every reference is written with its source effect; no TTL or expiry exists.
 mod assessment;
 mod bindings;
+mod control_bindings;
+mod controls;
+pub(crate) use control_bindings::control_record;
+#[cfg(test)]
+pub(crate) use controls::capture as assess_controls;
 mod inventory;
 mod material;
 mod model;
@@ -127,7 +132,10 @@ async fn append(
     if document.contains_key("channel_history_seal")
         && !matches!(
             kind,
-            ReferenceKind::PartitionCommand | ReferenceKind::LateUploadTombstone
+            ReferenceKind::PartitionCommand
+                | ReferenceKind::LateUploadTombstone
+                | ReferenceKind::ControlAlias
+                | ReferenceKind::ControlDisposition
         )
     {
         return Err(AllocationError::InvalidTransition.into());
