@@ -221,6 +221,7 @@ fn result(content: Value, is_error: bool) -> Value {
 fn failure(error: OutboxError) -> Value {
     let code = match error {
         OutboxError::RequestConflict => "request_key_conflict",
+        OutboxError::Capacity => "reply_backlog_full",
         OutboxError::Unavailable => "outcome_unconfirmed_retry_same_key",
         OutboxError::SourceMismatch => "reply_context_changed",
         OutboxError::ToolUnavailable => "no_eligible_active_channel_turn",

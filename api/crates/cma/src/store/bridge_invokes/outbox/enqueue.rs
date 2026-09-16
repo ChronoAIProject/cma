@@ -190,6 +190,8 @@ impl MongoBridgeReplyToolStore {
         } else {
             OutboxItem::from_tool_intent(intent, credential, sequence, predecessor, now_ms())?
         };
+        self.require_backlog_capacity(scope.source(), items.len(), session)
+            .await?;
         let last = items.last().ok_or(OutboxError::Corrupt)?;
         let next = ResponseHead {
             response_id: scope.source().response_id().as_str().into(),
