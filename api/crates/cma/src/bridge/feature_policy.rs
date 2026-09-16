@@ -2,7 +2,8 @@
 use std::sync::Arc;
 
 use layer2_core::bridge::{
-    BridgeConfig, BridgeConnectionValidator, BridgeError, BridgeFeature, BridgePlatform,
+    BridgeConfig, BridgeConnectionValidator, BridgeError, BridgeFeature,
+    BridgePlacementAvailability, BridgePlacementPolicy, BridgePlatform, BridgeSharedPlacementKind,
     BridgeValidation,
 };
 use layer2_core::resource_access::ResourceOwner;
@@ -56,6 +57,33 @@ impl BridgeConnectionValidator for ConfiguredBridgeConnections {
         result.map_err(|_| BridgeError::Unavailable)
     }
 
+    fn check_new_placement(&self, config: &BridgeConfig) -> Result<(), BridgeError> {
+        let kind = match config.placement {
+            BridgePlacementPolicy::WorkspacePerPartition { .. } => {
+                Some(BridgeSharedPlacementKind::WorkspacePerPartition)
+            }
+            BridgePlacementPolicy::WorktreeAgentPerPartition { .. } => {
+                Some(BridgeSharedPlacementKind::WorktreeAgentPerPartition)
+            }
+            _ => None,
+        };
+        if let Some(kind) = kind {
+            if !self.capabilities().placements.iter().any(|entry| {
+                entry.kind == kind && entry.availability == BridgePlacementAvailability::Available
+            }) {
+                return Err(BridgeError::Unavailable);
+            }
+            for feature in [
+                BridgeFeature::Management,
+                BridgeFeature::Allocation,
+                BridgeFeature::Execution,
+            ] {
+                self.check_feature(feature, &config.connector.platform)?;
+            }
+        }
+        self.inner.check_new_placement(config)
+    }
+
     fn capabilities(&self) -> layer2_core::bridge::BridgeCapabilityCatalog {
         let mut catalog = self.inner.capabilities();
         for connector in &mut catalog.connectors {
@@ -85,3 +113,6 @@ impl BridgeConnectionValidator for ConfiguredBridgeConnections {
         self.inner.validate_connection(owner, config).await
     }
 }
+
+#[cfg(test)]
+mod tests;
