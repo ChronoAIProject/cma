@@ -1,6 +1,7 @@
 use futures_util::TryStreamExt;
 mod admission_tests;
 mod audit_tests;
+mod claim_observation_tests;
 mod discovery_tests;
 mod execution_tests;
 mod queued_cancellation_tests;

@@ -146,6 +146,16 @@ impl AgentCommandWorkerStore for UncertainStore {
     ) -> Result<Option<AdmittedAgentCommand>, CommandLedgerError> {
         self.inner.claim_next_command(request).await
     }
+    async fn claim_observed_command(
+        &self,
+        request: CommandClaimRequest,
+        command_id: &AgentCommandId,
+        expected_revision: u64,
+    ) -> Result<Option<AdmittedAgentCommand>, CommandLedgerError> {
+        self.inner
+            .claim_observed_command(request, command_id, expected_revision)
+            .await
+    }
     async fn renew_command_claim(
         &self,
         claim: &CommandClaim,
