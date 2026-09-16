@@ -168,6 +168,16 @@ does not start another response. An uncertain runtime write retains its recovery
 state without automatic replay. Admission and execution create no outgoing chat
 message.
 
+The common worker binds its readiness check to the observed command ID and
+revision. Atomic lane selection preserves the existing message/control order
+and claims only that same observation; a different earlier eligible command or
+a changed revision leaves both claim records unchanged. The worker must obtain
+fresh readiness on a later attempt. Ordinary paused-message preparation retains
+its separate current-authority checks; Channel controls cannot invoke revival.
+This prevents readiness for one command from claiming another. It establishes
+no runtime ownership or handoff authority, and dispatch still requires its own
+current source, resource, runtime and writer fences.
+
 Held controls also have a refusal-only transaction. A positively proved local
 grant revocation or later complete consent generation (including revoke then
 re-enable) ends the original held command with `authority_revoked`. A terminal
