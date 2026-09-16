@@ -24,6 +24,8 @@ mod inventory;
 mod inventory_cases;
 mod invoke_cases;
 mod outbox_cases;
+mod partition_cases;
+mod partition_command_cases;
 mod provenance_cases;
 mod queued_cancellation_cases;
 mod replay;
@@ -141,6 +143,12 @@ fn paths() -> Vec<PathBuf> {
 }
 
 async fn scenario(name: &str) -> Scenario {
+    if let Some(scenario) = partition_command_cases::scenario(name).await {
+        return scenario;
+    }
+    if let Some(scenario) = partition_cases::scenario(name).await {
+        return scenario;
+    }
     if let Some(scenario) = workspace_cleanup_cases::scenario(name).await {
         return scenario;
     }

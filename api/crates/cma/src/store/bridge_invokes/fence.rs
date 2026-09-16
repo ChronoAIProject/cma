@@ -44,6 +44,24 @@ impl MongoBridgeInvokeStore {
                 None => self.fence_channel_grant(basis, session).await?,
             }
         }
+        if grant.channel.is_none() {
+            if let Some(allocation) = retained {
+                if !matches!(proof.effect(), BridgeInvokeEffect::ExecuteCommand { .. })
+                    || allocation.pin != grant.pin
+                    || allocation.config != grant.config
+                    || allocation.owner != grant.owner
+                    || !matches!(&allocation.placement,
+                        layer2_core::bridge::allocation::AllocationPlacement::ExistingAgent { target, grant_id }
+                        if target == &grant.target.ids && grant_id == grant.id.as_str())
+                {
+                    return Err(BridgeInvokeError::TargetMismatch.into());
+                }
+                if allocation.state == layer2_core::bridge::allocation::AllocationState::Retired {
+                    self.require_retained_fixed(allocation, true, session)
+                        .await?;
+                }
+            }
+        }
         self.bridges
             .credentials
             .require_retained_binding(&bridge, &grant.config, proof.custody_pin(), session)

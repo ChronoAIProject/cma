@@ -18,6 +18,20 @@ pub struct BridgeManagementLease {
 }
 
 impl BridgeManagementLease {
+    /// Share the same request-local proof across atomic command components.
+    /// This never refreshes its authority or deadline.
+    pub(super) fn same_request(&self) -> Result<Self, BridgeError> {
+        self.require_current()?;
+        Ok(Self {
+            record: self.record.clone(),
+            actor: self.actor.clone(),
+            authority: BridgeAuthority {
+                can_manage: self.authority.can_manage,
+                deadline: self.authority.deadline,
+            },
+            deadline: self.deadline,
+        })
+    }
     pub fn record(&self) -> &BridgeRecord {
         &self.record
     }

@@ -58,6 +58,12 @@ pub(super) async fn read_fenced(
     // the original Active Sandbox can still serve accepted work under drain.
     let retained = match allocation.state {
         AllocationState::Ready => head_generation == original_generation,
+        AllocationState::Retired
+            if head_generation == original_generation && current_head == allocation.id =>
+        {
+            store.require_detached_head(allocation, session).await?;
+            true
+        }
         AllocationState::Retired => head_generation > original_generation,
         _ => false,
     };

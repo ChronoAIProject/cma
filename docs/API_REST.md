@@ -978,7 +978,11 @@ SDKs expose this scope through their accessible Sandbox list method.
 | `GET /api/v1/bridges/{id}/invoke-grants` | Page current and revoked invocation grants for this bridge. |
 | `POST /api/v1/bridges/{id}/invoke-grants` | Explicitly authorize the selected retained Agent context for this saved bridge configuration. |
 | `GET /api/v1/bridges/{id}/invoke-readiness` | Observe current retained-Agent consent without granting execution or enable authority. |
+| `POST /api/v1/bridges/{id}/partitions/{allocation}/reset` | Exact Bridge/allocation revisions and retained Idempotency-Key; 202 reserves the next binding generation. |
+| `POST /api/v1/bridges/{id}/partitions/{allocation}/detach` | Exact Bridge/allocation revisions and retained Idempotency-Key; 202 blocks future partition input until explicit reset. |
 | `GET /api/v1/bridges/{id}/allocations` | Current Bridge and whole-parent management inventory; opaque cursor, limit 1–100. |
+| `GET /api/v1/bridges/{id}/partitions` | Current Bridge management and per-target access; scoped cursor, limit 1–25. |
+| `GET /api/v1/bridges/{id}/partitions/{allocation}` | Exact retained partition generation, bounded pending commands and latest correlated response. |
 | `GET /api/v1/bridges/{id}/allocations/{allocation}/child-cleanup` | Retained child cleanup acceptance, proved progress and observed holds. |
 | `POST /api/v1/bridges/{id}/allocations/{allocation}/child-cleanup` | Explicit remove_child acceptance with current revisions and retained Idempotency-Key; 202 does not mean physical removal. |
 | `GET /api/v1/bridges/{id}/allocations/{allocation}/workspace-cleanup` | Exact allocation-owned Workspace status, reviewed consent inputs, current eligibility and retained completion. |
@@ -1174,3 +1178,43 @@ Only a separately proved `complete` status releases that Workspace reservation.
 ## Source-control consent
 
 GET and PUT `/api/v1/bridge-invoke-grants/{id}/source-controls` manage separate original-sender consent. GET returns a required `policy` field: null means no consent was ever recorded. PUT returns exactly 200 with an immutable `{id, request, result}` receipt. See [Bridge source-control consent](BRIDGE_SOURCE_CONTROLS.md) for bounds, exact-request recovery and the distinction between recorded consent and demonstrated runtime support.
+
+## Partition status
+
+GET `/api/v1/bridges/{id}/partitions` lists retained allocation generations with
+an opaque scoped cursor and a default and maximum page size of 25. GET
+`/api/v1/bridges/{id}/partitions/{allocation}` adds at most 64 pending Channel
+commands and the latest correlated response. Both require current Bridge
+management authority; target details and activity also require the relevant
+Agent permissions. Responses distinguish reserved, available and redacted
+targets, unavailable source evidence, and truncated pending work. Source labels
+describe the first accepted message and must be rendered as text. These reads
+admit no work and do not assert current runtime connectivity.
+
+### Explicit partition reset and detach
+
+`reset` and `detach` require current Bridge owner/admin management authority,
+`Idempotency-Key`, and the closed JSON body
+`{"expected_bridge_revision":7,"expected_revision":5}`. The allocation ID and
+action are bound from the path. A successful request or exact replay returns
+202 with the same permanent `PartitionCommandReceipt`: actor, request digest,
+original generation/revision, retired result, optional successor, and acceptance
+time. Keep the exact path, body and key after cancellation or response loss.
+Current management authority is revalidated before receipt recovery; recovery
+precedes stale revision checks and live provider preflight. Reusing that key for
+different input conflicts.
+
+Reset reserves generation N+1 using the original accepted source and immutable
+configuration. Existing-Agent placement binds the same retained Agent and keeps
+its native conversation; new/shared placement reserves its configured successor
+and then ordinary workers provision it. The receipt does not claim provisioning
+has completed. Active allocation leases and unresolved creation effects prevent
+reset or detach.
+
+Detach retires the current allocation without creating a successor. Its head
+remains current and blocks fresh input until an explicit reset. Already accepted
+commands, explicit replies, resource identity, usage history and capacity remain
+retained under their original live authority. Reset and detach neither request
+cleanup nor release resource capacity; cleanup requires its separate explicit
+operation. Missing or inconsistent original source evidence refuses a new
+mutation, while an exact committed receipt remains recoverable.

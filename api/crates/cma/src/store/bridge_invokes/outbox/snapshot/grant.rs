@@ -56,7 +56,16 @@ impl MongoBridgeReplyToolStore {
                 if grant_id != original || grant.channel.is_some() {
                     return Err(OutboxError::SourceMismatch.into());
                 }
-                observed.allocation.clone()
+                if observed.allocation.state
+                    == layer2_core::bridge::allocation::AllocationState::Retired
+                {
+                    self.invokes
+                        .require_retained_fixed(&observed.allocation, write_fence, session)
+                        .await
+                        .map_err(grant_error)?
+                } else {
+                    observed.allocation.clone()
+                }
             }
             AllocationPlacement::NewSandbox { .. } | AllocationPlacement::ReuseParent { .. } => {
                 let basis = grant.channel.as_ref().ok_or(OutboxError::SourceMismatch)?;
