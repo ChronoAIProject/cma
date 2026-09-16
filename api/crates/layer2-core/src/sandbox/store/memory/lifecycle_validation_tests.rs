@@ -8,9 +8,9 @@ use crate::sandbox::store::{
 };
 use crate::sandbox::{
     AgentOperationDelivery, AgentOperationIntent, AgentOperationRecord, AgentStatus,
-    FirstMessageRecord, QueuedAgentMessage, SandboxEventKind, SandboxLifecycleOperation,
-    SandboxPausePhase, SandboxReviveCause, SandboxRevivePhase, SandboxStatus, SandboxWorkState,
-    SandboxWorkStep,
+    AgentWorkReceipt, AgentWorkStep, FirstMessageRecord, QueuedAgentMessage, SandboxEventKind,
+    SandboxLifecycleOperation, SandboxPausePhase, SandboxReviveCause, SandboxRevivePhase,
+    SandboxStatus, SandboxWorkState, SandboxWorkStep,
 };
 
 const LATER: &str = "2026-09-05T00:31:00Z";
@@ -171,6 +171,51 @@ async fn reopen_rejects_nonincreasing_generation_and_changed_conversation_identi
     };
     assert_rejected_atomically(&fixture, changed_identity).await;
     fixture.store.commit_sandbox_lifecycle(valid).await.unwrap();
+}
+
+#[tokio::test]
+async fn reopen_requires_exact_receipt_publication_and_preserves_other_work() {
+    let current = claimed_revive_phase(SandboxRevivePhase::ConversationReopen);
+    let fixture = seed_fixture(
+        current,
+        vec![test_agent("agt_receipt", AgentStatus::Paused)],
+    )
+    .await;
+    let valid = reopen_mutation(&fixture.current, &fixture.agents);
+    for invalid in [
+        "missing",
+        "operation",
+        "digest",
+        "time",
+        "duplicate",
+        "work",
+    ] {
+        let mut mutation = valid.clone();
+        let work = &mut mutation.agents[0].agent.work;
+        match invalid {
+            "missing" => work.receipts.clear(),
+            "operation" => work.receipts[0].operation_id = "another-agent:open:v1".into(),
+            "digest" => work.receipts[0].request_sha256 = "invalid".into(),
+            "time" => work.receipts[0].completed_at = NOW.into(),
+            "duplicate" => work.receipts.push(work.receipts[0].clone()),
+            "work" => work.next_fence += 1,
+            _ => unreachable!(),
+        }
+        assert_rejected_atomically(&fixture, mutation).await;
+    }
+    fixture
+        .store
+        .commit_sandbox_lifecycle(valid.clone())
+        .await
+        .unwrap();
+    assert_eq!(
+        fixture
+            .store
+            .get_agent(&fixture.agents[0].id)
+            .await
+            .unwrap(),
+        Some(valid.agents[0].agent.clone())
+    );
 }
 
 #[tokio::test]
@@ -628,6 +673,12 @@ fn reopen_mutation(current: &Sandbox, agents: &[Agent]) -> SandboxLifecycleMutat
             let mut next = current.clone();
             let conversation_id = current.conversation.conversation_id.clone().unwrap();
             next.conversation.runtime_generation = Some(5);
+            next.work.receipts.push(AgentWorkReceipt {
+                step: AgentWorkStep::OpenConversation,
+                operation_id: format!("agent:{}:open:v1", current.id),
+                request_sha256: "a".repeat(64),
+                completed_at: LATER.into(),
+            });
             next.transition(AgentStatus::Ready, LATER.into(), None)
                 .unwrap();
             next.conversation.last_seq += 2;
