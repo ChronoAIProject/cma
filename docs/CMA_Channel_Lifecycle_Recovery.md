@@ -170,3 +170,32 @@ Local provider fixtures and disposable persistence/runtime tests establish only
 the behavior exercised by their recorded source. They do not establish live
 Telegram delivery or production upgrade/rollback continuity. Channel image
 rotation and the complete lifecycle/retention acceptance matrix remain pending.
+
+
+Channel history disposition is pinned when each new allocation generation is
+reserved. The initial and currently sole disposition is `retain`: no generic
+Sandbox grace period, callback TTL, reset, detach, or configuration change can
+supply a history expiry deadline. The versioned allocation sidecar binds the
+original owner, configuration, source pin, target and generation. Old allocations
+without it retain an explicit legacy-policy hold; replay never applies today's
+default retroactively.
+
+Permanent `channel_history_references` rows account for the first source pin,
+accepted command and archived source, callback idempotency receipt, explicit
+outbox items and invocation receipts, and late-upload cleanup tombstones. Each
+reference and the allocation's reference count commit in the same transaction as
+the underlying admission. Exact replay does not increment the count. Callback
+inbox TTL does not remove these references or the accepted source archive. A
+late-upload tombstone remains owned after successful cleanup and repeated
+absence checks. No reference collection has a TTL index.
+
+The retirement assessment validates the pinned policy, reference count and exact
+retained target projections. Missing legacy policy, incomplete accounting,
+missing targets and bounded-inventory overflow are typed holds; contradictory
+identity is refused. This is an open retained inventory, not a sealed expiry
+manifest: original accepted work and late upload cleanup can still append
+references. Permanent partition-management journals, all supported/rollback
+writers and readers, complete history/archive inventories, and exact deletion
+effects must be accounted for by a future seal before any expiry. Physical home
+absence and provider-incarnation proof are still independently required;
+canonical Sandbox `Retired`, history deletion and capacity release remain gated.
