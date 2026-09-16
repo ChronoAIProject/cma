@@ -11,7 +11,10 @@ use layer2_core::resource_access::{
 use layer2_core::{Caller, SubjectId};
 use serde::Deserialize;
 
-use super::{identity, persistence::SecretDigest, AuthMode, AuthState};
+use super::{
+    bearer_authorization, permissions::PermissionEvidence, persistence::SecretDigest, AuthMode,
+    AuthState,
+};
 
 mod request_context;
 mod transport;
@@ -122,10 +125,16 @@ impl AuthState {
             .metadata()
             .await
             .map_err(|_| MembershipError::Unavailable)?;
-        let (subject, permissions, _) = identity::resolve_subject(self, &metadata, credential)
+        // Share only unfinished verification of this exact credential. Every
+        // caller still obtains fresh organization evidence within its deadline.
+        let verified = bearer_authorization::verify_subject(self, &metadata, credential)
             .await
             .map_err(|_| MembershipError::Unavailable)?;
-        if subject != caller.subject {
+        let PermissionEvidence::Active(permissions) = &verified.permissions else {
+            return Err(MembershipError::Unavailable);
+        };
+        let subject = &verified.subject;
+        if subject != &caller.subject {
             return Err(MembershipError::NotMember);
         }
         let context = CredentialContext {
@@ -141,13 +150,13 @@ impl AuthState {
             credential_source: layer2_core::resource_access::CredentialSource::Retained,
             caller: Caller::new(
                 subject.clone(),
-                crate::permissions::capabilities_from_permissions(permissions),
+                crate::permissions::capabilities_from_permissions(permissions.iter().cloned()),
             ),
             credential: context,
             // Userinfo does not prove a human user_type. Preserve the verified
             // API subject without inventing a human or organization identity.
             actor: ResourceActor::Api {
-                subject,
+                subject: subject.clone(),
                 delegation_id: None,
             },
             memberships: Vec::new(),
