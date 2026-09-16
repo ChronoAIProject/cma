@@ -25,7 +25,11 @@ use super::sandbox_mongo::{
 mod admission;
 #[cfg(test)]
 mod admission_tests;
+mod checkpoint;
+#[cfg(test)]
+mod checkpoint_tests;
 mod cleanup_admission;
+mod implementation;
 
 #[cfg_attr(test, derive(Clone))]
 pub(super) struct ConversationReceipt {
@@ -45,23 +49,6 @@ impl From<TransactionLogError> for ApplyError {
             TransactionLogError::Domain(error) => Self::Domain(error),
             TransactionLogError::Driver(error) => Self::Driver(error),
         }
-    }
-}
-
-#[async_trait::async_trait]
-impl AgentConversationStore for MongoSandboxStore {
-    async fn commit_agent_conversation(
-        &self,
-        mutation: AgentConversationMutation,
-    ) -> Result<Vec<AgentLogEntry>, SandboxStoreError> {
-        commit_conversation(self, mutation).await
-    }
-
-    async fn pending_agent_approvals(
-        &self,
-        id: &AgentId,
-    ) -> Result<Vec<AgentLogEntry>, SandboxStoreError> {
-        pending_approvals(self, id).await
     }
 }
 
@@ -197,6 +184,7 @@ async fn apply_mutation(
                 super::agent_commands::ApplyError::Driver(error) => ApplyError::Driver(error),
             })?;
     replace_agent(store, &current, mutation, session).await?;
+    checkpoint::carry(store, &current_row, &current, &mutation.agent, session).await?;
     insert_logs(store, &logs, session).await?;
     Ok(ConversationReceipt {
         command_dispatch,

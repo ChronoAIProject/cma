@@ -158,12 +158,20 @@ impl AgentOperationService {
         }
         self.commit_admission(&current, next, logs, at, parent)
             .await?;
+        let prompt_id = layer3_adapter::PromptIdentity::new(
+            &target.conversation_id,
+            target.runtime_generation,
+            turn_sequence,
+        );
         Ok(PreparedAgentOperation {
             target,
             operation_sequence,
             turn_sequence,
             required,
-            input: ConversationInput::Prompt(vec![ContentBlock::from(text)]),
+            input: ConversationInput::RecoverablePrompt {
+                content: vec![ContentBlock::from(text)],
+                prompt_id,
+            },
             rollback: PreWriteRollback::NewTurn,
             queued_message_sequence: None,
         })
