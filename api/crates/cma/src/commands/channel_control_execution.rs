@@ -17,7 +17,7 @@ impl ResourceCommandExecution {
         let Some(service) = &self.channel_controls else {
             return CommandReadiness::Retry;
         };
-        match service.ready_for_claim(command).await {
+        match service.ready_for_claim(command, &self.operations).await {
             Ok(()) => CommandReadiness::Ready,
             Err(error) => readiness(error),
         }

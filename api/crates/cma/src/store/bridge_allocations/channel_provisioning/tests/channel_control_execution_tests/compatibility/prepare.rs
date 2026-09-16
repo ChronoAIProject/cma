@@ -140,12 +140,12 @@ pub(super) async fn scenario() {
     let h = Harness::open().await;
     match mode.as_str() {
         "released-interrupt" | "released-steer" => worker::service(&h)
-            .release_held(&held.command)
+            .release_held(&held.command, &worker::execution(&h).operations)
             .await
             .unwrap(),
         "claimed" | "expired-claim" => {
             worker::service(&h)
-                .release_held(&held.command)
+                .release_held(&held.command, &worker::execution(&h).operations)
                 .await
                 .unwrap();
             let now = std::time::SystemTime::now();

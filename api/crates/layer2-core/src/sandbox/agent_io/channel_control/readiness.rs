@@ -2,9 +2,14 @@ use super::*;
 use crate::bridge::invoke::{BridgeInvokeEffect, BridgeInvokeRequest};
 
 impl ChannelControlExecutionService {
-    /// Readiness permits replacing an expired, undispatched claim. It grants
-    /// no execution authorization; dispatch must obtain its own exact live claim.
-    pub async fn ready_for_claim(&self, command: &AdmittedAgentCommand) -> Result<(), Error> {
+    /// Readiness requires the dispatch service's exact local runtime and permits
+    /// replacing an expired, undispatched claim. It grants no execution
+    /// authorization; dispatch must obtain its own exact live claim and runtime.
+    pub async fn ready_for_claim(
+        &self,
+        command: &AdmittedAgentCommand,
+        operations: &crate::sandbox::AgentOperationService,
+    ) -> Result<(), Error> {
         let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
         let work = async {
             command.validate().map_err(|_| Error::Corrupt)?;
@@ -26,6 +31,7 @@ impl ChannelControlExecutionService {
                 .await
                 .map_err(invoke_error)?;
             validation::require_ready_snapshot(&proof, &snapshot)?;
+            runtime::require_local(operations, &proof, &snapshot, deadline).await?;
             proof.require_current().map_err(invoke_error)?;
             if tokio::time::Instant::now() >= deadline {
                 return Err(Error::Unavailable);

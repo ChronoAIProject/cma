@@ -120,7 +120,9 @@ async fn channel_control_held_denial_timeout_retains_hold_and_never_renews_relea
     });
     let service = ChannelControlExecutionService::new(delayed.clone(), c.f.invokes.clone());
     assert!(matches!(
-        service.release_held(&held.command).await,
+        service
+            .release_held(&held.command, &worker::operations(&c))
+            .await,
         Err(ChannelControlError::Unavailable)
     ));
     assert!(Instant::now() >= delayed.deadline.lock().unwrap().unwrap());
@@ -147,7 +149,10 @@ async fn channel_control_held_denial_uncertain_authority_with_unchanged_local_fa
         inner: Some(denial::refusal_store(&c)),
     });
     let service = ChannelControlExecutionService::new(uncertain, c.f.invokes.clone());
-    assert!(service.release_held(&held.command).await.is_err());
+    assert!(service
+        .release_held(&held.command, &worker::operations(&c))
+        .await
+        .is_err());
     assert!(denial::stored(&c, &held).await == held);
     assert_eq!(c.f.items().await.len(), 1);
     c.f.close().await;
