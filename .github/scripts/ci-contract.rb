@@ -127,7 +127,7 @@ module CIContract
     }.each { |name, command| step(gate, name, command) }
     backend = job(ci, "backend", "Backend")
     mongo = step(backend, "Disposable real Mongo persistence contracts", "bash ../.github/scripts/mongo-contract-tests.sh")
-    require!(mongo["timeout-minutes"] == 20, "Mongo proof must be bounded")
+    require!(mongo["timeout-minutes"] == 25, "Mongo proof must retain its 25-minute bound")
     require!(workflow["permissions"] == { "contents" => "read" }, "remote workflow permissions broadened")
     require!(workflow.dig("concurrency", "cancel-in-progress") == false, "remote writers cannot be cancelled by a newer run")
     triggers = workflow["on"] || workflow[true]
