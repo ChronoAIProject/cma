@@ -143,3 +143,6 @@ mod tests;
 #[cfg(test)]
 #[path = "checkpoint_objects/mongo_integration_tests.rs"]
 mod mongo_integration_tests;
+
+#[cfg(test)]
+pub(in crate::store) mod history_test_support;

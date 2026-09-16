@@ -8,6 +8,7 @@ mod execution_tests;
 mod feature_gates;
 pub(in crate::store) mod fixtures;
 mod generic;
+mod history_tests;
 mod hold_refusal_tests;
 mod missing_source_tests;
 mod partition_commands;

@@ -66,6 +66,7 @@ impl MongoBridgeInvokeStore {
             ],
         )
         .await?;
+        super::channel_history::initialize(&database).await?;
         let store = Self {
             bridges,
             resources,
