@@ -1,5 +1,66 @@
 use super::*;
 
+#[tokio::test]
+#[ignore = "requires the disposable MongoDB replica contract runner"]
+async fn channel_control_held_denial_preserves_shared_reference_for_every_original_control() {
+    let c = ControlFixture::new().await;
+    c.f.resources
+        .reconcile_command(&c.f.command.receipt.envelope.command_id)
+        .await
+        .unwrap();
+    let first = c
+        .store
+        .reserve(c.request("shared-reference-cancel", 701, false).await)
+        .await
+        .unwrap();
+    let second = c
+        .store
+        .reserve(c.request("shared-reference-steer", 702, true).await)
+        .await
+        .unwrap();
+    assert!(first.sidecar.intent.reference == second.sidecar.intent.reference);
+    let before =
+        c.f.resources
+            .get_agent(&first.command.receipt.envelope.agent_id)
+            .await
+            .unwrap()
+            .unwrap();
+    let logs = c.f.resources.agent_log(&before.id, 0, 100).await.unwrap();
+    let source =
+        c.f.resources
+            .get_command(&c.f.command.receipt.envelope.command_id)
+            .await
+            .unwrap()
+            .unwrap();
+    consent(&c, 1, SourceControlAction::RevokeSenderControls).await;
+    let (execution, effects) = worker::execution(&c, None, false);
+    worker::run(&c, &first, execution.clone()).await;
+    assert_refused(&c, &first, CommandFailureCode::AuthorityRevoked).await;
+    worker::run(&c, &second, execution).await;
+    assert_eq!(stored(&c, &second).await.command.status, AgentResponseStatus::Failed,
+        "the first refusal must leave the shared reference readable for the second original held control");
+    assert_refused(&c, &second, CommandFailureCode::AuthorityRevoked).await;
+    assert!(effects.lock().unwrap().is_empty());
+    assert_eq!(
+        c.f.resources.get_agent(&before.id).await.unwrap().unwrap(),
+        before
+    );
+    assert_eq!(
+        c.f.resources.agent_log(&before.id, 0, 100).await.unwrap(),
+        logs
+    );
+    assert_eq!(
+        c.f.resources
+            .get_command(&source.receipt.envelope.command_id)
+            .await
+            .unwrap()
+            .unwrap(),
+        source
+    );
+    assert_eq!(c.f.items().await.len(), 1);
+    c.f.close().await;
+}
+
 pub(super) async fn consent(c: &ControlFixture, revision: u64, action: SourceControlAction) {
     let bridge =
         c.f.bridges
