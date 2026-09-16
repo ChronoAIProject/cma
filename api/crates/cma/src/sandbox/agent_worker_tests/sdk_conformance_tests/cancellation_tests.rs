@@ -113,8 +113,10 @@ async fn exercise(route: Route) -> Vec<Value> {
         .any(|entry| matches!(entry.kind, AgentLogKind::TurnInterrupted { .. })));
     let writes = probe.inputs();
     assert_eq!(writes.len(), 2);
-    assert!(matches!(&writes[0].1, ConversationInput::Prompt(blocks)
-        if blocks.len() == 1 && matches!(&blocks[0], layer3_adapter::ContentBlock::Text(text) if text.text == INPUT)));
+    assert!(
+        matches!(&writes[0].1, ConversationInput::RecoverablePrompt { content: blocks, .. }
+        if blocks.len() == 1 && matches!(&blocks[0], layer3_adapter::ContentBlock::Text(text) if text.text == INPUT))
+    );
     assert!(matches!(writes[1].1, ConversationInput::Cancel));
     assert_eq!(writes[0].0, writes[1].0);
     drop(worker);

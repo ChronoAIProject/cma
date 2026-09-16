@@ -167,8 +167,10 @@ async fn exercise(route: Route) -> Vec<Value> {
             .unwrap()
             .as_str()
     );
-    assert!(matches!(&writes[0].1, ConversationInput::Prompt(blocks)
-        if blocks.len() == 1 && matches!(&blocks[0], layer3_adapter::ContentBlock::Text(text) if text.text == INPUT)));
+    assert!(
+        matches!(&writes[0].1, ConversationInput::RecoverablePrompt { content: blocks, .. }
+        if blocks.len() == 1 && matches!(&blocks[0], layer3_adapter::ContentBlock::Text(text) if text.text == INPUT))
+    );
     probe.release_reply();
 
     let response_path = format!("/api/v2/responses/{response_id}");

@@ -116,7 +116,7 @@ async fn revived_worker_delivers_each_queued_message_once_then_publishes_active(
     );
     assert!(matches!(
         inputs.lock().unwrap().as_slice(),
-        [ConversationInput::Prompt(_)]
+        [ConversationInput::RecoverablePrompt { .. }]
     ));
 
     DurableAgentUpdateRecorder::new(harness.store.clone())

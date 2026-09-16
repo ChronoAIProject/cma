@@ -412,7 +412,7 @@ impl super::HostedControlTransport for ProviderHostedControlTransport {
         handle: &RuntimeHandle,
         launch: FencedRequest<AgentLaunch>,
         resume_conversation: Option<String>,
-        settings: HostedAgentOpenSettings,
+        mut settings: HostedAgentOpenSettings,
         updates: tokio::sync::mpsc::Sender<ConversationUpdate>,
     ) -> crate::Result<(ConversationChannel, FencedReceipt<AgentOpenReceipt>)> {
         let key = (handle.clone(), launch.request.agent_id.clone());
@@ -442,12 +442,14 @@ impl super::HostedControlTransport for ProviderHostedControlTransport {
         } else {
             None
         };
-        let opened = Bridge::open_with_subscription(
+        let recovered_prompt = settings.recovered_prompt.take();
+        let opened = Bridge::open_with_subscription_and_prompt(
             socket,
             launch.request.agent_id.as_str(),
             launch.request.cwd.clone(),
             (settings, subscription),
             resume_conversation,
+            recovered_prompt,
             updates,
         )
         .await?;
