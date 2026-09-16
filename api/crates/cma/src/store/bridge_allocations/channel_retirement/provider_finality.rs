@@ -1,5 +1,7 @@
 //! Provider proof and dispatch journal are joined inside the retirement fence.
 mod dispatch;
+mod home_dispatch;
+mod teardown;
 use super::super::MutationError;
 use crate::sandbox::channel_retirement::{
     model::ChannelRetirementSnapshot,
@@ -14,6 +16,7 @@ use mongodb::{
     ClientSession, Database,
 };
 use serde::{Deserialize, Serialize};
+pub(crate) use teardown::{write_home_delete, write_runtime_finality};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -26,9 +29,20 @@ struct RuntimeDispatch {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+struct HomeDispatch {
+    operation_id: String,
+    request: layer3_adapter::HomeVolumeRequest,
+    receipt: Option<layer3_adapter::HomeProvisionReceipt>,
+    backing: Option<layer3_adapter::HomeBackingIdentity>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct DispatchJournal {
     origin: ProviderDispatchOrigin,
     runtime: Vec<RuntimeDispatch>,
+    #[serde(default)]
+    home: Vec<HomeDispatch>,
 }
 
 impl crate::store::MongoBridgeAllocationStore {
@@ -63,6 +77,9 @@ pub(crate) struct ReadyRuntimeJournal {
     pub original: RuntimeProvisionReceipt,
     pub runtime_dispatch_set_sha256: String,
     pub home_dispatch_set_sha256: String,
+    pub home: Option<layer3_adapter::HomeBackingIdentity>,
+    pub runtime_finality: Option<layer3_adapter::RuntimeFinalityReceipt>,
+    pub home_delete: Option<layer3_adapter::HomeDeleteReceipt>,
 }
 
 async fn read_journal(
@@ -98,13 +115,52 @@ pub(crate) async fn read_ready_runtime(
         return Ok(None);
     };
     journal.origin.require(snapshot)?;
-    if journal.origin.original_home_policy.is_some()
-        || journal.runtime.len() != 1
+    if journal.runtime.len() != 1
         || snapshot.sandbox.lifecycle.runtime_generation_high_water != 1
         || snapshot.sandbox.lifecycle.runtime_provision.is_some()
     {
         return Ok(None);
     }
+    let (home, home_dispatch_set_sha256) = match &journal.origin.original_home_policy {
+        None if journal.home.is_empty() => (
+            None,
+            digest(&(
+                "no-home-dispatches",
+                &journal.origin.original_settings_sha256,
+            ))?,
+        ),
+        Some(policy) if journal.home.len() == 1 => {
+            let row = &journal.home[0];
+            let (Some(receipt), Some(backing)) = (&row.receipt, &row.backing) else {
+                return Ok(None);
+            };
+            receipt.validate().map_err(|_| AllocationError::Corrupt)?;
+            backing.validate().map_err(|_| AllocationError::Corrupt)?;
+            let attachment = snapshot
+                .sandbox
+                .lifecycle
+                .home
+                .as_ref()
+                .and_then(|home| home.attachment())
+                .ok_or(AllocationError::IdentityMismatch)?;
+            let provenance = snapshot
+                .home_provenance
+                .as_ref()
+                .ok_or(AllocationError::IdentityMismatch)?;
+            if receipt.operation_id() != row.operation_id
+                || receipt.home().request != row.request
+                || &row.request.policy != policy
+                || receipt.home() != &attachment
+                || backing.reference.home != attachment
+                || backing.reference.provider_scope != provenance.scope
+                || provenance.first_receipt.as_ref() != Some(&attachment.receipt)
+            {
+                return Err(AllocationError::IdentityMismatch.into());
+            }
+            (Some(backing.clone()), digest(&journal.home)?)
+        }
+        _ => return Ok(None),
+    };
     let dispatch = &journal.runtime[0];
     let Some(original) = &dispatch.receipt else {
         return Ok(None);
@@ -123,15 +179,17 @@ pub(crate) async fn read_ready_runtime(
     {
         return Err(AllocationError::IdentityMismatch.into());
     }
-    Ok(Some(ReadyRuntimeJournal {
+    let mut ready = ReadyRuntimeJournal {
         runtime_dispatch_set_sha256: digest(&journal.runtime)?,
-        home_dispatch_set_sha256: digest(&(
-            "no-home-dispatches",
-            &journal.origin.original_settings_sha256,
-        ))?,
+        home_dispatch_set_sha256,
+        home,
+        runtime_finality: None,
+        home_delete: None,
         origin: journal.origin,
         original: original.clone(),
-    }))
+    };
+    teardown::read_effects(database, snapshot, &mut ready, session).await?;
+    Ok(Some(ready))
 }
 
 pub(crate) async fn read_verified(
@@ -202,8 +260,18 @@ fn require_journal(
         || receipt.runtime.original() != &ready.original
         || receipt.runtime_dispatch_set_sha256 != ready.runtime_dispatch_set_sha256
         || receipt.home_dispatch_set_sha256 != ready.home_dispatch_set_sha256
+        || ready
+            .runtime_finality
+            .as_ref()
+            .is_some_and(|proof| proof != &receipt.runtime)
     {
         return Err(AllocationError::IdentityMismatch);
+    }
+    match (&receipt.home, &ready.home, &ready.home_delete) {
+        (crate::sandbox::channel_retirement::provider_finality::ProviderHomeFinality::NotConfigured { .. }, None, None) => (),
+        (crate::sandbox::channel_retirement::provider_finality::ProviderHomeFinality::Removed { receipt }, Some(original), Some(delete))
+            if receipt.original() == original && &receipt.delete_receipt() == delete && ready.runtime_finality.is_some() => (),
+        _ => return Err(AllocationError::IdentityMismatch),
     }
     Ok(())
 }

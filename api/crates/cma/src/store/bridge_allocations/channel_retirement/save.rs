@@ -99,6 +99,25 @@ pub(super) async fn apply(
             snapshot.sandbox.runtime = None;
             ("runtime_gone", SandboxWorkStep::MarkRetired)
         }
+        RetirementChange::ProviderRuntimeFinality(receipt)
+            if state.phase == RetirementPhase::RuntimeIntent =>
+        {
+            super::provider_finality::write_runtime_finality(
+                &database, &snapshot, receipt, session,
+            )
+            .await?;
+            (
+                "provider_runtime_finality",
+                SandboxWorkStep::TeardownRuntime,
+            )
+        }
+        RetirementChange::ProviderHomeDelete(receipt)
+            if state.phase == RetirementPhase::RuntimeIntent =>
+        {
+            super::provider_finality::write_home_delete(&database, &snapshot, receipt, session)
+                .await?;
+            ("provider_home_delete", SandboxWorkStep::TeardownRuntime)
+        }
         RetirementChange::RetainStorage
             if state.phase == RetirementPhase::RuntimeGone && snapshot.retention.is_none() =>
         {

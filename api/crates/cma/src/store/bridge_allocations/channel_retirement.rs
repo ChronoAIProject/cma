@@ -29,6 +29,8 @@ pub(crate) enum RetirementChange<'a> {
     Revoke(&'a RetirementKey),
     RuntimeIntent,
     RuntimeGone,
+    ProviderRuntimeFinality(&'a layer3_adapter::RuntimeFinalityReceipt),
+    ProviderHomeDelete(&'a layer3_adapter::HomeDeleteReceipt),
     ProviderFinality(
         &'a crate::sandbox::channel_retirement::provider_finality::ProviderFinalityReceipt,
     ),

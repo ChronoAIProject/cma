@@ -82,12 +82,6 @@ pub(super) async fn apply(
         return Ok(snapshot);
     };
     provider.require(&snapshot)?;
-    // Only the original immutable NotConfigured path is supported here.
-    if snapshot.provisioning.settings.home_policy.is_some()
-        || snapshot.sandbox.lifecycle.home.is_some()
-    {
-        return Ok(snapshot);
-    }
     let stamp = layer2_core::rfc3339_at(now);
     if stamp < snapshot.sandbox.updated_at {
         return Err(AllocationError::Conflict.into());
@@ -117,6 +111,9 @@ pub(super) async fn apply(
             stamp.clone(),
         )
         .map_err(|_| AllocationError::Conflict)?;
+    // The verified provider receipt above proves original backing removal;
+    // retain the original attachment in immutable provider/retention evidence.
+    snapshot.sandbox.lifecycle.home = None;
     snapshot
         .sandbox
         .transition(SandboxStatus::Retired, stamp.clone(), None)

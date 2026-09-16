@@ -38,7 +38,7 @@ async fn fresh_with_connection(published: bool) -> RetirementFixture {
     };
     let f = RetirementFixture::with_agents(renewal, registry, None);
     f.start().await;
-    for _ in 0..6 {
+    for _ in 0..7 {
         f.step().await;
     }
     assert_eq!(f.sandbox().await.work.step, SandboxWorkStep::MarkRetired);
