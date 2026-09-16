@@ -2,7 +2,7 @@
 
 <!-- nav: 11 Reference -->
 
-`bridges` exposes `list`, `read`, `choices`, `configuration`, `create`, `update`,
+`bridges` exposes `list`, `read`, `choices`, `creationTarget`, `configuration`, `create`, `update`,
 `control`, `validate`, `importKey` and `revokeKey` for bridge setup. Its explicit
 consent methods are `listInvokeGrants`, `readInvokeGrant`, `invokeReadiness`,
 `issueInvokeGrant` and `revokeInvokeGrant`. See [Bridge setup](bridges.md) for
