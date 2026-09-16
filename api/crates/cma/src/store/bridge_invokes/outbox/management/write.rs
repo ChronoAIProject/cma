@@ -61,11 +61,16 @@ impl MongoBridgeReplyToolStore {
         let document = self.items.find_one(doc! {"_id":&write.request().item_id,"record.source.pin.bridge_id":manager.record().id.as_str()})
             .session(&mut *session).await?.ok_or(OutboxManagementError::NotFound)?;
         let mut item = records::read_item(&document)?;
+        let previously_occupied = backlog::occupies_capacity(&item.state);
         let previous_revision = item.revision;
         let now = now_ms();
         write.apply(&mut item, now)?;
         if let Some(validation) = write.validation() {
             self.fence_delivery(manager.record(), &item.source, validation, session)
+                .await?;
+        }
+        if !previously_occupied && backlog::occupies_capacity(&item.state) {
+            self.require_backlog_capacity(&item.source, 1, session)
                 .await?;
         }
         if item.revision != previous_revision {

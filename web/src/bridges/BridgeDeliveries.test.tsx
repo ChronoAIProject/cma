@@ -28,7 +28,17 @@ function fixture() {
         state.uncertain = false;
         throw new TypeError('response lost');
       }
-      const body = JSON.parse(String(options?.body)) as { action: { kind: string } };
+      const body = JSON.parse(String(options?.body)) as {
+        expected_revision: number;
+        action: { kind: string };
+      };
+      if (body.action.kind === 'abandon') {
+        const receipt = structuredClone(sample('abandon-explicit')) as {
+          result: { revision: number };
+        };
+        receipt.result.revision = body.expected_revision + 1;
+        return Response.json(receipt);
+      }
       return Response.json(
         sample(body.action.kind === 'reconcile' ? 'reconcile-unknown' : 'retry-explicit'),
       );
@@ -39,6 +49,54 @@ function fixture() {
   const props = { client, id: bridge, revision: 2, allowed: true, onAccessChanged: changed };
   return { fetch, state, writes, props, changed };
 }
+it('requires explicit confirmation before abandoning a reply and recovers its exact uncertain request', async () => {
+  const test = fixture();
+  test.state.uncertain = true;
+  render(<BridgeDeliveries {...test.props} />);
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole('button', { name: 'Abandon reply' }));
+  expect(screen.getByRole('dialog', { name: 'Abandon this reply?' })).toBeInTheDocument();
+  expect(
+    screen.getByText(/Stop all future delivery attempts for reply 1, part 1 of 1/),
+  ).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Confirm abandon reply' })).toBeDisabled();
+  expect(test.writes).toHaveLength(0);
+  await user.click(screen.getByRole('checkbox', { name: /I understand that this reply/ }));
+  await user.click(screen.getByRole('button', { name: 'Cancel' }));
+  expect(test.writes).toHaveLength(0);
+  await user.click(screen.getByRole('button', { name: 'Abandon reply' }));
+  expect(screen.getByRole('button', { name: 'Confirm abandon reply' })).toBeDisabled();
+  await user.click(screen.getByRole('checkbox', { name: /I understand that this reply/ }));
+  await user.click(screen.getByRole('button', { name: 'Confirm abandon reply' }));
+  await screen.findByRole('button', { name: 'Recover previous action' });
+  expect(test.writes).toHaveLength(1);
+  expect(test.writes[0]?.body).toEqual({
+    item_id: `bro_${'a'.repeat(64)}`,
+    expected_revision: 4,
+    expected_bridge_revision: 2,
+    action: { kind: 'abandon' },
+  });
+  await user.click(screen.getByRole('button', { name: 'Refresh replies' }));
+  await screen.findByText(/The reply may have reached/);
+  await user.click(screen.getByRole('button', { name: 'Recover previous action' }));
+  await screen.findByText(
+    'Further attempts for this reply were abandoned. Earlier delivery may still have occurred.',
+  );
+  expect(test.writes).toHaveLength(2);
+  expect(test.writes[1]).toEqual(test.writes[0]);
+});
+
+it('closes abandonment review without sending when management access changes', async () => {
+  const test = fixture();
+  const view = render(<BridgeDeliveries {...test.props} />);
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole('button', { name: 'Abandon reply' }));
+  await user.click(screen.getByRole('checkbox', { name: /I understand that this reply/ }));
+  view.rerender(<BridgeDeliveries {...test.props} allowed={false} />);
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  expect(test.writes).toHaveLength(0);
+});
+
 it('requires duplicate-risk acceptance and preserves exact uncertain recovery across history refresh', async () => {
   const test = fixture();
   test.state.uncertain = true;

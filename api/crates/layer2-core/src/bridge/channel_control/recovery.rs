@@ -16,6 +16,7 @@ impl<'a> ChannelControlRecovery<'a> {
         if inbox.record().capabilities.is_none()
             || inbox.record().envelope.content_type != "text"
             || !inbox.record().envelope.attachments.is_empty()
+            || inbox.record().text_attachment.is_some()
         {
             return Err(Error::CapabilityUnsupported);
         }
