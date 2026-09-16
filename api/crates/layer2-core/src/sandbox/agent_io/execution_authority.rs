@@ -54,6 +54,9 @@ impl ResourceAccessService {
         }
         let started_at = SystemTime::now();
         let deadline = tokio::time::Instant::now() + MAX_MEMBERSHIP_AGE;
+        let deadline = context
+            .credential_deadline()
+            .map_or(deadline, |expiry| deadline.min(expiry));
         let authorized = self
             .authorize(
                 context,

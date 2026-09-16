@@ -119,10 +119,20 @@ impl OrganizationMembership {
     }
 }
 
-/// Trusted request context. Membership errors stay local to the affected org;
-/// a failed organization lookup does not remove independent personal access.
+/// Trusted custody selection; never deserialized from a public request or audit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CredentialSource {
+    /// Authority established by an existing retained sign-in or internal adapter.
+    Retained,
+    /// Exact independently presented credential; cannot borrow sign-in custody.
+    Independent { expires_at: Option<SystemTime> },
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
+/// Trusted request context. A failed organization lookup does not remove
+/// independent personal access, and custody remains with the actual caller.
 pub struct CallerContext {
+    pub credential_source: CredentialSource,
     pub caller: Caller,
     pub credential: CredentialContext,
     pub actor: ResourceActor,
@@ -130,6 +140,25 @@ pub struct CallerContext {
 }
 
 impl CallerContext {
+    /// The credential may expire before a resource/membership proof does.
+    pub fn credential_deadline(&self) -> Option<tokio::time::Instant> {
+        let CredentialSource::Independent {
+            expires_at: Some(expires_at),
+        } = self.credential_source
+        else {
+            return None;
+        };
+        let now = tokio::time::Instant::now();
+        Some(
+            now.checked_add(
+                expires_at
+                    .duration_since(SystemTime::now())
+                    .unwrap_or_default(),
+            )
+            .unwrap_or(now),
+        )
+    }
+
     /// Require actual principal attribution for ordinary CMA requests. A
     /// channel/delegated service will use its separately scoped bridge policy.
     pub fn validate_principal(&self) -> bool {
