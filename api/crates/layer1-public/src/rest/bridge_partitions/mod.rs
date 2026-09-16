@@ -11,10 +11,12 @@ use layer2_core::bridge::{status::*, BridgeId};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 mod shapes;
+pub(crate) mod usage;
 use shapes::*;
 
 pub fn bridge_partitions_router(service: Option<Arc<BridgePartitionService>>) -> Router {
     Router::new()
+        .route("/api/v1/bridges/{id}/usage", get(usage::read))
         .route("/api/v1/bridges/{id}/partitions", get(list))
         .route("/api/v1/bridges/{id}/partitions/{allocation}", get(detail))
         .layer(axum::middleware::from_fn(private_headers))

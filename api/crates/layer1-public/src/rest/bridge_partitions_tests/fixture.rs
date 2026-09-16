@@ -17,11 +17,33 @@ pub(in crate::rest) struct Memory {
     pub evidence: Mutex<PartitionEvidence>,
     pub calls: AtomicUsize,
     pub revoke: AtomicBool,
+    pub usage_limited: AtomicBool,
+    pub usage_changed: AtomicBool,
     pub ports: Arc<Ports>,
     pub activity: Mutex<PartitionActivityEvidence>,
 }
 #[async_trait::async_trait]
 impl BridgePartitionStore for Memory {
+    async fn usage(
+        &self,
+        manager: &BridgeManagementLease,
+    ) -> Result<Option<Vec<PartitionEvidence>>, PartitionStatusError> {
+        manager.require_current()?;
+        let calls = self.calls.fetch_add(1, Ordering::SeqCst);
+        if self.revoke.load(Ordering::SeqCst) {
+            self.ports.role.store(1, Ordering::SeqCst);
+        }
+        if self.usage_limited.load(Ordering::SeqCst) {
+            return Ok(None);
+        }
+        let mut value = self.evidence.lock().unwrap().clone();
+        value.first_source = None;
+        if self.usage_changed.load(Ordering::SeqCst) && calls > 0 {
+            value.current = !value.current;
+        }
+        Ok(Some(vec![value]))
+    }
+
     async fn list(
         &self,
         manager: &BridgeManagementLease,
@@ -195,6 +217,8 @@ pub(in crate::rest) async fn fixture_for(organization: bool, foreign_target: boo
         }),
         calls: AtomicUsize::new(0),
         revoke: AtomicBool::new(false),
+        usage_limited: AtomicBool::new(false),
+        usage_changed: AtomicBool::new(false),
         ports: ports.clone(),
         activity: Mutex::new(PartitionActivityEvidence {
             pending: vec![],

@@ -7,11 +7,13 @@ mod reads;
 mod sources;
 
 enum Query<'a> {
+    Usage,
     List { after: Option<&'a str>, limit: u32 },
     Detail(&'a str),
     Activity(&'a AllocationRecord),
 }
 enum ResultValue {
+    Usage(Option<Vec<PartitionEvidence>>),
     Partitions(Vec<PartitionEvidence>),
     Activity(Box<PartitionActivityEvidence>),
 }
@@ -103,6 +105,16 @@ impl MongoBridgeAllocationStore {
 
 #[async_trait::async_trait]
 impl BridgePartitionStore for MongoBridgeAllocationStore {
+    async fn usage(
+        &self,
+        manager: &BridgeManagementLease,
+    ) -> Result<Option<Vec<PartitionEvidence>>, PartitionStatusError> {
+        match self.partition_read(manager, Query::Usage).await? {
+            ResultValue::Usage(records) => Ok(records),
+            _ => Err(PartitionStatusError::Corrupt),
+        }
+    }
+
     async fn list(
         &self,
         manager: &BridgeManagementLease,

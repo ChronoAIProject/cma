@@ -2,12 +2,14 @@
 //! never a grant to invoke, reset, detach, retry or remove a retained target.
 mod access;
 mod service;
+mod usage;
 mod validation;
 mod views;
 
 use super::{allocation::AllocationRecord, ingress::StoredInbox, BridgeManagementLease};
 use crate::{resource_access::ResourceTarget, sandbox::agent_io::*};
 pub use service::BridgePartitionService;
+pub use usage::*;
 pub use views::*;
 
 pub const MAX_PARTITION_PAGE: u32 = 25;
@@ -75,6 +77,14 @@ impl PartitionResource {
 
 #[async_trait::async_trait]
 pub trait BridgePartitionStore: Send + Sync {
+    /// Complete, source-free inventory up to the fixed observation bound. More
+    /// rows return None, never partial counts masquerading as global usage.
+    async fn usage(
+        &self,
+        _manager: &BridgeManagementLease,
+    ) -> Result<Option<Vec<PartitionEvidence>>, PartitionStatusError> {
+        Err(PartitionStatusError::Unavailable)
+    }
     /// Exact Bridge/owner/config snapshots, ascending allocation ID, limit + 1.
     async fn list(
         &self,
