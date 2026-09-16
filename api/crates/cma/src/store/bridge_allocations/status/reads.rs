@@ -20,6 +20,68 @@ impl MongoBridgeAllocationStore {
             return Err(PartitionStatusError::Conflict.into());
         }
         match query {
+            Query::Usage => {
+                // Existing Bridge-prefix index, no sort before the hard bound:
+                // even retained generations beyond the view limit cannot cause
+                // an unbounded resource walk or a full inventory sort.
+                let mut cursor = self
+                    .records
+                    .find(doc! {"bridge_id":manager.record().id.as_str()})
+                    .hint(mongodb::options::Hint::Keys(
+                        doc! {"bridge_id":1,"creates_sandbox":1},
+                    ))
+                    .limit((MAX_USAGE_ALLOCATIONS + 1) as i64)
+                    .max_time(Duration::from_secs(2))
+                    .session(&mut *session)
+                    .await?;
+                let mut rows = Vec::new();
+                while let Some(row) = cursor.next(&mut *session).await.transpose()? {
+                    manager.require_current()?;
+                    rows.push(row);
+                }
+                if rows.len() > MAX_USAGE_ALLOCATIONS {
+                    return Ok(ResultValue::Usage(None));
+                }
+                let mut records = Vec::new();
+                for row in rows {
+                    records.push(
+                        self.partition_evidence(manager, &database, &row, false, session)
+                            .await?,
+                    );
+                }
+                let mut heads = self
+                    .heads
+                    .find(doc! {"bridge_id":manager.record().id.as_str()})
+                    .hint(mongodb::options::Hint::Keys(doc! {"bridge_id":1}))
+                    .limit((MAX_USAGE_ALLOCATIONS + 1) as i64)
+                    .max_time(Duration::from_secs(2))
+                    .session(&mut *session)
+                    .await?;
+                let mut head_ids = std::collections::BTreeSet::new();
+                while let Some(head) = heads.next(&mut *session).await.transpose()? {
+                    manager.require_current()?;
+                    let id = head
+                        .get_str("allocation_id")
+                        .map_err(|_| PartitionStatusError::Corrupt)?;
+                    if !head_ids.insert(id.to_owned()) {
+                        return Err(PartitionStatusError::Corrupt.into());
+                    }
+                    if head_ids.len() > MAX_USAGE_ALLOCATIONS {
+                        return Ok(ResultValue::Usage(None));
+                    }
+                    let current = records
+                        .iter()
+                        .find(|record| record.current && record.allocation.id == id)
+                        .ok_or(PartitionStatusError::Corrupt)?;
+                    decode_head(&head, &current.allocation.identity)
+                        .map_err(|_| PartitionStatusError::Corrupt)?;
+                }
+                if head_ids.len() != records.iter().filter(|record| record.current).count() {
+                    return Err(PartitionStatusError::Corrupt.into());
+                }
+                records.sort_by(|a, b| a.allocation.id.cmp(&b.allocation.id));
+                Ok(ResultValue::Usage(Some(records)))
+            }
             Query::List { after, limit } => {
                 let mut filter = doc! {"bridge_id":manager.record().id.as_str()};
                 if let Some(after) = after {
@@ -37,7 +99,7 @@ impl MongoBridgeAllocationStore {
                 while let Some(row) = cursor.next(&mut *session).await.transpose()? {
                     manager.require_current()?;
                     result.push(
-                        self.partition_evidence(manager, &database, &row, session)
+                        self.partition_evidence(manager, &database, &row, true, session)
                             .await?,
                     );
                 }
@@ -52,7 +114,7 @@ impl MongoBridgeAllocationStore {
                 let mut result = Vec::new();
                 if let Some(row) = row {
                     result.push(
-                        self.partition_evidence(manager, &database, &row, session)
+                        self.partition_evidence(manager, &database, &row, true, session)
                             .await?,
                     );
                 }
@@ -80,6 +142,7 @@ impl MongoBridgeAllocationStore {
         manager: &BridgeManagementLease,
         database: &Database,
         row: &Document,
+        include_source: bool,
         session: &mut ClientSession,
     ) -> Result<PartitionEvidence, ReadError> {
         let allocation = managed(manager, row)?;
@@ -118,7 +181,11 @@ impl MongoBridgeAllocationStore {
                 present.push(kind);
             }
         }
-        let first_source = sources::first(database, &allocation, session).await?;
+        let first_source = if include_source {
+            sources::first(database, &allocation, session).await?
+        } else {
+            None
+        };
         Ok(PartitionEvidence {
             allocation,
             current,

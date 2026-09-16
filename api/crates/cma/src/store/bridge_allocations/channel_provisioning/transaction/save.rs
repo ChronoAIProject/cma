@@ -24,6 +24,13 @@ pub(super) async fn apply(
     session: &mut ClientSession,
 ) -> Result<ChannelProvisioningSnapshot, MutationError> {
     let Some(change) = change else {
+        if !document.contains_key("channel_provisioning") {
+            let database = store.bridges.client.database(&resources.database);
+            crate::store::bridge_allocations::channel_retirement::provider_finality::begin_origin(
+                &database, &snapshot, session,
+            )
+            .await?;
+        }
         let changed = resources.sandboxes.update_one(doc! {"_id":snapshot.sandbox.id.as_str(),"revision":snapshot.sandbox.revision as i64},
             doc! {"$set":{"channel_provisioning":record_bson(&snapshot.state).map_err(|_| AllocationError::Corrupt)?},"$inc":{"channel_execution_fence":1_i64}})
             .session(&mut *session).await?;

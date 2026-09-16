@@ -46,6 +46,9 @@ pub(crate) enum FinalRetentionHoldReason {
     BackingStorageAbsenceUnproven,
     PhysicalHomeCleanupUnavailable,
     ChannelHistoryPolicyRequired,
+    ChannelHistoryRetained,
+    ChannelHistoryReferencesHeld,
+    ChannelHistoryReferencesUnsealed,
     ReaderJanitorCompatibilityRequired,
 }
 
@@ -61,6 +64,9 @@ impl FinalRetentionHoldReason {
             Self::BackingStorageAbsenceUnproven => "backing_absence_unproven",
             Self::PhysicalHomeCleanupUnavailable => "physical_cleanup_unavailable",
             Self::ChannelHistoryPolicyRequired => "history_policy_required",
+            Self::ChannelHistoryRetained => "history_retained",
+            Self::ChannelHistoryReferencesHeld => "history_refs_held",
+            Self::ChannelHistoryReferencesUnsealed => "history_refs_open",
             Self::ReaderJanitorCompatibilityRequired => "reader_janitor_proof_required",
         }
     }
@@ -70,6 +76,7 @@ impl FinalRetentionHoldReason {
 pub(crate) struct FinalRetentionAssessment {
     pub identity: RetentionEvidenceIdentity,
     pub home: RetainedHome,
+    pub history: crate::store::channel_history::ChannelHistoryAssessment,
     pub reasons: Vec<FinalRetentionHoldReason>,
 }
 
@@ -128,10 +135,17 @@ impl FinalRetentionAssessment {
             // Retention validation also requires that no home was configured.
             RetainedHome::NotConfigured
         };
-        // Generic Sandbox grace and inbox/reply-secret retention do not supply
-        // a Channel history disposition. No supported/rollback reader proof is
-        // wired into this protocol yet. Neither requirement is an approval flag.
-        reasons.push(FinalRetentionHoldReason::ChannelHistoryPolicyRequired);
+        // Missing legacy evidence never adopts a current default. A present
+        // retain policy and reference inventory still grant no expiry or release.
+        if snapshot.history.policy.is_none() {
+            reasons.push(FinalRetentionHoldReason::ChannelHistoryPolicyRequired);
+        } else {
+            reasons.push(FinalRetentionHoldReason::ChannelHistoryRetained);
+        }
+        if snapshot.history.hold.is_some() {
+            reasons.push(FinalRetentionHoldReason::ChannelHistoryReferencesHeld);
+        }
+        reasons.push(FinalRetentionHoldReason::ChannelHistoryReferencesUnsealed);
         reasons.push(FinalRetentionHoldReason::ReaderJanitorCompatibilityRequired);
         Ok(Self {
             identity: RetentionEvidenceIdentity {
@@ -155,6 +169,7 @@ impl FinalRetentionAssessment {
                     .transpose()?,
             },
             home,
+            history: snapshot.history.clone(),
             reasons,
         })
     }

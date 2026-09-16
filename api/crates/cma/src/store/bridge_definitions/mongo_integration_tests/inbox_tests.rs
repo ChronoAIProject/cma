@@ -11,7 +11,10 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
 use super::*;
+#[path = "inbox_platform_fixture.rs"]
+mod platform_fixture;
 use crate::store::AuthEncryptionKey;
+pub(super) use platform_fixture::callback_for_platform;
 #[path = "inbox_control_intents_tests.rs"]
 mod control_intents;
 #[path = "inbox_controls.rs"]
@@ -161,7 +164,7 @@ pub(super) async fn write_using_validator(
                 callback_token: token,
                 user_token: None,
                 message_id: payload["message_id"].as_str().unwrap(),
-                platform: "telegram",
+                platform: payload["platform"].as_str().unwrap(),
                 timestamp: &layer2_core::now_rfc3339(),
             },
             body,

@@ -250,6 +250,7 @@ async fn replace_agent(
         "last_seq": last_seq,
         "record.conversation.last_seq": last_seq,
         "channel_reuse_cleanup_execution": { "$exists": false },
+                "channel_history_seal": { "$exists": false },
     };
     filter.insert(operation.receipt_field(), doc! { "$exists": false });
     let mut fields = agent_replacement_fields(next)

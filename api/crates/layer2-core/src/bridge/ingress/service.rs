@@ -239,6 +239,7 @@ impl CallbackVerifier {
             relay,
             admission,
             capabilities: None,
+            text_attachment: None,
             execution_hold: Some(InboxExecutionHold::WorkerUnavailable),
             accepted_at: now,
             expires_at: now.saturating_add(i64::from(config.limits.inbox_retention_seconds)),
@@ -261,6 +262,7 @@ impl CallbackVerifier {
         let deadline = started + Duration::from_secs(remaining.clamp(0, 5) as u64);
         let signed = SignedCallback {
             control_refusal: None,
+            attachment_url: None,
             bridge,
             record,
             reply_token: if retain_reply { reply_token } else { None },

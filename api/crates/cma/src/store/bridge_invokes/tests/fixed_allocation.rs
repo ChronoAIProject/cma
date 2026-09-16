@@ -38,6 +38,7 @@ fn admission(bridge: &BridgeRecord) -> AllocationAdmission {
         relay: RelayCorroboration::AbsentInboxOnly,
         admission: InboxAdmission::Accepted,
         capabilities: None,
+        text_attachment: None,
         execution_hold: None,
         accepted_at: 101,
         expires_at: 3601,

@@ -20,7 +20,7 @@ export function placementUnavailable(
   if (mode.availability === 'runtime_unavailable')
     return 'Shared placement requires runtime support that is unavailable.';
   if (mode.availability === 'continuity_unverified')
-    return 'Shared placement is waiting for continuity verification.';
+    return 'Shared placement has not been enabled by the operator.';
   if (mode.availability !== 'available')
     return 'Shared placement availability could not be verified.';
   const connector = catalog?.connectors.find((item) => item.platform === platform);

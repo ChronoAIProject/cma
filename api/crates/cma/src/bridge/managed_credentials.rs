@@ -198,7 +198,12 @@ impl BridgeCredentialResolver for ManagedBridgeCredentials {
                 control_plane.actor_subject(),
                 control_plane.credential(),
             )
-            .await?;
+            .await
+            .inspect_err(|_| {
+                super::operations::health::authority_failure(
+                    super::operations::health::AuthorityFailure::CredentialVerificationFailed,
+                );
+            })?;
         if verified.key_state_version != metadata.key_state_version
             || verified.scopes != metadata.scopes
             || verified.allowed_service_ids != metadata.allowed_service_ids
@@ -232,6 +237,11 @@ impl BridgeCredentialResolver for ManagedBridgeCredentials {
             .await?
             .ok_or_else(unavailable)?;
         current.metadata.validate()?;
+        if tokio::time::Instant::now() >= lease.deadline {
+            super::operations::health::authority_failure(
+                super::operations::health::AuthorityFailure::CredentialExpired,
+            );
+        }
         if current.metadata.owner != lease.owner
             || current.metadata.connector.key_id != lease.key_id
             || current.metadata.connector.issuer != lease.issuer

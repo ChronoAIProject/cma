@@ -135,6 +135,7 @@ impl Fixture {
             relay: RelayCorroboration::AbsentInboxOnly,
             admission: InboxAdmission::Accepted,
             capabilities: None,
+            text_attachment: None,
             execution_hold: None,
             accepted_at: 101,
             expires_at: 3701,

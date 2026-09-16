@@ -7,6 +7,8 @@ use kube::core::{ApiResource, GroupVersionKind};
 
 use super::ProviderError;
 use crate::RuntimeHandle;
+#[path = "runtime_finality.rs"]
+pub(super) mod finality;
 
 const SANDBOX_ID_LABEL: &str = "opensandbox.io/id";
 const CREATOR_LABEL: &str = "cma/control-plane";
@@ -22,6 +24,8 @@ const DELETE_ATTEMPTS: usize = 3;
 #[derive(Clone)]
 pub struct BatchSandboxReclaimer {
     api: Api<DynamicObject>,
+    pods: Api<k8s_openapi::api::core::v1::Pod>,
+    scope: Option<crate::HomeVolumeScope>,
     namespace: String,
     expected_creator: Option<String>,
 }
@@ -33,7 +37,7 @@ pub(crate) struct CapturedSandbox {
     identity: DeletionIdentity,
 }
 
-#[derive(Clone, PartialEq)]
+#[derive(Clone, PartialEq, serde::Serialize)]
 struct DeletionIdentity {
     uid: String,
     generation: i64,
@@ -50,12 +54,13 @@ impl BatchSandboxReclaimer {
             ))
         })?;
         let namespace = config.default_namespace.clone();
+        let authority = config.cluster_url.to_string();
         let client = kube::Client::try_from(config).map_err(|error| {
             ProviderError::Unreachable(format!(
                 "build Kubernetes client for fenced sandbox cleanup: {error}"
             ))
         })?;
-        Ok(Self::namespaced(client, namespace))
+        Self::namespaced(client, namespace).with_finality_authority(&authority)
     }
 
     pub async fn infer_namespaced(namespace: impl Into<String>) -> Result<Self, ProviderError> {
@@ -65,12 +70,13 @@ impl BatchSandboxReclaimer {
                 "infer Kubernetes configuration for fenced sandbox cleanup: {error}"
             ))
         })?;
+        let authority = config.cluster_url.to_string();
         let client = kube::Client::try_from(config).map_err(|error| {
             ProviderError::Unreachable(format!(
                 "build Kubernetes client for fenced sandbox cleanup: {error}"
             ))
         })?;
-        Ok(Self::namespaced(client, namespace))
+        Self::namespaced(client, namespace).with_finality_authority(&authority)
     }
 
     pub fn namespaced(client: kube::Client, namespace: impl Into<String>) -> Self {
@@ -78,7 +84,9 @@ impl BatchSandboxReclaimer {
         let resource =
             ApiResource::from_gvk_with_plural(&GroupVersionKind::gvk(GROUP, VERSION, KIND), PLURAL);
         Self {
-            api: Api::namespaced_with(client, &namespace, &resource),
+            api: Api::namespaced_with(client.clone(), &namespace, &resource),
+            pods: Api::namespaced(client, &namespace),
+            scope: None,
             namespace,
             expected_creator: None,
         }
@@ -115,6 +123,14 @@ impl BatchSandboxReclaimer {
         else {
             return Ok(None);
         };
+        self.capture_object(object, handle).map(Some)
+    }
+
+    fn capture_object(
+        &self,
+        object: DynamicObject,
+        handle: &RuntimeHandle,
+    ) -> Result<CapturedSandbox, ProviderError> {
         self.verify(&object, handle)?;
         let uid = required(object.metadata.uid.as_deref(), handle, "Kubernetes UID")?;
         let resource_version = required(
@@ -140,7 +156,7 @@ impl BatchSandboxReclaimer {
             .ok_or_else(|| {
                 ProviderError::Malformed(format!("BatchSandbox {} has no specification", handle.0))
             })?;
-        Ok(Some(CapturedSandbox {
+        Ok(CapturedSandbox {
             handle: handle.clone(),
             resource_version,
             identity: DeletionIdentity {
@@ -150,7 +166,7 @@ impl BatchSandboxReclaimer {
                 owner_references: object.metadata.owner_references.unwrap_or_default(),
                 spec,
             },
-        }))
+        })
     }
 
     pub(crate) async fn delete(&self, mut captured: CapturedSandbox) -> Result<(), ProviderError> {
@@ -186,7 +202,7 @@ impl BatchSandboxReclaimer {
                     return Err(kube_error(
                         "delete BatchSandbox with identity preconditions",
                         error,
-                    ))
+                    ));
                 }
             }
         }

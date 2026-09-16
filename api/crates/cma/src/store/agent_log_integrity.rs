@@ -51,6 +51,28 @@ pub(super) async fn scan_complete_log<F>(
     last_seq: u64,
     session: &mut mongodb::ClientSession,
     snapshot: bool,
+    visit: F,
+) -> Result<LogSummary, TransactionLogError>
+where
+    F: FnMut(AgentLogEntry) -> Result<(), SandboxStoreError>,
+{
+    scan_collection(
+        &store.agent_log,
+        agent_id,
+        last_seq,
+        session,
+        snapshot,
+        visit,
+    )
+    .await
+}
+
+pub(super) async fn scan_collection<F>(
+    collection: &mongodb::Collection<Document>,
+    agent_id: &AgentId,
+    last_seq: u64,
+    session: &mut mongodb::ClientSession,
+    snapshot: bool,
     mut visit: F,
 ) -> Result<LogSummary, TransactionLogError>
 where
@@ -59,7 +81,7 @@ where
     if last_seq > PHYSICAL_AGENT_LOG_ENTRIES {
         return Err(capacity_error().into());
     }
-    let raw_log = store.agent_log.clone_with_type::<RawDocumentBuf>();
+    let raw_log = collection.clone_with_type::<RawDocumentBuf>();
     let find = raw_log
         .find(mongodb::bson::doc! { "agent_id": agent_id.as_str() })
         .sort(mongodb::bson::doc! { "seq": 1 })

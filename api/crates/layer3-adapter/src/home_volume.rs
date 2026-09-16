@@ -155,6 +155,32 @@ impl HomeVolumeAttachment {
 /// Control-plane storage effects. Runtime teardown alone never releases a home.
 #[async_trait::async_trait]
 pub trait HomeVolumeStore: Send + Sync {
+    async fn delete_original_home(
+        &self,
+        _original: &crate::HomeProvisionReceipt,
+        _operation_id: &str,
+    ) -> Result<crate::HomeDeleteReceipt> {
+        Err(AdapterError::Unsupported(
+            "exact original home deletion is unavailable".into(),
+        ))
+    }
+    async fn observe_home_finality(
+        &self,
+        _delete: &crate::HomeDeleteReceipt,
+    ) -> Result<crate::HomeFinalityReceipt> {
+        Err(AdapterError::Unsupported(
+            "original home claim absence is unavailable".into(),
+        ))
+    }
+    async fn prepare_receipted(
+        &self,
+        _request: &HomeVolumeRequest,
+        _operation_id: &str,
+    ) -> Result<crate::HomeProvisionReceipt> {
+        Err(AdapterError::Unsupported(
+            "original home creation acknowledgement is unavailable".into(),
+        ))
+    }
     /// Optional evidence capability. Absence never grants deletion provenance.
     fn allocation_scope(&self) -> Option<HomeVolumeScope> {
         None

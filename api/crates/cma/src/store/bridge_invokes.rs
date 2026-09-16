@@ -30,6 +30,7 @@ mod enable;
 mod fence;
 pub(in crate::store) mod outbox;
 mod source_controls;
+mod text_attachment;
 mod usage;
 pub(super) use enable::fence_enable;
 pub(in crate::store) use usage::apply_management_usage;
@@ -66,6 +67,7 @@ impl MongoBridgeInvokeStore {
             ],
         )
         .await?;
+        super::channel_history::initialize(&database).await?;
         let store = Self {
             bridges,
             resources,

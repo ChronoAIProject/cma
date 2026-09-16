@@ -246,6 +246,7 @@ pub struct ChannelReplyToolIntent {
     pub(super) invocation_id: String,
     pub(super) request_sha256: String,
     pub(super) text: String,
+    pub(super) original_outbox_id: Option<String>,
 }
 impl ChannelReplyToolIntent {
     pub fn prepare(
@@ -262,7 +263,11 @@ impl ChannelReplyToolIntent {
             invocation_id,
             request_sha256,
             text: request.text,
+            original_outbox_id: None,
         })
+    }
+    pub fn original_outbox_id(&self) -> Option<&str> {
+        self.original_outbox_id.as_deref()
     }
     pub fn scope(&self) -> &ChannelReplyTurnAuthorization {
         &self.scope
@@ -291,6 +296,9 @@ pub enum ReplyToolStatus {
 #[serde(deny_unknown_fields)]
 pub struct ReplyToolReceipt {
     pub receipt_id: String,
+    /// Opaque CMA item IDs; these confer no destination or edit authority.
+    #[serde(default)]
+    pub outbox_ids: Vec<String>,
     pub status: ReplyToolStatus,
     pub duplicate_risk: bool,
     pub failure: Option<DeliveryFailure>,

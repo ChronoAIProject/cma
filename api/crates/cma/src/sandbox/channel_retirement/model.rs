@@ -61,6 +61,7 @@ pub(crate) struct ChannelRetirementSnapshot {
     pub state: Option<ChannelRetirementState>,
     pub retention: Option<super::retention::ChannelStorageRetention>,
     pub retention_audit: Option<super::assessment::RetentionAuditIdentity>,
+    pub history: crate::store::channel_history::ChannelHistoryAssessment,
     pub tree: OwnedTree,
 }
 impl ChannelRetirementSnapshot {
@@ -218,6 +219,7 @@ impl ChannelRetirementSnapshot {
             state: None,
             retention: None,
             retention_audit: None,
+            history: self.history.clone(),
             tree: OwnedTree {
                 fingerprint: self.tree.fingerprint.clone(),
                 agent_live: self.tree.agent_live,
