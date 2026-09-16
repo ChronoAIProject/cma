@@ -59,6 +59,17 @@ impl ChannelWorkPort for ChannelAllocationWork {
         else {
             return Ok(());
         };
+        if !matches!(
+            record.state,
+            AllocationState::Ready | AllocationState::Retired | AllocationState::FailedTerminal
+        ) {
+            super::operations::health::pending(
+                super::operations::health::PendingStage::Allocation,
+                &record.id,
+                record.created_at_ms,
+                false,
+            );
+        }
         if record
             .lease
             .as_ref()
@@ -88,8 +99,14 @@ impl ChannelWorkPort for ChannelAllocationWork {
             .await
             .map_err(|_| Error::Unavailable)?
         {
-            ChannelProvisioningOutcome::Progressed(record)
-            | ChannelProvisioningOutcome::MintOutcomeUnknown(record) => {
+            ChannelProvisioningOutcome::MintOutcomeUnknown(record) => {
+                super::operations::health::mint_unknown(&record.id);
+                if record.id != id {
+                    return Err(Error::Corrupt);
+                }
+                Ok(())
+            }
+            ChannelProvisioningOutcome::Progressed(record) => {
                 // Consuming the returned identity does not reissue its effects.
                 if record.id != id {
                     return Err(Error::Corrupt);
@@ -140,6 +157,10 @@ impl ChannelWorkPort for ChannelInboxWork {
             Err(Error::Unsupported) => (Duration::from_secs(30), "unsupported"),
             Err(Error::Suspended) => (Duration::from_secs(30), "authority_required"),
             Err(Error::Corrupt) => (Duration::from_secs(30), "inconsistent"),
+            Err(Error::AttachmentExpired) => (Duration::from_secs(30), "text_attachment_expired"),
+            Err(Error::AttachmentUnavailable) => {
+                (Duration::from_secs(5), "text_attachment_unavailable")
+            }
             Err(Error::Unavailable) => (Duration::from_secs(5), "unavailable"),
         };
         self.inbox
@@ -160,6 +181,12 @@ impl ChannelInboxWork {
         else {
             return Ok(());
         };
+        super::operations::health::pending(
+            super::operations::health::PendingStage::Inbox,
+            &inbox.id,
+            inbox.accepted_at.saturating_mul(1000),
+            inbox.execution_hold.is_some(),
+        );
         let bridge = self
             .credentials
             .bridges
@@ -281,8 +308,16 @@ impl ChannelInboxWork {
             })
             .await
             .map_err(|_| Error::Suspended)?;
+        let inbox = super::attachments::capture(
+            inbox,
+            &proof,
+            &self.invokes,
+            &self.inbox,
+            &self.invoke_store,
+        )
+        .await?;
         self.commands
-            .admit(proof, inbox.clone(), record)
+            .admit(proof, inbox, record)
             .await
             .map_err(|error| match error {
                 layer2_core::sandbox::agent_io::ChannelCommandAdmissionError::Input(_) => {

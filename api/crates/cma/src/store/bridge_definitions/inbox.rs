@@ -30,6 +30,7 @@ mod prior;
 pub(in crate::store) mod receipts;
 mod redelivery;
 mod reply_addressing;
+pub(in crate::store) mod text_attachment;
 mod work;
 
 #[derive(Clone)]
@@ -37,6 +38,7 @@ pub(crate) struct MongoCallbackInbox {
     bridges: MongoBridgeStore,
     inbox: Collection<Document>,
     replies: Collection<Document>,
+    attachments: Collection<Document>,
     rates: Collection<Document>,
     receipts: Collection<Document>,
     redeliveries: Collection<Document>,
@@ -58,6 +60,7 @@ impl MongoCallbackInbox {
             &[
                 "bridge_callback_inbox",
                 "bridge_callback_replies",
+                "bridge_text_attachments",
                 "bridge_callback_rates",
                 "bridge_callback_receipts",
                 "bridge_callback_platform_messages",
@@ -71,6 +74,7 @@ impl MongoCallbackInbox {
             bridges: bridges.clone(),
             inbox: majority_collection(&database, "bridge_callback_inbox"),
             replies: majority_collection(&database, "bridge_callback_replies"),
+            attachments: majority_collection(&database, "bridge_text_attachments"),
             rates: majority_collection(&database, "bridge_callback_rates"),
             receipts: majority_collection(&database, "bridge_callback_receipts"),
             redeliveries: majority_collection(&database, "bridge_callback_platform_messages"),
@@ -78,7 +82,12 @@ impl MongoCallbackInbox {
             receipt_cursor: Arc::new(tokio::sync::Mutex::new(None)),
             cipher: Arc::new(AuthCipher::new(deployment, key)?),
         };
-        for collection in [&store.inbox, &store.replies, &store.rates] {
+        for collection in [
+            &store.inbox,
+            &store.replies,
+            &store.rates,
+            &store.attachments,
+        ] {
             collection
                 .create_index(
                     IndexModel::builder()
@@ -144,6 +153,7 @@ impl MongoCallbackInbox {
             "bridge_id":record.pin.bridge_id.as_str(),"admission":admission(&record.admission),
             "expires_at":DateTime::from_millis(record.expires_at*1000),"record":record_bson(record).map_err(|_|CallbackError::Unavailable)?})
             .session(&mut *session).await?;
+        self.retain_attachment(write, session).await?;
         self.retain_acceptance(record, None, session).await?;
         self.retain_platform_identity(write, session).await?;
         if let Some(expires) = record.reply_expires_at {

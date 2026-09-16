@@ -116,8 +116,8 @@ fn connector(name: &str) -> BridgeConnectorCapabilities {
         },
         attachment_output: false,
         output_text: implemented,
-        // The CMA relay currently permits InitialReply only, even where upstream supports edits.
-        output_edit: false,
+        // Explicit tool edits target only the original confirmed CMA reply.
+        output_edit: matches!(name, "lark" | "feishu"),
         output_progress: implemented,
         output_limit_utf16: implemented.then_some(if matches!(name, "telegram" | "telegram-new") {
             4000

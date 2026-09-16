@@ -15,6 +15,7 @@ mod partition_commands;
 mod refusals;
 mod retention_tests;
 mod sidecar;
+mod text_attachment;
 mod usage_management;
 mod usage_tests;
 use fixtures::ChannelFixture;

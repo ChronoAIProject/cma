@@ -47,6 +47,7 @@ fn existing_deployment_defaults_close_every_new_channel_effect() {
     assert!(!flags.enabled(BridgeFlag::V2UiTransport));
     assert!(!flags.enabled(BridgeFlag::TriggerCommandAdmission));
     assert!(!flags.enabled(BridgeFlag::ControlAdmission));
+    assert!(!flags.enabled(BridgeFlag::DiscordTextAttachments));
 }
 
 #[test]
@@ -239,4 +240,40 @@ fn drain_policy_never_replays_bound_terminal_or_expired_commands() {
             }
         }
     }
+}
+
+#[test]
+fn discord_text_attachments_are_an_independent_default_off_admission_selector() {
+    let ordinary = configured(&[BridgeFlag::Ingress, BridgeFlag::Discord]);
+    assert!(!ordinary.enabled(BridgeFlag::DiscordTextAttachments));
+    assert_eq!(
+        ordinary.check_new_effect(BridgeStage::Ingress, BridgePlatformFlag::Discord),
+        Ok(())
+    );
+    let file_only = configured(&[BridgeFlag::DiscordTextAttachments]);
+    assert!(file_only.enabled(BridgeFlag::DiscordTextAttachments));
+    assert_eq!(
+        file_only.check_new_effect(BridgeStage::Ingress, BridgePlatformFlag::Discord),
+        Err(BridgeFlag::Ingress)
+    );
+    let missing_platform = configured(&[BridgeFlag::Ingress, BridgeFlag::DiscordTextAttachments]);
+    assert_eq!(
+        missing_platform.check_new_effect(BridgeStage::Ingress, BridgePlatformFlag::Discord),
+        Err(BridgeFlag::Discord)
+    );
+    let enabled = configured(&[
+        BridgeFlag::Ingress,
+        BridgeFlag::Discord,
+        BridgeFlag::DiscordTextAttachments,
+    ]);
+    assert!(enabled.enabled(BridgeFlag::DiscordTextAttachments));
+    assert_eq!(
+        enabled.check_new_effect(BridgeStage::Ingress, BridgePlatformFlag::Discord),
+        Ok(())
+    );
+    // The selector grants neither allocation nor Agent execution authority.
+    assert_eq!(
+        enabled.check_new_effect(BridgeStage::Execution, BridgePlatformFlag::Discord),
+        Err(BridgeFlag::Execution)
+    );
 }

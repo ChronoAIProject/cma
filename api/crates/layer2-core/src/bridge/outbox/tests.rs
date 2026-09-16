@@ -387,3 +387,5 @@ fn rate_limit_metadata_never_makes_an_unconfirmed_send_retryable() {
     );
     assert_eq!(item.attempts.len(), 1);
 }
+
+mod edit;

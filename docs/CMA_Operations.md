@@ -501,6 +501,7 @@ are referenced in `infra/api/secret.yaml`, never stored in ConfigMaps.
 | `CHRONO_BRIDGE_TELEGRAM_ENABLED` | Telegram fresh-effect gate, independent of other platforms and stages; false by default |
 | `CHRONO_BRIDGE_TELEGRAM_NEW_ENABLED` | Telegram-new fresh-effect gate, independent of Telegram and other stages; false by default |
 | `CHRONO_BRIDGE_DISCORD_ENABLED` | Discord fresh-effect gate; false by default |
+| `CHRONO_BRIDGE_DISCORD_TEXT_ATTACHMENTS_ENABLED` | New single Discord text-file admission; false by default. Requires independent Discord/ingress gates and current authority; retrieval/Agent work also requires normal allocation/execution gates. Deploy supporting readers/workers before enablement. Disabling preserves original receipts and lets accepted work drain under normal gates; before rollback, drain it with a supporting worker or retain explicit suspension. See [attachment retrieval](BRIDGE_ATTACHMENT_RETRIEVAL.md). |
 | `CHRONO_BRIDGE_LARK_ENABLED` | Lark fresh-effect gate, independent of Feishu; false by default |
 | `CHRONO_BRIDGE_FEISHU_ENABLED` | Feishu fresh-effect gate, independent of Lark; false by default |
 | `CHRONO_BRIDGE_SLACK_ENABLED` | Slack boundary gate; false by default; missing human/loop evidence still refuses admission |
@@ -562,6 +563,11 @@ profile and service scope. Startup defaults seed missing default profiles; they
 are not a live rewrite mechanism for published profiles or existing settings.
 
 ## Bridge rollout switches
+
+See [Channel operational signals and alert definitions](CMA_Channel_Observability.md)
+for the existing text log format, durable queue/cleanup/authority observations,
+and disabled alert policy definitions. Health observations never authorize replay
+or replace retained recovery evidence.
 
 The registered feature switches are independent process-start booleans. Missing values
 mean false; only the exact strings `true` and `false` are accepted. A stage also

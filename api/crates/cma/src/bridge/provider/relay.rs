@@ -13,6 +13,13 @@ struct ReplyResponse {
     platform_message_id: Option<String>,
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct EditResponse {
+    upstream_message_id: String,
+    edited_at: String,
+}
+
 impl NyxBridgeProvider {
     pub(crate) async fn reply(
         &self,
@@ -29,16 +36,29 @@ impl NyxBridgeProvider {
         {
             return DeliveryOutcome::DefinitiveRejection(DeliveryFailure::CredentialRevoked);
         }
-        if !matches!(request.item().operation, RelayOperation::InitialReply) {
-            return DeliveryOutcome::DefinitiveRejection(DeliveryFailure::CapabilityUnsupported);
+        match &request.item().operation {
+            RelayOperation::InitialReply => {
+                self.post_reply(
+                    request.item().source.message_id(),
+                    request.item().text(),
+                    secret,
+                    request.deadline(),
+                )
+                .await
+            }
+            RelayOperation::Edit { .. } => {
+                if !layer2_core::bridge::outbox::editable_platform(&connector.platform) {
+                    return DeliveryOutcome::DefinitiveRejection(
+                        DeliveryFailure::CapabilityUnsupported,
+                    );
+                }
+                let Some(original) = request.edit_original_receipt() else {
+                    return DeliveryOutcome::DefinitiveRejection(DeliveryFailure::ReceiptInvalid);
+                };
+                self.post_edit(original, request.item().text(), secret, request.deadline())
+                    .await
+            }
         }
-        self.post_reply(
-            request.item().source.message_id(),
-            request.item().text(),
-            secret,
-            request.deadline(),
-        )
-        .await
     }
 
     async fn post_reply(
@@ -48,9 +68,88 @@ impl NyxBridgeProvider {
         secret: &SecretValue,
         deadline: tokio::time::Instant,
     ) -> DeliveryOutcome {
-        let result = tokio::time::timeout_at(deadline, async {
+        let bytes = match self
+            .post(
+                "/api/v1/channel-relay/reply",
+                message_id,
+                text,
+                secret,
+                deadline,
+            )
+            .await
+        {
+            Ok(bytes) => bytes,
+            Err(outcome) => return outcome,
+        };
+        let Ok(response) = serde_json::from_slice::<ReplyResponse>(&bytes) else {
+            return DeliveryOutcome::Unknown(DeliveryFailure::ReceiptInvalid);
+        };
+        if !canonical_id(&response.message_id)
+            || response.message_id == message_id
+            || response
+                .platform_message_id
+                .as_ref()
+                .is_some_and(|id| !canonical_id(id))
+        {
+            return DeliveryOutcome::Unknown(DeliveryFailure::ReceiptInvalid);
+        }
+        DeliveryOutcome::Confirmed(DeliveryReceipt {
+            nyxid_message_id: response.message_id,
+            platform_message_id: response.platform_message_id,
+        })
+    }
+
+    async fn post_edit(
+        &self,
+        original: &DeliveryReceipt,
+        text: &str,
+        secret: &SecretValue,
+        deadline: tokio::time::Instant,
+    ) -> DeliveryOutcome {
+        let Some(platform_id) = original
+            .platform_message_id
+            .as_deref()
+            .filter(|id| canonical_id(id))
+        else {
+            return DeliveryOutcome::DefinitiveRejection(DeliveryFailure::ReceiptInvalid);
+        };
+        let bytes = match self
+            .post(
+                "/api/v1/channel-relay/reply/update",
+                platform_id,
+                text,
+                secret,
+                deadline,
+            )
+            .await
+        {
+            Ok(bytes) => bytes,
+            Err(outcome) => return outcome,
+        };
+        let Ok(response) = serde_json::from_slice::<EditResponse>(&bytes) else {
+            return DeliveryOutcome::Unknown(DeliveryFailure::ReceiptInvalid);
+        };
+        if response.upstream_message_id != platform_id
+            || layer2_core::seconds_from_rfc3339(&response.edited_at).is_none()
+        {
+            return DeliveryOutcome::Unknown(DeliveryFailure::ReceiptInvalid);
+        }
+        // The update acknowledges this existing message; it creates no new
+        // NyxID message ID. Keep the original exact confirmed receipt identity.
+        DeliveryOutcome::Confirmed(original.clone())
+    }
+
+    async fn post(
+        &self,
+        path: &str,
+        message_id: &str,
+        text: &str,
+        secret: &SecretValue,
+        deadline: tokio::time::Instant,
+    ) -> Result<Zeroizing<Vec<u8>>, DeliveryOutcome> {
+        tokio::time::timeout_at(deadline, async {
             let mut endpoint = self.base_url.clone();
-            endpoint.set_path("/api/v1/channel-relay/reply");
+            endpoint.set_path(path);
             let mut response = self
                 .http
                 .post(endpoint)
@@ -59,8 +158,7 @@ impl NyxBridgeProvider {
                 .send()
                 .await
                 .map_err(|_| DeliveryOutcome::Unknown(DeliveryFailure::ResponseLost))?;
-            // Pinned NyxID consumes tokens before validation and stores replies
-            // after platform IO. No HTTP failure status proves absence of send.
+            // HTTP failure after request dispatch does not prove absence of send/edit.
             if response.status() != reqwest::StatusCode::OK {
                 return Err(
                     if response.status() == reqwest::StatusCode::TOO_MANY_REQUESTS {
@@ -89,28 +187,10 @@ impl NyxBridgeProvider {
                 }
                 bytes.extend_from_slice(&chunk);
             }
-            let response: ReplyResponse = serde_json::from_slice(&bytes)
-                .map_err(|_| DeliveryOutcome::Unknown(DeliveryFailure::ReceiptInvalid))?;
-            if !canonical_id(&response.message_id)
-                || response.message_id == message_id
-                || response
-                    .platform_message_id
-                    .as_ref()
-                    .is_some_and(|id| !canonical_id(id))
-            {
-                return Err(DeliveryOutcome::Unknown(DeliveryFailure::ReceiptInvalid));
-            }
-            Ok(DeliveryReceipt {
-                nyxid_message_id: response.message_id,
-                platform_message_id: response.platform_message_id,
-            })
+            Ok(bytes)
         })
-        .await;
-        match result {
-            Ok(Ok(receipt)) => DeliveryOutcome::Confirmed(receipt),
-            Ok(Err(outcome)) => outcome,
-            Err(_) => DeliveryOutcome::Unknown(DeliveryFailure::ResponseLost),
-        }
+        .await
+        .map_err(|_| DeliveryOutcome::Unknown(DeliveryFailure::ResponseLost))?
     }
 }
 
