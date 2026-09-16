@@ -113,7 +113,7 @@ impl MongoChannelControlExecutionStore {
         write_transition(&self.invokes, command, &admitted, session).await
     }
 }
-async fn write_transition(
+pub(super) async fn write_transition(
     invokes: &MongoBridgeInvokeStore,
     previous: &AdmittedAgentCommand,
     next: &AdmittedChannelControl,

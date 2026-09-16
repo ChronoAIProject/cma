@@ -81,6 +81,31 @@ pub(super) fn execution_at(
     Arc<crate::commands::ResourceCommandExecution>,
     Arc<Mutex<Vec<ConversationInput>>>,
 ) {
+    let (dependencies, writes) = dependencies(c, hook, hook_at, ambiguous);
+    (
+        Arc::new(crate::commands::ResourceCommandExecution {
+            channel_controls: Some(service(c)),
+            channel_revival: dependencies.channel_revival,
+            channel: Some(dependencies.channel),
+            invokes: Some(Arc::new(c.f.invokes.clone())),
+            authority: dependencies.authority,
+            access: dependencies.access,
+            store: dependencies.store,
+            operations: dependencies.operations,
+            context: dependencies.context,
+        }),
+        writes,
+    )
+}
+pub(super) fn dependencies(
+    c: &ControlFixture,
+    hook: Option<Hook>,
+    hook_at: usize,
+    ambiguous: bool,
+) -> (
+    crate::commands::ProductionCommandDependencies,
+    Arc<Mutex<Vec<ConversationInput>>>,
+) {
     let writes = Arc::new(Mutex::new(Vec::new()));
     let observed = writes.clone();
     let sender = ConversationInputSender::spawn(4, move |input| {
@@ -120,13 +145,11 @@ pub(super) fn execution_at(
         Arc::new(PlatformDefaults::default()),
     );
     (
-        Arc::new(crate::commands::ResourceCommandExecution {
-            channel_controls: Some(service(c)),
+        crate::commands::ProductionCommandDependencies {
             channel_revival: None,
-            channel: Some(Arc::new(ChannelAgentCommandService::new(Arc::new(
+            channel: Arc::new(ChannelAgentCommandService::new(Arc::new(
                 crate::store::MongoChannelCommandStore::new(c.invokes.clone()),
-            )))),
-            invokes: Some(Arc::new(c.f.invokes.clone())),
+            ))),
             authority: Arc::new(NoHuman),
             access: Arc::new(ResourceAccessService::new(
                 c.f.resources.clone(),
@@ -135,7 +158,7 @@ pub(super) fn execution_at(
             store: c.f.resources.clone(),
             operations: AgentOperationService::new(c.f.resources.clone(), runtime),
             context,
-        }),
+        },
         writes,
     )
 }

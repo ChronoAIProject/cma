@@ -6,6 +6,23 @@ use crate::sandbox::{
 use crate::{now_rfc3339, RuntimeCapability};
 
 impl AgentOperationService {
+    /// Admit only a readiness check. Actual execution obtains a new live proof
+    /// after the command worker atomically selects its replacement claim.
+    pub async fn trigger_ready_for_claim(
+        &self,
+        command: &AdmittedAgentCommand,
+    ) -> Result<(), AgentOperationError> {
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(15);
+        tokio::time::timeout_at(deadline, self.store.trigger_ready_for_claim(command))
+            .await
+            .map_err(|_| AgentOperationError::Conflict)?
+            .map_err(super::super::super::agent_operation_service::operation_store_error)?;
+        if tokio::time::Instant::now() >= deadline {
+            return Err(AgentOperationError::Conflict);
+        }
+        Ok(())
+    }
+
     pub async fn authorize_trigger_claim(
         &self,
         command: &AdmittedAgentCommand,

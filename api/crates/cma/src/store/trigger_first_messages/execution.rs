@@ -21,6 +21,35 @@ pub(in crate::store) async fn proof_in_session(
     command: &AdmittedAgentCommand,
     session: &mut ClientSession,
 ) -> Result<TriggerExecutionProof, SandboxStoreError> {
+    read_proof(store, command, session, ClaimRequirement::Execution).await
+}
+
+pub(in crate::store) async fn ready_for_claim(
+    store: &MongoSandboxStore,
+    command: &AdmittedAgentCommand,
+) -> Result<(), SandboxStoreError> {
+    let mut session = store.client.start_session().await.map_err(unavailable)?;
+    super::super::sandbox_mongo::start_transaction(&mut session)
+        .await
+        .map_err(unavailable)?;
+    let result = read_proof(store, command, &mut session, ClaimRequirement::Readiness)
+        .await
+        .map(|_| ());
+    let _ = session.abort_transaction().await;
+    result
+}
+
+enum ClaimRequirement {
+    Execution,
+    Readiness,
+}
+
+async fn read_proof(
+    store: &MongoSandboxStore,
+    command: &AdmittedAgentCommand,
+    session: &mut ClientSession,
+    requirement: ClaimRequirement,
+) -> Result<TriggerExecutionProof, SandboxStoreError> {
     let row = store
         .agents
         .find_one(doc! {"_id":command.receipt.envelope.agent_id.as_str()})
@@ -53,16 +82,23 @@ pub(in crate::store) async fn proof_in_session(
     binding
         .require_command(&current)
         .map_err(|error| SandboxStoreError::Corrupt(error.to_string()))?;
-    if current.work.lease.as_ref().map(|lease| &lease.claim)
-        != command.work.lease.as_ref().map(|lease| &lease.claim)
-        || current.status.is_terminal()
-        || current
-            .work
-            .lease
-            .as_ref()
-            .is_some_and(|lease| !lease.live_at(&layer2_core::now_rfc3339()))
-    {
-        return Err(SandboxStoreError::Conflict);
+    match requirement {
+        ClaimRequirement::Execution => {
+            if current.work.lease.as_ref().map(|lease| &lease.claim)
+                != command.work.lease.as_ref().map(|lease| &lease.claim)
+                || current.status.is_terminal()
+                || current
+                    .work
+                    .lease
+                    .as_ref()
+                    .is_some_and(|lease| !lease.live_at(&layer2_core::now_rfc3339()))
+            {
+                return Err(SandboxStoreError::Conflict);
+            }
+        }
+        ClaimRequirement::Readiness => {
+            require_ready(store, command, &current, session).await?;
+        }
     }
     let database = store.client.database(&store.agents.namespace().db);
     let launch_row =
@@ -217,6 +253,39 @@ pub(in crate::store) async fn require_mutation(
             return Err(SandboxStoreError::Conflict);
         }
     } else if mutation.trigger_execution_fence.is_some() {
+        return Err(SandboxStoreError::Conflict);
+    }
+    Ok(())
+}
+
+async fn require_ready(
+    store: &MongoSandboxStore,
+    supplied: &AdmittedAgentCommand,
+    current: &AdmittedAgentCommand,
+    session: &mut ClientSession,
+) -> Result<(), SandboxStoreError> {
+    let now = layer2_core::now_rfc3339();
+    if current != supplied || !current.awaiting_claim(&now) || current.queue_expired(&now) {
+        return Err(SandboxStoreError::Conflict);
+    }
+    let agent_id = current.receipt.envelope.agent_id.as_str();
+    let row = store
+        .agent_command_orders
+        .find_one(doc! {"_id": agent_id})
+        .session(&mut *session)
+        .await
+        .map_err(unavailable)?
+        .ok_or(SandboxStoreError::Conflict)?;
+    let lane = super::super::agent_commands::read_command_lane(&row, agent_id)
+        .map_err(|error| SandboxStoreError::Corrupt(error.to_string()))?;
+    if lane.lease.as_ref().is_some_and(|lease| lease.live_at(&now))
+        || current.receipt.agent_order > lane.last_order
+        || current
+            .work
+            .lease
+            .as_ref()
+            .is_some_and(|expired| lane.next_fence <= expired.claim.fence)
+    {
         return Err(SandboxStoreError::Conflict);
     }
     Ok(())

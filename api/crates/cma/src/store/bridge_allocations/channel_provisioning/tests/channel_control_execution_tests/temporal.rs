@@ -38,6 +38,13 @@ impl ChannelControlExecutionStore for DelayedRefresh {
     ) -> Result<(), ChannelControlError> {
         self.inner.expire_control_hold(command).await
     }
+    async fn refuse_control_hold(
+        &self,
+        command: &AdmittedAgentCommand,
+        deadline: Instant,
+    ) -> Result<(), ChannelControlError> {
+        self.inner.refuse_control_hold(command, deadline).await
+    }
 }
 
 #[tokio::test]
@@ -143,7 +150,7 @@ async fn channel_control_execution_ambiguous_conversation_commit_recovers_one_di
     c.f.close().await;
 }
 
-async fn scope_execution_commits(c: &mut ControlFixture) -> String {
+pub(super) async fn scope_execution_commits(c: &mut ControlFixture) -> String {
     let uri = std::env::var("CHRONO_TEST_MONGODB_FAILPOINT_URI").unwrap();
     let app_name = format!("control-execution-{}", uuid::Uuid::new_v4().simple());
     let mut options = mongodb::options::ClientOptions::parse(uri).await.unwrap();
@@ -170,7 +177,7 @@ async fn scope_execution_commits(c: &mut ControlFixture) -> String {
     app_name
 }
 
-fn failpoint_count(document: &Document) -> i64 {
+pub(super) fn failpoint_count(document: &Document) -> i64 {
     document
         .get_i64("count")
         .or_else(|_| document.get_i32("count").map(i64::from))

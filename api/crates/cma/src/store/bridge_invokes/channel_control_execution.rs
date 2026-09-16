@@ -1,5 +1,5 @@
-//! Exact retained Channel controls. Production composition deliberately does
-//! not construct this execution adapter until accepted ingress rollout is proved.
+//! Exact retained Channel controls. Production retains this execution adapter
+//! while fresh ingress remains disabled; release has separate stage gates.
 use super::MongoBridgeInvokeStore;
 use crate::store::sandbox_mongo::{record_bson, start_transaction};
 use layer2_core::bridge::channel_control::ChannelControlError as Error;
@@ -12,13 +12,13 @@ use std::sync::Arc;
 
 mod fence;
 mod read;
+mod refusal;
 mod release;
 
 pub(crate) struct MongoChannelControlExecutionStore {
     invokes: Arc<MongoBridgeInvokeStore>,
 }
 impl MongoChannelControlExecutionStore {
-    #[allow(dead_code)] // Only owned fixtures configure execution in this foundation.
     pub(crate) fn new(invokes: Arc<MongoBridgeInvokeStore>) -> Self {
         invokes
             .resources
@@ -65,6 +65,13 @@ impl ChannelControlExecutionStore for MongoChannelControlExecutionStore {
     }
     async fn expire_control_hold(&self, command: &AdmittedAgentCommand) -> Result<(), Error> {
         self.expire(command).await
+    }
+    async fn refuse_control_hold(
+        &self,
+        command: &AdmittedAgentCommand,
+        deadline: tokio::time::Instant,
+    ) -> Result<(), Error> {
+        self.refuse(command, deadline).await
     }
 }
 
