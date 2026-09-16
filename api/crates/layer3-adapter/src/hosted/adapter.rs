@@ -26,6 +26,8 @@ use crate::{
 mod agent;
 #[path = "adapter_checkpoint.rs"]
 mod checkpoint;
+#[path = "adapter_exchange.rs"]
+mod exchange;
 #[path = "adapter_install.rs"]
 mod install;
 #[path = "adapter_runtime.rs"]
@@ -90,47 +92,6 @@ impl HostedAdapter {
             .get(handle)
             .cloned()
             .ok_or_else(|| AdapterError::Unavailable(format!("unknown runtime {}", handle.0)))
-    }
-
-    async fn exchange(
-        &self,
-        handle: &RuntimeHandle,
-        frame: RequestFrame,
-    ) -> crate::Result<ResponseFrame> {
-        let operation = frame.operation();
-        let response = self.backend.exchange(handle, frame).await?;
-        if let ResponseFrame::Failure(failure) = response {
-            if failure.operation != operation {
-                return Err(AdapterError::unexpected_reply(operation_name(operation)));
-            }
-            return Err(failure_error(failure));
-        }
-        if response_operation(&response) != operation {
-            return Err(AdapterError::unexpected_reply(operation_name(operation)));
-        }
-        Ok(response)
-    }
-
-    async fn validate_options(
-        &self,
-        handle: &RuntimeHandle,
-        options: &crate::RuntimeOptions,
-    ) -> crate::Result<()> {
-        let state = self.known_state(handle).await?;
-        if options.own_credential != state.own_credential {
-            return Err(AdapterError::Rejected(
-                "agent credential mode differs from its sandbox".into(),
-            ));
-        }
-        if options.slot.0.trim().is_empty()
-            || !options.working_directory.starts_with('/')
-            || !options.home_directory.starts_with('/')
-        {
-            return Err(AdapterError::Rejected(
-                "agent slot, working directory, and home directory are required".into(),
-            ));
-        }
-        Ok(())
     }
 }
 
